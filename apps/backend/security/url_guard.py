@@ -1,43 +1,51 @@
 """
-SSRF guard for agent web tools (#370 / epic #318) — now a re-export
-==================================================================
+SSRF guard for agent web tools (#370 / epic #318) — a re-export of the canonical
+===============================================================================
 
-The agent runs under ``permission_mode="bypassPermissions"`` with ``WebFetch``
-granted, and the only PreToolUse hook gates ``Bash`` — so a prompt-injected /
-LLM-chosen URL reaches the fetch with no validation. ``hooks.py`` blocks that
-with the guard below.
+The agent runs under ``permission_mode="bypassPermissions"``, and the only
+PreToolUse hook gates ``Bash`` — so a prompt-injected / LLM-chosen URL would
+reach a fetch with no validation. ``hooks.py`` blocks that with the guard below.
 
 This module used to carry its own 30-line copy of the check, and said so:
 "duplicated here because the agent runtime (apps/backend) and the web-server
 are separate import roots". That reasoning held right up until the copies
-diverged — ``services/url_safety.py`` grew an explicit cloud-metadata refusal
-that survives a posture change, and this file did not. A drifted copy is worse
-than no guard at all: it still LOOKS like a guard, so CodeQL's barrier (which
-is registered on ``assert_safe_outbound_url`` by name) clears nothing here and
-no alert ever fires to tell you.
+diverged — one grew an explicit cloud-metadata refusal that survives a posture
+change, and this file did not. A drifted copy is worse than no guard at all: it
+still LOOKS like a guard, so CodeQL's barrier (which is registered on
+``assert_safe_outbound_url`` by name) clears nothing here and no alert ever
+fires to tell you.
 
-So the import root is bridged instead. The whole repo ships in one image
-(``COPY . /home/projects/MagesticAI/``), and the web-server already reaches the
-other way for the same reason — see ``server/routes/mcp.py`` and
-``tasks_usage.py``, which add ``apps/backend`` to ``sys.path`` to import the
-catalog and attribution modules. ``server.services.url_safety`` is stdlib-only
-and ``server/__init__.py`` / ``server/services/__init__.py`` are empty, so
-nothing web-serverish is dragged into the agent runtime by this.
+#1266 deduped it by bridging the import roots: this file appended
+``apps/web-server`` to ``sys.path`` and imported the web-server fork of it.
+That worked and failed closed, but it was a bridge, not a home — a stdlib-only
+security primitive shared by two runtimes reached by a path shim from one of
+them.
+
+#1270 removes the bridge. The guard's home is ``factory_common.url_safety``, the
+fleet canonical vendored byte-identically into BOTH ``apps/backend`` and
+``apps/web-server`` from the Factory hub (Factory#154/#161), so each runtime
+imports it from its own root with no path manipulation at all. Nothing was added
+to ``factory_common`` here — the module was already vendored, and its docstring
+already names this issue as the reason it lives there.
 
 If this import fails, the whole ``security`` package fails to import and the
-agent will not start. That is the correct direction to fail: an agent running
-with ``WebFetch`` and no SSRF guard is the thing #370 exists to prevent.
+agent will not start. That is the correct direction to fail: an agent with a web
+tool and no SSRF guard is the thing #370 exists to prevent.
 
-The permanent home is ``factory_common`` — the repo's stdlib-only
-"importable anywhere" layer, which exists for exactly this. It is vendored
-byte-exact from the Factory hub behind a drift gate, so moving the guard there
-has to land in the hub first and cannot be done from this repo alone. Tracked
-in #1270.
+One behavioural note, and #1361 closed the half of it that was a leak. The
+canonical used to raise plain ``ValueError`` while the web-server's fork raised
+``InputRejectedError``, and its resolve-failure branch interpolated the
+``socket.gaierror`` into the message. ``hooks.py`` and ``tools/web.py`` both put
+that message into text the agent reads back, so the resolver's wording crossed
+a boundary nobody here wrote it for. Factory#831 made the canonical raise
+``InputRejectedError`` (still a ``ValueError`` subclass, so both callers here
+keep catching) and dropped the ``gaierror`` from the text, keeping it on
+``__cause__``. With that, the web-server's fork had no reason left to exist and
+#1361 deleted it: there is one guard in the fleet now, this one.
 
 Note on DNS rebinding: the guard resolves the host and checks the resolved IP,
-then the SDK re-resolves at fetch time (TOCTOU). Unchanged by this refactor;
-closing it needs IP-pinning at the transport layer, which the SDK's WebFetch
-tool does not expose. Residual on #370.
+then the transport re-resolves at fetch time (TOCTOU). Unchanged by this
+refactor; closing it needs IP-pinning at the transport layer. Residual on #370.
 
 Note on redirects — CLOSED in #1269, and worth reading because the fix is not
 in this file. This hook could never close it: it validates a URL and then
@@ -54,24 +62,14 @@ redundancy.
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-_WEB_SERVER = Path(__file__).resolve().parents[2] / "web-server"
-if str(_WEB_SERVER) not in sys.path:
-    # Appended, not inserted at 0: this only needs to make `server` resolvable,
-    # and `server` is a generic enough name that jumping the queue ahead of
-    # site-packages would be a way to shadow somebody else's module.
-    sys.path.append(str(_WEB_SERVER))
-
-from server.services.url_safety import (  # noqa: E402
+from factory_common.url_safety import (
     assert_safe_outbound_url,
     fetch_following_safe_redirects,
 )
 
 # The historical name, kept so `hooks.py` and #370's tests read unchanged. Same
-# strict posture (public addresses only) and same `ValueError` as the copy it
-# replaces.
+# strict posture (public addresses only), and still caught by `except
+# ValueError` -- `InputRejectedError` subclasses it.
 assert_url_not_ssrf = assert_safe_outbound_url
 
 __all__ = [

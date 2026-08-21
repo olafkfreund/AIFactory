@@ -27,6 +27,7 @@ from server.services.argv_safety import (
     assert_safe_git_ref,
     bounded_count,
 )
+from server.services.http_verdict import honest_status
 from server.specpath import browse_roots, registered_project_roots, within_roots
 
 from ..auth import _try_decode_jwt
@@ -255,6 +256,7 @@ class DiscoveredProject(BaseModel):
 
 
 @router.get("/discover")
+@honest_status
 async def discover_projects(
     base_path: str = Query(..., description="Base directory to scan for projects"),
     max_depth: int = Query(
@@ -344,6 +346,7 @@ async def discover_projects(
 
 
 @router.get("/list")
+@honest_status
 async def list_directory_direct(
     path: str = Query(..., description="Absolute path to directory"),
     show_hidden: bool = Query(False, description="Show hidden files"),
@@ -398,6 +401,7 @@ async def list_directory_direct(
 
 
 @router.get("/read")
+@honest_status
 async def read_file_direct(
     path: str = Query(..., description="Absolute path to file"),
 ):

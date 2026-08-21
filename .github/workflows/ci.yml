@@ -18,6 +18,7 @@ jobs:
   backend-lint-test:
     name: backend (ruff + pytest)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # Redis service container for the cross-replica WS fan-out
     # integration tests (Epic #35 #40 half-A). MinIO for the
     # S3-workspaces tests (Epic #35 #40 half-B) starts via a
@@ -100,9 +101,21 @@ jobs:
       # AppArmor (bwrap can't create namespaces under that), so relax it — the
       # `|| true` keeps older kernels without the knob green.
       - name: Install bubblewrap (agent OS sandbox, #363)
+        # Each apt call is bounded and retried. A stalled mirror used to hang
+        # here indefinitely, and because the job had no timeout it presented as
+        # a permanently PENDING required check rather than a red one -- which
+        # cannot block a merge and cannot alert (#1365, Factory#836).
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y bubblewrap
+          for attempt in 1 2 3; do
+            sudo timeout 90 apt-get update -qq \
+              && sudo timeout 150 apt-get install -y bubblewrap \
+              && break
+            echo "apt attempt ${attempt} failed or timed out; retrying"
+            sleep 5
+          done
+          # Fail loudly rather than letting the sandbox corpus silently skip:
+          # a missing bwrap makes those tests pass by not running.
+          command -v bwrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
 
       - name: Pytest (skip slow)
@@ -154,6 +167,7 @@ jobs:
   postgres-acceptance:
     name: postgres (P1 acceptance, PG ${{ matrix.pg }})
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -203,6 +217,7 @@ jobs:
   secrets-acceptance:
     name: secrets (P2 acceptance)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # P2 EncryptedString / KMS acceptance. Three services run as
     # sidecars so the integration tests gate every PR:
     #   - postgres   → P2.3 column migration + backfill tests
@@ -287,6 +302,7 @@ jobs:
   oidc-acceptance:
     name: oidc (P3 acceptance)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # P3 OIDC SSO tests. Boots a Keycloak dev-mode container with the
     # `aifactory` realm imported from tests/oidc/fixtures/keycloak-realm.json.
     # Tests that need the IdP read OIDC_ISSUER_URL/CLIENT_ID/SECRET from
@@ -350,6 +366,7 @@ jobs:
   saml-scim-acceptance:
     name: saml-scim (P8 acceptance)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # P8 SAML + SCIM tests. Unlike P3 (OIDC) we don't boot a real IdP:
     # the SAML test fixtures generate signed `<Response>` documents
     # in-process using committed test certs (see tests/fixtures/saml/),
@@ -395,6 +412,7 @@ jobs:
   helm-acceptance:
     name: helm (P4 acceptance)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # P4 Helm chart tests. The harness lands first (P4.0a) with all
     # seven acceptance tests skip-pending; chart templates + lint +
     # kubeconform + kind install arrive in P4.1+. Job is green from
@@ -453,6 +471,7 @@ jobs:
   audit-acceptance:
     name: audit (P5 acceptance)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # P5 audit-hardening tests run entirely in-process against
     # in-memory SQLite — hash chain, retention job, GDPR erasure,
     # and export streaming are all pure-Python. No service container
@@ -486,6 +505,7 @@ jobs:
   obs-acceptance:
     name: obs (P6 acceptance)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -515,6 +535,7 @@ jobs:
   tenant-isolation-acceptance:
     name: tenant-isolation (P9 acceptance)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # Epic #35 #36 — Tenant Isolation Mode. Covers:
     #   - reconciler decision logic (tests/test_tenant_reconciler.py)
     #   - schema migration / TenantState ORM (tests/postgres/test_tenant_states_schema.py)
@@ -564,6 +585,7 @@ jobs:
   rmux-acceptance:
     name: rmux (R0b acceptance)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # Epic #44 / issue #45. R0b ships apps/web-server/server/rmux/wrapper.py
     # — the async subprocess wrapper that every later rmux phase depends
     # on. Tests run against a real rmux daemon installed on the runner.
@@ -619,6 +641,7 @@ jobs:
   evidence-acceptance:
     name: evidence (P7 acceptance)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # P7 closes the v1.0 Epic. Tests verify the compliance docs + the
     # three ship-readiness drill scripts exist and have the structural
     # contract auditors expect. No service containers — purely
@@ -647,9 +670,77 @@ jobs:
           CI: "true"
         run: apps/backend/.venv/bin/pytest tests/evidence/ -m evidence -v
 
+  deps-lock-drift:
+    name: deps (requirements.lock in sync)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The Dockerfile installs the runtime venv from requirements.lock with
+    # --require-hashes (#1284). That makes the lock load-bearing, and a
+    # load-bearing file that nothing checks is a file that rots: add a package
+    # to apps/*/requirements.txt without recompiling and the image quietly
+    # ships without it, surfacing as an ImportError in a pod rather than as a
+    # red check on the PR that caused it.
+    #
+    # Recompiling is a safe equality test, not a resolution race: uv reads the
+    # existing lock as *preferences*, so an unchanged input recompiles
+    # byte-identically even after upstream publishes a newer release. The job
+    # therefore fails only on real drift, never on the passage of time.
+    #
+    # That holds ONLY because the compile step seeds its -o path with the
+    # committed lock first. uv reads preferences from the output file, so
+    # compiling straight into a fresh /tmp path supplies none and resolves to
+    # newest-available every run. Compiling twice against the committed lock
+    # does not detect that -- both runs are equally preference-free and equally
+    # newest -- which is why it went unnoticed until an upstream release landed
+    # mid-morning and turned every open PR red.
+    #
+    # Comparison strips leading-# lines because the committed lock carries a
+    # hand-written prose header that --no-header does not reproduce. The `#
+    # via` provenance comments are indented and so survive the filter and are
+    # still compared.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "latest"
+
+      # Flags MUST match the lockfile header's regeneration command; the lock
+      # is only valid for the interpreter and platform it was compiled for,
+      # which are the runtime image's (chainguard python:latest-dev = CPython
+      # 3.14, and every image build is platforms: linux/amd64).
+      - name: Recompile the lock from the requirements files
+        run: |
+          # uv takes preferences from the file named by -o, so the committed
+          # lock has to BE that file before the compile or there are no
+          # preferences at all and every run resolves to newest-available.
+          # Without this seed the gate fails on the passage of time: it passed
+          # on dev at 2026-08-18T23:29Z and failed at 11:24Z next morning on
+          # the same tree, because lxml 6.1.2 published at 04:58Z and uvicorn
+          # 0.52.4 alongside it. Nothing in the repo had changed.
+          cp requirements.lock /tmp/requirements.recompiled.lock
+          uv pip compile --python-version 3.14 \
+            --python-platform x86_64-unknown-linux-gnu --generate-hashes \
+            --no-header \
+            apps/web-server/requirements.txt apps/backend/requirements.txt \
+            -o /tmp/requirements.recompiled.lock
+
+      - name: Fail if the committed lock differs
+        run: |
+          grep -v '^#' requirements.lock > /tmp/committed.body
+          grep -v '^#' /tmp/requirements.recompiled.lock > /tmp/recompiled.body
+          if ! diff -u /tmp/committed.body /tmp/recompiled.body; then
+            echo "::error::requirements.lock is out of sync with the requirements.txt files."
+            echo "Regenerate it with the command in the requirements.lock header and commit the result."
+            exit 1
+          fi
+          echo "requirements.lock is in sync."
+
   frontend-typecheck:
     name: frontend (typecheck)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -669,6 +760,7 @@ jobs:
   frontend-test:
     name: frontend (vitest)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # Runs the apps/frontend-web vitest component suite (16 .test.tsx
     # files) so the tests can no longer silently rot. Now BLOCKING: the
     # OnboardingWizard.test.tsx assertions were repaired to the current
@@ -692,6 +784,7 @@ jobs:
   frontend-quality:
     name: frontend lint + format (blocking, #647)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # Blocking frontend gate (#647): ESLint 9 flat config
     # (typescript-eslint strictTypeChecked + react-hooks + jsx-a11y) and a
     # scoped prettier --check. Tuned green at adoption via a warning baseline
@@ -741,6 +834,7 @@ jobs:
   docker-acceptance:
     name: docker (P0 acceptance)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # Docker is preinstalled on ubuntu-latest runners. Tests opt-in via
     # `-m docker`; all are skipped until P0.1+ implementations land,
     # so this job is green from day 1 and turns red the moment an
@@ -756,55 +850,33 @@ jobs:
         # building happens in release.yml at tag push time only.
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
-      # Trivy is PINNED, not `latest` (Factory#664). Two reasons; the first is
-      # the load-bearing one:
+      # Trivy is PINNED, not `latest` (Factory#664). `latest` means the scanner
+      # changes without a commit, so a scan verdict is not attributable to
+      # anything in git, and a Trivy release can turn the whole fleet red at
+      # once with no change from us. Bump this deliberately, the way image
+      # digests and CLI pins are bumped.
       #
-      #   1. REPRODUCIBILITY. `latest` means the scanner changes without a
-      #      commit, so a scan verdict is not attributable to anything in git,
-      #      and a Trivy release can turn the whole fleet red at once with no
-      #      change from us. Bump this deliberately, the way image digests and
-      #      CLI pins are bumped.
-      #   2. The install occasionally fails AFTER resolving the version, in the
-      #      download itself - observed once in 37 runs on 2026-08-10, where it
-      #      blocked a docs-only PR. The loop below re-attempts that.
-      #
-      # A plain retry loop rather than a retry action: this is five lines of
-      # bash, and a third-party action in the CVE-scan path is supply-chain
-      # surface bought for nothing.
+      # Installed via the SHA-pinned first-party action, replacing a
+      # `curl | sh` of contrib/install.sh fetched by a workflow-file `env:`
+      # SHA (Factory#808): on `pull_request` that env is the PR's own copy, and
+      # forks share one object store, so a fork PR could point the URL at its
+      # own script and the runner would execute it.
       #
       # Do NOT add `continue-on-error`. A scan step that passes without scanning
       # is a control that would look identical having done nothing - see
-      # standards/coding-standards.md rule 4.10. This retries a transient
-      # failure; it never converts a persistent one into a pass, and the final
-      # `trivy --version` asserts the binary is actually runnable rather than
-      # assuming the installer worked.
+      # standards/coding-standards.md rule 4.10.
       - name: Install Trivy (for P0.8 CVE scan)
-        env:
-          TRIVY_VERSION: "0.73.0"
-          # The installer is fetched by COMMIT, not by the vX.Y.Z tag: a tag is
-          # mutable and can be moved, so a tag-pinned script can change with no
-          # change on our side - which would defeat the point of pinning at all.
-          # This is the commit v0.73.0 points at; the fetched script is byte-identical
-          # to the tag copy, verified before pinning.
-          TRIVY_INSTALLER_SHA: "40c73e5d6166dcc0346a1ab4e94499d1572854e4"
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            if curl -sSfL --retry 3 --retry-delay 5 \
-                 "https://raw.githubusercontent.com/aquasecurity/trivy/${TRIVY_INSTALLER_SHA}/contrib/install.sh" \
-                 -o /tmp/install-trivy.sh \
-               && sh /tmp/install-trivy.sh -b "${HOME}/.local/bin" "v${TRIVY_VERSION}"; then
-              break
-            fi
-            if [ "$attempt" = "3" ]; then
-              echo "::error::Trivy v${TRIVY_VERSION} could not be installed after 3 attempts."
-              exit 1
-            fi
-            echo "install attempt ${attempt} failed; retrying in 15s"
-            sleep 15
-          done
-          echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
-          "${HOME}/.local/bin/trivy" --version
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.73.0
+          # No cache: a cached binary is one more thing that can go stale or be
+          # poisoned across runs, for a download that takes seconds.
+          cache: false
+
+      # Asserts the binary is runnable, not assumed - the action puts its own
+      # bin dir on $GITHUB_PATH, so no manual PATH append is needed.
+      - name: Assert Trivy is runnable
+        run: trivy --version
 
       - name: Install Syft (for P0.9 SBOM generation)
         uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610  # v0.24.0

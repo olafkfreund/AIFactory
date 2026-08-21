@@ -2,7 +2,9 @@
 
 > Auto-generated from the project manifests by `scripts/generate-techdocs-deps.py` (run in CI). Do not edit by hand.
 
-AIFactory pins **17** backend, **36** web-server, and **47** frontend runtime dependencies.
+AIFactory **declares** **17** backend, **36** web-server, and **47** frontend runtime dependencies.
+
+> **Python versions below are declared floors, not installed versions.** The runtime image installs the fully-resolved, hash-pinned closure from [`requirements.lock`](https://github.com/olafkfreund/AIFactory/blob/dev/requirements.lock) via `pip --require-hashes`; CI test jobs still resolve the floors freely (#1284).
 
 ## Backend (Python) — `apps/backend/requirements.txt`
 

@@ -144,8 +144,11 @@ def test_push_branch_pushes_to_origin(monkeypatch, tmp_path) -> None:
             self.stderr = ""
             self.returncode = rc
 
+    envs = []
+
     def fake_run(args, **kwargs):
         calls.append(args)
+        envs.append(kwargs.get("env"))
         if args[:2] == ["git", "rev-parse"]:
             return _R(stdout="aifactory/042-x")
         if args[:3] == ["git", "remote", "get-url"]:
@@ -154,10 +157,13 @@ def test_push_branch_pushes_to_origin(monkeypatch, tmp_path) -> None:
 
     monkeypatch.setattr(wf.subprocess, "run", fake_run)
     assert wf.maybe_push_workspace_branch(tmp_path, "042-x") is True
-    push = [c for c in calls if c[:2] == ["git", "push"]][0]
-    # token injected into the push URL; pushes HEAD:<branch>
-    assert push[2] == "https://x-access-token:ghs_faketoken@github.com/o/r.git"
+    idx = next(i for i, c in enumerate(calls) if c[:2] == ["git", "push"])
+    push, push_env = calls[idx], envs[idx]
+    # USERNAME-ONLY URL: since AIFactory#1366 the token rides in GIT_ASKPASS,
+    # never in argv, where /proc/<pid>/cmdline publishes it host-wide.
+    assert push[2] == "https://x-access-token@github.com/o/r.git"
     assert push[3] == "HEAD:aifactory/042-x"
+    assert push_env["GIT_PASS"] == "ghs_faketoken"  # vacuity guard
 
 
 # ---------------------------------------------------------------------------

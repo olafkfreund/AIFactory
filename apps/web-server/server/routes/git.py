@@ -10,14 +10,15 @@ import subprocess
 from pathlib import Path
 
 from factory_common.logsafe import sanitize_log
+from factory_common.url_safety import (
+    assert_safe_outbound_url,
+    build_no_redirect_opener,
+)
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
 from server.error_ref import client_error
-from server.services.url_safety import (
-    assert_safe_outbound_url,
-    build_no_redirect_opener,
-)
+from server.services.http_verdict import honest_status
 from server.specpath import browse_roots, within_roots
 
 logger = logging.getLogger(__name__)
@@ -142,6 +143,7 @@ class InitGitRequest(BaseModel):
 
 
 @router.post("/init")
+@honest_status
 async def initialize_git(request: InitGitRequest):
     """Initialize a new git repository with an initial commit (if needed)."""
     # The one that writes. Unconfined, this created a `.gitignore` at any path
@@ -310,6 +312,7 @@ class PullModelRequest(BaseModel):
 
 
 @ollama_router.post("/pull")
+@honest_status
 async def pull_ollama_model(request: PullModelRequest):
     """Pull an Ollama model."""
     import json
@@ -417,6 +420,7 @@ async def check_claude_code_version():
 
 
 @claude_code_router.post("/install")
+@honest_status
 async def install_claude_code():
     """Install Claude Code CLI, including Node.js via fnm if needed.
 
@@ -936,6 +940,7 @@ async def check_source_update():
 
 
 @updates_router.post("/source/download")
+@honest_status
 async def download_source_update():
     """
     Download Magestic AI source update via git pull.
@@ -1120,6 +1125,7 @@ class SquashCommitsRequest(BaseModel):
 
 
 @project_router.post("/{projectId}/git/squash")
+@honest_status
 async def squash_commits(projectId: str, request: SquashCommitsRequest):
     """Squash multiple commits into a single commit.
 
@@ -1262,6 +1268,7 @@ class CreateWorktreeRequest(BaseModel):
 
 
 @project_router.post("/{projectId}/git/worktree")
+@honest_status
 async def create_worktree(projectId: str, request: CreateWorktreeRequest):
     """Create a git worktree for parallel task work.
 
@@ -1296,7 +1303,13 @@ async def create_worktree(projectId: str, request: CreateWorktreeRequest):
     if not name:
         return {"success": False, "error": "Worktree name cannot be empty"}
 
-    if not re.match(r"^[a-zA-Z0-9_-]+$", name):
+    # `fullmatch`, not `match`: with `re.match` the trailing `$` also matches
+    # just BEFORE a final newline, so "ok\n" passed this check and became a
+    # directory name. That one is not traversal on its own, but a validator
+    # that accepts a character it was written to reject is the wrong thing to
+    # build a path on -- and `fullmatch` is also the form CodeQL models as a
+    # sanitizer, so the alert clears because the check got stricter.
+    if not re.fullmatch(r"[a-zA-Z0-9_-]+", name):
         return {
             "success": False,
             "error": "Worktree name must contain only letters, numbers, dashes, and underscores",
@@ -1444,6 +1457,7 @@ def run_gh_command(args: list[str], cwd: str) -> dict:
 
 
 @releases_router.post("")
+@honest_status
 async def create_release(projectId: str, request: CreateReleaseRequest):
     """Create a release using GitHub (gh) CLI.
 

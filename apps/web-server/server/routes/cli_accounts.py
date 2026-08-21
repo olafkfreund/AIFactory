@@ -28,6 +28,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, SecretStr
 
 from server.error_ref import client_error
+from server.services.http_verdict import honest_status
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -612,6 +613,7 @@ async def get_cli_status(cli: str):
 
 
 @router.post("/cli-accounts/{cli}/import")
+@honest_status
 async def import_cli_credentials(cli: str):
     """Import existing credentials from the CLI's default location."""
     cli = _validate_cli(cli)
@@ -867,6 +869,7 @@ def _npm_install_cli(cli: str, package: str) -> subprocess.CompletedProcess:
 
 
 @router.post("/cli-accounts/{cli}/install")
+@honest_status
 def install_or_update_cli(cli: str):
     """Install or update a CLI tool via npm.
 

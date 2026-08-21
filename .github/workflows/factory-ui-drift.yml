@@ -41,11 +41,22 @@ jobs:
   drift:
     name: vendored copies match the hub canonical (byte-exact)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Check out this service
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: service
+
+      # HUB_PIN_SHA lives in this workflow file, which on a fork PR comes from
+      # the PR's own tree. Forks share one object store with Factory, so a
+      # commit that exists only in a fork is still fetchable by SHA from
+      # olafkfreund/Factory -- a fork PR could pin a hub tree matching its own
+      # drifted copy and this gate would report green (AIFactory#1281).
+      - name: The pinned hub SHA must be on hub main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./service/.github/scripts/assert-hub-pin-on-main.sh "${{ env.HUB_PIN_SHA }}" "HUB_PIN_SHA"
 
       - name: Check out the Factory hub canonical at the pinned SHA
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

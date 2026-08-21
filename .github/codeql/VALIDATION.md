@@ -3,8 +3,9 @@
 `custom-queries/PathInjectionSanitized.ql` re-emits `py/path-injection`,
 `CommandInjectionSanitized.ql` re-emits `py/command-line-injection`, and
 `{Full,Partial}SsrfSanitized.ql` re-emit `py/full-ssrf` and `py/partial-ssrf`,
-each with this repo's barriers registered; `codeql-config.yml` excludes the
-four stock rules in their favour.
+and `ClearTextStorageSanitized.ql` re-emits
+`py/clear-text-storage-sensitive-data`, each with this repo's barriers
+registered; `codeql-config.yml` excludes the five stock rules in their favour.
 
 **Never change the barrier list without re-measuring.** A sanitizer pack that
 is not measured fails silently in both directions: too narrow and it suppresses
@@ -22,6 +23,37 @@ codeql version --format=terse     # expect 2.25.6
 
 Pin to the same version the fleet validated against (TFactory used 2.25.6), or
 the numbers are not comparable.
+
+**Better: pin to the bundle this repo's own code scanning runs, and check it
+rather than assuming.**
+
+```bash
+gh api "repos/olafkfreund/AIFactory/code-scanning/analyses?per_page=1" \
+  --jq '.[0].tool.version'      # 2.26.3 on 2026-08-18
+```
+
+A pin that is merely stable is not the same as a pin that is correct, and the
+difference is not cosmetic. The measurement in #1293 was taken at 2.25.6 and
+reported the cleartext fork as `cleared 1, NEW 1`; re-taken on the same tree
+with production's own 2.26.3 bundle it is `cleared 1, NEW 0`, because under
+2.26.3 stock already reports the "masked" source itself. Numbers that describe
+an analyser nobody runs describe nothing. Factory#778 is the same lesson one
+repo over.
+
+Whole coherent BUNDLES only — never a `python-queries` from one release mixed
+with a `python-all` from another. The simplest way to get one is the release
+tarball the CodeQL action itself installs:
+
+```bash
+curl -fsSL -o /tmp/cq.tar.gz \
+  https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.26.3/codeql-bundle-linux64.tar.gz
+mkdir -p /tmp/cqbundle && tar -xzf /tmp/cq.tar.gz -C /tmp/cqbundle
+export PATH=/tmp/cqbundle/codeql:$PATH
+```
+
+It ships `codeql/python-queries` 1.8.8 and `codeql/python-all` 7.2.3 in the
+search path, so `codeql pack install` is unnecessary and the registry problem
+below does not arise.
 
 One-time, to fetch the query libraries the Nix package does not bundle:
 
@@ -76,13 +108,50 @@ for f in stock custom; do
   grep -oE 'relative:///[^]|]*' /tmp/$f.csv | sed 's/""$//' | sort -u > /tmp/src_$f.txt
 done
 echo "cleared: $(comm -23 /tmp/src_stock.txt /tmp/src_custom.txt | wc -l)"
-echo "NEW (must be 0): $(comm -13 /tmp/src_stock.txt /tmp/src_custom.txt | wc -l)"
+echo "NEW (0, or triaged below): $(comm -13 /tmp/src_stock.txt /tmp/src_custom.txt | wc -l)"
 ```
 
 ## Two checks that are not optional
 
-**"NEW must be 0."** A barrier pack may only ever remove findings. If the custom
-query reports a source stock did not, the query is wrong, not the code.
+**"NEW must be 0 — or every NEW source individually triaged, with the triage
+recorded here."** A barrier can only ever REMOVE flows, so in the ordinary case
+a fork that reports a source stock did not is a fork that stopped being
+barrier-only, and the query is wrong rather than the code. That is the default
+reading and it stays the default reading.
+
+It is not the only reading. Blocking one flow can change which flow wins
+CodeQL's per-sink path selection, so a barrier can make a *pre-existing* finding
+reportable that stock never selected. Refusing every NEW outright forbids the
+most valuable thing a fork can do — and #1293 measured that case on this repo
+rather than inferring it.
+
+The two are told apart by a procedure, not by judgement:
+
+1. Sever the CLEARED flow in the SOURCE, at its sink (e.g. rewrite
+   `store_file.write_text(json.dumps(seal_profiles(data)))` to
+   `store_file.write_text("{}")`), so the payload can no longer reach the write.
+2. Rebuild the database. No custom pack in this step.
+3. Re-run the **STOCK** query.
+
+**If stock now reports the NEW source on its own, it was masked.** It is a
+pre-existing flow, the fork did not invent it, and it goes to triage on its own
+merits — fix it if real, record it as a false positive if not. **If stock does
+not report it, the query is wrong.** No third outcome, and no verdict that rests
+on how convincing the query looks.
+
+A NEW that passes on this route must be recorded in this file with: the rule,
+the exact source location, the severing edit that was made, the stock output
+before and after, and the triage verdict for the alert itself. A NEW with no
+such record has not been triaged, whatever anyone believes about it.
+
+Expect the hub gate to stay red until you write it down.
+`Factory/scripts/check_codeql_fork_validation.py` runs each fork against its
+stock counterpart daily and exits 1 on any NEW. That is deliberate and is not a
+disagreement with the paragraphs above: a gate cannot perform the severing
+procedure (it needs a source edit and a second database), so it reports NEW as a
+failure that DEMANDS this triage rather than as a verdict that the query is
+wrong — its output says so in those words. The rule lives in two places and they
+have to agree; if you change one, change the other.
 
 **Spot-check what cleared.** Open two or three of the cleared sources and
 confirm a real barrier is on the path. A name matching by accident, or a barrier
@@ -134,8 +203,12 @@ Registered for path injection: `safe_spec_component` (`server/specpath.py`) and
 `os.path.basename`.
 
 Registered for SSRF: `assert_safe_outbound_url`
-(`server/services/url_safety.py`), on the call and on the guard's own first
-parameter. See `custom-queries/SsrfBarriers.qll` for what is deliberately left
+(`factory_common/url_safety.py`, the fleet canonical vendored into both app
+roots — the web-server's forked copy in `server/services/url_safety.py` was
+deleted in #1361), on the call and on the guard's own first parameter. The
+registration is BY NAME and the name did not change, so both clauses match the
+same call sites as before; the definition simply moved to a file that was
+already in scope (this config carries no `paths-ignore`). See `custom-queries/SsrfBarriers.qll` for what is deliberately left
 out (`urlparse`, `startswith("http")`) and why the `allow_private=True` posture
 still counts as a barrier.
 
@@ -328,10 +401,15 @@ suppress precisely the branch that is not sanitising, and only that branch —
 the maximally dishonest barrier available, and worse than leaving all 122 open.
 
 That branch is still believed correct: `InputRejectedError` is raised only from
-`services/url_safety.py` and `services/argv_safety.py`, every message is
-developer-written and quotes only the caller's own input, and the one place a
-stdlib exception could have leaked in (`socket.gaierror` in `url_safety.py`)
-deliberately raises a plain `ValueError` so it takes the reference-id path.
+`factory_common/url_safety.py` and `services/argv_safety.py`, and every message
+is developer-written and quotes only the caller's own input. The one place a
+stdlib exception could have leaked in — the `socket.gaierror` branch — no longer
+renders it at all (Factory#831, adopted here by #1361): the host is the caller's
+own input and stays in the message, the resolver's wording is kept on
+`__cause__` and never in the text. It used to raise a plain `ValueError` to take
+the reference-id path instead, which worked for THIS server but not for
+`apps/backend`, where `security/hooks.py` and `tools/web.py` interpolate the
+guard's message into text the agent reads back.
 But "believed correct by convention at four raise sites" is not a property a
 dataflow barrier can assert, and CodeQL is right to keep asking.
 
@@ -370,8 +448,13 @@ Why that is a real distinction and not laundering, stated because the next
 reader will (rightly) suspect it is: `BaseException.__str__` renders `args`,
 which every exception in the process populates, so `str(exc)` forwards text of
 unknown authorship. `client_message` has exactly one writer, the constructor,
-reachable only from the eight `raise InputRejectedError(...)` sites in
-`services/argv_safety.py` and `services/url_safety.py`. CodeQL's model draws
+reachable only from the `raise InputRejectedError(...)` sites in
+`services/argv_safety.py` and `factory_common/url_safety.py`. Since #1361 that
+constructor is the hub's (`factory_common/client_errors.py`);
+`server/error_ref` re-exports it rather than defining a same-named twin,
+because `client_error` gates on `isinstance` and two classes of the same name
+would silently downgrade every guard rejection to a correlation id.
+CodeQL's model draws
 the same line for a stated reason rather than by accident:
 `StackTraceExposureQuery.qll` declares **one** attribute flow step, for
 `__traceback__`, precisely because a caught exception's other attributes are
@@ -382,11 +465,11 @@ wisely — `InputRejectedError(f"...{inner}")` would launder `inner`'s text
 straight through. That residual is held by
 `apps/web-server/tests/test_error_ref_client_message.py`, which asserts the
 **response body** on both sides: a rejected field still returns
-`"Invalid baseBranch: must be a plain git ref"` verbatim, and a resolver
-failure still returns a reference id. Mutation-checked — rewriting
-`url_safety.py`'s `socket.gaierror` branch to
-`raise InputRejectedError(f"cannot resolve host {host!r}: {exc}")` turns
-`test_a_resolver_failure_takes_the_reference_id_path` red on the body.
+`"Invalid baseBranch: must be a plain git ref"` verbatim, and a resolver failure
+returns `cannot resolve host 'nope.invalid'` — the caller's own host, and
+nothing the resolver wrote. Mutation-checked — restoring the old interpolation,
+`raise InputRejectedError(f"cannot resolve host {host!r}: {exc}")`, turns
+`test_a_resolver_failure_does_not_leak_the_resolver_text` red on the body.
 
 The 18 -> 0 row is ordinary code fixes to the leaks the previous measurement
 identified as real, all of them one root cause per group:
@@ -406,3 +489,91 @@ Still not fixed, and out of scope here: `_run_gh` returns
 `result.stderr.strip()` verbatim on a non-zero exit. That is subprocess output
 rather than an exception, so CodeQL does not model it — but `gh`'s stderr is
 not obviously caller-safe either, and it is the next thing to look at.
+
+## Cleartext-storage baseline recorded 2026-08-18 (#1293, #1276)
+
+CodeQL **2.26.3** (`python-queries` 1.8.8, `python-all` 7.2.3 — the bundle
+`repos/olafkfreund/AIFactory/code-scanning/analyses` reports as production's
+own), database over `apps/web-server` (283 source files), distinct sources:
+
+| tree | query | sources |
+|---|---|---|
+| `dev` @ f84f6f35 | stock `py/clear-text-storage-sensitive-data` | 2 |
+| `dev` @ f84f6f35 | `ClearTextStorageSanitized.ql` | **1** |
+| `dev` @ f84f6f35 | the fork with its sanitizer rewritten to match nothing | 2 |
+| `dev`, `seal_profiles` deleted from `_write_json_store` | `ClearTextStorageSanitized.ql` | 2 |
+
+`cleared 1, NEW 0`. The cleared source is `routes/settings.py:1436` (a profile
+`oauthToken`) reaching the `store_file.write_text(json.dumps(seal_profiles(...)))`
+sink at `settings.py:523` — the #1276 write, whose payload is AES-256-GCM
+ciphertext that stock cannot see because `seal_profiles` is imported from
+`crypto/secret_field.py`.
+
+Rows three and four are the controls, and they rule out the two opposite
+failures in one pass.
+
+**Vacuous barrier (row 3).** With the `SealSanitizer` class rewritten to match
+an impossible function name, the fork's output is **byte-identical to stock**,
+source for source and sink location for sink location. So the fork is stock plus
+the sanitizer and nothing else: it is neither under-matching (it would then look
+the same as row 2 for the wrong reason) nor over-broad (it would then clear
+something even with no barrier registered). This is stronger than deleting the
+query and re-running, which cannot distinguish those two.
+
+**Positive control (row 4).** Deleting `seal_profiles` from the source — so the
+same route writes the same payload in the clear — makes the fork report
+`settings.py:523` again. Its silence on row 2 is the barrier, not blindness.
+
+### The "NEW must be 0" counter-example this issue was filed on, corrected
+
+#1293 measured this fork at CodeQL **2.25.6** and got `cleared 1, NEW 1`: the
+fork reported `services/completion.py:877` where stock did not, and severing the
+settings.py flow and re-running stock reproduced it on its own — the masked-flow
+mechanism, demonstrated. That measurement stands as taken.
+
+It does not reproduce on production's analyser. Under 2.26.3 **stock reports
+both sources itself**, so there is no NEW at all and the pack lands clean under
+the rule either way. The masking was real at 2.25.6 and is gone at 2.26.3;
+upstream changed what the rule selects between the releases, exactly as
+Factory#778 saw for `py/command-line-injection`.
+
+Recorded rather than quietly dropped, because the amended rule above was written
+on the strength of that measurement and a reader who re-runs it at 2.26.3 will
+find no NEW and reasonably wonder whether the whole thing was imagined. It was
+not. But the rule now rests on a mechanism that no longer has a live example in
+this repo, and that is worth knowing before leaning on it.
+
+`completion.py:877` is `(spec_dir / "COMPLETED.json").write_text(json.dumps(event))`
+and remains OPEN under both analysers. Triaged in #1293 as a **sensitivity false
+positive**: the event is CloudEvents metadata — correlation key, task/spec/project
+ids, status, phase, event id, traceparent, and a usage block of token counts,
+cost, duration and billing mode. No credential reaches it; the `private`
+classification is a name heuristic on the usage fields. Nothing to fix there, and
+it is deliberately NOT excluded.
+
+### Registered barriers, and the conditionality that holds them up
+
+Registered: `seal`, `seal_profiles`, `seal_fields` (`server/crypto/secret_field.py`).
+Each returns `"enc.v1:" + urlsafe_b64encode(backend.encrypt(...))`.
+
+**Not** registered: `unseal`, `unseal_profiles`, `unseal_fields`. They move
+ciphertext back to plaintext, and their output reaching a file write is exactly
+what this rule exists to report. Registering them would invert the query.
+
+`seal()` DEGRADES to returning the plaintext, with a one-time warning, when no
+KMS backend was selected at all — so this barrier asserts that a key actually
+reaches the process, and that assertion is held up outside the query:
+
+- `tests/helm/test_kms_key_always_wired.py` (#1288, #1290) asserts the default
+  render hands the pod `KMS_FERNET_KEY` from a Secret, that every selectable
+  backend leaves the pod able to encrypt, and that selecting a cloud backend
+  without its key makes `helm template` fail outright. 12 tests, run in CI's
+  `helm (P4 acceptance)` job with `helm` installed — verified passing, not
+  skipped, on this tree.
+- `crypto.kms.encryption_is_required()` makes the fallback RAISE whenever a
+  backend was selected, so the silent-plaintext path is only reachable when
+  nobody configured anything — no worse than the `chmod 0600` that predated
+  #1276.
+
+If either goes, the `py/clear-text-storage-sensitive-data` exclusion in
+`codeql-config.yml` goes with it.

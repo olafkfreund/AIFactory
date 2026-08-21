@@ -26,6 +26,7 @@ jobs:
   build:
     name: Build Docusaurus
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -57,6 +58,7 @@ jobs:
     # Only deploy on push to main; PR builds and dev pushes only build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write   # needed by peaceiris/actions-gh-pages to push
     steps:

@@ -66,8 +66,22 @@ def main() -> int:
         "> Auto-generated from the project manifests by "
         "`scripts/generate-techdocs-deps.py` (run in CI). Do not edit by hand.",
         "",
-        f"AIFactory pins **{len(backend)}** backend, **{len(webserver)}** "
-        f"web-server, and **{len(fe_deps)}** frontend runtime dependencies.",
+        f"AIFactory **declares** **{len(backend)}** backend, "
+        f"**{len(webserver)}** web-server, and **{len(fe_deps)}** frontend "
+        "runtime dependencies.",
+        "",
+        # This line said "pins" until #1284, which is what the tables below
+        # disprove: nearly every Python entry is a `>=` floor. A generated doc
+        # asserting a control the manifests do not implement is worse than no
+        # doc, because it is the thing an auditor reads instead of the file.
+        # The declared floors are the minimum supported version; the exact set
+        # a build installs lives in the lock.
+        "> **Python versions below are declared floors, not installed "
+        "versions.** The runtime image installs the fully-resolved, "
+        "hash-pinned closure from [`requirements.lock`](https://github.com/"
+        "olafkfreund/AIFactory/blob/dev/requirements.lock) via "
+        "`pip --require-hashes`; CI test jobs still resolve the floors "
+        "freely (#1284).",
         "",
         "## Backend (Python) — `apps/backend/requirements.txt`",
         "",

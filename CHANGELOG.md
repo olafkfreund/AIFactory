@@ -2,6 +2,32 @@
 
 ### Fixed
 
+- **A credentialed git argv no longer reaches the log files.** `_inject_credential`
+  embeds the PAT in the fetch URL, which becomes an argv element, and `_run_git`
+  logged `" ".join(args)` at DEBUG unconditionally *and* interpolated the argv
+  into every `GitOperationError` message. Driving the real logging pipeline put
+  the token on **three** lines across two files -- the DEBUG line, plus both
+  copies `error_reference` makes of the exception (its message and its
+  `exc_info` render) -- and this fleet forwards application logs off-host. The
+  400 response was never affected: `client_error` returns a reference id, and
+  the JSON formatter keeps the `exc_info` render inside a string field; both are
+  now pinned by tests rather than assumed. The argv is no longer logged or
+  interpolated, and the logged subcommand is a module constant rather than a
+  value derived from the argv. stderr is still logged, because the credential is
+  no longer in the argv for it to echo. The credential remains in the child
+  process argv (`ps`/`/proc`); removing it entirely is PFactory#602. (#1356)
+- **Starting a task with auto-continue off no longer crashes it, after the agent
+  has already spawned.** The review gate -- `spec_dir`, `should_pass_force`, and
+  `_write_skill_context` -- sat one indent level too deep, inside
+  `if auto_continue:`. `auto_continue` is a client-supplied API field, so `POST`
+  with `"auto_continue": false` reached the `spec_dir` read at
+  `agent_service.py:1153`, outside the block, and raised `UnboundLocalError` --
+  *after* `create_subprocess_exec` had returned. The caller was told the task
+  failed while an orphaned agent process kept running against it, and the task's
+  selected skills were silently dropped. CodeQL flagged this defect in PFactory
+  and TFactory but not here, so it was found by walking the AST for stores
+  inside the block with loads outside rather than by trusting the alert list.
+  (#1356)
 - **Choosing a cloud KMS backend no longer produces a pod that writes
   credentials in plaintext.** `charts/aifactory/values.yaml` advertised five
   `kms.backend` values but only `fernet` was given anything usable at the pod:

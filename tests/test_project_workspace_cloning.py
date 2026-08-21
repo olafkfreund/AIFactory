@@ -372,7 +372,7 @@ async def test_clone_or_update_fails_closed_when_credential_strip_fails_after_pu
         # succeed; only the post-pull sanitizing `set-url` fails.
         cmd = list(args)
         if cmd[1:4] == ["remote", "set-url", "origin"] and any(
-            "example.test" in a and "s3cr3t" not in a for a in cmd
+            "example.test" in a and "x-token@" not in a for a in cmd
         ):
             return _mock_proc(returncode=1, stderr=b"fatal: could not set-url")
         return _mock_proc(returncode=0)
@@ -409,7 +409,7 @@ async def test_clone_or_update_credential_strip_failure_does_not_mask_pull_failu
         if cmd[1] == "fetch":
             return _mock_proc(returncode=1, stderr=b"fatal: could not read from remote")
         if cmd[1:4] == ["remote", "set-url", "origin"] and any(
-            "example.test" in a and "s3cr3t" not in a for a in cmd
+            "example.test" in a and "x-token@" not in a for a in cmd
         ):
             return _mock_proc(returncode=1, stderr=b"fatal: could not set-url")
         return _mock_proc(returncode=0)
@@ -445,7 +445,7 @@ async def test_credential_strip_failure_self_heals_on_the_next_call(tmp_path):
     async def fake_create_subprocess_exec(*args, **kw):
         cmd = list(args)
         is_sanitizing_set_url = cmd[1:4] == ["remote", "set-url", "origin"] and any(
-            "example.test" in a and "s3cr3t" not in a for a in cmd
+            "example.test" in a and "x-token@" not in a for a in cmd
         )
         if is_sanitizing_set_url:
             attempt["n"] += 1

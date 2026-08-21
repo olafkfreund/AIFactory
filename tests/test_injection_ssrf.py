@@ -18,10 +18,10 @@ _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT / "apps" / "web-server"))
 sys.path.insert(0, str(_ROOT / "apps" / "backend"))
 
+from factory_common.url_safety import assert_safe_outbound_url  # noqa: E402
 from server.routes.files import get_git_diff, search_files  # noqa: E402
 from server.routes.llm_endpoints import _probe_models  # noqa: E402
 from server.routes.projects import ProjectCreate  # noqa: E402
-from server.services.url_safety import assert_safe_outbound_url  # noqa: E402
 
 # ── C5: git URL / branch validators ────────────────────────────────────────
 
