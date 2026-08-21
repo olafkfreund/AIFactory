@@ -458,6 +458,25 @@ class CredentialMixin:
         profile_info = self._task_profiles.get(task_id, {})
         failed_model = profile_info.get("model", "unknown")
 
+        # Strict mode (#1374). Falling back is the right default for a user's
+        # build — a flaky provider should not lose their work. It is fatal for a
+        # MEASUREMENT, where "this model failed" and "this model succeeded" must
+        # not produce the same green result. Opt out with
+        # AIFACTORY_MODEL_FALLBACK=off and the task fails loudly instead.
+        if os.environ.get("AIFACTORY_MODEL_FALLBACK", "on").strip().lower() in {
+            "off",
+            "0",
+            "false",
+            "no",
+        }:
+            logger.warning(
+                "[AgentService] [Model: %s] Fallback DISABLED "
+                "(AIFACTORY_MODEL_FALLBACK=off); failing %s",
+                sanitize_log(failed_model),
+                sanitize_log(task_id),
+            )
+            return None
+
         # Build new command with sonnet model
         new_cmd = list(cmd)
         if "--model" in new_cmd:
@@ -490,6 +509,19 @@ class CredentialMixin:
             self._task_profiles[task_id]["model"] = "sonnet"
             self._task_profiles[task_id]["attempt"] = 2
             self._task_profiles[task_id]["fallbackFrom"] = failed_model
+
+        # The fallback has to actually TAKE (#1374). `--model` is priority 3 in
+        # phase_config._resolve_phase_model, BELOW `pinnedModel` and the auto
+        # profile's `phaseModels` — so on a fully pinned task the swapped flag
+        # above is silently outranked and the child re-resolves the model that
+        # just failed. This env var outranks every configured source; its
+        # companion names the displaced model so token_usage.json records the
+        # fallback instead of reading as a clean run of the pinned model.
+        env = {
+            **env,
+            "AIFACTORY_FALLBACK_MODEL": "sonnet",
+            "AIFACTORY_FALLBACK_FROM": failed_model,
+        }
 
         # Relaunch subprocess
         import pty

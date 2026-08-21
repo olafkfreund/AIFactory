@@ -293,6 +293,9 @@ def _empty_aggregate() -> dict[str, Any]:
         "categories": {k: {"tokens": 0, "costUsd": 0.0} for k in CATEGORY_LABELS},
         "model": None,
         "maxTokens": 200_000,
+        # Control-plane model fallbacks seen during this task (#1374). An empty
+        # list means "no fallback happened", which a missing key cannot say.
+        "fallbacks": [],
         "updatedAt": None,
         # Per-worker breakdown (#45 P1) — additive sibling of the scalar
         # aggregate above. Keyed by worker_id (a serial build = one implicit
@@ -306,6 +309,11 @@ def _empty_aggregate() -> dict[str, Any]:
 # build has no subtask fan-out, so its whole spend is attributed to one
 # implicit worker named "main".
 DEFAULT_WORKER_ID = "main"
+
+# Companion of ``phase_config.FALLBACK_MODEL_ENV``: the model a control-plane
+# fallback DISPLACED (#1374). Defined here, not imported, because this module is
+# deliberately stdlib-only and phase_config is imported from it lazily.
+FALLBACK_FROM_ENV = "AIFACTORY_FALLBACK_FROM"
 
 
 def _read_aggregate(usage_path: Path) -> dict[str, Any]:
@@ -321,6 +329,8 @@ def _read_aggregate(usage_path: Path) -> dict[str, Any]:
                 data["categories"].setdefault(k, {"tokens": 0, "costUsd": 0.0})
             # Backfill the per-worker map for files written before #45 P1.
             data.setdefault("workers", {})
+            # ... and the fallback list for files written before #1374.
+            data.setdefault("fallbacks", [])
             return data
     return _empty_aggregate()
 
@@ -405,6 +415,29 @@ def _fold_worker(
     rec["cost_usd"] = round(float(rec.get("cost_usd", 0.0)) + float(cost_usd or 0.0), 6)
     if duration_ms is not None:
         rec["duration_ms"] = int(rec.get("duration_ms", 0)) + int(duration_ms)
+
+
+def _stamp_fallback(agg: dict[str, Any], worker_id: str) -> None:
+    """Record a control-plane model fallback in the artefact (#1374).
+
+    ``phase_config`` makes the fallback model the one that actually resolves, so
+    the fold above already names the model that RAN. That alone is not enough:
+    corrected accounting reads exactly like a clean run of whatever ran last,
+    which is how a benchmark leg that swapped models mid-run got published as a
+    result for a single model. So also carry the DISPLACED model — per worker
+    (``fallbackFrom``) and once at the top level (``fallbacks``) — so a reader
+    can refuse to publish the leg.
+    """
+    displaced = os.environ.get(FALLBACK_FROM_ENV, "").strip()
+    if not displaced:
+        return
+    rec = agg.get("workers", {}).get(worker_id)
+    if rec is not None:
+        rec["fallbackFrom"] = displaced
+    entry = {"from": displaced, "to": (rec or {}).get("model"), "workerId": worker_id}
+    fallbacks = agg.setdefault("fallbacks", [])
+    if entry not in fallbacks:
+        fallbacks.append(entry)
 
 
 def record_turn(
@@ -501,6 +534,7 @@ def record_turn(
             cost_usd=attribution.cost_usd,
             duration_ms=duration_ms,
         )
+        _stamp_fallback(agg, wid)
         agg["updatedAt"] = datetime.now(UTC).isoformat()
         _atomic_write_json(usage_file_path(spec_dir), agg)
         # #1249: the file above is the durable record, but under the kubejob
