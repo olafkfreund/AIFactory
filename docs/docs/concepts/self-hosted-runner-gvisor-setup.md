@@ -7,20 +7,23 @@ sidebar_position: 11
 
 ## Why a self-hosted runner?
 
-The `gvisor-smoke.yml` CI workflow is `workflow_dispatch`-only rather than
-running on every push. The reason: GitHub-hosted runners use Docker to run
-Kind node containers, and Docker containers apply capability restrictions
-that prevent gVisor's `runsc` from launching sandboxed containers. Pods
-using `runtimeClassName: gvisor` inside a Kind cluster on a GitHub-hosted
-runner stay in `ContainerCreating` indefinitely.
+> **Note (AIFactory#1381):** a self-hosted runner is **no longer required**
+> to run the gVisor smoke test. This page previously claimed that Docker
+> capability restrictions stopped `runsc` from launching inside Kind node
+> containers on GitHub-hosted runners. That diagnosis was wrong — the actual
+> fault was that the workflow wrote its containerd config to
+> `/etc/containerd/config.d/`, which the Kind node image never imports.
+> Writing the stanza directly into `/etc/containerd/config.toml` makes
+> gVisor work on stock GitHub-hosted runners, verified end to end against
+> `kindest/node:v1.30.0`. `gvisor-smoke.yml` now runs on pull requests,
+> a weekly schedule, and manual dispatch.
 
-The Kubernetes-level tests (RuntimeClass wiring, pod spec validation) DO
-pass because they only inspect API object specs. The exec-based compatibility
-tests (git clone, curl, shell commands) require a pod that actually runs under
-gVisor, which needs either:
+The setup below is still useful when you want to validate gVisor against a
+**production-like host kernel** rather than a Kind node, for example before
+enabling `sandbox.gvisor.enabled=true` on a real cluster. Two options:
 
 1. A **self-hosted runner** with gVisor installed on the bare metal / VM host
-   (not nested inside Docker) — instructions below.
+   — instructions below.
 2. A **managed Kubernetes cluster with a gVisor node pool** (GKE Sandbox, EKS
    Bottlerocket with gVisor) — run the test suite directly against that cluster
    without Kind at all.

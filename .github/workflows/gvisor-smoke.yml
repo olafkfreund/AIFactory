@@ -1,42 +1,54 @@
 name: gVisor live-cluster smoke test
 
-# This job brings up a real Kind cluster with gVisor's runsc runtime
-# installed, deploys AIFactory with sandbox.gvisor.enabled=true, and
-# validates the compatibility table in docs/docs/concepts/gvisor-sandbox.md
-# against reality. It is the CI materialisation of issue #170.
+# Brings up a real Kind cluster with gVisor's runsc runtime installed,
+# deploys AIFactory with sandbox.gvisor.enabled=true, and validates the
+# compatibility table in docs/docs/concepts/gvisor-sandbox.md against a
+# workload that genuinely executes under the gVisor kernel.
 #
-# --- Why this job is workflow_dispatch-only (not push-triggered) ---
+# --- Why this job used to fail (AIFactory#1381) ---
 #
-# Option 2 (gVisor-with-kind on GitHub-hosted runners) was evaluated and
-# found to have a fundamental limitation: the Kind node container runs
-# with capability restrictions that prevent gVisor's runsc from launching
-# sandboxed containers. Pods using runtimeClassName=gvisor land in
-# ContainerCreating indefinitely. This is the limitation described in
-# the issue body: "running runsc requires kernel-level setup the standard
-# runners don't expose."
+# Every run of this workflow's draft failed with:
 #
-# The Kubernetes-level tests (RuntimeClass wiring, pod spec validation)
-# DO work reliably because they only inspect object specs without requiring
-# gVisor containers to actually launch. These tests prove the chart wiring
-# is correct. The exec-based compatibility tests require a running gVisor
-# container and are skipped automatically when the compat pod is not Running.
+#   FailedCreatePodSandBox: failed to get sandbox runtime:
+#   no runtime for "runsc" is configured
 #
-# Recommended production validation path:
-# 1. Register a self-hosted runner with gVisor installed on the HOST (not
-#    in a Kind node container). See guides/deployment/gvisor-smoke-test-local.md
-#    or guides/deployment/self-hosted-runner-gvisor-setup.md.
-# 2. Trigger this workflow manually with workflow_dispatch on a cluster
-#    that has a native gVisor node pool (GKE Sandbox, EKS Bottlerocket
-#    with gVisor, etc.) — in those cases, KIND is not used.
+# The original diagnosis recorded here was that Kind node containers
+# impose capability restrictions preventing runsc from launching. That
+# diagnosis was wrong. The real cause: the workflow wrote the runsc
+# runtime stanza to /etc/containerd/config.d/gvisor.toml, but the Kind
+# node image's /etc/containerd/config.toml contains NO `imports`
+# directive and the config.d directory does not exist. containerd never
+# read the drop-in, so the runsc handler was never registered.
 #
-# Decision: Option 2 not fully viable → dispatch-only fallback as specified
-# in the issue body option 4.
+# Verified against kindest/node:v1.30.0:
+#   * before: crictl runtimes = ['runc', 'test-handler']
+#   * after appending the stanza to config.toml directly:
+#            crictl runtimes = ['runc', 'runsc', 'test-handler']
+#   * a pod with runtimeClassName=gvisor reaches Running and its dmesg
+#     reports "Starting gVisor..." — i.e. it really is sandboxed.
+#
+# gVisor therefore DOES work on GitHub-hosted runners under Kind. The
+# job now runs on a real trigger instead of being dispatch-only.
+#
+# Two guards keep this job from going hollow (passing while measuring
+# nothing):
+#   1. an explicit assertion that containerd registered the runsc handler
+#   2. an explicit wait for the compat-tester pod to reach Running
+# Both fail the job rather than letting the pytest fixtures skip.
 
 on:
-  # No push/pull_request triggers — see explanation above.
-  # The RuntimeClass wiring is validated by the existing `helm-acceptance`
-  # job in ci.yml (template-rendering tests). Live-cluster exec tests
-  # require a self-hosted runner with real gVisor node support.
+  # Gate the things whose breakage this job would catch.
+  pull_request:
+    paths:
+      - 'charts/aifactory/**'
+      - 'tests/helm/test_live_gvisor.py'
+      - 'tests/helm/conftest.py'
+      - 'docs/docs/concepts/gvisor-sandbox.md'
+      - '.github/workflows/gvisor-smoke.yml'
+  # Liveness: catch upstream drift (gVisor releases, Kind node images)
+  # even in weeks where nobody touches the paths above.
+  schedule:
+    - cron: '17 4 * * 1'
   workflow_dispatch:
     inputs:
       gvisor_namespace:
@@ -48,7 +60,9 @@ on:
         default: 'gvisor-compat-tester'
         required: false
 
-# No concurrency group needed — dispatch-only, single run at a time.
+concurrency:
+  group: gvisor-smoke-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -153,15 +167,15 @@ jobs:
           docker exec "${NODE}" test -x /usr/local/bin/containerd-shim-runsc-v1 \
             && echo "containerd-shim-runsc-v1 is executable in node."
 
-          docker exec "${NODE}" mkdir -p /etc/containerd/config.d
-          docker exec "${NODE}" bash -c 'printf "%s\n" \
+          # Append DIRECTLY to config.toml. The Kind node image ships no
+          # `imports` directive, so a /etc/containerd/config.d drop-in is
+          # silently ignored — that was the AIFactory#1381 root cause.
+          docker exec "${NODE}" bash -c 'printf "\n%s\n%s\n" \
             "[plugins.\"io.containerd.grpc.v1.cri\".containerd.runtimes.runsc]" \
             "  runtime_type = \"io.containerd.runsc.v1\"" \
-            "[plugins.\"io.containerd.grpc.v1.cri\".containerd.runtimes.runsc.options]" \
-            "  TypeUrl = \"io.containerd.runsc.v1.options\"" \
-            > /etc/containerd/config.d/gvisor.toml'
+            >> /etc/containerd/config.toml'
 
-          docker exec "${NODE}" cat /etc/containerd/config.d/gvisor.toml
+          docker exec "${NODE}" tail -5 /etc/containerd/config.toml
 
           docker exec "${NODE}" systemctl restart containerd
 
@@ -177,6 +191,30 @@ jobs:
             fi
             sleep 1
           done
+
+      # ------------------------------------------------------------------ #
+      # 5b. GUARD: assert containerd registered the runsc handler.
+      #
+      # Without this, a silently-ignored config (AIFactory#1381) leaves the
+      # job green while every meaningful test skips. Fail loudly instead.
+      # ------------------------------------------------------------------ #
+      - name: Assert containerd registered the runsc runtime
+        run: |
+          set -euo pipefail
+          NODE="gvisor-smoke-control-plane"
+
+          echo "=== CRI-registered runtimes ==="
+          docker exec "${NODE}" crictl info \
+            | python3 -c 'import sys,json; print("\n".join(json.load(sys.stdin)["config"]["containerd"]["runtimes"]))' \
+            | tee /tmp/runtimes.txt
+
+          if ! grep -qx "runsc" /tmp/runtimes.txt; then
+            echo "ERROR: containerd did not register the 'runsc' handler."
+            echo "The gVisor stanza was not picked up from config.toml."
+            docker exec "${NODE}" tail -20 /etc/containerd/config.toml || true
+            exit 1
+          fi
+          echo "OK: containerd registered the runsc handler."
 
       # ------------------------------------------------------------------ #
       # 6. Create the gVisor RuntimeClass in Kubernetes
@@ -220,6 +258,11 @@ jobs:
           docker pull busybox:stable
           kind load docker-image busybox:stable --name gvisor-smoke
 
+          # ubuntu 22.04 with git + curl already installed, so the compat
+          # pod needs no apt at runtime and "Running" means "ready".
+          docker pull buildpack-deps:jammy-scm
+          kind load docker-image buildpack-deps:jammy-scm --name gvisor-smoke
+
       # ------------------------------------------------------------------ #
       # 9. Helm dep update
       # ------------------------------------------------------------------ #
@@ -245,6 +288,57 @@ jobs:
             --set image.pullPolicy=IfNotPresent \
             --timeout=5m \
             --wait=false
+
+      # ------------------------------------------------------------------ #
+      # 10b. GUARD: launch the compat-tester pod and wait for it to run.
+      #
+      # tests/helm/test_live_gvisor.py's `compat_pod` fixture skips every
+      # exec-based compatibility test when this pod is not Running. The
+      # merged workflow never created it, so all five compat tests skipped
+      # unconditionally — a pass-shaped empty measurement. Create it here
+      # and FAIL if it does not start, so a broken sandbox cannot read as
+      # a green run.
+      # ------------------------------------------------------------------ #
+      - name: Launch gVisor compatibility test pod
+        env:
+          NS: ${{ github.event.inputs.gvisor_namespace || 'aifactory' }}
+          POD: ${{ github.event.inputs.compat_pod_name || 'gvisor-compat-tester' }}
+        run: |
+          set -euo pipefail
+
+          kubectl apply -n "${NS}" -f - <<EOF
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: ${POD}
+          spec:
+            runtimeClassName: gvisor
+            restartPolicy: Never
+            containers:
+              - name: compat
+                image: buildpack-deps:jammy-scm
+                imagePullPolicy: IfNotPresent
+                command: ["sleep", "1800"]
+          EOF
+
+          if ! kubectl wait -n "${NS}" --for=condition=Ready \
+               "pod/${POD}" --timeout=180s; then
+            echo "ERROR: compat pod did not reach Ready under gVisor."
+            kubectl describe pod -n "${NS}" "${POD}" || true
+            exit 1
+          fi
+
+          # Prove the workload really executed under the gVisor kernel and
+          # not silently under runc.
+          echo "=== dmesg inside the sandbox ==="
+          kubectl exec -n "${NS}" "${POD}" -- dmesg > /tmp/dmesg.txt 2>&1 || true
+          head -5 /tmp/dmesg.txt
+          if ! grep -qi "gvisor" /tmp/dmesg.txt; then
+            echo "ERROR: pod is NOT running under gVisor (dmesg lacks the"
+            echo "gVisor banner) — it silently fell back to runc."
+            exit 1
+          fi
+          echo "OK: workload is running under the gVisor kernel."
 
       # ------------------------------------------------------------------ #
       # 11. Run the live-cluster gVisor tests
