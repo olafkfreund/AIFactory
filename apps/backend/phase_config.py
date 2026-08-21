@@ -373,6 +373,29 @@ def _difficulty_tier(metadata: TaskMetadataConfig | None) -> str | None:
     return value if isinstance(value, str) else None
 
 
+# Control-plane model fallback (#1374).
+#
+# When a non-Claude build fails, the web-server retries it with Claude Sonnet by
+# swapping ``--model`` in the child's command line
+# (``agent_credential._retry_task_with_fallback_model``). But a CLI model sits
+# BELOW ``pinnedModel`` and the auto profile's ``phaseModels`` in the precedence
+# implemented by ``_resolve_phase_model`` — so on a fully pinned task (exactly
+# the benchmark case) the swapped flag was silently outranked and the retry
+# re-resolved the model that had just failed.
+#
+# These two env vars are set on the retried child instead. FALLBACK_MODEL_ENV
+# outranks everything, so the model the control plane fell back to is the model
+# that actually runs; FALLBACK_FROM_ENV names the model it displaced, and
+# ``agents.token_attribution`` stamps it into ``token_usage.json`` so the
+# fallback is VISIBLE rather than merely corrected.
+FALLBACK_MODEL_ENV = "AIFACTORY_FALLBACK_MODEL"
+
+
+def fallback_model_override() -> str | None:
+    """Model forced by a control-plane fallback, or ``None`` when unset."""
+    return os.environ.get(FALLBACK_MODEL_ENV, "").strip() or None
+
+
 def get_phase_model(
     spec_dir: Path,
     phase: Phase,
@@ -420,6 +443,13 @@ def _resolve_phase_model(
     Returns:
         Resolved full model ID
     """
+    # A control-plane fallback outranks every configured source (#1374): the
+    # build is already running on this model, so resolving anything else would
+    # both re-run the failure and mislabel the accounting.
+    forced = fallback_model_override()
+    if forced:
+        return resolve_model_id(forced)
+
     # Load task metadata first — the auto profile's per-phase choice is the
     # user's most specific intent and must win over the run.py CLI default
     # model. (Without this, e.g. coding always falls back to the CLI's
@@ -483,7 +513,12 @@ def get_phase_model_betas(
     Returns:
         List of beta header strings, or empty list if none required
     """
-    # Same precedence as get_phase_model: auto profile metadata wins over CLI.
+    # Same precedence as get_phase_model: a control-plane fallback (#1374)
+    # first, then auto profile metadata over CLI.
+    forced = fallback_model_override()
+    if forced:
+        return get_model_betas(forced)
+
     metadata = load_task_metadata(spec_dir)
 
     if metadata and metadata.get("pinnedModel"):
