@@ -33,3 +33,39 @@ jobs:
               -H "Content-Type: application/json" \
               -d "{\"repo\": \"${{ github.repository }}\", \"pr_number\": $PR_NUMBER}"
           fi
+
+  # Factory#932. `review` skips whenever the label that triggered the run is not
+  # `aifactory:review`, which is correct -- and invisible. In the checks list a
+  # skipped job renders beside a passing one, so a review gate whose condition was
+  # never met looks, at a glance, exactly like a review that ran and approved. In
+  # this workflow's entire history (53 runs) the condition has never once been met,
+  # and nothing said so. This job says so.
+  #
+  # It reports the reason rather than a verdict: it is named "not applicable", and
+  # its summary states outright that nothing was reviewed. Note that its presence
+  # makes the RUN conclude `success` where it previously concluded `skipped`, so a
+  # liveness sweep must score the `review` job, not the run.
+  not-applicable:
+    name: review not applicable (nothing was reviewed)
+    needs: [review]
+    if: always() && needs.review.result == 'skipped'
+    # It writes a step summary and nothing else; it needs no token at all.
+    permissions: {}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Record why no review ran
+        env:
+          # Bound into env rather than interpolated into the shell: a label name is
+          # attacker-influencable text.
+          LABEL: ${{ github.event.label.name }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### AIFactory PR review: not applicable"
+            echo
+            echo "**Nothing was reviewed. This is not a pass.**"
+            echo
+            echo "This gate reviews a PR only when the label \`aifactory:review\` is applied."
+            printf "The label applied on this run was \`%s\`.\n" "$LABEL"
+          } >> "$GITHUB_STEP_SUMMARY"
