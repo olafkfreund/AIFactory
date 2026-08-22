@@ -206,3 +206,10 @@ OPUS_ANALYSIS_AND_IDEAS.md
 # local direnv env (holds secrets — never commit)
 .envrc
 .direnv/
+
+# Antigravity CLI writes per-project config symlinks into the working tree.
+# They point at an absolute path in the developer's home, so committing one
+# breaks every containerised build (the tarslip guard in artifact_store.py
+# correctly refuses an absolute link target) and leaks a host path into a
+# public repo. AIFactory#1392.
+.antigravitycli/
