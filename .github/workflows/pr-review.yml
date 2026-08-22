@@ -25,7 +25,13 @@ jobs:
           # AIFactory-internal registry key that cannot be derived from a PR
           # event, so it is supplied as a repo secret. `aifactory-task.yml`
           # already resolves it exactly this way.
-          AIFACTORY_PROJECT_ID: ${{ secrets.AIFACTORY_PROJECT_ID }}
+          # A project id is an identifier, not a credential -- it names which
+          # workspace the review runs against and leaks nothing. Stored as a
+          # repository VARIABLE so it is readable in the Actions UI and in
+          # `gh variable list`; `secrets.` on a variable resolves to empty,
+          # which would keep the gate failing on "missing" while the value
+          # was in fact set (AIFactory#1390).
+          AIFACTORY_PROJECT_ID: ${{ vars.AIFACTORY_PROJECT_ID }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
