@@ -327,8 +327,43 @@ def _tar_workspace(src_dir: Path) -> bytes:
         tarfile.open(fileobj=gz, mode="w", format=tarfile.PAX_FORMAT) as tar,
     ):
         for child in sorted(src_dir.rglob("*"), key=lambda p: p.relative_to(src_dir).as_posix()):
+            if _escapes(src_dir, child):
+                continue
             tar.add(child, arcname=child.relative_to(src_dir).as_posix(), recursive=False)
     return buf.getvalue()
+
+
+def _escapes(src_dir: Path, child: Path) -> bool:
+    """True for a symlink whose target lands outside ``src_dir``.
+
+    Packing one is not a security hole -- ``_vet_member`` catches it on the way
+    back out -- but it is a permanent one, because the rejection happens at
+    UNPACK, in the build Job, after the archive is already in object storage. A
+    single such link makes the whole workspace unrecoverable: every later build
+    dies in ``_safe_extract`` before it reads a line of source, and the task is
+    reaped as stranded with no diff and no useful log.
+
+    That is what took a benchmark run's build column to 0/3. An agent CLI wrote
+    ``.antigravitycli/<project>.json`` into the task worktree as an absolute
+    symlink into ``$HOME``, and every run after it inherited the failure.
+    AIFactory#1392 removed the tracked copy and gitignored the directory, which
+    does not fix this: the link is created at RUNTIME inside the worktree, and
+    the packer walks the tree rather than asking git what is tracked.
+
+    Skipping is right rather than merely convenient. The target is by definition
+    outside the workspace, so its content was never going to survive the trip to
+    another machine -- the link would arrive dangling even if it were allowed
+    through. These are agent-local config and credential paths, never build
+    inputs, and a credential path is one this archive should not carry anyway.
+
+    The vetter stays strict on the extract side; this does not replace it. An
+    archive from anywhere else is still untrusted and a hostile one is still
+    rejected. This only stops US from writing an archive we already know cannot
+    be read back.
+    """
+    if not child.is_symlink():
+        return False
+    return not _is_within(src_dir, child.parent / os.readlink(child))
 
 
 def _is_within(base: Path, target: Path) -> bool:
