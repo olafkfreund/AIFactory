@@ -102,3 +102,42 @@ def test_the_scan_examined_the_index_not_an_empty_list() -> None:
         f"git ls-files returned only {len(listing)} entries -- the symlink scan "
         "is not examining this repository"
     )
+
+
+def test_pack_skips_symlink_that_unpack_would_reject(tmp_path: Path) -> None:
+    """A workspace holding an escaping symlink must survive a pack/unpack round trip.
+
+    This is the AIFactory#1392 failure as a test. The link is rejected at
+    UNPACK, inside the build Job, so the symptom is a build that dies before
+    reading any source -- not a pack error anyone would notice. Asserting only
+    that ``_tar_workspace`` omits the member would pass against a packer that
+    dropped the wrong thing, so the assertion is the round trip: unpack must
+    reach the real file.
+
+    Both link shapes are planted. The absolute one is the observed defect; the
+    relative ``../`` escape is the same class and is what a naive "skip absolute
+    symlinks" fix would let through.
+    """
+    from apps.backend.core import artifact_store as store
+
+    outside = tmp_path / "outside.json"
+    outside.write_text("{}")
+
+    src = tmp_path / "ws"
+    (src / "sub").mkdir(parents=True)
+    (src / "real.py").write_text("x = 1\n")
+    (src / ".antigravitycli").mkdir()
+    (src / ".antigravitycli" / "proj.json").symlink_to(outside)  # absolute
+    (src / "sub" / "rel_escape").symlink_to(Path("..") / ".." / "outside.json")
+    (src / "sub" / "inside_link").symlink_to(Path("..") / "real.py")  # must be KEPT
+
+    blob = store._tar_workspace(src)
+
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    store._safe_extract(blob, dest)  # the mutation point: raises before this fix
+
+    assert (dest / "real.py").read_text() == "x = 1\n"
+    assert not (dest / ".antigravitycli" / "proj.json").exists()
+    assert not (dest / "sub" / "rel_escape").exists()
+    assert (dest / "sub" / "inside_link").is_symlink(), "an inside link must survive"
