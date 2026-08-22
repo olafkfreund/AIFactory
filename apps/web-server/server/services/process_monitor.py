@@ -36,6 +36,60 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 logger = logging.getLogger(__name__)
 
 
+def resolve_created_spec_dir(
+    service: AgentService, task_id: str, specs_dir: Path
+) -> Path | None:
+    """The spec dir that THIS task's spec-creation process authored.
+
+    ``_spec_dirs[task_id]`` is the task's own record, written by
+    ``SpecCreationMixin.start_spec_creation`` before the process is spawned and
+    handed to the agent as ``--spec-dir``. It is the authoritative answer and is
+    read first.
+
+    This used to be "whichever spec directory has the newest mtime", which is
+    correct for exactly one task at a time and wrong the moment two run
+    together (#1395). Three concurrent tasks in one project all resolved to the
+    same spec, built it, and pushed to its branch; two specs were never built
+    and all three reported success. An mtime scan cannot be made safe here --
+    every task finishing in the same window sees the same newest directory, so
+    tightening the ordering only narrows the window.
+
+    The scan is kept, and only as a fallback for a task with no record: a spec
+    the agent named itself, where nothing knew the id up front. It is logged at
+    warning level because it is a guess, and under concurrency it is the guess
+    that produced #1395.
+    """
+    owned = service._spec_dirs.get(task_id)
+    if owned is not None:
+        owned = Path(owned)
+        if owned.is_dir():
+            return owned
+        # Recorded but gone: fall through rather than return a dead path, and
+        # say so -- a missing spec dir is a different fault from an absent
+        # record and should not read as one.
+        logger.warning(
+            "[AgentService] task %s recorded spec dir %s but it does not exist; "
+            "falling back to newest-directory detection",
+            sanitize_log(task_id),
+            sanitize_log(str(owned)),
+        )
+
+    candidates = sorted(
+        (d for d in specs_dir.iterdir() if d.is_dir()),
+        key=lambda d: d.stat().st_mtime,
+        reverse=True,
+    )
+    if not candidates:
+        return None
+    logger.warning(
+        "[AgentService] task %s has no recorded spec dir; guessing the newest "
+        "of %d (#1395 -- unreliable if another task is creating a spec now)",
+        sanitize_log(task_id),
+        len(candidates),
+    )
+    return candidates[0]
+
+
 async def monitor_process(
     service: AgentService,
     task_id: str,
@@ -255,14 +309,11 @@ async def monitor_process(
             try:
                 specs_dir = project_path / ".aifactory" / "specs"
                 if specs_dir.exists():
-                    # Find the newest spec directory (just created)
-                    spec_dirs = sorted(
-                        [d for d in specs_dir.iterdir() if d.is_dir()],
-                        key=lambda d: d.stat().st_mtime,
-                        reverse=True,
+                    owned_spec_dir = resolve_created_spec_dir(
+                        service, task_id, specs_dir
                     )
-                    if spec_dirs:
-                        detected_spec_dir = spec_dirs[0]
+                    if owned_spec_dir is not None:
+                        detected_spec_dir = owned_spec_dir
                         detected_spec_id = detected_spec_dir.name
                         logger.info(
                             f"[AgentService] Detected created spec: {detected_spec_id}"
