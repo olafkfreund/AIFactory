@@ -75,7 +75,7 @@ env:
   # on hub `main`, never a PR-branch head -- the hub squash-merges, so a branch
   # head ceases to exist the moment the PR lands and the pin then resolves to
   # nothing (Factory#638).
-  HUB_PIN_SHA: "bea334671798016a002e538c144bbde698349d84"
+  HUB_PIN_SHA: "c08df2c83433b78af7ab6359cbdfcee7cf29cfac"
 
 jobs:
   drift:
