@@ -425,19 +425,19 @@ class TestPhaseModelsApplyWithoutACompanionFlag:
     what these tests do.
     """
 
-    def _spec(self, tmp_path, metadata):
+    def _spec(self, tmp_path: Path, metadata: dict[str, Any]) -> Path:
         spec = tmp_path / "spec"
         spec.mkdir()
         (spec / "task_metadata.json").write_text(json.dumps(metadata))
         return spec
 
-    def test_phase_models_alone_selects_the_model(self, tmp_path):
+    def test_phase_models_alone_selects_the_model(self, tmp_path: Path) -> None:
         """The exact request shape that produced #1397."""
         spec = self._spec(tmp_path, {"phaseModels": {"coding": "gemini-3-pro"}})
 
         assert get_phase_model(spec, "coding", cli_model="opus") == "gemini-3-pro"
 
-    def test_is_auto_profile_still_works(self, tmp_path):
+    def test_is_auto_profile_still_works(self, tmp_path: Path) -> None:
         """The flag is no longer required, but must not become poison either."""
         spec = self._spec(
             tmp_path, {"phaseModels": {"coding": "gemini-3-pro"}, "isAutoProfile": True}
@@ -445,7 +445,9 @@ class TestPhaseModelsApplyWithoutACompanionFlag:
 
         assert get_phase_model(spec, "coding", cli_model="opus") == "gemini-3-pro"
 
-    def test_an_unlisted_phase_falls_through_to_the_cli_model(self, tmp_path):
+    def test_an_unlisted_phase_falls_through_to_the_cli_model(
+        self, tmp_path: Path
+    ) -> None:
         """A partial map must not pin every other phase to the default.
 
         `.get(phase, DEFAULT_PHASE_MODELS[phase])` short-circuited priorities
@@ -465,7 +467,7 @@ class TestPhaseModelsApplyWithoutACompanionFlag:
             "claude-haiku-4-5-20251001"
         )
 
-    def test_each_phase_gets_its_own_model(self, tmp_path):
+    def test_each_phase_gets_its_own_model(self, tmp_path: Path) -> None:
         """The point of per-phase routing: plan on one model, code on another."""
         spec = self._spec(
             tmp_path,
@@ -476,7 +478,7 @@ class TestPhaseModelsApplyWithoutACompanionFlag:
         assert get_phase_model(spec, "coding") == "claude-haiku-4-5-20251001"
         assert get_phase_model(spec, "qa") == "claude-opus-4-8"
 
-    def test_an_empty_phase_models_map_is_not_a_selection(self, tmp_path):
+    def test_an_empty_phase_models_map_is_not_a_selection(self, tmp_path: Path) -> None:
         """`{}` must not swallow the CLI argument."""
         spec = self._spec(tmp_path, {"phaseModels": {}})
 
