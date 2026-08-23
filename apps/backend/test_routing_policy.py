@@ -14,7 +14,14 @@ from typing import Any
 
 import pytest
 from agents.token_attribution import PromptSegments, TurnUsage, record_turn
-from phase_config import DEFAULT_PHASE_MODELS, get_phase_model, resolve_model_id
+from phase_config import (
+    DEFAULT_PHASE_MODELS,
+    get_model_betas,
+    get_phase_model,
+    get_phase_model_betas,
+    get_phase_thinking,
+    resolve_model_id,
+)
 from routing_policy import (
     ENV_VAR,
     contract_route,
@@ -485,3 +492,55 @@ class TestPhaseModelsApplyWithoutACompanionFlag:
         assert get_phase_model(spec, "coding", cli_model="haiku") == (
             "claude-haiku-4-5-20251001"
         )
+
+
+class TestTheSiblingResolversAgree:
+    """#1397 follow-up: betas and thinking carried the same companion-flag gate.
+
+    Fixing only `_resolve_phase_model` would have been worse than leaving the
+    bug alone. `get_phase_model_betas` still required `isAutoProfile`, so a
+    request carrying `phaseModels` alone would select gemini for the model and
+    compute beta headers for opus -- two resolvers disagreeing about the same
+    run, silently.
+    """
+
+    def _spec(self, tmp_path: Path, metadata: dict[str, Any]) -> Path:
+        spec = tmp_path / "spec"
+        spec.mkdir()
+        (spec / "task_metadata.json").write_text(json.dumps(metadata))
+        return spec
+
+    def test_betas_follow_the_same_model_the_resolver_picks(
+        self, tmp_path: Path
+    ) -> None:
+        """The two must never describe different models for one phase.
+
+        `opus-1m` is the only entry in MODEL_BETAS_MAP with a non-empty value,
+        so it is the only model that can tell the branches apart. An earlier
+        version of this test used haiku vs opus and passed against the defect:
+        both return [], so it compared nothing -- a pass-shaped empty
+        measurement in the test itself, caught by mutation.
+        """
+        spec = self._spec(tmp_path, {"phaseModels": {"coding": "opus-1m"}})
+
+        betas = get_phase_model_betas(spec, "coding", cli_model="opus")
+
+        assert betas == ["context-1m-2025-08-07"], (
+            "betas were computed for the CLI model, not the phase model"
+        )
+        assert betas != get_model_betas("opus"), (
+            "this assertion must be able to distinguish the two models"
+        )
+
+    def test_phase_thinking_applies_without_the_companion_flag(
+        self, tmp_path: Path
+    ) -> None:
+        spec = self._spec(tmp_path, {"phaseThinking": {"coding": "ultrathink"}})
+
+        assert get_phase_thinking(spec, "coding") == "ultrathink"
+
+    def test_an_unlisted_phase_keeps_the_cli_thinking(self, tmp_path: Path) -> None:
+        """Same fall-through rule as the model resolver."""
+        spec = self._spec(tmp_path, {"phaseThinking": {"planning": "ultrathink"}})
+
+        assert get_phase_thinking(spec, "coding", cli_thinking="think") == "think"
