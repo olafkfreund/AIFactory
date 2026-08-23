@@ -42,7 +42,7 @@ def _nothing_was_built(project_dir: Path) -> str | None:
     """
     try:
         commits = subprocess.run(
-            ["git", "rev-list", "--count", "HEAD", "--not", "--remotes=origin"],
+            ["git", "rev-list", "--count", "HEAD", "--not", "--remotes=origin"],  # noqa: S607
             cwd=project_dir,
             capture_output=True,
             text=True,
@@ -50,7 +50,7 @@ def _nothing_was_built(project_dir: Path) -> str | None:
             check=False,
         )
         dirty = subprocess.run(
-            ["git", "status", "--porcelain"],
+            ["git", "status", "--porcelain"],  # noqa: S607
             cwd=project_dir,
             capture_output=True,
             text=True,
