@@ -45,10 +45,14 @@ def _read_json(path: Path) -> dict[str, Any] | None:
 
 
 def compute_speedup(
-    parallel_wall_s: float, serial_baseline_s: float | None
+    parallel_wall_s: float | None, serial_baseline_s: float | None
 ) -> float | None:
-    """Speedup = serial baseline / parallel wall-clock (None if not computable)."""
-    if not serial_baseline_s or parallel_wall_s <= 0:
+    """Speedup = serial baseline / parallel wall-clock (None if not computable).
+
+    ``parallel_wall_s`` is None when nothing timed the build, which is a
+    different thing from a build that took no time -- see ``_wave_summary``.
+    """
+    if not serial_baseline_s or not parallel_wall_s or parallel_wall_s <= 0:
         return None
     return round(serial_baseline_s / parallel_wall_s, 2)
 
@@ -61,7 +65,13 @@ def _wave_summary(parallel_report: dict[str, Any] | None) -> dict[str, Any]:
             "workers_max": 1,
             "total_waves": 0,
             "observed_max_concurrency": 1,
-            "parallel_wall_s": 0.0,
+            # None, not 0.0: nothing timed this build (#1399). A serial build
+            # writes no parallel report, so there is no duration to read -- and
+            # 0.0 does not read as "unknown", it reads as "instant". A dashboard
+            # renders it, a benchmark averages it, and an absent measurement
+            # quietly becomes a measurement of zero. `serial_baseline_s` beside
+            # it has always used None for exactly this case.
+            "parallel_wall_s": None,
             "waves": [],
         }
     waves = parallel_report.get("waves", []) or []
@@ -71,7 +81,10 @@ def _wave_summary(parallel_report: dict[str, Any] | None) -> dict[str, Any]:
         "workers_max": parallel_report.get("workers_max", 1),
         "total_waves": parallel_report.get("total_waves", len(waves)),
         "observed_max_concurrency": parallel_report.get("observed_max_concurrency", 1),
-        "parallel_wall_s": wall,
+        # `or None` for the same reason as the branch above: a wave report whose
+        # durations are all zero has not been timed either, and no real build
+        # takes zero seconds.
+        "parallel_wall_s": wall or None,
         "waves": [
             {
                 "wave": w.get("wave"),
