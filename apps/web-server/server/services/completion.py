@@ -868,9 +868,17 @@ def _sentinel_enabled() -> bool:
     return _truthy(os.environ.get("AIFACTORY_COMPLETION_SENTINEL"))
 
 
-def notify_completion(event: dict, *, spec_dir: Path | None = None) -> None:
+def notify_completion(event: dict, *, spec_dir: Path | None = None) -> bool:
     """Best-effort terminal notification: opt-in sentinel + opt-in webhook POST.
-    Never raises — a failing target must not break the pipeline."""
+
+    Never raises — a failing target must not break the pipeline. Returns whether
+    the event reached its destination, so a caller writing a fire-once marker can
+    record "delivered" rather than "attempted" (#1407).
+
+    True also when there is no webhook configured and when the outbox accepted
+    the event: in both cases this function did everything asked of it. False
+    means the POST was tried and failed.
+    """
     if _sentinel_enabled() and spec_dir is not None:
         try:
             spec_dir.mkdir(parents=True, exist_ok=True)
@@ -884,7 +892,7 @@ def notify_completion(event: dict, *, spec_dir: Path | None = None) -> None:
 
     url = _webhook_url()
     if not url:
-        return
+        return True
 
     # At-least-once path (#465): when the outbox flag is on, persist the event
     # durably and let the retrying relay deliver it — a crash before delivery no
@@ -895,7 +903,7 @@ def notify_completion(event: dict, *, spec_dir: Path | None = None) -> None:
 
         if outbox_enabled():
             enqueue(event, url)
-            return
+            return True
     except Exception:  # noqa: BLE001 — fall back to the direct POST, never raise
         logger.debug(
             "outbox enqueue failed; falling back to direct POST", exc_info=True
@@ -913,7 +921,19 @@ def notify_completion(event: dict, *, spec_dir: Path | None = None) -> None:
         )
         urllib.request.urlopen(req, timeout=timeout).close()  # noqa: S310
     except Exception:
-        logger.debug("completion webhook failed (best-effort)", exc_info=True)
+        # WARNING, not debug (#1407). This ran at debug in a pod logging at
+        # info, so a webhook that never delivered produced no line anywhere:
+        # 12,492 log lines over 24h contained "webhook" zero times while the
+        # cockpit showed $0.00 for every run. A best-effort side effect that
+        # silently never happens is not best-effort, it is off.
+        logger.warning(
+            "completion webhook POST to %s failed; CFactory will not receive "
+            "this task's usage",
+            sanitize_log(url),
+            exc_info=True,
+        )
+        return False
+    return True
 
 
 def emit_terminal_completion(
@@ -988,7 +1008,8 @@ def emit_terminal_completion(
         logger.debug(
             "serial main-worker sub-event skipped (best-effort)", exc_info=True
         )
-    notify_completion(event, spec_dir=spec_dir)
+    delivered = notify_completion(event, spec_dir=spec_dir)
+    event["_delivered"] = delivered
     return event
 
 

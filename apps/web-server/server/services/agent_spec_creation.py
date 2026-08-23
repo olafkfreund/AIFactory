@@ -91,8 +91,17 @@ class SpecCreationMixin:
                     if metadata.get("isAutoProfile") and metadata.get("phaseModels"):
                         spec_phase_model = metadata["phaseModels"].get("spec")
                 except (json.JSONDecodeError, OSError) as e:
+                    # FAIL CLOSED. `should_auto_approve` defaults to True and
+                    # the ONLY thing that clears it is
+                    # `requireReviewBeforeCoding` above. Swallowing this left it
+                    # True, so an unreadable task_metadata.json meant the spec
+                    # was AUTO-APPROVED without review -- the opposite of what
+                    # the flag exists to do (AIFactory#1384, TFactory#1139).
+                    should_auto_approve = False
                     logger.warning(
-                        f"[AgentService] Failed to read task_metadata.json: {e}"
+                        "[AgentService] Could not read task_metadata.json (%s); "
+                        "withholding auto-approval so a human decides",
+                        sanitize_log(str(e)),
                     )
 
             # PFactory governed specs (epic #327 / #329): PFactory already ran its

@@ -9,27 +9,143 @@ jobs:
     if: github.event.label.name == 'aifactory:review'
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    permissions:
-      contents: read
-      pull-requests: write
-      models: read
+    # This job calls an external service and touches nothing on GitHub: it
+    # needs no checkout and no token scopes. (It previously requested
+    # contents/pull-requests/models and checked out the full history, none of
+    # which the step body ever used -- the review runs server-side against
+    # AIFactory's own clone of the project.)
+    permissions: {}
 
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-
       - name: Run AIFactory review
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AIFACTORY_URL: ${{ secrets.AIFACTORY_URL }}
           AIFACTORY_TOKEN: ${{ secrets.AIFACTORY_TOKEN }}
+          # AIFactory's PR endpoints are PROJECT-scoped; the project id is an
+          # AIFactory-internal registry key that cannot be derived from a PR
+          # event, so it is supplied as a repo secret. `aifactory-task.yml`
+          # already resolves it exactly this way.
+          # A project id is an identifier, not a credential -- it names which
+          # workspace the review runs against and leaks nothing. Stored as a
+          # repository VARIABLE so it is readable in the Actions UI and in
+          # `gh variable list`; `secrets.` on a variable resolves to empty,
+          # which would keep the gate failing on "missing" while the value
+          # was in fact set (AIFactory#1390).
+          AIFACTORY_PROJECT_ID: ${{ vars.AIFACTORY_PROJECT_ID }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          PR_NUMBER="${{ github.event.pull_request.number }}"
+          set -euo pipefail
 
-          if [ -n "$AIFACTORY_URL" ]; then
-            curl -sf -X POST "$AIFACTORY_URL/api/github/prs/$PR_NUMBER/review" \
-              -H "Authorization: Bearer $AIFACTORY_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d "{\"repo\": \"${{ github.repository }}\", \"pr_number\": $PR_NUMBER}"
+          # #1387. Configuration is checked BEFORE the call and a gap fails the
+          # job. The old body wrapped the call in `if [ -n "$AIFACTORY_URL" ]`,
+          # so an unconfigured repo produced a green check that had reviewed
+          # nothing -- a pass-shaped empty measurement.
+          missing=""
+          [ -n "${AIFACTORY_URL:-}" ] || missing="${missing} AIFACTORY_URL"
+          [ -n "${AIFACTORY_PROJECT_ID:-}" ] || missing="${missing} AIFACTORY_PROJECT_ID"
+          [ -n "${AIFACTORY_TOKEN:-}" ] || missing="${missing} AIFACTORY_TOKEN"
+
+          if [ -n "${missing}" ]; then
+            {
+              echo "### AIFactory PR review: not configured"
+              echo
+              echo "**Nothing was reviewed. This is a failure, not a pass.**"
+              echo
+              printf 'Missing repository secret(s):%s\n' "${missing}"
+              echo
+              echo "Set them under Settings -> Secrets and variables -> Actions."
+              echo "\`AIFACTORY_PROJECT_ID\` is the project's id in AIFactory's own"
+              echo "registry -- the \`{projectId}\` in"
+              echo "\`POST /api/projects/{projectId}/github/prs/{prNumber}/review\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+            printf '::error::AIFactory PR review is not configured (missing:%s)\n' "${missing}"
+            exit 1
           fi
+
+          # The route is project-scoped. `routes/github.py` declares
+          # `@project_router.post("/prs/{prNumber}/review")`; `routes/projects.py`
+          # mounts that router at `/{projectId}/github`; `main.py` mounts
+          # `projects.router` at `/api/projects`. The flat `/api/github/prs/...`
+          # this workflow used to post to has never existed -- `/api/github` is
+          # `routes/github.py`'s OTHER router (`/cli/*`, `/auth/*`, `/repos`, ...).
+          url="${AIFACTORY_URL%/}/api/projects/${AIFACTORY_PROJECT_ID}/github/prs/${PR_NUMBER}/review"
+
+          # The endpoint's body model is `PRReviewRequest`, whose only field is
+          # `followup`. The `repo`/`pr_number` fields the old call sent were
+          # silently discarded.
+          # `rm -f` first: on a connection failure curl never writes the file, so
+          # a stale one would be reported as this call's response body.
+          rm -f response.json
+          code="$(curl -sS -o response.json -w '%{http_code}' \
+            --connect-timeout 15 --max-time 120 \
+            -X POST "${url}" \
+            -H "Authorization: Bearer ${AIFACTORY_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{"followup": false}' || true)"
+          # curl's own `%{http_code}` is already `000` when it never connected;
+          # do not append a second fallback or the code reads `000000`.
+          [ -n "${code}" ] || code="000"
+
+          # A non-202 must say what came back. `curl -sf` exited 22 on a 404 and
+          # printed nothing, which is how the wrong URL survived unnoticed.
+          if [ "${code}" != "202" ]; then
+            {
+              echo "### AIFactory PR review: request failed"
+              echo
+              echo "**Nothing was reviewed. This is a failure, not a pass.**"
+              echo
+              echo "\`POST /api/projects/.../github/prs/${PR_NUMBER}/review\` returned HTTP \`${code}\` (expected 202)."
+              echo
+              echo '```'
+              if [ -s response.json ]; then head -c 2000 response.json; else echo "(no response body)"; fi
+              echo
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            printf '::error::AIFactory PR review request returned HTTP %s (expected 202)\n' "${code}"
+            exit 1
+          fi
+
+          {
+            echo "### AIFactory PR review: started"
+            echo
+            printf 'AIFactory accepted the review request for PR #%s (HTTP 202).\n' "${PR_NUMBER}"
+            echo
+            echo "The review itself runs asynchronously on AIFactory; this job"
+            echo "reports only that the request was accepted."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Factory#932. `review` skips whenever the label that triggered the run is not
+  # `aifactory:review`, which is correct -- and invisible. In the checks list a
+  # skipped job renders beside a passing one, so a review gate whose condition was
+  # never met looks, at a glance, exactly like a review that ran and approved. In
+  # this workflow's entire history (53 runs) the condition has never once been met,
+  # and nothing said so. This job says so.
+  #
+  # It reports the reason rather than a verdict: it is named "not applicable", and
+  # its summary states outright that nothing was reviewed. Note that its presence
+  # makes the RUN conclude `success` where it previously concluded `skipped`, so a
+  # liveness sweep must score the `review` job, not the run.
+  not-applicable:
+    name: review not applicable (nothing was reviewed)
+    needs: [review]
+    if: always() && needs.review.result == 'skipped'
+    # It writes a step summary and nothing else; it needs no token at all.
+    permissions: {}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Record why no review ran
+        env:
+          # Bound into env rather than interpolated into the shell: a label name is
+          # attacker-influencable text.
+          LABEL: ${{ github.event.label.name }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### AIFactory PR review: not applicable"
+            echo
+            echo "**Nothing was reviewed. This is not a pass.**"
+            echo
+            echo "This gate reviews a PR only when the label \`aifactory:review\` is applied."
+            printf "The label applied on this run was \`%s\`.\n" "$LABEL"
+          } >> "$GITHUB_STEP_SUMMARY"

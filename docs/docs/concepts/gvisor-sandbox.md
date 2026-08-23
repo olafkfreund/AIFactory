@@ -80,13 +80,18 @@ The "works" rows in the table below are validated by the live-cluster smoke test
 
 ### Compatibility validation
 
-The smoke test (`.github/workflows/gvisor-smoke.yml`) is triggered manually (`workflow_dispatch`) rather than on every push. The reason: GitHub-hosted runners run Kind node containers inside Docker, and Docker applies capability restrictions that prevent `runsc` from launching sandboxed containers. Pods scheduled with `runtimeClassName: gvisor` inside this nested setup remain in `ContainerCreating` indefinitely.
+The smoke test (`.github/workflows/gvisor-smoke.yml`) runs on pull requests that touch the chart, the live-gVisor tests, or this page, plus a weekly schedule and manual dispatch.
 
-Two validation paths work correctly on GitHub-hosted runners:
-- **Kubernetes-level wiring tests** (`test_runtime_class_exists_in_cluster`, `test_pods_have_gvisor_runtimeclass`): these inspect API object specs and pass reliably.
+This page previously stated that gVisor could not run on GitHub-hosted runners, because Docker capability restrictions stopped `runsc` from launching inside Kind node containers. **That was incorrect** (AIFactory#1381). The real cause of the failures was a configuration bug: the workflow wrote the runsc runtime stanza to `/etc/containerd/config.d/gvisor.toml`, but the Kind node image's `/etc/containerd/config.toml` has no `imports` directive and no `config.d` directory, so containerd never read it and reported `no runtime for "runsc" is configured`.
+
+Writing the stanza directly into `config.toml` fixes it. Verified against `kindest/node:v1.30.0`: containerd then registers the `runsc` handler, a pod with `runtimeClassName: gvisor` reaches `Running`, and its `dmesg` shows the `Starting gVisor...` banner — so the workload genuinely executes under the gVisor kernel. `kubectl exec`, DNS and outbound TLS all work inside that sandbox.
+
+Validation paths on GitHub-hosted runners:
+- **Exec-based compatibility tests** run against a `gvisor-compat-tester` pod that the workflow launches under `runtimeClassName: gvisor`. The workflow fails if that pod does not become Ready, or if its `dmesg` lacks the gVisor banner, so a silent fallback to `runc` cannot read as a pass.
+- **Kubernetes-level wiring tests** (`test_runtime_class_exists_in_cluster`, `test_pods_have_gvisor_runtimeclass`): these inspect API object specs.
 - **Template-rendering tests** in `tests/helm/test_gvisor_runtime_class.py` run in the existing `helm-acceptance` CI job on every push.
 
-The exec-based compatibility tests require a cluster where gVisor containers actually launch. See:
+A self-hosted runner or a managed gVisor node pool remains an option for validating against a production-like kernel, but is no longer required to exercise the compatibility table. See:
 - [Running the smoke test locally with Kind](./gvisor-smoke-test-local.md) — for operators with full-kernel access
 - [Self-hosted runner gVisor setup](./self-hosted-runner-gvisor-setup.md) — to add a self-hosted runner to the CI pipeline
 

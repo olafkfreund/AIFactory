@@ -373,6 +373,29 @@ def _difficulty_tier(metadata: TaskMetadataConfig | None) -> str | None:
     return value if isinstance(value, str) else None
 
 
+# Control-plane model fallback (#1374).
+#
+# When a non-Claude build fails, the web-server retries it with Claude Sonnet by
+# swapping ``--model`` in the child's command line
+# (``agent_credential._retry_task_with_fallback_model``). But a CLI model sits
+# BELOW ``pinnedModel`` and the auto profile's ``phaseModels`` in the precedence
+# implemented by ``_resolve_phase_model`` — so on a fully pinned task (exactly
+# the benchmark case) the swapped flag was silently outranked and the retry
+# re-resolved the model that had just failed.
+#
+# These two env vars are set on the retried child instead. FALLBACK_MODEL_ENV
+# outranks everything, so the model the control plane fell back to is the model
+# that actually runs; FALLBACK_FROM_ENV names the model it displaced, and
+# ``agents.token_attribution`` stamps it into ``token_usage.json`` so the
+# fallback is VISIBLE rather than merely corrected.
+FALLBACK_MODEL_ENV = "AIFACTORY_FALLBACK_MODEL"
+
+
+def fallback_model_override() -> str | None:
+    """Model forced by a control-plane fallback, or ``None`` when unset."""
+    return os.environ.get(FALLBACK_MODEL_ENV, "").strip() or None
+
+
 def get_phase_model(
     spec_dir: Path,
     phase: Phase,
@@ -420,6 +443,13 @@ def _resolve_phase_model(
     Returns:
         Resolved full model ID
     """
+    # A control-plane fallback outranks every configured source (#1374): the
+    # build is already running on this model, so resolving anything else would
+    # both re-run the failure and mislabel the accounting.
+    forced = fallback_model_override()
+    if forced:
+        return resolve_model_id(forced)
+
     # Load task metadata first — the auto profile's per-phase choice is the
     # user's most specific intent and must win over the run.py CLI default
     # model. (Without this, e.g. coding always falls back to the CLI's
@@ -431,10 +461,24 @@ def _resolve_phase_model(
     if metadata and metadata.get("pinnedModel"):
         return resolve_model_id(metadata["pinnedModel"])
 
-    if metadata and metadata.get("isAutoProfile") and metadata.get("phaseModels"):
-        phase_models = metadata["phaseModels"]
-        model = phase_models.get(phase, DEFAULT_PHASE_MODELS[phase])
-        return resolve_model_id(model)
+    # `phaseModels` is honoured whenever it names THIS phase. It used to also
+    # require `isAutoProfile`, an undocumented companion flag: a request
+    # carrying `{"phaseModels": {"coding": "gemini-3-pro"}}` and nothing else
+    # fell straight through to the CLI default and ran opus, while reporting
+    # opus honestly -- so the setting read as working until you compared it
+    # against what was asked for (#1397). Nothing else gives `phaseModels` a
+    # meaning, so its presence IS the intent.
+    #
+    # Only when the phase is actually present, too. The old
+    # `.get(phase, DEFAULT_PHASE_MODELS[phase])` returned the DEFAULT for any
+    # phase the map omitted, which short-circuited priorities 3-5 below: a map
+    # naming only `planning` made `--model haiku` resolve to opus for coding.
+    # A phase the caller did not mention is a phase they left to the normal
+    # precedence, not one they pinned to the default.
+    if metadata and metadata.get("phaseModels"):
+        phase_models = metadata["phaseModels"] or {}
+        if phase_models.get(phase):
+            return resolve_model_id(phase_models[phase])
 
     # CLI argument takes precedence over non-auto metadata
     if cli_model:
@@ -483,16 +527,26 @@ def get_phase_model_betas(
     Returns:
         List of beta header strings, or empty list if none required
     """
-    # Same precedence as get_phase_model: auto profile metadata wins over CLI.
+    # Same precedence as get_phase_model: a control-plane fallback (#1374)
+    # first, then auto profile metadata over CLI.
+    forced = fallback_model_override()
+    if forced:
+        return get_model_betas(forced)
+
     metadata = load_task_metadata(spec_dir)
 
     if metadata and metadata.get("pinnedModel"):
         return get_model_betas(metadata["pinnedModel"])
 
-    if metadata and metadata.get("isAutoProfile") and metadata.get("phaseModels"):
-        phase_models = metadata["phaseModels"]
-        model_short = phase_models.get(phase, DEFAULT_PHASE_MODELS[phase])
-        return get_model_betas(model_short)
+    # Must mirror _resolve_phase_model exactly. It stopped requiring
+    # `isAutoProfile` in #1397; leaving this one behind would be worse than the
+    # original bug, because the betas would then be computed for a DIFFERENT
+    # model than the one actually selected -- headers for opus on a gemini run,
+    # disagreeing silently.
+    if metadata and metadata.get("phaseModels"):
+        phase_models = metadata["phaseModels"] or {}
+        if phase_models.get(phase):
+            return get_model_betas(phase_models[phase])
 
     if cli_model:
         return get_model_betas(cli_model)
@@ -537,9 +591,15 @@ def get_phase_thinking(
     # Same precedence as get_phase_model: auto profile metadata wins over CLI.
     metadata = load_task_metadata(spec_dir)
 
-    if metadata and metadata.get("isAutoProfile") and metadata.get("phaseThinking"):
-        phase_thinking = metadata["phaseThinking"]
-        return phase_thinking.get(phase, DEFAULT_PHASE_THINKING[phase])
+    # `phaseThinking` carried the same undocumented `isAutoProfile` requirement
+    # as `phaseModels` did (#1397): supplied on its own it was silently ignored.
+    # Same reasoning -- nothing else gives the field a meaning, so its presence
+    # is the intent -- and the same fall-through, so a phase the caller did not
+    # name keeps the normal precedence instead of being pinned to the default.
+    if metadata and metadata.get("phaseThinking"):
+        phase_thinking = metadata["phaseThinking"] or {}
+        if phase_thinking.get(phase):
+            return phase_thinking[phase]
 
     if cli_thinking:
         return cli_thinking
