@@ -538,10 +538,15 @@ def get_phase_model_betas(
     if metadata and metadata.get("pinnedModel"):
         return get_model_betas(metadata["pinnedModel"])
 
-    if metadata and metadata.get("isAutoProfile") and metadata.get("phaseModels"):
-        phase_models = metadata["phaseModels"]
-        model_short = phase_models.get(phase, DEFAULT_PHASE_MODELS[phase])
-        return get_model_betas(model_short)
+    # Must mirror _resolve_phase_model exactly. It stopped requiring
+    # `isAutoProfile` in #1397; leaving this one behind would be worse than the
+    # original bug, because the betas would then be computed for a DIFFERENT
+    # model than the one actually selected -- headers for opus on a gemini run,
+    # disagreeing silently.
+    if metadata and metadata.get("phaseModels"):
+        phase_models = metadata["phaseModels"] or {}
+        if phase_models.get(phase):
+            return get_model_betas(phase_models[phase])
 
     if cli_model:
         return get_model_betas(cli_model)
@@ -586,9 +591,15 @@ def get_phase_thinking(
     # Same precedence as get_phase_model: auto profile metadata wins over CLI.
     metadata = load_task_metadata(spec_dir)
 
-    if metadata and metadata.get("isAutoProfile") and metadata.get("phaseThinking"):
-        phase_thinking = metadata["phaseThinking"]
-        return phase_thinking.get(phase, DEFAULT_PHASE_THINKING[phase])
+    # `phaseThinking` carried the same undocumented `isAutoProfile` requirement
+    # as `phaseModels` did (#1397): supplied on its own it was silently ignored.
+    # Same reasoning -- nothing else gives the field a meaning, so its presence
+    # is the intent -- and the same fall-through, so a phase the caller did not
+    # name keeps the normal precedence instead of being pinned to the default.
+    if metadata and metadata.get("phaseThinking"):
+        phase_thinking = metadata["phaseThinking"] or {}
+        if phase_thinking.get(phase):
+            return phase_thinking[phase]
 
     if cli_thinking:
         return cli_thinking
