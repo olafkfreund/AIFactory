@@ -411,3 +411,77 @@ def test_execution_profile_carries_autonomy_tier_as_difficulty() -> None:
         {"model": "opus", "autonomy_tier": "hard", "complexity": "complex"}
     )
     assert meta["difficultyTier"] == "hard"
+
+
+class TestPhaseModelsApplyWithoutACompanionFlag:
+    """#1397: `phaseModels` must select the model on its own.
+
+    It used to be honoured only when `isAutoProfile` was ALSO set -- an
+    undocumented companion flag. A request carrying nothing but
+    `{"phaseModels": {"coding": "gemini-3-pro"}}` fell through to the CLI
+    default and ran opus, then reported opus honestly. Truthful reporting of a
+    selection that never happened is why this read as working: the only way to
+    see it was to compare the model used against the model asked for, which is
+    what these tests do.
+    """
+
+    def _spec(self, tmp_path: Path, metadata: dict[str, Any]) -> Path:
+        spec = tmp_path / "spec"
+        spec.mkdir()
+        (spec / "task_metadata.json").write_text(json.dumps(metadata))
+        return spec
+
+    def test_phase_models_alone_selects_the_model(self, tmp_path: Path) -> None:
+        """The exact request shape that produced #1397."""
+        spec = self._spec(tmp_path, {"phaseModels": {"coding": "gemini-3-pro"}})
+
+        assert get_phase_model(spec, "coding", cli_model="opus") == "gemini-3-pro"
+
+    def test_is_auto_profile_still_works(self, tmp_path: Path) -> None:
+        """The flag is no longer required, but must not become poison either."""
+        spec = self._spec(
+            tmp_path, {"phaseModels": {"coding": "gemini-3-pro"}, "isAutoProfile": True}
+        )
+
+        assert get_phase_model(spec, "coding", cli_model="opus") == "gemini-3-pro"
+
+    def test_an_unlisted_phase_falls_through_to_the_cli_model(
+        self, tmp_path: Path
+    ) -> None:
+        """A partial map must not pin every other phase to the default.
+
+        `.get(phase, DEFAULT_PHASE_MODELS[phase])` short-circuited priorities
+        3-5, so naming only `planning` made `--model haiku` resolve to opus for
+        coding. A phase the caller did not mention is one they left to the
+        normal precedence, not one they pinned.
+
+        haiku is used rather than opus because DEFAULT_PHASE_MODELS["coding"]
+        IS opus -- asserting against opus could not tell the default from the
+        CLI argument, and would pass against the defect.
+        """
+        spec = self._spec(
+            tmp_path, {"phaseModels": {"planning": "sonnet"}, "isAutoProfile": True}
+        )
+
+        assert get_phase_model(spec, "coding", cli_model="haiku") == (
+            "claude-haiku-4-5-20251001"
+        )
+
+    def test_each_phase_gets_its_own_model(self, tmp_path: Path) -> None:
+        """The point of per-phase routing: plan on one model, code on another."""
+        spec = self._spec(
+            tmp_path,
+            {"phaseModels": {"planning": "sonnet", "coding": "haiku", "qa": "opus"}},
+        )
+
+        assert get_phase_model(spec, "planning") == "claude-sonnet-5"
+        assert get_phase_model(spec, "coding") == "claude-haiku-4-5-20251001"
+        assert get_phase_model(spec, "qa") == "claude-opus-4-8"
+
+    def test_an_empty_phase_models_map_is_not_a_selection(self, tmp_path: Path) -> None:
+        """`{}` must not swallow the CLI argument."""
+        spec = self._spec(tmp_path, {"phaseModels": {}})
+
+        assert get_phase_model(spec, "coding", cli_model="haiku") == (
+            "claude-haiku-4-5-20251001"
+        )
