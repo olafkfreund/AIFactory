@@ -31,17 +31,84 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ISSUE_TITLE: ${{ github.event.issue.title }}
           REPO: ${{ github.repository }}
-          # The AIFactory project id this repo maps to (set as a repo secret).
-          AIFACTORY_PROJECT_ID: ${{ secrets.AIFACTORY_PROJECT_ID }}
+          # A project id is an identifier, not a credential -- it names which
+          # workspace the task lands in and leaks nothing. Stored as a repository
+          # VARIABLE, and read as one: `secrets.` on a variable resolves to EMPTY,
+          # which is how this workflow came to post `project_id: ""` while the
+          # value was in fact set (#1389). Same correction pr-review.yml carries
+          # for #1390.
+          AIFACTORY_PROJECT_ID: ${{ vars.AIFACTORY_PROJECT_ID }}
         run: |
-          if [ -n "$AIFACTORY_URL" ]; then
-            # RFC-0011 governed tier-driven ingest (#635). The poller is the
-            # primary intake; this is the GH-Actions-on-label fast path.
-            curl -sf -X POST "$AIFACTORY_URL/api/tasks/from-issue" \
-              -H "Authorization: Bearer $AIFACTORY_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d "{\"project_id\": \"$AIFACTORY_PROJECT_ID\", \"provider\": \"github\", \"repo\": \"$REPO\", \"issue_number\": $ISSUE_NUMBER}"
-          else
-            gh issue comment "$ISSUE_NUMBER" \
-              --body "🏭 **AIFactory**: Issue queued for import. Set the \`AIFACTORY_URL\` repository secret to automate task creation."
+          set -euo pipefail
+
+          # #1389, mirroring #1387. Configuration is checked BEFORE the call and a
+          # gap fails the job. The old body wrapped the call in
+          # `if [ -n "$AIFACTORY_URL" ]` and commented on the issue instead, so an
+          # unconfigured repo produced a green check that had created no task -- a
+          # pass-shaped empty measurement.
+          missing=""
+          [ -n "${AIFACTORY_URL:-}" ] || missing="${missing} AIFACTORY_URL (secret)"
+          [ -n "${AIFACTORY_TOKEN:-}" ] || missing="${missing} AIFACTORY_TOKEN (secret)"
+          [ -n "${AIFACTORY_PROJECT_ID:-}" ] || missing="${missing} AIFACTORY_PROJECT_ID (variable)"
+
+          if [ -n "${missing}" ]; then
+            {
+              echo "### AIFactory task creation: not configured"
+              echo
+              echo "**No task was created. This is a failure, not a pass.**"
+              echo
+              printf 'Missing:%s\n' "${missing}"
+              echo
+              echo "Secrets live under Settings -> Secrets and variables -> Actions, Secrets tab."
+              echo "\`AIFACTORY_PROJECT_ID\` is a **variable**, not a secret -- Variables tab on"
+              echo "that same page. It is the project's id in AIFactory's own registry."
+            } >> "$GITHUB_STEP_SUMMARY"
+            printf '::error::AIFactory task creation is not configured (missing:%s)\n' "${missing}"
+            exit 1
           fi
+
+          # RFC-0011 governed tier-driven ingest (#635). The poller is the primary
+          # intake; this is the GH-Actions-on-label fast path.
+          # `rm -f` first: on a connection failure curl never writes the file, so a
+          # stale one would be reported as this call's response body.
+          rm -f response.json
+          code="$(curl -sS -o response.json -w '%{http_code}' \
+            --connect-timeout 15 --max-time 120 \
+            -X POST "${AIFACTORY_URL%/}/api/tasks/from-issue" \
+            -H "Authorization: Bearer ${AIFACTORY_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"project_id\": \"${AIFACTORY_PROJECT_ID}\", \"provider\": \"github\", \"repo\": \"${REPO}\", \"issue_number\": ${ISSUE_NUMBER}}" || true)"
+          # curl's own `%{http_code}` is already `000` when it never connected; do not
+          # append a second fallback or the code reads `000000`.
+          [ -n "${code}" ] || code="000"
+
+          # `curl -sf` exited 22 and printed nothing, so a 404 from an empty project
+          # id looked exactly like success to everyone downstream.
+          case "${code}" in
+            2*) ;;
+            *)
+              {
+                echo "### AIFactory task creation: request failed"
+                echo
+                echo "**No task was created. This is a failure, not a pass.**"
+                echo
+                printf '`POST /api/tasks/from-issue` returned HTTP `%s`.\n' "${code}"
+                echo
+                echo '```'
+                if [ -s response.json ]; then head -c 2000 response.json; else echo "(no response body)"; fi
+                echo
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+              printf '::error::AIFactory task creation returned HTTP %s\n' "${code}"
+              exit 1
+              ;;
+          esac
+
+          {
+            echo "### AIFactory task created"
+            echo
+            printf 'AIFactory accepted the task request for issue #%s (HTTP %s).\n' "${ISSUE_NUMBER}" "${code}"
+            echo
+            echo "The build itself runs asynchronously on AIFactory; this job reports"
+            echo "only that the request was accepted."
+          } >> "$GITHUB_STEP_SUMMARY"
