@@ -114,13 +114,13 @@ async def run_terminal_completion(
     if is_terminal:
         _completion_marker = spec_dir / ".terminal_completion_emitted"
         if not _completion_marker.exists():
-            try:
-                _completion_marker.write_text(datetime.now(UTC).isoformat())
-            except OSError as e:
-                logger.debug(
-                    "terminal-completion marker write failed (may re-emit next call): %s",
-                    sanitize_log(str(e)),
-                )
+            # The marker is written AFTER a confirmed delivery, never before
+            # (#1407). Writing it first made it a tombstone: the first failure
+            # -- transient or not -- permanently suppressed every later attempt,
+            # because the emit only runs when the marker is absent. Six of seven
+            # specs carried the marker while CFactory had received two POSTs in
+            # 24 hours, one of them a probe. "We tried once" was being recorded
+            # as "done", and nothing retried or complained.
             try:
                 from .completion import emit_terminal_completion
 
@@ -128,15 +128,38 @@ async def run_terminal_completion(
                     task_id.split(":", 1)[0] if ":" in task_id else project_path.name
                 )
                 terminal_status = terminal_status
-                emit_terminal_completion(
+                _event = emit_terminal_completion(
                     spec_dir,
                     task_id=task_id,
                     project_id=project_id,
                     spec_id=spec_id,
                     status=terminal_status,
                 )
+                if _event.get("_delivered", True):
+                    try:
+                        _completion_marker.write_text(datetime.now(UTC).isoformat())
+                    except OSError as e:
+                        logger.warning(
+                            "terminal-completion marker write failed for %s; the "
+                            "event was delivered and will be re-sent next call: %s",
+                            sanitize_log(spec_id),
+                            sanitize_log(str(e)),
+                        )
+                else:
+                    # No marker: the next terminal call retries instead of
+                    # skipping. CFactory dedups by
+                    # (service, correlation_key, status), so a re-send is safe.
+                    logger.warning(
+                        "completion event for %s was not delivered; leaving no "
+                        "marker so the next terminal call retries",
+                        sanitize_log(spec_id),
+                    )
             except Exception:
-                logger.debug("completion emit failed (best-effort)", exc_info=True)
+                logger.warning(
+                    "completion emit failed for %s; no marker written, will retry",
+                    sanitize_log(spec_id),
+                    exc_info=True,
+                )
 
     # Terminal completion side-effects: hand off to TFactory + run the PR
     # endgame. Gated on COMPLETED only — NOT on emit_events. emit_events
