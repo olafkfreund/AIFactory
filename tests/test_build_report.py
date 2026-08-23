@@ -106,7 +106,10 @@ class TestBuildReport:
         report = build_report(spec, now=lambda: "T")
         assert report["parallel"] is False
         assert report["total_waves"] == 0
-        assert report["parallel_wall_s"] == 0.0
+        # None, not 0.0 (#1399): no parallel report means nothing timed this
+        # build. 0.0 was indistinguishable from a build that took no time, so
+        # an absent measurement read as a real one.
+        assert report["parallel_wall_s"] is None
         assert report["speedup_vs_serial"] is None
         assert report["cost_usd"] == 0.42  # cost still captured
 
@@ -173,3 +176,71 @@ class TestPersistence:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestUnmeasuredDurationIsNotZero:
+    """#1399: an unmeasured build duration must not read as a measured zero.
+
+    `parallel_wall_s: 0.0` shipped on every serial build. It is not a value a
+    real build can produce, but nothing downstream can tell it from one -- a
+    table renders it, an average absorbs it, and "we never timed this" becomes
+    "this took no time". The distinction these tests protect is unknown vs zero,
+    which is why they assert `is None` rather than falsiness: `0.0` is falsy too
+    and would pass a truthiness check.
+    """
+
+    def test_serial_build_reports_none_not_zero(self, tmp_path: Path):
+        spec = tmp_path / "004-serial"
+        spec.mkdir()
+
+        report = build_report(spec, now=lambda: "T")
+
+        assert report["parallel_wall_s"] is None
+
+    def test_all_zero_wave_durations_report_none(self, tmp_path: Path):
+        """A wave report exists but carries no real timings.
+
+        Same defect one layer in: summing zeros produces a confident 0.0.
+        """
+        spec = tmp_path / "005-zero-waves"
+        spec.mkdir()
+        (spec / "parallel_report.json").write_text(
+            json.dumps(
+                {
+                    "parallel": True,
+                    "workers_max": 2,
+                    "total_waves": 2,
+                    "waves": [
+                        {"wave": 1, "duration_s": 0.0, "subtask_ids": ["a"]},
+                        {"wave": 2, "duration_s": 0.0, "subtask_ids": ["b"]},
+                    ],
+                }
+            )
+        )
+
+        report = build_report(spec, now=lambda: "T")
+
+        assert report["parallel_wall_s"] is None
+
+    def test_a_real_duration_still_survives(self, tmp_path: Path):
+        """The fix must not swallow genuine timings."""
+        spec = tmp_path / "006-timed"
+        spec.mkdir()
+        (spec / "parallel_report.json").write_text(
+            json.dumps(
+                {
+                    "parallel": True,
+                    "workers_max": 2,
+                    "total_waves": 1,
+                    "waves": [{"wave": 1, "duration_s": 12.5, "subtask_ids": ["a"]}],
+                }
+            )
+        )
+
+        report = build_report(spec, now=lambda: "T")
+
+        assert report["parallel_wall_s"] == 12.5
+
+    def test_speedup_handles_an_unmeasured_wall(self):
+        """compute_speedup must not raise on None -- it takes the field directly."""
+        assert compute_speedup(parallel_wall_s=None, serial_baseline_s=45.0) is None
