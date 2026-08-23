@@ -461,10 +461,24 @@ def _resolve_phase_model(
     if metadata and metadata.get("pinnedModel"):
         return resolve_model_id(metadata["pinnedModel"])
 
-    if metadata and metadata.get("isAutoProfile") and metadata.get("phaseModels"):
-        phase_models = metadata["phaseModels"]
-        model = phase_models.get(phase, DEFAULT_PHASE_MODELS[phase])
-        return resolve_model_id(model)
+    # `phaseModels` is honoured whenever it names THIS phase. It used to also
+    # require `isAutoProfile`, an undocumented companion flag: a request
+    # carrying `{"phaseModels": {"coding": "gemini-3-pro"}}` and nothing else
+    # fell straight through to the CLI default and ran opus, while reporting
+    # opus honestly -- so the setting read as working until you compared it
+    # against what was asked for (#1397). Nothing else gives `phaseModels` a
+    # meaning, so its presence IS the intent.
+    #
+    # Only when the phase is actually present, too. The old
+    # `.get(phase, DEFAULT_PHASE_MODELS[phase])` returned the DEFAULT for any
+    # phase the map omitted, which short-circuited priorities 3-5 below: a map
+    # naming only `planning` made `--model haiku` resolve to opus for coding.
+    # A phase the caller did not mention is a phase they left to the normal
+    # precedence, not one they pinned to the default.
+    if metadata and metadata.get("phaseModels"):
+        phase_models = metadata["phaseModels"] or {}
+        if phase_models.get(phase):
+            return resolve_model_id(phase_models[phase])
 
     # CLI argument takes precedence over non-auto metadata
     if cli_model:
