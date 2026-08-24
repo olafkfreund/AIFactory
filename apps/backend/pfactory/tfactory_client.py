@@ -425,6 +425,57 @@ def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | 
         return None, None
 
 
+def _remote_commit_count(spec_dir: Path, spec_id: str) -> int | None:
+    """Commits on the PUSHED build branch, or ``None`` if origin cannot answer.
+
+    The evidence source that survives the kubejob path without depending on
+    anything inside the build remembering to record itself (#1414).
+
+    #1070's gate condemned a real build -- one commit, five files, 29 passing
+    tests -- because git could not answer (the control-plane worktree stays on
+    the base branch) and the ledger answered `0`. The ledger was written once at
+    build start and never appended to: `record_good_commit` fires per SUBTASK,
+    only when that session left a new commit, so a build that commits once at
+    the end records nothing. An existing empty `commits` list is then
+    indistinguishable from "committed nothing", and the build lost its TFactory
+    handoff and its PR.
+
+    Origin has no such gap. The build pushes `aifactory/<spec_id>` before the
+    Job exits, so the remote branch is what the build actually produced.
+
+    Fails to ``None``, never ``0``: an unreachable origin, a missing branch or a
+    fetch that cannot run means the question was not answered here, and the
+    caller must keep failing open. Only a MEASURED zero is allowed to block.
+    """
+    repo = _project_dir(spec_dir)
+    if not (repo / ".git").exists():
+        return None
+    branch = _build_branch(spec_id)
+    base = _task_base_branch(spec_dir) or "main"
+    # Fetch into the remote-tracking ref explicitly; a bare `git fetch origin
+    # <branch>` leaves the result only in FETCH_HEAD, which the range below
+    # cannot name for both sides.
+    _git_stdout(
+        repo,
+        [
+            "fetch",
+            "--quiet",
+            "origin",
+            f"{branch}:refs/remotes/origin/{branch}",
+            f"{base}:refs/remotes/origin/{base}",
+        ],
+    )
+    out = _git_stdout(
+        repo,
+        [
+            "rev-list",
+            "--count",
+            f"refs/remotes/origin/{base}..refs/remotes/origin/{branch}",
+        ],
+    )
+    return int(out) if out.isdigit() else None
+
+
 def _recorded_commit_count(spec_dir: Path) -> int | None:
     """Commits the build itself recorded in ``memory/build_commits.json``, or None.
 
@@ -480,7 +531,16 @@ def build_commit_count(spec_dir: Path, spec_id: str) -> int | None:
     the branch holds, where the ledger can only be stale.
     """
     git = _git_commit_count(spec_dir, spec_id)
-    return git if git is not None else _recorded_commit_count(spec_dir)
+    if git is not None:
+        return git
+    # The remote before the ledger (#1414). The build PUSHES its branch, so
+    # origin is the authority on what it produced, while the ledger only knows
+    # what something remembered to write down. An unmaintained ledger answers
+    # `0` with total confidence; origin either answers correctly or not at all.
+    remote = _remote_commit_count(spec_dir, spec_id)
+    if remote is not None:
+        return remote
+    return _recorded_commit_count(spec_dir)
 
 
 def _git_commit_count(spec_dir: Path, spec_id: str) -> int | None:
