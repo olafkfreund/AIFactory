@@ -18,17 +18,17 @@ from factory_common.logsafe import sanitize_log
 
 from server import specpath
 
+from ..websockets.events import emit_subtask_update
+from . import task_control
+from .task_phase import TaskPhase, scale_progress
+from .task_status import read_plan
+
 # Kept as a module-level name, not an import alias. Two `from server.specpath
 # import ...` lines cannot satisfy both ruff configs this repo runs -- the
 # backend gate's root config wants them split, the ratchet's strict config wants
 # them combined, and neither accepts the other's shape. One module import
 # sidesteps that, and this binding preserves the name the barrier tests address.
 _safe_spec_component = specpath.safe_spec_component
-
-from ..websockets.events import emit_subtask_update
-from . import task_control
-from .task_phase import TaskPhase, scale_progress
-from .task_status import read_plan
 
 if TYPE_CHECKING:
     from collections.abc import Callable
