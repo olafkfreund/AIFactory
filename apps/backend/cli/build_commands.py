@@ -61,23 +61,35 @@ def build_is_silent_noop(spec_dir: Path, work_dir: Path | None = None) -> bool:
     - PAUSE file present (human paused the build)
     - plan status ``human_review`` (paused for plan approval)
 
-    #1422: the subtask count alone is not enough. A run reported "All subtasks
-    completed!", pushed its branch and advanced its card while the branch tip was
-    byte-identical to its base — the bookkeeping said done and the worktree had
-    gained nothing. Counting completed subtasks measures what the agent claimed;
-    it does not measure what it produced. So when ``work_dir`` is given, a run
-    that completed subtasks must ALSO show git output to escape this guard.
+    #1422: the subtask count alone is not enough, in two ways.
+
+    A run reported "All subtasks completed!", pushed its branch and advanced its
+    card while the branch tip was byte-identical to its base — the bookkeeping
+    said done and the worktree had gained nothing. Counting completed subtasks
+    measures what the agent CLAIMED; it does not measure what it produced.
+
+    Worse, the run that did this had NO plan at all: ``skip_planning`` is set for
+    every low- and medium-tier card, so no ``implementation_plan.json`` is
+    written, ``count_subtasks`` answers ``(0, 0)``, and 0-of-0 reads as "all
+    completed" everywhere downstream. The original ``total == 0`` early return
+    therefore made this guard inert for the majority of runs — a count of zero
+    looked identical to a clean bill of health.
+
+    So whenever the counter cannot prove work happened — no plan, or subtasks
+    that merely claim completion — ``work_dir`` decides, by asking git. The
+    counter can only EXCLUDE the guard when it positively shows completed work.
     """
     completed, total = count_subtasks(spec_dir)
-    if total == 0:
-        return False
-    if completed > 0:
+    if total > 0 and completed == 0:
+        # The #779 case: subtasks planned, none finished. No git check needed.
+        pass
+    else:
         if work_dir is None:
             return False
         # Imported here, not at module level: importing ``agents`` at import time
         # regresses the strict-import ratchet (see the PAUSE note below). Reused
         # rather than reimplemented so the two callers cannot drift apart.
-        from agents.tools_pkg.tools.qa import _nothing_was_built
+        from agents.tools_pkg.tools.qa import _nothing_was_built  # noqa: PLC0415
 
         if _nothing_was_built(work_dir) is None:
             return False

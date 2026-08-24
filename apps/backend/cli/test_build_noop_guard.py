@@ -85,8 +85,8 @@ def test_unreadable_plan_status_still_noop(tmp_path: Path) -> None:
 
 
 def _git(repo: Path, *args: str) -> None:
-    subprocess.run(
-        ["git", *args],
+    subprocess.run(  # noqa: S603 -- fixed argv, no shell, test-only
+        ["git", *args],  # noqa: S607 -- git from PATH, as the guard itself invokes it
         cwd=repo,
         check=True,
         capture_output=True,
@@ -145,3 +145,33 @@ def test_without_work_dir_the_counter_still_decides(tmp_path: Path) -> None:
     """Callers that pass no worktree keep the pre-#1422 behaviour."""
     _write_plan(tmp_path, ["completed", "pending"])
     assert build_is_silent_noop(tmp_path) is False
+
+
+def test_no_plan_at_all_with_empty_worktree_is_noop(tmp_path: Path) -> None:
+    """skip_planning writes no plan, so 0-of-0 read as 'all completed' (#1422).
+
+    This is the shape that actually escaped: every low- and medium-tier card runs
+    with ``skip_planning``, so ``count_subtasks`` answers ``(0, 0)`` and the old
+    ``total == 0`` early return made the guard inert for all of them.
+    """
+    spec = tmp_path / "spec"
+    spec.mkdir()  # no implementation_plan.json, as skip_planning leaves it
+    work = _repo_with_base(tmp_path)
+    assert build_is_silent_noop(spec, work) is True
+
+
+def test_no_plan_but_real_commit_is_not_noop(tmp_path: Path) -> None:
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    work = _repo_with_base(tmp_path)
+    (work / "feature.txt").write_text("real work\n", encoding="utf-8")
+    _git(work, "add", "feature.txt")
+    _git(work, "commit", "-qm", "implement the thing")
+    assert build_is_silent_noop(spec, work) is False
+
+
+def test_no_plan_without_work_dir_stays_permissive(tmp_path: Path) -> None:
+    """No plan and no worktree to check: cannot prove a no-op, so do not claim one."""
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    assert build_is_silent_noop(spec) is False
