@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any
 
 from factory_common.logsafe import sanitize_log
 
+from server.specpath import spec_dir_for
+
 from ..websockets.events import emit_task_status, emit_task_update
 from .agent_task_models import TaskLog, TaskProgress
 from .task_log_writer import TaskLogWriter
@@ -471,7 +473,7 @@ class EmitMixin:
                 # cwd, silently, under a plausible-looking .aifactory/ tree. No
                 # snapshot is better than one filed in the wrong place (#431).
                 return False
-            spec_dir = Path(project_path) / ".aifactory" / "specs" / spec_id
+            spec_dir = spec_dir_for(project_path, spec_id)
             return (
                 emit_usage_snapshot(
                     spec_dir,

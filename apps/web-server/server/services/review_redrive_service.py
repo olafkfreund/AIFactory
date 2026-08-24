@@ -37,6 +37,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+from server.specpath import spec_dir_for
+
 from ..config import get_settings
 from . import inbox_service, task_control
 
@@ -106,19 +108,13 @@ def _get_redrive_module() -> ModuleType | None:
 
 
 def _main_spec_dir(project_path: Path, spec_id: str) -> Path:
-    return project_path / ".aifactory" / "specs" / spec_id
+    return spec_dir_for(project_path, spec_id)
 
 
 def _worktree_spec_dir(project_path: Path, spec_id: str) -> Path:
-    return (
-        project_path
-        / ".aifactory"
-        / "worktrees"
-        / "tasks"
-        / spec_id
-        / ".aifactory"
-        / "specs"
-        / spec_id
+    return spec_dir_for(
+        project_path / ".aifactory" / "worktrees" / "tasks" / spec_id,
+        spec_id,
     )
 
 

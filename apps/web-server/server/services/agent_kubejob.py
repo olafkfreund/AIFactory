@@ -21,6 +21,7 @@ from factory_common.logsafe import sanitize_log
 
 from server.project_registry import resolve_project_path
 from server.services import review_redrive_service
+from server.specpath import spec_dir_for
 
 from .build_log_stream import PlanSync
 from .task_log_writer import TaskLogWriter
@@ -130,7 +131,7 @@ class KubejobMixin:
         if not spec_id:
             return
         project_path = resolve_project_path(project_id)
-        spec_dir = project_path / ".aifactory" / "specs" / spec_id
+        spec_dir = spec_dir_for(project_path, spec_id)
         try:
             backend_path: Path | None = self.backend_path
         except Exception:  # noqa: BLE001
@@ -205,7 +206,7 @@ class KubejobMixin:
         # #916: selectedSkills were never materialized for kubejob builds — the
         # in-pod path writes skill_context.md before spawning; do the same before
         # the worktree is populated so the Job's spec dir carries it.
-        self._write_skill_context(project_path / ".aifactory" / "specs" / spec_id)
+        self._write_skill_context(spec_dir_for(project_path, spec_id))
         # Pooled credential checkout (#670) — distinct token per concurrent Job.
         token, profile_id, profile_name = self._resolve_claude_token_pooled(task_id)
         if token:
@@ -411,7 +412,7 @@ class KubejobMixin:
         end. Best-effort: progress reporting must never fail a dispatch.
         """
         try:
-            spec_dir = project_path / ".aifactory" / "specs" / spec_id
+            spec_dir = spec_dir_for(project_path, spec_id)
             spec_dir.mkdir(parents=True, exist_ok=True)
             writer = TaskLogWriter(spec_dir)
             writer.set_phase_status(spec_id, TaskPhase.PLANNING, "active")
@@ -448,7 +449,7 @@ class KubejobMixin:
         if not os.environ.get(WORKSPACE_URI_ENV, "").strip():
             return None
 
-        spec_dir = project_path / ".aifactory" / "specs" / spec_id
+        spec_dir = spec_dir_for(project_path, spec_id)
         return lambda: maybe_fetch_plan(spec_dir, spec_id)
 
     async def _kubejob_worker_ref(self, task_id: str) -> tuple[str, str] | None:

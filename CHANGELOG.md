@@ -1,5 +1,20 @@
 ## [Unreleased]
 
+## 3.6.76 - 2026-08-24
+
+### Fixed
+
+- **The service layer joined `spec_id` onto filesystem paths with no barrier.**
+  `safe_spec_component` existed and worked, but only the route handlers used it
+  -- they sanitise by reassignment before joining. The services built the same
+  paths themselves and guarded 2 of their 31 joins across 13 modules;
+  `agent_kubejob` split a job id on ":" and joined the tail onto a path with
+  nothing in between. `specpath.py`'s own docstring already claimed services
+  "keep their own barrier for the paths they build directly", and they did not.
+  The join now lives behind the barrier in one `spec_dir_for()` constructor,
+  because a per-site guard leaves the next site unguarded. `Path` joins collapse
+  traversal silently, so validation has to happen before the join (#1410).
+
 ## 3.6.75 - 2026-08-23
 
 ### Fixed
