@@ -50,8 +50,8 @@ from .input_handlers import (
 )
 
 
-def build_is_silent_noop(spec_dir: Path) -> bool:
-    """True when a finished agent run implemented NOTHING (#779).
+def build_is_silent_noop(spec_dir: Path, work_dir: Path | None = None) -> bool:
+    """True when a finished agent run implemented NOTHING (#779, #1422).
 
     A run whose plan has subtasks but ZERO completed produced no code — every
     subtask failed or was never started. Exiting 0 in that state makes a
@@ -60,10 +60,27 @@ def build_is_silent_noop(spec_dir: Path) -> bool:
 
     - PAUSE file present (human paused the build)
     - plan status ``human_review`` (paused for plan approval)
+
+    #1422: the subtask count alone is not enough. A run reported "All subtasks
+    completed!", pushed its branch and advanced its card while the branch tip was
+    byte-identical to its base — the bookkeeping said done and the worktree had
+    gained nothing. Counting completed subtasks measures what the agent claimed;
+    it does not measure what it produced. So when ``work_dir`` is given, a run
+    that completed subtasks must ALSO show git output to escape this guard.
     """
     completed, total = count_subtasks(spec_dir)
-    if total == 0 or completed > 0:
+    if total == 0:
         return False
+    if completed > 0:
+        if work_dir is None:
+            return False
+        # Imported here, not at module level: importing ``agents`` at import time
+        # regresses the strict-import ratchet (see the PAUSE note below). Reused
+        # rather than reimplemented so the two callers cannot drift apart.
+        from agents.tools_pkg.tools.qa import _nothing_was_built
+
+        if _nothing_was_built(work_dir) is None:
+            return False
     # "PAUSE" mirrors agents.base.HUMAN_INTERVENTION_FILE (not imported here:
     # module-level agents imports would regress the strict-import ratchet).
     if (spec_dir / "PAUSE").exists():
@@ -380,14 +397,25 @@ def handle_build_command(
         # headless build Job is marked Failed instead of Complete — a silent
         # no-op build (codex agentic auth mismatch, dead provider, ...) must
         # surface as a failure, not as a green build with an empty branch.
-        if build_is_silent_noop(spec_dir):
+        if build_is_silent_noop(spec_dir, working_dir):
             _completed, _total = count_subtasks(spec_dir)
             emit_phase(
                 ExecutionPhase.FAILED,
                 f"Build produced no code: {_completed}/{_total} subtasks completed",
             )
+            # Two distinct shapes, and saying which one saves the reader a guess:
+            # nothing ran at all, or things claimed to run and left no trace.
+            _detail = (
+                f"no subtasks completed ({_completed}/{_total})"
+                if _completed == 0
+                else (
+                    f"{_completed}/{_total} subtasks reported complete but the "
+                    "worktree has no commits beyond its base and no uncommitted "
+                    "changes (#1422)"
+                )
+            )
             print_status(
-                f"BUILD FAILED - no subtasks completed ({_completed}/{_total}). "
+                f"BUILD FAILED - {_detail}. "
                 "The coder implemented nothing; check the coding-provider "
                 "credentials/model and the session logs.",
                 "error",
