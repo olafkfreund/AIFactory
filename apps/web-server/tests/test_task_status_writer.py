@@ -128,14 +128,29 @@ def test_merge_addresses_the_spec_dir_by_sanitized_spec_id() -> None:
 
     spec_id is the value the handler has already put through
     safe_spec_component.
+
+    Asserts the BARRIER, not one spelling of it. This originally pinned the
+    literal `"specs" / safe_spec_component(spec_id)`, and #1410 then moved the
+    join and its barrier into `spec_dir_for()` so the service layer could not
+    keep open-coding it -- 31 joins across 13 modules, only 2 of them guarded.
+    That is exactly the refactor this docstring warned about, and the barrier
+    survived it; only the spelling changed. A test pinned to source shape fails
+    on a change that strengthens the very property it protects, so it now
+    accepts either construction and rejects an unbarriered join.
     """
     src = (_WEB_SERVER / "server" / "services" / "approval.py").read_text()
     call = src.index("status_error = write_status(")
     args = src[call : src.index("updated_by=", call)]
-    assert '"specs" / safe_spec_component(spec_id)' in args, (
+    barriered = (
+        "spec_dir_for(" in args or '"specs" / safe_spec_component(spec_id)' in args
+    )
+    assert barriered, (
         "the spec dir must be addressed by a BARRIERED spec_id -- callers do "
         "sanitise, but a helper that trusts its parameter is one refactor away "
         "from a caller that does not, and CodeQL is right to say so"
+    )
+    assert '"specs" / spec_id' not in args, (
+        "spec_id is joined onto the path with no barrier -- use spec_dir_for()"
     )
     assert "/ task_id" not in args, (
         "task_id is raw URL input and carries the project prefix"

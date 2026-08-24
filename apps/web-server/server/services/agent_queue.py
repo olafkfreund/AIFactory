@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Any
 
 from factory_common.logsafe import sanitize_log
 
+from server.specpath import spec_dir_for
+
 from ..websockets.events import emit_task_status
 from . import task_control
 
@@ -42,7 +44,7 @@ class QueueMixin:
         self, task_id: str, project_path: Path, spec_id: str
     ) -> None:
         """Persist + emit the ``queued`` status for a parked build (#668)."""
-        spec_dir = project_path / ".aifactory" / "specs" / spec_id
+        spec_dir = spec_dir_for(project_path, spec_id)
         try:
             task_control.write_control(
                 spec_dir,

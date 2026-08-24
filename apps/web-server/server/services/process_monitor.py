@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING
 
 from factory_common.logsafe import sanitize_log
 
+from server.specpath import spec_dir_for
+
 from .agent_service import (
     TaskPhase,
     TaskProgress,
@@ -152,9 +154,7 @@ async def monitor_process(
                         _, detected_spec_id = task_id.split(":", 1)
 
                     if detected_spec_id:
-                        detected_spec_dir = (
-                            project_path / ".aifactory" / "specs" / detected_spec_id
-                        )
+                        detected_spec_dir = spec_dir_for(project_path, detected_spec_id)
                         plan_review_file = detected_spec_dir / "plan_review.html"
 
                         # Check if plan_review.html exists (indicates review checkpoint reached)
@@ -417,7 +417,7 @@ async def monitor_process(
         # Code 0: auto_continue mode (web UI) - exits cleanly after saving review state
         # Code 1: CLI mode - exits with error when blocked (legacy behavior)
         if project_path and spec_id:
-            spec_dir = project_path / ".aifactory" / "specs" / spec_id
+            spec_dir = spec_dir_for(project_path, spec_id)
             review_state_file = spec_dir / "review_state.json"
 
             # If review_state.json exists with approved=false, task is waiting for human review
@@ -512,7 +512,7 @@ async def monitor_process(
 
         # Check for early failure and attempt profile failover
         if return_code != 0 and project_path and spec_id and cmd and env:
-            spec_dir = project_path / ".aifactory" / "specs" / spec_id
+            spec_dir = spec_dir_for(project_path, spec_id)
 
             # Check if this is an early failure (no logs written)
             is_early = service._is_early_failure(spec_dir, return_code)
@@ -632,13 +632,7 @@ async def monitor_process(
         # genuine success / partial-review path untouched.
         build_succeeded = return_code == 0
         if build_succeeded and spec_id and project_path:
-            plan_file = (
-                project_path
-                / ".aifactory"
-                / "specs"
-                / spec_id
-                / "implementation_plan.json"
-            )
+            plan_file = spec_dir_for(project_path, spec_id) / "implementation_plan.json"
             if plan_file.exists():
                 try:
                     if is_failed_build(json.loads(plan_file.read_text())):
@@ -676,13 +670,7 @@ async def monitor_process(
         # Auto-continuation: if process exited successfully but subtasks remain,
         # restart execution instead of marking as completed (max 10 continuation rounds)
         if return_code == 0 and spec_id and project_path and cmd and env:
-            plan_file = (
-                project_path
-                / ".aifactory"
-                / "specs"
-                / spec_id
-                / "implementation_plan.json"
-            )
+            plan_file = spec_dir_for(project_path, spec_id) / "implementation_plan.json"
             if plan_file.exists():
                 try:
                     plan_data = json.loads(plan_file.read_text())

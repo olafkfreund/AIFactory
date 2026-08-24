@@ -15,7 +15,7 @@ from typing import Any
 
 from server.services.gh import run_gh_command
 from server.services.task_status import write_status
-from server.specpath import safe_spec_component
+from server.specpath import spec_dir_for
 
 
 def approved(
@@ -46,7 +46,7 @@ def approved(
     # does not -- and the analyser is right to say so. safe_spec_component is
     # idempotent, so an already-safe value passes straight through.
     status_error = write_status(
-        project_path / ".aifactory" / "specs" / safe_spec_component(spec_id),
+        spec_dir_for(project_path, spec_id),
         status="done",
         reason=f"approved: {message}",
         updated_by="approve-merge",

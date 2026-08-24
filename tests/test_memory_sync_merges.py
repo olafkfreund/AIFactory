@@ -180,6 +180,13 @@ def test_the_barrier_is_actually_applied_before_any_path_is_built():
     body = src.split("async def _sync_worktree_files", 1)[1]
 
     call = body.find("_safe_spec_component(spec_id)")
-    first_path = body.find("worktree_spec = (")
+    # Locate the path build by the ASSIGNMENT NAME, not by one formatting of it.
+    # This previously looked for the literal `worktree_spec = (`, which stopped
+    # matching when #1410 moved the join into `spec_dir_for()` and the
+    # parenthesised form went away -- `find` returned -1 and the comparison
+    # asserted `call < -1`, failing on a change that strengthened the barrier
+    # rather than removing it.
+    first_path = body.find("worktree_spec =")
     assert call != -1, "spec_id is no longer sanitised (CodeQL py/path-injection)"
+    assert first_path != -1, "the worktree path build moved -- update this marker"
     assert 0 <= call < first_path, "the barrier must run BEFORE spec_id reaches a path"

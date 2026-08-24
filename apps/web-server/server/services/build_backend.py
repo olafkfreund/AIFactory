@@ -103,6 +103,7 @@ from typing import Any
 from factory_common.logsafe import sanitize_log
 
 from server.services.task_branch import record_branch
+from server.specpath import spec_dir_for
 
 from .task_phase import (
     _append_parallel_flags,
@@ -750,7 +751,7 @@ def _spec_source_dir(project_path: Path, spec_id: str) -> Path:
     into the worktree, and runs run.py from there. The build Job needs the SAME
     source dir to materialize into the co-mounted worktree before dispatch.
     """
-    return project_path / ".aifactory" / "specs" / spec_id
+    return spec_dir_for(project_path, spec_id)
 
 
 def populate_build_worktree(project_path: Path, spec_id: str) -> str | None:
