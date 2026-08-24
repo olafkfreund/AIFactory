@@ -426,6 +426,45 @@ USER root
 COPY --from=ghcr.io/olafkfreund/tfactory-runner-nix:latest@sha256:369e1aa003519d5edc8363c2f9aa69247798ebdc312ebd2c1e46aff61d4613c9 /nix/store /nix/store
 COPY --from=ghcr.io/olafkfreund/tfactory-runner-nix:latest@sha256:369e1aa003519d5edc8363c2f9aa69247798ebdc312ebd2c1e46aff61d4613c9 --chown=65532:65532 /nix/var /nix/var
 
+# Browser evidence (screencasts + screenshots) for the coder image only -- the
+# API server in the `runtime` stage has no use for a browser and should not
+# carry its CVE surface.
+#
+# Egress from the build Job reaches exactly two places: the Wolfi apk mirror and
+# the npm registry. Every binary CDN is blocked -- Playwright's own browser
+# download opens, delivers ~9MB of a ~170MB Chromium, then stalls forever, and
+# `ffmpeg-static` fails the same way against GitHub releases. So both the
+# browser and its encoder have to arrive through the two channels that work:
+#   * chromium            -- from apk.
+#   * @ffmpeg-installer   -- ships the binary INSIDE the npm tarball (no
+#                            postinstall download), and unlike Wolfi's ffmpeg it
+#                            carries libvpx, which Playwright's webm pipeline
+#                            requires (`-deadline` is a libvpx private option;
+#                            without it ffmpeg exits before writing a frame).
+#
+# Playwright resolves these from versioned cache dirs BEFORE consulting any
+# PLAYWRIGHT_*_EXECUTABLE_PATH env var, so pointing at them needs symlinks, not
+# environment. The revisions are derived from `--dry-run` rather than hardcoded
+# so a playwright bump re-links instead of silently falling back to a download
+# that cannot finish.
+RUN apk add --no-cache chromium \
+ && npm install -g playwright@1.49.0 @ffmpeg-installer/linux-x64 \
+ && FF="$(find /usr/local/lib/node_modules/@ffmpeg-installer -name ffmpeg -type f | head -1)" \
+ && test -n "$FF" && chmod 0755 "$FF" \
+ && export PLAYWRIGHT_BROWSERS_PATH=/home/nonroot/.cache/ms-playwright \
+ && npx playwright install --dry-run chromium-headless-shell 2>/dev/null \
+      | awk '/Install location/{print $NF}' \
+      | while read -r d; do \
+          case "$d" in \
+            *chromium_headless_shell-*) mkdir -p "$d/chrome-linux" \
+              && ln -sf /usr/bin/chromium-browser "$d/chrome-linux/headless_shell" ;; \
+            *ffmpeg-*) mkdir -p "$d" && ln -sf "$FF" "$d/ffmpeg-linux" ;; \
+          esac; \
+        done \
+ && chown -R 65532:65532 /home/nonroot/.cache \
+ && test -L "$(find /home/nonroot/.cache/ms-playwright -name headless_shell | head -1)" \
+ && test -L "$(find /home/nonroot/.cache/ms-playwright -name ffmpeg-linux | head -1)"
+
 USER nonroot
 
 # nix resolves from the baked default profile; flakes on; reuse the apk cert
