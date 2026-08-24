@@ -26,7 +26,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "apps" / "web-server"))
 
-from server.specpath import spec_dir_for  # noqa: E402
+from server.specpath import spec_dir_for
 
 _SERVICES = Path(__file__).parent.parent / "apps" / "web-server" / "server" / "services"
 _RAW_JOIN = re.compile(r'/\s*"specs"\s*/\s*\w+')

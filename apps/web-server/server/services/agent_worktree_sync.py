@@ -16,8 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from factory_common.logsafe import sanitize_log
 
-from server.specpath import safe_spec_component as _safe_spec_component
-from server.specpath import spec_dir_for
+from server.specpath import safe_spec_component as _safe_spec_component, spec_dir_for
 
 from ..websockets.events import emit_subtask_update
 from . import task_control
