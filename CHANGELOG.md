@@ -1,5 +1,38 @@
 ## [Unreleased]
 
+## 3.6.78 - 2026-08-24
+
+### Fixed
+
+- **The coder image had no browser, so screencast evidence was impossible.**
+  `@playwright/mcp` was installed but no browser binary existed, and nothing in
+  the cluster could fetch one. Egress from the build Job reaches exactly two
+  destinations -- the Wolfi apk mirror and the npm registry. Every binary CDN is
+  blocked in a way that reads as slowness rather than failure: Playwright's own
+  download opens, transfers ~9MB of a ~170MB Chromium, then stalls indefinitely,
+  and `ffmpeg-static` fails identically against GitHub releases. A 50-minute
+  probe sat at 9,068,719 bytes without moving.
+
+  Both halves now arrive through the two channels that work: `chromium` from apk,
+  and `@ffmpeg-installer/linux-x64`, which ships its binary inside the npm tarball
+  rather than downloading on postinstall. The npm route is required for a second
+  reason -- Wolfi's own ffmpeg carries no VP8 encoder, only the `vp8_v4l2m2m`
+  hardware wrapper, so Playwright's webm pipeline died on `-deadline` (a libvpx
+  private option) before writing a frame, and no `libvpx` package exists in the
+  index.
+
+  Playwright resolves both binaries from versioned cache directories *before*
+  consulting `PLAYWRIGHT_*_EXECUTABLE_PATH`, so the env vars have no effect and
+  symlinks are required. Revisions are derived from `playwright install
+  --dry-run` rather than hardcoded, so a version bump re-links instead of
+  silently falling back to a download that cannot complete. Two `test -L`
+  assertions fail the build if either link is missing.
+
+  Scoped to the `build-runtime` stage: the API server has no use for a browser
+  and should not carry its CVE surface. Verified in-cluster on the pinned build
+  image -- screenshot 8,640 bytes, webm 18,244 bytes, both from
+  `chromium.launch()` with no code changes.
+
 ## 3.6.77 - 2026-08-24
 
 ### Fixed
