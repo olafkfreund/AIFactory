@@ -175,3 +175,24 @@ def test_no_plan_without_work_dir_stays_permissive(tmp_path: Path) -> None:
     spec = tmp_path / "spec"
     spec.mkdir()
     assert build_is_silent_noop(spec) is False
+
+
+# The escape hatches must survive the git check, not just the counter check.
+# Both are reached only after the #1422 branch, so a reordering there would
+# silently start failing paused builds — which look exactly like empty ones.
+
+
+def test_pause_still_excluded_with_an_empty_worktree(tmp_path: Path) -> None:
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    (spec / "PAUSE").write_text("paused", encoding="utf-8")
+    work = _repo_with_base(tmp_path)
+    assert build_is_silent_noop(spec, work) is False
+
+
+def test_human_review_still_excluded_with_an_empty_worktree(tmp_path: Path) -> None:
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    _write_plan(spec, ["completed"], plan_status="human_review")
+    work = _repo_with_base(tmp_path)
+    assert build_is_silent_noop(spec, work) is False
