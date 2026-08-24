@@ -31,6 +31,8 @@ from typing import Any
 
 from factory_common.logsafe import sanitize_log
 
+from server.specpath import spec_dir_for
+
 logger = logging.getLogger(__name__)
 
 
@@ -65,7 +67,7 @@ async def run_delegation(
     from .delegation_formatter import render_plan_as_comment
 
     task_id = f"{project_id}:{spec_id}"
-    spec_dir = project_path / ".aifactory" / "specs" / spec_id
+    spec_dir = spec_dir_for(project_path, spec_id)
 
     # ------------------------------------------------------------------
     # 1. Spawn the planner-only subprocess and AWAIT it (gap #3).

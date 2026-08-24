@@ -28,7 +28,7 @@ import logging
 import subprocess
 from pathlib import Path
 
-from server.specpath import safe_spec_component
+from server.specpath import spec_dir_for
 
 logger = logging.getLogger(__name__)
 
@@ -96,9 +96,7 @@ def _marker_path(project_path: Path, spec_id: str) -> Path:
     with the barriered component is the shape the rest of this codebase uses
     (#565) and the only one that actually cuts the flow.
     """
-    return (
-        project_path / ".aifactory" / "specs" / safe_spec_component(spec_id) / _MARKER
-    )
+    return spec_dir_for(project_path, spec_id) / _MARKER
 
 
 def record_branch(project_path: Path, spec_id: str, branch: str) -> None:

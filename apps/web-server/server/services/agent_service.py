@@ -22,6 +22,8 @@ from typing import Any
 
 from factory_common.logsafe import sanitize_log
 
+from server.specpath import spec_dir_for
+
 from ..config import get_settings
 from ..utils.subprocess_env import make_subprocess_env
 from . import task_control
@@ -201,9 +203,7 @@ class AgentService(
         CFactory. Best-effort: returns None when the spec has no provenance.
         """
         try:
-            req_file = (
-                project_path / ".aifactory" / "specs" / spec_id / "requirements.json"
-            )
+            req_file = spec_dir_for(project_path, spec_id) / "requirements.json"
             if not req_file.exists():
                 return None
             req = json.loads(req_file.read_text())
@@ -262,7 +262,7 @@ class AgentService(
         # it to a durable terminal lifecycle_state (never-overclaim).
         spec_dir_hint = self._spec_dirs.get(task_id)
         if spec_dir_hint is None and project_path is not None and spec_id:
-            spec_dir_hint = project_path / ".aifactory" / "specs" / spec_id
+            spec_dir_hint = spec_dir_for(project_path, spec_id)
 
         await monitor_process(self, task_id, proc, project_path, spec_id, cmd, env)
 
@@ -368,9 +368,7 @@ class AgentService(
         """
 
         logger = logging.getLogger(__name__)
-        plan_file = (
-            project_path / ".aifactory" / "specs" / spec_id / "implementation_plan.json"
-        )
+        plan_file = spec_dir_for(project_path, spec_id) / "implementation_plan.json"
         logger.info(
             "[AgentService._update_plan_status] CALLED for spec_id=%s, status=%s, task_id=%s",
             sanitize_log(spec_id),
@@ -604,9 +602,7 @@ class AgentService(
         go parallel without an explicit manual start.
         """
         try:
-            meta_file = (
-                project_path / ".aifactory" / "specs" / spec_id / "task_metadata.json"
-            )
+            meta_file = spec_dir_for(project_path, spec_id) / "task_metadata.json"
             if meta_file.exists():
                 meta = json.loads(meta_file.read_text())
                 return meta.get("parallel"), meta.get("workers")
@@ -878,7 +874,7 @@ class AgentService(
         if auto_continue:
             cmd.append("--auto-continue")
 
-        spec_dir = project_path / ".aifactory" / "specs" / spec_id
+        spec_dir = spec_dir_for(project_path, spec_id)
 
         # Write skill context file based on selectedSkills in task_metadata
         self._write_skill_context(spec_dir)
@@ -990,7 +986,7 @@ class AgentService(
             )
             # Store for potential retry — read model from task_metadata.json
             exec_model = "sonnet"  # default
-            exec_spec_dir = project_path / ".aifactory" / "specs" / spec_id
+            exec_spec_dir = spec_dir_for(project_path, spec_id)
             exec_metadata_file = exec_spec_dir / "task_metadata.json"
             if exec_metadata_file.exists():
                 try:
@@ -1039,7 +1035,7 @@ class AgentService(
         # Default off — Remote Control requires a paid Anthropic subscription
         # (Pro/Max/Team/Enterprise) so we can't enable it for everyone.
         _rc_enabled = False
-        _rc_spec_dir = project_path / ".aifactory" / "specs" / spec_id
+        _rc_spec_dir = spec_dir_for(project_path, spec_id)
         _rc_metadata_file = _rc_spec_dir / "task_metadata.json"
         if _rc_metadata_file.exists():
             try:
@@ -1110,9 +1106,7 @@ class AgentService(
         # the agent writes task_logs.json are still debuggable (#146).
         # _process_output still drains the PIPE; this is an additional
         # post-mortem capture, not a replacement.
-        spec_stderr_log = (
-            project_path / ".aifactory" / "specs" / spec_id / "spawn_stderr.log"
-        )
+        spec_stderr_log = spec_dir_for(project_path, spec_id) / "spawn_stderr.log"
         try:
             spec_stderr_log.parent.mkdir(parents=True, exist_ok=True)
             spec_stderr_log.write_text("")  # truncate any previous capture
@@ -1159,16 +1153,13 @@ class AgentService(
             / ".aifactory"
             / "worktrees"
             / "tasks"
-            / spec_id
-            / ".aifactory"
-            / "specs"
-            / spec_id
+            / spec_dir_for(spec_id, spec_id)
         )
         worktree_spec_dir.mkdir(parents=True, exist_ok=True)
         log_writer = TaskLogWriter(worktree_spec_dir)
 
         # Also write to main spec dir for immediate visibility
-        main_spec_dir = project_path / ".aifactory" / "specs" / spec_id
+        main_spec_dir = spec_dir_for(project_path, spec_id)
         main_spec_dir.mkdir(parents=True, exist_ok=True)
         main_log_writer = TaskLogWriter(main_spec_dir)
 

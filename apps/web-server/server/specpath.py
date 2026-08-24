@@ -51,6 +51,27 @@ def safe_spec_component(value: object, field: str = "spec_id") -> str:
     return text
 
 
+def spec_dir_for(project_path: object, spec_id: object) -> Path:
+    """The spec directory for *spec_id* under *project_path*, barrier applied.
+
+    One constructor rather than a guard at each join (#1410). The service layer
+    open-coded this join 31 times across 13 modules and guarded only two of them
+    -- the validation lived in the route handlers, which sanitise `spec_id` by
+    reassignment before joining, while the services built the same paths
+    straight from a task id. `agent_kubejob` was the clearest case: it split a
+    job id on ":" and joined the tail onto a path with nothing in between.
+
+    This module's own docstring already said services "keep their own barrier
+    for the paths they build directly". They did not. Adding a barrier to 23
+    call sites would leave the 24th unguarded the day someone adds it, so the
+    join itself moves here and the barrier is not optional.
+
+    Raises ValueError on an unsafe component -- see `safe_spec_component` for
+    why it raises rather than sanitising.
+    """
+    return Path(project_path) / ".aifactory" / "specs" / safe_spec_component(spec_id)
+
+
 def contained_path(
     candidate: object, roots: Iterable[object], what: str, expand_user: bool = False
 ) -> Path:

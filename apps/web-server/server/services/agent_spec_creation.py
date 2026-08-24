@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any
 
 from factory_common.logsafe import sanitize_log
 
+from server.specpath import spec_dir_for
+
 from ..utils.subprocess_env import make_subprocess_env
 from .agent_task_models import TaskProgress
 from .task_phase import TaskPhase
@@ -64,7 +66,7 @@ class SpecCreationMixin:
         # Parse spec_id from task_id (format: "project_id:spec_id")
         if ":" in task_id:
             _, spec_id = task_id.split(":", 1)
-            spec_dir = project_path / ".aifactory" / "specs" / spec_id
+            spec_dir = spec_dir_for(project_path, spec_id)
         else:
             # Fallback: no project ID prefix (shouldn't happen in web mode)
             spec_dir = None

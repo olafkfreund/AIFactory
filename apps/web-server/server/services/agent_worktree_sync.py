@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 from factory_common.logsafe import sanitize_log
 
 from server.specpath import safe_spec_component as _safe_spec_component
+from server.specpath import spec_dir_for
 
 from ..websockets.events import emit_subtask_update
 from . import task_control
@@ -71,12 +72,9 @@ class WorktreeSyncMixin:
             / ".aifactory"
             / "worktrees"
             / "tasks"
-            / spec_id
-            / ".aifactory"
-            / "specs"
-            / spec_id
+            / spec_dir_for(spec_id, spec_id)
         )
-        main_spec = project_path / ".aifactory" / "specs" / spec_id
+        main_spec = spec_dir_for(project_path, spec_id)
 
         # Ensure main spec dir exists
         main_spec.mkdir(parents=True, exist_ok=True)

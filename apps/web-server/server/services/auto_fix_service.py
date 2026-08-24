@@ -37,6 +37,7 @@ from factory_common.logsafe import sanitize_log
 
 from server.error_ref import InputRejectedError
 from server.services.git_base_url import safe_git_base_url  # #1360
+from server.specpath import spec_dir_for
 
 logger = logging.getLogger(__name__)
 
@@ -492,7 +493,7 @@ async def start_auto_fix(project_id: str, issue_number: int) -> dict[str, Any]:
 
     # Determine whether to delegate before recording the queue item, so
     # the queue carries the right initial status.
-    spec_dir = project_path / ".aifactory" / "specs" / spec_id
+    spec_dir = spec_dir_for(project_path, spec_id)
     task_metadata = _read_task_metadata(spec_dir)
     # Delegation works on GitHub (Copilot, V1) and GitLab (Duo Workflow,
     # V1.5 #98). ADO has no autonomous-agent equivalent — the provider's
