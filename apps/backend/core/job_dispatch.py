@@ -169,11 +169,36 @@ def job_name(service: str, job_id: str) -> str:
     return f"{JOB_NAME_PREFIX}-{service}-{_short(job_id)}"
 
 
+# Twin of ``nix_provisioner._strip_npx``, deliberately duplicated: these two
+# files are INDEPENDENT vendoring units and each fork places them in a different
+# package (``core/`` vs ``tools/runners/``), so a cross-import would not resolve
+# after vendoring. Keep the two in step — see nix_provisioner for the full
+# reasoning and the live evidence.
+#
+# `npx <tool>` re-fetches <tool> from the npm registry even when the flake has
+# already put a version-matched copy on PATH, then runs THAT copy, silently
+# undoing the provisioning. Only tools the flake provably ships are rewritten;
+# stripping `npx` from one it does not ship would turn a working fetch into
+# "command not found".
+_NPX_PROVIDED_BY_FLAKE = ("playwright",)
+
+# argv is ["npx", "<tool>", ...]; anything shorter cannot be a rewrite target.
+_NPX_MIN_PARTS = 2
+
+
+def _strip_npx(command: str) -> str:
+    """Drop a leading ``npx`` when the flake supplies the tool itself."""
+    parts = command.split()
+    if len(parts) >= _NPX_MIN_PARTS and parts[0] == "npx" and parts[1] in _NPX_PROVIDED_BY_FLAKE:
+        return " ".join(parts[1:])
+    return command
+
+
 def nix_develop_wrap(commands: list[str]) -> str:
     """Wrap commands to run inside the per-task Nix env. `path:` is mandatory — a
     bare flake ref triggers Nix's git fetcher and breaks on the Job-root vs
     worktree-uid mismatch (RFC-0016 §4.1 gotcha)."""
-    joined = " && ".join(commands)
+    joined = " && ".join(_strip_npx(c) for c in commands)
     return f"nix develop path:/work#default --command bash -c {_shq(joined)}"
 
 
@@ -522,6 +547,28 @@ def build_job_manifest(spec: JobSpec) -> dict[str, Any]:
     }
 
 
+def _selftest_npx_strip() -> None:
+    """`npx playwright` must become the flake's own binary (TFactory#1152).
+
+    Consumers emit "npx playwright test" because it is correct for the docker
+    runner images. Under `nix develop` it is fatal: npx re-fetches a mismatched
+    playwright from npm, that copy cannot resolve @playwright/test, and the lane
+    reports zero tests — which reads as a flaky runner, not a provisioning bug.
+    Proven live: `npx playwright test` found no tests while `playwright test` on
+    the same shell passed in 6.5s.
+    """
+    wrapped = nix_develop_wrap(["npx playwright test tests/e2e"])
+    _require(
+        "'playwright test tests/e2e'" in wrapped or "playwright test tests/e2e" in wrapped,
+        f"npx must be stripped for a flake-provided tool: {wrapped}",
+    )
+    _require("npx playwright" not in wrapped, f"npx survived the rewrite: {wrapped}")
+    # Tools the flake does NOT ship keep their npx — stripping it there would turn
+    # a working fetch into "command not found".
+    keep = nix_develop_wrap(["npx cypress run"])
+    _require("npx cypress run" in keep, f"npx must survive for a non-flake tool: {keep}")
+
+
 def _selftest() -> None:
     spec = JobSpec(
         service="aifactory",
@@ -793,3 +840,4 @@ def _selftest_trace_env() -> None:
 
 if __name__ == "__main__":
     _selftest()
+    _selftest_npx_strip()
