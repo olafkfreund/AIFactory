@@ -1,6 +1,63 @@
 ## [Unreleased]
 
+## 3.6.76 - 2026-08-24
+
 ### Fixed
+
+- **The service layer joined `spec_id` onto filesystem paths with no barrier.**
+  `safe_spec_component` existed and worked, but only the route handlers used it
+  -- they sanitise by reassignment before joining. The services built the same
+  paths themselves and guarded 2 of their 31 joins across 13 modules;
+  `agent_kubejob` split a job id on ":" and joined the tail onto a path with
+  nothing in between. `specpath.py`'s own docstring already claimed services
+  "keep their own barrier for the paths they build directly", and they did not.
+  The join now lives behind the barrier in one `spec_dir_for()` constructor,
+  because a per-site guard leaves the next site unguarded. `Path` joins collapse
+  traversal silently, so validation has to happen before the join (#1410).
+
+## 3.6.75 - 2026-08-23
+
+### Fixed
+
+- **The cockpit's token and cost figures were $0.00 for every run, and nothing
+  said why.** `.terminal_completion_emitted` was written BEFORE the RFC-0001
+  emit, and the emit only runs when that marker is absent -- so the first
+  failure wrote a permanent "already done" tombstone and every later terminal
+  call skipped delivery entirely. Measured live: 6 of 7 specs carried the marker
+  while CFactory had received 2 POSTs in 24 hours, one of them a hand-sent
+  probe, and 12,492 log lines mentioned the webhook zero times because the
+  failure logged at DEBUG. The marker now records a confirmed delivery, a
+  failure leaves none so the next call retries (CFactory dedups by
+  service/correlation_key/status), and webhook failures log at WARNING (#1407).
+- **`metadata.phaseModels` selected nothing.** It was honoured only when an
+  undocumented companion flag `isAutoProfile` was also set, so a request naming
+  a backend ran the default model and reported the default honestly -- four
+  benchmark cells asking for three different backends all ran
+  `claude-opus-4-8`. A partial map also pinned every unnamed phase to the
+  default, short-circuiting the CLI argument and the routing tier. The sibling
+  resolvers for betas and thinking carried the same gate (#1397).
+- **Concurrent tasks in one project all built the newest spec.** Ownership was
+  decided by "whichever spec directory has the newest mtime", correct for one
+  task at a time and wrong the moment two run together: three tasks adopted one
+  spec, built it, and pushed to its branch while two specs were never built and
+  all three reported success. The task's own recorded spec dir is now read
+  instead (#1395).
+- **QA signed off on builds that produced nothing.** A run with zero commits and
+  a clean worktree was recorded as `approved` with
+  `tests_passed: {"unit": "1/1"}`. Approval now requires evidence of work --
+  a commit not yet on any origin branch, or an uncommitted change (#1396).
+- **A workspace holding an escaping symlink was permanently unbuildable.** The
+  packer archived links that the extract-side guard must reject, so the failure
+  landed inside the build Job after the archive reached object storage. Fixed in
+  the hub canonical and re-vendored (Factory#944).
+- **`build_report` reported `parallel_wall_s: 0.0` for every serial build** -- a
+  hardcoded literal, so the field never carried a measurement. It is now `None`
+  when nothing timed the run, matching `serial_baseline_s` beside it (#1399).
+- **`aifactory-task.yml` posted `project_id: ""`.** It read
+  `AIFACTORY_PROJECT_ID` from `secrets.` for a value stored as a repository
+  variable; `secrets.` on a variable resolves to empty rather than erroring. The
+  workflow now fails closed when configuration is missing instead of producing a
+  green check that created no task (#1389).
 
 - **A credentialed git argv no longer reaches the log files.** `_inject_credential`
   embeds the PAT in the fetch URL, which becomes an argv element, and `_run_git`
