@@ -9,6 +9,8 @@ instead of Complete with an empty branch. Legitimate 0-completed exits
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -72,3 +74,125 @@ def test_unreadable_plan_status_still_noop(tmp_path: Path) -> None:
     # the guard never fires — never fail a build on unreadable metadata.
     (tmp_path / "implementation_plan.json").write_text("{not json", encoding="utf-8")
     assert build_is_silent_noop(tmp_path) is False
+
+
+# ── #1422: completed subtasks are a claim, not evidence ───────────────────────
+#
+# A run reported "All subtasks completed!", pushed its branch and advanced its
+# card while the branch tip was byte-identical to its base. The subtask counter
+# and the worktree disagreed, and only the counter was consulted. These cover the
+# case the counter cannot see.
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(  # noqa: S603 -- fixed argv, no shell, test-only
+        ["git", *args],  # noqa: S607 -- git from PATH, as the guard itself invokes it
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        env={**os.environ, "GIT_CONFIG_GLOBAL": "/dev/null", "HOME": str(repo)},
+    )
+
+
+def _repo_with_base(tmp_path: Path) -> Path:
+    """A repo whose base commit is reachable from a fake ``origin`` remote."""
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _git(origin, "init", "-q", "-b", "main")
+    _git(origin, "config", "user.email", "t@example.com")
+    _git(origin, "config", "user.name", "t")
+    (origin / "base.txt").write_text("base\n", encoding="utf-8")
+    _git(origin, "add", "base.txt")
+    _git(origin, "commit", "-qm", "base")
+
+    work = tmp_path / "work"
+    _git(tmp_path, "clone", "-q", str(origin), str(work))
+    _git(work, "config", "user.email", "t@example.com")
+    _git(work, "config", "user.name", "t")
+    return work
+
+
+def test_completed_but_empty_worktree_is_noop(tmp_path: Path) -> None:
+    """The #1422 case: subtasks claim completion, git shows nothing."""
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    _write_plan(spec, ["completed", "completed"])
+    work = _repo_with_base(tmp_path)
+    assert build_is_silent_noop(spec, work) is True
+
+
+def test_completed_with_a_real_commit_is_not_noop(tmp_path: Path) -> None:
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    _write_plan(spec, ["completed", "completed"])
+    work = _repo_with_base(tmp_path)
+    (work / "feature.txt").write_text("real work\n", encoding="utf-8")
+    _git(work, "add", "feature.txt")
+    _git(work, "commit", "-qm", "implement the thing")
+    assert build_is_silent_noop(spec, work) is False
+
+
+def test_completed_with_uncommitted_changes_is_not_noop(tmp_path: Path) -> None:
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    _write_plan(spec, ["completed"])
+    work = _repo_with_base(tmp_path)
+    (work / "wip.txt").write_text("uncommitted\n", encoding="utf-8")
+    assert build_is_silent_noop(spec, work) is False
+
+
+def test_without_work_dir_the_counter_still_decides(tmp_path: Path) -> None:
+    """Callers that pass no worktree keep the pre-#1422 behaviour."""
+    _write_plan(tmp_path, ["completed", "pending"])
+    assert build_is_silent_noop(tmp_path) is False
+
+
+def test_no_plan_at_all_with_empty_worktree_is_noop(tmp_path: Path) -> None:
+    """skip_planning writes no plan, so 0-of-0 read as 'all completed' (#1422).
+
+    This is the shape that actually escaped: every low- and medium-tier card runs
+    with ``skip_planning``, so ``count_subtasks`` answers ``(0, 0)`` and the old
+    ``total == 0`` early return made the guard inert for all of them.
+    """
+    spec = tmp_path / "spec"
+    spec.mkdir()  # no implementation_plan.json, as skip_planning leaves it
+    work = _repo_with_base(tmp_path)
+    assert build_is_silent_noop(spec, work) is True
+
+
+def test_no_plan_but_real_commit_is_not_noop(tmp_path: Path) -> None:
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    work = _repo_with_base(tmp_path)
+    (work / "feature.txt").write_text("real work\n", encoding="utf-8")
+    _git(work, "add", "feature.txt")
+    _git(work, "commit", "-qm", "implement the thing")
+    assert build_is_silent_noop(spec, work) is False
+
+
+def test_no_plan_without_work_dir_stays_permissive(tmp_path: Path) -> None:
+    """No plan and no worktree to check: cannot prove a no-op, so do not claim one."""
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    assert build_is_silent_noop(spec) is False
+
+
+# The escape hatches must survive the git check, not just the counter check.
+# Both are reached only after the #1422 branch, so a reordering there would
+# silently start failing paused builds — which look exactly like empty ones.
+
+
+def test_pause_still_excluded_with_an_empty_worktree(tmp_path: Path) -> None:
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    (spec / "PAUSE").write_text("paused", encoding="utf-8")
+    work = _repo_with_base(tmp_path)
+    assert build_is_silent_noop(spec, work) is False
+
+
+def test_human_review_still_excluded_with_an_empty_worktree(tmp_path: Path) -> None:
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    _write_plan(spec, ["completed"], plan_status="human_review")
+    work = _repo_with_base(tmp_path)
+    assert build_is_silent_noop(spec, work) is False
