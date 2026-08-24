@@ -1,5 +1,19 @@
 ## [Unreleased]
 
+## 3.6.77 - 2026-08-24
+
+### Fixed
+
+- **The #1070 evidence gate condemned real builds.** A build with one commit,
+  five files and 29 passing tests was recorded as failed, which also skipped its
+  TFactory handoff and PR endgame. Both evidence sources failed the same way on
+  the kubejob path: git correctly cannot answer (the control-plane worktree stays
+  on the base branch), and the commit ledger answered `0` because it is written
+  once at build start and only appended per subtask — a build that commits once
+  at the end records nothing. `build_commit_count` now asks **origin**, where the
+  build pushed its branch, after local git and before the ledger. Fails to `None`
+  rather than `0`, so an unreachable remote never condemns a build (#1414).
+
 ## 3.6.76 - 2026-08-24
 
 ### Fixed
