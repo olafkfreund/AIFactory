@@ -112,12 +112,9 @@ def _main_spec_dir(project_path: Path, spec_id: str) -> Path:
 
 
 def _worktree_spec_dir(project_path: Path, spec_id: str) -> Path:
-    return (
-        project_path
-        / ".aifactory"
-        / "worktrees"
-        / "tasks"
-        / spec_dir_for(spec_id, spec_id)
+    return spec_dir_for(
+        project_path / ".aifactory" / "worktrees" / "tasks" / spec_id,
+        spec_id,
     )
 
 

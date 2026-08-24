@@ -1148,12 +1148,9 @@ class AgentService(
 
         # Create TaskLogWriter for detailed phase logs
         # Write to worktree spec dir (will be synced to main spec dir)
-        worktree_spec_dir = (
-            project_path
-            / ".aifactory"
-            / "worktrees"
-            / "tasks"
-            / spec_dir_for(spec_id, spec_id)
+        worktree_spec_dir = spec_dir_for(
+            project_path / ".aifactory" / "worktrees" / "tasks" / spec_id,
+            spec_id,
         )
         worktree_spec_dir.mkdir(parents=True, exist_ok=True)
         log_writer = TaskLogWriter(worktree_spec_dir)

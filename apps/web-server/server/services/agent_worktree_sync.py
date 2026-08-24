@@ -16,7 +16,14 @@ from typing import TYPE_CHECKING, Any
 
 from factory_common.logsafe import sanitize_log
 
-from server.specpath import safe_spec_component as _safe_spec_component, spec_dir_for
+from server import specpath
+
+# Kept as a module-level name, not an import alias. Two `from server.specpath
+# import ...` lines cannot satisfy both ruff configs this repo runs -- the
+# backend gate's root config wants them split, the ratchet's strict config wants
+# them combined, and neither accepts the other's shape. One module import
+# sidesteps that, and this binding preserves the name the barrier tests address.
+_safe_spec_component = specpath.safe_spec_component
 
 from ..websockets.events import emit_subtask_update
 from . import task_control
@@ -66,14 +73,11 @@ class WorktreeSyncMixin:
         # Barrier BEFORE the value reaches any path expression.
         spec_id = _safe_spec_component(spec_id)
 
-        worktree_spec = (
-            project_path
-            / ".aifactory"
-            / "worktrees"
-            / "tasks"
-            / spec_dir_for(spec_id, spec_id)
+        worktree_spec = specpath.spec_dir_for(
+            project_path / ".aifactory" / "worktrees" / "tasks" / spec_id,
+            spec_id,
         )
-        main_spec = spec_dir_for(project_path, spec_id)
+        main_spec = specpath.spec_dir_for(project_path, spec_id)
 
         # Ensure main spec dir exists
         main_spec.mkdir(parents=True, exist_ok=True)

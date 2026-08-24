@@ -51,7 +51,7 @@ def safe_spec_component(value: object, field: str = "spec_id") -> str:
     return text
 
 
-def spec_dir_for(project_path: object, spec_id: object) -> Path:
+def spec_dir_for(project_path: str | os.PathLike[str], spec_id: object) -> Path:
     """The spec directory for *spec_id* under *project_path*, barrier applied.
 
     One constructor rather than a guard at each join (#1410). The service layer
