@@ -418,6 +418,34 @@ def _python_libs(m: Manifest, project_dir=None) -> list[str]:
     return out
 
 
+# `npx <tool>` re-fetches `<tool>` from the npm registry even when the flake has
+# already put a version-matched copy on PATH, then runs THAT copy — so the whole
+# point of provisioning is silently undone. Proven live: with the flake's
+# playwright-test-1.60.0 on PATH, `npx playwright test` reported
+# "not found and will be installed: playwright@1.62.1", then died on
+# `Cannot find module '@playwright/test'` and found no tests — while
+# `playwright test` on the same shell passed in 6.5s.
+#
+# Only `playwright` is rewritten. The module header states this rule, and the
+# flake provably ships that binary whenever a browser lane is implied. Stripping
+# `npx` from a tool the flake does NOT ship would turn a working fetch into
+# "command not found", which is worse than the bug — so the other npx commands
+# discovery emits (mocha, cypress, nyc) are left alone until their toolchains
+# are in the flake too.
+_NPX_PROVIDED_BY_FLAKE = ("playwright",)
+
+# argv is ["npx", "<tool>", ...]; anything shorter cannot be a rewrite target.
+_NPX_MIN_PARTS = 2
+
+
+def _strip_npx(command: str) -> str:
+    """Drop a leading ``npx`` when the flake supplies the tool itself."""
+    parts = command.split()
+    if len(parts) >= _NPX_MIN_PARTS and parts[0] == "npx" and parts[1] in _NPX_PROVIDED_BY_FLAKE:
+        return " ".join(parts[1:])
+    return command
+
+
 def nix_develop_argv(
     flake_dir: str,
     commands: list[str],
@@ -440,7 +468,7 @@ def nix_develop_argv(
     """
     if not commands:
         raise ProvisionError("no commands to run in the nix dev shell")
-    joined = " && ".join(commands)
+    joined = " && ".join(_strip_npx(c) for c in commands)
     ref = f"path:{flake_dir}#{attr}" if path_ref else f"{flake_dir}#{attr}"
     return [
         binary,
@@ -461,6 +489,26 @@ def materialize_or_halt_argv(flake_dir: str, env: dict, **kw) -> list[str]:
 
 
 # --------------------------------------------------------------------------- #
+def _test_npx_strip() -> None:
+    """`npx playwright` must become the flake's own binary (TFactory#1152).
+
+    discovery.py emits "npx playwright test" for any repo with a playwright
+    config — correct for the docker runner images, fatal on this substrate: npx
+    re-fetches a mismatched playwright from npm, that copy cannot resolve
+    @playwright/test, and the lane reports zero tests. Every generated browser
+    test is then flagged as a runner error and no AC is ever verified.
+    """
+    argv = nix_develop_argv("/work", ["npx playwright test tests/e2e"])
+    assert argv[-1] == "playwright test tests/e2e", argv  # noqa: S101
+    # Tools the flake does NOT ship keep their npx — stripping it there would
+    # turn a working fetch into "command not found".
+    keep = nix_develop_argv("/work", ["npx cypress run", "npx mocha"])
+    assert keep[-1] == "npx cypress run && npx mocha", keep  # noqa: S101
+    # A bare `npx`, and a command that merely mentions one, are left alone.
+    bare = nix_develop_argv("/work", ["npx", "playwright test"])
+    assert bare[-1] == "npx && playwright test", bare  # noqa: S101
+
+
 def _test() -> None:
     # 1. browser manifest -> flake has playwright + browsers env, drops bare chromium.
     env_browser = {
@@ -533,6 +581,7 @@ def _test() -> None:
     # path_ref for a co-mounted git worktree (avoids the git-fetcher ownership trap).
     argv_p = nix_develop_argv("/work", ["true"], path_ref=True)
     assert argv_p[2] == "path:/work#default", argv_p
+    _test_npx_strip()
 
     # 5. materialize-or-halt uses proof.verify; empty => true.
     a = materialize_or_halt_argv("/work", env_browser)

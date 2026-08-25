@@ -1,5 +1,27 @@
 ## [Unreleased]
 
+## 3.6.79 - 2026-08-25
+
+### Fixed
+
+- **An API the card enumerated was treated as a suggestion.** A card naming the
+  exact functions to export got a working implementation with different names,
+  twice on the same card: 0/4 at low tier, 1/4 at medium. The first run reported
+  24 passing tests, all passing, none exercising the API the card specified --
+  the coder writes the tests too, so a green suite against an invented API is
+  indistinguishable from a green suite against the required one.
+
+  The cost was not cosmetic: the card declared those functions so the next three
+  cards could import them, and with the names changed each dependent card
+  re-implemented the whole thing.
+
+  QA sign-off now refuses when the spec enumerates an API the build does not
+  define, at the same gate as the #1396 empty-build refusal and deferring to it
+  when nothing was built at all. It fires only on a contract the author wrote --
+  an exports block, an export declaration, or backticked names under an API
+  heading -- so a card that never promised an API cannot be blocked for breaking
+  one. (#1421)
+
 ## 3.6.78 - 2026-08-24
 
 ### Fixed
