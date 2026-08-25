@@ -60,7 +60,8 @@ def clone(tmp_path: Path) -> Path:
     _git(seed, "commit", "-qm", "base")
     subprocess.run(
         ["git", "clone", "-q", "--bare", str(seed), str(origin)],
-        check=True, capture_output=True,
+        check=True,
+        capture_output=True,
     )
     work = tmp_path / "work"
     subprocess.run(
@@ -87,7 +88,9 @@ def test_a_literal_exports_block_is_a_contract() -> None:
 
 
 def test_export_declarations_are_a_contract() -> None:
-    assert required_exports("```ts\nexport function move(b) {}\nexport const winner = 1;\n```") == {
+    assert required_exports(
+        "```ts\nexport function move(b) {}\nexport const winner = 1;\n```"
+    ) == {
         "move",
         "winner",
     }
@@ -100,7 +103,10 @@ def test_prose_mentioning_a_function_is_not_a_contract() -> None:
     that never promised an API cannot be blocked for breaking one.
     """
     assert required_exports("Fix the bug in `render()` and tidy `main()`.") == set()
-    assert required_exports("# Overview\n\nA tic tac toe game. No API is specified.") == set()
+    assert (
+        required_exports("# Overview\n\nA tic tac toe game. No API is specified.")
+        == set()
+    )
 
 
 def test_names_are_scoped_to_the_api_section() -> None:
@@ -124,7 +130,12 @@ def test_the_observed_incident_is_refused(clone: Path) -> None:
     _git(clone, "add", "game.js")
     _git(clone, "commit", "-qm", "tictactoe")
 
-    assert missing_exports(SPEC, clone) == ["emptyBoard", "move", "winner", "winningLine"]
+    assert missing_exports(SPEC, clone) == [
+        "emptyBoard",
+        "move",
+        "winner",
+        "winningLine",
+    ]
 
 
 def test_a_build_that_honours_the_contract_passes(clone: Path) -> None:
@@ -186,13 +197,20 @@ def test_a_definition_elsewhere_in_the_repo_does_not_vouch(clone: Path) -> None:
     _git(clone, "add", "game.js")
     _git(clone, "commit", "-qm", "build")
 
-    assert missing_exports(SPEC, clone) == ["emptyBoard", "move", "winner", "winningLine"]
+    assert missing_exports(SPEC, clone) == [
+        "emptyBoard",
+        "move",
+        "winner",
+        "winningLine",
+    ]
 
 
 # ── the glue: reading spec.md at sign-off time ────────────────────────────────
 
 
-def test_the_qa_helper_reads_the_contract_from_spec_md(clone: Path, tmp_path: Path) -> None:
+def test_the_qa_helper_reads_the_contract_from_spec_md(
+    clone: Path, tmp_path: Path
+) -> None:
     """The wiring, not just the checker. A guard that is written but never
     reaches its call site is inert, and looks identical to one that passes."""
     from agents.tools_pkg.tools.qa import _missing_contract_exports

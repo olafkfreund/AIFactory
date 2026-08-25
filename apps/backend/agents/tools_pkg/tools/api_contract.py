@@ -31,6 +31,10 @@ from pathlib import Path
 # being ABSENT, and absence looks the same everywhere.
 _IDENT = r"[A-Za-z_][A-Za-z0-9_]*"
 
+# `git status --porcelain` prefixes each path with two status columns and a
+# space, so the path starts at index 3 and a shorter line carries no path.
+_PORCELAIN_PREFIX = 3
+
 # Contract forms, most explicit first. Each must be something an author WROTE
 # deliberately -- a heading they typed, or literal export code they pasted --
 # never prose that merely happens to mention a function. A heuristic that fires
@@ -39,7 +43,9 @@ _IDENT = r"[A-Za-z_][A-Za-z0-9_]*"
 _EXPORT_BLOCK = re.compile(
     r"(?:module\.exports\s*=\s*\{|export\s*\{)([^}]*)\}", re.MULTILINE
 )
-_EXPORT_DECL = re.compile(rf"export\s+(?:default\s+)?(?:async\s+)?(?:function|const|class)\s+({_IDENT})")
+_EXPORT_DECL = re.compile(
+    rf"export\s+(?:default\s+)?(?:async\s+)?(?:function|const|class)\s+({_IDENT})"
+)
 # A heading that announces an API, then the backticked names listed under it.
 _API_HEADING = re.compile(
     r"^\s{0,3}#{1,6}\s*(?:required\s+)?"
@@ -101,12 +107,28 @@ def _build_output_files(project_dir: Path) -> list[Path]:
     paths: set[str] = set()
     try:
         committed = subprocess.run(
-            ["git", "log", "--name-only", "--pretty=format:", "HEAD", "--not", "--remotes=origin"],  # noqa: S607
-            cwd=project_dir, capture_output=True, text=True, timeout=30, check=False,
+            [  # noqa: S607
+                "git",
+                "log",
+                "--name-only",
+                "--pretty=format:",
+                "HEAD",
+                "--not",
+                "--remotes=origin",
+            ],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
         )
         dirty = subprocess.run(
             ["git", "status", "--porcelain"],  # noqa: S607
-            cwd=project_dir, capture_output=True, text=True, timeout=30, check=False,
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return []
@@ -114,8 +136,8 @@ def _build_output_files(project_dir: Path) -> list[Path]:
         paths.update(ln.strip() for ln in committed.stdout.splitlines() if ln.strip())
     if dirty.returncode == 0:
         for ln in dirty.stdout.splitlines():
-            if len(ln) > 3:
-                paths.add(ln[3:].strip().split(" -> ")[-1])
+            if len(ln) > _PORCELAIN_PREFIX:
+                paths.add(ln[_PORCELAIN_PREFIX:].strip().split(" -> ")[-1])
     return [p for p in (project_dir / rel for rel in sorted(paths)) if p.is_file()]
 
 
