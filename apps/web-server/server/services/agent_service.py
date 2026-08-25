@@ -76,6 +76,13 @@ from .task_phase import (  # noqa: E402,F401
 # (services/tenant_target.py).
 from .tenant_target import TenantTarget, resolve_tenant_target  # noqa: E402,F401
 
+# Statuses after which nothing else runs. Only these justify creating a plan
+# file that was never written: a mid-run status has a live process that will
+# write one, whereas a terminal status is the last word and has nowhere else to
+# go. "human_review" is deliberately absent -- it is a checkpoint, and a task
+# reaching it has a plan by definition.
+_TERMINAL_PLAN_STATUSES = frozenset({"completed", "failed"})
+
 
 class AgentService(
     KubejobMixin,
@@ -382,10 +389,57 @@ class AgentService(
             f"[AgentService._update_plan_status] plan_file exists: {plan_file.exists()}"
         )
         if not plan_file.exists():
+            # A TERMINAL status must not depend on an artifact the failure
+            # prevented (#1430). Task status lives in the plan file, so a build
+            # that died before writing one had nowhere to record that it died --
+            # it kept reporting its last phase forever. The cockpit showed a
+            # LIVE AGENT for a build that had failed 50 minutes earlier, and the
+            # dispatching card never left "dispatched", so the sequence could
+            # neither advance nor report failure.
+            #
+            # The earlier a build failed, the more certain it was to be recorded
+            # as still running. That is exactly backwards.
+            #
+            # Writing a minimal plan is safe HERE and only here: the file is
+            # ABSENT, not unreadable. #1081's rule -- "I cannot read this is
+            # never a licence to replace it" -- is about a plan that exists and
+            # would be lost. There is nothing to lose when none was ever
+            # written, and the alternative is a task that is permanently a lie.
+            if status not in _TERMINAL_PLAN_STATUSES:
+                logger.warning(
+                    "[AgentService._update_plan_status] plan_file does not exist, "
+                    "returning early (status=%s is not terminal)",
+                    sanitize_log(status),
+                )
+                return
             logger.warning(
-                "[AgentService._update_plan_status] plan_file does not exist, returning early"
+                "[AgentService._update_plan_status] plan_file does not exist; "
+                "recording terminal status=%s so the task does not stay running",
+                sanitize_log(status),
             )
-            return
+            try:
+                plan_file.parent.mkdir(parents=True, exist_ok=True)
+                plan_file.write_text(
+                    json.dumps(
+                        {
+                            "status": status,
+                            "phases": [],
+                            "recorded_by": "terminal-status-fallback",
+                        },
+                        indent=2,
+                    )
+                )
+            except OSError:
+                # Escalate rather than log-and-return. A dropped terminal status
+                # is the one update that must never be lost silently -- losing it
+                # is what produced the phantom agent this branch exists to stop.
+                logger.exception(
+                    "[AgentService._update_plan_status] could not record terminal "
+                    "status=%s for %s",
+                    sanitize_log(status),
+                    sanitize_log(spec_id),
+                )
+                raise
 
         # Map internal status to frontend-compatible status using the canonical helpers
         # (defined before try so it's available in the except fallback)
