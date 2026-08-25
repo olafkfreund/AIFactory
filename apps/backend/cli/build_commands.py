@@ -68,7 +68,8 @@ def _contract_gap_in_existing_code(spec_dir: Path, work_dir: Path | None) -> lis
             unsatisfied_by_existing_code,
         )
 
-        return unsatisfied_by_existing_code(spec_text, Path(work_dir))
+        names: list[str] = unsatisfied_by_existing_code(spec_text, Path(work_dir))
+        return names
     except Exception:  # noqa: BLE001 - never let a diagnostic mask the real failure
         return []
 

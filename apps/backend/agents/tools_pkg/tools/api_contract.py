@@ -226,8 +226,8 @@ def unsatisfied_by_existing_code(spec_text: str, project_dir: Path) -> list[str]
     if listed.returncode != 0:
         return []
     defined: set[str] = set()
-    for rel in listed.stdout.splitlines():
-        rel = rel.strip()
+    for line in listed.stdout.splitlines():
+        rel = line.strip()
         if not rel:
             continue
         path = project_dir / rel

@@ -49,6 +49,10 @@ class KubejobMixin:
         _drain_queue: Callable[..., Any]
         _emit_log: Callable[..., Any]
         _release_task_credential: Callable[..., Any]
+        # Declared for the same reason as its siblings above: a sibling mixin
+        # provides it, and every self._update_plan_status call in this file was
+        # otherwise an attr-defined error (#1430).
+        _update_plan_status: Callable[..., Any]
         _resolve_claude_token_pooled: Callable[..., Any]
         _safe_emit_task_status: Callable[..., Any]
         _spawn_task_execution: Callable[..., Any]
@@ -125,8 +129,6 @@ class KubejobMixin:
 
     async def _record_kubejob_failure(self, job_id: str, reason: str) -> None:
         """Write the terminal ``failed`` status where the task API reads it."""
-        from server.project_registry import resolve_project_path
-
         project_id, _, spec_id = job_id.partition(":")
         if not spec_id:
             return
