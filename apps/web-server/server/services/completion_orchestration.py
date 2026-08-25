@@ -81,8 +81,15 @@ async def run_terminal_completion(
     is_completed: bool,
     terminal_status: str,
     logger: Any,
-) -> None:
-    """Fire-once terminal-completion emission + side-effects (see module docstring)."""
+) -> str:
+    """Fire-once terminal-completion emission + side-effects (see module docstring).
+
+    Returns the EFFECTIVE terminal status, which is not always the one passed in:
+    the evidence gate below downgrades ``completed`` to ``failed`` when the build
+    wrote nothing. Callers must record what this decided rather than what they
+    asked for, or the plan says "completed" for a build this function already
+    ruled failed (#1430).
+    """
     # Evidence gate (#1070): a build with nothing to show is a FAILED build, not
     # a review request. Downgrading here covers both build backends at once —
     # the in-pod subprocess path and the kubejob path both finish through this
@@ -485,3 +492,4 @@ async def run_terminal_completion(
                         )
             except Exception:
                 logger.debug("PR endgame failed (best-effort)", exc_info=True)
+    return terminal_status
