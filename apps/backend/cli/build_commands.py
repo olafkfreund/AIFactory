@@ -50,6 +50,29 @@ from .input_handlers import (
 )
 
 
+def _contract_gap_in_existing_code(spec_dir: Path, work_dir: Path | None) -> list[str]:
+    """Names the spec enumerates that the checkout does not define (#1430).
+
+    Best-effort and additive: any failure yields no names and the caller falls
+    back to its previous message. A diagnostic must never turn one failure into
+    two.
+    """
+    if work_dir is None:
+        return []
+    try:
+        spec_text = (spec_dir / "spec.md").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    try:
+        from agents.tools_pkg.tools.api_contract import (  # noqa: PLC0415
+            unsatisfied_by_existing_code,
+        )
+
+        return unsatisfied_by_existing_code(spec_text, Path(work_dir))
+    except Exception:  # noqa: BLE001 - never let a diagnostic mask the real failure
+        return []
+
+
 def build_is_silent_noop(spec_dir: Path, work_dir: Path | None = None) -> bool:
     """True when a finished agent run implemented NOTHING (#779, #1422).
 
@@ -426,12 +449,33 @@ def handle_build_command(
                     "changes (#1422)"
                 )
             )
-            print_status(
-                f"BUILD FAILED - {_detail}. "
-                "The coder implemented nothing; check the coding-provider "
-                "credentials/model and the session logs.",
-                "error",
-            )
+            # #1430: "check the credentials" is the right advice for a dead
+            # provider and the wrong advice for the commonest case. On spec 158
+            # the coder found a commit whose description matched the card almost
+            # verbatim, declared the work already done, and wrote nothing --
+            # while the existing module exported newGame/checkWinner and the
+            # spec named emptyBoard/move/winner/winningLine. Nothing was wrong
+            # with the credentials, and the message sent the reader to them.
+            #
+            # So when the spec enumerates an API the checkout does not provide,
+            # say THAT: it names what is actually wrong and what would fix it.
+            _unsatisfied = _contract_gap_in_existing_code(spec_dir, working_dir)
+            if _unsatisfied:
+                print_status(
+                    f"BUILD FAILED - {_detail}. The spec requires "
+                    f"{', '.join(_unsatisfied)}, which the existing code does "
+                    "not define -- so 'already implemented' is not true, "
+                    "whatever the commit descriptions say. Implement the named "
+                    "API, or correct the spec if the names are wrong.",
+                    "error",
+                )
+            else:
+                print_status(
+                    f"BUILD FAILED - {_detail}. "
+                    "The coder implemented nothing; check the coding-provider "
+                    "credentials/model and the session logs.",
+                    "error",
+                )
             sys.exit(1)
 
         # Run QA validation BEFORE finalization (while worktree still exists)

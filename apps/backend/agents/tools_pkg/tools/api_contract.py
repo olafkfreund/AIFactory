@@ -122,6 +122,22 @@ def required_exports(spec_text: str) -> set[str]:
     )
 
 
+def _defines(text: str, name: str) -> bool:
+    """Whether *text* defines *name*.
+
+    Definition, not export syntax -- see :func:`missing_exports` for why. Shared
+    by both callers so "defined" cannot come to mean two different things.
+    """
+    return bool(
+        re.search(
+            rf"\b(?:function|const|let|var|class|def)\s+{re.escape(name)}\b"
+            rf"|\b{re.escape(name)}\s*[:=]\s*(?:async\s+)?(?:function\b|\()"
+            rf"|\bexports\.{re.escape(name)}\b",
+            text,
+        )
+    )
+
+
 def _build_output_files(project_dir: Path) -> list[Path]:
     """Files this build added or changed -- committed-but-unpushed, plus dirty.
 
@@ -171,6 +187,64 @@ def _build_output_files(project_dir: Path) -> list[Path]:
     return [p for p in (project_dir / rel for rel in sorted(paths)) if p.is_file()]
 
 
+def unsatisfied_by_existing_code(spec_text: str, project_dir: Path) -> list[str]:
+    """Required names absent from the WHOLE checkout, not just this build's output.
+
+    ``missing_exports`` deliberately looks only at what the build produced, so a
+    same-named function elsewhere cannot vouch for an API the build never wrote.
+    This asks the different question: does the code that is ALREADY here satisfy
+    the contract?
+
+    That question only arises when a build produced nothing, and it is the one
+    the operator actually needs answered. Observed on spec 158: the coder read
+    the card, found a commit whose description matched almost verbatim, declared
+    the work already done and wrote nothing. It was judging by DESCRIPTION -- the
+    existing module exports newGame/checkWinner/isBoardFull, while the spec names
+    emptyBoard/move/winner/winningLine. 1 of 4.
+
+    The build then failed with "the coder implemented nothing; check the
+    coding-provider credentials/model", which is true and sent the reader to the
+    wrong place entirely. Nothing was wrong with the credentials.
+
+    Tracked files only (``git ls-files``): a vendored copy or a node_modules hit
+    would answer yes to a contract the project does not actually offer.
+    """
+    required = required_exports(spec_text)
+    if not required:
+        return []
+    try:
+        listed = subprocess.run(
+            ["git", "ls-files"],  # noqa: S607
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if listed.returncode != 0:
+        return []
+    defined: set[str] = set()
+    for rel in listed.stdout.splitlines():
+        rel = rel.strip()
+        if not rel:
+            continue
+        path = project_dir / rel
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for name in required - defined:
+            if _defines(text, name):
+                defined.add(name)
+        if defined == required:
+            break
+    return sorted(required - defined)
+
+
 def missing_exports(spec_text: str, project_dir: Path) -> list[str]:
     """Required names this build did not define. Empty when the contract is met.
 
@@ -198,11 +272,6 @@ def missing_exports(spec_text: str, project_dir: Path) -> list[str]:
         for name in required:
             if name in defined:
                 continue
-            if re.search(
-                rf"\b(?:function|const|let|var|class|def)\s+{re.escape(name)}\b"
-                rf"|\b{re.escape(name)}\s*[:=]\s*(?:async\s+)?(?:function\b|\()"
-                rf"|\bexports\.{re.escape(name)}\b",
-                text,
-            ):
+            if _defines(text, name):
                 defined.add(name)
     return sorted(required - defined)
