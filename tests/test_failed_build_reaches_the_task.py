@@ -14,6 +14,7 @@ actually invokes the hook -- because that is the half that was missing.
 
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 
@@ -92,3 +93,134 @@ async def test_absent_hook_is_still_supported() -> None:
     """Tests and any caller that does not need the hook keep working."""
     be = KubeJobBuildBackend(_Store())
     await be._fail("p:158-spec", "boom")  # must not raise
+
+
+# ── the SUCCESS side had the same hole (#1430) ────────────────────────────────
+#
+# Spec 160 finished with all four subtasks completed, pushed a branch with the
+# contracted API, handed off to TFactory with a 200 -- and still read
+# "in_progress / planning" to the task API and "dispatched" to the card that
+# requested it. The failure case was the visible one (a LIVE AGENT for a dead
+# build); this one is worse, because the sequence cannot advance and the card
+# never reaches its next stage even though the work is done.
+
+
+class _Recorder:
+    """The two calls _on_kubejob_build_done makes, without the real mixin host."""
+
+    def __init__(self, effective: str = "completed") -> None:
+        self.effective = effective
+        self.recorded: list[tuple[str, str]] = []
+        self.released: list[str] = []
+        self.drained = 0
+
+    def _release_task_credential(self, job_id: str) -> None:
+        self.released.append(job_id)
+
+    async def _emit_kubejob_terminal_completion(self, job_id: str) -> str:
+        return self.effective
+
+    async def _record_kubejob_terminal(self, job_id: str, status: str) -> None:
+        self.recorded.append((job_id, status))
+
+    async def _drain_queue(self) -> None:
+        self.drained += 1
+
+
+@pytest.mark.asyncio
+async def test_a_successful_build_records_completed() -> None:
+    from server.services.agent_kubejob import KubejobMixin
+
+    r = _Recorder("completed")
+    await KubejobMixin._on_kubejob_build_done(r, "p:160-spec")
+
+    assert r.recorded == [("p:160-spec", "completed")]
+
+
+@pytest.mark.asyncio
+async def test_the_evidence_gate_downgrade_is_what_gets_recorded() -> None:
+    """run_terminal_completion downgrades "completed" to "failed" when the build
+    wrote nothing. Recording the optimistic value would put "completed" in the
+    plan for a build that function already ruled failed."""
+    from server.services.agent_kubejob import KubejobMixin
+
+    r = _Recorder("failed")
+    await KubejobMixin._on_kubejob_build_done(r, "p:160-spec")
+
+    assert r.recorded == [("p:160-spec", "failed")]
+
+
+@pytest.mark.asyncio
+async def test_bookkeeping_still_happens_on_success() -> None:
+    """Credential release and queue drain must survive the change, or a finished
+    build strands a credential and blocks the FIFO behind it."""
+    from server.services.agent_kubejob import KubejobMixin
+
+    r = _Recorder()
+    await KubejobMixin._on_kubejob_build_done(r, "p:160-spec")
+
+    assert r.released == ["p:160-spec"]
+    assert r.drained == 1
+
+
+# ── the return-value plumbing itself (mutation C) ─────────────────────────────
+#
+# The tests above fake _emit_kubejob_terminal_completion, so replacing
+# run_terminal_completion's `return terminal_status` with a hardcoded
+# "completed" changed nothing and the mutation SURVIVED. The downgrade is the
+# whole reason the caller asks rather than assumes, so it needs its own test.
+
+
+@pytest.mark.asyncio
+async def test_run_terminal_completion_returns_the_downgraded_status(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """An empty build is downgraded to "failed" inside the completion path. The
+    caller records what came back, so if this returns the optimistic value the
+    plan says "completed" for a build already ruled failed."""
+    from server.services import completion_orchestration as co
+
+    monkeypatch.setattr(co, "_build_wrote_nothing", lambda *a, **k: True)
+
+    spec_dir = tmp_path / "spec"
+    spec_dir.mkdir()
+
+    result = await co.run_terminal_completion(
+        spec_dir=spec_dir,
+        project_path=tmp_path,
+        spec_id="160-spec",
+        task_id="p:160-spec",
+        backend_path=None,
+        is_terminal=False,  # skip the emit; the downgrade is what matters
+        is_completed=True,
+        terminal_status="completed",
+        logger=logging.getLogger("test"),
+    )
+
+    assert result == "failed"
+
+
+@pytest.mark.asyncio
+async def test_it_returns_completed_when_the_build_wrote_something(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from server.services import completion_orchestration as co
+
+    monkeypatch.setattr(co, "_build_wrote_nothing", lambda *a, **k: False)
+
+    spec_dir = tmp_path / "spec"
+    spec_dir.mkdir()
+
+    result = await co.run_terminal_completion(
+        spec_dir=spec_dir,
+        project_path=tmp_path,
+        spec_id="160-spec",
+        task_id="p:160-spec",
+        backend_path=None,
+        is_terminal=False,
+        is_completed=True,
+        terminal_status="completed",
+        logger=logging.getLogger("test"),
+    )
+
+    assert result == "completed"
