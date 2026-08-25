@@ -1054,7 +1054,7 @@ class KubeJobBuildBackend:
     reconcile-by-poll → reap) is pure-ish and unit-tested.
     """
 
-    def __init__(self, store: Any, on_done: Any = None) -> None:
+    def __init__(self, store: Any, on_done: Any = None, on_fail: Any = None) -> None:
         self._store = store
         # #852: fired once when a build reaches ``done`` (from ``_done``). The
         # reaper only writes the job-state row; the AgentService layer injects
@@ -1062,6 +1062,13 @@ class KubeJobBuildBackend:
         # emit the completion event + TFactory handoff — none of which the row
         # write does. Async ``(job_id) -> None``; None in tests / when unused.
         self._on_done = on_done
+        # #1430: the same asymmetry #852 fixed for ``done``, still open for
+        # ``fail``. ``_fail`` wrote the job-state row and stopped, so a failed
+        # build never reached the task: it kept reporting its last phase, the
+        # cockpit showed a LIVE AGENT for a build that had died, and the
+        # dispatching card never left "dispatched". Async ``(job_id, reason) ->
+        # None``; None in tests / when unused.
+        self._on_fail = on_fail
 
     # -- cluster I/O (thin, injectable for tests) ---------------------------
 
@@ -1362,6 +1369,19 @@ class KubeJobBuildBackend:
             _log.warning("[build_backend] reaped stranded build %s: %s", job_id, reason)
         except Exception:  # noqa: BLE001 - reaper must never crash the loop
             _log.exception("[build_backend] could not reap %s", job_id)
+            return
+        # Mirrors ``_done`` exactly, and for the same reason (#1430): the row
+        # write is not visible to the task, so without this the build is failed
+        # in the store and running everywhere a human or CFactory looks.
+        # Guarded the same way — a hook failure must not crash the reconcile
+        # loop or re-strand an already-failed build.
+        if self._on_fail is not None:
+            try:
+                await self._on_fail(job_id, reason)
+            except Exception:  # noqa: BLE001
+                _log.exception(
+                    "[build_backend] on_fail hook raised for %s (ignored)", job_id
+                )
 
     @staticmethod
     async def _job_outcome(batch: Any, namespace: str, job_name: str) -> str:

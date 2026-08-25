@@ -49,6 +49,10 @@ class KubejobMixin:
         _drain_queue: Callable[..., Any]
         _emit_log: Callable[..., Any]
         _release_task_credential: Callable[..., Any]
+        # Declared for the same reason as its siblings above: a sibling mixin
+        # provides it, and every self._update_plan_status call in this file was
+        # otherwise an attr-defined error (#1430).
+        _update_plan_status: Callable[..., Any]
         _resolve_claude_token_pooled: Callable[..., Any]
         _safe_emit_task_status: Callable[..., Any]
         _spawn_task_execution: Callable[..., Any]
@@ -83,9 +87,56 @@ class KubejobMixin:
             from .build_backend import KubeJobBuildBackend
 
             self._kubejob_build_backend = KubeJobBuildBackend(
-                self._store(), on_done=self._on_kubejob_build_done
+                self._store(),
+                on_done=self._on_kubejob_build_done,
+                on_fail=self._on_kubejob_build_failed,
             )
         return self._kubejob_build_backend
+
+    async def _on_kubejob_build_failed(self, job_id: str, reason: str) -> None:
+        """A kubejob build reached ``failed`` (#1430): finish it like a real one.
+
+        The counterpart to :meth:`_on_kubejob_build_done`, and missing for the
+        same reason its sibling was (#852): the reaper's ``_fail`` writes only
+        the job-state row, which nothing downstream reads. Task status lives in
+        the plan, so a failed build kept reporting its last phase -- the cockpit
+        showed a LIVE AGENT for a build that had died 50 minutes earlier, the
+        dispatching card never left "dispatched", and a re-run would adopt the
+        phantom.
+
+        The earlier a build failed, the more certainly it was recorded as still
+        running, because an early failure is exactly the one that never wrote a
+        plan to update.
+
+        Deliberately NOT the done path: no completion event and no TFactory
+        handoff. Nothing was built, so handing off would send the verifier at a
+        branch that does not exist. What a failure DOES share with a success is
+        the bookkeeping -- release the pooled credential and drain the queue, or
+        one dead build strands a credential and blocks the FIFO behind it.
+
+        Best-effort throughout: a build already marked failed must never be
+        undone by a bookkeeping failure here.
+        """
+        self._release_task_credential(job_id)
+        try:
+            await self._record_kubejob_failure(job_id, reason)
+        except Exception:  # noqa: BLE001
+            _log.exception(
+                "[AgentService] kubejob failure record failed for %s (ignored)",
+                job_id,
+            )
+        await self._drain_queue()
+
+    async def _record_kubejob_failure(self, job_id: str, reason: str) -> None:
+        """Write the terminal ``failed`` status where the task API reads it."""
+        project_id, _, spec_id = job_id.partition(":")
+        if not spec_id:
+            return
+        project_path = resolve_project_path(project_id)
+        _log.warning(
+            "[AgentService] recording failed status for %s: %s", job_id, reason
+        )
+        await self._update_plan_status(project_path, spec_id, "failed", job_id)
 
     async def _on_kubejob_build_done(self, job_id: str) -> None:
         """A kubejob build reached ``done`` (#852): finish it like a real build.
