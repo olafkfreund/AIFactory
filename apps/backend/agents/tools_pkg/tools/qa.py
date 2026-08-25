@@ -12,6 +12,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .api_contract import missing_exports
+
 try:
     from claude_agent_sdk import tool
 
@@ -19,6 +21,21 @@ try:
 except ImportError:
     SDK_TOOLS_AVAILABLE = False
     tool = None
+
+
+def _missing_contract_exports(spec_dir: Path, project_dir: Path) -> list[str]:
+    """Required names from spec.md that this build did not define (#1421).
+
+    Best-effort: an unreadable spec yields no contract and no refusal. An
+    unreadable spec is not evidence that a contract was broken, and blocking
+    sign-off on it would trade a false pass for a false failure — the same trade
+    ``_nothing_was_built`` refuses to make when git cannot answer.
+    """
+    try:
+        spec_text = (spec_dir / "spec.md").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    return missing_exports(spec_text, project_dir)
 
 
 def _nothing_was_built(project_dir: Path) -> str | None:
@@ -195,6 +212,35 @@ def create_qa_tools(
                                     "the change first; if the task genuinely "
                                     "requires no code change, say so rather than "
                                     "signing off."
+                                ),
+                            }
+                        ]
+                    }
+
+                # #1421: an API the card ENUMERATED is a contract, not a
+                # suggestion. Two runs of the same card produced 0/4 and 1/4 of
+                # the named functions, and the second reported 24 passing tests
+                # -- the coder writes the tests too, so a suite can be green
+                # against an API it invented. Only a check catches that: a green
+                # suite against the wrong API is indistinguishable from a green
+                # suite against the right one, and raising the tier moved 0/4 to
+                # 1/4 without making the contract binding.
+                missing = _missing_contract_exports(get_spec_dir(), get_project_dir())
+                if missing:
+                    return {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": (
+                                    "Refusing to approve: the spec enumerates an "
+                                    "API this build does not define — "
+                                    f"{', '.join(missing)}. The card named those "
+                                    "so dependent cards could import them; with "
+                                    "different names each one re-implements the "
+                                    "whole thing instead (#1421). Export the "
+                                    "names the spec asked for, or change the "
+                                    "spec if they are wrong — do not sign off on "
+                                    "an equivalent API under other names."
                                 ),
                             }
                         ]
