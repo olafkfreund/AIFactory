@@ -310,3 +310,98 @@ def test_the_bullet_shape_reaches_missing_exports(clone: Path) -> None:
         "winner",
         "winningLine",
     ]
+
+
+# ── #1430: "already implemented" is a claim that can be checked ───────────────
+#
+# Spec 158: the coder read the card, found a commit whose description matched
+# almost verbatim, declared the work already done and wrote nothing. It was
+# judging by DESCRIPTION -- the existing module exported newGame/checkWinner/
+# isBoardFull while the spec named emptyBoard/move/winner/winningLine. 1 of 4.
+#
+# The build then failed with "the coder implemented nothing; check the
+# coding-provider credentials/model", which is true and sends the reader to the
+# wrong place. Nothing was wrong with the credentials.
+
+
+def test_the_existing_checkout_is_measured_against_the_contract(clone: Path) -> None:
+    """The spec-158 shape exactly: code is present, the required API is not."""
+    from agents.tools_pkg.tools.api_contract import unsatisfied_by_existing_code
+
+    (clone / "game.js").write_text(
+        "function newGame() {}\nfunction checkWinner() {}\nfunction move() {}\n"
+    )
+    _git(clone, "add", "game.js")
+    _git(clone, "commit", "-qm", "looks done, is not")
+
+    assert unsatisfied_by_existing_code(SPEC, clone) == [
+        "emptyBoard",
+        "winner",
+        "winningLine",
+    ]
+
+
+def test_a_checkout_that_satisfies_the_contract_reports_nothing(clone: Path) -> None:
+    """'Already implemented' must be believed when it is actually true."""
+    from agents.tools_pkg.tools.api_contract import unsatisfied_by_existing_code
+
+    (clone / "game.js").write_text(
+        "function emptyBoard() {}\nfunction move() {}\n"
+        "function winner() {}\nfunction winningLine() {}\n"
+    )
+    _git(clone, "add", "game.js")
+    _git(clone, "commit", "-qm", "genuinely done")
+
+    assert unsatisfied_by_existing_code(SPEC, clone) == []
+
+
+def test_untracked_files_do_not_vouch_for_the_contract(clone: Path) -> None:
+    """Tracked files only. A vendored copy or a node_modules hit would answer
+    yes to a contract the project does not actually offer."""
+    from agents.tools_pkg.tools.api_contract import unsatisfied_by_existing_code
+
+    (clone / "vendor.js").write_text(
+        "function emptyBoard() {}\nfunction move() {}\n"
+        "function winner() {}\nfunction winningLine() {}\n"
+    )  # never git-added
+
+    assert unsatisfied_by_existing_code(SPEC, clone) == [
+        "emptyBoard",
+        "move",
+        "winner",
+        "winningLine",
+    ]
+
+
+def test_a_spec_with_no_contract_reports_nothing(clone: Path) -> None:
+    from agents.tools_pkg.tools.api_contract import unsatisfied_by_existing_code
+
+    assert unsatisfied_by_existing_code("# Just do something sensible.\n", clone) == []
+
+
+def test_this_differs_from_missing_exports_on_purpose(clone: Path) -> None:
+    """The two answer different questions, and both are needed.
+
+    missing_exports asks "did THIS BUILD write the API" -- so a pre-existing
+    definition must not vouch for it. unsatisfied_by_existing_code asks "does
+    the code already here satisfy the contract", which is the question that
+    matters when a build produced nothing at all.
+    """
+    from agents.tools_pkg.tools.api_contract import (
+        missing_exports,
+        unsatisfied_by_existing_code,
+    )
+
+    (clone / "game.js").write_text(
+        "function emptyBoard() {}\nfunction move() {}\n"
+        "function winner() {}\nfunction winningLine() {}\n"
+    )
+    _git(clone, "add", "game.js")
+    _git(clone, "commit", "-qm", "seed")
+    _git(clone, "push", "-q", "origin", "HEAD:main")
+    _git(clone, "fetch", "-q", "origin")
+
+    # This build wrote nothing, so missing_exports defers to the #1396 refusal.
+    assert missing_exports(SPEC, clone) == []
+    # But the contract IS satisfied by what is already there.
+    assert unsatisfied_by_existing_code(SPEC, clone) == []
