@@ -1,6 +1,132 @@
 ## [Unreleased]
 
+## 3.6.79 - 2026-08-25
+
 ### Fixed
+
+- **An API the card enumerated was treated as a suggestion.** A card naming the
+  exact functions to export got a working implementation with different names,
+  twice on the same card: 0/4 at low tier, 1/4 at medium. The first run reported
+  24 passing tests, all passing, none exercising the API the card specified --
+  the coder writes the tests too, so a green suite against an invented API is
+  indistinguishable from a green suite against the required one.
+
+  The cost was not cosmetic: the card declared those functions so the next three
+  cards could import them, and with the names changed each dependent card
+  re-implemented the whole thing.
+
+  QA sign-off now refuses when the spec enumerates an API the build does not
+  define, at the same gate as the #1396 empty-build refusal and deferring to it
+  when nothing was built at all. It fires only on a contract the author wrote --
+  an exports block, an export declaration, or backticked names under an API
+  heading -- so a card that never promised an API cannot be blocked for breaking
+  one. (#1421)
+
+## 3.6.78 - 2026-08-24
+
+### Fixed
+
+- **The coder image had no browser, so screencast evidence was impossible.**
+  `@playwright/mcp` was installed but no browser binary existed, and nothing in
+  the cluster could fetch one. Egress from the build Job reaches exactly two
+  destinations -- the Wolfi apk mirror and the npm registry. Every binary CDN is
+  blocked in a way that reads as slowness rather than failure: Playwright's own
+  download opens, transfers ~9MB of a ~170MB Chromium, then stalls indefinitely,
+  and `ffmpeg-static` fails identically against GitHub releases. A 50-minute
+  probe sat at 9,068,719 bytes without moving.
+
+  Both halves now arrive through the two channels that work: `chromium` from apk,
+  and `@ffmpeg-installer/linux-x64`, which ships its binary inside the npm tarball
+  rather than downloading on postinstall. The npm route is required for a second
+  reason -- Wolfi's own ffmpeg carries no VP8 encoder, only the `vp8_v4l2m2m`
+  hardware wrapper, so Playwright's webm pipeline died on `-deadline` (a libvpx
+  private option) before writing a frame, and no `libvpx` package exists in the
+  index.
+
+  Playwright resolves both binaries from versioned cache directories *before*
+  consulting `PLAYWRIGHT_*_EXECUTABLE_PATH`, so the env vars have no effect and
+  symlinks are required. Revisions are derived from `playwright install
+  --dry-run` rather than hardcoded, so a version bump re-links instead of
+  silently falling back to a download that cannot complete. Two `test -L`
+  assertions fail the build if either link is missing.
+
+  Scoped to the `build-runtime` stage: the API server has no use for a browser
+  and should not carry its CVE surface. Verified in-cluster on the pinned build
+  image -- screenshot 8,640 bytes, webm 18,244 bytes, both from
+  `chromium.launch()` with no code changes.
+
+## 3.6.77 - 2026-08-24
+
+### Fixed
+
+- **The #1070 evidence gate condemned real builds.** A build with one commit,
+  five files and 29 passing tests was recorded as failed, which also skipped its
+  TFactory handoff and PR endgame. Both evidence sources failed the same way on
+  the kubejob path: git correctly cannot answer (the control-plane worktree stays
+  on the base branch), and the commit ledger answered `0` because it is written
+  once at build start and only appended per subtask — a build that commits once
+  at the end records nothing. `build_commit_count` now asks **origin**, where the
+  build pushed its branch, after local git and before the ledger. Fails to `None`
+  rather than `0`, so an unreachable remote never condemns a build (#1414).
+
+## 3.6.76 - 2026-08-24
+
+### Fixed
+
+- **The service layer joined `spec_id` onto filesystem paths with no barrier.**
+  `safe_spec_component` existed and worked, but only the route handlers used it
+  -- they sanitise by reassignment before joining. The services built the same
+  paths themselves and guarded 2 of their 31 joins across 13 modules;
+  `agent_kubejob` split a job id on ":" and joined the tail onto a path with
+  nothing in between. `specpath.py`'s own docstring already claimed services
+  "keep their own barrier for the paths they build directly", and they did not.
+  The join now lives behind the barrier in one `spec_dir_for()` constructor,
+  because a per-site guard leaves the next site unguarded. `Path` joins collapse
+  traversal silently, so validation has to happen before the join (#1410).
+
+## 3.6.75 - 2026-08-23
+
+### Fixed
+
+- **The cockpit's token and cost figures were $0.00 for every run, and nothing
+  said why.** `.terminal_completion_emitted` was written BEFORE the RFC-0001
+  emit, and the emit only runs when that marker is absent -- so the first
+  failure wrote a permanent "already done" tombstone and every later terminal
+  call skipped delivery entirely. Measured live: 6 of 7 specs carried the marker
+  while CFactory had received 2 POSTs in 24 hours, one of them a hand-sent
+  probe, and 12,492 log lines mentioned the webhook zero times because the
+  failure logged at DEBUG. The marker now records a confirmed delivery, a
+  failure leaves none so the next call retries (CFactory dedups by
+  service/correlation_key/status), and webhook failures log at WARNING (#1407).
+- **`metadata.phaseModels` selected nothing.** It was honoured only when an
+  undocumented companion flag `isAutoProfile` was also set, so a request naming
+  a backend ran the default model and reported the default honestly -- four
+  benchmark cells asking for three different backends all ran
+  `claude-opus-4-8`. A partial map also pinned every unnamed phase to the
+  default, short-circuiting the CLI argument and the routing tier. The sibling
+  resolvers for betas and thinking carried the same gate (#1397).
+- **Concurrent tasks in one project all built the newest spec.** Ownership was
+  decided by "whichever spec directory has the newest mtime", correct for one
+  task at a time and wrong the moment two run together: three tasks adopted one
+  spec, built it, and pushed to its branch while two specs were never built and
+  all three reported success. The task's own recorded spec dir is now read
+  instead (#1395).
+- **QA signed off on builds that produced nothing.** A run with zero commits and
+  a clean worktree was recorded as `approved` with
+  `tests_passed: {"unit": "1/1"}`. Approval now requires evidence of work --
+  a commit not yet on any origin branch, or an uncommitted change (#1396).
+- **A workspace holding an escaping symlink was permanently unbuildable.** The
+  packer archived links that the extract-side guard must reject, so the failure
+  landed inside the build Job after the archive reached object storage. Fixed in
+  the hub canonical and re-vendored (Factory#944).
+- **`build_report` reported `parallel_wall_s: 0.0` for every serial build** -- a
+  hardcoded literal, so the field never carried a measurement. It is now `None`
+  when nothing timed the run, matching `serial_baseline_s` beside it (#1399).
+- **`aifactory-task.yml` posted `project_id: ""`.** It read
+  `AIFACTORY_PROJECT_ID` from `secrets.` for a value stored as a repository
+  variable; `secrets.` on a variable resolves to empty rather than erroring. The
+  workflow now fails closed when configuration is missing instead of producing a
+  green check that created no task (#1389).
 
 - **A credentialed git argv no longer reaches the log files.** `_inject_credential`
   embeds the PAT in the fetch URL, which becomes an argv element, and `_run_git`
