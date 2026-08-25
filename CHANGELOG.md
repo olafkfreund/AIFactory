@@ -1,5 +1,31 @@
 ## [Unreleased]
 
+## 3.6.81 - 2026-08-25
+
+### Fixed
+
+- **An enumerated API now reaches the coder as a hard requirement.** Two live
+  failures on the same card, both after the spec was fixed to carry the API at
+  all: one build read emptyBoard/move/winner/winningLine and shipped
+  newGame/checkWinner/isBoardFull (1 of 4); the next wrote nothing at all,
+  reporting that the work "was already completed -- description matches this
+  spec almost verbatim". It was judging by DESCRIPTION while the existing module
+  exported different names. The prompt now names the required exports, says why
+  they bind (later cards import them), and tells the agent to VERIFY each one in
+  the checkout before concluding the work is done. (#1434)
+
+- **A reaped failed build now reaches the task.** The reaper's failure path
+  wrote only the job-state row, which nothing downstream reads, so a failed
+  build kept reporting its last phase: the cockpit showed a live agent for a
+  build that had died 50 minutes earlier and the dispatching card never left
+  "dispatched". `on_fail` mirrors the `on_done` hook added in #852 -- minus the
+  completion event and TFactory handoff, since nothing was built. (#1433)
+
+- **"The coder implemented nothing; check the credentials" was wrong advice.**
+  When a build produces nothing and the spec enumerates an API the checkout does
+  not provide, the failure now names the missing exports instead of pointing at
+  the provider. Nothing was wrong with the credentials. (#1433)
+
 ## 3.6.80 - 2026-08-25
 
 ### Fixed
