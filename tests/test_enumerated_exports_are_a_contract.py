@@ -243,3 +243,70 @@ def test_an_unreadable_spec_does_not_refuse(clone: Path, tmp_path: Path) -> None
     _git(clone, "commit", "-qm", "x")
 
     assert _missing_contract_exports(empty, clone) == []
+
+
+# ── the shape the reported card actually used ─────────────────────────────────
+#
+# The first cut keyed only off headings matching exports/api/interface. Run
+# against the real FCT-4 body it returned NOTHING: that card enumerates its API
+# under "## What to build", which is how a deliverable is usually described. The
+# check was inert on the very card that prompted it.
+
+
+FCT4 = """## What to build
+
+`games/tictactoe/index.html` — a single self-contained page.
+
+`games/tictactoe/game.js` — the rules as pure functions:
+
+- `emptyBoard()` — a fresh 9-cell board
+- `move(board, index, player)` — returns a NEW board
+- `winner(board)` — `"X"`, `"O"`, `"draw"`, or `null`
+- `winningLine(board)` — the three indices that won, or `null`
+"""
+
+
+def test_a_bulleted_list_of_signatures_is_a_contract() -> None:
+    assert required_exports(FCT4) == {"emptyBoard", "move", "winner", "winningLine"}
+
+
+def test_a_numbered_list_counts_too() -> None:
+    assert required_exports("1. `alpha()` does a\n2. `beta()` does b\n") == {
+        "alpha",
+        "beta",
+    }
+
+
+def test_one_bullet_is_prose_not_a_contract() -> None:
+    """The threshold is the whole safety story. A single bullet opening with a
+    backticked call is ordinary writing, and refusing a build over it would be a
+    refusal nobody could predict."""
+    assert required_exports("## Notes\n\n- `cleanup()` runs on exit\n") == set()
+
+
+def test_a_dotted_call_is_not_a_bare_name() -> None:
+    """`console.log()` must not contribute `console`: the identifier stops at the
+    dot, so a debugging note in a bullet list cannot become a required export."""
+    spec = "## Notes\n\n- `console.log()` for debug\n- `process.exit()` to bail\n"
+    assert required_exports(spec) == set()
+
+
+def test_bullets_without_parens_are_commands_not_functions() -> None:
+    assert required_exports("- `npm install` first\n- `npm test` after\n") == set()
+
+
+def test_the_bullet_shape_reaches_missing_exports(clone: Path) -> None:
+    """End to end on the reported card's own shape: the wrong API is refused and
+    every missing name is listed."""
+    (clone / "game.js").write_text(
+        "function createGame() {}\nfunction isValidMove() {}\n"
+    )
+    _git(clone, "add", "game.js")
+    _git(clone, "commit", "-qm", "wrong api")
+
+    assert missing_exports(FCT4, clone) == [
+        "emptyBoard",
+        "move",
+        "winner",
+        "winningLine",
+    ]
