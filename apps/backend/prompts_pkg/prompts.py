@@ -193,6 +193,10 @@ root, not in the spec directory.
     # RFC-0012 / RFC-0013: the solo agent is coder + QA in one flow, so surface
     # both the team's house standards and the deployment context to it.
     spec_context += get_house_standards_context(spec_dir)
+    # #1430: an enumerated API is a contract. Injected for solo because solo is
+    # coder AND QA in one flow, so nothing downstream will catch a paraphrase
+    # before the branch is pushed.
+    spec_context += get_api_contract_context(spec_dir)
     # RFC-0015: honour the per-project constitution (enforceable clauses = hard).
     spec_context += get_constitution_context(spec_dir)
     spec_context += get_deployment_context(spec_dir)
@@ -426,6 +430,73 @@ def get_house_standards_context(spec_dir: Path) -> str:
             lines.append(f"  - `{ref}`")
     lines += ["", "---", "", ""]
     return "\n".join(lines)
+
+
+def get_api_contract_context(spec_dir: Path) -> str:
+    """Render the spec's enumerated API as a HARD requirement (#1430).
+
+    When a spec names the exact functions to export, those names are a contract:
+    the card declared them so the NEXT cards can import them. With the names
+    changed, each dependent card re-implements the whole thing -- which is what
+    happened across four demo cards that produced four separate implementations.
+
+    Two live failures this closes, both from the same card:
+
+    Spec 157 received the full spec, saw emptyBoard/move/winner/winningLine, and
+    shipped newGame/checkWinner/isBoardFull/move -- 1 of 4. Fixing the INPUT was
+    not enough; the model read the required API and paraphrased it anyway.
+
+    Spec 158 wrote nothing at all, reporting "this work was already completed and
+    committed on this branch -- description matches this spec almost verbatim".
+    It was judging by DESCRIPTION. The existing module exported newGame and
+    checkWinner; the spec named emptyBoard and winner. A matching description is
+    not evidence that a contract is met, and that is the belief this block
+    attacks directly.
+
+    Deliberately asks the agent to CHECK rather than handing it a pre-computed
+    gap: the check is what it skipped, and an agent told "these three are
+    missing" learns nothing about the next spec. Degrades silently to "" when the
+    spec enumerates no API, which is the common case.
+
+    Mirrors the RFC-0012 house-standards injection pattern.
+    """
+    try:
+        spec_text = (spec_dir / "spec.md").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    try:
+        from agents.tools_pkg.tools.api_contract import (  # noqa: PLC0415
+            required_exports,
+        )
+
+        names = sorted(required_exports(spec_text))
+    except Exception:  # noqa: BLE001 - an advisory block must never fail a build
+        return ""
+    if not names:
+        return ""
+    listed = ", ".join(f"`{n}`" for n in names)
+    return f"""## REQUIRED API (HARD REQUIREMENT)
+
+This spec enumerates an API by name. These are a CONTRACT, not a suggestion:
+
+{listed}
+
+Export them under EXACTLY these names. Later work imports them, so an equivalent
+API under different names is a failure, not a stylistic choice -- every importer
+then has to reimplement what you built.
+
+Before concluding this work is already done, VERIFY each name above is defined
+and exported in the checkout. A commit message or issue description that matches
+this spec is NOT evidence: a previous build can satisfy every acceptance
+criterion while exporting entirely different names. Check the code.
+
+If the existing code does not export these names, that IS the work -- implement
+them, whatever the history says. If you believe a name is wrong, say so
+explicitly rather than silently choosing another.
+
+---
+
+"""
 
 
 def get_constitution_context(spec_dir: Path) -> str:
