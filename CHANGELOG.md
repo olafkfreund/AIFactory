@@ -1,5 +1,25 @@
 ## [Unreleased]
 
+## 3.6.80 - 2026-08-25
+
+### Fixed
+
+- **An enumerated API listed as bullets was invisible to the contract check.**
+  Run against the real card body from #1421 -- the tic-tac-toe card whose API
+  came back 0/4 then 1/4 -- `required_exports` returned nothing. That card lists
+  its functions under "## What to build", and the first cut only looked under
+  headings matching exports/api/interface, so the check was inert on the very
+  card that prompted it. A list item whose first token is a backticked call now
+  counts, at two or more per document. (#1429)
+
+- **A build that died before writing its plan file stayed "in_progress"
+  forever.** Task status lives in `implementation_plan.json`, so a terminal
+  status had nowhere to land and was dropped -- the cockpit showed a live agent
+  for a build that had failed 50 minutes earlier, and the dispatching card never
+  left "dispatched". The earlier a build failed, the more certainly it was
+  recorded as running. A terminal status now writes a minimal plan when none
+  exists; an existing plan is never replaced. (#1430)
+
 ## 3.6.79 - 2026-08-25
 
 ### Fixed
