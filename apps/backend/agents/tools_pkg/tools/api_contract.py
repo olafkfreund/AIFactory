@@ -54,6 +54,21 @@ _API_HEADING = re.compile(
 )
 _BACKTICKED_CALL = re.compile(rf"`({_IDENT})\s*\(")
 
+# A list item whose FIRST token is a backticked call: "- `move(board, index)` — ..."
+# This is how an API is enumerated in practice, and the heading above such a list
+# is usually about the deliverable ("## What to build"), not about exports -- which
+# is why keying only off headings left the check inert on the very card that
+# prompted it.
+_BULLET_CALL = re.compile(
+    rf"^\s{{0,3}}(?:[-*+]|\d+\.)\s+`({_IDENT})\s*\(", re.MULTILINE
+)
+
+# Two is the threshold, and it is the whole safety story. One bullet starting with
+# a backticked call is ordinary prose -- "- `npm run build()` to rebuild" -- and
+# refusing a build over it would be a refusal nobody can predict. Two or more in
+# one document is someone listing an API.
+_BULLET_CALL_MIN = 2
+
 
 def _names_in_export_blocks(text: str) -> set[str]:
     names: set[str] = set()
@@ -82,6 +97,17 @@ def _names_under_api_heading(text: str) -> set[str]:
     return names
 
 
+def _names_in_bullet_lists(text: str) -> set[str]:
+    """Names from a bulleted enumeration of function signatures.
+
+    Only fires at ``_BULLET_CALL_MIN`` or more, because a single bullet opening
+    with a backticked call is ordinary prose. A list of several is an API being
+    spelled out, whatever the heading above it happens to say.
+    """
+    names = _BULLET_CALL.findall(text)
+    return set(names) if len(names) >= _BULLET_CALL_MIN else set()
+
+
 def required_exports(spec_text: str) -> set[str]:
     """Names the spec states as a required API. Empty when it states none.
 
@@ -89,7 +115,11 @@ def required_exports(spec_text: str) -> set[str]:
     the point: this only ever refuses a build whose card explicitly enumerated an
     API, so a card that never made the promise cannot be blocked for breaking it.
     """
-    return _names_in_export_blocks(spec_text) | _names_under_api_heading(spec_text)
+    return (
+        _names_in_export_blocks(spec_text)
+        | _names_under_api_heading(spec_text)
+        | _names_in_bullet_lists(spec_text)
+    )
 
 
 def _build_output_files(project_dir: Path) -> list[Path]:
