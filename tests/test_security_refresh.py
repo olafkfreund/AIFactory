@@ -53,7 +53,9 @@ def test_the_dockerfile_consumes_the_arg():
     body = (_ROOT / "Dockerfile").read_text()
 
     assert "ARG SECURITY_REFRESH" in body
-    assert "${SECURITY_REFRESH}" in body, "declared but never referenced -- no cache bust"
+    assert "${SECURITY_REFRESH}" in body, (
+        "declared but never referenced -- no cache bust"
+    )
 
 
 def test_the_detector_can_actually_fail():
