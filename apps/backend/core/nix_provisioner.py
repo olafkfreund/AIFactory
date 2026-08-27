@@ -252,6 +252,22 @@ def _needs_browser(m: Manifest) -> bool:
     return any(t in hay for t in ("playwright", "chromium", "browser"))
 
 
+def _needs_jest(m: Manifest) -> bool:
+    """A jest lane is implied by a jest reference in the packages or commands.
+
+    TFactory#1165: the jest lane was the only unit-capable lane with no
+    in-cluster path -- its runner was DockerRunner-only, and TFactory pods have
+    no container runtime, so EVERY JavaScript/TypeScript unit test errored
+    before it started. It read as flakiness; it was total.
+
+    Mirrors :func:`_needs_browser` deliberately: same detection shape, same
+    "one token buys the toolchain" contract, so the two node lanes stay
+    symmetrical rather than growing separate conventions.
+    """
+    hay = " ".join(m.system_packages + m.verify_commands + m.proof_verify).lower()
+    return "jest" in hay
+
+
 def _python_attr(m: Manifest) -> str:
     ver = m.toolchain.get("python")
     return _PY_ATTR.get(ver or "", "python313")
@@ -276,7 +292,17 @@ def _go_attr(m: Manifest) -> str:
 # nixpkgs top-level attrs we know how to map system_packages onto. Browser libs
 # come bundled with playwright-driver.browsers, so a bare 'chromium' is dropped
 # in favour of the playwright stack (added separately) to avoid version skew.
-_DROP_SYSTEM_PKGS = {"chromium", "playwright", "browser", "playwright-driver"}
+_DROP_SYSTEM_PKGS = {
+    "chromium",
+    "playwright",
+    "browser",
+    "playwright-driver",
+    # Same reason as the browser attrs above: `jest` is the TRIGGER token, not a
+    # top-level nixpkgs attr. It is dropped here and the real package is added
+    # from nodePackages below, so a manifest can say "jest" without knowing the
+    # attribute path.
+    "jest",
+}
 
 
 def _system_pkg_attrs(m: Manifest) -> list[str]:
@@ -318,6 +344,14 @@ def generate_flake(env: dict, *, nixpkgs: str = DEFAULT_NIXPKGS, project_dir=Non
         # text in a minimal Nix container (without it, screenshots come out
         # textless — proven in-container 2026-06-17).
         sys_attrs_with_node += ["nodejs_22", "playwright-test", "dejavu_fonts"]
+    jest = _needs_jest(m)
+    if jest:
+        # nodePackages.jest, not a bare `jest` attr (there is none), and node is
+        # added only when the browser block has not already added it -- listing
+        # nodejs_22 twice is a duplicate-package eval error, not a no-op.
+        if not browser:
+            sys_attrs_with_node.append("nodejs_22")
+        pkg_lines.append("pkgs.nodePackages.jest")
     for a in sys_attrs_with_node:
         pkg_lines.append(f"pkgs.{a}")
 
