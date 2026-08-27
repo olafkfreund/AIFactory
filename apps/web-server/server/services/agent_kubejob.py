@@ -119,7 +119,8 @@ class KubejobMixin:
         """
         self._release_task_credential(job_id)
         try:
-            await self._record_kubejob_failure(job_id, reason)
+            _log.warning("[AgentService] kubejob build %s failed: %s", job_id, reason)
+            await self._record_kubejob_terminal(job_id, "failed")
         except Exception:  # noqa: BLE001
             _log.exception(
                 "[AgentService] kubejob failure record failed for %s (ignored)",
@@ -127,16 +128,27 @@ class KubejobMixin:
             )
         await self._drain_queue()
 
-    async def _record_kubejob_failure(self, job_id: str, reason: str) -> None:
-        """Write the terminal ``failed`` status where the task API reads it."""
+    async def _record_kubejob_terminal(self, job_id: str, status: str) -> None:
+        """Write a terminal status where the task API reads it (#1430).
+
+        Both kubejob outcomes need this and neither had it. The reaper writes a
+        job-state row that nothing downstream reads; task status lives in the
+        plan. So a build that FAILED kept reporting its last phase, and a build
+        that SUCCEEDED did too -- spec 160 finished with all four subtasks
+        completed, pushed a branch, handed off to TFactory with a 200, and still
+        read ``in_progress / planning`` to the task API and ``dispatched`` to the
+        card that requested it.
+
+        The failure case was the visible one (a LIVE AGENT for a dead build), but
+        the success case is worse: the sequence cannot advance, so the card never
+        moves to its next stage even though the work is done.
+        """
         project_id, _, spec_id = job_id.partition(":")
         if not spec_id:
             return
         project_path = resolve_project_path(project_id)
-        _log.warning(
-            "[AgentService] recording failed status for %s: %s", job_id, reason
-        )
-        await self._update_plan_status(project_path, spec_id, "failed", job_id)
+        _log.info("[AgentService] recording terminal status %s for %s", status, job_id)
+        await self._update_plan_status(project_path, spec_id, status, job_id)
 
     async def _on_kubejob_build_done(self, job_id: str) -> None:
         """A kubejob build reached ``done`` (#852): finish it like a real build.
@@ -152,16 +164,28 @@ class KubejobMixin:
         undone by a bookkeeping failure here.
         """
         self._release_task_credential(job_id)
+        # The status the COMPLETION decided, not the one we asked for: its
+        # evidence gate downgrades "completed" to "failed" when the build wrote
+        # nothing, and recording the optimistic value would put "completed" in
+        # the plan for a build that function already ruled failed (#1430).
+        effective = "completed"
         try:
-            await self._emit_kubejob_terminal_completion(job_id)
+            effective = await self._emit_kubejob_terminal_completion(job_id)
         except Exception:  # noqa: BLE001
             _log.exception(
                 "[AgentService] kubejob completion emit failed for %s (ignored)",
                 job_id,
             )
+        try:
+            await self._record_kubejob_terminal(job_id, effective)
+        except Exception:  # noqa: BLE001
+            _log.exception(
+                "[AgentService] kubejob terminal-status record failed for %s (ignored)",
+                job_id,
+            )
         await self._drain_queue()
 
-    async def _emit_kubejob_terminal_completion(self, job_id: str) -> None:
+    async def _emit_kubejob_terminal_completion(self, job_id: str) -> str:
         """Emit the RFC-0001 completion event + side-effects for a done kubejob.
 
         Reuses the in-pod completion path (``run_terminal_completion``) so the
@@ -180,14 +204,14 @@ class KubejobMixin:
 
         project_id, _, spec_id = job_id.partition(":")
         if not spec_id:
-            return
+            return "completed"
         project_path = resolve_project_path(project_id)
         spec_dir = spec_dir_for(project_path, spec_id)
         try:
             backend_path: Path | None = self.backend_path
         except Exception:  # noqa: BLE001
             backend_path = None
-        await run_terminal_completion(
+        return await run_terminal_completion(
             spec_dir=spec_dir,
             project_path=project_path,
             spec_id=spec_id,
