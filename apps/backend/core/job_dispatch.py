@@ -122,6 +122,21 @@ SERVICES = ("aifactory", "cfactory", "pfactory", "tfactory")
 # REFERENCE to it rather than this pod's copy — see trace_env().
 OTLP_AUTH_SECRET = "otel-otlp-auth"  # noqa: S105 — k8s Secret name, not a credential
 OTLP_AUTH_SECRET_KEY = "headers"  # noqa: S105 — the Secret's KEY name, not a credential
+
+# Cloud credentials for a task, mounted as a FILE rather than passed as an env
+# value. Google's ADC chain reads a key file from GOOGLE_APPLICATION_CREDENTIALS;
+# there is no supported "inline JSON" env form, so a volume is the only correct
+# shape — and it keeps the key out of the pod env, which shows up in
+# `kubectl describe` and in anything that dumps its environment.
+#
+# Opt-in per cluster: without GCP_CREDS_SECRET_ENV set, no volume is added and
+# Jobs are byte-identical to before. `optional: True` mirrors the OTLP header
+# rule above — a cluster that names a Secret it does not have must still dispatch
+# Jobs that simply lack the credential, rather than Jobs wedged in
+# CreateContainerConfigError. A build that cannot reach GCP must still build.
+GCP_CREDS_SECRET_ENV = "FACTORY_GCP_CREDS_SECRET"  # noqa: S105 — env NAME, not a credential
+GCP_CREDS_KEY = "key.json"
+GCP_CREDS_MOUNT = "/var/secrets/gcp"
 TERMINAL_STATES = ("done", "failed", "stuck")
 # The control plane reconciles by polling the job-state table, so a missed
 # completion event never strands a job; reporting is idempotent on (job_id, state).
@@ -463,6 +478,23 @@ def build_job_manifest(spec: JobSpec) -> dict[str, Any]:
         # Warm store: persist the realised closures across Jobs (RFC-0016 #197).
         mounts.append({"name": "nix-store", "mountPath": "/nix/store"})
 
+    gcp_secret = os.environ.get(GCP_CREDS_SECRET_ENV, "").strip()
+    if gcp_secret:
+        volumes.append(
+            {"name": "gcp-creds", "secret": {"secretName": gcp_secret, "optional": True}}
+        )
+        mounts.append({"name": "gcp-creds", "mountPath": GCP_CREDS_MOUNT, "readOnly": True})
+        # ADC reads the file at this path. Set here rather than left to the
+        # consumer: a caller that mounts the volume and forgets the variable gets
+        # a Job with the credential present and unusable, which reads as "no
+        # permissions" and sends the reader hunting IAM instead of config.
+        env.append(
+            {
+                "name": "GOOGLE_APPLICATION_CREDENTIALS",
+                "value": f"{GCP_CREDS_MOUNT}/{GCP_CREDS_KEY}",
+            }
+        )
+
     container = {
         "name": "task",
         "image": spec.image,
@@ -567,6 +599,72 @@ def _selftest_npx_strip() -> None:
     # a working fetch into "command not found".
     keep = nix_develop_wrap(["npx cypress run"])
     _require("npx cypress run" in keep, f"npx must survive for a non-flake tool: {keep}")
+
+
+def _selftest_gcp_creds() -> None:
+    """The GCP key is mounted as a FILE, and only when configured.
+
+    Three failure modes this pins, each of which has a way to ship:
+      * the credential passed as an env VALUE (visible in `kubectl describe`);
+      * the volume mounted with no GOOGLE_APPLICATION_CREDENTIALS, which reads as
+        an IAM problem and sends the reader hunting permissions, not config;
+      * the block landing inside `if spec.nix_store_pvc:` so the mount silently
+        depends on an unrelated feature. That one is not hypothetical -- it is
+        exactly what happened while writing this, and this test is what caught it,
+        which is why the spec below deliberately sets NO nix_store_pvc.
+    """
+    spec = JobSpec(
+        service="aifactory",
+        job_id="proj-abc:900-gcp",
+        commands=["true"],
+        correlation_key=1,
+        service_account="aifactory-sandbox",
+        data_pvc="aifactory-data",
+        worktree_subpath="workspaces/x",
+    )
+    saved = os.environ.get(GCP_CREDS_SECRET_ENV)
+    try:
+        os.environ.pop(GCP_CREDS_SECRET_ENV, None)
+        pod_off = build_job_manifest(spec)["spec"]["template"]["spec"]
+        _require(
+            all(v["name"] != "gcp-creds" for v in pod_off.get("volumes", [])),
+            "volume added while unconfigured",
+        )
+        _require(
+            all(
+                e["name"] != "GOOGLE_APPLICATION_CREDENTIALS"
+                for e in pod_off["containers"][0]["env"]
+            ),
+            "ADC env set while unconfigured",
+        )
+
+        os.environ[GCP_CREDS_SECRET_ENV] = "gcp-demo-creds"
+        pod_on = build_job_manifest(spec)["spec"]["template"]["spec"]
+        vol = [v for v in pod_on["volumes"] if v["name"] == "gcp-creds"]
+        _require(len(vol) == 1, f"expected one gcp-creds volume: {pod_on['volumes']}")
+        _require(vol[0]["secret"]["secretName"] == "gcp-demo-creds", f"name: {vol[0]}")
+        _require(
+            vol[0]["secret"]["optional"] is True,
+            f"must be optional so a missing Secret cannot wedge the Job: {vol[0]}",
+        )
+        c = pod_on["containers"][0]
+        mt = [m for m in c["volumeMounts"] if m["name"] == "gcp-creds"]
+        _require(len(mt) == 1 and mt[0]["readOnly"] is True, f"mount: {mt}")
+        adc = [e for e in c["env"] if e["name"] == "GOOGLE_APPLICATION_CREDENTIALS"]
+        _require(len(adc) == 1, "GOOGLE_APPLICATION_CREDENTIALS not set")
+        _require(
+            adc[0]["value"] == f"{GCP_CREDS_MOUNT}/{GCP_CREDS_KEY}",
+            f"ADC path: {adc[0]}",
+        )
+        _require(
+            all("value" not in e or "PRIVATE KEY" not in str(e["value"]) for e in c["env"]),
+            "key material leaked into env",
+        )
+    finally:
+        if saved is None:
+            os.environ.pop(GCP_CREDS_SECRET_ENV, None)
+        else:
+            os.environ[GCP_CREDS_SECRET_ENV] = saved
 
 
 def _selftest() -> None:
@@ -841,3 +939,4 @@ def _selftest_trace_env() -> None:
 if __name__ == "__main__":
     _selftest()
     _selftest_npx_strip()
+    _selftest_gcp_creds()
