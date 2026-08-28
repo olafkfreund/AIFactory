@@ -86,15 +86,24 @@ class FromIssueRequest(BaseModel):
     base_branch: str | None = Field(None, description="Base branch for the worktree")
 
 
-def _normalize_issue(payload: dict | None) -> dict:
-    """Pull title/body/number/labels/url out of a provider/gh issue dict."""
+def _normalize_issue(payload: dict | None, issue_number: int | None = None) -> dict:
+    """Pull title/body/number/labels/url out of a provider/gh issue dict.
+
+    ``issue_number`` is the request's own field, used only when the payload
+    carries no number of its own. A caller that sends BOTH a pre-fetched payload
+    and the number it fetched it by used to lose the number here, and a spec
+    written without one correlates on the synthetic ``af-<spec_id>`` key that
+    nothing else joins on — which is how a build's whole token spend landed on
+    an orphan work item and the cockpit reported $0.00 (#1418).
+    """
     payload = payload or {}
     raw_labels = payload.get("labels") or []
     label_names = [
         lbl.get("name", "") if isinstance(lbl, dict) else str(lbl) for lbl in raw_labels
     ]
+    number = payload.get("number")
     return {
-        "number": payload.get("number"),
+        "number": issue_number if number is None else number,
         "title": payload.get("title", "") or "",
         "body": payload.get("body", "") or "",
         "url": payload.get("url", "") or payload.get("htmlUrl", "") or "",
@@ -286,7 +295,7 @@ async def create_from_issue(
 
     # 1. Resolve the issue: explicit payload wins; otherwise fetch via provider.
     if request.payload is not None:
-        issue = _normalize_issue(request.payload)
+        issue = _normalize_issue(request.payload, request.issue_number)
     elif request.issue_number is not None:
         try:
             fetched = await _fetch_issue_via_provider(
