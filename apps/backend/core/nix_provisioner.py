@@ -302,11 +302,66 @@ _DROP_SYSTEM_PKGS = {
     # runner itself comes from npm at lane setup, because nixpkgs has no jest
     # attribute to name (see the jest block in generate_flake).
     "jest",
+    # The Python harness already supplies all three via `withPackages` a few
+    # lines below, and NONE of them is a top-level nixpkgs attr -- `pkgs.pytest`
+    # does not exist (nixpkgs suggests "btest, cpptest, evtest"), so emitting it
+    # failed the WHOLE flake eval, not just that package. A manifest naming
+    # `pytest` in system_packages is the most obvious thing a planner writes for
+    # a Python lane, and it produced a dev shell that could not be realised.
+    #
+    # Found by the generated-flake evaluation gate in factory-runners, on its
+    # first run. Same defect class as the `nodePackages.jest` emission
+    # (Factory#1007) and invisible for the same reason: the unit tests assert on
+    # the flake's TEXT, and nothing evaluated one.
+    "pytest",
+    "pip",
+    "python",
+    # `selenium` is a PyPI/npm package, not a nixpkgs top-level attr — the same
+    # shape as `jest` above. Unlike `jest` it does NOT name a toolchain we can
+    # infer: selenium bindings exist for Python and for node, and the manifest's
+    # `language` already decides which harness runs, so buying node here would
+    # be a guess that is wrong half the time (and a ~200MB one). Drop it and let
+    # the lane's own package manager install the bindings, exactly as it does
+    # for the driver itself.
+    "selenium",
+}
+
+# Common name a planner writes -> the nixpkgs attr that actually exists at the
+# pinned rev (Factory#1009). These differ from _DROP_SYSTEM_PKGS: they name a
+# REAL toolchain, so dropping them would silently take the toolchain away rather
+# than fix the flake. Each token below was measured against nixpkgs 567a49d1 —
+# `pkgs.node`, `pkgs.npm`, `pkgs.rust`, `pkgs.dotnet` and `pkgs.vitest` do not
+# exist, and a missing attr fails the WHOLE devShell eval, so the lane reports a
+# runner failure instead of a test result (reads as flakiness, is not).
+#
+#   node/npm -> nodejs_22, the same attr the jest and browser blocks add; npm
+#               ships inside the nodejs derivation, so it needs no attr of its own.
+#   vitest   -> nodejs_22 too: no nixpkgs attr exists, but unlike selenium it is
+#               unambiguously a node runner, so the token buys node and the
+#               runner comes from npm at lane setup (the jest contract).
+#   rust     -> rustc. `cargo` is already a valid top-level attr and needs no alias.
+#   dotnet   -> dotnet-sdk.
+#
+# Aliasing makes collisions routine — `node` + `npm` is the likeliest pair a
+# planner writes, and `vitest` beside a browser lane is another — so
+# generate_flake dedupes the final attr list. Measured: a duplicate is NOT an
+# eval or build failure (both forms realise and run `node --version`), so this
+# is tidiness in a committed deliverable, not correctness.
+_SYSTEM_PKG_ALIASES = {
+    "node": "nodejs_22",
+    "npm": "nodejs_22",
+    "vitest": "nodejs_22",
+    "rust": "rustc",
+    "dotnet": "dotnet-sdk",
 }
 
 
 def _system_pkg_attrs(m: Manifest) -> list[str]:
-    return [p for p in m.system_packages if p.lower() not in _DROP_SYSTEM_PKGS]
+    return [
+        _SYSTEM_PKG_ALIASES.get(p.lower(), p)
+        for p in m.system_packages
+        if p.lower() not in _DROP_SYSTEM_PKGS
+    ]
 
 
 def generate_flake(env: dict, *, nixpkgs: str = DEFAULT_NIXPKGS, project_dir=None) -> str:
@@ -362,11 +417,20 @@ def generate_flake(env: dict, *, nixpkgs: str = DEFAULT_NIXPKGS, project_dir=Non
     # The runner comes from npm instead: nix_env.py installs jest/ts-jest/
     # typescript locally, once per lane, and exits 127 loudly if the install or
     # the binary check fails. So node is all the flake owes this lane, and only
-    # when the browser block has not already added it -- listing nodejs_22
-    # twice is a duplicate-package eval error, not a no-op.
+    # when the browser block has not already added it. (This guard used to be
+    # justified as avoiding a "duplicate-package eval error" -- measured
+    # 2026-08-28 against nixpkgs 567a49d1, that is not true: a doubled attr
+    # evaluates and realises fine. It is kept because it is still the clearest
+    # way to say "the browser block already brought node", and the dedupe below
+    # now covers the collisions the alias table makes routine.)
     if jest and not browser:
         sys_attrs_with_node.append("nodejs_22")
-    for a in sys_attrs_with_node:
+    # dict.fromkeys = order-preserving dedupe (see _SYSTEM_PKG_ALIASES): two
+    # manifest tokens can alias to the same attr, and the browser and jest
+    # blocks add nodejs_22 too. Cosmetic, not load-bearing — a duplicate still
+    # evaluates and realises — but the flake is a committed deliverable and a
+    # doubled line reads as a bug to the next person.
+    for a in dict.fromkeys(sys_attrs_with_node):
         pkg_lines.append(f"pkgs.{a}")
 
     packages = "\n          ".join(pkg_lines)
