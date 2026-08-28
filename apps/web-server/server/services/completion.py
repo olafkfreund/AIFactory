@@ -503,6 +503,19 @@ def build_completion_event(
                 halt_reason or "no_evidence: build emitted 0 tokens (did not run)"
             )
     when = updated_at or _now_iso()
+    # #1418: the synthetic fallback is CORRECT for a spec with no upstream issue,
+    # but it is also what a DROPPED issue number looks like — and then this
+    # terminal event (the one carrying the usage block) files its tokens under a
+    # key no poller and no rollup joins on, so the cockpit reads $0.00 while the
+    # spend sits in an orphan row. Say so once per build, on the event that
+    # matters, rather than leaving the degradation silent.
+    if issue_number is None:
+        logger.info(
+            "completion event for spec %s has no issue number; correlating on the "
+            "synthetic key %s (no cross-service join)",
+            sanitize_log(spec_id),
+            sanitize_log(correlation_key(spec_id, None)),
+        )
     event = {
         "correlation_key": correlation_key(spec_id, issue_number),
         "service": SERVICE_NAME,
