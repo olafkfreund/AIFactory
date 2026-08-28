@@ -93,6 +93,29 @@ def test_envelope_synthetic_key_when_no_issue():
     assert ev["correlation"]["issue_number"] is None
 
 
+def test_synthetic_key_is_logged(caplog):
+    """The fallback must announce itself (#1418).
+
+    It is correct for a spec with no issue, but identical on the wire to a
+    DROPPED issue number — and then this event's usage block lands on a key no
+    rollup joins on. Silence is what made that take a live-pod dig to find.
+    """
+    with caplog.at_level("INFO", logger=_completion_mod.logger.name):
+        build_completion_event(
+            task_id="proj:spec-9", spec_id="spec-9", status="done", issue_number=None
+        )
+    assert any("af-spec-9" in r.getMessage() for r in caplog.records), caplog.text
+
+
+def test_real_issue_key_is_not_logged(caplog):
+    """The correlated path stays quiet — this fires on every terminal event."""
+    with caplog.at_level("INFO", logger=_completion_mod.logger.name):
+        build_completion_event(
+            task_id="proj:spec-9", spec_id="spec-9", status="done", issue_number=412
+        )
+    assert not any("synthetic key" in r.getMessage() for r in caplog.records)
+
+
 # ── transport (best-effort) ──────────────────────────────────────────────────
 
 

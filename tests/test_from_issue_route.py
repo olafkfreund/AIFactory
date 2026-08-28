@@ -362,3 +362,60 @@ async def test_deployment_default_applies_when_unlabelled(project, monkeypatch):
     monkeypatch.setenv("AIFACTORY_INTAKE_PARALLEL", "1")
     _, spec_id = await _ingest(["factory:medium"])
     assert _task_metadata(tmp_path, spec_id)["parallel"] is True
+
+
+async def test_payload_without_number_falls_back_to_request_issue_number(project):
+    """A caller sending BOTH a pre-fetched payload and the number it fetched it
+    by keeps the number (#1418).
+
+    The dropped number is not a cosmetic loss: the spec is then written with no
+    ``provenance.issue_number``, the completion event correlates on the
+    synthetic ``af-<spec_id>`` key, and the build's whole token spend lands on a
+    work item the cockpit's cost rollup never reads.
+    """
+    tmp_path, _ = project
+    req = FromIssueRequest(
+        project_id="p",
+        issue_number=561,
+        payload={
+            "title": "Tiny fix",
+            "body": "do the thing",
+            "labels": [{"name": "factory:low"}],
+        },
+    )
+    res = await create_from_issue(req)
+    assert res["issue_number"] == 561
+    reqs = _requirements(tmp_path, res["spec_id"])
+    assert reqs["githubIssue"]["number"] == 561
+    assert reqs["provenance"]["issue_number"] == 561
+
+
+async def test_payload_number_wins_over_request_issue_number(project):
+    """The payload is the fetched issue; the request field only fills a gap."""
+    tmp_path, _ = project
+    req = FromIssueRequest(
+        project_id="p",
+        issue_number=999,
+        payload={"number": 11, "title": "t", "labels": [{"name": "factory:low"}]},
+    )
+    res = await create_from_issue(req)
+    assert res["issue_number"] == 11
+    assert _requirements(tmp_path, res["spec_id"])["provenance"]["issue_number"] == 11
+
+
+async def test_no_issue_number_anywhere_stays_absent(project):
+    """A card with no upstream issue records no number — nothing is fabricated.
+
+    The synthetic correlation key is the honest answer here; an invented number
+    would collide with a real issue.
+    """
+    tmp_path, _ = project
+    req = FromIssueRequest(
+        project_id="p",
+        payload={"title": "board card", "labels": [{"name": "factory:low"}]},
+    )
+    res = await create_from_issue(req)
+    assert res["issue_number"] is None
+    reqs = _requirements(tmp_path, res["spec_id"])
+    assert reqs["githubIssue"]["number"] is None
+    assert "issue_number" not in reqs.get("provenance", {})
