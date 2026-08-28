@@ -252,6 +252,22 @@ def _needs_browser(m: Manifest) -> bool:
     return any(t in hay for t in ("playwright", "chromium", "browser"))
 
 
+def _needs_jest(m: Manifest) -> bool:
+    """A jest lane is implied by a jest reference in the packages or commands.
+
+    TFactory#1165: the jest lane was the only unit-capable lane with no
+    in-cluster path -- its runner was DockerRunner-only, and TFactory pods have
+    no container runtime, so EVERY JavaScript/TypeScript unit test errored
+    before it started. It read as flakiness; it was total.
+
+    Mirrors :func:`_needs_browser` deliberately: same detection shape, same
+    "one token buys the toolchain" contract, so the two node lanes stay
+    symmetrical rather than growing separate conventions.
+    """
+    hay = " ".join(m.system_packages + m.verify_commands + m.proof_verify).lower()
+    return "jest" in hay
+
+
 def _python_attr(m: Manifest) -> str:
     ver = m.toolchain.get("python")
     return _PY_ATTR.get(ver or "", "python313")
@@ -276,7 +292,17 @@ def _go_attr(m: Manifest) -> str:
 # nixpkgs top-level attrs we know how to map system_packages onto. Browser libs
 # come bundled with playwright-driver.browsers, so a bare 'chromium' is dropped
 # in favour of the playwright stack (added separately) to avoid version skew.
-_DROP_SYSTEM_PKGS = {"chromium", "playwright", "browser", "playwright-driver"}
+_DROP_SYSTEM_PKGS = {
+    "chromium",
+    "playwright",
+    "browser",
+    "playwright-driver",
+    # Same reason as the browser attrs above: `jest` is the TRIGGER token, not a
+    # top-level nixpkgs attr. It is dropped here and the real package is added
+    # from nodePackages below, so a manifest can say "jest" without knowing the
+    # attribute path.
+    "jest",
+}
 
 
 def _system_pkg_attrs(m: Manifest) -> list[str]:
@@ -318,6 +344,14 @@ def generate_flake(env: dict, *, nixpkgs: str = DEFAULT_NIXPKGS, project_dir=Non
         # text in a minimal Nix container (without it, screenshots come out
         # textless — proven in-container 2026-06-17).
         sys_attrs_with_node += ["nodejs_22", "playwright-test", "dejavu_fonts"]
+    jest = _needs_jest(m)
+    if jest:
+        # nodePackages.jest, not a bare `jest` attr (there is none), and node is
+        # added only when the browser block has not already added it -- listing
+        # nodejs_22 twice is a duplicate-package eval error, not a no-op.
+        if not browser:
+            sys_attrs_with_node.append("nodejs_22")
+        pkg_lines.append("pkgs.nodePackages.jest")
     for a in sys_attrs_with_node:
         pkg_lines.append(f"pkgs.{a}")
 
@@ -386,7 +420,11 @@ def _python_libs(m: Manifest, project_dir=None) -> list[str]:
     manifest."""
     libs: list[str] = []
     hay = " ".join(m.verify_commands + m.build_commands + m.proof_verify).lower()
-    if (m.language or "").lower() in ("", "python") or "pytest" in hay:
+    # Does this project run a PYTHON harness at all? Reused below: a browser
+    # lane only implies a Python web stack when there is Python here to serve
+    # with.
+    py_harness = (m.language or "").lower() in ("", "python") or "pytest" in hay
+    if py_harness:
         # `requests` is HARNESS surface, not app surface, so it rides with pytest
         # rather than waiting on the SUT to declare it. TFactory's pytest
         # descriptor instructs Gen-Functional to drive the api lane with
@@ -396,7 +434,19 @@ def _python_libs(m: Manifest, project_dir=None) -> list[str]:
         # `import requests`, i.e. at collection, and every HTTP-level acceptance
         # criterion came back unverifiable against correct code (TFactory#892).
         libs += ["pytest", "pytest-cov", "requests"]
-    if "uvicorn" in hay or "fastapi" in hay or "httpx" in hay or _needs_browser(m):
+    # `_needs_browser` alone is NOT enough. A static HTML/JS page has a browser
+    # lane and no Python whatsoever, and this clause was handing it fastapi +
+    # uvicorn + httpx purely to serve a static file. That derivation misses the
+    # binary cache, builds inside the verify Job's cgroup, and gets OOM-killed:
+    # TFactory spec 190/192 each lost a jest verdict to
+    #     builder failed due to signal 9 (Killed)
+    # on a `python313.withPackages` env the project never needed. The browser
+    # lane serves static targets without it (see detect_serve_command).
+    #
+    # An explicit mention in the commands still pulls the stack in, so a project
+    # that really uses it is unaffected -- as is any Python project with a
+    # browser lane, which is what this clause was for.
+    if "uvicorn" in hay or "fastapi" in hay or "httpx" in hay or (_needs_browser(m) and py_harness):
         libs += ["fastapi", "uvicorn", "httpx"]
     if project_dir is not None:
         libs += _deps_from_pyproject(project_dir)
@@ -509,6 +559,58 @@ def _test_npx_strip() -> None:
     assert bare[-1] == "npx && playwright test", bare  # noqa: S101
 
 
+def _test_go_manifest() -> None:
+    """A go env gets the go toolchain and no python at all."""
+    # 3b. go manifest -> go toolchain + test/coverage tools, no python/withPackages.
+    env_go = {
+        "language": "go",
+        "toolchain": {"go": "1.22"},
+        "system_packages": ["gotestsum", "gocover-cobertura"],
+        "verify_commands": ["go test ./..."],
+        "provisioning": {"method": "nix", "ref": "flake.nix", "generated": True},
+    }
+    fg = generate_flake(env_go)
+    assert "pkgs.go_1_22" in fg, fg  # noqa: S101
+    assert "pkgs.gotestsum" in fg and "pkgs.gocover-cobertura" in fg, fg  # noqa: S101
+    assert "withPackages" not in fg and "python" not in fg, fg  # noqa: S101
+    assert "pytest" not in fg, fg  # noqa: S101 — no python libs inferred for a go env
+    assert "requests" not in fg, fg  # noqa: S101 — harness libs are python-lane only
+
+
+def _test_browser_lane_deps() -> None:
+    """A browser lane implies a python web stack ONLY for a python project."""
+    # 3c. javascript + a BROWSER lane -> node, and no python web stack.
+    # A static HTML/JS page has a browser lane and no python at all. This clause
+    # used to hand it fastapi + uvicorn + httpx purely to serve a static file;
+    # that env missed the binary cache, built inside the verify Job's cgroup and
+    # was OOM-killed, costing a jest verdict per run (TFactory spec 190/192).
+    env_js_browser = {
+        "language": "javascript",
+        "toolchain": {"node": "22"},
+        "system_packages": ["playwright"],
+        "verify_commands": ["npx playwright test"],
+        "provisioning": {"method": "nix", "ref": "flake.nix", "generated": True},
+    }
+    fjb = generate_flake(env_js_browser)
+    assert "nodejs" in fjb, fjb  # noqa: S101
+    assert "fastapi" not in fjb, fjb  # noqa: S101 — nothing here to serve with python
+    assert "uvicorn" not in fjb, fjb  # noqa: S101
+    assert "withPackages" not in fjb, fjb  # noqa: S101
+
+    # 3d. a PYTHON project with a browser lane still gets the web stack -- that
+    # is what the clause was for, and narrowing it must not take that away.
+    env_py_browser = {
+        "language": "python",
+        "toolchain": {"python": "3.13"},
+        "system_packages": ["playwright"],
+        "verify_commands": ["pytest -q"],
+        "provisioning": {"method": "nix", "ref": "flake.nix", "generated": True},
+    }
+    fpb = generate_flake(env_py_browser)
+    assert "fastapi" in fpb, fpb  # noqa: S101
+    assert "uvicorn" in fpb, fpb  # noqa: S101
+
+
 def _test() -> None:
     # 1. browser manifest -> flake has playwright + browsers env, drops bare chromium.
     env_browser = {
@@ -555,20 +657,9 @@ def _test() -> None:
     f3 = generate_flake(env_sys)
     assert "pkgs.pkg-config" in f3 and "pkgs.openssl" in f3, f3
 
-    # 3b. go manifest -> go toolchain + test/coverage tools, no python/withPackages.
-    env_go = {
-        "language": "go",
-        "toolchain": {"go": "1.22"},
-        "system_packages": ["gotestsum", "gocover-cobertura"],
-        "verify_commands": ["go test ./..."],
-        "provisioning": {"method": "nix", "ref": "flake.nix", "generated": True},
-    }
-    fg = generate_flake(env_go)
-    assert "pkgs.go_1_22" in fg, fg  # noqa: S101
-    assert "pkgs.gotestsum" in fg and "pkgs.gocover-cobertura" in fg, fg  # noqa: S101
-    assert "withPackages" not in fg and "python" not in fg, fg  # noqa: S101
-    assert "pytest" not in fg, fg  # noqa: S101 — no python libs inferred for a go env
-    assert "requests" not in fg, fg  # noqa: S101 — harness libs are python-lane only
+    _test_go_manifest()
+
+    _test_browser_lane_deps()
     # unknown/unset go version degrades to bare `pkgs.go` (no system pkgs here,
     # so `pkgs.go` is the sole package line — no false match on gocover etc.).
     fg2 = generate_flake({"language": "go", "verify_commands": ["go test ./..."]})
