@@ -298,9 +298,9 @@ _DROP_SYSTEM_PKGS = {
     "browser",
     "playwright-driver",
     # Same reason as the browser attrs above: `jest` is the TRIGGER token, not a
-    # top-level nixpkgs attr. It is dropped here and the real package is added
-    # from nodePackages below, so a manifest can say "jest" without knowing the
-    # attribute path.
+    # top-level nixpkgs attr. It is dropped here and buys nodejs below; the
+    # runner itself comes from npm at lane setup, because nixpkgs has no jest
+    # attribute to name (see the jest block in generate_flake).
     "jest",
 }
 
@@ -345,13 +345,27 @@ def generate_flake(env: dict, *, nixpkgs: str = DEFAULT_NIXPKGS, project_dir=Non
         # textless — proven in-container 2026-06-17).
         sys_attrs_with_node += ["nodejs_22", "playwright-test", "dejavu_fonts"]
     jest = _needs_jest(m)
-    if jest:
-        # nodePackages.jest, not a bare `jest` attr (there is none), and node is
-        # added only when the browser block has not already added it -- listing
-        # nodejs_22 twice is a duplicate-package eval error, not a no-op.
-        if not browser:
-            sys_attrs_with_node.append("nodejs_22")
-        pkg_lines.append("pkgs.nodePackages.jest")
+    # NODE ONLY -- there is no jest attribute, because nixpkgs has none to give.
+    #
+    # This used to emit `pkgs.nodePackages.jest`. nixpkgs removed the whole
+    # `nodePackages` set on 2026-03-03, and it did not degrade to a no-op: the
+    # attribute now THROWS, so a manifest naming jest produced a flake that
+    # failed to EVALUATE -- taking the entire dev shell down with it, not just
+    # jest. The lane then reported a runner failure rather than a test result,
+    # which is the same shape as TFactory#1165 and reads as flakiness rather
+    # than a missing package. Measured against nixpkgs 567a49d1: forcing the
+    # devShell derivation errored with "nodePackages has been removed" before
+    # this change and resolves to a .drv after it. Note `nix eval` of the shell
+    # NAME passes either way -- the package list is lazy, so a check that does
+    # not force the derivation reports a healthy flake that cannot build.
+    #
+    # The runner comes from npm instead: nix_env.py installs jest/ts-jest/
+    # typescript locally, once per lane, and exits 127 loudly if the install or
+    # the binary check fails. So node is all the flake owes this lane, and only
+    # when the browser block has not already added it -- listing nodejs_22
+    # twice is a duplicate-package eval error, not a no-op.
+    if jest and not browser:
+        sys_attrs_with_node.append("nodejs_22")
     for a in sys_attrs_with_node:
         pkg_lines.append(f"pkgs.{a}")
 
@@ -446,7 +460,19 @@ def _python_libs(m: Manifest, project_dir=None) -> list[str]:
     # An explicit mention in the commands still pulls the stack in, so a project
     # that really uses it is unaffected -- as is any Python project with a
     # browser lane, which is what this clause was for.
-    if "uvicorn" in hay or "fastapi" in hay or "httpx" in hay or (_needs_browser(m) and py_harness):
+    # The browser clause needs a POSITIVE python signal, not merely "language
+    # unset". `py_harness` treats an unset language as python so the pytest
+    # harness still lands for manifests that omit it -- correct there, wrong
+    # here: a JS spec that declares no language was still buying fastapi +
+    # uvicorn + httpx off the back of its browser lane, which is the build that
+    # OOM-killed the verify Job (TFactory specs 190/192).
+    py_explicit = (m.language or "").lower() == "python" or "pytest" in hay
+    if (
+        "uvicorn" in hay
+        or "fastapi" in hay
+        or "httpx" in hay
+        or (_needs_browser(m) and py_explicit)
+    ):
         libs += ["fastapi", "uvicorn", "httpx"]
     if project_dir is not None:
         libs += _deps_from_pyproject(project_dir)
