@@ -277,10 +277,24 @@ def _python_attr(m: Manifest) -> str:
 # default Go (always present); a requested minor only maps to an explicit
 # attr for versions we know exist in the pin, else degrades to `go` rather
 # than emitting a non-existent attr (which would fail the flake eval).
+# Go minors that EXIST at DEFAULT_NIXPKGS. Verified against the pin, not assumed:
+# go_1_21 and go_1_22 are gone ("Did you mean go_1_23, go_1_25 or go_1_26?") and
+# go_1_23 throws outright ("Go 1.23 is end-of-life and 'go_1_23' has been
+# removed"). Mapping to any of the three produced a flake that could not
+# EVALUATE, so a manifest naming a Go minor got a runner failure rather than a
+# test result -- the same defect as Factory#1007 and #1012, in a fourth table.
+#
+# It stayed invisible because two assertions PINNED the broken output: a text
+# check for `pkgs.go_1_22` in the test module and another in this file's own
+# self-test. Both asserted the attribute was emitted; neither evaluated it.
+#
+# An unpinnable minor now falls back to the default `go` rather than naming an
+# attribute that does not exist. That is a deliberate widening, not a silent
+# one: the alternative is a dead shell, and refusing would break manifests that
+# work today on a Go the pin no longer carries.
 _GO_ATTR = {
-    "1.21": "go_1_21",
-    "1.22": "go_1_22",
-    "1.23": "go_1_23",
+    "1.25": "go_1_25",
+    "1.26": "go_1_26",
 }
 
 
@@ -744,7 +758,7 @@ def _test_go_manifest() -> None:
         "provisioning": {"method": "nix", "ref": "flake.nix", "generated": True},
     }
     fg = generate_flake(env_go)
-    assert "pkgs.go_1_22" in fg, fg  # noqa: S101
+    assert "pkgs.go_1_25" in fg, fg  # noqa: S101
     assert "pkgs.gotestsum" in fg and "pkgs.gocover-cobertura" in fg, fg  # noqa: S101
     assert "withPackages" not in fg and "python" not in fg, fg  # noqa: S101
     assert "pytest" not in fg, fg  # noqa: S101 — no python libs inferred for a go env
