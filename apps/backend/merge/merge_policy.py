@@ -39,6 +39,8 @@ __all__ = [
     "HOLD_BLOCKING",
     "decide_merge",
     "deployment_block_reasons",
+    "floor_from_paths",
+    "raise_review_tier",
     "tier_permits_auto_merge",
 ]
 
@@ -64,6 +66,55 @@ _TIER_ALIASES: dict[str, str] = {
     "hard": "hard",
     "blocking": "hard",
 }
+
+
+# Ordinal for the canonical buckets, so a tier can be RAISED and never lowered
+# (#1456). Ranking the bucket rather than the spelling means auto/low and
+# blocking/hard compare correctly against each other.
+_BUCKET_RANK: dict[str, int] = {"low": 0, "medium": 1, "hard": 2}
+
+
+def floor_from_paths(changed: object) -> str:
+    """The lowest review tier a change touching *changed* may be reviewed at.
+
+    Path-derived, so a change cannot self-declare itself routine: any changed
+    file matching ``review_tier.HIGH_RISK_PATTERNS`` (auth / secrets /
+    migrations / infra / CI) floors it at ``blocking`` — the same verdict
+    ``review_tier.classify_review_tier`` reaches for a high-risk plan. The
+    pattern table is IMPORTED, never restated: a second copy of a shared rule
+    drifts (Factory#590).
+
+    Returns ``"auto"`` (no floor) for an empty or unmatched change set, so a
+    diff nobody could read never raises anything.
+
+    Lazy import: ``review_tier`` is a top-level module of the backend package,
+    which is on ``sys.path`` only at runtime — the same reason ``pr_endgame``
+    imports this module lazily.
+    """
+    try:
+        from review_tier import (  # type: ignore[import-not-found,unused-ignore] # noqa: PLC0415
+            _RISK_RE,
+        )
+    except ImportError:  # pragma: no cover - backend always present in prod
+        return "auto"
+    if not isinstance(changed, Iterable) or isinstance(changed, str | bytes):
+        return "auto"
+    for path in changed:
+        if isinstance(path, str) and path.strip() and _RISK_RE.search(path):
+            return "blocking"
+    return "auto"
+
+
+def raise_review_tier(tier: str | None, floor: str | None) -> str | None:
+    """The stricter of *tier* and *floor*. NEVER lowers a tier.
+
+    Accepts either spelling on either side (``auto``/``low`` …). An
+    unrecognised or absent ``tier`` ranks below every real floor, so a floor
+    still applies to it; an unrecognised ``floor`` can never lower a real tier.
+    """
+    t = _BUCKET_RANK.get(_TIER_ALIASES.get(str(tier or "").strip().lower(), ""), -1)
+    f = _BUCKET_RANK.get(_TIER_ALIASES.get(str(floor or "").strip().lower(), ""), -1)
+    return floor if f > t else tier
 
 
 def _verdict_pass(tfactory_verdict: object) -> bool:
