@@ -29,6 +29,7 @@ from pathlib import Path
 
 from factory_common.logsafe import sanitize_log
 
+from server.services.build_backend import task_repo_dir
 from server.services.task_branch import resolve_task_branch
 
 logger = logging.getLogger(__name__)
@@ -227,7 +228,7 @@ def apply_path_risk_floor(
         # that pushed ref against the PROJECT repo (#1089), where the local
         # base branch may be stale or checked out elsewhere.
         changed = _get_changed_files_from_git(
-            project_path / ".aifactory" / "worktrees" / "tasks" / spec_id,
+            task_repo_dir(project_path, spec_id) or project_path,
             f"origin/{base}",
             project_path,
             spec_id,
@@ -917,8 +918,10 @@ def gather_pr_context(
     what ``gh`` and ``_split_repo`` take. The caller uses ``provider`` to decide
     whether this GitHub-shaped endgame may run at all — see ``run_pr_endgame``.
     """
-    worktree = project_path / ".aifactory" / "worktrees" / "tasks" / spec_id
-    if not worktree.exists():
+    # #1467: the kubejob build clone moved to worktrees/builds/<spec>, so ask
+    # for the build repo rather than assuming the task-worktree path.
+    worktree = task_repo_dir(project_path, spec_id)
+    if worktree is None:
         return None
     head = runner(["git", "rev-parse", "--abbrev-ref", "HEAD"], str(worktree))
     branch = head.out.strip() if head.ok else ""

@@ -103,7 +103,7 @@ from typing import Any
 from factory_common.logsafe import sanitize_log
 
 from server.services.task_branch import record_branch
-from server.specpath import spec_dir_for
+from server.specpath import safe_spec_component, spec_dir_for
 
 from .task_phase import (
     _append_parallel_flags,
@@ -185,8 +185,19 @@ _DEFAULT_DEADLINE_SECONDS = 6 * 3600  # a full build is long-lived
 # fallback when the env is somehow unset; the image always sets it.
 _DEFAULT_BACKEND_PATH = "/home/projects/MagesticAI/apps/backend"
 
-# The worktree a build runs in (mirrors agent_service._spawn_task_execution).
-_WORKTREE_TEMPLATE = ".aifactory/worktrees/tasks/{spec_id}"
+# The standalone build clone a dispatched Job runs in, co-mounted at ``/work``.
+#
+# #1467: this MUST NOT be ``.aifactory/worktrees/tasks/<spec_id>``. That path is
+# owned by ``WorktreeManager`` — the in-pod path registers a REAL linked worktree
+# there (``git worktree add``), and ``routes/pr.py`` pushes the task branch from
+# it. ``_populate_self_contained_worktree`` rmtree'd the path and replaced it
+# with a standalone clone WITHOUT deregistering, so the parent repo kept a
+# ``git worktree list`` entry pointing at a directory that is no longer a linked
+# worktree. That orphan holds the branch lock: create-PR then pushes from a clone
+# that lacks the branch, and TFactory's git_writer cannot check the branch out
+# ("already used by worktree at ..."). Giving the build clone its own path means
+# nothing competes for the branch.
+_BUILD_CLONE_TEMPLATE = ".aifactory/worktrees/builds/{spec_id}"
 
 # -- build Job environment (#671 OAuth-env defect) --------------------------- #
 #
@@ -355,7 +366,7 @@ def _worktree_subpath(data_root: str, project_path: Path, spec_id: str) -> str |
     the project is outside the data root (dev/test on a laptop) — the Job then
     runs without the worktree mount, which is honest rather than wrong.
     """
-    worktree = project_path / _WORKTREE_TEMPLATE.format(spec_id=spec_id)
+    worktree = project_path / _BUILD_CLONE_TEMPLATE.format(spec_id=spec_id)
     root = data_root.rstrip("/") + "/"
     norm = str(worktree).rstrip("/")
     if not norm.startswith(root):
@@ -915,6 +926,64 @@ def _git_out(args: list[str]) -> str:
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
+def task_repo_dir(project_path: Path, spec_id: str) -> Path | None:
+    """The git repo a delivery step (create-PR, the endgame) should stand in.
+
+    Two different things can hold a task's code, and #1467 was them fighting over
+    one path:
+
+    * the LINKED task worktree ``.aifactory/worktrees/tasks/<spec>``, which the
+      in-pod build backend builds in — it holds the task branch and its commits;
+    * the standalone BUILD CLONE ``.aifactory/worktrees/builds/<spec>``, which
+      the control plane cuts before dispatching a Job — the Job builds elsewhere
+      and pushes, so this one stays on the base branch and the branch is
+      recovered from origin (#1459).
+
+    Prefer the worktree: when it exists it is the only one of the two that
+    actually contains the build. This is not a search for the BRANCH (that is
+    ``resolve_task_branch``'s job, and it must not depend on layout) — it is the
+    build clone's own address, which moved in #1467 and whose two consumers have
+    to be told where.
+    """
+    try:
+        spec_id = safe_spec_component(spec_id)
+    except ValueError:
+        return None
+    for candidate in (
+        project_path / ".aifactory" / "worktrees" / "tasks" / spec_id,
+        project_path / _BUILD_CLONE_TEMPLATE.format(spec_id=spec_id),
+    ):
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def orphaned_worktree_registrations(project_path: Path) -> list[str]:
+    """Registered worktrees whose path is no longer a linked worktree (#1467).
+
+    A linked worktree's ``.git`` is a FILE pointing back at
+    ``<repo>/.git/worktrees/<id>``. If something replaces the directory with a
+    standalone clone (``.git`` a DIRECTORY), the registration survives and keeps
+    holding the branch lock: every later checkout of that branch fails with
+    "already used by worktree at ...", and a push from the replacement clone
+    cannot see the branch at all. ``git worktree prune`` does NOT clear it —
+    prune only drops registrations whose path is GONE, and this one exists.
+
+    Cheap enough to run whenever a build completes, which is the point: this
+    class of defect otherwise needs a full pipeline run to surface.
+
+    The first ``worktree list --porcelain`` entry is the main worktree, whose
+    ``.git`` is a directory legitimately; it is never an orphan.
+    """
+    out = _git_out(["-C", str(project_path), "worktree", "list", "--porcelain"])
+    paths = [
+        line[len("worktree ") :]
+        for line in out.splitlines()
+        if line.startswith("worktree ")
+    ]
+    return [p for p in paths[1:] if not (Path(p) / ".git").is_file()]
+
+
 def _refresh_to_remote_base(wt_path: Path, base_branch: str) -> None:
     """Fast-forward the fresh build clone to the remote base head (#960).
 
@@ -978,7 +1047,11 @@ def _populate_self_contained_worktree(
 
     manager: Any = worktree_mod.WorktreeManager(project_path)
     branch = manager.get_branch_name(spec_id)
-    wt_path = Path(manager.get_worktree_path(spec_id))
+    # #1467: NOT manager.get_worktree_path(spec_id) — that is the linked task
+    # worktree's path, and replacing it with this clone orphaned its registration
+    # in the parent repo (see _BUILD_CLONE_TEMPLATE). The build clone gets its own
+    # path; the branch stays checked out where git thinks it is.
+    wt_path = project_path / _BUILD_CLONE_TEMPLATE.format(spec_id=spec_id)
     base_branch = manager.base_branch
 
     # The real GitHub remote the build pushes to (the local clone source below is
