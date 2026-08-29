@@ -235,6 +235,34 @@ async def create_pr_from_task(
         timeout=15,
     )
 
+    # #1459: same failure as #959/PR #962, on the other door. Under the
+    # kubejob/packed build backend the build ran in a k8s Job on an ephemeral
+    # /work and pushed its branch to origin from there; THIS control-plane
+    # worktree stayed on the base branch and has no local ref for that branch,
+    # so the push below fails "src refspec <branch> does not match any" and no
+    # PR opens. Fetch the branch into a local ref first, exactly as
+    # services/pr_endgame.create_pr does. Fail-safe: on the co-mount path (the
+    # branch is already local, possibly checked out here) git declines and the
+    # fetch is a harmless no-op — we log and fall through to the existing
+    # behaviour.
+    try:
+        fetch_result = subprocess.run(  # noqa: S603, ASYNC221, PLW1510
+            ["git", "fetch", "origin", f"{worktree_branch}:{worktree_branch}"],  # noqa: S607
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if fetch_result.returncode != 0:
+            logger.info(
+                "fetch of %s from origin skipped (%s) - branch may be local "
+                "already or not yet on origin",
+                worktree_branch,
+                (fetch_result.stderr or fetch_result.stdout).strip()[:200],
+            )
+    except (subprocess.SubprocessError, OSError) as exc:
+        logger.info("fetch of %s from origin skipped: %s", worktree_branch, exc)
+
     # Push the branch to remote
     # Use --force-with-lease after successful rebase (rebase rewrites history)
     push_cmd = ["git", "push", "-u", "origin", worktree_branch]
