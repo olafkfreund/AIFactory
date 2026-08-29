@@ -32,7 +32,9 @@ from review_tier import HIGH_RISK_PATTERNS  # noqa: E402
 from server.services import pr_endgame as pe  # noqa: E402
 
 
-def _spec(tmp_path: Path, tier: str | None, *, deployment: dict | None = None) -> Path:
+def _spec(
+    tmp_path: Path, tier: str | None, *, deployment: dict[str, object] | None = None
+) -> Path:
     """A spec dir + worktree shaped like a finished build."""
     spec_id = "001-x"
     (tmp_path / ".aifactory" / "worktrees" / "tasks" / spec_id).mkdir(parents=True)
@@ -41,7 +43,7 @@ def _spec(tmp_path: Path, tier: str | None, *, deployment: dict | None = None) -
     (spec / "requirements.json").write_text(
         json.dumps({"github_repo": "olafkfreund/AIFactory"})
     )
-    meta: dict = {"base_branch": "dev"}
+    meta: dict[str, object] = {"base_branch": "dev"}
     if tier is not None:
         meta["reviewTier"] = tier
     (spec / "task_metadata.json").write_text(json.dumps(meta))
