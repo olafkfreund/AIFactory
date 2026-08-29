@@ -24,7 +24,7 @@
 # default-branch flip splits bumps across both branches.
 #
 # Known gap, unchanged: Dependabot's Dockerfile parser only reads FROM. The
-# `COPY --from=ghcr.io/olafkfreund/tfactory-runner-nix:...` pins are invisible to
+# `COPY --from=ghcr.io/olafkfreund/factory-runner-nix:...` pins are invisible to
 # it and stay hand-managed. Risk is low -- that registry is ours, so upstream
 # garbage collection is not a threat -- but it is uncovered, not covered.
 #

@@ -147,7 +147,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          # Prefer GHCR_PAT (can read the private tfactory-runner-nix base
+          # Prefer GHCR_PAT (can read the private factory-runner-nix base
           # image the build COPYs from); GITHUB_TOKEN can't pull that unlinked
           # private package -> 403. Mirrors deploy.yml / PFactory/TFactory (#511).
           password: ${{ secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}

@@ -99,7 +99,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 # Canonical nix-base image (RFC-0016 #198). Override per env in the consumer.
-DEFAULT_NIX_IMAGE = "ghcr.io/olafkfreund/tfactory-runner-nix:latest"
+DEFAULT_NIX_IMAGE = "ghcr.io/olafkfreund/factory-runner-nix:latest"
 
 # Dispatch/reconcile contract (apis/concurrency-conventions.md §3).
 JOB_NAME_PREFIX = "factory"  # Job named factory-<service>-<job_id_short>

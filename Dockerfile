@@ -432,8 +432,8 @@ USER root
 # not already in the substrate) can't write new paths. Warm builds — the packed
 # multi-node case we're unblocking — work; cold-write support is a follow-up
 # (writable overlay at Job runtime) tracked on the slice-3 issue.
-COPY --from=ghcr.io/olafkfreund/tfactory-runner-nix:latest@sha256:369e1aa003519d5edc8363c2f9aa69247798ebdc312ebd2c1e46aff61d4613c9 /nix/store /nix/store
-COPY --from=ghcr.io/olafkfreund/tfactory-runner-nix:latest@sha256:369e1aa003519d5edc8363c2f9aa69247798ebdc312ebd2c1e46aff61d4613c9 --chown=65532:65532 /nix/var /nix/var
+COPY --from=ghcr.io/olafkfreund/factory-runner-nix:latest@sha256:28c94cf7552f81dcf24c556ae74a5220b84eb1ebe9e9bb6e58d67c346d143e1e /nix/store /nix/store
+COPY --from=ghcr.io/olafkfreund/factory-runner-nix:latest@sha256:28c94cf7552f81dcf24c556ae74a5220b84eb1ebe9e9bb6e58d67c346d143e1e --chown=65532:65532 /nix/var /nix/var
 
 # Browser evidence (screencasts + screenshots) for the coder image only -- the
 # API server in the `runtime` stage has no use for a browser and should not

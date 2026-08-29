@@ -72,7 +72,7 @@ def test_gate_keeps_caps_nix_local_builds_need():
 
 
 def test_gate_pod_never_pins_runasnonroot():
-    """#840 regression: the gate image (tfactory-runner-nix) is USER 0:0 because
+    """#840 regression: the gate image (factory-runner-nix) is USER 0:0 because
     nix builds run as root and nix must write /nix/var. #812 set runAsNonRoot
     here on the premise that "task images declare a non-root USER" — true of the
     BUILD image, false of this one — and the kubelet then refused the container
@@ -139,7 +139,7 @@ def test_manifest_mounts_warm_nix_store_with_seed_init():
     # seed initContainer populates it from the image on first use.
     m = build_job_manifest(
         "fsbx-abc",
-        "ghcr.io/olafkfreund/tfactory-runner-nix:latest",
+        "ghcr.io/olafkfreund/factory-runner-nix:latest",
         ["nix develop path:/work#default -c go build ./..."],
         repo_pvc="aifactory-data",
         repo_subpath="ws/proj/.aifactory/worktrees/tasks/t",
@@ -158,7 +158,7 @@ def test_manifest_mounts_warm_nix_store_with_seed_init():
     # seed init container copies the image's /nix into the empty PVC at /warm
     init = t["initContainers"][0]
     assert init["name"] == "seed-nix-store"
-    assert init["image"] == "ghcr.io/olafkfreund/tfactory-runner-nix:latest"
+    assert init["image"] == "ghcr.io/olafkfreund/factory-runner-nix:latest"
     assert init["volumeMounts"][0]["mountPath"] == "/warm"
     assert "/warm/store" in init["command"][-1]
 
