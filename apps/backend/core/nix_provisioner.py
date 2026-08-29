@@ -364,6 +364,61 @@ def _system_pkg_attrs(m: Manifest) -> list[str]:
     ]
 
 
+# Declared `language` -> the nixpkgs attrs that put its toolchain on PATH
+# (Factory#1012). Third sibling of _DROP_SYSTEM_PKGS / _SYSTEM_PKG_ALIASES, and
+# the same contract as those two: a token in, real attrs out, every attr
+# measured against the pinned rev 567a49d1 (rustc-1.95.0, cargo-1.95.0,
+# openjdk-21.0.12, maven-3.9.12, dotnet-sdk-8.0.422, nodejs-22.22.3) because a
+# missing attr fails the WHOLE devShell eval, not just that package.
+#
+# Why a table and a refusal rather than only one of them. generate_flake used to
+# branch on `go` and let EVERYTHING else fall through to the Python harness, so
+# `language: rust` got a shell whose entire package list was `pkgs.python313`.
+# That fails OPEN, into a plausible-but-wrong toolchain: the flake evaluates,
+# the shell realises, and the defect only surfaces later as `cargo: command not
+# found`, at which point it reads as a flaky environment rather than a
+# provisioning bug (the #1007 / #1009 symptom class). The table makes the four
+# languages a planner actually emits work; the `else: raise` below makes the
+# fifth one FAIL CLOSED, loudly, at generation time.
+#
+# The distinction that has to survive: `(m.language or "python")` for an ABSENT
+# language stays deliberate and correct -- a manifest that omits `language` gets
+# the pytest harness, as it always has. Only a language that was DECLARED and is
+# unrecognised is refused. Absent is a default; declared-but-unknown is a
+# statement the generator cannot honour.
+#
+# Aliases are spelled out rather than normalised because the planner's spelling
+# is not ours to predict: `dotnet` / `csharp` / `c#` all name one SDK, and
+# `node` / `javascript` / `typescript` / `js` / `ts` all name one runtime. A
+# missing alias here costs a false refusal, which is loud and cheap to fix; the
+# alternative (falling back) is the bug this table exists to kill.
+#
+# Not in the table: `go` and `python`, which keep their own version-aware
+# resolvers below (_go_attr, _python_attr + the withPackages set) -- they map to
+# an attr computed from `toolchain`, not to a fixed list.
+_LANG_ATTRS = {
+    # rustc alone has no cargo; every Rust verify command in practice is
+    # `cargo test`, so the pair ships together.
+    "rust": ["rustc", "cargo"],
+    # maven rides along for the same reason cargo does: `mvn test` is the
+    # declared command far more often than a bare `javac`. gradle is NOT
+    # included -- a project that wants it names it in system_packages, and
+    # buying both build tools unasked is ~200MB of store for nothing.
+    "java": ["jdk21", "maven"],
+    "dotnet": ["dotnet-sdk"],
+    "csharp": ["dotnet-sdk"],
+    "c#": ["dotnet-sdk"],
+    # Same attr the jest and browser blocks add, so the dedupe in generate_flake
+    # collapses the overlap when a node project also has one of those lanes.
+    "node": ["nodejs_22"],
+    "nodejs": ["nodejs_22"],
+    "javascript": ["nodejs_22"],
+    "typescript": ["nodejs_22"],
+    "js": ["nodejs_22"],
+    "ts": ["nodejs_22"],
+}
+
+
 def generate_flake(env: dict, *, nixpkgs: str = DEFAULT_NIXPKGS, project_dir=None) -> str:
     """Render a reproducible `flake.nix` from an RFC-0005 environment manifest.
 
@@ -371,6 +426,9 @@ def generate_flake(env: dict, *, nixpkgs: str = DEFAULT_NIXPKGS, project_dir=Non
     system packages, and (when a browser lane is implied) version-matched
     playwright-test + browsers wired via env. The shell's tools are on PATH so
     consumers call the Nix binaries directly.
+
+    Raises ProvisionError when `language` is DECLARED but unrecognised — see
+    _LANG_ATTRS for why that is not the same as an absent one.
     """
     m = Manifest.from_contract(env)
     lang = (m.language or "python").lower()
@@ -381,7 +439,19 @@ def generate_flake(env: dict, *, nixpkgs: str = DEFAULT_NIXPKGS, project_dir=Non
         # Go has no withPackages set — the toolchain is one attr; test/coverage
         # tools (gotestsum, gocover-cobertura) ride in as system_packages.
         pkg_lines.append(f"pkgs.{_go_attr(m)}")
-    else:
+    elif lang in _LANG_ATTRS:
+        # Fixed attr list, no withPackages set — the language's own package
+        # manager (cargo, maven, nuget, npm) installs libraries at lane setup,
+        # exactly as the jest lane does.
+        #
+        # PREPENDED to sys_attrs rather than emitted into pkg_lines, so it flows
+        # through the same dedupe the alias table needs. `language: typescript`
+        # beside a jest or browser lane is the obvious collision — both name
+        # nodejs_22 — and emitting the toolchain separately doubled the line.
+        # (The go and python branches cannot do this: their attr is computed, and
+        # python's is a `withPackages` expression, not a bare attr name.)
+        sys_attrs = _LANG_ATTRS[lang] + sys_attrs
+    elif lang == "python":
         py = _python_attr(m)
         py_pkgs = [_PY_PKG_ALIASES.get(p, p) for p in _python_libs(m, project_dir=project_dir)]
         if py_pkgs:
@@ -392,6 +462,20 @@ def generate_flake(env: dict, *, nixpkgs: str = DEFAULT_NIXPKGS, project_dir=Non
             pkg_lines.append(f"(pkgs.{py}.withPackages (p: [ {joined} ]))")
         else:
             pkg_lines.append(f"pkgs.{py}")
+    else:
+        # FAIL CLOSED. Emitting the Python shell here is what #1012 was: the
+        # generated flake builds, the lane starts, and the declared command dies
+        # with "command not found" hours downstream where it reads as a flaky
+        # environment. Refusing costs one loud error at generation time, names
+        # the exact fix (add the language to _LANG_ATTRS, or drop the field to
+        # get the pytest default on purpose), and cannot be mistaken for
+        # anything else.
+        raise ProvisionError(
+            f"unsupported environment.language {m.language!r}: no toolchain mapping. "
+            f"Known: go, python, {', '.join(sorted(_LANG_ATTRS))}. "
+            "Add it to nix_provisioner._LANG_ATTRS, or omit `language` to get the "
+            "default Python harness."
+        )
     sys_attrs_with_node = list(sys_attrs)
     browser = _needs_browser(m)
     if browser:
