@@ -582,7 +582,12 @@ class AuditLog(Base):
     )
     action: Mapped[str] = mapped_column(String(255), nullable=False)
     resource_type: Mapped[str] = mapped_column(String(255), nullable=False)
-    resource_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # 255, not 36 (#1458, migration c1f5a3d7b924). This is a free-form pointer
+    # into whichever table resource_type names -- no FK, and those tables do not
+    # all use UUID keys. The task pipeline's ids are composite
+    # ("{project_id}:{spec-slug}", 53+ chars), so a UUID-sized column dropped
+    # every audited task action on the floor.
+    resource_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     details_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     ip: Mapped[str | None] = mapped_column(String(45), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
