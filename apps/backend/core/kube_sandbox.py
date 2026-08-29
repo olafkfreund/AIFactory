@@ -103,7 +103,7 @@ def build_job_manifest(
         # premise that "task images declare a non-root USER" — true of the BUILD
         # image (aifactory:*-nix is USER nonroot, and job_dispatch rightly keeps
         # runAsNonRoot), false of the GATE image: AIFACTORY_SANDBOX_IMAGE is
-        # tfactory-runner-nix, which is USER 0:0 because nix builds run as root
+        # factory-runner-nix, which is USER 0:0 because nix builds run as root
         # and nix must write /nix/var. The kubelet then refused the container
         # outright — "container has runAsNonRoot and image will run as root",
         # CreateContainerConfigError — so every gate Job died before running a

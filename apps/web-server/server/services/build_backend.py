@@ -124,7 +124,7 @@ _ENV_BACKEND = "AIFACTORY_BUILD_BACKEND"
 # Build-Job image (#671 defect fix). The build Job runs run.py via a plain
 # ``bash -c "python run.py …"`` entrypoint (nix_develop=False), so it needs an
 # image that actually ships bash + python + run.py + the agent SDK — i.e. the
-# AIFactory runtime image itself, NOT the thin ``tfactory-runner-nix`` gate
+# AIFactory runtime image itself, NOT the thin ``factory-runner-nix`` gate
 # substrate (which has no bash/python on PATH outside a ``nix develop`` shell;
 # the build Job pod hits StartError on it and run.py never runs).
 #

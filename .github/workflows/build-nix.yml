@@ -68,7 +68,7 @@ jobs:
           username: ${{ github.actor }}
           password: "${{ secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}"
 
-      # amd64 only — the substrate (tfactory-runner-nix) is amd64-only and the
+      # amd64 only — the substrate (factory-runner-nix) is amd64-only and the
       # p510 k3d cluster is amd64. The gha cache (scope=aifactory-nix) lets a
       # re-run reuse the heavy /nix/store COPY layer instead of re-pulling it.
       # Rebuild the base-security layer at most once a day. Without a
