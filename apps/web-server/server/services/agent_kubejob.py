@@ -23,6 +23,7 @@ from server.project_registry import resolve_project_path
 from server.services import review_redrive_service
 from server.specpath import spec_dir_for
 
+from .build_backend import orphaned_worktree_registrations
 from .build_log_stream import PlanSync
 from .task_log_writer import TaskLogWriter
 from .task_phase import TaskPhase
@@ -198,8 +199,6 @@ class KubejobMixin:
         (``git worktree remove``) deletes a directory, which is not a thing to do
         unattended on a completion path.
         """
-        from .build_backend import orphaned_worktree_registrations
-
         project_id, _, _spec = job_id.partition(":")
         try:
             orphans = orphaned_worktree_registrations(resolve_project_path(project_id))
