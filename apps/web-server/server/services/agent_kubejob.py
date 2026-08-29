@@ -23,6 +23,7 @@ from server.project_registry import resolve_project_path
 from server.services import review_redrive_service
 from server.specpath import spec_dir_for
 
+from .build_backend import orphaned_worktree_registrations
 from .build_log_stream import PlanSync
 from .task_log_writer import TaskLogWriter
 from .task_phase import TaskPhase
@@ -31,6 +32,37 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 _log = logging.getLogger(__name__)
+
+
+def _report_orphaned_worktrees(job_id: str) -> list[str]:
+    """#1467 invariant: no registered worktree may be a non-worktree on disk.
+
+    An orphaned registration holds the branch lock, so create-PR pushes from
+    a repo without the branch and TFactory's git_writer cannot check it out —
+    both in the looks-finished-delivers-nothing shape. Checked here because
+    build completion is the moment the state matters and the cheapest place
+    to catch it without a full pipeline run. Report-only: the remedy
+    (``git worktree remove``) deletes a directory, which is not a thing to do
+    unattended on a completion path.
+    """
+    project_id, _, _spec = job_id.partition(":")
+    try:
+        orphans = orphaned_worktree_registrations(resolve_project_path(project_id))
+    except Exception:  # noqa: BLE001 - a diagnostic must never fail a build
+        _log.exception(
+            "[AgentService] worktree-registration check failed for %s (ignored)",
+            sanitize_log(job_id),
+        )
+        return []
+    if orphans:
+        _log.error(
+            "[AgentService] #1467 orphaned worktree registrations after %s: %s "
+            "— these hold the branch lock; deregister with "
+            "`git worktree remove --force <path>`",
+            sanitize_log(job_id),
+            sanitize_log(", ".join(orphans)),
+        )
+    return orphans
 
 
 class KubejobMixin:
@@ -183,6 +215,7 @@ class KubejobMixin:
                 "[AgentService] kubejob terminal-status record failed for %s (ignored)",
                 job_id,
             )
+        _report_orphaned_worktrees(job_id)
         await self._drain_queue()
 
     async def _emit_kubejob_terminal_completion(self, job_id: str) -> str:
