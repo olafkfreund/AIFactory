@@ -28,6 +28,7 @@ from pydantic import BaseModel
 
 from server.error_ref import client_error
 from server.project_registry import get_projects_file
+from server.services.build_backend import task_repo_dir
 from server.services.http_verdict import honest_status
 from server.services.task_branch import resolve_task_branch
 from server.specpath import safe_spec_component
@@ -109,10 +110,12 @@ async def create_pr_from_task(
     if not spec_dir.exists():
         return {"success": False, "error": f"Task {task_id} not found"}
 
-    # Find the worktree
-    worktree_path = project_path / ".aifactory" / "worktrees" / "tasks" / spec_id
+    # The repo to push from: the linked task worktree when the in-pod backend
+    # built there, else the kubejob build clone (#1467 moved it to
+    # worktrees/builds so it stops clobbering the worktree).
+    worktree_path = task_repo_dir(project_path, spec_id)
 
-    if not worktree_path.exists():
+    if worktree_path is None:
         return {"success": False, "error": "No worktree found for this task"}
 
     # Base branch first: resolving the task branch needs to know which branch

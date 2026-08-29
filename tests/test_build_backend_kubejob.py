@@ -175,10 +175,11 @@ def test_manifest_runs_run_py_on_build_image_with_mounts(
     # /clis is the always-on install-clis provisioning (#777), alongside the
     # worktree + warm-store mounts.
     assert mount_paths == {"/work", "/nix/store", "/clis"}
-    # worktree subPath is the data-root-relative worktree dir.
+    # /work subPath is the data-root-relative BUILD CLONE dir — deliberately not
+    # worktrees/tasks/<spec>, which belongs to the linked task worktree (#1467).
     work_mt = next(mt for mt in c["volumeMounts"] if mt["mountPath"] == "/work")
     assert work_mt["subPath"] == (
-        "workspaces/proj-1/.aifactory/worktrees/tasks/042-go-hello"
+        "workspaces/proj-1/.aifactory/worktrees/builds/042-go-hello"
     )
 
     env_names = {e["name"] for e in c["env"]}
@@ -888,7 +889,7 @@ async def test_dispatch_populates_worktree_before_job_created(
         proj
         / ".aifactory"
         / "worktrees"
-        / "tasks"
+        / "builds"  # the build clone, not the task worktree (#1467)
         / "110-feat"
         / ".aifactory"
         / "specs"
@@ -1457,7 +1458,9 @@ def test_manifest_default_keeps_work_comount(
     )
     c = m["spec"]["template"]["spec"]["containers"][0]
     work_mt = next(mt for mt in c["volumeMounts"] if mt["mountPath"] == "/work")
-    assert work_mt["subPath"] == ("workspaces/proj-1/.aifactory/worktrees/tasks/042-go")
+    assert work_mt["subPath"] == (
+        "workspaces/proj-1/.aifactory/worktrees/builds/042-go"
+    )
     env_names = {e["name"] for e in c["env"]}
     assert "WORKSPACE_URI" not in env_names  # default → no unpack
 
