@@ -20,6 +20,7 @@ tests/test_terminal_completion_characterization.py.
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -185,6 +186,28 @@ async def run_terminal_completion(
                     "terminal-side-effects marker write failed (may re-run next call): %s",
                     sanitize_log(str(e)),
                 )
+
+            # #1456: score the REAL diff against the high-risk path table and
+            # raise reviewTier BEFORE the handoff below — TFactory picks its VAL
+            # floor off the contract this metadata feeds, so a raise landing
+            # afterwards would verify at the self-declared rigor. Advisory
+            # unless AIFACTORY_PATH_RISK_FLOOR_ENFORCE is on (it then rewrites
+            # reviewTier, which both TFactory and the PR endgame already read).
+            # Same helper the endgame calls; idempotent, best-effort.
+            try:
+                from .pr_endgame import apply_path_risk_floor  # noqa: PLC0415
+
+                _meta_file = spec_dir / "task_metadata.json"
+                _meta = json.loads(_meta_file.read_text())
+                apply_path_risk_floor(
+                    project_path,
+                    spec_dir,
+                    spec_id,
+                    str(_meta.get("base_branch") or _meta.get("baseBranch") or "main"),
+                    _meta.get("reviewTier"),
+                )
+            except Exception:  # noqa: BLE001 — never blocks completion
+                logger.debug("path risk floor skipped (best-effort)", exc_info=True)
 
             # Auto-handover the finished build to TFactory when the task
             # opted in (task_metadata `auto_handover_tfactory`, #496) and
@@ -473,6 +496,10 @@ async def run_terminal_completion(
                             # gather_pr_context from the same
                             # task_metadata.json it reads the base from.
                             review_tier=ctx.get("review_tier"),
+                            # #1456 advisory rollout: what the CHANGED PATHS
+                            # say the tier should be, noted on the PR for the
+                            # human even while it may not withhold the merge.
+                            review_tier_floor=ctx.get("review_tier_floor"),
                             reviewer=_reviewer,
                             review_fn=_review_fn,
                             fix_fn=_fix_fn,
