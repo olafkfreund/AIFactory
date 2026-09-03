@@ -50,6 +50,11 @@ extend-exclude = [
     "scripts/ratchet_helpers.py",
     "apps/backend/core/factory_sandbox.py",
     "apps/backend/core/nix_provisioner.py",
+    # RFC-0005 paved road: nix_provisioner's sibling — the declarative
+    # language-descriptor loader, vendored byte-exact together with
+    # core/languages/*.yaml (the descriptors it globs). Same hub canonical
+    # terms as the modules above.
+    "apps/backend/core/language_descriptors.py",
     # RFC-0014 (#664): byte-exact mirror of the hub canonical
     # scripts/cost_router_core.py, formatted at the fleet line-length (100). The
     # AIFactory-native budget logic that consumes it lives in
