@@ -32,6 +32,28 @@ import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # only for annotations; the runtime import is the shim below
+    from language_descriptors import LanguageDescriptor
+
+# The declarative language descriptors (contracts/languages/*.yaml at the hub,
+# vendored beside this module in every consumer). They EXTEND the hardcoded
+# tables below: a language a descriptor declares gets its nix attrs + shell env
+# from the descriptor, so onboarding a language is a YAML drop, not an edit to
+# this file (RFC-0005 paved road). The dual import covers both contexts this
+# module is vendored into: a package (apps.backend.core / tools.runners) and a
+# flat scripts/ directory. A missing sibling module fails CLOSED at use time —
+# generate_flake's unknown-language refusal below names it — never silently.
+try:  # package context
+    from .language_descriptors import (
+        resolve_language as _resolve_descriptor,
+    )
+except ImportError:
+    try:  # flat context (hub scripts/, direct execution)
+        from language_descriptors import resolve_language as _resolve_descriptor
+    except ImportError:  # mis-vendored: module without its sibling
+        _resolve_descriptor = None
 
 # nixpkgs pin for generated flakes. A FULL commit rev (not a branch) keeps
 # generated flakes reproducible AND avoids a GitHub API call to resolve the
@@ -433,6 +455,22 @@ _LANG_ATTRS = {
 }
 
 
+def _descriptor_for_language(lang: str) -> LanguageDescriptor | None:
+    """The language descriptor to provision from, or None.
+
+    None when the builtin branches own the language (go/python and everything in
+    _LANG_ATTRS stay authoritative — the descriptor path EXTENDS the generator,
+    it never shadows a version-aware resolver), and None when the token matches
+    no descriptor (the caller's fail-closed refusal then stands).
+    """
+    if _resolve_descriptor is None:
+        return None
+    if lang in ("go", "python") or lang in _LANG_ATTRS:
+        return None
+    descriptor: LanguageDescriptor | None = _resolve_descriptor(lang)
+    return descriptor
+
+
 def generate_flake(env: dict, *, nixpkgs: str = DEFAULT_NIXPKGS, project_dir=None) -> str:
     """Render a reproducible `flake.nix` from an RFC-0005 environment manifest.
 
@@ -448,8 +486,22 @@ def generate_flake(env: dict, *, nixpkgs: str = DEFAULT_NIXPKGS, project_dir=Non
     lang = (m.language or "python").lower()
     sys_attrs = _system_pkg_attrs(m)
 
+    # Descriptor-declared languages (swift, kotlin, ...): resolved FIRST so the
+    # paved road extends the generator without touching it, but only for
+    # languages the builtin branches below do not already own — the builtin
+    # tables stay authoritative for go/python/node/rust/java/dotnet.
+    descriptor = _descriptor_for_language(lang)
+
+    descriptor_env: dict[str, str] = {}
     pkg_lines: list[str] = []
-    if lang == "go":
+    if descriptor is not None:
+        # Same contract as _LANG_ATTRS: a fixed attr list, prepended so it flows
+        # through the dedupe; libraries come from the language's own package
+        # manager at lane setup. The descriptor may also demand devShell env
+        # (Swift's corelibs on LD_LIBRARY_PATH), emitted verbatim below.
+        sys_attrs = list(descriptor.nix_packages) + sys_attrs
+        descriptor_env = dict(descriptor.nix_shell_env)
+    elif lang == "go":
         # Go has no withPackages set — the toolchain is one attr; test/coverage
         # tools (gotestsum, gocover-cobertura) ride in as system_packages.
         pkg_lines.append(f"pkgs.{_go_attr(m)}")
@@ -484,11 +536,18 @@ def generate_flake(env: dict, *, nixpkgs: str = DEFAULT_NIXPKGS, project_dir=Non
         # the exact fix (add the language to _LANG_ATTRS, or drop the field to
         # get the pytest default on purpose), and cannot be mistaken for
         # anything else.
+        hint = (
+            "Add a descriptor under contracts/languages/ (the paved road; see "
+            "language_descriptors.py)"
+            if _resolve_descriptor is not None
+            else "language_descriptors is NOT importable beside this module — the "
+            "vendoring is broken (module without its sibling); fix that first"
+        )
         raise ProvisionError(
             f"unsupported environment.language {m.language!r}: no toolchain mapping. "
-            f"Known: go, python, {', '.join(sorted(_LANG_ATTRS))}. "
-            "Add it to nix_provisioner._LANG_ATTRS, or omit `language` to get the "
-            "default Python harness."
+            f"Known: go, python, {', '.join(sorted(_LANG_ATTRS))}, plus any "
+            f"contracts/languages/ descriptor. {hint}, or omit `language` to get "
+            "the default Python harness."
         )
     sys_attrs_with_node = list(sys_attrs)
     browser = _needs_browser(m)
@@ -535,11 +594,15 @@ def generate_flake(env: dict, *, nixpkgs: str = DEFAULT_NIXPKGS, project_dir=Non
 
     let_lines = ""
     env_lines = ""
+    for var, value in descriptor_env.items():
+        # Values are Nix string expressions from the descriptor ("${pkgs...}"
+        # interpolation included), emitted verbatim into the devShell.
+        env_lines += "\n        " + var + ' = "' + value + '";'
     if browser:
         let_lines = (
             "\n      fontsConf = pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; };"
         )
-        env_lines = (
+        env_lines += (
             "\n        # Nix-provided, version-matched browsers — no network "
             "download.\n"
             '        PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers}";\n'
@@ -752,7 +815,13 @@ def _test_go_manifest() -> None:
     # 3b. go manifest -> go toolchain + test/coverage tools, no python/withPackages.
     env_go = {
         "language": "go",
-        "toolchain": {"go": "1.22"},
+        # 1.25 is an explicitly mapped minor in _GO_ATTR. This said "1.22" while
+        # the assert below demanded go_1_25 — Factory#1019 moved the table but
+        # not this env, so `python3 scripts/nix_provisioner.py` failed on a
+        # clean main and nothing in CI noticed (CI runs pytest, not this
+        # module's __main__). The unmapped-minor fallback keeps its own case
+        # below (fg2 asserts bare `pkgs.go`).
+        "toolchain": {"go": "1.25"},
         "system_packages": ["gotestsum", "gocover-cobertura"],
         "verify_commands": ["go test ./..."],
         "provisioning": {"method": "nix", "ref": "flake.nix", "generated": True},
@@ -797,6 +866,46 @@ def _test_browser_lane_deps() -> None:
     fpb = generate_flake(env_py_browser)
     assert "fastapi" in fpb, fpb  # noqa: S101
     assert "uvicorn" in fpb, fpb  # noqa: S101
+
+
+def _test_descriptor_languages() -> None:
+    """Descriptor-declared languages provision via the paved road (RFC-0005).
+
+    These assert against the REAL vendored descriptors, deliberately: a
+    descriptor that fails to load, or a languages/ directory missing from the
+    vendoring, must fail this self-test rather than silently narrow the
+    generator back to its hardcoded tables.
+    """
+    assert _resolve_descriptor is not None, (  # noqa: S101
+        "language_descriptors must be importable beside this module — "
+        "vendor them together (see the verification-core drift gate)"
+    )
+    env_swift = {
+        "language": "swift",
+        "verify_commands": ["swift test"],
+        "provisioning": {"method": "nix", "generated": True},
+    }
+    fs = generate_flake(env_swift)
+    assert "pkgs.swiftpm" in fs and "pkgs.swiftPackages.XCTest" in fs, fs  # noqa: S101
+    # Swift's corelibs must land on LD_LIBRARY_PATH or swiftpm dies at manifest
+    # compile ("libdispatch.so: cannot open shared object file") — proven on
+    # this substrate 2026-09-03.
+    assert 'LD_LIBRARY_PATH = "${pkgs.swiftPackages.Dispatch}/lib' in fs, fs  # noqa: S101
+    assert "withPackages" not in fs and "pytest" not in fs, fs  # noqa: S101
+
+    fk = generate_flake({"language": "kotlin", "verify_commands": ["gradle test --no-daemon"]})
+    assert "pkgs.kotlin" in fk and "pkgs.gradle" in fk and "pkgs.jdk21" in fk, fk  # noqa: S101
+
+    # Aliases resolve to the same descriptor (`spm` names the Swift toolchain).
+    fa = generate_flake({"language": "spm", "verify_commands": ["swift test"]})
+    assert "pkgs.swiftpm" in fa, fa  # noqa: S101
+
+    # A language neither the tables nor a descriptor declares still FAILS CLOSED.
+    try:
+        generate_flake({"language": "elixir", "verify_commands": ["mix test"]})
+        raise AssertionError("expected ProvisionError for an undeclared language")
+    except ProvisionError:
+        pass
 
 
 def _test() -> None:
@@ -846,6 +955,8 @@ def _test() -> None:
     assert "pkgs.pkg-config" in f3 and "pkgs.openssl" in f3, f3
 
     _test_go_manifest()
+
+    _test_descriptor_languages()
 
     _test_browser_lane_deps()
     # unknown/unset go version degrades to bare `pkgs.go` (no system pkgs here,
