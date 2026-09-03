@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:  # only for annotations; the runtime import is the shim below
     from language_descriptors import LanguageDescriptor
 
+
 # The declarative language descriptors (contracts/languages/*.yaml at the hub,
 # vendored beside this module in every consumer). They EXTEND the hardcoded
 # tables below: a language a descriptor declares gets its nix attrs + shell env
@@ -45,6 +46,17 @@ if TYPE_CHECKING:  # only for annotations; the runtime import is the shim below
 # module is vendored into: a package (apps.backend.core / tools.runners) and a
 # flat scripts/ directory. A missing sibling module fails CLOSED at use time —
 # generate_flake's unknown-language refusal below names it — never silently.
+class _MissingDescriptorError(Exception):
+    """Stand-in for DescriptorError when language_descriptors is not vendored
+    beside this module. Never raised and never caught in practice: the
+    ``_resolve_descriptor is None`` guard in _descriptor_for_language returns
+    before the except clause referencing it can be reached. It exists so the
+    except clause always names a real exception type (a ``None`` there is a
+    TypeError waiting behind an unreachable branch, and CodeQL rightly flags
+    it - py/useless-except, AIFactory alert 2433).
+    """
+
+
 try:  # package context
     from .language_descriptors import (
         DescriptorError as _DescriptorError,
@@ -58,7 +70,7 @@ except ImportError:
         )
     except ImportError:  # mis-vendored: module without its sibling
         _resolve_descriptor = None
-        _DescriptorError = None
+        _DescriptorError = _MissingDescriptorError
 
 # nixpkgs pin for generated flakes. A FULL commit rev (not a branch) keeps
 # generated flakes reproducible AND avoids a GitHub API call to resolve the
