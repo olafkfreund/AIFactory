@@ -47,13 +47,18 @@ if TYPE_CHECKING:  # only for annotations; the runtime import is the shim below
 # generate_flake's unknown-language refusal below names it — never silently.
 try:  # package context
     from .language_descriptors import (
+        DescriptorError as _DescriptorError,
         resolve_language as _resolve_descriptor,
     )
 except ImportError:
     try:  # flat context (hub scripts/, direct execution)
-        from language_descriptors import resolve_language as _resolve_descriptor
+        from language_descriptors import (
+            DescriptorError as _DescriptorError,
+            resolve_language as _resolve_descriptor,
+        )
     except ImportError:  # mis-vendored: module without its sibling
         _resolve_descriptor = None
+        _DescriptorError = None
 
 # nixpkgs pin for generated flakes. A FULL commit rev (not a branch) keeps
 # generated flakes reproducible AND avoids a GitHub API call to resolve the
@@ -467,7 +472,17 @@ def _descriptor_for_language(lang: str) -> LanguageDescriptor | None:
         return None
     if lang in ("go", "python") or lang in _LANG_ATTRS:
         return None
-    descriptor: LanguageDescriptor | None = _resolve_descriptor(lang)
+    try:
+        descriptor: LanguageDescriptor | None = _resolve_descriptor(lang)
+    except _DescriptorError as exc:
+        # This module's documented failure type is ProvisionError; a caller
+        # catching that to fail a provisioning cleanly must not be surprised by
+        # a DescriptorError (a ValueError subclass it has never heard of)
+        # escaping from a broken or missing languages/ vendoring — exactly the
+        # state a consumer is in before its descriptors land.
+        raise ProvisionError(
+            f"language descriptors could not be loaded while resolving {lang!r}: {exc}"
+        ) from exc
     return descriptor
 
 
