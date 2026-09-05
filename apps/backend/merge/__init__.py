@@ -58,6 +58,8 @@ from .merge_policy import (
     HOLD_BLOCKING,
     decide_merge,
     deployment_block_reasons,
+    floor_from_paths,
+    raise_review_tier,
     tier_permits_auto_merge,
 )
 from .models import MergeReport, MergeStats, TaskMergeRequest
@@ -88,6 +90,8 @@ __all__ = [
     "HOLD_BLOCKING",
     "decide_merge",
     "deployment_block_reasons",
+    "floor_from_paths",
+    "raise_review_tier",
     "tier_permits_auto_merge",
     # Types
     "ChangeType",

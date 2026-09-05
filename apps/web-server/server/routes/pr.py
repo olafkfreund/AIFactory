@@ -28,6 +28,7 @@ from pydantic import BaseModel
 
 from server.error_ref import client_error
 from server.project_registry import get_projects_file
+from server.services.build_backend import task_repo_dir
 from server.services.http_verdict import honest_status
 from server.services.task_branch import resolve_task_branch
 from server.specpath import safe_spec_component
@@ -109,10 +110,12 @@ async def create_pr_from_task(
     if not spec_dir.exists():
         return {"success": False, "error": f"Task {task_id} not found"}
 
-    # Find the worktree
-    worktree_path = project_path / ".aifactory" / "worktrees" / "tasks" / spec_id
+    # The repo to push from: the linked task worktree when the in-pod backend
+    # built there, else the kubejob build clone (#1467 moved it to
+    # worktrees/builds so it stops clobbering the worktree).
+    worktree_path = task_repo_dir(project_path, spec_id)
 
-    if not worktree_path.exists():
+    if worktree_path is None:
         return {"success": False, "error": "No worktree found for this task"}
 
     # Base branch first: resolving the task branch needs to know which branch
@@ -234,6 +237,34 @@ async def create_pr_from_task(
         text=True,
         timeout=15,
     )
+
+    # #1459: same failure as #959/PR #962, on the other door. Under the
+    # kubejob/packed build backend the build ran in a k8s Job on an ephemeral
+    # /work and pushed its branch to origin from there; THIS control-plane
+    # worktree stayed on the base branch and has no local ref for that branch,
+    # so the push below fails "src refspec <branch> does not match any" and no
+    # PR opens. Fetch the branch into a local ref first, exactly as
+    # services/pr_endgame.create_pr does. Fail-safe: on the co-mount path (the
+    # branch is already local, possibly checked out here) git declines and the
+    # fetch is a harmless no-op — we log and fall through to the existing
+    # behaviour.
+    try:
+        fetch_result = subprocess.run(  # noqa: S603, ASYNC221, PLW1510
+            ["git", "fetch", "origin", f"{worktree_branch}:{worktree_branch}"],  # noqa: S607
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if fetch_result.returncode != 0:
+            logger.info(
+                "fetch of %s from origin skipped (%s) - branch may be local "
+                "already or not yet on origin",
+                worktree_branch,
+                (fetch_result.stderr or fetch_result.stdout).strip()[:200],
+            )
+    except (subprocess.SubprocessError, OSError) as exc:
+        logger.info("fetch of %s from origin skipped: %s", worktree_branch, exc)
 
     # Push the branch to remote
     # Use --force-with-lease after successful rebase (rebase rewrites history)

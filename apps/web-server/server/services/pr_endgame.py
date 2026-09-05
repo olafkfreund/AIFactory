@@ -29,6 +29,7 @@ from pathlib import Path
 
 from factory_common.logsafe import sanitize_log
 
+from server.services.build_backend import task_repo_dir
 from server.services.task_branch import resolve_task_branch
 
 logger = logging.getLogger(__name__)
@@ -160,6 +161,124 @@ def _describe_tier(tier: str | None) -> str:
     if tier is None:
         return "none"
     return _TIER_LOG_LABEL.get(tier.strip().lower(), "unrecognised")
+
+
+# The raise is ADVISORY until this is on: it is logged and noted on the PR, but
+# the tier that actually gates the merge (and reaches TFactory via
+# task_metadata) is left alone. Same rollout shape as `quality_gate`'s
+# enabled=False and TFACTORY_PR_STATUS's dry-run -- the path runs on every build
+# so the evidence is real, without changing an outcome until an operator says so.
+PATH_RISK_FLOOR_ENV = "AIFACTORY_PATH_RISK_FLOOR_ENFORCE"
+
+# What the advisory line says. A CONSTANT prefix, and the tiers themselves go
+# through _describe_tier, so nothing read off disk reaches a log record or the
+# PR body (py/log-injection -- see _TIER_LOG_LABEL).
+PATH_RISK_FLOOR_NOTE = "path-derived risk floor raises reviewTier"
+
+
+def path_floor_enforced(project_path: Path | None = None) -> bool:
+    """Whether the path-derived floor may actually change the merge decision."""
+    return _flag(PATH_RISK_FLOOR_ENV, project_path)
+
+
+def apply_path_risk_floor(
+    project_path: Path,
+    spec_dir: Path,
+    spec_id: str,
+    base: str,
+    tier: str | None,
+) -> tuple[str | None, str | None]:
+    """Raise *tier* to the floor this task's REAL diff + deployment block demand.
+
+    Returns ``(effective_tier, floor)``. ``floor`` is None when nothing raised
+    the tier, so the caller can tell "no floor" from "floored to the same tier".
+
+    Two dark paths meet here (#1456): ``merge_policy.floor_from_paths`` scores
+    the actual ``git diff`` against ``review_tier.HIGH_RISK_PATTERNS``, and the
+    RFC-0013 ``deployment_block_reasons`` overlay is consulted for the first
+    time outside its own tests. Both may only ever TIGHTEN.
+
+    The diff is read through ``cli.workspace_commands._get_changed_files_from_git``
+    -- the one differ that already handles the #1089 pushed-ref case -- rather
+    than a second implementation that would disagree with it.
+
+    Best-effort: a diff or contract we could not read leaves the tier untouched.
+    A measurement that did not happen must never raise a tier, and must never
+    break the endgame.
+    """
+    try:
+        from cli.workspace_commands import (  # type: ignore[import-not-found,unused-ignore] # noqa: PLC0415
+            _get_changed_files_from_git,
+        )
+        from merge.merge_policy import (  # type: ignore[import-not-found,unused-ignore] # noqa: PLC0415
+            deployment_block_reasons,
+            floor_from_paths,
+            raise_review_tier,
+        )
+        from pfactory.tfactory_client import (  # type: ignore[import-not-found,unused-ignore] # noqa: PLC0415
+            load_task_contract,
+        )
+    except ImportError:  # pragma: no cover - backend always present in prod
+        logger.warning("[pr-endgame] backend unavailable; path risk floor not applied")
+        return tier, None
+
+    floor = "auto"
+    try:
+        # origin/<base>: the build pushed its branch, and the differ resolves
+        # that pushed ref against the PROJECT repo (#1089), where the local
+        # base branch may be stale or checked out elsewhere.
+        changed = _get_changed_files_from_git(
+            task_repo_dir(project_path, spec_id) or project_path,
+            f"origin/{base}",
+            project_path,
+            spec_id,
+        )
+        floor = floor_from_paths(changed)
+    except Exception:  # noqa: BLE001 - never break the endgame over a diff
+        logger.debug("[pr-endgame] path risk floor: diff unreadable", exc_info=True)
+    try:
+        deployment = (load_task_contract(spec_dir) or {}).get("deployment")
+        if deployment_block_reasons(deployment):
+            floor = "blocking"
+    except Exception:  # noqa: BLE001 - same: an unreadable contract adds nothing
+        logger.debug("[pr-endgame] path risk floor: contract unreadable", exc_info=True)
+
+    raised = raise_review_tier(tier, floor)
+    if raised == tier:
+        return tier, None
+    logger.info(
+        "[pr-endgame] %s: %s %s -> %s (enforced=%s)",
+        sanitize_log(spec_id),
+        PATH_RISK_FLOOR_NOTE,
+        sanitize_log(_describe_tier(tier)),
+        sanitize_log(_describe_tier(raised)),
+        path_floor_enforced(project_path),
+    )
+    if not path_floor_enforced(project_path):
+        # Advisory: record the finding for the audit trail, leave reviewTier --
+        # the field the merge gate and TFactory's VAL floor both read -- alone.
+        _record_path_risk_floor(spec_dir, raised, enforced=False)
+        return tier, raised
+    # Enforcing: reviewTier is rewritten in place, so the raise reaches BOTH the
+    # merge gate below and TFactory (which picks its VAL floor off the contract
+    # this metadata feeds) without a second consumer to keep in step.
+    _record_path_risk_floor(spec_dir, raised, enforced=True)
+    return raised, raised
+
+
+def _record_path_risk_floor(spec_dir: Path, floor: str, *, enforced: bool) -> None:
+    """Persist the floor onto task_metadata.json. Best-effort, never raises."""
+    meta_file = Path(spec_dir) / "task_metadata.json"
+    try:
+        meta = json.loads(meta_file.read_text())
+        if not isinstance(meta, dict):
+            return
+        meta["pathRiskFloor"] = floor
+        if enforced:
+            meta["reviewTier"] = floor
+        meta_file.write_text(json.dumps(meta, indent=2))
+    except (OSError, ValueError):
+        logger.debug("[pr-endgame] could not record pathRiskFloor", exc_info=True)
 
 
 def tier_allows_auto_merge(tier: str | None) -> bool:
@@ -799,8 +918,10 @@ def gather_pr_context(
     what ``gh`` and ``_split_repo`` take. The caller uses ``provider`` to decide
     whether this GitHub-shaped endgame may run at all — see ``run_pr_endgame``.
     """
-    worktree = project_path / ".aifactory" / "worktrees" / "tasks" / spec_id
-    if not worktree.exists():
+    # #1467: the kubejob build clone moved to worktrees/builds/<spec>, so ask
+    # for the build repo rather than assuming the task-worktree path.
+    worktree = task_repo_dir(project_path, spec_id)
+    if worktree is None:
         return None
     head = runner(["git", "rev-parse", "--abbrev-ref", "HEAD"], str(worktree))
     branch = head.out.strip() if head.ok else ""
@@ -880,6 +1001,13 @@ def gather_pr_context(
     # and yield the owner "gitlab:group", which is a plausible-looking GitHub
     # repo that does not exist — the failure mode worth ruling out by parsing.
     provider, bare = _parse_repo_ref(repo)
+    # #1456: the tier on disk is SELF-DECLARED (it came from a GitHub label).
+    # Score the real diff against the high-risk path table before the tier is
+    # allowed to gate anything. Advisory by default: `review_tier` is unchanged
+    # and `review_tier_floor` carries the finding to the log + PR body.
+    review_tier, review_tier_floor = apply_path_risk_floor(
+        project_path, spec_dir, spec_id, base, review_tier
+    )
     return {
         "worktree": worktree,
         "branch": branch,
@@ -887,6 +1015,7 @@ def gather_pr_context(
         "repo": bare,
         "provider": provider,
         "review_tier": review_tier,
+        "review_tier_floor": review_tier_floor,
     }
 
 
@@ -901,6 +1030,7 @@ async def run_pr_endgame(
     provider: str = "github",
     auto_merge: bool = False,
     review_tier: str | None = None,
+    review_tier_floor: str | None = None,
     reviewer: str = "aifactory",
     review_fn: Callable[[], ReviewState] | None = None,
     fix_fn: Callable[[list], bool] | None = None,
@@ -973,6 +1103,14 @@ async def run_pr_endgame(
     owner, name = parts
 
     title, body = _pr_title_body(spec_dir, spec_id)
+    if review_tier_floor:
+        # Advisory rollout (#1456): tell the human reviewer what the paths say,
+        # even while the floor is not yet allowed to withhold the merge. Both
+        # tiers go through _describe_tier, so nothing off disk is echoed.
+        body = (
+            f"{body}\n\n> {PATH_RISK_FLOOR_NOTE} "
+            f"{_describe_tier(review_tier)} -> {_describe_tier(review_tier_floor)}."
+        )
     try:
         pr = await asyncio.to_thread(
             lambda: create_pr(
