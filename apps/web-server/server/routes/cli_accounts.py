@@ -19,6 +19,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -39,6 +40,11 @@ logger = logging.getLogger(__name__)
 
 # Canonical CLI ids.  "antigravity" is the Google CLI (formerly "gemini").
 SUPPORTED_CLIS = {"codex", "antigravity"}
+
+# How long a polling thread waits for the server loop to run the broadcast
+# coroutine before giving up and logging. Bounded so a wedged loop cannot pin
+# a daemon thread forever.
+_BROADCAST_TIMEOUT_SECONDS = 10.0
 
 # Legacy id -> canonical id.  Old clients / stored values that say "gemini"
 # are transparently routed to the "antigravity" config.
@@ -447,16 +453,59 @@ def _get_cli_status(cli: str) -> CLIAccountStatus:
     )
 
 
+def _write_secret_json(path: Path, data: dict) -> None:
+    """Write ``data`` as JSON to ``path`` at 0600, atomically, with no
+    readable window.
+
+    ``Path.write_text`` + a later ``chmod(0o600)`` has two defects on a file
+    holding OAuth tokens:
+
+    1. **A readable window.** ``write_text`` creates the file at the umask
+       default (usually 0644) and the secret is on disk at those perms until
+       the ``chmod`` lands. Anyone on the box can read it in between.
+    2. **Not atomic.** ``write_text`` truncates in place, so a concurrent
+       reader gets a half-written file, ``json.load`` raises
+       ``JSONDecodeError``, the reader treats that as "no credentials", and
+       the next save writes that belief back — destroying the stored tokens.
+
+    ``tempfile.mkstemp`` opens the temp file 0600 from creation regardless of
+    umask, and ``os.replace`` publishes it atomically within the filesystem:
+    a reader sees either the whole old file or the whole new one. The replace
+    also swaps the inode, so a file an older build left at 0644 comes out
+    0600.
+
+    Sibling forks keep this in ``server/paths.py``
+    (PFactory ``atomic_write_secret_json``, TFactory ``write_secret_file``);
+    AIFactory's ``paths.py`` has no such helper on ``dev`` yet, so the write
+    lives here — the only secret-writing site in this module. Swap the body
+    for the shared helper once it is ported.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".")
+    try:
+        with os.fdopen(fd, "w") as handle:
+            json.dump(data, handle, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        Path(tmp).replace(path)  # atomic within a filesystem
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
 def _save_credentials(cli: str, data: dict) -> None:
     """Save credentials to ~/.aifactory/{cli}-credentials.json with 0o600."""
     CREDENTIALS_DIR.mkdir(parents=True, exist_ok=True)
-    path = CLI_CONFIG[cli]["stored_credentials"]
-    path.write_text(json.dumps(data, indent=2))
-    path.chmod(0o600)
+    _write_secret_json(CLI_CONFIG[cli]["stored_credentials"], data)
 
 
-def _poll_codex_token(mtime_before: float) -> None:
-    """Poll ~/.codex/auth.json for new credentials after user runs `codex login`."""
+def _poll_codex_token(mtime_before: float, loop: asyncio.AbstractEventLoop) -> None:
+    """Poll ~/.codex/auth.json for new credentials after user runs `codex login`.
+
+    ``loop`` is the ASGI server's running loop, captured by the caller; this
+    function runs in a worker thread and hands it to
+    ``_broadcast_cli_auth_event`` so the outcome reaches the browser.
+    """
     credentials_path = CLI_CONFIG["codex"]["credentials_file"]
     for _ in range(90):  # ~3 minutes
         try:
@@ -480,17 +529,22 @@ def _poll_codex_token(mtime_before: float) -> None:
                                 },
                             )
                             logger.info("[Codex] Credentials detected and saved")
-                            _broadcast_cli_auth_event("codex", True)
+                            _broadcast_cli_auth_event("codex", True, loop)
                             return
         except Exception as e:
             logger.warning(f"[Codex] Polling error: {e}")
         time.sleep(2)
     logger.warning("[Codex] Credentials not detected within timeout")
-    _broadcast_cli_auth_event("codex", False)
+    _broadcast_cli_auth_event("codex", False, loop)
 
 
-def _poll_gemini_token(mtime_before: float) -> None:
-    """Poll ~/.gemini/settings.json and oauth_creds.json for new credentials."""
+def _poll_gemini_token(mtime_before: float, loop: asyncio.AbstractEventLoop) -> None:
+    """Poll ~/.gemini/settings.json and oauth_creds.json for new credentials.
+
+    ``loop`` is the ASGI server's running loop, captured by the caller; this
+    function runs in a worker thread and hands it to
+    ``_broadcast_cli_auth_event`` so the outcome reaches the browser.
+    """
     settings_path = CLI_CONFIG["antigravity"]["credentials_file"]
     oauth_path = CLI_CONFIG["antigravity"]["oauth_credentials_file"]
 
@@ -538,7 +592,7 @@ def _poll_gemini_token(mtime_before: float) -> None:
                         },
                     )
                     logger.info("[Gemini] Credentials detected and saved")
-                    _broadcast_cli_auth_event("antigravity", True)
+                    _broadcast_cli_auth_event("antigravity", True, loop)
                     return
                 elif selected_type == "API_KEY" or (
                     settings and settings.get("apiKey")
@@ -555,25 +609,42 @@ def _poll_gemini_token(mtime_before: float) -> None:
                         },
                     )
                     logger.info("[Gemini] API key credentials detected and saved")
-                    _broadcast_cli_auth_event("antigravity", True)
+                    _broadcast_cli_auth_event("antigravity", True, loop)
                     return
         except Exception as e:
             logger.warning(f"[Gemini] Polling error: {e}")
         time.sleep(2)
     logger.warning("[Gemini] Credentials not detected within timeout")
-    _broadcast_cli_auth_event("antigravity", False)
+    _broadcast_cli_auth_event("antigravity", False, loop)
 
 
-def _broadcast_cli_auth_event(cli: str, success: bool) -> None:
-    """Broadcast a cli-account-auth event via WebSocket."""
+def _broadcast_cli_auth_event(
+    cli: str, success: bool, loop: asyncio.AbstractEventLoop
+) -> None:
+    """Broadcast a cli-account-auth event on the ASGI server's event loop.
+
+    Called from the credential-polling worker threads, which have no event
+    loop of their own. ``loop`` MUST be the loop the ASGI server is running
+    on, because the WebSocket connections this event has to reach are owned
+    by that loop.
+
+    Running the coroutine on a fresh ``asyncio.new_event_loop()`` here (as
+    this did before) touches another loop's transports: the send either
+    raises "attached to a different loop" or corrupts the connection.
+    ``deliver_local`` swallows send errors and unregisters the client, so
+    the failure is SILENT — the browser simply never receives
+    ``cli-account-auth`` and the portal shows the CLI login as never having
+    completed. ``run_coroutine_threadsafe`` schedules onto the live loop
+    instead, which is the only loop allowed to write to those sockets.
+    """
     try:
         from ..websockets.events import broadcast_event
 
-        loop = asyncio.new_event_loop()
-        loop.run_until_complete(
-            broadcast_event("cli-account-auth", {"cli": cli, "success": success})
+        future = asyncio.run_coroutine_threadsafe(
+            broadcast_event("cli-account-auth", {"cli": cli, "success": success}),
+            loop,
         )
-        loop.close()
+        future.result(timeout=_BROADCAST_TIMEOUT_SECONDS)
     except Exception as e:
         logger.warning(f"Failed to broadcast cli-account-auth event: {e}")
 
@@ -720,10 +791,14 @@ async def start_cli_login(cli: str):
     credentials_path = cfg["credentials_file"]
 
     mtime_before = credentials_path.stat().st_mtime if credentials_path.exists() else 0
+    # The polling thread has no loop of its own; capture the server's here,
+    # while we are still on it, so the broadcast lands on the loop that owns
+    # the WebSocket connections.
+    loop = asyncio.get_running_loop()
 
     if cli == "codex":
         threading.Thread(
-            target=_poll_codex_token, args=(mtime_before,), daemon=True
+            target=_poll_codex_token, args=(mtime_before, loop), daemon=True
         ).start()
         return {
             "success": True,
@@ -734,7 +809,7 @@ async def start_cli_login(cli: str):
         }
     else:  # antigravity
         threading.Thread(
-            target=_poll_gemini_token, args=(mtime_before,), daemon=True
+            target=_poll_gemini_token, args=(mtime_before, loop), daemon=True
         ).start()
         binary = get_antigravity_binary()
         return {
@@ -792,14 +867,18 @@ async def start_cli_login_terminal(cli: str):
     # Start credential file polling in background
     credentials_path = cfg["credentials_file"]
     mtime_before = credentials_path.stat().st_mtime if credentials_path.exists() else 0
+    # The polling thread has no loop of its own; capture the server's here,
+    # while we are still on it, so the broadcast lands on the loop that owns
+    # the WebSocket connections.
+    loop = asyncio.get_running_loop()
 
     if cli == "codex":
         threading.Thread(
-            target=_poll_codex_token, args=(mtime_before,), daemon=True
+            target=_poll_codex_token, args=(mtime_before, loop), daemon=True
         ).start()
     else:
         threading.Thread(
-            target=_poll_gemini_token, args=(mtime_before,), daemon=True
+            target=_poll_gemini_token, args=(mtime_before, loop), daemon=True
         ).start()
 
     return {
