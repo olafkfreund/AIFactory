@@ -32,7 +32,6 @@ if str(_WEB_SERVER) not in sys.path:
     sys.path.insert(0, str(_WEB_SERVER))
 
 import pytest  # noqa: E402
-
 from server.paths import atomic_write_secret_json, write_secret_file  # noqa: E402
 
 SECRET = "sk-ant-oat01-THIS-IS-THE-SECRET"
@@ -149,7 +148,8 @@ def test_concurrent_reader_never_sees_a_torn_file(tmp_path: Path) -> None:
     payload = {
         "activeProfileId": "p1",
         "profiles": [
-            {"id": f"p{i}", "name": f"Account {i}", "token": SECRET * 40} for i in range(1, 6)
+            {"id": f"p{i}", "name": f"Account {i}", "token": SECRET * 40}
+            for i in range(1, 6)
         ],
     }
     atomic_write_secret_json(p, payload)
@@ -216,7 +216,10 @@ def test_config_token_and_jwt_secret_have_no_readable_window(
         secret = config_mod.Settings._get_or_generate_jwt_secret(settings)
     spy.assert_no_window()
 
-    for path, value in ((tmp_path / ".token", token), (tmp_path / ".jwt_secret", secret)):
+    for path, value in (
+        (tmp_path / ".token", token),
+        (tmp_path / ".jwt_secret", secret),
+    ):
         assert path.read_text().strip() == value
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
@@ -234,7 +237,9 @@ def test_write_json_store_has_no_readable_window(
     )
 
     with _ChmodSpy() as spy:
-        settings_mod._write_json_store("api-profiles.json", {"profiles": [{"token": SECRET}]})
+        settings_mod._write_json_store(
+            "api-profiles.json", {"profiles": [{"token": SECRET}]}
+        )
     spy.assert_no_window()
 
     store = tmp_path / "api-profiles.json"
