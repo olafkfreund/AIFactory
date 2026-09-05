@@ -26,6 +26,7 @@ import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from factory_common.logsafe import sanitize_log
 
@@ -37,6 +38,11 @@ logger = logging.getLogger(__name__)
 # Copilot's code-review reviewer slug (GitHub's automated PR reviewer). Requesting
 # it is best-effort — a human can always review if the slug/rollout differs.
 COPILOT_REVIEWER = "copilot-pull-request-reviewer[bot]"
+
+# Strong references to the background verdict-watchers. asyncio keeps only a weak
+# reference to a running task, so without this set the watcher can be collected
+# mid-flight and the endgame stops with no error anywhere.
+_BACKGROUND_TASKS: set[asyncio.Task[Any]] = set()
 
 # How long to wait for Copilot's verdict before handing back to a human.
 _POLL_INTERVAL_SECONDS = 30
@@ -218,9 +224,16 @@ def apply_path_risk_floor(
         from pfactory.tfactory_client import (  # type: ignore[import-not-found,unused-ignore] # noqa: PLC0415
             load_task_contract,
         )
-    except ImportError:  # pragma: no cover - backend always present in prod
-        logger.warning("[pr-endgame] backend unavailable; path risk floor not applied")
-        return tier, None
+    except ImportError:
+        # Fail CLOSED. This block imports the ONLY thing that scores the diff
+        # for auth/secrets/migrations/infra/CI risk; if it is not importable the
+        # classifier did not run, and "we did not look" is not "we looked and it
+        # was fine". Returning the tier untouched silently deleted the floor for
+        # every change on a box where the backend package was not on sys.path.
+        logger.warning(
+            "[pr-endgame] merge policy unavailable; path risk floor fails CLOSED"
+        )
+        return _path_risk_floor_closed(project_path, spec_dir, spec_id, tier)
 
     floor = "auto"
     try:
@@ -238,7 +251,12 @@ def apply_path_risk_floor(
         logger.debug("[pr-endgame] path risk floor: diff unreadable", exc_info=True)
     try:
         deployment = (load_task_contract(spec_dir) or {}).get("deployment")
-        if deployment_block_reasons(deployment):
+        # satisfied_gates is not optional decoration: without it EVERY declared
+        # system gate reads as outstanding forever, so once `human-approval` is
+        # required the tier stays floored even after a human actually approves.
+        if deployment_block_reasons(
+            deployment, satisfied_gates=satisfied_system_gates(spec_dir, deployment)
+        ):
             floor = "blocking"
     except Exception:  # noqa: BLE001 - same: an unreadable contract adds nothing
         logger.debug("[pr-endgame] path risk floor: contract unreadable", exc_info=True)
@@ -266,6 +284,63 @@ def apply_path_risk_floor(
     return raised, raised
 
 
+def _path_risk_floor_closed(
+    project_path: Path,
+    spec_dir: Path,
+    spec_id: str,
+    tier: str | None,
+) -> tuple[str | None, str | None]:
+    """The floor we could not measure, applied CLOSED (``blocking``).
+
+    ``blocking`` is the top bucket, so raising to it is always the stricter
+    choice and never lowers a tier. The advisory/enforcing rollout flag is still
+    honoured -- an operator who has not switched the floor on still only gets
+    the note, exactly as for a measured floor.
+    """
+    logger.info(
+        "[pr-endgame] %s: %s unmeasurable -> blocking (enforced=%s)",
+        sanitize_log(spec_id),
+        PATH_RISK_FLOOR_NOTE,
+        path_floor_enforced(project_path),
+    )
+    if not path_floor_enforced(project_path):
+        _record_path_risk_floor(spec_dir, "blocking", enforced=False)
+        return tier, "blocking"
+    _record_path_risk_floor(spec_dir, "blocking", enforced=True)
+    return "blocking", "blocking"
+
+
+# Where an operator (or an upstream approval step) records the RFC-0013 system
+# gates that have actually been cleared for this task.
+SATISFIED_GATES_KEYS = ("satisfiedSystemGates", "satisfied_system_gates")
+
+
+def satisfied_system_gates(spec_dir: Path, deployment: object = None) -> list[str]:
+    """The RFC-0013 system gates recorded as already cleared for this task.
+
+    Read from ``task_metadata.json`` (``satisfiedSystemGates``) and from the
+    contract's own ``deployment.satisfied_gates``. Best-effort: an unreadable
+    file contributes nothing, which is the SAFE direction here -- an unknown
+    approval leaves the gate outstanding and the change held.
+    """
+    gates: list[str] = []
+    if isinstance(deployment, dict):
+        declared = deployment.get("satisfied_gates")
+        if isinstance(declared, list):
+            gates.extend(str(g) for g in declared)
+    try:
+        meta = json.loads((Path(spec_dir) / "task_metadata.json").read_text())
+    except (OSError, ValueError):
+        return gates
+    if not isinstance(meta, dict):
+        return gates
+    for key in SATISFIED_GATES_KEYS:
+        recorded = meta.get(key)
+        if isinstance(recorded, list):
+            gates.extend(str(g) for g in recorded)
+    return gates
+
+
 def _record_path_risk_floor(spec_dir: Path, floor: str, *, enforced: bool) -> None:
     """Persist the floor onto task_metadata.json. Best-effort, never raises."""
     meta_file = Path(spec_dir) / "task_metadata.json"
@@ -281,28 +356,120 @@ def _record_path_risk_floor(spec_dir: Path, floor: str, *, enforced: bool) -> No
         logger.debug("[pr-endgame] could not record pathRiskFloor", exc_info=True)
 
 
-def tier_allows_auto_merge(tier: str | None) -> bool:
-    """Whether this task's review tier permits auto-merge at all (#1158).
+# Mirrors ``merge.merge_policy.AUTO_MERGE``. Duplicated as a literal ONLY so the
+# comparison below does not need the lazy import to succeed; ``test_merge_gate``
+# asserts the two are equal, so a rename over there fails a test rather than
+# silently turning this gate into "never auto-merge".
+AUTO_MERGE_DISPOSITION = "auto-merge"
+HOLD_BLOCKING_DISPOSITION = "hold-blocking"
 
-    Delegates the tier policy to ``merge.merge_policy`` -- the RFC-0011 routing
-    table lives there and must not be re-implemented here. Lazy import: the
-    backend package is on sys.path only at runtime (same pattern as
-    ``conflict_service``), and a missing backend must not break the endgame, so
-    an import failure degrades to "no opinion" rather than blocking a merge the
-    operator asked for.
+# task_metadata keys carrying the RFC-0011/RFC-0006 gate signals, camel and snake.
+_SIGNAL_KEYS: dict[str, tuple[str, ...]] = {
+    "tfactory_verdict": ("tfactoryVerdict", "tfactory_verdict"),
+    "achieved_val": ("achievedVal", "achieved_val"),
+    "val_floor": ("valFloor", "val_floor"),
+    "ci_parity": ("ciParity", "ci_parity"),
+    "host_ci_green": ("hostCiGreen", "host_ci_green"),
+}
+
+# The TFactory handback receipt (``qa.correction._HANDBACK_RECORD``). Its mere
+# presence IS a verdict: TFactory handed this build back because verification
+# failed.
+_HANDBACK_RECEIPT = "handback_received.json"
+
+
+def _meta_signal(meta: dict[str, object], key: str) -> object:
+    for name in _SIGNAL_KEYS[key]:
+        if name in meta:
+            return meta[name]
+    return None
+
+
+def merge_gate_signals(spec_dir: Path) -> dict[str, object]:
+    """The RFC-0011 gate signals this task actually recorded, for ``decide_merge``.
+
+    Returns a dict keyed exactly like ``decide_merge``'s keyword arguments.
+
+    Two kinds of value live here and the difference matters:
+
+    * MEASURED and negative -- a TFactory handback receipt on disk, a recorded
+      ``ciParity: false``, an ``achievedVal`` below ``valFloor``. These are the
+      whole point: the merge is refused.
+    * NOT MEASURED -- AIFactory records no host-CI roll-up at PR-open time (the
+      checks have not run yet) and no VAL/parity roll-up at all today. An
+      unmeasured signal takes the value that leaves the decision where it was
+      before this gate existed, because withholding every merge on evidence
+      nobody has produced yet would just switch the feature off.
+
+    So this NARROWS: it can refuse a merge on recorded evidence of failure, and
+    it never invents a green. That is strictly more than the tier ceiling it
+    replaces, which read only ``reviewTier`` and ignored the verdict entirely.
     """
-    if tier is None:
-        return True
+    signals: dict[str, object] = {
+        "host_ci_green": True,
+        "tfactory_verdict": "pass",
+        # 0, not None: `decide_merge` fails a MISSING achieved level closed, and
+        # rightly so. VAL-0 is "nothing verified", which satisfies only the
+        # "no floor declared" case -- so a task that records a `valFloor` and no
+        # achieved level is still refused.
+        "achieved_val": 0,
+        "val_floor": None,
+        "ci_parity": True,
+    }
+    spec_dir = Path(spec_dir)
+    if (spec_dir / _HANDBACK_RECEIPT).is_file():
+        signals["tfactory_verdict"] = "handback"
     try:
-        from merge.merge_policy import tier_permits_auto_merge  # noqa: PLC0415
-    except ImportError:  # pragma: no cover - backend always present in prod
+        meta = json.loads((spec_dir / "task_metadata.json").read_text())
+    except (OSError, ValueError):
+        return signals
+    if not isinstance(meta, dict):
+        return signals
+    for key in ("tfactory_verdict", "achieved_val", "val_floor"):
+        recorded = _meta_signal(meta, key)
+        if recorded is not None:
+            signals[key] = recorded
+    for key in ("ci_parity", "host_ci_green"):
+        recorded = _meta_signal(meta, key)
+        if isinstance(recorded, bool):
+            signals[key] = recorded
+    # A recorded handback is never overwritten by a stale metadata verdict.
+    if (spec_dir / _HANDBACK_RECEIPT).is_file():
+        signals["tfactory_verdict"] = "handback"
+    return signals
+
+
+def merge_disposition(spec_dir: Path, tier: str | None) -> str:
+    """The RFC-0011/RFC-0013 merge disposition for this task (#637).
+
+    THE fix for the hole this module carried: ``merge.merge_policy.decide_merge``
+    -- the decision matrix that enforces the TFactory verdict, the RFC-0006 VAL
+    floor and RFC-0009 CI parity on top of the tier -- had no production caller
+    anywhere. The real merge path asked only ``tier_permits_auto_merge``, which
+    checks the tier CEILING and nothing else, so a PR carrying a ``handback``
+    verdict or a below-floor VAL auto-merged exactly like a clean one.
+
+    Fails CLOSED: if the policy module cannot be imported we have no decision,
+    and no decision is not permission to merge. (It used to return "no opinion",
+    i.e. True, so the one failure mode that removes the gate also removed the
+    gate's ability to say no.)
+
+    Back-compat: an absent/blank ``reviewTier`` is decided as ``low`` -- the
+    tier the task effectively had before RFC-0011 -- rather than as an unknown
+    spelling, so a task that never carried a tier still behaves as it did. An
+    UNRECOGNISED tier is passed straight through and ``decide_merge`` holds it.
+    """
+    try:
+        from merge.merge_policy import decide_merge  # noqa: PLC0415
+    except ImportError:
         logger.warning(
-            "[pr-endgame] merge_policy unavailable; reviewTier=%s not applied", tier
+            "[pr-endgame] merge_policy unavailable; auto-merge withheld "
+            "(reviewTier=%s)",
+            sanitize_log(_describe_tier(tier)),
         )
-        return True
-    # bool(): merge_policy is imported lazily from the backend package, so
-    # mypy --strict sees it as Any and the bare return leaks that out.
-    return bool(tier_permits_auto_merge(tier))
+        return HOLD_BLOCKING_DISPOSITION
+    effective = tier if tier is not None and str(tier).strip() else "low"
+    return str(decide_merge(str(effective), **merge_gate_signals(spec_dir)))
 
 
 # Which reviewer gates the merge. "aifactory" = AIFactory's own review engine
@@ -1074,28 +1241,34 @@ async def run_pr_endgame(
             "repo": repo,
         }
 
-    # RFC-0011 per-tier merge policy (#1158). `AIFACTORY_AUTO_MERGE` stays the
-    # master switch; the tier may only ever make it STRICTER, never looser --
-    # the same "may only tighten" rule merge_policy applies to its deployment
-    # overlay. So a `factory:hard` task (reviewTier=blocking) cannot auto-merge
-    # even with the flag on, while `factory:low` (auto) is unaffected.
+    # RFC-0011 / RFC-0013 merge policy (#1158, #637). `AIFACTORY_AUTO_MERGE`
+    # stays the master switch; the policy may only ever make it STRICTER, never
+    # looser -- the same "may only tighten" rule merge_policy applies to its
+    # deployment overlay. So a `factory:hard` task (reviewTier=blocking) cannot
+    # auto-merge even with the flag on, and neither can a `factory:low` task
+    # whose recorded TFactory verdict is a handback.
     #
     # The decision is made here rather than at the call site because every route
     # into the endgame passes through this function. The tier is READ by
     # `gather_pr_context` (which already parses task_metadata.json for the base
     # branch) and passed in, so this feature adds no second filesystem path
     # built from a request-supplied spec id.
-    if auto_merge and not tier_allows_auto_merge(review_tier):
-        # A CONSTANT, never the raw value: reviewTier comes off disk, and
-        # interpolating file content into a log record lets a crafted value
-        # forge log entries (py/log-injection).
-        logger.info(
-            "[pr-endgame] %s: auto-merge withheld, reviewTier=%s does not permit "
-            "it (AIFACTORY_AUTO_MERGE is on; the tier is stricter)",
-            sanitize_log(spec_id),
-            sanitize_log(_describe_tier(review_tier)),
-        )
-        auto_merge = False
+    if auto_merge:
+        disposition = merge_disposition(spec_dir, review_tier)
+        if disposition != AUTO_MERGE_DISPOSITION:
+            # A CONSTANT, never the raw value: reviewTier comes off disk, and
+            # interpolating file content into a log record lets a crafted value
+            # forge log entries (py/log-injection). `disposition` is one of
+            # merge_policy's three literals, so it is safe as-is.
+            logger.info(
+                "[pr-endgame] %s: auto-merge withheld, merge policy says %s "
+                "(reviewTier=%s; AIFACTORY_AUTO_MERGE is on but the policy is "
+                "stricter)",
+                sanitize_log(spec_id),
+                disposition,
+                sanitize_log(_describe_tier(review_tier)),
+            )
+            auto_merge = False
 
     parts = _split_repo(repo)
     if parts is None:
@@ -1163,7 +1336,13 @@ async def run_pr_endgame(
         runner=runner,
     )
     if background:
-        asyncio.create_task(coro)
+        # A strong reference, held until the watcher finishes. The event loop
+        # keeps only a WEAK one, so a bare `create_task(coro)` can be garbage
+        # collected mid-flight -- silently, with no exception and no log --
+        # after this function has already told the caller `watching: true`.
+        task = asyncio.create_task(coro)
+        _BACKGROUND_TASKS.add(task)
+        task.add_done_callback(_BACKGROUND_TASKS.discard)
         return {"ok": True, "pr": pr, "watching": True}
     result = await coro
     return {"ok": True, "pr": pr, "watching": False, **result}
