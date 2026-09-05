@@ -86,7 +86,9 @@ def test_failure_path_cannot_forge_a_log_line(tmp_path: Path) -> None:
 
     log_path = tmp_path / "audit.log"
     handler = logging.FileHandler(log_path, encoding="utf-8")
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    )
     logger = logging.getLogger(audit_service.__name__)
     logger.addHandler(handler)
     previous_level, previous_propagate = logger.level, logger.propagate
@@ -138,9 +140,7 @@ def test_audit_failure_leaves_the_caller_able_to_commit(fresh_db) -> None:
 
     async def _go() -> None:
         async with SessionLocal() as session:
-            session.add(
-                Organization(name=org_name, slug=org_name, owner_id="owner-1")
-            )
+            session.add(Organization(name=org_name, slug=org_name, owner_id="owner-1"))
 
             # A NOT NULL violation on `action`: one of the concrete ways the
             # insert fails in production (an over-length resource_id and a
@@ -159,7 +159,11 @@ def test_audit_failure_leaves_the_caller_able_to_commit(fresh_db) -> None:
 
         async with SessionLocal() as check:
             orgs = (
-                (await check.execute(select(Organization).where(Organization.name == org_name)))
+                (
+                    await check.execute(
+                        select(Organization).where(Organization.name == org_name)
+                    )
+                )
                 .scalars()
                 .all()
             )
