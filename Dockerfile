@@ -69,7 +69,7 @@ RUN mkdir -p apps/web-server/static \
 # Stage 2: Runtime (Chainguard Python, dev variant for now — minimal split
 # happens in P0.5 once we know what the runtime *actually* needs)
 # ---------------------------------------------------------------------------
-FROM cgr.dev/chainguard/python:latest-dev@sha256:534fb1a1b9ad4d9d149ab669ca4218be76c84990e2f3379c7f703d224647666b AS runtime
+FROM cgr.dev/chainguard/python:latest-dev@sha256:aa89119db7f7fb4a6628ac82e2c38404cc64cd56ccd858d2c78646776b3fffef AS runtime
 
 USER root
 
@@ -337,9 +337,35 @@ RUN python3 -m venv /home/projects/MagesticAI/.venv
 # job is what catches that in review instead.
 #
 # Regeneration command lives in the lockfile header.
+# pip is removed from the venv in the same layer that finishes using it, and
+# the base copies are apk-deleted below. Ported from PFactory#679, which hit
+# and solved this first; TFactory#1277 is the same two findings here.
+#
+# The two HIGH findings this clears are NOT project dependencies — neither
+# requirements file nor requirements.lock carries msgpack or setuptools. Both
+# are declared by pip 26.2.1's own vendored SBOM, `pip/_vendor/bom.cdx.json`
+# (msgpack 1.1.2, GHSA-6v7p-g79w-8964; setuptools 70.3.0, CVE-2025-47273),
+# which is what Trivy reads. A lock entry therefore cannot touch them: verified
+# by installing `msgpack>=1.2.1` and `setuptools>=78.1.1` into this venv and
+# re-scanning — pip ships 1.2.2 and 84.0.0 ALONGSIDE the vendored entries and
+# Trivy still reports 1.1.2 and 70.3.0. No pip upgrade clears them either:
+# 26.2.1 IS the latest release, and pip main still vendors setuptools 70.3.0.
+#
+# pip is build-time-only here — runtime never installs packages, and cluster
+# egress allows apk + npm only, so an in-pod `pip install` could not reach PyPI
+# anyway. The later `build-runtime` stage provisions via nix + apk + npm and
+# never calls pip, so removing it here does not affect the -nix image.
 RUN /home/projects/MagesticAI/.venv/bin/pip install --no-cache-dir \
         --require-hashes \
-        -r /home/projects/MagesticAI/requirements.lock
+        -r /home/projects/MagesticAI/requirements.lock \
+ && /home/projects/MagesticAI/.venv/bin/pip uninstall -y pip
+
+# Remove the base image's pip too (same findings, second copy).
+# py3-pip-wheel is ensurepip's bundled wheel — only needed by `python -m venv`,
+# which has already run. Verified: the venv imports its stack fine afterwards.
+USER root
+RUN apk del --no-cache py3.14-pip py3.14-pip-base py3-pip-wheel
+USER nonroot
 
 # Git identity for in-container worktree operations
 RUN git config --global user.name "AIFactory" \
