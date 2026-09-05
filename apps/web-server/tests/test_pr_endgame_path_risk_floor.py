@@ -27,7 +27,11 @@ for _p in (str(_WS), str(_BACKEND)):
         sys.path.insert(0, _p)
 
 from cli import workspace_commands  # noqa: E402
-from merge.merge_policy import floor_from_paths, raise_review_tier  # noqa: E402
+from merge.merge_policy import (  # noqa: E402
+    floor_from_paths,
+    raise_review_tier,
+    tier_permits_auto_merge,
+)
 from review_tier import HIGH_RISK_PATTERNS  # noqa: E402
 from server.services import pr_endgame as pe  # noqa: E402
 
@@ -116,7 +120,7 @@ def test_enforcing_the_floor_withholds_the_auto_merge(
 
     assert ctx is not None
     assert ctx["review_tier"] == "blocking"
-    assert pe.tier_allows_auto_merge(ctx["review_tier"]) is False
+    assert tier_permits_auto_merge(ctx["review_tier"]) is False
     written = json.loads((spec / "task_metadata.json").read_text())
     assert written["reviewTier"] == "blocking"
 
@@ -138,7 +142,7 @@ def test_blocking_tier_with_unfloored_paths_stays_blocking(
     assert ctx is not None
     assert ctx["review_tier"] == "blocking"
     assert ctx["review_tier_floor"] is None  # nothing changed, nothing to say
-    assert pe.tier_allows_auto_merge(ctx["review_tier"]) is False
+    assert tier_permits_auto_merge(ctx["review_tier"]) is False
 
 
 @pytest.mark.parametrize(
@@ -167,7 +171,7 @@ def test_high_risk_deployment_floors_an_auto_task(
 
     assert ctx is not None
     assert ctx["review_tier"] == "blocking"
-    assert pe.tier_allows_auto_merge(ctx["review_tier"]) is False
+    assert tier_permits_auto_merge(ctx["review_tier"]) is False
 
 
 # --------------------------------------------------------------------------- #

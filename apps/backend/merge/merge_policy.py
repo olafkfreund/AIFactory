@@ -21,16 +21,17 @@ Tier policy (RFC-0011 routing table):
 RFC-0013 deployment overlay (#645): once the per-tier disposition is computed
 the deployment policy may only ever make it *stricter*, never looser. A change
 whose ``deployment`` block carries a ``high`` risk class — or that reaches
-production — can NEVER auto-merge while its blocking system gates (``human-approval``,
-and the required pre-deploy scans surfaced as CI checks) are unsatisfied, even at
-``factory:low``. Production is VAL-4 and never autonomous; the deploy that *does*
-run is always held behind a human. The overlay degrades, never fabricates:
-absent / empty deployment inputs leave the RFC-0011 decision untouched, and
+production — can NEVER auto-merge while ANY of its required system gates
+(``human-approval``, and the required pre-deploy scans surfaced as CI checks) are
+unsatisfied, even at ``factory:low``. Production is VAL-4 and never autonomous;
+the deploy that *does* run is always held behind a human. The overlay degrades,
+never fabricates: absent / empty deployment inputs leave the RFC-0011 decision untouched, and
 UNKNOWN delivery health (DORA ``available=false``) never relaxes a gate.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 
 __all__ = [
@@ -48,10 +49,13 @@ AUTO_MERGE = "auto-merge"
 HOLD_ASYNC = "hold-async"
 HOLD_BLOCKING = "hold-blocking"
 
-# System gates that, when required by the deployment policy, must be cleared by a
-# human (they cannot be satisfied autonomously). A required-but-unsatisfied gate
-# in this set forces hold-blocking regardless of tier.
-_BLOCKING_GATES: frozenset[str] = frozenset({"human-approval"})
+# System gates that can only ever be cleared by a HUMAN. Every required gate
+# blocks while it is unsatisfied; this set only changes the wording of the
+# reason, so the audit trail says which ones no amount of automation can clear.
+_HUMAN_ONLY_GATES: frozenset[str] = frozenset({"human-approval"})
+
+# Back-compat alias for the old name (it was public-ish via the module).
+_BLOCKING_GATES = _HUMAN_ONLY_GATES
 
 # Deployment risk classes that may never auto-merge autonomously.
 _NON_AUTONOMOUS_RISK: frozenset[str] = frozenset({"high"})
@@ -84,8 +88,16 @@ def floor_from_paths(changed: object) -> str:
     pattern table is IMPORTED, never restated: a second copy of a shared rule
     drifts (Factory#590).
 
-    Returns ``"auto"`` (no floor) for an empty or unmatched change set, so a
-    diff nobody could read never raises anything.
+    Returns ``"auto"`` (no floor) for an empty or unmatched change set: a diff
+    that matched no high-risk pattern genuinely carries no floor.
+
+    Fails CLOSED, not open. If the pattern table itself cannot be imported the
+    classifier did not run, and a classifier that did not run has not cleared
+    anything — it returns ``"blocking"``. The previous ``"auto"`` was worse than
+    it looks: ``"auto"`` is bucket rank 0, not the ``-1``
+    :func:`raise_review_tier` gives an unrecognised value, so a vanished
+    auth/secrets/migrations/infra/CI classifier could not raise ANY tier and the
+    floor silently disappeared for every change.
 
     Lazy import: ``review_tier`` is a top-level module of the backend package,
     which is on ``sys.path`` only at runtime — the same reason ``pr_endgame``
@@ -95,8 +107,8 @@ def floor_from_paths(changed: object) -> str:
         from review_tier import (  # type: ignore[import-not-found,unused-ignore] # noqa: PLC0415
             _RISK_RE,
         )
-    except ImportError:  # pragma: no cover - backend always present in prod
-        return "auto"
+    except ImportError:
+        return "blocking"
     if not isinstance(changed, Iterable) or isinstance(changed, str | bytes):
         return "auto"
     for path in changed:
@@ -135,14 +147,27 @@ def _val_meets_floor(achieved_val: object, val_floor: object) -> bool:
 
     VALs are ordinal (VAL-1 < VAL-2 < VAL-3). Accepts ints (1/2/3) or strings
     like ``"VAL-2"`` / ``"val2"`` / ``"2"``. A missing achieved level fails.
+
+    An ABSENT floor (None / blank) means no floor was declared, so any achieved
+    level satisfies it. An UNPARSEABLE floor ("VAL-three", "high") is a
+    different thing entirely: it is a gate nobody can read, and a gate nobody
+    can read is not a gate anyone may waive — it fails, matching the
+    already-fail-closed branch above for a missing achieved level.
     """
     a = _val_rank(achieved_val)
     f = _val_rank(val_floor)
     if a is None:
         return False
     if f is None:
-        return True  # no floor declared => any achieved level satisfies
+        return _floor_absent(val_floor)
     return a >= f
+
+
+def _floor_absent(val_floor: object) -> bool:
+    """Whether *val_floor* declares no floor at all (vs. one we cannot parse)."""
+    if val_floor is None:
+        return True
+    return isinstance(val_floor, str) and not val_floor.strip()
 
 
 def _val_rank(val: object) -> int | None:
@@ -151,9 +176,12 @@ def _val_rank(val: object) -> int | None:
     if isinstance(val, int):
         return val
     if isinstance(val, str):
-        digits = "".join(ch for ch in val if ch.isdigit())
-        if digits:
-            return int(digits)
+        # The FIRST integer run, never every digit concatenated: joining the
+        # digits turned "VAL-1 of 3" into 13 and "VAL-2 (3 lanes)" into 23, so
+        # any annotated level outranked every floor and the VAL gate inverted.
+        match = re.search(r"\d+", val)
+        if match:
+            return int(match.group())
     return None
 
 
@@ -184,10 +212,19 @@ def deployment_block_reasons(
     Honest + conservative (RFC-0013 §3/§6):
       * ``risk_class: high`` => never autonomous.
       * ``production_classification: production`` => never autonomous (VAL-4).
-      * any required ``system_gates`` in ``_BLOCKING_GATES`` that is NOT in
-        ``satisfied_gates`` => held until a human clears it.
+      * ANY required ``system_gates`` entry that is NOT in ``satisfied_gates``
+        => held. This used to intersect the required set with
+        ``_BLOCKING_GATES`` (``{"human-approval"}``), so a contract declaring
+        ``system_gates: ["security-scan", "sbom", "dr-signoff"]`` produced ZERO
+        reasons while the module docstring promised those pre-deploy scans held
+        the merge. The docstring was right and the code was a near no-op; the
+        code now matches it. A gate we cannot see evidence for is unsatisfied.
       * UNKNOWN delivery health never *relaxes* a gate — it is simply not a
         reason to merge, so it is intentionally not consulted here.
+
+    ``satisfied_gates`` is what makes this satisfiable: a caller that never
+    passes it can only ever see every declared gate as outstanding, which is why
+    ``pr_endgame`` now reads the recorded approvals and passes them in.
     """
     if not isinstance(deployment, Mapping):
         return []
@@ -206,8 +243,13 @@ def deployment_block_reasons(
 
     required_gates = _str_set(deployment.get("system_gates"))
     have = _str_set(satisfied_gates)
-    for gate in sorted(required_gates & _BLOCKING_GATES):
-        if gate not in have:
+    for gate in sorted(required_gates - have):
+        if gate in _HUMAN_ONLY_GATES:
+            reasons.append(
+                f"required system gate '{gate}' is not satisfied "
+                "(only a human can clear it)"
+            )
+        else:
             reasons.append(f"required system gate '{gate}' is not satisfied")
 
     return reasons
