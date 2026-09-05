@@ -374,6 +374,8 @@ class CredentialMixin:
 
         logger = logging.getLogger(__name__)
 
+        from ..paths import atomic_write_secret_json  # noqa: TID252, PLC0415
+
         profiles_file = self._resolve_profiles_file()
 
         if not profiles_file.exists():
@@ -390,9 +392,9 @@ class CredentialMixin:
             # Update active profile
             data["activeProfileId"] = profile_id
 
-            # Write back with secure permissions
-            profiles_file.write_text(json.dumps(data, indent=2))
-            profiles_file.chmod(0o600)
+            # Write back atomically at 0600 from creation: no world-readable
+            # window, and a concurrent load_profiles never sees a torn file.
+            atomic_write_secret_json(profiles_file, data)
 
             # Update env token to match active profile (if available)
             token = None
