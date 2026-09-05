@@ -145,6 +145,22 @@ async def log_audit_event(
     failures never propagate to the calling code.  A warning is logged
     instead.
 
+    The insert runs inside its own SAVEPOINT so that promise actually
+    holds. Without one, a failed flush (a violated FK on ``org_id``/
+    ``user_id``, an over-length column) leaves the caller's
+    ``AsyncSession`` in a needs-rollback state; the route's next
+    ``await db.commit()`` then raises ``PendingRollbackError`` and the
+    BUSINESS request 500s -- the audit failure propagated after all,
+    just later and wearing the caller's name. Rolling the savepoint back
+    restores the session to exactly the state the caller had before, so
+    their transaction stays committable.
+
+    A savepoint rather than a separate session (the
+    :func:`log_audit_event_bg` route) on purpose: callers pass their own
+    session precisely so the audit row lands in the SAME transaction as
+    the action it records. A separate session would commit an audit row
+    for a business change that then rolled back.
+
     Parameters
     ----------
     db:
@@ -169,29 +185,34 @@ async def log_audit_event(
         The IP address of the client, if available.
     """
     try:
-        # Epic #26 P5.2 — hash chain on write. This row's prev_hash =
-        # compute_hash(current chain head). See ``_next_prev_hash``.
-        prev_hash_value = await _next_prev_hash(db)
+        # Own savepoint: a failed audit insert must not leave the caller's
+        # session in a needs-rollback state (see the docstring). Everything
+        # that touches the DB goes inside -- the chain-head SELECT too, since
+        # a failed statement poisons the transaction just as an insert does.
+        async with db.begin_nested():
+            # Epic #26 P5.2 — hash chain on write. This row's prev_hash =
+            # compute_hash(current chain head). See ``_next_prev_hash``.
+            prev_hash_value = await _next_prev_hash(db)
 
-        entry = AuditLog(
-            user_id=user_id,
-            org_id=org_id,
-            action=action,
-            resource_type=resource_type,
-            resource_id=resource_id,
-            details_json=json.dumps(details) if details is not None else None,
-            ip=ip,
-            retention_until=_default_retention_until(),
-            prev_hash=prev_hash_value,
-        )
-        db.add(entry)
-        await db.flush()
+            entry = AuditLog(
+                user_id=user_id,
+                org_id=org_id,
+                action=action,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                details_json=json.dumps(details) if details is not None else None,
+                ip=ip,
+                retention_until=_default_retention_until(),
+                prev_hash=prev_hash_value,
+            )
+            db.add(entry)
+            await db.flush()
     except Exception:
         logger.warning(
             "Failed to write audit log entry: action=%s resource_type=%s resource_id=%s",
-            action,
-            resource_type,
-            resource_id,
+            sanitize_log(action),
+            sanitize_log(resource_type),
+            sanitize_log(resource_id),
             exc_info=True,
         )
 
