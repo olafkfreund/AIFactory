@@ -422,7 +422,10 @@ class CredentialMixin:
             # Emit WebSocket event for system-wide profile change
             from ..websockets.events import broadcast_event
 
-            asyncio.create_task(
+            # RUF006 is suppressed on the next statement (#1484): a fire-and-forget UI
+            # notification. A lost broadcast means one browser misses a profile-changed
+            # banner; the profile switch itself is already committed above.
+            asyncio.create_task(  # noqa: RUF006
                 broadcast_event(
                     "profile:changed",
                     {

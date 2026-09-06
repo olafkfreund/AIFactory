@@ -200,13 +200,22 @@ async def _run_fixer_bg(spec_dir: Path) -> None:
         await asyncio.to_thread(check_fix_cycle_assertions, spec_dir)
 
 
+_BACKGROUND_FIXERS: set[asyncio.Task[None]] = set()
+
+
 async def _default_fixer(spec_dir: Path) -> dict:
     """Schedule a real QA-fixer run in the background; return immediately.
 
     Running it inline would block the HTTP request for the whole fix; the
     background task surfaces progress through the usual task status.
     """
-    asyncio.create_task(_run_fixer_bg(spec_dir))
+    # A STRONG reference, held until the fixer finishes (#1484). The event loop
+    # keeps only a weak one, so a bare ``create_task(...)`` here could be
+    # garbage-collected mid-run -- with no exception and no log -- after this
+    # function has already answered ``scheduled: True``.
+    task = asyncio.create_task(_run_fixer_bg(spec_dir))
+    _BACKGROUND_FIXERS.add(task)
+    task.add_done_callback(_BACKGROUND_FIXERS.discard)
     return {"status": "qa_fixing", "scheduled": True}
 
 

@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 
 from factory_common.logsafe import sanitize_log
 
+from server.background import spawn
 from server.specpath import spec_dir_for
 
 from .agent_service import (
@@ -271,7 +272,7 @@ async def monitor_process(
                     if task_id in service._task_log_writers:
                         log_writer, main_log_writer = service._task_log_writers[task_id]
 
-                    asyncio.create_task(
+                    spawn(
                         service._process_output(
                             task_id,
                             new_proc.stdout,
@@ -280,7 +281,7 @@ async def monitor_process(
                             spec_id=spec_id,
                         )
                     )
-                    asyncio.create_task(
+                    spawn(
                         service._process_output(
                             task_id,
                             new_proc.stderr,
@@ -289,7 +290,7 @@ async def monitor_process(
                             spec_id=spec_id,
                         )
                     )
-                    asyncio.create_task(
+                    spawn(
                         service._monitor_process(
                             task_id, new_proc, project_path, spec_id, cmd=None, env=None
                         )
@@ -568,7 +569,7 @@ async def monitor_process(
                         log_writer, main_log_writer = service._task_log_writers[task_id]
 
                     # Restart output processing for new subprocess
-                    asyncio.create_task(
+                    spawn(
                         service._process_output(
                             task_id,
                             new_proc.stdout,
@@ -577,7 +578,7 @@ async def monitor_process(
                             spec_id=spec_id,
                         )
                     )
-                    asyncio.create_task(
+                    spawn(
                         service._process_output(
                             task_id,
                             new_proc.stderr,
@@ -588,7 +589,7 @@ async def monitor_process(
                     )
 
                     # Restart monitoring for new subprocess (without cmd/env to prevent infinite retry)
-                    asyncio.create_task(
+                    spawn(
                         service._monitor_process(
                             task_id,
                             new_proc,

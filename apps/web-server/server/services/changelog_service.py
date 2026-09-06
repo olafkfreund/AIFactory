@@ -15,6 +15,8 @@ from pathlib import Path
 
 from factory_common.logsafe import sanitize_log
 
+from server.background import spawn
+
 from ..config import get_settings
 from ..websockets.events import broadcast_event
 from .argv_safety import assert_safe_git_ref
@@ -262,7 +264,7 @@ class ChangelogService:
             )
 
             # Start output processing in background
-            asyncio.create_task(self._process_output(project_id, project_path, proc))
+            spawn(self._process_output(project_id, project_path, proc))
 
             return True
 

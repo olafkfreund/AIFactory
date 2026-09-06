@@ -22,6 +22,7 @@ from typing import Any
 
 from factory_common.logsafe import sanitize_log
 
+from server.background import spawn
 from server.specpath import spec_dir_for
 
 from ..config import get_settings
@@ -1232,7 +1233,7 @@ class AgentService(
         main_log_writer.set_phase_status(spec_id, TaskPhase.PLANNING, "active")
 
         # Start output processing in background with log writers
-        asyncio.create_task(
+        spawn(
             self._process_output(
                 task_id,
                 proc.stdout,
@@ -1241,12 +1242,10 @@ class AgentService(
                 spec_id=spec_id,
             )
         )
-        asyncio.create_task(self._process_output(task_id, proc.stderr, is_stderr=True))
+        spawn(self._process_output(task_id, proc.stderr, is_stderr=True))
 
         # Start process monitor to clean up when finished (with file syncing and failover support)
-        asyncio.create_task(
-            self._monitor_process(task_id, proc, project_path, spec_id, cmd, env)
-        )
+        spawn(self._monitor_process(task_id, proc, project_path, spec_id, cmd, env))
 
         # Epic #44 R1 — opt-in Live Agent Console. No-op when
         # AIFACTORY_RMUX_ENABLED is unset/false (the default), so the
