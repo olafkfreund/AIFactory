@@ -19,7 +19,6 @@ import os
 import shlex
 import shutil
 import subprocess
-import tempfile
 import threading
 import time
 from pathlib import Path
@@ -29,6 +28,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, SecretStr
 
 from server.error_ref import client_error
+from server.paths import atomic_write_secret_json
 from server.services.http_verdict import honest_status
 
 router = APIRouter()
@@ -453,50 +453,12 @@ def _get_cli_status(cli: str) -> CLIAccountStatus:
     )
 
 
-def _write_secret_json(path: Path, data: dict) -> None:
-    """Write ``data`` as JSON to ``path`` at 0600, atomically, with no
-    readable window.
-
-    ``Path.write_text`` + a later ``chmod(0o600)`` has two defects on a file
-    holding OAuth tokens:
-
-    1. **A readable window.** ``write_text`` creates the file at the umask
-       default (usually 0644) and the secret is on disk at those perms until
-       the ``chmod`` lands. Anyone on the box can read it in between.
-    2. **Not atomic.** ``write_text`` truncates in place, so a concurrent
-       reader gets a half-written file, ``json.load`` raises
-       ``JSONDecodeError``, the reader treats that as "no credentials", and
-       the next save writes that belief back — destroying the stored tokens.
-
-    ``tempfile.mkstemp`` opens the temp file 0600 from creation regardless of
-    umask, and ``os.replace`` publishes it atomically within the filesystem:
-    a reader sees either the whole old file or the whole new one. The replace
-    also swaps the inode, so a file an older build left at 0644 comes out
-    0600.
-
-    Sibling forks keep this in ``server/paths.py``
-    (PFactory ``atomic_write_secret_json``, TFactory ``write_secret_file``);
-    AIFactory's ``paths.py`` has no such helper on ``dev`` yet, so the write
-    lives here — the only secret-writing site in this module. Swap the body
-    for the shared helper once it is ported.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".")
-    try:
-        with os.fdopen(fd, "w") as handle:
-            json.dump(data, handle, indent=2)
-            handle.flush()
-            os.fsync(handle.fileno())
-        Path(tmp).replace(path)  # atomic within a filesystem
-    except BaseException:
-        Path(tmp).unlink(missing_ok=True)
-        raise
-
-
 def _save_credentials(cli: str, data: dict) -> None:
     """Save credentials to ~/.aifactory/{cli}-credentials.json with 0o600."""
     CREDENTIALS_DIR.mkdir(parents=True, exist_ok=True)
-    _write_secret_json(CLI_CONFIG[cli]["stored_credentials"], data)
+    # 0600 from creation and published with os.replace -- no readable
+    # window, no truncated file for a concurrent reader.
+    atomic_write_secret_json(CLI_CONFIG[cli]["stored_credentials"], data)
 
 
 def _poll_codex_token(mtime_before: float, loop: asyncio.AbstractEventLoop) -> None:
