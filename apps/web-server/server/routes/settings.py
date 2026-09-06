@@ -38,6 +38,7 @@ from server.crypto.secret_field import (
     unseal_profiles,
 )
 from server.error_ref import client_error
+from server.paths import atomic_write_secret_json, write_secret_file
 from server.services.http_verdict import honest_status
 
 # --------------------------------------------------------------------------
@@ -520,9 +521,9 @@ def _write_json_store(name: str, data: Any) -> None:
     never contains a usable token. A no-op for stores with no ``profiles`` key.
     """
     store_file = Path(get_settings().PROJECTS_DATA_DIR) / name
-    store_file.parent.mkdir(parents=True, exist_ok=True)
-    store_file.write_text(json.dumps(seal_profiles(data), indent=2))
-    store_file.chmod(0o600)
+    # 0600 from creation and published with os.replace: no world-readable
+    # window, and a concurrent reader never sees a truncated store.
+    atomic_write_secret_json(store_file, seal_profiles(data))
 
 
 def load_app_settings() -> AppSettings:
@@ -657,8 +658,7 @@ async def regenerate_api_token():
 
     # Generate new token
     new_token = secrets.token_urlsafe(32)
-    token_file.write_text(new_token)
-    token_file.chmod(0o600)
+    write_secret_file(token_file, new_token)  # 0600 from creation, no readable window
 
     # Update settings (note: requires server restart to take effect)
     return {
@@ -2853,8 +2853,7 @@ async def import_claude_credentials():
     profiles_data["profiles"].append(new_profile)
     profiles_data["activeProfileId"] = profile_id
 
-    profiles_file.write_text(json.dumps(profiles_data, indent=2))
-    profiles_file.chmod(0o600)
+    atomic_write_secret_json(profiles_file, profiles_data)
 
     # Also set env var for immediate use
     os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = token

@@ -15,6 +15,7 @@ from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
+from server.background import spawn
 from server.error_ref import client_error
 from server.project_registry import load_projects, resolve_project_id
 from server.specpath import safe_spec_component
@@ -1558,9 +1559,14 @@ async def dispatch_task_to_copilot(
 
         loop = _asyncio.get_event_loop()
         if loop.is_running():
-            loop.create_task(emit_task_status(task_id, "copilot_pr_opened"))
+            # RUF006 is suppressed on the next statement (#1484): one UI status
+            # transition. The watcher that does the actual work IS anchored (see the
+            # spawn() below); losing this emit costs a badge refresh, not the dispatch.
+            loop.create_task(  # noqa: RUF006
+                emit_task_status(task_id, "copilot_pr_opened")
+            )
 
-    asyncio.create_task(
+    spawn(
         watch_for_copilot_pr(
             task_id=task_id,
             repo_full_name=request.repo_full_name,

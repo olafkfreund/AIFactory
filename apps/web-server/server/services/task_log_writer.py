@@ -213,7 +213,13 @@ class TaskLogWriter:
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                asyncio.create_task(emit_task_logs_stream(spec_id, stream_chunk))
+                # RUF006 is suppressed on the next statement (#1484): a per-LINE live-
+                # log emit. Losing one drops a line from the streaming console; the
+                # durable log file is written separately, and anchoring per line would
+                # grow the set without bound on a hot path.
+                asyncio.create_task(  # noqa: RUF006
+                    emit_task_logs_stream(spec_id, stream_chunk)
+                )
         except RuntimeError:
             # No event loop running, skip WebSocket emit
             pass

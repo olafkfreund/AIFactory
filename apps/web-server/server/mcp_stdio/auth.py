@@ -32,9 +32,9 @@ from dataclasses import dataclass
 
 from fastapi import HTTPException, Request, status
 
+from server.auth import _is_legacy_api_token
 from server.error_ref import client_error
 
-from ..config import get_settings
 from ..mcp_remote import auth as mcp_remote_auth
 
 logger = logging.getLogger(__name__)
@@ -102,7 +102,6 @@ def require_acw_scope(scope: str):
     """
 
     async def _check(request: Request):
-        settings = get_settings()
         token = _strip_bearer(request.headers.get("Authorization"))
         if not token:
             raise HTTPException(
@@ -110,8 +109,10 @@ def require_acw_scope(scope: str):
                 detail="Missing or malformed Authorization header (expected 'Bearer <token>')",
             )
 
-        # Legacy admin token = wildcard. Compare against settings.API_TOKEN.
-        if token == settings.API_TOKEN:
+        # Legacy admin token = wildcard. Matched constant-time via the
+        # shared helper, which also refuses to authenticate anything when
+        # API_TOKEN is unset (Factory#324 M1).
+        if _is_legacy_api_token(token):
             return _LegacyAdminKey()
 
         try:

@@ -84,12 +84,37 @@ def test_absent_deployment_block_unchanged() -> None:
 
 
 def test_low_risk_deployment_still_auto_merges() -> None:
+    """Low risk, internal, and its one declared gate recorded as cleared."""
     deployment = {
         "risk_class": "low",
         "production_classification": "internal",
         "system_gates": ["ci-green"],
     }
-    assert decide_merge("low", **_GREEN, deployment=deployment) == AUTO_MERGE
+    decision = decide_merge(
+        "low", **_GREEN, deployment=deployment, satisfied_gates=["ci-green"]
+    )
+    assert decision == AUTO_MERGE
+
+
+def test_unsatisfied_non_human_gate_blocks_too() -> None:
+    """The near-no-op (#637): required gates were intersected with
+    {"human-approval"}, so a contract declaring security-scan / sbom /
+    dr-signoff produced ZERO reasons while the docstring promised those
+    pre-deploy scans held the merge."""
+    deployment = {
+        "risk_class": "low",
+        "system_gates": ["security-scan", "sbom", "dr-signoff"],
+    }
+    assert decide_merge("low", **_GREEN, deployment=deployment) == HOLD_BLOCKING
+    assert (
+        decide_merge(
+            "low",
+            **_GREEN,
+            deployment=deployment,
+            satisfied_gates=["security-scan", "sbom", "dr-signoff"],
+        )
+        == AUTO_MERGE
+    )
 
 
 def test_high_risk_blocks_auto_merge_at_low_tier() -> None:
@@ -114,9 +139,23 @@ def test_unsatisfied_human_approval_gate_blocks() -> None:
     assert decide_merge("low", **_GREEN, deployment=deployment) == HOLD_BLOCKING
 
 
-def test_satisfied_human_approval_gate_does_not_block_on_gate_alone() -> None:
-    # Medium risk + the only blocking gate cleared => deployment imposes no block,
+def test_satisfied_gates_do_not_block() -> None:
+    # Medium risk + every declared gate cleared => deployment imposes no block,
     # so the base low-tier decision (auto-merge) stands.
+    deployment = {
+        "risk_class": "medium",
+        "system_gates": ["ci-green", "human-approval"],
+    }
+    decision = decide_merge(
+        "low",
+        **_GREEN,
+        deployment=deployment,
+        satisfied_gates=["human-approval", "ci-green"],
+    )
+    assert decision == AUTO_MERGE
+
+
+def test_human_gate_cleared_but_another_gate_outstanding_still_blocks() -> None:
     deployment = {
         "risk_class": "medium",
         "system_gates": ["ci-green", "human-approval"],
@@ -124,7 +163,7 @@ def test_satisfied_human_approval_gate_does_not_block_on_gate_alone() -> None:
     decision = decide_merge(
         "low", **_GREEN, deployment=deployment, satisfied_gates=["human-approval"]
     )
-    assert decision == AUTO_MERGE
+    assert decision == HOLD_BLOCKING
 
 
 def test_production_blocks_even_with_human_approval_satisfied() -> None:
@@ -181,7 +220,8 @@ def test_reasons_malformed_block_never_raises() -> None:
 def test_reasons_satisfied_gate_drops_from_list() -> None:
     deployment = {"system_gates": ["human-approval"]}
     assert deployment_block_reasons(deployment) == [
-        "required system gate 'human-approval' is not satisfied"
+        "required system gate 'human-approval' is not satisfied "
+        "(only a human can clear it)"
     ]
     assert (
         deployment_block_reasons(deployment, satisfied_gates=["human-approval"]) == []

@@ -50,6 +50,11 @@ extend-exclude = [
     "scripts/ratchet_helpers.py",
     "apps/backend/core/factory_sandbox.py",
     "apps/backend/core/nix_provisioner.py",
+    # RFC-0005 paved road: nix_provisioner's sibling — the declarative
+    # language-descriptor loader, vendored byte-exact together with
+    # core/languages/*.yaml (the descriptors it globs). Same hub canonical
+    # terms as the modules above.
+    "apps/backend/core/language_descriptors.py",
     # RFC-0014 (#664): byte-exact mirror of the hub canonical
     # scripts/cost_router_core.py, formatted at the fleet line-length (100). The
     # AIFactory-native budget logic that consumes it lives in
@@ -108,6 +113,17 @@ select = [
     "C4",     # flake8-comprehensions
     "UP",     # pyupgrade
     "TID251", # flake8-tidy-imports: banned-api (architecture import boundary, #261)
+    # #1484: `asyncio.create_task(coro())` on a line of its own hands the task
+    # to a loop that keeps only a WEAK reference to it, so a GC cycle between
+    # awaits can collect it mid-flight -- no exception, no log, and usually a
+    # response that already reported success (#1479 was one such watcher). The
+    # shared strict baseline in standards/ruff.toml selects all of RUF, so the
+    # DIFF-SCOPED ratchet has always gated this rule on changed files; this line
+    # adds it to the BLOCKING repo-wide check too. Affordable because the tree
+    # is clean: the consequential sites are anchored via server/background.py
+    # and the four remaining fire-and-forget UI/telemetry emits carry a per-line
+    # `# noqa: RUF006` stating what is lost if one is dropped.
+    "RUF006", # store a reference to the return value of asyncio.create_task
 ]
 
 ignore = [
