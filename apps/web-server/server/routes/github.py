@@ -20,6 +20,7 @@ from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from server.background import spawn
 from server.error_ref import client_error
 from server.services.gh import run_gh_command  # re-exported: see services/gh.py
 from server.services.git_base_url import safe_git_base_url  # #1360
@@ -685,7 +686,7 @@ async def start_github_auth():
             }
 
         # Start background monitor for process completion
-        asyncio.create_task(_monitor_gh_auth(proc))
+        spawn(_monitor_gh_auth(proc))
 
         return {
             "success": True,

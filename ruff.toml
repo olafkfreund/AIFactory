@@ -113,6 +113,17 @@ select = [
     "C4",     # flake8-comprehensions
     "UP",     # pyupgrade
     "TID251", # flake8-tidy-imports: banned-api (architecture import boundary, #261)
+    # #1484: `asyncio.create_task(coro())` on a line of its own hands the task
+    # to a loop that keeps only a WEAK reference to it, so a GC cycle between
+    # awaits can collect it mid-flight -- no exception, no log, and usually a
+    # response that already reported success (#1479 was one such watcher). The
+    # shared strict baseline in standards/ruff.toml selects all of RUF, so the
+    # DIFF-SCOPED ratchet has always gated this rule on changed files; this line
+    # adds it to the BLOCKING repo-wide check too. Affordable because the tree
+    # is clean: the consequential sites are anchored via server/background.py
+    # and the four remaining fire-and-forget UI/telemetry emits carry a per-line
+    # `# noqa: RUF006` stating what is lost if one is dropped.
+    "RUF006", # store a reference to the return value of asyncio.create_task
 ]
 
 ignore = [

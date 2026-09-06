@@ -276,7 +276,13 @@ class SessionRegistry:
             if not redis_transport.redis_enabled():
                 return
             loop = asyncio.get_running_loop()
-            loop.create_task(redis_transport.publish_pane_bytes(spec_id, data))
+            # RUF006 is suppressed on the next statement (#1484): a per-CHUNK best-
+            # effort mirror. Losing one publish drops one pane fragment from the live
+            # console; nothing is stranded, and anchoring a task per chunk would trade a
+            # dropped byte for unbounded set growth on a hot path.
+            loop.create_task(  # noqa: RUF006
+                redis_transport.publish_pane_bytes(spec_id, data)
+            )
         except RuntimeError:
             # No running loop (e.g. sync test context) — skip the Redis mirror.
             pass

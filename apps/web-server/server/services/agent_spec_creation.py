@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from factory_common.logsafe import sanitize_log
 
+from server.background import spawn
 from server.specpath import spec_dir_for
 
 from ..utils.subprocess_env import make_subprocess_env
@@ -296,13 +297,13 @@ class SpecCreationMixin:
         )
 
         # Start output processing in background
-        asyncio.create_task(self._process_output(task_id, proc.stdout, is_stderr=False))
-        asyncio.create_task(self._process_output(task_id, proc.stderr, is_stderr=True))
+        spawn(self._process_output(task_id, proc.stdout, is_stderr=False))
+        spawn(self._process_output(task_id, proc.stderr, is_stderr=True))
 
         # Start process monitor to clean up when finished
         # Pass project_path so monitor can detect created spec and check for review state
         # Pass cmd and env so model fallback can retry with a different model on failure
-        asyncio.create_task(
+        spawn(
             self._monitor_process(
                 task_id, proc, project_path=project_path, cmd=cmd, env=env
             )

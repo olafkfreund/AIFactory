@@ -19,7 +19,6 @@ tests/test_terminal_completion_characterization.py.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import sys
 from datetime import UTC, datetime
@@ -27,6 +26,8 @@ from pathlib import Path
 from typing import Any
 
 from factory_common.logsafe import sanitize_log
+
+from server.background import spawn
 
 from .task_control import write_control
 
@@ -266,7 +267,7 @@ async def run_terminal_completion(
                             await maybe_auto_handoff_tfactory(spec_dir, spec_id)
 
                         def _re_test_sync() -> None:
-                            asyncio.create_task(_re_test())
+                            spawn(_re_test())
 
                         # Reviewer gating (#71 Phase A). "aifactory" uses
                         # AIFactory's own review engine (Claude/Ollama, no
@@ -291,7 +292,7 @@ async def run_terminal_completion(
 
                             def _on_pr_opened(prn: int) -> None:
                                 _pr_box["pr"] = prn
-                                asyncio.create_task(
+                                spawn(
                                     get_pr_review_service().start_review(
                                         _proj_id, prn, project_path
                                     )
@@ -302,7 +303,7 @@ async def run_terminal_completion(
                                 try:
                                     from pfactory.tfactory_client import send_pr_attach
 
-                                    asyncio.create_task(
+                                    spawn(
                                         send_pr_attach(
                                             spec_dir, spec_id, prn, ctx.get("repo")
                                         )
