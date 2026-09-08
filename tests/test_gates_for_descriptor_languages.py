@@ -18,7 +18,11 @@ _BACKEND = Path(__file__).parent.parent / "apps" / "backend"
 sys.path.insert(0, str(_BACKEND))
 sys.path.insert(0, str(_BACKEND / "core"))
 
-from agents.gate_runner import detect_gates  # noqa: E402
+from agents.gate_runner import (  # noqa: E402
+    Gate,
+    _command_in_module,
+    detect_gates,
+)
 from cli.build_commands import _trailing_gate_evidence  # noqa: E402
 
 
@@ -99,3 +103,34 @@ def test_gate_evidence_survives_a_corrupt_marker(tmp_path):
     (tmp_path / ".trailing_gates_done").write_bytes(b"\xff\xfe\x00binary")
 
     assert _trailing_gate_evidence(tmp_path) is None
+
+
+def test_a_module_gate_is_entered_by_the_command_not_the_mount(tmp_path):
+    # The runner's cwd must stay the worktree root: the Nix Job mounts it at
+    # /work and reads flake.nix from there. Handing it the module mounted the
+    # module instead, and nix reported "flake.nix does not exist" with a store
+    # hash that never moved however the root was edited.
+    gate = Gate("kotlin-unit", ["gradle", "test"], cwd=tmp_path / "lanes/kotlin-core")
+
+    argv = _command_in_module(gate, tmp_path)
+
+    assert argv[:2] == ["bash", "-c"]
+    assert argv[2] == "cd lanes/kotlin-core && gradle test"
+
+
+def test_a_root_gate_is_left_alone(tmp_path):
+    gate = Gate("pytest", ["pytest", "-q"], cwd=tmp_path)
+
+    assert _command_in_module(gate, tmp_path) == ["pytest", "-q"]
+
+
+def test_a_gate_with_no_cwd_is_left_alone(tmp_path):
+    gate = Gate("pytest", ["pytest", "-q"])
+
+    assert _command_in_module(gate, tmp_path) == ["pytest", "-q"]
+
+
+def test_a_module_outside_the_tree_is_left_alone(tmp_path):
+    gate = Gate("odd", ["true"], cwd=tmp_path.parent / "elsewhere")
+
+    assert _command_in_module(gate, tmp_path) == ["true"]

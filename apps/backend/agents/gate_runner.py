@@ -427,6 +427,33 @@ def _select_runner() -> Callable[[list[str], Path], tuple[int | None, str]]:
     return _default_runner
 
 
+def _command_in_module(gate: Gate, project_dir: Path) -> list[str]:
+    """The gate's argv, entered from *project_dir* rather than its module.
+
+    The runner's cwd has to stay the worktree root: the Nix Job mounts that cwd
+    at /work and `nix develop path:/work#default` reads the flake from there.
+    Handing it the module directory instead mounted the module as /work, so nix
+    looked for flake.nix inside lanes/kotlin-core and reported
+
+        error: path '/nix/store/…-source/flake.nix' does not exist
+
+    — with a store hash that never moved no matter what was written at the root,
+    because the root was not what it was reading (AIFactory#1491).
+
+    So the module is entered by the command instead of by the mount. A gate at
+    the root is left exactly as it was.
+    """
+    if gate.cwd is None or gate.cwd == project_dir:
+        return gate.command
+    try:
+        relative = gate.cwd.relative_to(project_dir)
+    except ValueError:
+        # Outside the tree: not something to cd into from here.
+        return gate.command
+    inner = f"cd {shlex.quote(str(relative))} && {shlex.join(gate.command)}"
+    return ["bash", "-c", inner]
+
+
 async def run_gates(
     project_dir: Path,
     gates: list[Gate] | None = None,
@@ -453,8 +480,8 @@ async def run_gates(
     run = runner or _select_runner()
     results: list[GateResult] = []
     for gate in gates:
-        gate_cwd = gate.cwd or project_dir
-        exit_code, output = await asyncio.to_thread(run, gate.command, gate_cwd)
+        argv = _command_in_module(gate, project_dir)
+        exit_code, output = await asyncio.to_thread(run, argv, project_dir)
         if exit_code is None or exit_code == gate.skip_code:
             results.append(
                 GateResult(gate.name, passed=True, skipped=True, output_tail=output)
