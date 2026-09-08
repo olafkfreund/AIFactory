@@ -279,6 +279,17 @@ async def run_autonomous_agent(
         if is_build_complete(spec_dir):
             print_build_complete_banner(spec_dir)
             status_manager.update(state=BuildState.COMPLETE)
+            # Gates before the report, and before returning. This path is how a
+            # finished build is usually entered — the coder completes its
+            # subtasks in one invocation and the next one finds the work done —
+            # and it returned here without ever reaching the trailing gates
+            # after the session loop. So `build_report.json` recorded
+            # `gates: null` and the build reported success having executed no
+            # test, which is what kept AIFactory#1491 alive through five fixes
+            # downstream of this return. The run-once marker makes the call
+            # idempotent, so a build that already ran its gates does not repeat
+            # them.
+            await _run_trailing_gates_if_build_complete(spec_dir, project_dir)
             _emit_build_report(spec_dir, source_spec_dir)
             return
 
