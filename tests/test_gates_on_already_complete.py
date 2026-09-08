@@ -23,7 +23,10 @@ _CODER = _BACKEND / "agents" / "coder.py"
 def _run_autonomous_agent_node() -> ast.AsyncFunctionDef:
     tree = ast.parse(_CODER.read_text(encoding="utf-8"))
     for node in ast.walk(tree):
-        if isinstance(node, ast.AsyncFunctionDef) and node.name == "run_autonomous_agent":
+        if (
+            isinstance(node, ast.AsyncFunctionDef)
+            and node.name == "run_autonomous_agent"
+        ):
             return node
     raise AssertionError("run_autonomous_agent not found")
 
@@ -39,8 +42,8 @@ def _gate_call_lines(fn: ast.AST) -> list[int]:
     ]
 
 
-def _already_complete_return_line(fn: ast.AST) -> int:
-    """The `return` inside the `if is_build_complete(...)` guard."""
+def _already_complete_guard(fn: ast.AST) -> ast.If:
+    """The `if is_build_complete(...)` block that returns early."""
     for node in ast.walk(fn):
         if not isinstance(node, ast.If):
             continue
@@ -49,30 +52,30 @@ def _already_complete_return_line(fn: ast.AST) -> int:
             isinstance(test, ast.Call)
             and isinstance(test.func, ast.Name)
             and test.func.id == "is_build_complete"
+            and any(isinstance(n, ast.Return) for n in ast.walk(node))
         ):
-            returns = [n.lineno for n in ast.walk(node) if isinstance(n, ast.Return)]
-            if returns:
-                return min(returns)
+            return node
     raise AssertionError("the is_build_complete early-return guard was not found")
 
 
 def test_the_already_complete_path_runs_gates_before_returning():
-    fn = _run_autonomous_agent_node()
-    early_return = _already_complete_return_line(fn)
-    gate_calls = _gate_call_lines(fn)
+    # The call has to be INSIDE the guard, not merely earlier in the function:
+    # a refactor that moved the post-loop call up would otherwise satisfy a
+    # line-number comparison while reintroducing the bug.
+    guard = _already_complete_guard(_run_autonomous_agent_node())
 
-    assert gate_calls, "run_autonomous_agent never calls the trailing gates"
-    before_the_return = [line for line in gate_calls if line < early_return]
-    assert before_the_return, (
-        "the already-complete path returns before the trailing gates: a finished "
-        "build entered this way reports success having run no gate at all"
+    assert _gate_call_lines(guard), (
+        "the already-complete path returns without calling the trailing gates: a "
+        "finished build entered this way reports success having run no gate at all"
     )
 
 
 def test_the_post_loop_gate_call_is_still_there():
     # The serial path still needs its own call after the loop; this test exists
-    # so removing it to 'deduplicate' fails loudly.
+    # so removing it to "deduplicate" fails loudly. Counted outside the guard so
+    # the guard's own call cannot satisfy it.
     fn = _run_autonomous_agent_node()
-    early_return = _already_complete_return_line(fn)
+    guard = _already_complete_guard(fn)
+    in_guard = set(_gate_call_lines(guard))
 
-    assert [line for line in _gate_call_lines(fn) if line > early_return]
+    assert [line for line in _gate_call_lines(fn) if line not in in_guard]
