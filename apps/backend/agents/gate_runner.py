@@ -376,6 +376,11 @@ def _nix_kube_runner(image: str) -> Callable[[list[str], Path], tuple[int | None
         logger.info("[gate] no warm Nix store PVC — /nix resolves from image %s", image)
 
     def run(command: list[str], cwd: Path) -> tuple[int | None, str]:
+        # Mount the directory that actually holds the flake, and step down into
+        # the gate's own module from inside the shell. Mounting the module would
+        # hide the flake from `nix develop path:/work#default`.
+        mount_root = _flake_root_for(cwd)
+        argv = _mounted_at(command, cwd, mount_root)
         try:
             res = KubeJobSandbox(
                 image,
@@ -383,8 +388,8 @@ def _nix_kube_runner(image: str) -> Callable[[list[str], Path], tuple[int | None
                 data_root=data_root,
                 nix_store_pvc=nix_store_pvc,
             ).run(
-                [shlex.join(_nix_wrap(command))],
-                workdir=str(cwd),
+                [shlex.join(_nix_wrap(argv))],
+                workdir=str(mount_root),
                 timeout=GATE_TIMEOUT_SECONDS,
             )
         except Exception as exc:  # noqa: BLE001 - sandbox issues are gate failures
@@ -427,31 +432,35 @@ def _select_runner() -> Callable[[list[str], Path], tuple[int | None, str]]:
     return _default_runner
 
 
-def _command_in_module(gate: Gate, project_dir: Path) -> list[str]:
-    """The gate's argv, entered from *project_dir* rather than its module.
+def _flake_root_for(cwd: Path) -> Path:
+    """The nearest ancestor of *cwd* holding a flake, or *cwd* itself.
 
-    The runner's cwd has to stay the worktree root: the Nix Job mounts that cwd
-    at /work and `nix develop path:/work#default` reads the flake from there.
-    Handing it the module directory instead mounted the module as /work, so nix
-    looked for flake.nix inside lanes/kotlin-core and reported
+    Only the Nix runner needs this: it mounts the cwd it is given at /work, and
+    ``nix develop path:/work#default`` reads the flake from there. A gate runs in
+    the module that holds its build file (lanes/kotlin-core), while
+    materialize_flake_into writes the flake at the worktree root — so mounting
+    the module made nix look for a flake inside it and report
 
         error: path '/nix/store/…-source/flake.nix' does not exist
 
-    — with a store hash that never moved no matter what was written at the root,
-    because the root was not what it was reading (AIFactory#1491).
-
-    So the module is entered by the command instead of by the mount. A gate at
-    the root is left exactly as it was.
+    with a store hash that never moved however the root was edited, because the
+    root was not what it was reading (AIFactory#1491).
     """
-    if gate.cwd is None or gate.cwd == project_dir:
-        return gate.command
+    for candidate in (cwd, *cwd.parents):
+        if (candidate / "flake.nix").exists():
+            return candidate
+    return cwd
+
+
+def _mounted_at(command: list[str], cwd: Path, mount_root: Path) -> list[str]:
+    """``command``, entered from *mount_root* instead of *cwd*."""
+    if mount_root == cwd:
+        return command
     try:
-        relative = gate.cwd.relative_to(project_dir)
+        relative = cwd.relative_to(mount_root)
     except ValueError:
-        # Outside the tree: not something to cd into from here.
-        return gate.command
-    inner = f"cd {shlex.quote(str(relative))} && {shlex.join(gate.command)}"
-    return ["bash", "-c", inner]
+        return command
+    return ["bash", "-c", f"cd {shlex.quote(str(relative))} && {shlex.join(command)}"]
 
 
 async def run_gates(
@@ -480,8 +489,9 @@ async def run_gates(
     run = runner or _select_runner()
     results: list[GateResult] = []
     for gate in gates:
-        argv = _command_in_module(gate, project_dir)
-        exit_code, output = await asyncio.to_thread(run, argv, project_dir)
+        exit_code, output = await asyncio.to_thread(
+            run, gate.command, gate.cwd or project_dir
+        )
         if exit_code is None or exit_code == gate.skip_code:
             results.append(
                 GateResult(gate.name, passed=True, skipped=True, output_tail=output)
