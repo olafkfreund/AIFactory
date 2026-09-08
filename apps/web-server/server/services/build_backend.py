@@ -254,6 +254,16 @@ _FIXED_BUILD_ENV: dict[str, str] = {
 # plus GITHUB_TOKEN/GH_TOKEN for run.py's PR endgame. ANTHROPIC_API_KEY is NOT
 # here — OAuth-only policy (subprocess_env._STRIP_VARS).
 _PASSTHROUGH_BUILD_ENV: tuple[str, ...] = (
+    # The build Job runs the trailing gates itself, and
+    # `gate_runner._select_runner` reads these to decide whether a gate goes to a
+    # per-task Nix sandbox or to a plain host subprocess. Unset in the Job, it
+    # silently chose the subprocess, found no toolchain, and recorded
+    # `kotlin-unit skipped (tool not available)` — a gate that ran and verified
+    # nothing (#1491).
+    "AIFACTORY_SANDBOX_GATES",
+    "AIFACTORY_SANDBOX_IMAGE",
+    "AIFACTORY_SANDBOX_BACKEND",
+    "AIFACTORY_SANDBOX_REPO_PVC",
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_MODEL",
