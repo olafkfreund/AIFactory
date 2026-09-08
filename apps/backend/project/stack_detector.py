@@ -118,57 +118,102 @@ class StackDetector:
         if self.parser.file_exists("pubspec.yaml", "*.dart", "**/*.dart"):
             self.stack.languages.append("dart")
 
+    # A manifest deeper than the repo root is still this project's manifest.
+    # `file_exists` with a plain name only tests `project_dir / name`, so in a
+    # repo whose builds live under a subdirectory — lanes/kotlin-core,
+    # services/api, packages/web — every check below missed, and the package
+    # manager was never recorded. The languages ARE found, because those rules
+    # glob recursively ("**/*.kt"), so the effect is a project detected as
+    # Kotlin with no build tool: `gradle test` is then refused with "not in the
+    # allowed commands for this project" (AIFactory#1491), because the command
+    # allowlist is assembled from the detected package managers.
+    _MANIFEST_MAX_DEPTH = 4
+    # Directories that carry other projects' manifests, not this one's. A
+    # package.json under node_modules is a dependency, not a declaration that
+    # this repo uses npm.
+    _MANIFEST_SKIP_DIRS = frozenset(
+        {
+            "node_modules",
+            "vendor",
+            "build",
+            "dist",
+            "target",
+            "out",
+            ".git",
+            ".gradle",
+            ".venv",
+            "venv",
+            "__pycache__",
+            "site-packages",
+            "third_party",
+            "testdata",
+            "fixtures",
+        }
+    )
+
+    def _manifest_exists(self, *names: str) -> bool:
+        """True when any of ``names`` exists at the root or in a nested module."""
+        if self.parser.file_exists(*names):
+            return True
+        for depth in range(1, self._MANIFEST_MAX_DEPTH + 1):
+            prefix = "/".join(["*"] * depth)
+            for name in names:
+                for hit in self.project_dir.glob(f"{prefix}/{name}"):
+                    if not self._MANIFEST_SKIP_DIRS.intersection(hit.parts):
+                        return True
+        return False
+
     def detect_package_managers(self) -> None:
         """Detect package managers used."""
         # Node.js package managers
-        if self.parser.file_exists("package-lock.json"):
+        if self._manifest_exists("package-lock.json"):
             self.stack.package_managers.append("npm")
-        if self.parser.file_exists("yarn.lock"):
+        if self._manifest_exists("yarn.lock"):
             self.stack.package_managers.append("yarn")
-        if self.parser.file_exists("pnpm-lock.yaml"):
+        if self._manifest_exists("pnpm-lock.yaml"):
             self.stack.package_managers.append("pnpm")
-        if self.parser.file_exists("bun.lockb", "bun.lock"):
+        if self._manifest_exists("bun.lockb", "bun.lock"):
             self.stack.package_managers.append("bun")
-        if self.parser.file_exists("deno.json", "deno.jsonc"):
+        if self._manifest_exists("deno.json", "deno.jsonc"):
             self.stack.package_managers.append("deno")
 
         # Python package managers
-        if self.parser.file_exists("requirements.txt", "requirements-dev.txt"):
+        if self._manifest_exists("requirements.txt", "requirements-dev.txt"):
             self.stack.package_managers.append("pip")
-        if self.parser.file_exists("pyproject.toml"):
+        if self._manifest_exists("pyproject.toml"):
             toml = self.parser.read_toml("pyproject.toml")
             if toml:
                 if "tool" in toml and "poetry" in toml["tool"]:
                     self.stack.package_managers.append("poetry")
                 elif "project" in toml:
                     # Modern pyproject.toml - could be pip, uv, hatch, pdm
-                    if self.parser.file_exists("uv.lock"):
+                    if self._manifest_exists("uv.lock"):
                         self.stack.package_managers.append("uv")
-                    elif self.parser.file_exists("pdm.lock"):
+                    elif self._manifest_exists("pdm.lock"):
                         self.stack.package_managers.append("pdm")
                     else:
                         self.stack.package_managers.append("pip")
-        if self.parser.file_exists("Pipfile"):
+        if self._manifest_exists("Pipfile"):
             self.stack.package_managers.append("pipenv")
 
         # Other package managers
-        if self.parser.file_exists("Cargo.toml"):
+        if self._manifest_exists("Cargo.toml"):
             self.stack.package_managers.append("cargo")
-        if self.parser.file_exists("go.mod"):
+        if self._manifest_exists("go.mod"):
             self.stack.package_managers.append("go_mod")
-        if self.parser.file_exists("Gemfile"):
+        if self._manifest_exists("Gemfile"):
             self.stack.package_managers.append("gem")
-        if self.parser.file_exists("composer.json"):
+        if self._manifest_exists("composer.json"):
             self.stack.package_managers.append("composer")
-        if self.parser.file_exists("pom.xml"):
+        if self._manifest_exists("pom.xml"):
             self.stack.package_managers.append("maven")
-        if self.parser.file_exists("build.gradle", "build.gradle.kts"):
+        if self._manifest_exists("build.gradle", "build.gradle.kts"):
             self.stack.package_managers.append("gradle")
 
         # Dart/Flutter package managers
-        if self.parser.file_exists("pubspec.yaml", "pubspec.lock"):
+        if self._manifest_exists("pubspec.yaml", "pubspec.lock"):
             self.stack.package_managers.append("pub")
-        if self.parser.file_exists("melos.yaml"):
+        if self._manifest_exists("melos.yaml"):
             self.stack.package_managers.append("melos")
 
     def detect_databases(self) -> None:
