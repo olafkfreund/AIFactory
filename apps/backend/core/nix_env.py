@@ -83,3 +83,87 @@ def materialize_flake_into(project_dir: Path, env: dict | None) -> bool:
     flake_path.write_text(generate_flake(env), encoding="utf-8")
     logger.info("nix_env: wrote generated %s into %s", _FLAKE, project_dir)
     return True
+
+
+def infer_environment(project_dir: Path) -> dict[str, object] | None:
+    """An environment manifest derived from what the project actually is.
+
+    The contract is the source of truth when there is one. A task created
+    without one — `POST /api/tasks/create-and-run` from a plain description,
+    for instance — carries `environment: null`, so
+    :func:`materialize_flake_into` writes nothing and returns False WITHOUT
+    logging. The consequences were invisible and severe: no flake means
+    `nix develop path:/work#default` has nothing to enter, so the gate lane
+    cannot supply a toolchain, so the coder falls back to bare shell in a
+    control-plane pod. A live Kotlin task reported `gradle: exit 127`, ran no
+    gate at all (`build_report.json` had `gates: null`), and was still returned
+    as APPROVED on inspection (#1491, #1496).
+
+    Nothing here is invented: the language comes from the same StackDetector the
+    command allowlist is built from, and its toolchain and verify command come
+    from that language's own descriptor (`contracts/languages/<name>.yaml`) —
+    the file that already declares, for Kotlin, `nix.packages: [kotlin, gradle,
+    jdk21]` and a unit lane of `gradle test --no-daemon --console=plain`.
+
+    Returns None when no detected language has a descriptor, so a project this
+    cannot speak for keeps today's behaviour rather than getting a guessed
+    toolchain.
+    """
+    try:
+        # Lazy: the descriptors are a vendored drop that a consumer may not
+        # carry, and `core` must not import them at module scope.
+        from language_descriptors import resolve_language  # noqa: PLC0415
+    except ImportError:  # pragma: no cover - environment guard
+        try:
+            from .language_descriptors import resolve_language  # noqa: PLC0415
+        except ImportError:
+            logger.info("nix_env: language descriptors unavailable; cannot infer")
+            return None
+
+    try:
+        # Lazy: `core` importing the `project` package at module scope would
+        # close an import cycle (project.analyzer reaches back into core).
+        from project.stack_detector import StackDetector  # noqa: PLC0415
+    except ImportError:  # pragma: no cover - environment guard
+        logger.info("nix_env: stack detector unavailable; cannot infer")
+        return None
+
+    try:
+        stack = StackDetector(Path(project_dir)).detect_all()
+    except Exception as exc:  # noqa: BLE001 - detection must never break a build
+        logger.info(
+            "nix_env: stack detection failed (%s); cannot infer", type(exc).__name__
+        )
+        return None
+
+    for language in getattr(stack, "languages", []) or []:
+        descriptor = resolve_language(str(language))
+        if descriptor is None:
+            continue
+        unit = descriptor.lane("unit")
+        # A lane the descriptor itself marks unavailable is not a verify
+        # command; the descriptor states why, and inventing one would be worse
+        # than leaving it out.
+        verify = (
+            [unit.command]
+            if unit is not None and unit.available and unit.command
+            else []
+        )
+        logger.info(
+            "nix_env: inferred %s environment from the detected stack (%s)",
+            descriptor.name,
+            ", ".join(descriptor.nix_packages),
+        )
+        return {
+            "language": descriptor.name,
+            "provisioning": {"method": "nix", "generated": True},
+            "verify_commands": verify,
+            "network": descriptor.network,
+            "inferred": True,
+        }
+
+    logger.info(
+        "nix_env: no detected language has a descriptor (%s); not inferring",
+        ", ".join(getattr(stack, "languages", []) or []) or "none detected",
+    )
+    return None

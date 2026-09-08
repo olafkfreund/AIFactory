@@ -1267,7 +1267,7 @@ async def _run_trailing_gates_if_build_complete(
             try:
                 import json as _json
 
-                from core.nix_env import materialize_flake_into
+                from core.nix_env import infer_environment, materialize_flake_into
 
                 cpath = spec_dir / "implementation_plan.json"
                 env = (
@@ -1275,8 +1275,30 @@ async def _run_trailing_gates_if_build_complete(
                     if cpath.exists()
                     else None
                 )
+                # A task with no contract carries no environment, and then this
+                # wrote nothing and said nothing: no flake, so `nix develop` has
+                # nothing to enter, so the gate lane cannot supply a toolchain
+                # and the build falls back to bare shell. Infer one from the
+                # detected stack instead (#1491, #1496).
+                if not env:
+                    env = infer_environment(gate_dir)
                 if materialize_flake_into(gate_dir, env):
-                    print_status("Nix env: materialized flake.nix for gates", "info")
+                    origin = (
+                        "inferred from the detected stack"
+                        if (env or {}).get("inferred")
+                        else "from the contract"
+                    )
+                    print_status(
+                        f"Nix env: materialized flake.nix for gates ({origin})", "info"
+                    )
+                else:
+                    # The silence here is what made #1491 hard to see: a build
+                    # with no toolchain looked identical to one that needed none.
+                    print_status(
+                        "Nix env: no flake materialized — gates run without a "
+                        "provisioned toolchain",
+                        "warning",
+                    )
             except Exception as exc:  # noqa: BLE001 - best-effort; gates still run
                 print_status(f"Nix env materialize skipped: {exc}", "info")
 
