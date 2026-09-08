@@ -60,7 +60,7 @@ def test_a_manifest_at_the_root_is_unaffected(tmp_path):
     assert "gradle" in commands
 
 
-def test_a_dependencys_manifest_does_not_count_as_this_project(tmp_path):
+def test_a_dependency_manifest_does_not_count_as_this_project(tmp_path):
     # A package-lock.json under node_modules belongs to a dependency. Recursing
     # without this guard would declare every repo an npm project.
     (tmp_path / "node_modules/leftpad").mkdir(parents=True)
@@ -82,3 +82,33 @@ def test_the_search_is_bounded(tmp_path):
     managers, _ = _allowed(tmp_path)
 
     assert "cargo" not in managers
+
+
+def test_a_checkout_under_a_skip_named_directory_still_detects(tmp_path):
+    # The skip list must be applied to the path RELATIVE to the project. Using
+    # the absolute parts meant a repo living under any directory called build/,
+    # vendor/, out/ ... skipped every nested manifest and detected nothing.
+    root = tmp_path / "build" / "my-repo"
+    (root / "lanes/kotlin-core").mkdir(parents=True)
+    (root / "lanes/kotlin-core/build.gradle.kts").write_text("plugins {}\n")
+    (root / "lanes/kotlin-core/Main.kt").write_text("fun main() {}\n")
+
+    managers, commands = _allowed(root)
+
+    assert "gradle" in managers
+    assert {"gradle", "gradlew"} <= commands
+
+
+def test_a_nested_pyproject_still_names_a_package_manager(tmp_path):
+    # _manifest_exists reported the nested file as present while read_toml only
+    # ever read the root, so this block fell through and added nothing.
+    (tmp_path / "services/api").mkdir(parents=True)
+    (tmp_path / "services/api/pyproject.toml").write_text(
+        '[project]\nname = "api"\nversion = "0.1.0"\n'
+    )
+    (tmp_path / "services/api/main.py").write_text("print('x')\n")
+
+    managers, _ = _allowed(tmp_path)
+
+    assert managers, "a nested pyproject.toml must name some Python package manager"
+    assert "pip" in managers or "uv" in managers or "pdm" in managers
