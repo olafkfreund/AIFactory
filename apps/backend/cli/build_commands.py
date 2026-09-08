@@ -60,7 +60,10 @@ def _trailing_gate_evidence(spec_dir: Path) -> str | None:
     marker = spec_dir / ".trailing_gates_done"
     try:
         text = marker.read_text(encoding="utf-8").strip()
-    except OSError:
+    except (OSError, ValueError):
+        # ValueError covers UnicodeDecodeError on a corrupt marker. This runs
+        # during build finalization: unreadable evidence is no evidence, which
+        # is the safe answer, but it must never take the build down with it.
         return None
     return text or None
 
@@ -544,8 +547,8 @@ def handle_build_command(
 
         elif not skip_qa and is_qa_approved(spec_dir):
             # A pre-approval is the coder's own reading of its own work. That is
-            # worth something, but it is not evidence, and it must not be able to
-            # report the same "passed" a executed gate suite reports.
+            # worth something, but it is not evidence, and it must not be able
+            # to report the same "passed" as an executed gate suite.
             #
             # Live example (AIFactory#1496): a Kotlin build where `gradle` was
             # never found, no gate ran at all, and the run still completed as
@@ -566,13 +569,16 @@ def handle_build_command(
                     "warning",
                 )
                 # #597's rule, applied one level up: an absent check must read
-                # differently from a passing one.
+                # differently from a passing one. It has to be a TERMINAL phase:
+                # the phase stream drives the UI and task state, so stopping at
+                # QA_REVIEW would leave a finished build looking stuck, and
+                # setting qa_approved here would do nothing at all — nothing
+                # reads it after this branch.
                 emit_phase(
-                    ExecutionPhase.QA_REVIEW,
-                    "Pre-approved but unverified — no gate ran",
-                    progress=100,
+                    ExecutionPhase.COMPLETE,
+                    "Completed WITHOUT verification — pre-approved by the coder, "
+                    "no gate ran",
                 )
-                qa_approved = False
             else:
                 print_status(
                     "QA pre-approved by the coder; verification gates: "

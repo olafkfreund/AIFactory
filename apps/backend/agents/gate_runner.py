@@ -126,34 +126,47 @@ def detect_gates(project_dir: Path) -> list[Gate]:
 
 
 # Build files that mark the root of a module the descriptor's command can run in.
-_MODULE_MARKERS = (
-    "build.gradle.kts",
-    "build.gradle",
-    "pom.xml",
-    "Package.swift",
-    "Cargo.toml",
-    "go.mod",
-    "pyproject.toml",
-    "package.json",
-)
+# Keyed by descriptor name, deliberately NOT one shared list: this fleet's repos
+# are polyglot, and a generic marker at the root — a package.json beside
+# lanes/kotlin-core — would capture the Kotlin gate and run `gradle test` in a
+# directory with no Gradle build.
+_MODULE_MARKERS_BY_LANGUAGE: dict[str, tuple[str, ...]] = {
+    "kotlin": (
+        "settings.gradle.kts",
+        "settings.gradle",
+        "build.gradle.kts",
+        "build.gradle",
+    ),
+    "java": ("pom.xml", "settings.gradle.kts", "build.gradle.kts", "build.gradle"),
+    "scala": ("build.sbt", "build.gradle.kts", "build.gradle"),
+    "swift": ("Package.swift",),
+    "rust": ("Cargo.toml",),
+    "go": ("go.mod",),
+    "python": ("pyproject.toml", "setup.py", "setup.cfg"),
+    "javascript": ("package.json",),
+    "typescript": ("package.json",),
+}
 _MODULE_MAX_DEPTH = 4
 _MODULE_SKIP_DIRS = frozenset(
     {"node_modules", "vendor", "build", "dist", "target", "out", ".git", ".gradle"}
 )
 
 
-def _module_dir_for(project_dir: Path) -> Path | None:
+def _module_dir_for(project_dir: Path, language: str) -> Path | None:
     """The nearest directory holding a build file — the root, or a nested module.
 
     The hardcoded families above all test ``project_dir / marker``, so a repo
     whose build lives under lanes/ or services/ produced no gates at all.
     """
-    for marker in _MODULE_MARKERS:
+    markers = _MODULE_MARKERS_BY_LANGUAGE.get(language.lower())
+    if not markers:
+        return None
+    for marker in markers:
         if (project_dir / marker).exists():
             return project_dir
     for depth in range(1, _MODULE_MAX_DEPTH + 1):
         prefix = "/".join(["*"] * depth)
-        for marker in _MODULE_MARKERS:
+        for marker in markers:
             for hit in sorted(project_dir.glob(f"{prefix}/{marker}")):
                 relative = hit.relative_to(project_dir)
                 if not _MODULE_SKIP_DIRS.intersection(relative.parts):
@@ -188,7 +201,6 @@ def _descriptor_gates(project_dir: Path, *, already: set[str]) -> list[Gate]:
         logger.info("[gate] stack detection failed (%s)", type(exc).__name__)
         return []
 
-    module_dir = _module_dir_for(project_dir)
     out: list[Gate] = []
     for language in languages:
         descriptor = resolve_language(str(language))
@@ -206,7 +218,16 @@ def _descriptor_gates(project_dir: Path, *, already: set[str]) -> list[Gate]:
         name = f"{descriptor.name}-unit"
         if name in already:
             continue
-        out.append(Gate(name, shlex.split(unit.command), cwd=module_dir or project_dir))
+        module_dir = _module_dir_for(project_dir, descriptor.name)
+        if module_dir is None:
+            # The language is present but its build file is not. Running its
+            # command from the repo root would fail for a reason that has
+            # nothing to do with the code under test.
+            logger.info(
+                "[gate] %s detected but no build file found; no gate", descriptor.name
+            )
+            continue
+        out.append(Gate(name, shlex.split(unit.command), cwd=module_dir))
         already.add(name)
     return out
 
