@@ -209,12 +209,61 @@ def _strip_npx(command: str) -> str:
     return command
 
 
+# Where a packed Job writes store paths the baked image does not already carry.
+# Container-local and ephemeral on purpose: it must not be /work, which is the
+# repo worktree (a store under it would land in `git status` and in the packed
+# workspace).
+WRITABLE_STORE_ROOT = "/tmp/factory-nix-store"  # noqa: S108 — container-local, not shared
+
+
+def _store_args() -> str:
+    """`nix develop` arguments giving the Job a writable store.
+
+    The baked ``-nix`` image copies /nix/store in UNCHOWNED, so it is read-only
+    to the sandbox uid (65532). Nix can read and exec those paths, which is all
+    a WARM build needs — but it cannot write, so a derivation the substrate does
+    not already carry fails outright. In practice that meant exactly one usable
+    language: the warm-up flake bakes python+pytest and nothing else, so a
+    Kotlin task found no JVM and reported `gradle: exit 127` (AIFactory#1491, AIFactory#1492).
+
+    A chroot store fixes it without any privilege: nix writes to
+    ``local?root=<dir>`` as an ordinary user. Measured in-cluster on the real
+    build image under the Job's own NetworkPolicy: a cold `nixpkgs#hello` built
+    and RAN from such a store, and the egress the policy already allows
+    (0.0.0.0/0:443, private ranges excluded) reaches cache.nixos.org.
+
+    The baked store is kept as a substituter so warm paths stay warm: copying an
+    already-present closure from it measured 0.8s, a local file copy rather than
+    the network fetch that TFactory#768 removed.
+
+    ``require-sigs false`` is needed because the image's store carries no
+    per-path signatures for this user to verify. Nix has no per-substituter form
+    of that option, so it applies to the WHOLE invocation, cache.nixos.org
+    included — the honest description of the trade. What limits it: the only
+    substituters in play are that store, which is the image the Job already
+    boots from and therefore trusts completely, and cache.nixos.org over TLS,
+    whose paths are content-addressed, so a substituted path that did not hash
+    to the requested store path would not be accepted as it. The exposure is a
+    substituter able to serve a path for a hash it does not match, which is not
+    reachable from either source here.
+    """
+    return (
+        f'--store "local?root={WRITABLE_STORE_ROOT}" '
+        f'--extra-substituters "local?root=/" '
+        f"--option require-sigs false"
+    )
+
+
 def nix_develop_wrap(commands: list[str]) -> str:
     """Wrap commands to run inside the per-task Nix env. `path:` is mandatory — a
     bare flake ref triggers Nix's git fetcher and breaks on the Job-root vs
     worktree-uid mismatch (RFC-0016 §4.1 gotcha)."""
     joined = " && ".join(_strip_npx(c) for c in commands)
-    return f"nix develop path:/work#default --command bash -c {_shq(joined)}"
+    return (
+        f"mkdir -p {WRITABLE_STORE_ROOT} && "
+        f"nix develop path:/work#default {_store_args()} "
+        f"--command bash -c {_shq(joined)}"
+    )
 
 
 def _shq(s: str) -> str:
@@ -667,6 +716,23 @@ def _selftest_gcp_creds() -> None:
             os.environ[GCP_CREDS_SECRET_ENV] = saved
 
 
+def _check_nix_develop(command: str) -> None:
+    """The per-task nix invocation: the flake ref, and a store it can write to.
+
+    Without a writable store it can only ever use what was baked, which is one
+    warmed language (AIFactory#1492). These four are what make a cold derivation
+    possible without re-fetching the warm ones.
+    """
+    _require("nix develop path:/work#default" in command, "nix develop wrap")
+    _require(f'--store "local?root={WRITABLE_STORE_ROOT}"' in command, "writable chroot store")
+    _require('--extra-substituters "local?root=/"' in command, "baked store kept as a substituter")
+    _require(
+        command.strip().startswith(f"mkdir -p {WRITABLE_STORE_ROOT}"),
+        "store root created before nix is asked to use it",
+    )
+    _require(not WRITABLE_STORE_ROOT.startswith("/work"), "store is outside the worktree")
+
+
 def _selftest() -> None:
     spec = JobSpec(
         service="aifactory",
@@ -770,7 +836,7 @@ def _selftest() -> None:
         "container securityContext (#812)",
     )
     _require(c["image"] == DEFAULT_NIX_IMAGE, "nix-base image")
-    _require("nix develop path:/work#default" in c["command"][2], "nix develop wrap")
+    _check_nix_develop(c["command"][2])
     _require("go test ./..." in c["command"][2], "task command present")
     mount_paths = {mt["mountPath"] for mt in c["volumeMounts"]}
     _require(mount_paths == {"/work", "/nix/store"}, f"mounts: {mount_paths}")
