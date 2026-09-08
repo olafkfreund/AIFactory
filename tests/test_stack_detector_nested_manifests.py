@@ -37,8 +37,12 @@ def _allowed(project_dir: Path) -> tuple[list[str], set[str]]:
 def test_a_gradle_module_below_the_root_unlocks_gradle(tmp_path):
     # The pfactory-friends-demo layout: build files under lanes/, not at root.
     (tmp_path / "lanes/kotlin-core/src/main/kotlin").mkdir(parents=True)
-    (tmp_path / "lanes/kotlin-core/build.gradle.kts").write_text('plugins { kotlin("jvm") }\n')
-    (tmp_path / "lanes/kotlin-core/src/main/kotlin/Profile.kt").write_text("data class P(val i: String)\n")
+    (tmp_path / "lanes/kotlin-core/build.gradle.kts").write_text(
+        'plugins { kotlin("jvm") }\n'
+    )
+    (tmp_path / "lanes/kotlin-core/src/main/kotlin/Profile.kt").write_text(
+        "data class P(val i: String)\n"
+    )
 
     managers, commands = _allowed(tmp_path)
 
