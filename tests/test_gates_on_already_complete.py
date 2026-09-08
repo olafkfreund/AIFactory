@@ -78,4 +78,8 @@ def test_the_post_loop_gate_call_is_still_there():
     guard = _already_complete_guard(fn)
     in_guard = set(_gate_call_lines(guard))
 
-    assert [line for line in _gate_call_lines(fn) if line not in in_guard]
+    assert [line for line in _gate_call_lines(fn) if line not in in_guard], (
+        "the post-loop trailing-gates call is gone: the serial path completes its "
+        "session loop without ever reaching a gate, so a build that ran to the end "
+        "in one invocation reports success having executed no test"
+    )
