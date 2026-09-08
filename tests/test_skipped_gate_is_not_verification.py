@@ -16,7 +16,10 @@ from pathlib import Path
 _BACKEND = Path(__file__).parent.parent / "apps" / "backend"
 sys.path.insert(0, str(_BACKEND))
 
-from cli.build_commands import _evidence_shows_an_executed_gate  # noqa: E402
+from cli.build_commands import (  # noqa: E402
+    _evidence_shows_an_executed_gate,
+    _gate_outcomes,
+)
 
 
 def test_an_all_skipped_suite_is_not_evidence():
@@ -47,3 +50,17 @@ def test_a_missing_marker_is_not_evidence():
 def test_unparseable_evidence_is_not_evidence():
     # Better to call an unreadable summary unverified than to read a pass into it.
     assert not _evidence_shows_an_executed_gate("something entirely unexpected")
+
+
+def test_outcomes_parse_from_a_normal_summary():
+    assert _gate_outcomes("kotlin-unit: passed, swift-unit: skipped") == [
+        "passed",
+        "skipped",
+    ]
+
+
+def test_outcomes_are_empty_when_the_summary_does_not_parse():
+    # This is what separates "every gate was skipped" from "the summary could
+    # not be read": claiming skips for a corrupt marker sends the reader after
+    # the wrong thing.
+    assert _gate_outcomes("something entirely unexpected") == []
