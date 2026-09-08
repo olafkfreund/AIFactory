@@ -151,17 +151,29 @@ class StackDetector:
         }
     )
 
-    def _manifest_exists(self, *names: str) -> bool:
-        """True when any of ``names`` exists at the root or in a nested module."""
-        if self.parser.file_exists(*names):
-            return True
+    def _find_manifest(self, *names: str) -> Path | None:
+        """The first of ``names`` at the root or in a nested module, or None."""
+        for name in names:
+            root_hit = self.project_dir / name
+            if root_hit.exists():
+                return root_hit
         for depth in range(1, self._MANIFEST_MAX_DEPTH + 1):
             prefix = "/".join(["*"] * depth)
             for name in names:
-                for hit in self.project_dir.glob(f"{prefix}/{name}"):
-                    if not self._MANIFEST_SKIP_DIRS.intersection(hit.parts):
-                        return True
-        return False
+                for hit in sorted(self.project_dir.glob(f"{prefix}/{name}")):
+                    # Compare the path RELATIVE to the project. `hit.parts`
+                    # carries the absolute path, so a checkout living under any
+                    # directory that happens to be called build/ or vendor/ --
+                    # and the build worktrees here sit under a `builds` sibling
+                    # of one -- would skip every hit and detect nothing.
+                    relative = hit.relative_to(self.project_dir)
+                    if not self._MANIFEST_SKIP_DIRS.intersection(relative.parts):
+                        return hit
+        return None
+
+    def _manifest_exists(self, *names: str) -> bool:
+        """True when any of ``names`` exists at the root or in a nested module."""
+        return self._find_manifest(*names) is not None
 
     def detect_package_managers(self) -> None:
         """Detect package managers used."""
@@ -180,9 +192,17 @@ class StackDetector:
         # Python package managers
         if self._manifest_exists("requirements.txt", "requirements-dev.txt"):
             self.stack.package_managers.append("pip")
-        if self._manifest_exists("pyproject.toml"):
-            toml = self.parser.read_toml("pyproject.toml")
-            if toml:
+        pyproject = self._find_manifest("pyproject.toml")
+        if pyproject is not None:
+            # read_toml resolves against the project root, so a nested
+            # pyproject.toml parsed to nothing and this block added no package
+            # manager at all. Read whichever file was actually found.
+            toml = self.parser.read_toml(str(pyproject.relative_to(self.project_dir)))
+            if not toml:
+                # Present but unreadable/unparseable: it is still a Python
+                # project, and pip is the floor.
+                self.stack.package_managers.append("pip")
+            elif toml:
                 if "tool" in toml and "poetry" in toml["tool"]:
                     self.stack.package_managers.append("poetry")
                 elif "project" in toml:
