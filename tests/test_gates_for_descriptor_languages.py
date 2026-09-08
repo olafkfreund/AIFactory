@@ -18,7 +18,13 @@ _BACKEND = Path(__file__).parent.parent / "apps" / "backend"
 sys.path.insert(0, str(_BACKEND))
 sys.path.insert(0, str(_BACKEND / "core"))
 
-from agents.gate_runner import detect_gates  # noqa: E402
+from agents.gate_runner import (  # noqa: E402
+    Gate,
+    _flake_root_for,
+    _mounted_at,
+    detect_gates,
+    run_gates,
+)
 from cli.build_commands import _trailing_gate_evidence  # noqa: E402
 
 
@@ -99,3 +105,52 @@ def test_gate_evidence_survives_a_corrupt_marker(tmp_path):
     (tmp_path / ".trailing_gates_done").write_bytes(b"\xff\xfe\x00binary")
 
     assert _trailing_gate_evidence(tmp_path) is None
+
+
+def test_the_flake_root_is_the_ancestor_that_has_the_flake(tmp_path):
+    # The Nix runner mounts the cwd it is given at /work and reads the flake
+    # from there. A gate runs in its module; the flake is at the worktree root.
+    (tmp_path / "flake.nix").write_text("{}\n")
+    module = tmp_path / "lanes/kotlin-core"
+    module.mkdir(parents=True)
+
+    assert _flake_root_for(module) == tmp_path
+
+
+def test_the_flake_root_falls_back_to_the_gate_dir(tmp_path):
+    module = tmp_path / "lanes/kotlin-core"
+    module.mkdir(parents=True)
+
+    assert _flake_root_for(module) == module
+
+
+def test_the_command_steps_down_into_its_module(tmp_path):
+    module = tmp_path / "lanes/kotlin-core"
+
+    argv = _mounted_at(["gradle", "test"], module, tmp_path)
+
+    assert argv == ["bash", "-c", "cd lanes/kotlin-core && gradle test"]
+
+
+def test_a_command_already_at_the_mount_is_untouched(tmp_path):
+    assert _mounted_at(["pytest", "-q"], tmp_path, tmp_path) == ["pytest", "-q"]
+
+
+def test_the_runner_contract_still_receives_the_gates_own_cwd(tmp_path):
+    # An injected runner must keep getting (command, cwd) with the gate's own
+    # directory — no shell parsing required to honour Gate.cwd.
+    import asyncio
+
+    seen: list[tuple[list[str], Path]] = []
+
+    def fake_runner(command, cwd):
+        seen.append((command, cwd))
+        return 0, ""
+
+    module = tmp_path / "lanes/kotlin-core"
+    module.mkdir(parents=True)
+    gate = Gate("kotlin-unit", ["gradle", "test"], cwd=module)
+
+    asyncio.run(run_gates(tmp_path, [gate], runner=fake_runner))
+
+    assert seen == [(["gradle", "test"], module)]
