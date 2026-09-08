@@ -52,6 +52,10 @@ class Gate:
     # reads differently from one that ran clean — otherwise a dead lane is
     # quieter than a failing one (#1123). None = no such code.
     skip_code: int | None = None
+    # Where to run it. None = the project root. A monorepo keeps its build file
+    # in the module (lanes/kotlin-core), and `gradle test` at the root finds no
+    # build to run.
+    cwd: Path | None = None
 
 
 @dataclass
@@ -116,7 +120,95 @@ def detect_gates(project_dir: Path) -> list[Gate]:
     if (p / "go.mod").exists():
         gates.append(Gate("go-test", ["go", "test", "./..."]))
 
+    gates.extend(_descriptor_gates(p, already={g.name for g in gates}))
+
     return gates
+
+
+# Build files that mark the root of a module the descriptor's command can run in.
+_MODULE_MARKERS = (
+    "build.gradle.kts",
+    "build.gradle",
+    "pom.xml",
+    "Package.swift",
+    "Cargo.toml",
+    "go.mod",
+    "pyproject.toml",
+    "package.json",
+)
+_MODULE_MAX_DEPTH = 4
+_MODULE_SKIP_DIRS = frozenset(
+    {"node_modules", "vendor", "build", "dist", "target", "out", ".git", ".gradle"}
+)
+
+
+def _module_dir_for(project_dir: Path) -> Path | None:
+    """The nearest directory holding a build file — the root, or a nested module.
+
+    The hardcoded families above all test ``project_dir / marker``, so a repo
+    whose build lives under lanes/ or services/ produced no gates at all.
+    """
+    for marker in _MODULE_MARKERS:
+        if (project_dir / marker).exists():
+            return project_dir
+    for depth in range(1, _MODULE_MAX_DEPTH + 1):
+        prefix = "/".join(["*"] * depth)
+        for marker in _MODULE_MARKERS:
+            for hit in sorted(project_dir.glob(f"{prefix}/{marker}")):
+                relative = hit.relative_to(project_dir)
+                if not _MODULE_SKIP_DIRS.intersection(relative.parts):
+                    return hit.parent
+    return None
+
+
+def _descriptor_gates(project_dir: Path, *, already: set[str]) -> list[Gate]:
+    """Gates from the detected languages' own descriptors.
+
+    detect_gates knew Python, Node, Rust and Go, and nothing else — so a Kotlin
+    project produced no gates, the gate step ran nothing, and the build reported
+    success having executed no test at all (AIFactory#1491, #1496). Rather than
+    hardcode another family, ask the language descriptor: it already declares
+    the unit lane and its command, and says why when a lane cannot run.
+    """
+    try:
+        from core.language_descriptors import resolve_language  # noqa: PLC0415
+    except ImportError:
+        try:
+            from language_descriptors import resolve_language  # noqa: PLC0415
+        except ImportError:
+            return []
+    try:
+        from project.stack_detector import StackDetector  # noqa: PLC0415
+    except ImportError:
+        return []
+
+    try:
+        languages = StackDetector(project_dir).detect_all().languages or []
+    except Exception as exc:  # noqa: BLE001 - detection must never break the build
+        logger.info("[gate] stack detection failed (%s)", type(exc).__name__)
+        return []
+
+    module_dir = _module_dir_for(project_dir)
+    out: list[Gate] = []
+    for language in languages:
+        descriptor = resolve_language(str(language))
+        if descriptor is None:
+            continue
+        unit = descriptor.lane("unit")
+        if unit is None or not unit.available or not unit.command:
+            # A lane the descriptor marks unavailable states its reason; that is
+            # an honest absence, not a gate.
+            if unit is not None and not unit.available:
+                logger.info(
+                    "[gate] %s unit lane unavailable: %s", descriptor.name, unit.reason
+                )
+            continue
+        name = f"{descriptor.name}-unit"
+        if name in already:
+            continue
+        out.append(Gate(name, shlex.split(unit.command), cwd=module_dir or project_dir))
+        already.add(name)
+    return out
 
 
 def _file_contains(path: Path, needle: str) -> bool:
@@ -340,7 +432,8 @@ async def run_gates(
     run = runner or _select_runner()
     results: list[GateResult] = []
     for gate in gates:
-        exit_code, output = await asyncio.to_thread(run, gate.command, project_dir)
+        gate_cwd = gate.cwd or project_dir
+        exit_code, output = await asyncio.to_thread(run, gate.command, gate_cwd)
         if exit_code is None or exit_code == gate.skip_code:
             results.append(
                 GateResult(gate.name, passed=True, skipped=True, output_tail=output)

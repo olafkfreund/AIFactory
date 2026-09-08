@@ -50,6 +50,21 @@ from .input_handlers import (
 )
 
 
+def _trailing_gate_evidence(spec_dir: Path) -> str | None:
+    """What the trailing gate step recorded, or None if it never ran.
+
+    ``_run_trailing_gates_if_build_complete`` writes its outcome to
+    ``.trailing_gates_done`` — either the gate summary, or the sentence
+    "no gates detected ...". Absence of the file means the step did not run.
+    """
+    marker = spec_dir / ".trailing_gates_done"
+    try:
+        text = marker.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return text or None
+
+
 def _contract_gap_in_existing_code(spec_dir: Path, work_dir: Path | None) -> list[str]:
     """Names the spec enumerates that the checkout does not define (#1430).
 
@@ -528,20 +543,45 @@ def handle_build_command(
                 qa_approved = False
 
         elif not skip_qa and is_qa_approved(spec_dir):
-            # QA was pre-approved by coder agent - emit phase events for proper logging
+            # A pre-approval is the coder's own reading of its own work. That is
+            # worth something, but it is not evidence, and it must not be able to
+            # report the same "passed" a executed gate suite reports.
+            #
+            # Live example (AIFactory#1496): a Kotlin build where `gradle` was
+            # never found, no gate ran at all, and the run still completed as
+            # "QA validation passed (pre-approved)" — indistinguishable, to
+            # anyone reading the result, from a suite that ran and was green.
+            gate_evidence = _trailing_gate_evidence(spec_dir)
             emit_phase(
                 ExecutionPhase.QA_REVIEW, "QA pre-approved by coder agent", progress=100
             )
 
-            print("\n" + "=" * 70)
-            print("  QA PRE-APPROVED BY CODER")
-            print("=" * 70)
-            print("\nThe coder agent has validated all acceptance criteria.")
-            print(
-                "Implementation meets requirements - no additional QA review needed.\n"
-            )
-
-            emit_phase(ExecutionPhase.COMPLETE, "QA validation passed (pre-approved)")
+            if gate_evidence is None or gate_evidence.startswith("no gates detected"):
+                why = gate_evidence or "the gate step did not run at all"
+                print_status(
+                    "QA PRE-APPROVED BY CODER — NOT VERIFIED: the coder approved "
+                    f"its own work and no verification gate ran over it ({why}). "
+                    "This build has executed no test; run the project's own suite "
+                    "before merging.",
+                    "warning",
+                )
+                # #597's rule, applied one level up: an absent check must read
+                # differently from a passing one.
+                emit_phase(
+                    ExecutionPhase.QA_REVIEW,
+                    "Pre-approved but unverified — no gate ran",
+                    progress=100,
+                )
+                qa_approved = False
+            else:
+                print_status(
+                    "QA pre-approved by the coder; verification gates: "
+                    f"{gate_evidence}",
+                    "success",
+                )
+                emit_phase(
+                    ExecutionPhase.COMPLETE, "QA validation passed (pre-approved)"
+                )
 
             # Sync implementation plan to main project
             if sync_plan_to_source(spec_dir, source_spec_dir):
