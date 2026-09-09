@@ -23,6 +23,19 @@ from core.factory_sandbox import RunResult  # reuse the shared result shape
 logger = logging.getLogger(__name__)
 
 
+# The unpack step's program. Kept out of the command list: adjacent string
+# literals in a list read as a missing comma (CodeQL flagged exactly that), and
+# a one-line program is easier to check here than inside a manifest.
+# APP_BACKEND_PATH comes from the image — a hardcoded path was wrong, the code
+# lives under /home/projects/….
+_UNPACK_PROGRAM = (
+    "import os,sys;"
+    "sys.path.insert(0,os.environ['APP_BACKEND_PATH']);"
+    "from core.artifact_store import ArtifactStore,unpack_workspace;"
+    "unpack_workspace(ArtifactStore(),sys.argv[1],sys.argv[2])"
+)
+
+
 def build_job_manifest(
     name: str,
     image: str,
@@ -147,6 +160,16 @@ def build_job_manifest(
             }
         )
     elif workspace_uri:
+        # No `unpack_image or image` fallback: the gate image is DEFINED as the
+        # one without AIFactory code or store credentials, so defaulting to it
+        # would turn a misconfiguration into a confusing gate failure attributed
+        # to the code under test. Refuse instead.
+        if not unpack_image:
+            raise ValueError(
+                "workspace_uri needs unpack_image: the unpack initContainer must "
+                "run an image carrying the AIFactory code and object-store "
+                "credentials (the build image), never the gate image"
+            )
         # The gate image has neither the AIFactory code nor store credentials,
         # so the unpack runs in an initContainer on the build image and lands in
         # a shared emptyDir. `data` filtering / traversal vetting lives in
@@ -157,18 +180,8 @@ def build_job_manifest(
         pod_spec["initContainers"] = [
             {
                 "name": "unpack-workspace",
-                "image": unpack_image or image,
-                "command": [
-                    "python3",
-                    "-c",
-                    # APP_BACKEND_PATH is set by the image (a hardcoded path
-                    # was wrong: the code lives under /home/projects/…).
-                    "import os,sys;sys.path.insert(0,os.environ['APP_BACKEND_PATH']);"
-                    "from core.artifact_store import ArtifactStore,unpack_workspace;"
-                    "unpack_workspace(ArtifactStore(),sys.argv[1],sys.argv[2])",
-                    workspace_uri,
-                    workdir,
-                ],
+                "image": unpack_image,
+                "command": ["python3", "-c", _UNPACK_PROGRAM, workspace_uri, workdir],
                 "env": [
                     {"name": k, "value": v}
                     for k, v in sorted((store_env or {}).items())

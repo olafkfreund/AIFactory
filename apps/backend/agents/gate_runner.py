@@ -432,14 +432,23 @@ def _nix_kube_runner(image: str) -> Callable[[list[str], Path], tuple[int | None
             # a nested Job mounting the data PVC would see no repo and run the
             # gate against an empty directory — a red that measured nothing.
             # Send the code to the gate Job instead (#1524).
-            packed = _packed_workspace_for(mount_root)
+            # The unpack initContainer must run the BUILD image (code + store
+            # credentials). Without it there is no packed path to take, so say
+            # that rather than dispatching a Job that cannot unpack.
+            unpack_image = os.environ.get("AIFACTORY_BUILD_IMAGE") or ""
+            packed = _packed_workspace_for(mount_root) if unpack_image else None
+            if not unpack_image:
+                logger.warning(
+                    "[gate] AIFACTORY_BUILD_IMAGE is unset — cannot run the "
+                    "unpack initContainer, so the gate cannot be sent the code"
+                )
             if packed:
                 try:
                     res = KubeJobSandbox(
                         image,
                         nix_store_pvc=nix_store_pvc,
                         workspace_uri=packed,
-                        unpack_image=os.environ.get("AIFACTORY_BUILD_IMAGE") or None,
+                        unpack_image=unpack_image,
                         store_env=_store_env(),
                     ).run(
                         [shlex.join(_nix_wrap(argv))],
