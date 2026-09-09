@@ -198,3 +198,81 @@ def test_mountable_repo_still_dispatches_a_job(monkeypatch, tmp_path):
     )
 
     assert gr._nix_kube_runner("img")(["gradle", "test"], work) == (0, "ran in a Job")
+
+
+def test_packed_workspace_manifest_unpacks_into_an_emptydir():
+    """#1524: the gate image has neither the AIFactory code nor store creds, so
+    the unpack runs in an initContainer on the build image."""
+    from core.kube_sandbox import build_job_manifest
+
+    spec = build_job_manifest(
+        "n",
+        "gate-image",
+        ["true"],
+        workspace_uri="s3://b/w.tar.gz",
+        unpack_image="aifactory:sha-x-nix",
+        store_env={"S3_ENDPOINT": "http://minio:9000"},
+    )["spec"]["template"]["spec"]
+
+    (init,) = spec["initContainers"]
+    assert init["image"] == "aifactory:sha-x-nix", "unpack must not use the gate image"
+    assert init["env"] == [{"name": "S3_ENDPOINT", "value": "http://minio:9000"}]
+    assert "s3://b/w.tar.gz" in init["command"]
+    # The path to the code inside the image comes from the image itself; a
+    # hardcoded guess was wrong (it is not /app).
+    assert "APP_BACKEND_PATH" in " ".join(init["command"])
+    # Shared scratch, not a PVC — a PVC subPath is exactly what cannot reach it.
+    assert spec["volumes"] == [{"name": "repo", "emptyDir": {}}]
+    assert spec["containers"][0]["workingDir"] == "/work"
+
+
+def test_unmountable_repo_with_a_store_dispatches_a_gate_job(monkeypatch, tmp_path):
+    """The code is sent TO the gate image, which has the toolchain closure.
+
+    Running in-process instead makes nix build gcc from source: the build
+    image's store carries no Kotlin/Gradle closure and the Job has no egress
+    (#1524), so that path cannot reach a green gate.
+    """
+    import agents.gate_runner as gr
+    import core.kube_sandbox as ks
+
+    (tmp_path / "flake.nix").write_text("{}")
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", "/home/nonroot/.aifactory")
+    monkeypatch.setenv("S3_ENDPOINT", "http://minio:9000")
+    monkeypatch.setenv("AIFACTORY_BUILD_IMAGE", "aifactory:sha-x-nix")
+    monkeypatch.setattr(gr, "_packed_workspace_for", lambda _root: "s3://b/w.tar.gz")
+    monkeypatch.setattr(
+        gr,
+        "_default_runner",
+        lambda *a: (_ for _ in ()).throw(AssertionError("ran in-process")),
+    )
+
+    seen: dict = {}
+
+    class FakeSandbox:
+        def __init__(self, image, **kw):
+            seen["image"] = image
+            seen.update(kw)
+
+        def run(self, *_a, **_k):
+            return SimpleNamespace(ok=True, exit_code=0, output="BUILD SUCCESSFUL")
+
+    monkeypatch.setattr(ks, "KubeJobSandbox", FakeSandbox)
+
+    assert gr._nix_kube_runner("gate-image")(["gradle", "test"], tmp_path) == (
+        0,
+        "BUILD SUCCESSFUL",
+    )
+    assert seen["workspace_uri"] == "s3://b/w.tar.gz"
+    assert seen["unpack_image"] == "aifactory:sha-x-nix"
+    assert seen["store_env"]["S3_ENDPOINT"] == "http://minio:9000"
+    # No repo_pvc: a PVC co-mount is what this path exists to avoid.
+    assert "repo_pvc" not in seen
+
+
+def test_packing_is_skipped_without_an_object_store(monkeypatch, tmp_path):
+    """No store configured → no URI to hand a Job; keep the in-process attempt."""
+    import agents.gate_runner as gr
+
+    monkeypatch.delenv("S3_ENDPOINT", raising=False)
+    assert gr._packed_workspace_for(tmp_path) is None
