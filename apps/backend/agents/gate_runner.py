@@ -344,6 +344,50 @@ def _nix_wrap(command: list[str], *, mount: str = "/work") -> list[str]:
     ]
 
 
+_STORE_ENV_VARS = (
+    "S3_ENDPOINT",
+    "S3_BUCKET",
+    "S3_ACCESS_KEY",
+    "S3_SECRET_KEY",
+    "S3_REGION",
+)
+
+
+def _store_env() -> dict[str, str]:
+    """The object-store vars the unpack initContainer needs, as present."""
+    return {k: v for k in _STORE_ENV_VARS if (v := os.environ.get(k))}
+
+
+def _packed_workspace_for(mount_root: Path) -> str | None:
+    """Pack the worktree so a gate Job can unpack it; None when it cannot.
+
+    AIFactory#1524: on the packed path the code lives in the build Job's own
+    emptyDir, which no other pod can mount, and the gate cannot simply run
+    in-process either — the build image's Nix store has no toolchain closure and
+    no egress to fetch one, so `nix develop` tries to build gcc from source.
+    Sending the code to the gate image (which does have the closure, and runs as
+    root so nix can write its store) is what actually reaches a green gate.
+    """
+    if not os.environ.get("S3_ENDPOINT"):
+        return None
+    try:
+        from core.artifact_store import (  # noqa: PLC0415
+            ArtifactRef,
+            ArtifactStore,
+            pack_workspace,
+        )
+
+        ref = ArtifactRef(
+            service="aifactory", job_id=f"gate-{mount_root.name}", role="workspace"
+        )
+        uri = pack_workspace(ArtifactStore(), ref, mount_root)
+    except Exception as exc:  # noqa: BLE001 - packing must never crash a gate
+        logger.warning("[gate] could not pack the worktree for a gate Job: %s", exc)
+        return None
+    logger.info("[gate] packed the worktree for the gate Job -> %s", uri)
+    return uri
+
+
 def _nix_kube_runner(image: str) -> Callable[[list[str], Path], tuple[int | None, str]]:
     """k8s-Job gate runner that runs each gate inside the per-task Nix dev shell.
 
@@ -384,11 +428,32 @@ def _nix_kube_runner(image: str) -> Callable[[list[str], Path], tuple[int | None
         if not repo_is_mountable(str(mount_root), data_root):
             # AIFactory#1491: on the packed path /work is a pod-local emptyDir, so
             # a nested Job mounting the data PVC would see no repo and run the
-            # gate against an empty directory — reporting a red that measured
-            # nothing. The code is right here and /nix ships in the image, so run
-            # the same dev shell locally instead.
+            # gate against an empty directory — a red that measured nothing.
+            # Send the code to the gate Job instead (#1524).
+            packed = _packed_workspace_for(mount_root)
+            if packed:
+                try:
+                    res = KubeJobSandbox(
+                        image,
+                        nix_store_pvc=nix_store_pvc,
+                        workspace_uri=packed,
+                        unpack_image=os.environ.get("AIFACTORY_BUILD_IMAGE") or None,
+                        store_env=_store_env(),
+                    ).run(
+                        [shlex.join(_nix_wrap(argv))],
+                        timeout=GATE_TIMEOUT_SECONDS,
+                    )
+                except Exception as exc:  # noqa: BLE001 - sandbox issues are gate failures
+                    return 1, f"nix-kube-sandbox error: {exc}"
+                return (res.exit_code if res.ok else 1), res.output[
+                    -_OUTPUT_TAIL_CHARS:
+                ]
+            # No object store configured: run the dev shell in-process. The
+            # build image may lack the toolchain closure (#1524), in which case
+            # this fails with a readable reason rather than a bare exit 1.
             logger.info(
-                "[gate] %s is not on the data PVC — running the Nix shell in-process",
+                "[gate] %s is not on the data PVC and no object store is "
+                "configured — running the Nix shell in-process",
                 mount_root,
             )
             return _default_runner(_nix_wrap(argv, mount=str(mount_root)), mount_root)
