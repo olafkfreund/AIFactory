@@ -764,8 +764,37 @@ def build_run_py_job_manifest(
         # WORKSPACE_URI and unpacks it into /work (multi-node). None (default) →
         # WORKSPACE_URI is omitted and the /work co-mount path is unchanged.
         workspace_uri=workspace_uri,
+        # #1491: with sandbox gates routed through a nested Job, the build Job
+        # itself calls the k8s API to create the gate Job. Without a mounted
+        # token `load_incluster_config()` fails and the client falls back to a
+        # kubeconfig that does not exist in a pod ("Invalid kube-config file.
+        # Expected key current-context"), so every gate died before running.
+        # Only when gates actually route to a Job — a build that runs its gates
+        # in-process has no reason to hold an API token.
+        automount_service_account_token=_gates_dispatch_jobs(),
     )
     return _inject_install_clis(_inject_seed_creds(build_job_manifest(spec)))
+
+
+def _gates_dispatch_jobs() -> bool:
+    """True when the build Job will create gate Jobs through the k8s API.
+
+    Mirrors agents.gate_runner._select_runner: gates route to a Job only when
+    they are enabled, an image is configured, and the backend is one of the
+    in-cluster Job backends. A docker/host backend dispatches nothing and must
+    not be handed a token.
+    """
+    enabled = os.environ.get("AIFACTORY_SANDBOX_GATES", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    backend = os.environ.get("AIFACTORY_SANDBOX_BACKEND", "docker").strip().lower()
+    return bool(
+        enabled
+        and os.environ.get("AIFACTORY_SANDBOX_IMAGE", "").strip()
+        and backend in ("kubejob", "nixjob")
+    )
 
 
 def _spec_source_dir(project_path: Path, spec_id: str) -> Path:
