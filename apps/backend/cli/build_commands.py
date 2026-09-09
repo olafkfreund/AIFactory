@@ -69,12 +69,17 @@ def _evidence_shows_an_executed_gate(evidence: str | None) -> bool:
         return False
     if evidence.startswith("no gates detected"):
         return False
-    outcomes = [
-        part.split(":", 1)[1].strip() for part in evidence.split(",") if ":" in part
-    ]
+    outcomes = _gate_outcomes(evidence)
     if not outcomes:
         return False
     return any(outcome != "skipped" for outcome in outcomes)
+
+
+def _gate_outcomes(evidence: str) -> list[str]:
+    """The per-gate outcomes in a recorded summary, or [] if it does not parse."""
+    return [
+        part.split(":", 1)[1].strip() for part in evidence.split(",") if ":" in part
+    ]
 
 
 def _trailing_gate_evidence(spec_dir: Path) -> str | None:
@@ -589,7 +594,16 @@ def handle_build_command(
             if not _evidence_shows_an_executed_gate(gate_evidence):
                 why = gate_evidence or "the gate step did not run at all"
                 if gate_evidence and not gate_evidence.startswith("no gates detected"):
-                    why = f"every gate was skipped ({gate_evidence})"
+                    # Only claim "skipped" when the summary actually parses that
+                    # way. A corrupt or reformatted marker is unreadable, not
+                    # evidence of skips, and saying otherwise sends the reader
+                    # after the wrong thing.
+                    outcomes = _gate_outcomes(gate_evidence)
+                    why = (
+                        f"every gate was skipped ({gate_evidence})"
+                        if outcomes and all(o == "skipped" for o in outcomes)
+                        else f"the gate summary could not be read ({gate_evidence})"
+                    )
                 print_status(
                     "QA PRE-APPROVED BY CODER — NOT VERIFIED: the coder approved "
                     f"its own work and no verification gate ran over it ({why}). "
