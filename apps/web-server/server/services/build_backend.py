@@ -264,6 +264,10 @@ _PASSTHROUGH_BUILD_ENV: tuple[str, ...] = (
     "AIFACTORY_SANDBOX_IMAGE",
     "AIFACTORY_SANDBOX_BACKEND",
     "AIFACTORY_SANDBOX_REPO_PVC",
+    # #1524: the gate Job unpacks the packed worktree in an initContainer that
+    # must run an image carrying the AIFactory code + boto3 — i.e. this one. The
+    # build Job cannot know its own image otherwise.
+    "AIFACTORY_BUILD_IMAGE",
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_MODEL",

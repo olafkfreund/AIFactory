@@ -23,6 +23,19 @@ from core.factory_sandbox import RunResult  # reuse the shared result shape
 logger = logging.getLogger(__name__)
 
 
+# The unpack step's program. Kept out of the command list: adjacent string
+# literals in a list read as a missing comma (CodeQL flagged exactly that), and
+# a one-line program is easier to check here than inside a manifest.
+# APP_BACKEND_PATH comes from the image — a hardcoded path was wrong, the code
+# lives under /home/projects/….
+_UNPACK_PROGRAM = (
+    "import os,sys;"
+    "sys.path.insert(0,os.environ['APP_BACKEND_PATH']);"
+    "from core.artifact_store import ArtifactStore,unpack_workspace;"
+    "unpack_workspace(ArtifactStore(),sys.argv[1],sys.argv[2])"
+)
+
+
 def build_job_manifest(
     name: str,
     image: str,
@@ -39,6 +52,9 @@ def build_job_manifest(
     workdir: str = "/work",
     repo_ro: bool = False,
     nix_store_pvc: str | None = None,
+    workspace_uri: str | None = None,
+    unpack_image: str | None = None,
+    store_env: dict[str, str] | None = None,
 ) -> dict:
     """Pure builder for the per-task Job manifest. No cluster access.
 
@@ -50,6 +66,15 @@ def build_job_manifest(
     AIFactory pod that already holds the RWO PVC (true on a single-node /
     local-path cluster); it is omitted entirely when ``repo_pvc`` is None,
     leaving the toolchain-only behavior unchanged.
+
+    When ``workspace_uri`` is given (and no ``repo_pvc``), the code arrives by
+    the PACKED path instead: an initContainer running ``unpack_image`` — the
+    AIFactory image, which carries the code and the object-store credentials —
+    unpacks the archive into an emptyDir that the gate container then works in.
+    This is how a gate reaches the code on the multi-node/packed path, where the
+    worktree lives in the build Job's own emptyDir and no PVC subPath can reach
+    it (AIFactory#1491/#1524). The gate image itself needs no store credentials
+    and no AIFactory code.
 
     When ``nix_store_pvc`` is given (RFC-0016 #197), the whole ``/nix`` tree is
     served from that warm-store PVC so per-task Nix Jobs stop cold-fetching the
@@ -134,6 +159,37 @@ def build_job_manifest(
                 "persistentVolumeClaim": {"claimName": repo_pvc, "readOnly": repo_ro},
             }
         )
+    elif workspace_uri:
+        # No `unpack_image or image` fallback: the gate image is DEFINED as the
+        # one without AIFactory code or store credentials, so defaulting to it
+        # would turn a misconfiguration into a confusing gate failure attributed
+        # to the code under test. Refuse instead.
+        if not unpack_image:
+            raise ValueError(
+                "workspace_uri needs unpack_image: the unpack initContainer must "
+                "run an image carrying the AIFactory code and object-store "
+                "credentials (the build image), never the gate image"
+            )
+        # The gate image has neither the AIFactory code nor store credentials,
+        # so the unpack runs in an initContainer on the build image and lands in
+        # a shared emptyDir. `data` filtering / traversal vetting lives in
+        # artifact_store.unpack_workspace, which is what runs here.
+        container["workingDir"] = workdir
+        mounts.append({"name": "repo", "mountPath": workdir})
+        volumes.append({"name": "repo", "emptyDir": {}})
+        pod_spec["initContainers"] = [
+            {
+                "name": "unpack-workspace",
+                "image": unpack_image,
+                "command": ["python3", "-c", _UNPACK_PROGRAM, workspace_uri, workdir],
+                "env": [
+                    {"name": k, "value": v}
+                    for k, v in sorted((store_env or {}).items())
+                ],
+                "securityContext": dict(container_hardening),
+                "volumeMounts": [{"name": "repo", "mountPath": workdir}],
+            }
+        ]
     if nix_store_pvc:
         mounts.append({"name": "nix-store", "mountPath": "/nix"})
         volumes.append(
@@ -145,7 +201,7 @@ def build_job_manifest(
         # Seed the warm store from the image's baked-in /nix on first use, else
         # the empty PVC overlay would hide nix's own closure (the nix binary
         # itself lives in /nix/store) and the Job could not run.
-        pod_spec["initContainers"] = [
+        pod_spec.setdefault("initContainers", []).append(
             {
                 "name": "seed-nix-store",
                 "image": image,
@@ -161,7 +217,7 @@ def build_job_manifest(
                 "securityContext": dict(container_hardening),
                 "volumeMounts": [{"name": "nix-store", "mountPath": "/warm"}],
             }
-        ]
+        )
     if mounts:
         container["volumeMounts"] = mounts
     if volumes:

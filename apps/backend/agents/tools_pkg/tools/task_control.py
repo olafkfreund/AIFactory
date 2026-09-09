@@ -416,17 +416,24 @@ def create_task_control_tools() -> list[Any]:
                     "description_preview": (args.get("description", "")[:200]),
                 },
             )
-        payload = {
+        # The endpoint takes the identity of the task as QUERY params and reads
+        # the rest from a CreateAndRunRequest body. Sending all of it as a body
+        # made every call fail with 422 "Field required" on the three query
+        # params, and silently dropped `provenance` with it (#1522).
+        params = {
             "project_id": args["project_id"],
             "title": args["title"],
             "description": args["description"],
         }
+        payload: dict[str, Any] = {}
         if args.get("model"):
             payload["model"] = args["model"]
         if args.get("provenance"):
             payload["provenance"] = args["provenance"]
         try:
-            raw = await request("POST", "/api/tasks/create-and-run", json=payload)
+            raw = await request(
+                "POST", "/api/tasks/create-and-run", params=params, json=payload
+            )
         except MCPHTTPError as exc:
             return _format_error(exc)
         return _format_json({"created_and_started": True, "details": raw})
