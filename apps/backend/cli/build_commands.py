@@ -50,6 +50,38 @@ from .input_handlers import (
 )
 
 
+def _evidence_shows_an_executed_gate(evidence: str | None) -> bool:
+    """True when the recorded evidence contains a gate that actually ran.
+
+    A gate whose tool is missing is reported `skipped`, and `summarize_gates`
+    renders a suite of nothing but skips as a pass. Seen live: the build Job
+    lacked the sandbox env, so every gate fell to a plain host subprocess with
+    no toolchain and the run recorded
+
+        kotlin-unit: skipped, swift-unit: skipped
+
+    which is not verification — it is the same empty result as "no gates
+    detected", wearing the word `passed` (#1491). #597's rule is that a skipped
+    gate must be visible and never silently green; this applies it to the
+    summary a human reads.
+    """
+    if not evidence:
+        return False
+    if evidence.startswith("no gates detected"):
+        return False
+    outcomes = _gate_outcomes(evidence)
+    if not outcomes:
+        return False
+    return any(outcome != "skipped" for outcome in outcomes)
+
+
+def _gate_outcomes(evidence: str) -> list[str]:
+    """The per-gate outcomes in a recorded summary, or [] if it does not parse."""
+    return [
+        part.split(":", 1)[1].strip() for part in evidence.split(",") if ":" in part
+    ]
+
+
 def _trailing_gate_evidence(spec_dir: Path) -> str | None:
     """What the trailing gate step recorded, or None if it never ran.
 
@@ -559,8 +591,19 @@ def handle_build_command(
                 ExecutionPhase.QA_REVIEW, "QA pre-approved by coder agent", progress=100
             )
 
-            if gate_evidence is None or gate_evidence.startswith("no gates detected"):
+            if not _evidence_shows_an_executed_gate(gate_evidence):
                 why = gate_evidence or "the gate step did not run at all"
+                if gate_evidence and not gate_evidence.startswith("no gates detected"):
+                    # Only claim "skipped" when the summary actually parses that
+                    # way. A corrupt or reformatted marker is unreadable, not
+                    # evidence of skips, and saying otherwise sends the reader
+                    # after the wrong thing.
+                    outcomes = _gate_outcomes(gate_evidence)
+                    why = (
+                        f"every gate was skipped ({gate_evidence})"
+                        if outcomes and all(o == "skipped" for o in outcomes)
+                        else f"the gate summary could not be read ({gate_evidence})"
+                    )
                 print_status(
                     "QA PRE-APPROVED BY CODER — NOT VERIFIED: the coder approved "
                     f"its own work and no verification gate ran over it ({why}). "
