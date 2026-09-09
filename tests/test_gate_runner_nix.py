@@ -67,6 +67,12 @@ def test_repo_owned_flake_respected(tmp_path):
     assert (tmp_path / "flake.nix").read_text() == "# hand-written\n"  # not overwritten
 
 
+# A worktree that really is on the data PVC. `/work` is NOT: on the packed path
+# it is a pod-local emptyDir, and a gate there runs locally instead of being
+# dispatched to a Job that would see no repo (AIFactory#1491).
+_MOUNTABLE = Path("/home/nonroot/.aifactory/workspaces/p/worktrees/tasks/007")
+
+
 def _capture_sandbox(monkeypatch) -> dict:
     """Swap KubeJobSandbox for a recorder; returns the kwargs it was built with."""
     seen: dict = {}
@@ -95,7 +101,7 @@ def test_gate_drops_warm_store_pvc_when_nix_in_image(monkeypatch):
     seen = _capture_sandbox(monkeypatch)
     monkeypatch.setenv("AIFACTORY_NIX_STORE_PVC", "aifactory-nix-store")
     monkeypatch.setenv("AIFACTORY_PACKED_NIX_IN_IMAGE", "true")
-    _nix_kube_runner("ghcr.io/x/nix:latest")(["pytest", "-q"], Path("/work"))
+    _nix_kube_runner("ghcr.io/x/nix:latest")(["pytest", "-q"], _MOUNTABLE)
     assert seen["nix_store_pvc"] is None, seen
     assert seen["repo_pvc"] == "aifactory-data", seen  # repo co-mount unchanged
 
@@ -105,7 +111,7 @@ def test_gate_keeps_warm_store_pvc_when_flag_off(monkeypatch):
     seen = _capture_sandbox(monkeypatch)
     monkeypatch.setenv("AIFACTORY_NIX_STORE_PVC", "aifactory-nix-store")
     monkeypatch.delenv("AIFACTORY_PACKED_NIX_IN_IMAGE", raising=False)
-    _nix_kube_runner("ghcr.io/x/nix:latest")(["pytest", "-q"], Path("/work"))
+    _nix_kube_runner("ghcr.io/x/nix:latest")(["pytest", "-q"], _MOUNTABLE)
     assert seen["nix_store_pvc"] == "aifactory-nix-store", seen
 
 
@@ -118,3 +124,77 @@ def test_nix_in_image_flag_parsing(monkeypatch):
     for off in ("", "0", "false", "no"):
         monkeypatch.setenv("AIFACTORY_PACKED_NIX_IN_IMAGE", off)
         assert nix_in_image() is False, off
+
+
+def test_repo_is_mountable_only_under_the_data_root():
+    """AIFactory#1491: the packed path's /work is a pod-local emptyDir."""
+    from core.kube_sandbox import repo_is_mountable
+
+    root = "/home/nonroot/.aifactory"
+    assert repo_is_mountable(f"{root}/workspaces/p/worktrees/tasks/007", root)
+    # What the build Job actually reports as its cwd — no other pod can see it.
+    assert not repo_is_mountable("/work/.aifactory/worktrees/tasks/007", root)
+    assert not repo_is_mountable(None, root)
+
+
+def test_unmountable_repo_runs_the_nix_shell_locally(monkeypatch, tmp_path):
+    """A gate must never be dispatched to a Job that cannot see the code.
+
+    Doing so runs the build tool against an empty directory and reports the
+    resulting non-zero as if it had tested the repo (AIFactory#1491).
+    """
+    import agents.gate_runner as gr
+
+    (tmp_path / "flake.nix").write_text("{}")
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", "/home/nonroot/.aifactory")
+
+    dispatched: list[object] = []
+    import core.kube_sandbox as ks
+
+    monkeypatch.setattr(
+        ks, "KubeJobSandbox", lambda *a, **k: dispatched.append(a) or None
+    )
+    seen: dict[str, object] = {}
+
+    def fake_default(command, cwd):
+        seen["command"], seen["cwd"] = command, cwd
+        return 0, "BUILD SUCCESSFUL"
+
+    monkeypatch.setattr(gr, "_default_runner", fake_default)
+
+    exit_code, output = gr._nix_kube_runner("img")(["gradle", "test"], tmp_path)
+
+    assert not dispatched, "dispatched a Job that could not mount the repo"
+    assert (exit_code, output) == (0, "BUILD SUCCESSFUL")
+    # It still runs inside the per-task dev shell, rooted at the real flake.
+    assert seen["command"][:3] == ["nix", "develop", f"path:{tmp_path}#default"]
+    assert seen["cwd"] == tmp_path
+
+
+def test_mountable_repo_still_dispatches_a_job(monkeypatch, tmp_path):
+    """The co-mount path is unchanged — the fallback is not a silent takeover."""
+    import agents.gate_runner as gr
+
+    root = tmp_path / "data"
+    work = root / "workspaces" / "p" / "worktrees" / "tasks" / "007"
+    work.mkdir(parents=True)
+    (work / "flake.nix").write_text("{}")
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", str(root))
+
+    class FakeSandbox:
+        def __init__(self, *a, **k):
+            pass
+
+        def run(self, *a, **k):
+            return SimpleNamespace(ok=True, exit_code=0, output="ran in a Job")
+
+    import core.kube_sandbox as ks
+
+    monkeypatch.setattr(ks, "KubeJobSandbox", FakeSandbox)
+    monkeypatch.setattr(
+        gr,
+        "_default_runner",
+        lambda *a: (_ for _ in ()).throw(AssertionError("ran locally")),
+    )
+
+    assert gr._nix_kube_runner("img")(["gradle", "test"], work) == (0, "ran in a Job")

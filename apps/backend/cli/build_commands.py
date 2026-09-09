@@ -75,6 +75,13 @@ def _evidence_shows_an_executed_gate(evidence: str | None) -> bool:
     return any(outcome != "skipped" for outcome in outcomes)
 
 
+def _gate_outcomes_include_a_failure(evidence: str | None) -> bool:
+    """True when any gate in the recorded summary failed."""
+    if not evidence:
+        return False
+    return any(outcome == "failed" for outcome in _gate_outcomes(evidence))
+
+
 def _gate_outcomes(evidence: str) -> list[str]:
     """The per-gate outcomes in a recorded summary, or [] if it does not parse."""
     return [
@@ -621,6 +628,27 @@ def handle_build_command(
                     ExecutionPhase.COMPLETE,
                     "Completed WITHOUT verification — pre-approved by the coder, "
                     "no gate ran",
+                )
+            elif _gate_outcomes_include_a_failure(gate_evidence):
+                # A gate that ran and FAILED is evidence — of the opposite. It
+                # was being reported with the same success wording as a clean
+                # run: "✓ QA pre-approved by the coder; verification gates:
+                # kotlin-unit: failed" (#1491). Seen live.
+                print_status(
+                    "QA PRE-APPROVED BY CODER — BUT A GATE FAILED: "
+                    f"{gate_evidence}. The coder approved its own work and the "
+                    "verification that ran over it did not pass; see "
+                    "GATE_FAILURES.md and the gate output above.",
+                    "error",
+                )
+                # No `qa_approved = False` here: as the comment above says,
+                # nothing reads it after this branch, so the assignment would be
+                # dead — the same inert "fix" #1502 shipped. The terminal phase
+                # and the error status ARE the mechanism; they reach the UI and
+                # the log, which is what a failing gate has to change.
+                emit_phase(
+                    ExecutionPhase.COMPLETE,
+                    f"Completed with FAILING gates — {gate_evidence}",
                 )
             else:
                 print_status(

@@ -19,6 +19,7 @@ sys.path.insert(0, str(_BACKEND))
 from cli.build_commands import (  # noqa: E402
     _evidence_shows_an_executed_gate,
     _gate_outcomes,
+    _gate_outcomes_include_a_failure,
 )
 
 
@@ -64,3 +65,18 @@ def test_outcomes_are_empty_when_the_summary_does_not_parse():
     # not be read": claiming skips for a corrupt marker sends the reader after
     # the wrong thing.
     assert _gate_outcomes("something entirely unexpected") == []
+
+
+def test_a_failing_gate_is_recognised_as_a_failure():
+    # A gate that ran and failed is evidence — of the opposite. It was being
+    # reported with the same success wording as a clean run:
+    # "✓ QA pre-approved by the coder; verification gates: kotlin-unit: failed".
+    assert _gate_outcomes_include_a_failure("kotlin-unit: failed, swift-unit: failed")
+    assert _gate_outcomes_include_a_failure("kotlin-unit: passed, swift-unit: failed")
+
+
+def test_a_clean_or_skipped_summary_is_not_a_failure():
+    assert not _gate_outcomes_include_a_failure("kotlin-unit: passed")
+    assert not _gate_outcomes_include_a_failure("kotlin-unit: skipped")
+    assert not _gate_outcomes_include_a_failure("no gates detected in /work")
+    assert not _gate_outcomes_include_a_failure(None)
