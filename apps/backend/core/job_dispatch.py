@@ -67,7 +67,8 @@ same way the live ``kube_sandbox.py`` backends already apply Jobs.
 Design (matches apis/concurrency-conventions.md §3 + the proven kube_sandbox shape):
 - restartPolicy Never, backoffLimit 0 (no silent retries — a retry is a new attempt
   with an incremented job-state ``attempt``), ttlSecondsAfterFinished (GC),
-  activeDeadlineSeconds (deadline), automountServiceAccountToken False.
+  activeDeadlineSeconds (deadline), automountServiceAccountToken False unless the
+  Job orchestrates other Jobs (``automount_service_account_token``).
 - The thin nix-base image; the task's commands run via ``nix develop`` against the
   per-task flake co-mounted in the worktree (caller wraps commands; see
   ``nix_develop_wrap``).
@@ -95,7 +96,7 @@ from __future__ import annotations
 import os
 import re
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 # Canonical nix-base image (RFC-0016 #198). Override per env in the consumer.
@@ -172,6 +173,13 @@ class JobSpec:
     namespace: str = "factory"
     nix_develop: bool = True  # wrap commands in `nix develop path:/work#default`
     extra_env: dict[str, str] = field(default_factory=dict)
+    # A Job that itself dispatches Jobs through the k8s API needs a token to
+    # authenticate with; without one `load_incluster_config()` fails and the
+    # client falls back to a kubeconfig that does not exist in a pod
+    # ("Invalid kube-config file. Expected key current-context", AIFactory#1491).
+    # Default False keeps every existing Job tokenless — grant it only to a Job
+    # that genuinely orchestrates, and whose service account is scoped to that.
+    automount_service_account_token: bool = False
 
 
 def _short(job_id: str) -> str:
@@ -565,7 +573,7 @@ def build_job_manifest(spec: JobSpec) -> dict[str, Any]:
 
     pod_spec: dict[str, Any] = {
         "restartPolicy": "Never",
-        "automountServiceAccountToken": False,
+        "automountServiceAccountToken": spec.automount_service_account_token,
         # #812: non-root enforced by the kubelet (not just the image USER) and
         # the default seccomp profile pinned.
         #
@@ -716,6 +724,24 @@ def _selftest_gcp_creds() -> None:
             os.environ[GCP_CREDS_SECRET_ENV] = saved
 
 
+def _selftest_service_account(spec: JobSpec, ps: dict[str, Any]) -> None:
+    """Identity: the SA, the tokenless default, and the orchestrator opt-in.
+
+    Asserting only the default would let the flag be silently ignored — the Job
+    would keep the permission to create Jobs with no credential to use it.
+    """
+    _require(ps["serviceAccountName"] == "aifactory-sandbox", "SA")
+    _require(ps["automountServiceAccountToken"] is False, "no token automount")
+    manifest = build_job_manifest(replace(spec, automount_service_account_token=True))
+    _require(
+        manifest["spec"]["template"]["spec"]["automountServiceAccountToken"] is True,
+        "automount_service_account_token=True must reach the pod spec — without "
+        "it an orchestrating Job cannot authenticate to the API and dies with "
+        "'Invalid kube-config file' (AIFactory#1491)",
+    )
+    assert_job_policy(manifest)
+
+
 def _check_nix_develop(command: str) -> None:
     """The per-task nix invocation: the flake ref, and a store it can write to.
 
@@ -751,8 +777,7 @@ def _selftest() -> None:
     assert_job_policy(m)
     _require(name.startswith("factory-aifactory-"), f"name prefix: {name}")
     ps = m["spec"]["template"]["spec"]
-    _require(ps["serviceAccountName"] == "aifactory-sandbox", "SA")
-    _require(ps["automountServiceAccountToken"] is False, "no token automount")
+    _selftest_service_account(spec, ps)
     _require(
         ps["securityContext"]
         == {
