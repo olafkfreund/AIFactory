@@ -1376,9 +1376,9 @@ async def _run_trailing_gates_if_build_complete(
             # stdout, which is captured, and truncate so a runaway log cannot
             # bury the rest of the output.
             for r in failures:
-                head = (r.output_tail or "").strip()[-_GATE_FAILURE_LOG_CHARS:]
+                tail = (r.output_tail or "").strip()[-_GATE_FAILURE_LOG_CHARS:]
                 print_status(
-                    f"Gate {r.name} failed (exit {r.exit_code}): {head or '(no output)'}",
+                    f"Gate {r.name} failed (exit {r.exit_code}): {tail or '(no output)'}",
                     "error",
                 )
             extra = []

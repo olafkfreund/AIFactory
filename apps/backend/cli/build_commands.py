@@ -641,11 +641,15 @@ def handle_build_command(
                     "GATE_FAILURES.md and the gate output above.",
                     "error",
                 )
+                # No `qa_approved = False` here: as the comment above says,
+                # nothing reads it after this branch, so the assignment would be
+                # dead — the same inert "fix" #1502 shipped. The terminal phase
+                # and the error status ARE the mechanism; they reach the UI and
+                # the log, which is what a failing gate has to change.
                 emit_phase(
                     ExecutionPhase.COMPLETE,
                     f"Completed with FAILING gates — {gate_evidence}",
                 )
-                qa_approved = False
             else:
                 print_status(
                     "QA pre-approved by the coder; verification gates: "
