@@ -380,7 +380,9 @@ def _packed_workspace_for(mount_root: Path) -> str | None:
         ref = ArtifactRef(
             service="aifactory", job_id=f"gate-{mount_root.name}", role="workspace"
         )
-        uri = pack_workspace(ArtifactStore(), ref, mount_root)
+        # Annotated: pack_workspace is untyped, so an unannotated binding
+        # would leak Any out of a `str | None` function (mypy --strict).
+        uri: str = pack_workspace(ArtifactStore(), ref, mount_root)
     except Exception as exc:  # noqa: BLE001 - packing must never crash a gate
         logger.warning("[gate] could not pack the worktree for a gate Job: %s", exc)
         return None
