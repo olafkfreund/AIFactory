@@ -1221,6 +1221,11 @@ def _should_require_human_review(spec_dir: Path) -> bool:
     return bool(requires_review_before_coding(spec_dir))
 
 
+# How much of a failed gate's output to echo into the Job's stdout. Enough to
+# carry a stack trace or a nix error, short of burying the log.
+_GATE_FAILURE_LOG_CHARS = 1200
+
+
 async def _run_trailing_gates_if_build_complete(
     spec_dir: Path, project_dir: Path
 ) -> None:
@@ -1364,6 +1369,18 @@ async def _run_trailing_gates_if_build_complete(
                 lines.append("\n## undeclared test dependencies (#611f)\n\n")
                 lines.extend(f"- {c}\n" for c in dep_conflicts)
             marker.write_text("".join(lines), encoding="utf-8")
+            # GATE_FAILURES.md lives in the spec dir, which does not leave a
+            # build Job — so a gate that failed inside one left no reason
+            # anywhere a human could read, and the only visible trace was
+            # "kotlin-unit: failed" (#1491). Put the reason in the Job's own
+            # stdout, which is captured, and truncate so a runaway log cannot
+            # bury the rest of the output.
+            for r in failures:
+                head = (r.output_tail or "").strip()[-_GATE_FAILURE_LOG_CHARS:]
+                print_status(
+                    f"Gate {r.name} failed (exit {r.exit_code}): {head or '(no output)'}",
+                    "error",
+                )
             extra = []
             if layout_conflicts:
                 extra.append(f"{len(layout_conflicts)} layout conflict(s)")
