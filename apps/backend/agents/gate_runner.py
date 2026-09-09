@@ -353,7 +353,7 @@ def _nix_kube_runner(image: str) -> Callable[[list[str], Path], tuple[int | None
     The build env thus matches TFactory's verify env — no drift. Requires
     flake.nix in the co-mounted worktree (materialize_flake_into writes it).
     """
-    from core.kube_sandbox import KubeJobSandbox
+    from core.kube_sandbox import KubeJobSandbox, repo_is_mountable
 
     repo_pvc = os.environ.get("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data") or None
     data_root = os.environ.get("AIFACTORY_DATA_ROOT", "/home/nonroot/.aifactory")
@@ -381,6 +381,17 @@ def _nix_kube_runner(image: str) -> Callable[[list[str], Path], tuple[int | None
         # hide the flake from `nix develop path:/work#default`.
         mount_root = _flake_root_for(cwd)
         argv = _mounted_at(command, cwd, mount_root)
+        if not repo_is_mountable(str(mount_root), data_root):
+            # AIFactory#1491: on the packed path /work is a pod-local emptyDir, so
+            # a nested Job mounting the data PVC would see no repo and run the
+            # gate against an empty directory — reporting a red that measured
+            # nothing. The code is right here and /nix ships in the image, so run
+            # the same dev shell locally instead.
+            logger.info(
+                "[gate] %s is not on the data PVC — running the Nix shell in-process",
+                mount_root,
+            )
+            return _default_runner(_nix_wrap(argv, mount=str(mount_root)), mount_root)
         try:
             res = KubeJobSandbox(
                 image,

@@ -215,6 +215,17 @@ def _pvc_subpath(workdir: str | None, data_root: str) -> str | None:
     return norm[len(root) :]
 
 
+def repo_is_mountable(workdir: str | None, data_root: str) -> bool:
+    """True when a nested Job can co-mount the repo at *workdir* from the PVC.
+
+    False means the code lives somewhere no other pod can reach — the packed
+    path's ``/work`` emptyDir being the live case (AIFactory#1491): the build Job
+    unpacks the worktree into a pod-local dir, so a Job that mounts the data PVC
+    sees no repo at all and the gate measures an empty directory.
+    """
+    return _pvc_subpath(workdir, data_root) is not None
+
+
 def _exit_code_from_pod(pod: object, *, job_succeeded: bool) -> tuple[bool, int]:
     """(succeeded, exit_code) from a Job pod's terminated container state.
 
