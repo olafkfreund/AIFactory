@@ -329,6 +329,54 @@ async def test_create_and_run_with_confirm_calls_endpoint(tools_by_name, monkeyp
     assert payload["created_and_started"] is True
 
 
+async def test_create_and_run_sends_identity_as_query_params(
+    tools_by_name, monkeypatch
+):
+    """#1522: the endpoint declares these as Query(...), so a body-only call
+    fails with 422 "Field required" on all three — every call, silently.
+
+    The pre-existing tests passed throughout the outage because they asserted
+    only the method, the path and the body.
+    """
+    captured: list = []
+    _make_request_stub(monkeypatch, {"task_id": "x"}, captured)
+    await tools_by_name["task_create_and_run"](
+        {"project_id": "p1", "title": "t", "description": "d", "confirm": True}
+    )
+    kwargs = captured[0]["kwargs"]
+    assert kwargs["params"] == {
+        "project_id": "p1",
+        "title": "t",
+        "description": "d",
+    }
+    # They must NOT also ride in the body: CreateAndRunRequest does not
+    # declare them, and duplicating them is how the shapes drifted apart.
+    assert "project_id" not in kwargs.get("json", {})
+
+
+def test_create_and_run_query_params_match_the_endpoint():
+    """Contract: what the client puts in the query string is exactly what the
+    route declares as Query(...). Asserting the client against itself is what
+    let #1522 ship."""
+    import inspect
+    import sys
+    from pathlib import Path
+
+    # The web-server package is not on the path for this module (same shape as
+    # tests/test_mcp_stdio_list_projects.py).
+    sys.path.insert(0, str(Path(__file__).parent.parent / "apps" / "web-server"))
+
+    from fastapi import params as fastapi_params
+    from server.mcp_stdio.router import proxy_create_and_run_task
+
+    declared = {
+        name
+        for name, prm in inspect.signature(proxy_create_and_run_task).parameters.items()
+        if isinstance(prm.default, fastapi_params.Query)
+    }
+    assert declared == {"project_id", "title", "description"}, declared
+
+
 async def test_create_and_run_forwards_provenance(tools_by_name, monkeypatch):
     """PFactory provenance (#332) is forwarded to the create-and-run endpoint."""
     captured: list = []
