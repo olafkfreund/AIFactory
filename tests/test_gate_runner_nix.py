@@ -276,3 +276,45 @@ def test_packing_is_skipped_without_an_object_store(monkeypatch, tmp_path):
 
     monkeypatch.delenv("S3_ENDPOINT", raising=False)
     assert gr._packed_workspace_for(tmp_path) is None
+
+
+def test_packed_workspace_refuses_to_unpack_with_the_gate_image():
+    """A fallback that cannot work is worse than a refusal.
+
+    The gate image is defined as the one WITHOUT AIFactory code or store
+    credentials, so defaulting the unpack to it would turn a misconfiguration
+    into a gate failure blamed on the code under test.
+    """
+    import pytest
+    from core.kube_sandbox import build_job_manifest
+
+    with pytest.raises(ValueError, match="unpack_image"):
+        build_job_manifest("n", "gate-image", ["true"], workspace_uri="s3://b/w.tar.gz")
+
+
+def test_no_build_image_falls_back_instead_of_dispatching(monkeypatch, tmp_path):
+    """Without AIFACTORY_BUILD_IMAGE there is no image that can unpack, so the
+    packed path is not attempted at all."""
+    import agents.gate_runner as gr
+    import core.kube_sandbox as ks
+
+    (tmp_path / "flake.nix").write_text("{}")
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", "/home/nonroot/.aifactory")
+    monkeypatch.setenv("S3_ENDPOINT", "http://minio:9000")
+    monkeypatch.delenv("AIFACTORY_BUILD_IMAGE", raising=False)
+    monkeypatch.setattr(
+        gr,
+        "_packed_workspace_for",
+        lambda _r: (_ for _ in ()).throw(AssertionError("packed without an image")),
+    )
+    monkeypatch.setattr(
+        ks,
+        "KubeJobSandbox",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("dispatched")),
+    )
+    monkeypatch.setattr(gr, "_default_runner", lambda *a: (0, "ran in-process"))
+
+    assert gr._nix_kube_runner("gate-image")(["gradle", "test"], tmp_path) == (
+        0,
+        "ran in-process",
+    )
