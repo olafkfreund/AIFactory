@@ -12,6 +12,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from agents.gate_runner import (
+    evidence_shows_an_executed_gate,
+    gate_outcomes_include_a_failure,
+    trailing_gate_evidence,
+)
+
 from .api_contract import missing_exports
 
 try:
@@ -241,6 +247,63 @@ def create_qa_tools(
                                     "names the spec asked for, or change the "
                                     "spec if they are wrong — do not sign off on "
                                     "an equivalent API under other names."
+                                ),
+                            }
+                        ]
+                    }
+
+                # #1496: "approved" requires evidence that a verification
+                # command actually ran, not just a self-report.
+                #
+                # Observed live, twice: the coder agent said outright it could
+                # NOT run the suite ("no Gradle/JVM on PATH ... I cannot
+                # execute the suite") and this tool was still called with
+                # status="approved". "APPROVED ✓" is the same string a build
+                # gets when its tests ran and passed -- so the distinction
+                # between *verified* and *read carefully* was destroyed at
+                # exactly the point a human (or a downstream dashboard) reads
+                # the result.
+                #
+                # `trailing_gate_evidence` reads the one OBJECTIVE record of
+                # whether a verification command executed: the marker the
+                # coder's own trailing-gate step writes to this same spec_dir
+                # (agents/coder.py `_run_trailing_gates_if_build_complete`).
+                # It is written before QA ever runs, by a different code path
+                # than the one asking to approve, so it cannot be satisfied by
+                # an agent simply asserting `tests_passed` -- the thing #1396
+                # already proved cannot be trusted on its own.
+                gate_evidence = trailing_gate_evidence(get_spec_dir())
+                if not evidence_shows_an_executed_gate(gate_evidence):
+                    why = gate_evidence or "the gate step never ran for this build"
+                    return {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": (
+                                    "Refusing to approve: no verification "
+                                    f"command is recorded as having run ({why}). "
+                                    "An APPROVED sign-off must be backed by an "
+                                    "executed gate, not an agent's own reading "
+                                    "of the code (#1496). If the toolchain is "
+                                    "genuinely unavailable here, say so and "
+                                    "leave this build unapproved -- do not "
+                                    "record a pass for a suite that never ran."
+                                ),
+                            }
+                        ]
+                    }
+                if gate_outcomes_include_a_failure(gate_evidence):
+                    return {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": (
+                                    "Refusing to approve: the recorded "
+                                    f"verification gates did not all pass ({gate_evidence}). "
+                                    "A failing gate is evidence the build does "
+                                    "not work, not something QA can sign off "
+                                    "over (#1496). See GATE_FAILURES.md and fix "
+                                    "the failure before approving."
                                 ),
                             }
                         ]
