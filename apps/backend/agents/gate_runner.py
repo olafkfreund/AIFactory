@@ -428,11 +428,19 @@ def _nix_kube_runner(image: str) -> Callable[[list[str], Path], tuple[int | None
     # whenever the two PVs stranded on different nodes (the live factory cluster:
     # aifactory-data on the server, aifactory-nix-store on the agent). See
     # nix_in_image for why the image is a sufficient /nix source.
-    nix_store_pvc = (
-        None
-        if nix_in_image()
-        else (os.environ.get("AIFACTORY_NIX_STORE_PVC", "") or None)
-    )
+    # #1541: the gitops manifest states the condition for bringing it back —
+    # "do not reintroduce it without RWX storage" — and the fleet now has one:
+    # the `nfs` RWX class, proven by tfactory-data-rwx. An RWX claim cannot
+    # strand against another PV, which is what #253 actually hit.
+    # Independently, the packed path (#1525) mounts NO repo PVC at all (the code
+    # arrives in an emptyDir via the unpack initContainer), so the nix store is
+    # the pod's only claim there. It stays dropped on the co-mount path, where
+    # the repo PVC really is mounted.
+    # This matters because the runner image bakes no language closures: without
+    # a persistent store every gate re-downloads its whole toolchain from
+    # cache.nixos.org, and Swift never finishes inside the Job deadline.
+    configured_store_pvc = os.environ.get("AIFACTORY_NIX_STORE_PVC", "") or None
+    nix_store_pvc = None if nix_in_image() else configured_store_pvc
     if nix_store_pvc:
         logger.info("[gate] warm Nix store PVC %s mounted at /nix", nix_store_pvc)
     else:
@@ -461,9 +469,13 @@ def _nix_kube_runner(image: str) -> Callable[[list[str], Path], tuple[int | None
                 )
             if packed:
                 try:
+                    # Warming matters most here: the runner image bakes no
+                    # language closures, so without a persistent store every
+                    # gate re-downloads its whole toolchain from cache.nixos.org
+                    # and Swift never finishes inside the Job deadline (#1541).
                     res = KubeJobSandbox(
                         image,
-                        nix_store_pvc=nix_store_pvc,
+                        nix_store_pvc=configured_store_pvc,
                         workspace_uri=packed,
                         unpack_image=unpack_image,
                         store_env=_store_env(),
