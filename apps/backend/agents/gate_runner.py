@@ -644,3 +644,80 @@ def summarize_gates(results: list[GateResult]) -> str:
 def failing_gates(results: list[GateResult]) -> list[GateResult]:
     """Gates that actually failed (skipped tools are not failures)."""
     return [r for r in results if not r.passed and not r.skipped]
+
+
+# -----------------------------------------------------------------------------
+# Recorded-evidence helpers (AIFactory#1496)
+# -----------------------------------------------------------------------------
+#
+# `_run_trailing_gates_if_build_complete` (agents/coder.py) writes the outcome
+# of the one gate run a build gets to `<spec_dir>/.trailing_gates_done` --
+# either a `summarize_gates` string or the sentence "no gates detected ...".
+# That file is the only OBJECTIVE record of whether a verification command
+# executed: everything else (an agent's own prose, a self-reported
+# `tests_passed` dict) is the agent's word about its own work, which is
+# exactly what #1496 showed cannot be trusted -- a coder that plainly said "no
+# JVM/Kotlin/Gradle toolchain is available ... I cannot execute the suite" was
+# still followed by an `update_qa_status(status="approved")` call.
+#
+# These helpers are the single place that reads that record, so the tool that
+# WRITES a QA sign-off (agents/tools_pkg/tools/qa.py) and the CLI banner that
+# reports a coder's own pre-approval (cli/build_commands.py) agree on what
+# counts as evidence.
+
+
+def trailing_gate_evidence(spec_dir: Path) -> str | None:
+    """What the trailing gate step recorded, or None if it never ran.
+
+    Absence of the file means the step did not run at all (e.g. the build
+    never reached "all subtasks complete", or bypassed the coder loop
+    entirely).
+    """
+    marker = spec_dir / ".trailing_gates_done"
+    try:
+        text = marker.read_text(encoding="utf-8").strip()
+    except (OSError, ValueError):
+        # ValueError covers UnicodeDecodeError on a corrupt marker. Unreadable
+        # evidence is no evidence -- the safe answer -- but reading it must
+        # never raise into the caller.
+        return None
+    return text or None
+
+
+def gate_outcomes(evidence: str) -> list[str]:
+    """The per-gate outcomes in a recorded summary, or [] if it does not parse."""
+    return [
+        part.split(":", 1)[1].strip() for part in evidence.split(",") if ":" in part
+    ]
+
+
+def evidence_shows_an_executed_gate(evidence: str | None) -> bool:
+    """True when the recorded evidence contains a gate that actually ran.
+
+    A gate whose tool is missing is reported `skipped`, and `summarize_gates`
+    renders a suite of nothing but skips as a pass. Seen live: the build Job
+    lacked the sandbox env, so every gate fell to a plain host subprocess with
+    no toolchain and the run recorded
+
+        kotlin-unit: skipped, swift-unit: skipped
+
+    which is not verification — it is the same empty result as "no gates
+    detected", wearing the word `passed` (#1491). #597's rule is that a skipped
+    gate must be visible and never silently green; this applies it to the
+    record a QA sign-off is checked against.
+    """
+    if not evidence:
+        return False
+    if evidence.startswith("no gates detected"):
+        return False
+    outcomes = gate_outcomes(evidence)
+    if not outcomes:
+        return False
+    return any(outcome != "skipped" for outcome in outcomes)
+
+
+def gate_outcomes_include_a_failure(evidence: str | None) -> bool:
+    """True when any gate in the recorded summary failed."""
+    if not evidence:
+        return False
+    return any(outcome == "failed" for outcome in gate_outcomes(evidence))

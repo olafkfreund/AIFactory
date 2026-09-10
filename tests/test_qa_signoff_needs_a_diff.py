@@ -217,6 +217,9 @@ class TestTheToolItselfRefuses:
 
         spec = tmp_path / "spec"
         self._plan(spec)
+        # #1496: a commit alone is no longer enough -- approval also needs the
+        # trailing-gate marker recording that a verification command ran.
+        (spec / ".trailing_gates_done").write_text("pytest: passed\n")
         handler = self._tool(spec, clone)
 
         result = await handler(

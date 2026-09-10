@@ -50,61 +50,44 @@ from .input_handlers import (
 )
 
 
+# Recorded-evidence helpers now live in agents.gate_runner (AIFactory#1496): the
+# tool that WRITES a QA sign-off (agents/tools_pkg/tools/qa.py) needs the same
+# "did a gate actually run" answer this banner does, so there is exactly one
+# definition rather than two that can drift. Deferred imports (matching the
+# `_nothing_was_built` import a few lines below) rather than a module-level
+# one: this file's sys.path setup already runs before its own top imports, so
+# any NEW top-level import here adds to the E402 count the ratchet already
+# treats as legacy debt on the existing ones -- a deferred, function-scoped
+# import sidesteps that without touching the pattern the rest of the file
+# uses. Kept as thin wrappers (not just called inline) so the private names
+# stay importable from this module, as they were before the move and as
+# existing tests expect.
+def _trailing_gate_evidence(spec_dir: Path) -> str | None:
+    from agents.gate_runner import trailing_gate_evidence  # noqa: PLC0415
+
+    result: str | None = trailing_gate_evidence(spec_dir)
+    return result
+
+
 def _evidence_shows_an_executed_gate(evidence: str | None) -> bool:
-    """True when the recorded evidence contains a gate that actually ran.
+    from agents.gate_runner import evidence_shows_an_executed_gate  # noqa: PLC0415
 
-    A gate whose tool is missing is reported `skipped`, and `summarize_gates`
-    renders a suite of nothing but skips as a pass. Seen live: the build Job
-    lacked the sandbox env, so every gate fell to a plain host subprocess with
-    no toolchain and the run recorded
-
-        kotlin-unit: skipped, swift-unit: skipped
-
-    which is not verification — it is the same empty result as "no gates
-    detected", wearing the word `passed` (#1491). #597's rule is that a skipped
-    gate must be visible and never silently green; this applies it to the
-    summary a human reads.
-    """
-    if not evidence:
-        return False
-    if evidence.startswith("no gates detected"):
-        return False
-    outcomes = _gate_outcomes(evidence)
-    if not outcomes:
-        return False
-    return any(outcome != "skipped" for outcome in outcomes)
+    result: bool = evidence_shows_an_executed_gate(evidence)
+    return result
 
 
 def _gate_outcomes_include_a_failure(evidence: str | None) -> bool:
-    """True when any gate in the recorded summary failed."""
-    if not evidence:
-        return False
-    return any(outcome == "failed" for outcome in _gate_outcomes(evidence))
+    from agents.gate_runner import gate_outcomes_include_a_failure  # noqa: PLC0415
+
+    result: bool = gate_outcomes_include_a_failure(evidence)
+    return result
 
 
 def _gate_outcomes(evidence: str) -> list[str]:
-    """The per-gate outcomes in a recorded summary, or [] if it does not parse."""
-    return [
-        part.split(":", 1)[1].strip() for part in evidence.split(",") if ":" in part
-    ]
+    from agents.gate_runner import gate_outcomes  # noqa: PLC0415
 
-
-def _trailing_gate_evidence(spec_dir: Path) -> str | None:
-    """What the trailing gate step recorded, or None if it never ran.
-
-    ``_run_trailing_gates_if_build_complete`` writes its outcome to
-    ``.trailing_gates_done`` — either the gate summary, or the sentence
-    "no gates detected ...". Absence of the file means the step did not run.
-    """
-    marker = spec_dir / ".trailing_gates_done"
-    try:
-        text = marker.read_text(encoding="utf-8").strip()
-    except (OSError, ValueError):
-        # ValueError covers UnicodeDecodeError on a corrupt marker. This runs
-        # during build finalization: unreadable evidence is no evidence, which
-        # is the safe answer, but it must never take the build down with it.
-        return None
-    return text or None
+    result: list[str] = gate_outcomes(evidence)
+    return result
 
 
 def _contract_gap_in_existing_code(spec_dir: Path, work_dir: Path | None) -> list[str]:
