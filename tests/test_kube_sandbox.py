@@ -250,3 +250,38 @@ def test_exit_code_falls_back_to_job_flag_when_no_terminated_state():
         SimpleNamespace(status=SimpleNamespace(container_statuses=None)),
         job_succeeded=False,
     ) == (False, 1)
+
+
+def test_job_failure_reason_names_the_deadline():
+    """A Job killed by activeDeadlineSeconds never ran the command to completion.
+
+    It has no terminated container state, so the exit code falls back to a
+    synthetic 1 — the same value a genuinely failing test produces. Without the
+    reason, "the toolchain download did not finish" is indistinguishable from
+    "your tests failed" (AIFactory#1491 family).
+    """
+    from types import SimpleNamespace
+
+    from core.kube_sandbox import _job_failure_reason
+
+    killed = SimpleNamespace(
+        conditions=[SimpleNamespace(type="Failed", reason="DeadlineExceeded")]
+    )
+    assert _job_failure_reason(killed) == "DeadlineExceeded"
+
+    # A Failed condition with no reason still reports something usable.
+    assert (
+        _job_failure_reason(
+            SimpleNamespace(conditions=[SimpleNamespace(type="Failed", reason=None)])
+        )
+        == "Failed"
+    )
+    # A healthy or unknown status must not invent a reason.
+    assert _job_failure_reason(SimpleNamespace(conditions=[])) == ""
+    assert _job_failure_reason(SimpleNamespace(conditions=None)) == ""
+    assert (
+        _job_failure_reason(
+            SimpleNamespace(conditions=[SimpleNamespace(type="Complete", reason="x")])
+        )
+        == ""
+    )
