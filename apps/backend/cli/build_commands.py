@@ -17,20 +17,6 @@ if str(_PARENT_DIR) not in sys.path:
 
 # Import only what we need at module level
 # Heavy imports are lazy-loaded in functions to avoid import errors
-# Recorded-evidence helpers live in agents.gate_runner (AIFactory#1496): the
-# tool that WRITES a QA sign-off (agents/tools_pkg/tools/qa.py) needs the same
-# "did a gate actually run" answer this banner does, so there is exactly one
-# definition rather than two that can drift. Aliased back to their original
-# names -- unchanged call sites below, and tests import these names directly
-# from this module.
-from agents.gate_runner import (
-    evidence_shows_an_executed_gate as _evidence_shows_an_executed_gate,
-)
-from agents.gate_runner import gate_outcomes as _gate_outcomes
-from agents.gate_runner import (
-    gate_outcomes_include_a_failure as _gate_outcomes_include_a_failure,
-)
-from agents.gate_runner import trailing_gate_evidence as _trailing_gate_evidence
 from progress import count_subtasks, print_paused_banner
 from review import ReviewState, requires_review_before_coding
 from ui import (
@@ -62,6 +48,46 @@ from .input_handlers import (
     read_from_file,
     read_multiline_input,
 )
+
+
+# Recorded-evidence helpers now live in agents.gate_runner (AIFactory#1496): the
+# tool that WRITES a QA sign-off (agents/tools_pkg/tools/qa.py) needs the same
+# "did a gate actually run" answer this banner does, so there is exactly one
+# definition rather than two that can drift. Deferred imports (matching the
+# `_nothing_was_built` import a few lines below) rather than a module-level
+# one: this file's sys.path setup already runs before its own top imports, so
+# any NEW top-level import here adds to the E402 count the ratchet already
+# treats as legacy debt on the existing ones -- a deferred, function-scoped
+# import sidesteps that without touching the pattern the rest of the file
+# uses. Kept as thin wrappers (not just called inline) so the private names
+# stay importable from this module, as they were before the move and as
+# existing tests expect.
+def _trailing_gate_evidence(spec_dir: Path) -> str | None:
+    from agents.gate_runner import trailing_gate_evidence  # noqa: PLC0415
+
+    result: str | None = trailing_gate_evidence(spec_dir)
+    return result
+
+
+def _evidence_shows_an_executed_gate(evidence: str | None) -> bool:
+    from agents.gate_runner import evidence_shows_an_executed_gate  # noqa: PLC0415
+
+    result: bool = evidence_shows_an_executed_gate(evidence)
+    return result
+
+
+def _gate_outcomes_include_a_failure(evidence: str | None) -> bool:
+    from agents.gate_runner import gate_outcomes_include_a_failure  # noqa: PLC0415
+
+    result: bool = gate_outcomes_include_a_failure(evidence)
+    return result
+
+
+def _gate_outcomes(evidence: str) -> list[str]:
+    from agents.gate_runner import gate_outcomes  # noqa: PLC0415
+
+    result: list[str] = gate_outcomes(evidence)
+    return result
 
 
 def _contract_gap_in_existing_code(spec_dir: Path, work_dir: Path | None) -> list[str]:

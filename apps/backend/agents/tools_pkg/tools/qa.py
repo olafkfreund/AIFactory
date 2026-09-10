@@ -95,6 +95,79 @@ def _nothing_was_built(project_dir: Path) -> str | None:
     return f"{project_dir} has no commits beyond its base and no uncommitted changes."
 
 
+def _approval_refusal_reason(spec_dir: Path, project_dir: Path) -> str | None:
+    """Why `update_qa_status(status="approved")` must be refused, or None.
+
+    Every guard an "approved" write has to pass, in one place, so
+    `update_qa_status` itself stays a thin dispatcher rather than a wall of
+    early returns (the ratchet's complexity caps exist for exactly that).
+
+    #1396: nothing was built -- a build with no diff cannot have been tested,
+    whatever `tests_passed` claims.
+
+    #1421: the spec enumerates an API this build does not export -- a green
+    suite against an invented API is indistinguishable from one against the
+    right one.
+
+    #1496: no evidence a verification command actually ran. Observed live,
+    twice: the coder agent said outright it could NOT run the suite ("no
+    Gradle/JVM on PATH ... I cannot execute the suite") and this tool was
+    still called with status="approved". "APPROVED ✓" is the same string a
+    build gets when its tests ran and passed -- so the distinction between
+    *verified* and *read carefully* was destroyed at exactly the point a
+    human (or a downstream dashboard) reads the result. `trailing_gate_evidence`
+    reads the one OBJECTIVE record of whether a verification command
+    executed: the marker the coder's own trailing-gate step writes to this
+    same spec_dir (agents/coder.py `_run_trailing_gates_if_build_complete`),
+    written before QA ever runs by a different code path than the one asking
+    to approve -- so it cannot be satisfied by an agent simply asserting
+    `tests_passed`, the thing #1396 already proved cannot be trusted alone.
+    """
+    unbuilt = _nothing_was_built(project_dir)
+    if unbuilt:
+        return (
+            f"Refusing to approve: nothing was built. {unbuilt} Approving "
+            "here would record a passing QA sign-off, and test results, for "
+            "code that does not exist (#1396). Implement the change first; "
+            "if the task genuinely requires no code change, say so rather "
+            "than signing off."
+        )
+
+    missing = _missing_contract_exports(spec_dir, project_dir)
+    if missing:
+        return (
+            "Refusing to approve: the spec enumerates an API this build "
+            f"does not define — {', '.join(missing)}. The card named those "
+            "so dependent cards could import them; with different names "
+            "each one re-implements the whole thing instead (#1421). "
+            "Export the names the spec asked for, or change the spec if "
+            "they are wrong — do not sign off on an equivalent API under "
+            "other names."
+        )
+
+    gate_evidence = trailing_gate_evidence(spec_dir)
+    if not evidence_shows_an_executed_gate(gate_evidence):
+        why = gate_evidence or "the gate step never ran for this build"
+        return (
+            f"Refusing to approve: no verification command is recorded as "
+            f"having run ({why}). An APPROVED sign-off must be backed by an "
+            "executed gate, not an agent's own reading of the code (#1496). "
+            "If the toolchain is genuinely unavailable here, say so and "
+            "leave this build unapproved -- do not record a pass for a "
+            "suite that never ran."
+        )
+    if gate_outcomes_include_a_failure(gate_evidence):
+        return (
+            "Refusing to approve: the recorded verification gates did not "
+            f"all pass ({gate_evidence}). A failing gate is evidence the "
+            "build does not work, not something QA can sign off over "
+            "(#1496). See GATE_FAILURES.md and fix the failure before "
+            "approving."
+        )
+
+    return None
+
+
 def create_qa_tools(
     spec_dir: Path | Callable[[], Path],
     project_dir: Path | Callable[[], Path],
@@ -190,124 +263,16 @@ def create_qa_tools(
             if status in ["in_review", "rejected"]:
                 qa_session += 1
 
-            # #1396: "approved" requires something to have been built.
-            #
-            # A build that produced nothing was signed off with
-            # `tests_passed: {"unit": "1/1"}` and `verified_by: "qa_agent"`.
-            # The branch had zero commits, the worktree was clean, and the
-            # files existed on no branch and in no commit -- but the Job
-            # reported SuccessCriteriaMet, the progress bar read 2/2, and every
-            # layer that reports upward said done and tested. Only reading the
-            # branch by hand contradicted it.
-            #
-            # `tests_passed` is the sharpest part: not a status someone forgot
-            # to update, but a positive claim about a test run that never
-            # happened, written into the artifact downstream consumers trust.
+            # An "approved" write is refused until every pre-approval
+            # guard is satisfied -- see `_approval_refusal_reason` for what
+            # each one catches and why (#1396, #1421, #1496). Pulled into one
+            # helper (rather than inlined here) so this function's own
+            # branch/return count stays readable -- the ratchet caught the
+            # #1496 guard pushing update_qa_status over the complexity caps.
             if status == "approved":
-                unbuilt = _nothing_was_built(get_project_dir())
-                if unbuilt:
-                    return {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": (
-                                    "Refusing to approve: nothing was built. "
-                                    f"{unbuilt} Approving here would record a "
-                                    "passing QA sign-off, and test results, for "
-                                    "code that does not exist (#1396). Implement "
-                                    "the change first; if the task genuinely "
-                                    "requires no code change, say so rather than "
-                                    "signing off."
-                                ),
-                            }
-                        ]
-                    }
-
-                # #1421: an API the card ENUMERATED is a contract, not a
-                # suggestion. Two runs of the same card produced 0/4 and 1/4 of
-                # the named functions, and the second reported 24 passing tests
-                # -- the coder writes the tests too, so a suite can be green
-                # against an API it invented. Only a check catches that: a green
-                # suite against the wrong API is indistinguishable from a green
-                # suite against the right one, and raising the tier moved 0/4 to
-                # 1/4 without making the contract binding.
-                missing = _missing_contract_exports(get_spec_dir(), get_project_dir())
-                if missing:
-                    return {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": (
-                                    "Refusing to approve: the spec enumerates an "
-                                    "API this build does not define — "
-                                    f"{', '.join(missing)}. The card named those "
-                                    "so dependent cards could import them; with "
-                                    "different names each one re-implements the "
-                                    "whole thing instead (#1421). Export the "
-                                    "names the spec asked for, or change the "
-                                    "spec if they are wrong — do not sign off on "
-                                    "an equivalent API under other names."
-                                ),
-                            }
-                        ]
-                    }
-
-                # #1496: "approved" requires evidence that a verification
-                # command actually ran, not just a self-report.
-                #
-                # Observed live, twice: the coder agent said outright it could
-                # NOT run the suite ("no Gradle/JVM on PATH ... I cannot
-                # execute the suite") and this tool was still called with
-                # status="approved". "APPROVED ✓" is the same string a build
-                # gets when its tests ran and passed -- so the distinction
-                # between *verified* and *read carefully* was destroyed at
-                # exactly the point a human (or a downstream dashboard) reads
-                # the result.
-                #
-                # `trailing_gate_evidence` reads the one OBJECTIVE record of
-                # whether a verification command executed: the marker the
-                # coder's own trailing-gate step writes to this same spec_dir
-                # (agents/coder.py `_run_trailing_gates_if_build_complete`).
-                # It is written before QA ever runs, by a different code path
-                # than the one asking to approve, so it cannot be satisfied by
-                # an agent simply asserting `tests_passed` -- the thing #1396
-                # already proved cannot be trusted on its own.
-                gate_evidence = trailing_gate_evidence(get_spec_dir())
-                if not evidence_shows_an_executed_gate(gate_evidence):
-                    why = gate_evidence or "the gate step never ran for this build"
-                    return {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": (
-                                    "Refusing to approve: no verification "
-                                    f"command is recorded as having run ({why}). "
-                                    "An APPROVED sign-off must be backed by an "
-                                    "executed gate, not an agent's own reading "
-                                    "of the code (#1496). If the toolchain is "
-                                    "genuinely unavailable here, say so and "
-                                    "leave this build unapproved -- do not "
-                                    "record a pass for a suite that never ran."
-                                ),
-                            }
-                        ]
-                    }
-                if gate_outcomes_include_a_failure(gate_evidence):
-                    return {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": (
-                                    "Refusing to approve: the recorded "
-                                    f"verification gates did not all pass ({gate_evidence}). "
-                                    "A failing gate is evidence the build does "
-                                    "not work, not something QA can sign off "
-                                    "over (#1496). See GATE_FAILURES.md and fix "
-                                    "the failure before approving."
-                                ),
-                            }
-                        ]
-                    }
+                refusal = _approval_refusal_reason(get_spec_dir(), get_project_dir())
+                if refusal:
+                    return {"content": [{"type": "text", "text": refusal}]}
 
             plan["qa_signoff"] = {
                 "status": status,
