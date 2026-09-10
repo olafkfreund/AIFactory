@@ -1828,3 +1828,34 @@ def test_manifest_default_omits_base_branch(
     # No override -> run.py keeps its own base-branch detection, as in-pod.
     cmd = _parallel_cmd(monkeypatch)
     assert "--base-branch" not in cmd
+
+
+def test_token_only_when_gates_dispatch_jobs(monkeypatch):
+    """#1491: the build Job creates gate Jobs through the k8s API, which needs a
+    mounted service-account token — but ONLY when gates actually route to a Job.
+
+    Without the token `load_incluster_config()` fails and the client falls back
+    to a kubeconfig that does not exist in a pod, so every gate died with
+    "Invalid kube-config file. Expected key current-context".
+    """
+    from server.services.build_backend import _gates_dispatch_jobs
+
+    monkeypatch.setenv("AIFACTORY_SANDBOX_IMAGE", "ghcr.io/x/runner-nix:latest")
+
+    monkeypatch.setenv("AIFACTORY_SANDBOX_GATES", "true")
+    monkeypatch.setenv("AIFACTORY_SANDBOX_BACKEND", "nixjob")
+    assert _gates_dispatch_jobs() is True
+    monkeypatch.setenv("AIFACTORY_SANDBOX_BACKEND", "kubejob")
+    assert _gates_dispatch_jobs() is True
+
+    # A host/docker backend dispatches nothing: no API call, so no token.
+    monkeypatch.setenv("AIFACTORY_SANDBOX_BACKEND", "docker")
+    assert _gates_dispatch_jobs() is False
+
+    # Gates off, or no image → the runner never reaches a Job either.
+    monkeypatch.setenv("AIFACTORY_SANDBOX_BACKEND", "nixjob")
+    monkeypatch.setenv("AIFACTORY_SANDBOX_GATES", "false")
+    assert _gates_dispatch_jobs() is False
+    monkeypatch.setenv("AIFACTORY_SANDBOX_GATES", "true")
+    monkeypatch.setenv("AIFACTORY_SANDBOX_IMAGE", "")
+    assert _gates_dispatch_jobs() is False
