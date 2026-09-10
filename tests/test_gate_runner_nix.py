@@ -318,3 +318,16 @@ def test_no_build_image_falls_back_instead_of_dispatching(monkeypatch, tmp_path)
         0,
         "ran in-process",
     )
+
+
+def test_gate_timeout_is_configurable():
+    """Every gate cold-fetches its closure; the budget must be raisable without
+    a release (#1541). Parsed from a mapping, so no module reload is needed —
+    reloading swaps module identity and breaks sibling tests' monkeypatching."""
+    from agents.gate_runner import _timeout_from_env
+
+    assert _timeout_from_env({}) == 600
+    assert _timeout_from_env({"AIFACTORY_GATE_TIMEOUT_SECONDS": "1800"}) == 1800
+    # Junk must not crash a build; fall back to the default.
+    assert _timeout_from_env({"AIFACTORY_GATE_TIMEOUT_SECONDS": "soon"}) == 600
+    assert _timeout_from_env({"AIFACTORY_GATE_TIMEOUT_SECONDS": ""}) == 600

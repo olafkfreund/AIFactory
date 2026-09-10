@@ -26,7 +26,7 @@ import logging
 import os
 import shlex
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,8 +34,25 @@ from core.nix_env import nix_in_image
 
 logger = logging.getLogger(__name__)
 
+
 # How long any single gate may run before we treat it as failed (seconds).
-GATE_TIMEOUT_SECONDS = 600
+# Every gate cold-fetches its toolchain closure from cache.nixos.org: the
+# runner image bakes no language closures (verified — no kotlin or swift paths
+# in its store). Kotlin fits in 600s; Swift, which drags in GTK, does not, and
+# the Job's deadline kills it mid-download. Configurable so raising the budget
+# does not need a release. The real fix is warming the closures (#1541).
+def _timeout_from_env(env: Mapping[str, str]) -> int:
+    """Gate budget in seconds; 600 unless overridden. Pure, so it is testable
+    without reloading the module (a reload swaps module identity and breaks
+    every other test's monkeypatching)."""
+    raw = (env.get("AIFACTORY_GATE_TIMEOUT_SECONDS") or "").strip()
+    try:
+        return int(raw) if raw else 600
+    except ValueError:
+        return 600
+
+
+GATE_TIMEOUT_SECONDS = _timeout_from_env(os.environ)
 
 # Max characters of captured output to retain per gate (keeps logs/markers sane).
 _OUTPUT_TAIL_CHARS = 4000

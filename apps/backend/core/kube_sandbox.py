@@ -282,6 +282,20 @@ def repo_is_mountable(workdir: str | None, data_root: str) -> bool:
     return _pvc_subpath(workdir, data_root) is not None
 
 
+def _job_failure_reason(status: object) -> str:
+    """The k8s reason a Job failed (e.g. ``DeadlineExceeded``), or "".
+
+    A Job that hits ``activeDeadlineSeconds`` is killed with no terminated
+    container state, so the exit code falls back to a synthetic 1 — the same
+    value a genuinely failing test produces. The reason is the only thing that
+    tells those apart.
+    """
+    for cond in getattr(status, "conditions", None) or []:
+        if getattr(cond, "type", "") == "Failed":
+            return str(getattr(cond, "reason", "") or "Failed")
+    return ""
+
+
 def _exit_code_from_pod(pod: object, *, job_succeeded: bool) -> tuple[bool, int]:
     """(succeeded, exit_code) from a Job pod's terminated container state.
 
@@ -357,6 +371,7 @@ class KubeJobSandbox:
         try:
             await batch.create_namespaced_job(self.namespace, manifest)
             succeeded = False
+            failure_reason = ""
             for _ in range(max(1, timeout // 3)):
                 # read the Job object (needs only `get jobs`), not the jobs/status
                 # subresource — keeps the sandbox Role least-privilege.
@@ -365,6 +380,7 @@ class KubeJobSandbox:
                     succeeded = True
                     break
                 if st and st.failed:
+                    failure_reason = _job_failure_reason(st)
                     break
                 await asyncio.sleep(3)
             pods = await core.list_namespaced_pod(
@@ -384,7 +400,15 @@ class KubeJobSandbox:
                 # succeeded/failed flag (RFC-0005): the flag collapses every
                 # non-zero to "failed" and loses the actual status.
                 succeeded, exit_code = _exit_code_from_pod(pod, job_succeeded=succeeded)
-            return RunResult(succeeded, exit_code, (output or "").strip(), [])
+            text = (output or "").strip()
+            if failure_reason:
+                # A Job killed by its deadline never finished the command, so its
+                # output is a truncated transcript of whatever it got through —
+                # indistinguishable from a command that ran and failed. Name the
+                # reason, or "the toolchain download did not finish" reads as
+                # "your tests failed" (AIFactory#1491 family).
+                text = f"[job {failure_reason}] {text}"
+            return RunResult(succeeded, exit_code, text, [])
         finally:
             try:
                 await batch.delete_namespaced_job(
