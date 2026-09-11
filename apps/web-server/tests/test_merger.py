@@ -554,7 +554,7 @@ def test_sweep_unreadable_tenant_stamp_never_processed_by_default_sweep(
 
     seen: list[str] = []
 
-    def fake_process(project_id, _project_path, spec_dir, *, dry_run, runner):
+    def fake_process(project_id, _project_path, spec_dir, **_kwargs):
         seen.append(spec_dir.name)
         return {
             "task": f"{project_id}:{spec_dir.name}",
