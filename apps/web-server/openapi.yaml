@@ -8348,6 +8348,50 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/maintenance/merger:
+    get:
+      summary: Report Merger
+      description: What the merger would do. Opens nothing.
+      operationId: report_merger_api_maintenance_merger_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Report Merger Api Maintenance Merger Get
+  /api/maintenance/merger/run:
+    post:
+      summary: Run Merger
+      description: Open PRs for stranded task branches. Never merges; see services.merger.
+      operationId: run_merger_api_maintenance_merger_run_post
+      parameters:
+      - name: dry_run
+        in: query
+        required: false
+        schema:
+          type: boolean
+          description: 'default true: opening PRs must be asked for explicitly'
+          default: true
+          title: Dry Run
+        description: 'default true: opening PRs must be asked for explicitly'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Run Merger Api Maintenance Merger Run Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/search:
     get:
       tags:

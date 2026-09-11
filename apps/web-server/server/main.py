@@ -46,6 +46,7 @@ from .routes import (
     git_credentials,
     github,
     mcp,
+    merger,
     notifications,
     organizations,
     projects,
@@ -564,6 +565,9 @@ def create_app() -> FastAPI:
     # Orphaned-task reaper: a task whose worker died stays in a
     # machine-owned state forever and shows as active in the cockpit.
     app.include_router(stale.router)
+    # Merger: opens PRs for stranded task branches (pushed, committed work
+    # with no open PR) -- see server.services.merger.
+    app.include_router(merger.router)
 
     app.include_router(search.router, tags=["Search"])
     app.include_router(mcp.router)
