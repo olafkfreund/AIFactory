@@ -355,7 +355,6 @@ async def _run_seeded(monkeypatch, statuses, *, timeout=3):
     statuses, one per `read_namespaced_job` call, and a stubbed k8s client."""
     import kubernetes_asyncio.client as k8s_client
     import kubernetes_asyncio.config as k8s_config
-
     from core.kube_sandbox import KubeJobSandbox
 
     async def _noop(*_a, **_k):
