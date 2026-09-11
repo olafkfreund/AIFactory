@@ -20,7 +20,7 @@ from server.routes import merger as merger_routes  # noqa: E402
 class _Req:
     """Minimal stand-in for a FastAPI Request (headers mapping + empty state)."""
 
-    def __init__(self, headers: dict | None = None):
+    def __init__(self, headers: dict[str, str] | None = None):
         self.headers = headers or {}
         self.state = type("S", (), {})()
 
