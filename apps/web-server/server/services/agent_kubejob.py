@@ -807,11 +807,15 @@ class KubejobMixin:
                 if self.is_running(task.id):
                     continue  # a live subprocess build in THIS pod
                 if await self._kubejob_liveness(task.id) != "absent":
-                    # "live" (a running durable row) or "unknown" (store
-                    # disabled, a transient read error, or a row in a state
-                    # we don't recognize as terminal) — either way, a
-                    # watchdog that destroys work must fail toward LEAVING
-                    # IT ALONE, so only a definite "absent" reaps (#1551).
+                    # "live" (a running durable row) or "unknown" (a
+                    # transient store-read error, or a row in a state we
+                    # don't recognize as terminal) — either way, a watchdog
+                    # that destroys work must fail toward LEAVING IT ALONE,
+                    # so only a definite "absent" reaps. Note: with no
+                    # durable store, is_running() above is already the full
+                    # answer (single-pod only), so _kubejob_liveness reads
+                    # that configuration as "absent" too, not "unknown"
+                    # (#1551).
                     continue
                 if not self._task_stale(task.updated_at, now, deadline_seconds):
                     continue
@@ -833,31 +837,42 @@ class KubejobMixin:
         return reaped
 
     async def _kubejob_liveness(self, task_id: str) -> str:
-        """Tri-state view of the durable job-state row backing ``task_id``.
+        """Tri-state liveness for ``task_id``, per the backend actually in play.
 
-        Returns ``"live"`` (row says ``running``), ``"absent"`` (row says a
-        terminal state — ``done``/``failed``/``stuck``/``review`` — written
-        either by the Job itself or by ``reap_vanished_jobs``' cluster check,
-        which runs every tick BEFORE the task-level reaper and already
-        confirms a stranded ``running`` row against the k8s Job before
-        flipping it terminal), or ``"unknown"`` for every path that cannot
-        prove the build is over.
+        Returns ``"live"`` (durable row says ``running``), ``"absent"`` (a
+        definite negative — see below), or ``"unknown"`` for every path that
+        cannot prove the build is over. ONLY CALL THIS after the caller has
+        already checked ``is_running(task_id)`` (``reap_abandoned_tasks``
+        does) — the "no store" branch below leans on that having happened.
 
         #1551: the old ``_has_live_kubejob`` returned a plain ``bool`` and
-        collapsed every uncertain case — no store configured, a transient
-        read error, a row in a state this code doesn't recognize — into
-        ``False``, which ``reap_abandoned_tasks`` read as "no live build" and
-        reaped. Three concurrent tasks were killed this way while their Jobs
-        were genuinely ``Running`` in the cluster: the store read raced the
-        concurrent admits/writes for those tasks and the resulting exception
-        (previously swallowed silently — no log at all) was indistinguishable
-        from "definitely nothing running". A watchdog that destroys work must
-        fail toward LEAVING IT ALONE, so only a proven terminal row reaches
-        ``"absent"``; everything else is ``"unknown"`` and the caller must not
-        reap on it.
+        collapsed every uncertain case — a transient store read error, a row
+        in a state this code doesn't recognize — into ``False``, which
+        ``reap_abandoned_tasks`` read as "no live build" and reaped. Three
+        concurrent tasks were killed this way while their Jobs were genuinely
+        ``Running`` in the cluster: the store read raced the concurrent
+        admits/writes for those tasks and the resulting exception (previously
+        swallowed silently — no log at all) was indistinguishable from
+        "definitely nothing running". A watchdog that destroys work must fail
+        toward LEAVING IT ALONE, so only a proven terminal row reaches
+        ``"absent"`` in that configuration.
+
+        No durable store is a DIFFERENT case, not more doubt: the kubejob
+        backend refuses to dispatch a Job without the store (see
+        ``_kubejob_backend_enabled``), so with no store EVERY build in this
+        deployment is an in-pod subprocess — a single-pod-only configuration
+        (``_store_enabled`` gates the durable, multi-replica-safe admission
+        path; its own startup log calls the in-memory fallback "single-pod
+        dev only... NOT multi-replica safe"). ``is_running(task_id)``, which
+        the caller already checked, is therefore the FULL answer for whether
+        this task has a live build anywhere — there is no second replica and
+        no k8s Job that could be holding it open. So "no store" is a definite
+        ``"absent"``, not ``"unknown"``: the leak this would otherwise cause
+        (a dead subprocess staying ``in_progress`` forever, shrinking the cap
+        on every occurrence) is a real regression, not a safe default.
         """
         if not getattr(self, "_store_enabled", False):
-            return "unknown"
+            return "absent"
         try:
             state = await self._store().get_state(task_id)
         except Exception:  # noqa: BLE001 - never let a doubt read as "absent"
@@ -878,6 +893,15 @@ class KubejobMixin:
         if lifecycle == "running":
             return "live"
         if lifecycle in _TERMINAL_STATES:
+            # A proven negative: mark_terminal is written ONLY by the control
+            # plane (agent_service.py / build_backend.py's _done/_fail) —
+            # never by run.py in the Job pod, which has no job-state write at
+            # all. For a k8s-job row specifically, build_backend's _done/_fail
+            # write this AFTER observing the Job's own status via the batch
+            # API (reap_vanished_jobs / _job_outcome), which runs every
+            # reconcile tick BEFORE the task-level reaper -- so a stranded
+            # "running" row is already cluster-confirmed terminal by the time
+            # this predicate ever sees it as non-running.
             return "absent"
         return "unknown"  # e.g. "queued", or a future state this doesn't know
 

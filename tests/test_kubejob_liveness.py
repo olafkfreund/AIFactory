@@ -1,17 +1,25 @@
-"""#1551: the reaper must fail toward LEAVING WORK ALONE, not toward reaping.
+"""#1551: the reaper must fail toward LEAVING WORK ALONE, not toward reaping
+-- for the backend actually in play.
 
-``_kubejob_liveness`` replaces the old ``_has_live_kubejob`` bool: every
-uncertain path (no store, a transient read error, a row in a state that isn't
-a proven terminal) used to collapse to ``False`` -> "no live build" -> reaped.
-These tests exercise the real method against a real (sqlite-backed)
-JobStateStore, not a stand-in, so a regression that turns "unknown" back into
-"absent" is caught here.
+``_kubejob_liveness`` replaces the old ``_has_live_kubejob`` bool: a transient
+read error or a row in a state that isn't a proven terminal used to collapse
+to ``False`` -> "no live build" -> reaped. These tests exercise the real
+method against a real (sqlite-backed) JobStateStore, not a stand-in, so a
+regression that turns "unknown" back into "absent" is caught here.
+
+A SECOND review finding (same issue): treating "no durable store" as
+"unknown" leaked abandoned in-pod subprocess tasks forever, because with no
+store the kubejob backend never dispatches a Job (see
+``_kubejob_backend_enabled``) -- every build is a single-pod subprocess, and
+``is_running()``, already checked by the caller, is the complete answer. So
+"no store" must read as a definite "absent", not "unknown".
 """
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -77,9 +85,15 @@ async def test_no_row_is_unknown_not_absent(tmp_path: Path):
     assert await owner._kubejob_liveness("never-admitted") == "unknown"
 
 
-async def test_store_disabled_is_unknown(tmp_path: Path):
+async def test_store_disabled_is_absent_not_unknown(tmp_path: Path):
+    """Mutation guard: with no durable store, every build in this deployment
+    is an in-pod subprocess (the kubejob backend refuses to dispatch without
+    the store) -- is_running(), already checked by the caller, is the full
+    answer, so this must read as a definite "absent", not "unknown". If this
+    regresses to "unknown", a dead subprocess task leaks in_progress forever
+    and the concurrency cap shrinks on every occurrence."""
     owner = _Owner(None, store_enabled=False)
-    assert await owner._kubejob_liveness("t1") == "unknown"
+    assert await owner._kubejob_liveness("t1") == "absent"
 
 
 async def test_store_read_error_is_unknown_not_absent(tmp_path: Path):
@@ -107,3 +121,45 @@ async def test_queued_row_is_unknown_not_absent(tmp_path: Path):
     )  # queued, cap=1
     owner = _Owner(store, store_enabled=True)
     assert await owner._kubejob_liveness("t2") == "unknown"
+
+
+# ── reap_abandoned_tasks end-to-end, real _kubejob_liveness (no stand-in) ──
+
+
+async def test_store_disabled_reaps_dead_subprocess(monkeypatch, tmp_path: Path):
+    """The leak this fix closes: AIFACTORY_BUILD_BACKEND=kubejob configured
+    WITHOUT DATABASE_URL still starts the reconcile loop (main.py gates it on
+    kubejob_enabled() alone), so reap_abandoned_tasks runs with
+    ``_store_enabled=False``. A subprocess that died without updating its
+    status must still be reaped -- not leaked forever with the cap shrinking
+    each time."""
+    from datetime import UTC, datetime, timedelta
+
+    class _Reaper(KubejobMixin):
+        def __init__(self):
+            self._store_enabled = False
+            self._job_store = None
+            self.reaped_calls: list[tuple[str, str]] = []
+
+        def is_running(self, task_id: str) -> bool:
+            return False  # the subprocess died; nothing left in this pod
+
+        async def _update_plan_status(
+            self, project_path, spec_id, status, task_id, **kw
+        ):
+            self.reaped_calls.append((task_id, status))
+
+    stale_iso = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+    task = SimpleNamespace(id="p:x", status="in_progress", updated_at=stale_iso)
+    monkeypatch.setattr(
+        "server.project_registry.load_projects", lambda: {"p": {"path": "/x"}}
+    )
+    spec_dir = Path("/x/specs/x")
+    monkeypatch.setattr(
+        "server.routes.task_service.get_spec_dirs", lambda pp: [spec_dir]
+    )
+    monkeypatch.setattr("server.routes.task_service.spec_to_task", lambda pid, sd: task)
+
+    r = _Reaper()
+    assert await r.reap_abandoned_tasks(deadline_seconds=600) == ["p:x"]
+    assert r.reaped_calls == [("p:x", "failed")]
