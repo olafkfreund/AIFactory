@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -46,8 +47,18 @@ def _skip(task: str, reason: str) -> dict[str, Any]:
     return {"task": task, "action": "skipped", "pr": None, "reason": reason}
 
 
-def _find_open_pr(owner: str, name: str, branch: str, runner: Runner) -> int | None:
-    """An already-open PR for ``branch``, or None. Makes re-runs idempotent."""
+def _find_open_pr(
+    owner: str, name: str, branch: str, runner: Runner
+) -> tuple[bool, int | None]:
+    """``(measured, pr_number)`` for an already-open PR on ``branch``.
+
+    ``measured`` is False when the ``gh pr list`` query itself failed --
+    network blip, rate limit, bad token. That is NOT the same as "queried
+    successfully and found nothing": treating a failed query as "no open PR"
+    is exactly the bug this module exists to not repeat (a failed measurement
+    read as a definite negative), so the caller must skip rather than proceed
+    to ``gh pr create`` on an unmeasured idempotency check.
+    """
     res = runner(
         [
             "gh",
@@ -66,8 +77,10 @@ def _find_open_pr(owner: str, name: str, branch: str, runner: Runner) -> int | N
         ],
         None,
     )
-    text = res.out.strip() if res.ok else ""
-    return int(text) if text.isdigit() else None
+    if not res.ok:
+        return False, None
+    text = res.out.strip()
+    return True, (int(text) if text.isdigit() else None)
 
 
 def _branch_ahead_and_changed(
@@ -83,9 +96,9 @@ def _branch_ahead_and_changed(
     treat that as "don't know", never as "empty" (#5 is about a MEASURED
     ahead_by of 0, not an absent measurement).
     """
-    runner(["git", "fetch", "origin", base], str(worktree))
+    fetched_base = runner(["git", "fetch", "origin", base], str(worktree))
     fetched_head = runner(["git", "fetch", "origin", branch], str(worktree))
-    if not fetched_head.ok:
+    if not fetched_base.ok or not fetched_head.ok:
         return None, None
     base_ref, head_ref = f"origin/{base}", f"origin/{branch}"
     ahead = runner(
@@ -96,11 +109,13 @@ def _branch_ahead_and_changed(
     changed = runner(
         ["git", "diff", "--name-only", f"{base_ref}...{head_ref}"], str(worktree)
     )
-    changed_files = (
-        len([line for line in changed.out.splitlines() if line.strip()])
-        if changed.ok
-        else None
-    )
+    if not changed.ok:
+        # A failed diff must not be read as "measured, zero changed files" --
+        # that reported a real branch as empty (the same class of bug as
+        # #1/#2 above). Unmeasurable in EITHER dimension means the whole pair
+        # is unmeasurable, not half a measurement.
+        return None, None
+    changed_files = len([line for line in changed.out.splitlines() if line.strip()])
     return int(ahead.out.strip()), changed_files
 
 
@@ -232,7 +247,9 @@ def _decide(
     owner, name = parts
     branch, base = ctx["branch"], ctx["base"]
 
-    existing = _find_open_pr(owner, name, branch, runner)
+    pr_list_measured, existing = _find_open_pr(owner, name, branch, runner)
+    if not pr_list_measured:
+        raise _SkipTask("open_pr_check_unmeasurable (gh pr list failed)")
     if existing is not None:
         return {"action": "already_open", "pr": existing}
 
@@ -296,9 +313,17 @@ def _process_spec(
 
 
 def sweep(
-    *, dry_run: bool = True, runner: Runner = pe._default_runner
+    *,
+    dry_run: bool = True,
+    runner: Runner = pe._default_runner,
+    project_ids: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     """Scan every project's specs and open PRs for stranded branches.
+
+    ``project_ids``, when given, restricts the scan to those ids (the route
+    passes the caller's visible projects -- see ``routes/merger.py`` -- so a
+    non-admin user cannot trigger a fleet-wide scan of orgs they cannot see).
+    Defaults to every registered project.
 
     Returns a report with one entry per spec examined -- ``opened``,
     ``already_open``, ``would_open`` (dry run), or ``skipped`` with a reason --
@@ -306,7 +331,8 @@ def sweep(
     content-free branch is never opened. Never merges anything.
     """
     results: list[dict[str, Any]] = []
-    for project_id in load_projects():
+    scope = load_projects() if project_ids is None else project_ids
+    for project_id in scope:
         try:
             project_path = resolve_project_path(project_id)
         except Exception:  # noqa: BLE001 - one broken project must not hide the rest

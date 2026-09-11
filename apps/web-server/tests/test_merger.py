@@ -64,12 +64,20 @@ def _spec(tmp_path: Path, spec_id: str, *, repo="o/r", base_branch=None) -> Path
 
 def test_find_open_pr_none():
     r = FakeRunner({"pr list": CmdResult(0, "", "")})
-    assert mg._find_open_pr("o", "r", "b", r) is None
+    assert mg._find_open_pr("o", "r", "b", r) == (True, None)
 
 
 def test_find_open_pr_found():
     r = FakeRunner({"pr list": CmdResult(0, "42\n", "")})
-    assert mg._find_open_pr("o", "r", "b", r) == 42
+    assert mg._find_open_pr("o", "r", "b", r) == (True, 42)
+
+
+def test_find_open_pr_query_failure_is_unmeasured_not_none():
+    """Finding #1: a failed `gh pr list` must be distinguishable from a
+    successful query that found nothing -- else the sweep proceeds to
+    `gh pr create` on an idempotency check that was never actually made."""
+    r = FakeRunner({"pr list": CmdResult(1, "", "rate limited")})
+    assert mg._find_open_pr("o", "r", "b", r) == (False, None)
 
 
 # ── _branch_ahead_and_changed ────────────────────────────────────────────────
@@ -111,6 +119,38 @@ def test_branch_ahead_and_changed_zero_is_measured_not_unmeasurable(tmp_path):
     )
     ahead, changed = mg._branch_ahead_and_changed(tmp_path, "main", "aifactory/1", r)
     assert (ahead, changed) == (0, 0)
+
+
+def test_branch_ahead_and_changed_unmeasurable_when_base_fetch_fails(tmp_path):
+    """Finding #2: the base fetch's result was previously discarded -- a stale
+    `origin/main` still produced a plausible-looking (wrong) comparison."""
+    r = FakeRunner(
+        {
+            "fetch origin main": CmdResult(1, "", "connection reset"),
+            "fetch origin aifactory/1": CmdResult(0, "", ""),
+            "rev-list --count": CmdResult(0, "3\n", ""),
+            "diff --name-only": CmdResult(0, "a.py\n", ""),
+        }
+    )
+    ahead, changed = mg._branch_ahead_and_changed(tmp_path, "main", "aifactory/1", r)
+    assert (ahead, changed) == (None, None)
+
+
+def test_branch_ahead_and_changed_unmeasurable_when_diff_fails(tmp_path):
+    """Finding #3: a failed `git diff` must not surface as changed_files=None
+    while ahead_by is still a real number -- `not changed_files` would then
+    read a real branch as empty. A failed diff makes the WHOLE pair
+    unmeasurable."""
+    r = FakeRunner(
+        {
+            "fetch origin main": CmdResult(0, "", ""),
+            "fetch origin aifactory/1": CmdResult(0, "", ""),
+            "rev-list --count": CmdResult(0, "3\n", ""),
+            "diff --name-only": CmdResult(1, "", "ambiguous argument"),
+        }
+    )
+    ahead, changed = mg._branch_ahead_and_changed(tmp_path, "main", "aifactory/1", r)
+    assert (ahead, changed) == (None, None)
 
 
 # ── honest_pr_title_and_body ─────────────────────────────────────────────────
@@ -228,6 +268,21 @@ def test_process_spec_never_drops_silently_when_unmeasurable(tmp_path, monkeypat
     assert not r.saw("pr create")
 
 
+def test_process_spec_skips_not_duplicates_when_pr_list_query_fails(
+    tmp_path, monkeypatch
+):
+    """Finding #1 end-to-end: a failed idempotency check must never fall
+    through to `gh pr create` -- that would open a duplicate PR precisely
+    when the duplicate-check couldn't run."""
+    monkeypatch.setenv("AIFACTORY_AUTO_PR", "true")
+    spec_dir = _spec(tmp_path, "001-x")
+    r = FakeRunner(_routes(**{"pr list": CmdResult(1, "", "rate limited")}))
+    out = mg._process_spec("proj", tmp_path, spec_dir, dry_run=False, runner=r)
+    assert out["action"] == "skipped"
+    assert "unmeasurable" in out["reason"]
+    assert not r.saw("pr create")
+
+
 def test_process_spec_never_merges_regardless_of_auto_merge_env(tmp_path, monkeypatch):
     monkeypatch.setenv("AIFACTORY_AUTO_PR", "true")
     monkeypatch.setenv("AIFACTORY_AUTO_MERGE", "true")
@@ -328,3 +383,29 @@ def test_sweep_one_broken_spec_does_not_hide_the_rest(tmp_path, monkeypatch):
     assert len(report["results"]) == 2
     assert any(r["reason"] == "sweep_error (see logs)" for r in report["results"])
     assert any(r["action"] == "opened" for r in report["results"])
+
+
+def test_sweep_project_ids_restricts_scope(tmp_path, monkeypatch):
+    """The route passes the caller's visible projects; sweep must honour it
+    rather than always scanning every registered project (finding #4)."""
+    monkeypatch.setattr(
+        mg,
+        "load_projects",
+        lambda: {"p1": {"path": "/should/not/be/read"}, "p2": {"path": "/nope"}},
+    )
+    seen: list[str] = []
+
+    def fake_process(project_id, *_a, **_k):
+        seen.append(project_id)
+        return {
+            "task": f"{project_id}:x",
+            "action": "skipped",
+            "pr": None,
+            "reason": "r",
+        }
+
+    monkeypatch.setattr(mg, "_process_spec", fake_process)
+    monkeypatch.setattr(mg, "resolve_project_path", lambda _pid: tmp_path)
+    monkeypatch.setattr(mg, "get_spec_dirs", lambda _p: [tmp_path / "spec-1"])
+    mg.sweep(dry_run=True, runner=FakeRunner({}), project_ids=["p1"])
+    assert seen == ["p1"], "sweep scanned a project outside the restricted scope"
