@@ -1276,9 +1276,7 @@ async def _run_trailing_gates_if_build_complete(
         # a fix must get its own gate run, not the previous commit's stale
         # pass (#1545).
         done_marker = spec_dir / ".trailing_gates_done"
-        if done_marker.exists() and trailing_gate_marker_is_current(
-            spec_dir, gate_dir
-        ):
+        if done_marker.exists() and trailing_gate_marker_is_current(spec_dir, gate_dir):
             return
 
         # RFC-0005 Tier A: when gates route through the Nix Job backend,

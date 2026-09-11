@@ -216,9 +216,9 @@ def build_job_manifest(
             "if [ -e /warm/store ]; then "
             "echo 'warm nix store already populated'; "
             "else "
-            "tmp=/warm/.seed-$$; rm -rf \"$tmp\" && mkdir -p \"$tmp\" "
-            "&& cp -a /nix/. \"$tmp/\" "
-            "&& for e in \"$tmp\"/*; do "
+            'tmp=/warm/.seed-$$; rm -rf "$tmp" && mkdir -p "$tmp" '
+            '&& cp -a /nix/. "$tmp/" '
+            '&& for e in "$tmp"/*; do '
             'n=$(basename "$e"); [ "$n" = store ] && continue; '
             'mv -n "$e" /warm/ 2>/dev/null || rm -rf "$e"; '
             "done "

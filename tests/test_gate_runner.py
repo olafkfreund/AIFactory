@@ -145,9 +145,7 @@ class TestEvidenceFailsClosedOnAnUnknownOutcome:
 
         # A mix of a real pass and a garbled entry must not let the real pass
         # carry the record -- the marker as a whole is unparseable evidence.
-        assert (
-            evidence_shows_an_executed_gate("mypy: passed, pytest: unknown") is False
-        )
+        assert evidence_shows_an_executed_gate("mypy: passed, pytest: unknown") is False
 
     def test_known_outcomes_still_count(self):
         from agents.gate_runner import evidence_shows_an_executed_gate

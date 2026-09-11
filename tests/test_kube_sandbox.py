@@ -368,9 +368,11 @@ async def _run_seeded(monkeypatch, statuses, *, timeout=3):
     fake_batch = _FakeBatchApi(statuses)
     fake_core = _FakeCoreApi()
 
-    monkeypatch.setattr(k8s_config, "load_incluster_config", lambda: (_ for _ in ()).throw(
-        Exception("no in-cluster config in tests")
-    ))
+    monkeypatch.setattr(
+        k8s_config,
+        "load_incluster_config",
+        lambda: (_ for _ in ()).throw(Exception("no in-cluster config in tests")),
+    )
     monkeypatch.setattr(k8s_config, "load_kube_config", _noop)
     monkeypatch.setattr(k8s_client, "ApiClient", lambda: _FakeApiClient())
     monkeypatch.setattr(k8s_client, "BatchV1Api", lambda api: fake_batch)
