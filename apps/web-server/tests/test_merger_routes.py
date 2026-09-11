@@ -76,7 +76,9 @@ def test_run_merger_does_not_block_the_event_loop(monkeypatch):
     monkeypatch.setattr(merger_routes, "load_projects", lambda: {})
     order: list[str] = []
 
-    def blocking_sweep(*, dry_run, project_ids):
+    # **_ absorbs project_ids: the stub must ACCEPT the route's real kwargs
+    # without asserting on them, and naming an unused one trips ARG001.
+    def blocking_sweep(*, dry_run, **_):
         order.append("sweep-start")
         time.sleep(0.05)
         order.append("sweep-end")
