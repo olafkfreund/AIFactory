@@ -59,7 +59,7 @@ def _spec(
     spec_dir.mkdir(parents=True)
     req = {"github_repo": repo, "title": f"Task {spec_id}"}
     (spec_dir / "requirements.json").write_text(json.dumps(req))
-    meta: dict = {}
+    meta: dict[str, object] = {}
     if base_branch:
         meta["base_branch"] = base_branch
     if tenant:
@@ -436,7 +436,7 @@ def test_sweep_tenant_filters_specs_not_projects(tmp_path, monkeypatch):
 
     seen: list[str] = []
 
-    def fake_process(project_id, _project_path, spec_dir, *, dry_run, runner):
+    def fake_process(project_id, _project_path, spec_dir, **_kwargs):
         seen.append(spec_dir.name)
         return {
             "task": f"{project_id}:{spec_dir.name}",
@@ -462,7 +462,7 @@ def test_sweep_tenant_none_scans_every_tenant(tmp_path, monkeypatch):
 
     seen: list[str] = []
 
-    def fake_process(project_id, _project_path, spec_dir, *, dry_run, runner):
+    def fake_process(project_id, _project_path, spec_dir, **_kwargs):
         seen.append(spec_dir.name)
         return {
             "task": f"{project_id}:{spec_dir.name}",
@@ -511,7 +511,7 @@ def test_sweep_spec_enumeration_error_does_not_hide_later_projects(
 
     seen: list[str] = []
 
-    def fake_process(project_id, _project_path, spec_dir, *, dry_run, runner):
+    def fake_process(project_id, _project_path, spec_dir, **_kwargs):
         seen.append(f"{project_id}:{spec_dir.name}")
         return {
             "task": f"{project_id}:{spec_dir.name}",

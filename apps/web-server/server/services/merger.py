@@ -349,7 +349,7 @@ def sweep(
             continue
         try:
             spec_dirs = get_spec_dirs(project_path)
-        except Exception:  # noqa: BLE001 - a permission error here must not
+        except Exception:
             # hide every project after this one -- #1554 finding 4, the exact
             # "never drop work" rule this module exists to enforce.
             logger.exception(
