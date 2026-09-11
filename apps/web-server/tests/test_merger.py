@@ -26,7 +26,7 @@ class FakeRunner:
         self.routes = routes
         self.calls: list[list[str]] = []
 
-    def __call__(self, argv, cwd=None):
+    def __call__(self, argv, _cwd=None):
         self.calls.append(argv)
         joined = " ".join(argv)
         # Longest (most specific) match wins, so a narrow override (e.g. one
@@ -269,7 +269,7 @@ def test_sweep_accounts_for_every_spec(tmp_path, monkeypatch):
     _spec(proj, "002-empty")
 
     monkeypatch.setattr(mg, "load_projects", lambda: {"p1": {"path": str(proj)}})
-    monkeypatch.setattr(mg, "resolve_project_path", lambda pid: proj)
+    monkeypatch.setattr(mg, "resolve_project_path", lambda _pid: proj)
 
     # One runner shared across both specs; each spec's worktree path (the
     # `cwd` every call gets) embeds its own spec id, so route on that rather
@@ -306,7 +306,7 @@ def test_sweep_one_broken_spec_does_not_hide_the_rest(tmp_path, monkeypatch):
     _spec(proj, "002-ok")
 
     monkeypatch.setattr(mg, "load_projects", lambda: {"p1": {"path": str(proj)}})
-    monkeypatch.setattr(mg, "resolve_project_path", lambda pid: proj)
+    monkeypatch.setattr(mg, "resolve_project_path", lambda _pid: proj)
 
     calls = {"n": 0}
 

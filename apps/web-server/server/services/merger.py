@@ -191,52 +191,60 @@ def honest_pr_title_and_body(
     return title, body
 
 
-def _process_spec(
-    project_id: str,
+class _SkipTask(Exception):  # noqa: N818 - not an error, a control-flow signal
+    """Raised to short-circuit ``_decide`` with a reason, keeping its return
+    count under the complexity ratchet's cap without collapsing the many
+    distinct "why not" cases into one another."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+
+
+def _decide(
     project_path: Path,
     spec_dir: Path,
+    spec_id: str,
     *,
     dry_run: bool,
     runner: Runner,
 ) -> dict[str, Any]:
-    spec_id = spec_dir.name
-    task = f"{project_id}:{spec_id}"
+    """Everything about one spec except actually opening the PR.
 
+    Returns the outcome dict directly for ``already_open``/``would_open``/
+    ``opened``, or raises ``_SkipTask`` for every "no PR, here's why" case --
+    ``_process_spec`` converts that into the same-shaped ``skipped`` dict.
+    """
     ctx = pe.gather_pr_context(project_path, spec_dir, spec_id, runner=runner)
     if ctx is None:
-        return _skip(task, "no_worktree_or_resolvable_repo")
-    if not pe._is_github(ctx["provider"]):  # noqa: SLF001
-        return _skip(task, f"provider_not_github:{ctx['provider']}")
-
-    parts = pe._split_repo(ctx["repo"])  # noqa: SLF001
+        raise _SkipTask("no_worktree_or_resolvable_repo")
+    if not pe._is_github(ctx["provider"]):
+        raise _SkipTask(f"provider_not_github:{ctx['provider']}")
+    parts = pe._split_repo(ctx["repo"])
     if parts is None:
-        return _skip(task, f"unresolvable_repo:{ctx['repo']}")
+        raise _SkipTask(f"unresolvable_repo:{ctx['repo']}")
     owner, name = parts
     branch, base = ctx["branch"], ctx["base"]
 
     existing = _find_open_pr(owner, name, branch, runner)
     if existing is not None:
-        return {"task": task, "action": "already_open", "pr": existing, "reason": None}
+        return {"action": "already_open", "pr": existing}
 
     ahead_by, changed_files = _branch_ahead_and_changed(
         ctx["worktree"], base, branch, runner
     )
     if ahead_by is None:
-        return _skip(task, "ahead_by_unmeasurable (branch not fetchable from origin)")
+        raise _SkipTask("ahead_by_unmeasurable (branch not fetchable from origin)")
     if ahead_by == 0 or not changed_files:
-        return _skip(
-            task, f"no_content (ahead_by={ahead_by}, changed_files={changed_files or 0})"
+        raise _SkipTask(
+            f"no_content (ahead_by={ahead_by}, changed_files={changed_files or 0})"
         )
-
     if not pe.is_auto_pr_enabled(project_path):
-        return _skip(task, "auto_pr_disabled")
+        raise _SkipTask("auto_pr_disabled")
 
     if dry_run:
         return {
-            "task": task,
             "action": "would_open",
             "pr": None,
-            "reason": None,
             "ahead_by": ahead_by,
             "changed_files": changed_files,
         }
@@ -254,14 +262,31 @@ def _process_spec(
             runner=runner,
         )
     except Exception as exc:  # noqa: BLE001 - the sweep must never crash on one task
-        logger.warning("[merger] create_pr error for %s: %s", task, exc)
-        return _skip(task, f"create_pr_error:{exc}")
+        logger.warning("[merger] create_pr error for %s: %s", spec_id, exc)
+        raise _SkipTask(f"create_pr_error:{exc}") from exc
     if pr is None:
-        return _skip(task, "pr_not_created (gh pr create failed)")
-    return {"task": task, "action": "opened", "pr": pr, "reason": None}
+        raise _SkipTask("pr_not_created (gh pr create failed)")
+    return {"action": "opened", "pr": pr}
 
 
-def sweep(*, dry_run: bool = True, runner: Runner = pe._default_runner) -> dict[str, Any]:  # noqa: SLF001
+def _process_spec(
+    project_id: str,
+    project_path: Path,
+    spec_dir: Path,
+    *,
+    dry_run: bool,
+    runner: Runner,
+) -> dict[str, Any]:
+    spec_id = spec_dir.name
+    task = f"{project_id}:{spec_id}"
+    try:
+        outcome = _decide(project_path, spec_dir, spec_id, dry_run=dry_run, runner=runner)
+    except _SkipTask as skip:
+        return _skip(task, skip.reason)
+    return {"task": task, "reason": None, **outcome}
+
+
+def sweep(*, dry_run: bool = True, runner: Runner = pe._default_runner) -> dict[str, Any]:
     """Scan every project's specs and open PRs for stranded branches.
 
     Returns a report with one entry per spec examined -- ``opened``,
