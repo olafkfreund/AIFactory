@@ -62,10 +62,10 @@ from .input_handlers import (
 # uses. Kept as thin wrappers (not just called inline) so the private names
 # stay importable from this module, as they were before the move and as
 # existing tests expect.
-def _trailing_gate_evidence(spec_dir: Path) -> str | None:
+def _trailing_gate_evidence(spec_dir: Path, project_dir: Path) -> str | None:
     from agents.gate_runner import trailing_gate_evidence  # noqa: PLC0415
 
-    result: str | None = trailing_gate_evidence(spec_dir)
+    result: str | None = trailing_gate_evidence(spec_dir, project_dir)
     return result
 
 
@@ -576,7 +576,7 @@ def handle_build_command(
             # never found, no gate ran at all, and the run still completed as
             # "QA validation passed (pre-approved)" — indistinguishable, to
             # anyone reading the result, from a suite that ran and was green.
-            gate_evidence = _trailing_gate_evidence(spec_dir)
+            gate_evidence = _trailing_gate_evidence(spec_dir, working_dir)
             emit_phase(
                 ExecutionPhase.QA_REVIEW, "QA pre-approved by coder agent", progress=100
             )

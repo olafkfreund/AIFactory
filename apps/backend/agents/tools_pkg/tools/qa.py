@@ -122,6 +122,12 @@ def _approval_refusal_reason(spec_dir: Path, project_dir: Path) -> str | None:
     written before QA ever runs by a different code path than the one asking
     to approve -- so it cannot be satisfied by an agent simply asserting
     `tests_passed`, the thing #1396 already proved cannot be trusted alone.
+
+    #1545: the marker alone used to be enough, but it is persistent -- a
+    worktree copy or a web-sync republish can carry a PRIOR build's passing
+    marker into this one. `trailing_gate_evidence` now only returns evidence
+    still bound to `project_dir`'s current git HEAD, so a marker recorded for
+    a different tree reads as no evidence, not a stale pass.
     """
     unbuilt = _nothing_was_built(project_dir)
     if unbuilt:
@@ -145,7 +151,7 @@ def _approval_refusal_reason(spec_dir: Path, project_dir: Path) -> str | None:
             "other names."
         )
 
-    gate_evidence = trailing_gate_evidence(spec_dir)
+    gate_evidence = trailing_gate_evidence(spec_dir, project_dir)
     if not evidence_shows_an_executed_gate(gate_evidence):
         why = gate_evidence or "the gate step never ran for this build"
         return (
