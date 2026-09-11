@@ -114,7 +114,42 @@ def _nothing_was_built(project_dir: Path) -> str | None:
 # overlap the previous one in-process, and the spec_dir itself lives on the
 # same shared filesystem the marker does, so nothing about this scopes it to
 # one process -- an in-memory lock would only cover the former).
-_GATE_REFRESH_CLAIM_NAME = ".trailing_gates_refresh.claim"
+#
+# #1549 review (Copilot): a claim stored INSIDE `spec_dir` gets caught by spec
+# replication and leaks. Two mechanisms copy spec-dir CONTENTS wholesale --
+# `WorktreeSyncMixin._sync_worktree_files`'s "sync any additional file" loop
+# (apps/web-server/server/services/agent_worktree_sync.py) copies every
+# regular file `worktree_spec.iterdir()` finds that isn't on the hardcoded
+# `files_to_sync` allowlist, dotfiles included, worktree -> main; and
+# `copy_spec_to_worktree` (apps/backend/core/workspace/setup.py) does an
+# unconditional `shutil.copytree(source_spec_dir, target_spec_dir,
+# dirs_exist_ok=True)` for every NEW worktree, main -> worktree. Both read
+# from disk, not from a name list this module controls, so a claim living at
+# `spec_dir / name` survives past its `finally` release in whichever copy the
+# sync ran before that release landed -- turning the TTL backstop (meant for a
+# crashed run) into the everyday path: an hour-long block on every refresh,
+# for a perfectly healthy claim that was simply copied elsewhere.
+#
+# `.trailing_gates_done` itself tolerates this because it is DATA about the
+# tree (bound to a HEAD sha, re-validated per read -- #1545); a copy of it is
+# either still valid or correctly stale, never actively harmful. A claim has
+# no such property: it is pure per-attempt, per-process coordination state,
+# never meant to be read anywhere but the process that just wrote it, so a
+# copy of it is never "correctly" anything -- it is just a phantom lock. The
+# established in-repo pattern for adjacent problems (`task_control.json`,
+# `qa_review_cycle.json` -- see their own module docstrings) is a NAME
+# exclusion from the sync allowlist, but that only protects the one sync
+# direction with a hardcoded list (`files_to_sync`); it does nothing against
+# the catch-all "any other file" loop, and nothing against
+# `copy_spec_to_worktree`'s unconditional copytree, and it is one more name
+# every future replication path has to remember to add. Storing the claim as
+# a SIBLING of `spec_dir` instead of a child is immune to both current paths
+# structurally, not by convention: `copytree(source_spec_dir, ...)` only ever
+# copies `source_spec_dir`'s own contents, and the "any other file" loop only
+# ever iterates `worktree_spec.iterdir()`'s own contents -- neither one visits
+# `spec_dir`'s siblings, so nothing has to be told to skip this file, and
+# nothing new added later needs to remember to either.
+_GATE_REFRESH_CLAIM_SUFFIX = ".trailing_gates_refresh.claim"
 
 # Generous upper bound on one refresh's real duration: a build's trailing
 # gates can fan out across several languages, sequentially, and #1541 measured
@@ -124,6 +159,13 @@ _GATE_REFRESH_CLAIM_NAME = ".trailing_gates_refresh.claim"
 # lock, since a stale claim that blocks every future refresh forever would be
 # worse than the race it exists to prevent.
 _STALE_CLAIM_TTL_SECONDS = 3600
+
+
+def _gate_refresh_claim_path(spec_dir: Path) -> Path:
+    """Where `spec_dir`'s refresh claim lives: a SIBLING of `spec_dir`, named
+    from `spec_dir.name` so distinct specs sharing a parent never collide,
+    not a child of it -- see the module note above for why."""
+    return spec_dir.parent / f".{spec_dir.name}{_GATE_REFRESH_CLAIM_SUFFIX}"
 
 
 def _claim_gate_refresh(spec_dir: Path) -> bool:
@@ -136,7 +178,7 @@ def _claim_gate_refresh(spec_dir: Path) -> bool:
     in-flight refresh, or a future approval attempt after it, will make
     current evidence available).
     """
-    claim = spec_dir / _GATE_REFRESH_CLAIM_NAME
+    claim = _gate_refresh_claim_path(spec_dir)
     if _create_claim_file(claim):
         return True
 
@@ -174,7 +216,7 @@ def _release_gate_refresh_claim(spec_dir: Path) -> None:
     unlikely case where BOTH the TTL expired and this run is still alive) is
     not an error -- the goal state (no claim left behind) is already true."""
     with contextlib.suppress(OSError):
-        (spec_dir / _GATE_REFRESH_CLAIM_NAME).unlink()
+        _gate_refresh_claim_path(spec_dir).unlink()
 
 
 async def _refresh_stale_gate_evidence(spec_dir: Path, project_dir: Path) -> str | None:

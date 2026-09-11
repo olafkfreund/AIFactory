@@ -32,6 +32,7 @@ from agents.tools_pkg.tools.qa import (
     _claim_gate_refresh,
     _release_gate_refresh_claim,
 )
+from core.workspace.setup import copy_spec_to_worktree
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -460,3 +461,80 @@ async def test_concurrent_stale_refresh_dispatches_gate_run_once(
     assert any("Refusing" not in t for t in texts), (
         f"at least one of the two concurrent approvals must succeed: {texts}"
     )
+
+
+# =============================================================================
+# The claim must not leak through spec-dir replication (#1549 review)
+#
+# `spec_dir` is not a private, single-owner directory -- it is replicated by
+# two REAL code paths: `copy_spec_to_worktree` (apps/backend, main -> every
+# new worktree, unconditional `shutil.copytree`) and
+# `WorktreeSyncMixin._sync_worktree_files` (apps/web-server, worktree -> main,
+# a catch-all loop over every file not on a hardcoded allowlist). A claim
+# living INSIDE spec_dir would be swept up by either. These tests drive the
+# REAL replication functions (no mocking of the copy logic itself) and assert
+# the claim never appears on the other side.
+# =============================================================================
+
+
+def test_claim_does_not_leak_into_new_worktree_via_copy_spec_to_worktree(
+    tmp_path: Path,
+) -> None:
+    """`copy_spec_to_worktree` copies the WHOLE source spec dir into every new
+    worktree, unconditionally. A claim inside spec_dir would be seeded into
+    every future worktree too; as a sibling, it must never appear there."""
+    source_spec_dir = tmp_path / "main" / ".aifactory" / "specs" / "001-test"
+    source_spec_dir.mkdir(parents=True)
+    (source_spec_dir / "spec.md").write_text("hello\n")
+
+    assert _claim_gate_refresh(source_spec_dir) is True
+    claim_path = qa_mod._gate_refresh_claim_path(source_spec_dir)
+    assert claim_path.exists()
+
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    target_spec_dir = copy_spec_to_worktree(source_spec_dir, worktree_path, "001-test")
+
+    assert not (target_spec_dir / claim_path.name).exists(), (
+        "the refresh claim leaked into a brand-new worktree"
+    )
+    assert (target_spec_dir / "spec.md").exists(), "sanity: real spec files still copy"
+
+
+@pytest.mark.asyncio
+async def test_claim_does_not_leak_into_main_spec_via_worktree_sync(
+    tmp_path: Path,
+) -> None:
+    """`_sync_worktree_files`'s "any other file" loop copies every file it
+    finds in the worktree spec dir that isn't on the hardcoded allowlist,
+    worktree -> main. A claim inside spec_dir would ride along; as a sibling
+    of the worktree spec dir, it must never appear in the main spec dir."""
+    sys.path.insert(0, str(Path(__file__).parent.parent / "apps" / "web-server"))
+    from server import specpath  # noqa: PLC0415
+    from server.services.agent_worktree_sync import WorktreeSyncMixin  # noqa: PLC0415
+
+    project_path = tmp_path / "project"
+    spec_id = "001-test-spec"
+    worktree_spec = specpath.spec_dir_for(
+        project_path / ".aifactory" / "worktrees" / "tasks" / spec_id, spec_id
+    )
+    worktree_spec.mkdir(parents=True)
+
+    # A claim the gate refresh left behind against the WORKTREE spec dir.
+    assert _claim_gate_refresh(worktree_spec) is True
+    claim_path = qa_mod._gate_refresh_claim_path(worktree_spec)
+    assert claim_path.exists()
+
+    class _SyncHarness(WorktreeSyncMixin):
+        pass
+
+    # No implementation_plan.json and no task_id: this build has nothing else
+    # to sync, which keeps the harness to exactly the mixin under test (no
+    # websocket/task-tracking attributes needed for those unrelated branches).
+    await _SyncHarness()._sync_worktree_files(project_path, spec_id, task_id=None)
+
+    main_spec = specpath.spec_dir_for(project_path, spec_id)
+    assert not (main_spec / claim_path.name).exists(), (
+        "the refresh claim leaked into the main spec dir via worktree sync"
+    )
+    assert claim_path.exists(), "the original claim must be untouched by sync"
