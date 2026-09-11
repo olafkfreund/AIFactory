@@ -39,6 +39,7 @@ from server.project_registry import load_projects, resolve_project_path
 from server.routes.task_service import get_spec_dirs
 from server.services import pr_endgame as pe
 from server.services.pr_endgame import Runner
+from server.tenancy import spec_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -317,6 +318,7 @@ def sweep(
     dry_run: bool = True,
     runner: Runner = pe._default_runner,
     project_ids: Iterable[str] | None = None,
+    tenant: str | None = None,
 ) -> dict[str, Any]:
     """Scan every project's specs and open PRs for stranded branches.
 
@@ -324,6 +326,13 @@ def sweep(
     passes the caller's visible projects -- see ``routes/merger.py`` -- so a
     non-admin user cannot trigger a fleet-wide scan of orgs they cannot see).
     Defaults to every registered project.
+
+    ``tenant``, when given, further restricts to specs stamped with that
+    tenant (mirrors ``routes/tasks.py``'s ``list_tasks`` -- #1554 finding 1:
+    org membership alone does not separate tenants sharing one org, so a spec
+    with no stamp is never matched by a real tenant). ``None`` means every
+    tenant, which is what multi-tenant-disabled deployments and the route's
+    own service-principal/auth-disabled path both pass.
 
     Returns a report with one entry per spec examined -- ``opened``,
     ``already_open``, ``would_open`` (dry run), or ``skipped`` with a reason --
@@ -338,7 +347,21 @@ def sweep(
         except Exception:  # noqa: BLE001 - one broken project must not hide the rest
             logger.warning("[merger] cannot resolve project %s", project_id)
             continue
-        for spec_dir in get_spec_dirs(project_path):
+        try:
+            spec_dirs = get_spec_dirs(project_path)
+        except Exception:  # noqa: BLE001 - a permission error here must not
+            # hide every project after this one -- #1554 finding 4, the exact
+            # "never drop work" rule this module exists to enforce.
+            logger.exception(
+                "[merger] cannot enumerate specs for project %s", project_id
+            )
+            results.append(
+                _skip(f"{project_id}:*", "spec_enumeration_error (see logs)")
+            )
+            continue
+        if tenant is not None:
+            spec_dirs = [d for d in spec_dirs if spec_tenant(d) == tenant]
+        for spec_dir in spec_dirs:
             try:
                 results.append(
                     _process_spec(

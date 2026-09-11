@@ -45,17 +45,27 @@ class FakeRunner:
         return any(needle in " ".join(c) for c in self.calls)
 
 
-def _spec(tmp_path: Path, spec_id: str, *, repo="o/r", base_branch=None) -> Path:
+def _spec(
+    tmp_path: Path,
+    spec_id: str,
+    *,
+    repo="o/r",
+    base_branch=None,
+    tenant=None,
+) -> Path:
     wt = tmp_path / ".aifactory" / "worktrees" / "tasks" / spec_id
     wt.mkdir(parents=True)
     spec_dir = tmp_path / ".aifactory" / "specs" / spec_id
     spec_dir.mkdir(parents=True)
     req = {"github_repo": repo, "title": f"Task {spec_id}"}
     (spec_dir / "requirements.json").write_text(json.dumps(req))
+    meta: dict = {}
     if base_branch:
-        (spec_dir / "task_metadata.json").write_text(
-            json.dumps({"base_branch": base_branch})
-        )
+        meta["base_branch"] = base_branch
+    if tenant:
+        meta["tenant_id"] = tenant
+    if meta:
+        (spec_dir / "task_metadata.json").write_text(json.dumps(meta))
     return spec_dir
 
 
@@ -409,3 +419,113 @@ def test_sweep_project_ids_restricts_scope(tmp_path, monkeypatch):
     monkeypatch.setattr(mg, "get_spec_dirs", lambda _p: [tmp_path / "spec-1"])
     mg.sweep(dry_run=True, runner=FakeRunner({}), project_ids=["p1"])
     assert seen == ["p1"], "sweep scanned a project outside the restricted scope"
+
+
+def test_sweep_tenant_filters_specs_not_projects(tmp_path, monkeypatch):
+    """Finding #1 (#1554): org membership alone does not separate two
+    tenants sharing one org -- filtering must happen at the SPEC level
+    (mirrors routes/tasks.py's list_tasks spec_tenant filter), not merely at
+    project/org scope."""
+    proj = tmp_path / "proj"
+    _spec(proj, "001-acme", tenant="acme")
+    _spec(proj, "002-other", tenant="other")
+    _spec(proj, "003-unstamped")  # => "default" tenant, must not match "acme"
+
+    monkeypatch.setattr(mg, "load_projects", lambda: {"p1": {"path": str(proj)}})
+    monkeypatch.setattr(mg, "resolve_project_path", lambda _pid: proj)
+
+    seen: list[str] = []
+
+    def fake_process(project_id, _project_path, spec_dir, *, dry_run, runner):
+        seen.append(spec_dir.name)
+        return {
+            "task": f"{project_id}:{spec_dir.name}",
+            "action": "skipped",
+            "pr": None,
+            "reason": "r",
+        }
+
+    monkeypatch.setattr(mg, "_process_spec", fake_process)
+    mg.sweep(dry_run=True, runner=FakeRunner({}), tenant="acme")
+    assert seen == ["001-acme"], "a non-matching or unstamped spec leaked through"
+
+
+def test_sweep_tenant_none_scans_every_tenant(tmp_path, monkeypatch):
+    """tenant=None (multi-tenant mode off) must be a no-op filter -- the
+    existing single-tenant behaviour byte-identical."""
+    proj = tmp_path / "proj"
+    _spec(proj, "001-acme", tenant="acme")
+    _spec(proj, "002-other", tenant="other")
+
+    monkeypatch.setattr(mg, "load_projects", lambda: {"p1": {"path": str(proj)}})
+    monkeypatch.setattr(mg, "resolve_project_path", lambda _pid: proj)
+
+    seen: list[str] = []
+
+    def fake_process(project_id, _project_path, spec_dir, *, dry_run, runner):
+        seen.append(spec_dir.name)
+        return {
+            "task": f"{project_id}:{spec_dir.name}",
+            "action": "skipped",
+            "pr": None,
+            "reason": "r",
+        }
+
+    monkeypatch.setattr(mg, "_process_spec", fake_process)
+    mg.sweep(dry_run=True, runner=FakeRunner({}))
+    assert sorted(seen) == ["001-acme", "002-other"]
+
+
+def test_sweep_spec_enumeration_error_does_not_hide_later_projects(
+    tmp_path, monkeypatch
+):
+    """Finding #4 (#1554): get_spec_dirs used to sit OUTSIDE the per-project
+    try, so a permission error enumerating one project's specs aborted the
+    whole sweep -- every project after it silently never got scanned. The
+    merger's entire purpose is "never drop work"; this is that rule broken
+    at the project level."""
+    monkeypatch.setenv("AIFACTORY_AUTO_PR", "true")
+    proj_bad = tmp_path / "bad"
+    proj_good = tmp_path / "good"
+    proj_bad.mkdir()
+    _spec(proj_good, "001-ok")
+
+    monkeypatch.setattr(
+        mg,
+        "load_projects",
+        lambda: {"pbad": {"path": str(proj_bad)}, "pgood": {"path": str(proj_good)}},
+    )
+    monkeypatch.setattr(
+        mg,
+        "resolve_project_path",
+        lambda pid: proj_bad if pid == "pbad" else proj_good,
+    )
+    real_get_spec_dirs = mg.get_spec_dirs
+
+    def flaky_get_spec_dirs(project_path):
+        if project_path == proj_bad:
+            raise PermissionError("denied")
+        return real_get_spec_dirs(project_path)
+
+    monkeypatch.setattr(mg, "get_spec_dirs", flaky_get_spec_dirs)
+
+    seen: list[str] = []
+
+    def fake_process(project_id, _project_path, spec_dir, *, dry_run, runner):
+        seen.append(f"{project_id}:{spec_dir.name}")
+        return {
+            "task": f"{project_id}:{spec_dir.name}",
+            "action": "opened",
+            "pr": 1,
+            "reason": None,
+        }
+
+    monkeypatch.setattr(mg, "_process_spec", fake_process)
+    report = mg.sweep(dry_run=False, runner=FakeRunner({}))
+    assert seen == ["pgood:001-ok"], (
+        "the good project (after the bad one) must still be scanned -- "
+        "silently dropping it is the exact bug this fixes"
+    )
+    assert any(
+        r["reason"] == "spec_enumeration_error (see logs)" for r in report["results"]
+    )

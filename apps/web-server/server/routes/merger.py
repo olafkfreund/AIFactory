@@ -16,14 +16,23 @@ Under ``/api/maintenance`` rather than ``/api/tasks`` for the same reason
 ``stale.py`` is: this scans every project, it is not task-scoped, so it must
 not collide with ``tasks.py``'s ``@router.get("/{task_id}")``.
 
-Authorization mirrors ``tasks.py``'s ``list_tasks`` (#319): the sweep is
-restricted to projects owned by an org the caller belongs to via
-``accessible_org_ids`` -- ``None`` (service principal / local UI) means every
-project, same as everywhere else that helper is used. This is object-level
-scoping, not a route-level role gate, because the merger's own purpose --
-opening PRs for a caller's own stranded work -- does not call for an
-admin-only endpoint; it calls for the same "see only your orgs" rule every
-other fleet-wide read in this router already applies.
+Authorization (#319, tightened by #1554):
+
+- Object-level scope, both endpoints: ``accessible_org_ids`` restricts the
+  sweep to projects owned by an org the caller belongs to -- ``None``
+  (service principal / local UI) means every project, same as everywhere
+  else that helper is used -- mirroring ``tasks.py``'s ``list_tasks``.
+- Tenant scope, both endpoints: when multi-tenant mode is on, ``sweep`` is
+  additionally given the caller's resolved tenant and filters to specs
+  stamped with it (mirrors ``list_tasks``'s ``spec_tenant`` filter -- org
+  membership alone does not separate two tenants sharing one org).
+- Role floor, WRITE only: a report (``GET``, or ``POST`` with
+  ``dry_run=true``) stays at "any membership" (``accessible_org_ids``'s
+  default), since it opens nothing. An actual sweep (``POST
+  dry_run=false``) pushes branches and opens PRs -- the same side effect as
+  ``routes/pr.py``'s ``create_pr_from_task``, which requires
+  ``require_task_access("member")`` -- so it requires ``minimum_role=
+  "member"`` in every org the sweep would touch, not mere viewer membership.
 
 Runs ``sweep`` in a worker thread via ``asyncio.to_thread``: it shells out to
 ``git``/``gh`` per spec examined, and running that on the event loop would
@@ -42,6 +51,7 @@ from server.database.engine import get_db
 from server.project_registry import load_projects
 from server.routes.project_authz import accessible_org_ids
 from server.services.merger import sweep
+from server.tenancy import multi_tenant_enabled, resolve_tenant
 
 router = APIRouter()
 
@@ -53,13 +63,21 @@ router = APIRouter()
 _DB_DEP = Depends(get_db)
 
 
-async def _visible_project_ids(request: Request, db: AsyncSession) -> list[str]:
-    """Project ids the caller may trigger the merger against (#319)."""
+async def _visible_project_ids(
+    request: Request, db: AsyncSession, *, minimum_role: str = "viewer"
+) -> list[str]:
+    """Project ids the caller may trigger the merger against (#319, #1554)."""
     projects = load_projects()
-    allowed = await accessible_org_ids(request, db)
+    allowed = await accessible_org_ids(request, db, minimum_role)
     if allowed is None:
         return list(projects.keys())
     return [pid for pid, p in projects.items() if p.get("org_id") in allowed]
+
+
+def _tenant_scope(request: Request) -> str | None:
+    """The caller's tenant to filter specs by, or None for "every tenant"
+    (multi-tenant mode off -- #1554 finding 1)."""
+    return resolve_tenant(request) if multi_tenant_enabled() else None
 
 
 @router.get("/api/maintenance/merger")
@@ -69,7 +87,9 @@ async def report_merger(
 ) -> dict[str, Any]:
     """What the merger would do. Opens nothing."""
     project_ids = await _visible_project_ids(request, db)
-    return await asyncio.to_thread(sweep, dry_run=True, project_ids=project_ids)
+    return await asyncio.to_thread(
+        sweep, dry_run=True, project_ids=project_ids, tenant=_tenant_scope(request)
+    )
 
 
 @router.post("/api/maintenance/merger/run")
@@ -81,5 +101,11 @@ async def run_merger(
     db: AsyncSession = _DB_DEP,
 ) -> dict[str, Any]:
     """Open PRs for stranded task branches. Never merges; see services.merger."""
-    project_ids = await _visible_project_ids(request, db)
-    return await asyncio.to_thread(sweep, dry_run=dry_run, project_ids=project_ids)
+    # A real sweep pushes branches and opens PRs -- the same write the
+    # per-task PR endpoint gates on "member" (#1554 finding 2). A dry run
+    # opens nothing, so it stays at the report's "any membership" level.
+    minimum_role = "viewer" if dry_run else "member"
+    project_ids = await _visible_project_ids(request, db, minimum_role=minimum_role)
+    return await asyncio.to_thread(
+        sweep, dry_run=dry_run, project_ids=project_ids, tenant=_tenant_scope(request)
+    )
