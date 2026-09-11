@@ -58,18 +58,66 @@ def resolve_tenant(request: Any = None) -> str:
         return DEFAULT_TENANT
 
 
+# Returned by :func:`spec_tenant` when ``task_metadata.json`` exists but could
+# not be read or parsed (permission error, I/O error, corrupt JSON) -- fixed
+# fleet-wide, factory-gitops#13/#14-adjacent finding, generalised from #1554
+# finding 1: this is NOT the same as "no stamp". A missing file is genuine
+# absence and safely defaults to DEFAULT_TENANT (every caller already treats
+# an unstamped spec that way); a file that exists but errors tells us nothing
+# about which tenant owns it, and every ``spec_tenant(d) == tenant`` filter in
+# this codebase (routes/tasks.py, routes/projects.py, services/merger.py) is
+# a SECURITY BOUNDARY -- collapsing "unknown" into "default" let an
+# unreadable-but-real stamp be read, or written to, by whoever the caller
+# resolves to as "default". This sentinel can never equal a real tenant id
+# (``resolve_tenant`` only ever returns the ``X-Tenant-Id`` header value or
+# ``DEFAULT_TENANT``), so it fails every existing filter closed -- excluded
+# from every tenant's view, including default's -- with NO changes needed at
+# any of those three call sites.
+UNREADABLE_TENANT = "__tenant_unreadable__"
+
+
 def read_spec_tenant(spec_dir: Path) -> str | None:
-    """The tenant stamped on a spec's ``task_metadata.json``, or ``None``."""
+    """The tenant stamped on a spec's ``task_metadata.json``.
+
+    ``None`` means genuinely unstamped (no file, or no ``tenant_id`` key).
+    An unreadable/corrupt file (exists but errors) returns
+    :data:`UNREADABLE_TENANT` instead of ``None`` -- see that constant's
+    comment for why conflating the two is the bug.
+    """
     try:
-        meta = json.loads((Path(spec_dir) / "task_metadata.json").read_text())
-    except (OSError, ValueError):
+        text = (Path(spec_dir) / "task_metadata.json").read_text()
+    except FileNotFoundError:
         return None
+    except OSError:
+        logger.warning(
+            "tenant stamp unreadable for %s (failing closed, not defaulting)",
+            sanitize_log(spec_dir),
+        )
+        return UNREADABLE_TENANT
+    try:
+        meta = json.loads(text)
+    except ValueError:
+        logger.warning(
+            "tenant stamp unparseable for %s (failing closed, not defaulting)",
+            sanitize_log(spec_dir),
+        )
+        return UNREADABLE_TENANT
     tenant = meta.get("tenant_id")
     return str(tenant) if tenant else None
 
 
 def spec_tenant(spec_dir: Path) -> str:
-    """Like :func:`read_spec_tenant` but a missing stamp means ``"default"``."""
+    """Like :func:`read_spec_tenant` but a missing stamp means ``"default"``.
+
+    A genuinely unreadable stamp (file exists, read/parse failed) is NEVER
+    defaulted -- ``read_spec_tenant`` returns :data:`UNREADABLE_TENANT` for
+    that case, a non-empty string that survives the ``or DEFAULT_TENANT``
+    fallback below unchanged (only ``None`` -- a real absence -- falls
+    through to it), so it fails closed out of every ``== tenant`` filter
+    rather than silently resolving to ``"default"`` (#1554 finding 1: this
+    used to let an unreadable-but-real stamp be swept as if it belonged to
+    whichever tenant a caller resolved to as default).
+    """
     return read_spec_tenant(spec_dir) or DEFAULT_TENANT
 
 

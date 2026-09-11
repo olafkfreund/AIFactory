@@ -529,3 +529,45 @@ def test_sweep_spec_enumeration_error_does_not_hide_later_projects(
     assert any(
         r["reason"] == "spec_enumeration_error (see logs)" for r in report["results"]
     )
+
+
+def test_sweep_unreadable_tenant_stamp_never_processed_by_default_sweep(
+    tmp_path, monkeypatch
+):
+    """Finding #1 generalised (#1555): a spec with an unreadable stamp must
+    NEVER be treated as belonging to the "default" tenant -- that is exactly
+    what would let a default-tenant sweep push/PR a spec whose real tenant is
+    unknown. It must be excluded from processing AND recorded, not silently
+    dropped from either the scan or the report."""
+    monkeypatch.setenv("AIFACTORY_AUTO_PR", "true")
+    proj = tmp_path / "proj"
+    _spec(proj, "001-good", tenant="default")
+    bad_id = "002-corrupt"
+    (proj / ".aifactory" / "worktrees" / "tasks" / bad_id).mkdir(parents=True)
+    bad_spec = proj / ".aifactory" / "specs" / bad_id
+    bad_spec.mkdir(parents=True)
+    (bad_spec / "requirements.json").write_text(json.dumps({"github_repo": "o/r"}))
+    (bad_spec / "task_metadata.json").write_text("{not valid json")
+
+    monkeypatch.setattr(mg, "load_projects", lambda: {"p1": {"path": str(proj)}})
+    monkeypatch.setattr(mg, "resolve_project_path", lambda _pid: proj)
+
+    seen: list[str] = []
+
+    def fake_process(project_id, _project_path, spec_dir, *, dry_run, runner):
+        seen.append(spec_dir.name)
+        return {
+            "task": f"{project_id}:{spec_dir.name}",
+            "action": "opened",
+            "pr": 1,
+            "reason": None,
+        }
+
+    monkeypatch.setattr(mg, "_process_spec", fake_process)
+    report = mg.sweep(dry_run=False, runner=FakeRunner({}), tenant="default")
+    assert seen == ["001-good"], "an unreadable-stamp spec was swept as default tenant"
+    assert any(
+        r["task"] == f"p1:{bad_id}"
+        and r["reason"] == "tenant_stamp_unreadable (see logs)"
+        for r in report["results"]
+    ), "the unreadable spec must be recorded, not silently dropped"

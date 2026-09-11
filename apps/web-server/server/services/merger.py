@@ -39,7 +39,7 @@ from server.project_registry import load_projects, resolve_project_path
 from server.routes.task_service import get_spec_dirs
 from server.services import pr_endgame as pe
 from server.services.pr_endgame import Runner
-from server.tenancy import spec_tenant
+from server.tenancy import UNREADABLE_TENANT, spec_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -330,9 +330,15 @@ def sweep(
     ``tenant``, when given, further restricts to specs stamped with that
     tenant (mirrors ``routes/tasks.py``'s ``list_tasks`` -- #1554 finding 1:
     org membership alone does not separate tenants sharing one org, so a spec
-    with no stamp is never matched by a real tenant). ``None`` means every
-    tenant, which is what multi-tenant-disabled deployments and the route's
-    own service-principal/auth-disabled path both pass.
+    with no stamp is never matched by a real tenant). A spec whose stamp
+    exists but could not be read is never matched either -- it fails closed
+    (``tenancy.UNREADABLE_TENANT``) rather than defaulting, and is recorded
+    as a skip, not silently dropped. ``None`` means every tenant: that is
+    what the route passes whenever multi-tenant mode itself is OFF
+    (``routes/merger.py``'s ``_tenant_scope`` checks only
+    ``multi_tenant_enabled()``, not who the caller is -- a service-principal
+    or auth-disabled call still gets tenant-filtered like anyone else once
+    multi-tenant mode is on and it sends an ``X-Tenant-Id``).
 
     Returns a report with one entry per spec examined -- ``opened``,
     ``already_open``, ``would_open`` (dry run), or ``skipped`` with a reason --
@@ -360,7 +366,26 @@ def sweep(
             )
             continue
         if tenant is not None:
-            spec_dirs = [d for d in spec_dirs if spec_tenant(d) == tenant]
+            kept = []
+            for d in spec_dirs:
+                stamp = spec_tenant(d)
+                if stamp == UNREADABLE_TENANT:
+                    # Fail closed (#1554 finding 1, generalised): an
+                    # unreadable stamp must never be treated as any
+                    # tenant's, including "default" -- that would let a
+                    # default-tenant sweep push/PR a spec whose real tenant
+                    # is unknown. Recorded, not silently dropped, same as
+                    # every other unmeasurable git state this module skips.
+                    results.append(
+                        _skip(
+                            f"{project_id}:{d.name}",
+                            "tenant_stamp_unreadable (see logs)",
+                        )
+                    )
+                    continue
+                if stamp == tenant:
+                    kept.append(d)
+            spec_dirs = kept
         for spec_dir in spec_dirs:
             try:
                 results.append(
