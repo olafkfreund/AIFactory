@@ -88,7 +88,9 @@ def _branch_ahead_and_changed(
     if not fetched_head.ok:
         return None, None
     base_ref, head_ref = f"origin/{base}", f"origin/{branch}"
-    ahead = runner(["git", "rev-list", "--count", f"{base_ref}..{head_ref}"], str(worktree))
+    ahead = runner(
+        ["git", "rev-list", "--count", f"{base_ref}..{head_ref}"], str(worktree)
+    )
     if not ahead.ok or not ahead.out.strip().isdigit():
         return None, None
     changed = runner(
@@ -115,12 +117,17 @@ def _gate_evidence_for(spec_dir: Path, project_path: Path) -> str | None:
     except ImportError:
         return None
     try:
-        return trailing_gate_evidence(spec_dir, project_path)
+        # Explicit annotation, not a bare return: this file's mypy_path scope
+        # makes the lazily-imported call itself Any (same gap noted beside
+        # `_should_require_human_review` in coder.py) -- the declared type is
+        # what keeps `-> str | None` honest against `no-any-return`.
+        evidence: str | None = trailing_gate_evidence(spec_dir, project_path)
     except Exception:  # noqa: BLE001 - evidence lookup must never break the sweep
         logger.debug(
             "[merger] gate evidence lookup failed for %s", spec_dir.name, exc_info=True
         )
         return None
+    return evidence
 
 
 def _qa_status_for(spec_dir: Path) -> str:
@@ -168,7 +175,7 @@ def honest_pr_title_and_body(
     that gate, that is the whole reason the merger exists. A reviewer must be
     able to tell "the factory opened this" from "the factory verified this".
     """
-    title, _unused_body = pe._pr_title_body(spec_dir, spec_id)  # noqa: SLF001
+    title, _unused_body = pe._pr_title_body(spec_dir, spec_id)
     gate_line = _gate_evidence_for(spec_dir, project_path) or (
         "no verification gates recorded for this build"
     )
@@ -261,7 +268,7 @@ def _decide(
             body=body,
             runner=runner,
         )
-    except Exception as exc:  # noqa: BLE001 - the sweep must never crash on one task
+    except Exception as exc:
         logger.warning("[merger] create_pr error for %s: %s", spec_id, exc)
         raise _SkipTask(f"create_pr_error:{exc}") from exc
     if pr is None:
@@ -280,13 +287,17 @@ def _process_spec(
     spec_id = spec_dir.name
     task = f"{project_id}:{spec_id}"
     try:
-        outcome = _decide(project_path, spec_dir, spec_id, dry_run=dry_run, runner=runner)
+        outcome = _decide(
+            project_path, spec_dir, spec_id, dry_run=dry_run, runner=runner
+        )
     except _SkipTask as skip:
         return _skip(task, skip.reason)
     return {"task": task, "reason": None, **outcome}
 
 
-def sweep(*, dry_run: bool = True, runner: Runner = pe._default_runner) -> dict[str, Any]:
+def sweep(
+    *, dry_run: bool = True, runner: Runner = pe._default_runner
+) -> dict[str, Any]:
     """Scan every project's specs and open PRs for stranded branches.
 
     Returns a report with one entry per spec examined -- ``opened``,
@@ -305,10 +316,14 @@ def sweep(*, dry_run: bool = True, runner: Runner = pe._default_runner) -> dict[
             try:
                 results.append(
                     _process_spec(
-                        project_id, project_path, spec_dir, dry_run=dry_run, runner=runner
+                        project_id,
+                        project_path,
+                        spec_dir,
+                        dry_run=dry_run,
+                        runner=runner,
                     )
                 )
-            except Exception:  # noqa: BLE001 - one broken spec must not hide the rest
+            except Exception:
                 logger.exception(
                     "[merger] sweep failed for %s:%s", project_id, spec_dir.name
                 )

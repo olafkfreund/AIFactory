@@ -33,7 +33,9 @@ class FakeRunner:
         # spec's branch) is not shadowed by a broader catch-all registered
         # earlier in the same routes dict.
         matches = [
-            (needle, result) for needle, result in self.routes.items() if needle in joined
+            (needle, result)
+            for needle, result in self.routes.items()
+            if needle in joined
         ]
         if matches:
             return max(matches, key=lambda pair: len(pair[0]))[1]
@@ -183,7 +185,12 @@ def test_process_spec_idempotent_when_pr_already_open(tmp_path, monkeypatch):
     spec_dir = _spec(tmp_path, "001-x")
     r = FakeRunner(_routes(**{"pr list": CmdResult(0, "9\n", "")}))
     out = mg._process_spec("proj", tmp_path, spec_dir, dry_run=False, runner=r)
-    assert out == {"task": "proj:001-x", "action": "already_open", "pr": 9, "reason": None}
+    assert out == {
+        "task": "proj:001-x",
+        "action": "already_open",
+        "pr": 9,
+        "reason": None,
+    }
     assert not r.saw("pr create"), "an already-open PR must never be re-opened"
 
 
