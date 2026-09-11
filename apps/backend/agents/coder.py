@@ -1240,8 +1240,11 @@ async def _run_trailing_gates_if_build_complete(
         from .gate_runner import (
             detect_gates,
             failing_gates,
+            gate_dir_for,
             run_gates,
             summarize_gates,
+            trailing_gate_marker_is_current,
+            write_trailing_gate_marker,
         )
 
         # Only run when the whole plan is complete — "once at the end".
@@ -1264,13 +1267,18 @@ async def _run_trailing_gates_if_build_complete(
         # derives its PVC subPath from this cwd — so detecting/running against the
         # primary checkout (often no go.mod / package.json) silently found nothing.
         # Fall back to project_dir for a non-worktree build. (#597)
-        worktree = project_dir / ".aifactory" / "worktrees" / "tasks" / spec_dir.name
-        gate_dir = worktree if worktree.exists() else project_dir
+        gate_dir = gate_dir_for(spec_dir, project_dir)
 
-        # Run exactly once per build, no matter how many parallel waves or the
-        # serial post-loop call reach this point. (#597)
+        # Run once per tree, no matter how many parallel waves or the serial
+        # post-loop call reach this point (#597) -- but a marker bound to a
+        # DIFFERENT tree (an earlier commit, or one copied in by worktree
+        # setup / web sync) does not count: a QA-fixer iteration that commits
+        # a fix must get its own gate run, not the previous commit's stale
+        # pass (#1545).
         done_marker = spec_dir / ".trailing_gates_done"
-        if done_marker.exists():
+        if done_marker.exists() and trailing_gate_marker_is_current(
+            spec_dir, gate_dir
+        ):
             return
 
         # RFC-0005 Tier A: when gates route through the Nix Job backend,
@@ -1331,8 +1339,8 @@ async def _run_trailing_gates_if_build_complete(
 
         if not gates:
             # A skipped gate must be VISIBLE, never silently treated as green. (#597)
-            done_marker.write_text(
-                f"no gates detected in {gate_dir}\n", encoding="utf-8"
+            write_trailing_gate_marker(
+                spec_dir, gate_dir, f"no gates detected in {gate_dir}"
             )
             print_status(f"Trailing gates: none detected in {gate_dir}", "info")
             return
@@ -1395,7 +1403,7 @@ async def _run_trailing_gates_if_build_complete(
             if marker.exists():
                 marker.unlink()  # clear any stale failures from a prior run
             print_status(f"Trailing gates passed: {summary}", "success")
-        done_marker.write_text(f"{summary}\n", encoding="utf-8")  # ran once (#597)
+        write_trailing_gate_marker(spec_dir, gate_dir, summary)  # ran once (#597)
     except Exception as exc:  # noqa: BLE001 - gates are best-effort, never break a build
         logger.debug("Trailing gate run skipped: %s", exc)
 

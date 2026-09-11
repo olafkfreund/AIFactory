@@ -47,9 +47,13 @@ def _timeout_from_env(env: Mapping[str, str]) -> int:
     every other test's monkeypatching)."""
     raw = (env.get("AIFACTORY_GATE_TIMEOUT_SECONDS") or "").strip()
     try:
-        return int(raw) if raw else 600
+        value = int(raw) if raw else 600
     except ValueError:
         return 600
+    # 0 would time out every gate instantly and a negative value is invalid as
+    # Kubernetes `activeDeadlineSeconds` — both are configuration mistakes, not
+    # a deliberately short budget, so fall back the same as unparseable input.
+    return value if value > 0 else 600
 
 
 GATE_TIMEOUT_SECONDS = _timeout_from_env(os.environ)
@@ -664,15 +668,108 @@ def failing_gates(results: list[GateResult]) -> list[GateResult]:
 # WRITES a QA sign-off (agents/tools_pkg/tools/qa.py) and the CLI banner that
 # reports a coder's own pre-approval (cli/build_commands.py) agree on what
 # counts as evidence.
+#
+# #1545: the marker alone is not proof it describes THIS tree. Worktree setup
+# copies the whole spec dir (marker included), and the web sync republishes
+# files into a resumed build's spec dir -- either can carry a marker written
+# for a different commit into a build it never ran a gate against. The marker
+# is now bound to the git HEAD sha of the directory the gates actually ran in
+# (`gate_dir_for`) at write time, and a read only counts it as evidence when
+# that sha still matches the CURRENT tree. This also fixes the "QA-fixer
+# iterations compound it" half of #1545: the marker previously gated
+# `_run_trailing_gates_if_build_complete` on existence alone, so a build that
+# kept fixing and re-committing after the one gate run never got the gates
+# re-run. Binding on HEAD sha makes a new commit invalidate the marker and
+# retrigger the gate run.
 
 
-def trailing_gate_evidence(spec_dir: Path) -> str | None:
-    """What the trailing gate step recorded, or None if it never ran.
+def gate_dir_for(spec_dir: Path, project_dir: Path) -> Path:
+    """Where trailing gates actually run for a build (#597).
+
+    The task worktree a parallel wave (or the serial post-loop call) merges
+    into, falling back to `project_dir` when there is none. The single
+    definition shared by the writer
+    (agents/coder.py::_run_trailing_gates_if_build_complete) and every reader
+    of the marker it writes, so both agree on which tree's HEAD the evidence
+    is bound to.
+    """
+    worktree = project_dir / ".aifactory" / "worktrees" / "tasks" / spec_dir.name
+    return worktree if worktree.exists() else project_dir
+
+
+def _current_head_sha(gate_dir: Path) -> str | None:
+    """Git HEAD sha of `gate_dir`, or None when it cannot be determined.
+
+    Best-effort: a missing git binary, a non-git directory, or any other
+    subprocess failure must not raise -- it makes the tree binding below a
+    no-op ("cannot verify") rather than crashing evidence collection.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],  # noqa: S607
+            cwd=gate_dir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    sha = result.stdout.strip()
+    return sha or None
+
+
+def write_trailing_gate_marker(spec_dir: Path, gate_dir: Path, evidence: str) -> None:
+    """Persist gate evidence bound to `gate_dir`'s current tree (#1545).
+
+    The marker's first line is the tree identifier the evidence was recorded
+    against: `gate_dir`'s git HEAD sha, or "-" when it could not be
+    determined. `trailing_gate_evidence` only returns evidence whose
+    identifier still matches the CURRENT tree, so a marker copied in from a
+    different build (worktree setup, web sync, a resumed build) reads as no
+    evidence at all rather than a stale pass.
+    """
+    sha = _current_head_sha(gate_dir) or "-"
+    marker = spec_dir / ".trailing_gates_done"
+    marker.write_text(f"{sha}\n{evidence}\n", encoding="utf-8")
+
+
+def trailing_gate_marker_is_current(spec_dir: Path, gate_dir: Path) -> bool:
+    """True when the recorded marker is bound to `gate_dir`'s CURRENT HEAD.
+
+    Also true when the binding cannot be checked at all -- no marker sha was
+    recorded ("-"), or `gate_dir`'s HEAD cannot be read now. Git is not always
+    available (tests, a non-git checkout); treating "cannot verify" as "stale"
+    would fail this guard closed somewhere it was never meant to reach. That is
+    a known, documented gap: a build that never sits inside a git checkout
+    gets no protection from this binding.
+    """
+    marker = spec_dir / ".trailing_gates_done"
+    try:
+        text = marker.read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return False
+    recorded_sha = text.split("\n", 1)[0].strip()
+    if not recorded_sha or recorded_sha == "-":
+        return True
+    current_sha = _current_head_sha(gate_dir)
+    if current_sha is None:
+        return True
+    return recorded_sha == current_sha
+
+
+def trailing_gate_evidence(spec_dir: Path, project_dir: Path) -> str | None:
+    """What the trailing gate step recorded for the CURRENT tree, or None.
 
     Absence of the file means the step did not run at all (e.g. the build
     never reached "all subtasks complete", or bypassed the coder loop
-    entirely).
+    entirely). Evidence recorded for a tree other than the current one (see
+    module note above, #1545) is likewise treated as absent -- it is not
+    proof about THIS build.
     """
+    gate_dir = gate_dir_for(spec_dir, project_dir)
     marker = spec_dir / ".trailing_gates_done"
     try:
         text = marker.read_text(encoding="utf-8").strip()
@@ -681,7 +778,19 @@ def trailing_gate_evidence(spec_dir: Path) -> str | None:
         # evidence is no evidence -- the safe answer -- but reading it must
         # never raise into the caller.
         return None
-    return text or None
+    if not text:
+        return None
+    if not trailing_gate_marker_is_current(spec_dir, gate_dir):
+        return None
+    _, _, evidence = text.partition("\n")
+    evidence = evidence.strip()
+    return evidence or None
+
+
+# The only outcomes `GateResult.status` (and therefore `summarize_gates`) ever
+# emits. Anything else in a marker is not a real gate result — either a hand
+# edit or a corrupted/truncated write — and must not be read as one.
+_KNOWN_GATE_OUTCOMES = frozenset({"passed", "failed", "skipped"})
 
 
 def gate_outcomes(evidence: str) -> list[str]:
@@ -705,6 +814,11 @@ def evidence_shows_an_executed_gate(evidence: str | None) -> bool:
     detected", wearing the word `passed` (#1491). #597's rule is that a skipped
     gate must be visible and never silently green; this applies it to the
     record a QA sign-off is checked against.
+
+    An outcome outside {passed, failed, skipped} — e.g. a malformed marker
+    read back as ``pytest: unknown`` — fails CLOSED: it is not `skipped`, so
+    the naive "any non-skipped outcome" reading would count it as an executed,
+    PASSING gate. A record this tool cannot parse is not evidence (#1545).
     """
     if not evidence:
         return False
@@ -712,6 +826,8 @@ def evidence_shows_an_executed_gate(evidence: str | None) -> bool:
         return False
     outcomes = gate_outcomes(evidence)
     if not outcomes:
+        return False
+    if any(outcome not in _KNOWN_GATE_OUTCOMES for outcome in outcomes):
         return False
     return any(outcome != "skipped" for outcome in outcomes)
 

@@ -103,6 +103,15 @@ def _tool(spec: Path, project: Path):
     return tools[0].handler
 
 
+def _write_marker(spec: Path, project: Path, evidence: str) -> None:
+    """Write `.trailing_gates_done` the way the real writer does (#1545): bound
+    to `project`'s current git HEAD, so `trailing_gate_evidence` accepts it as
+    describing THIS tree rather than a stale/foreign one."""
+    from agents.gate_runner import gate_dir_for, write_trailing_gate_marker
+
+    write_trailing_gate_marker(spec, gate_dir_for(spec, project), evidence)
+
+
 @pytest.mark.asyncio
 async def test_approval_with_no_gate_marker_is_refused(
     tmp_path: Path, built_clone: Path, real_sdk
@@ -132,9 +141,7 @@ async def test_approval_when_every_gate_was_skipped_is_refused(
     """A toolchain absence must reach the verdict, not just prose (#1496)."""
     spec = tmp_path / "spec"
     _plan(spec)
-    (spec / ".trailing_gates_done").write_text(
-        "kotlin-unit: skipped, swift-unit: skipped\n"
-    )
+    _write_marker(spec, built_clone, "kotlin-unit: skipped, swift-unit: skipped")
     handler = _tool(spec, built_clone)
 
     result = await handler(
@@ -152,7 +159,7 @@ async def test_approval_when_no_gates_were_detected_is_refused(
 ) -> None:
     spec = tmp_path / "spec"
     _plan(spec)
-    (spec / ".trailing_gates_done").write_text(f"no gates detected in {built_clone}\n")
+    _write_marker(spec, built_clone, f"no gates detected in {built_clone}")
     handler = _tool(spec, built_clone)
 
     result = await handler({"status": "approved", "issues": "[]", "tests_passed": "{}"})
@@ -167,7 +174,7 @@ async def test_approval_when_a_gate_failed_is_refused(
     """A failed gate is not an approval, even if the agent says otherwise."""
     spec = tmp_path / "spec"
     _plan(spec)
-    (spec / ".trailing_gates_done").write_text("pytest: failed\n")
+    _write_marker(spec, built_clone, "pytest: failed")
     handler = _tool(spec, built_clone)
 
     result = await handler(
@@ -188,7 +195,7 @@ async def test_approval_with_a_real_passing_gate_is_allowed(
     """The guard must not block a build that was genuinely verified."""
     spec = tmp_path / "spec"
     _plan(spec)
-    (spec / ".trailing_gates_done").write_text("pytest: passed\n")
+    _write_marker(spec, built_clone, "pytest: passed")
     handler = _tool(spec, built_clone)
 
     result = await handler(

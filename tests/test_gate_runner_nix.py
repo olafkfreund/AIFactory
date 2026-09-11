@@ -331,6 +331,11 @@ def test_gate_timeout_is_configurable():
     # Junk must not crash a build; fall back to the default.
     assert _timeout_from_env({"AIFACTORY_GATE_TIMEOUT_SECONDS": "soon"}) == 600
     assert _timeout_from_env({"AIFACTORY_GATE_TIMEOUT_SECONDS": ""}) == 600
+    # #1545: 0 would time out every gate instantly, and a negative value is
+    # invalid as Kubernetes `activeDeadlineSeconds` -- both fall back the same
+    # as unparseable input, not through as a broken budget.
+    assert _timeout_from_env({"AIFACTORY_GATE_TIMEOUT_SECONDS": "0"}) == 600
+    assert _timeout_from_env({"AIFACTORY_GATE_TIMEOUT_SECONDS": "-30"}) == 600
 
 
 def test_packed_path_uses_the_warm_store_even_with_nix_in_image(monkeypatch, tmp_path):

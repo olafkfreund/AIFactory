@@ -218,8 +218,12 @@ class TestTheToolItselfRefuses:
         spec = tmp_path / "spec"
         self._plan(spec)
         # #1496: a commit alone is no longer enough -- approval also needs the
-        # trailing-gate marker recording that a verification command ran.
-        (spec / ".trailing_gates_done").write_text("pytest: passed\n")
+        # trailing-gate marker recording that a verification command ran. Write
+        # it the way the real gate step does (#1545): bound to `clone`'s
+        # current HEAD, so it is accepted as evidence for THIS tree.
+        from agents.gate_runner import gate_dir_for, write_trailing_gate_marker
+
+        write_trailing_gate_marker(spec, gate_dir_for(spec, clone), "pytest: passed")
         handler = self._tool(spec, clone)
 
         result = await handler(
