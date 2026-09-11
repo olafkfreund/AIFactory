@@ -23,7 +23,7 @@ from server.project_registry import resolve_project_path
 from server.services import review_redrive_service
 from server.specpath import spec_dir_for
 
-from .build_backend import orphaned_worktree_registrations
+from .build_backend import _TERMINAL_STATES, orphaned_worktree_registrations
 from .build_log_stream import PlanSync
 from .task_log_writer import TaskLogWriter
 from .task_phase import TaskPhase
@@ -806,8 +806,13 @@ class KubejobMixin:
                     continue
                 if self.is_running(task.id):
                     continue  # a live subprocess build in THIS pod
-                if await self._has_live_kubejob(task.id):
-                    continue  # a live k8s build (durable running row)
+                if await self._kubejob_liveness(task.id) != "absent":
+                    # "live" (a running durable row) or "unknown" (store
+                    # disabled, a transient read error, or a row in a state
+                    # we don't recognize as terminal) — either way, a
+                    # watchdog that destroys work must fail toward LEAVING
+                    # IT ALONE, so only a definite "absent" reaps (#1551).
+                    continue
                 if not self._task_stale(task.updated_at, now, deadline_seconds):
                     continue
                 try:
@@ -827,15 +832,54 @@ class KubejobMixin:
                     )
         return reaped
 
-    async def _has_live_kubejob(self, task_id: str) -> bool:
-        """True when a ``running`` durable job-state row backs this task."""
+    async def _kubejob_liveness(self, task_id: str) -> str:
+        """Tri-state view of the durable job-state row backing ``task_id``.
+
+        Returns ``"live"`` (row says ``running``), ``"absent"`` (row says a
+        terminal state — ``done``/``failed``/``stuck``/``review`` — written
+        either by the Job itself or by ``reap_vanished_jobs``' cluster check,
+        which runs every tick BEFORE the task-level reaper and already
+        confirms a stranded ``running`` row against the k8s Job before
+        flipping it terminal), or ``"unknown"`` for every path that cannot
+        prove the build is over.
+
+        #1551: the old ``_has_live_kubejob`` returned a plain ``bool`` and
+        collapsed every uncertain case — no store configured, a transient
+        read error, a row in a state this code doesn't recognize — into
+        ``False``, which ``reap_abandoned_tasks`` read as "no live build" and
+        reaped. Three concurrent tasks were killed this way while their Jobs
+        were genuinely ``Running`` in the cluster: the store read raced the
+        concurrent admits/writes for those tasks and the resulting exception
+        (previously swallowed silently — no log at all) was indistinguishable
+        from "definitely nothing running". A watchdog that destroys work must
+        fail toward LEAVING IT ALONE, so only a proven terminal row reaches
+        ``"absent"``; everything else is ``"unknown"`` and the caller must not
+        reap on it.
+        """
         if not getattr(self, "_store_enabled", False):
-            return False
+            return "unknown"
         try:
             state = await self._store().get_state(task_id)
-        except Exception:  # noqa: BLE001
-            return False
-        return bool(state and state.get("lifecycle_state") == "running")
+        except Exception:  # noqa: BLE001 - never let a doubt read as "absent"
+            _log.warning(
+                "[AgentService] job-state read failed for %s — treating "
+                "liveness as unknown, never reaping on doubt (#1551)",
+                sanitize_log(task_id),
+                exc_info=True,
+            )
+            return "unknown"
+        if state is None:
+            # A row should already exist for anything ever admitted through
+            # the durable path (admit() writes it before the task's status
+            # can flip to in_progress) — a miss here is itself the anomaly
+            # #1551 tracks, not a clean "never built" answer.
+            return "unknown"
+        lifecycle = state.get("lifecycle_state")
+        if lifecycle == "running":
+            return "live"
+        if lifecycle in _TERMINAL_STATES:
+            return "absent"
+        return "unknown"  # e.g. "queued", or a future state this doesn't know
 
     @staticmethod
     def _task_stale(updated_at: str, now: Any, deadline_seconds: int) -> bool:

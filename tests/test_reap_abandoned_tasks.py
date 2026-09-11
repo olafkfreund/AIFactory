@@ -22,17 +22,26 @@ class _Reaper(KubejobMixin):
     """Minimal stand-in exposing the reaper's collaborators as overridable seams."""
 
     def __init__(
-        self, *, running: set[str] | None = None, live: set[str] | None = None
+        self,
+        *,
+        running: set[str] | None = None,
+        live: set[str] | None = None,
+        unknown: set[str] | None = None,
     ):
         self._running = running or set()
         self._live = live or set()
+        self._unknown = unknown or set()
         self.reaped_calls: list[tuple[str, str]] = []
 
     def is_running(self, task_id: str) -> bool:
         return task_id in self._running
 
-    async def _has_live_kubejob(self, task_id: str) -> bool:
-        return task_id in self._live
+    async def _kubejob_liveness(self, task_id: str) -> str:
+        if task_id in self._live:
+            return "live"
+        if task_id in self._unknown:
+            return "unknown"
+        return "absent"
 
     async def _update_plan_status(self, project_path, spec_id, status, task_id, **kw):
         self.reaped_calls.append((task_id, status))
@@ -100,6 +109,31 @@ async def test_skips_live_kubejob(monkeypatch):
     _patch_enum(monkeypatch, [("x", _task("x", "in_progress", _iso(-3600)))])
     r = _Reaper(live={"p:x"})  # a running durable job-state row backs it
     assert await r.reap_abandoned_tasks(deadline_seconds=600) == []
+
+
+async def test_skips_unknown_kubejob_liveness(monkeypatch):
+    """#1551: "unknown" (store disabled, a transient read error, an
+    unrecognized lifecycle state) must never be reaped — only a proven
+    "absent" may be."""
+    _patch_enum(monkeypatch, [("x", _task("x", "in_progress", _iso(-3600)))])
+    r = _Reaper(unknown={"p:x"})
+    assert await r.reap_abandoned_tasks(deadline_seconds=600) == []
+    assert r.reaped_calls == []
+
+
+async def test_reaps_only_definite_absent(monkeypatch):
+    """A mixed batch: only the task with a proven-terminal row is reaped."""
+    _patch_enum(
+        monkeypatch,
+        [
+            ("live", _task("live", "in_progress", _iso(-3600))),
+            ("unknown", _task("unknown", "in_progress", _iso(-3600))),
+            ("gone", _task("gone", "in_progress", _iso(-3600))),
+        ],
+    )
+    r = _Reaper(live={"p:live"}, unknown={"p:unknown"})
+    assert await r.reap_abandoned_tasks(deadline_seconds=600) == ["p:gone"]
+    assert r.reaped_calls == [("p:gone", "failed")]
 
 
 async def test_skips_non_running_statuses(monkeypatch):
