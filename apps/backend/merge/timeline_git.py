@@ -17,6 +17,8 @@ import logging
 import subprocess
 from pathlib import Path
 
+from .git_utils import GitReadError, is_missing_path_error
+
 logger = logging.getLogger(__name__)
 
 # Import debug utilities
@@ -78,7 +80,15 @@ class TimelineGitHelper:
             commit_hash: Git commit hash
 
         Returns:
-            File content as string, or None if file doesn't exist at that commit
+            File content as string, or None if the file doesn't exist at
+            that commit
+
+        Raises:
+            GitReadError: `git show` failed for a reason other than the
+                file being absent at that commit (bad/unresolvable commit,
+                corrupt repo, lock contention, I/O error, ...). Callers
+                must not treat this the same as "file doesn't exist" --
+                doing so silently invents an empty baseline.
         """
         try:
             result = subprocess.run(
@@ -87,11 +97,29 @@ class TimelineGitHelper:
                 capture_output=True,
                 text=True,
             )
-            if result.returncode == 0:
-                return result.stdout
+        except OSError as e:
+            logger.error(
+                "git show %s:%s could not be run: %s", commit_hash, file_path, e
+            )
+            raise GitReadError(
+                f"git show {commit_hash}:{file_path} could not be run: {e}"
+            ) from e
+
+        if result.returncode == 0:
+            return result.stdout
+        if is_missing_path_error(result.stderr):
             return None
-        except Exception:
-            return None
+        logger.error(
+            "git show %s:%s failed (exit %d): %s",
+            commit_hash,
+            file_path,
+            result.returncode,
+            result.stderr.strip(),
+        )
+        raise GitReadError(
+            f"git show {commit_hash}:{file_path} failed (exit {result.returncode}): "
+            f"{result.stderr.strip()}"
+        )
 
     def get_files_changed_in_commit(self, commit_hash: str) -> list[str]:
         """
