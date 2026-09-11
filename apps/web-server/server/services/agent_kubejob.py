@@ -23,7 +23,7 @@ from server.project_registry import resolve_project_path
 from server.services import review_redrive_service
 from server.specpath import spec_dir_for
 
-from .build_backend import orphaned_worktree_registrations
+from .build_backend import _TERMINAL_STATES, orphaned_worktree_registrations
 from .build_log_stream import PlanSync
 from .task_log_writer import TaskLogWriter
 from .task_phase import TaskPhase
@@ -806,8 +806,17 @@ class KubejobMixin:
                     continue
                 if self.is_running(task.id):
                     continue  # a live subprocess build in THIS pod
-                if await self._has_live_kubejob(task.id):
-                    continue  # a live k8s build (durable running row)
+                if await self._kubejob_liveness(task.id) != "absent":
+                    # "live" (a running durable row) or "unknown" (a
+                    # transient store-read error, or a row in a state we
+                    # don't recognize as terminal) — either way, a watchdog
+                    # that destroys work must fail toward LEAVING IT ALONE,
+                    # so only a definite "absent" reaps. Note: with no
+                    # durable store, is_running() above is already the full
+                    # answer (single-pod only), so _kubejob_liveness reads
+                    # that configuration as "absent" too, not "unknown"
+                    # (#1551).
+                    continue
                 if not self._task_stale(task.updated_at, now, deadline_seconds):
                     continue
                 try:
@@ -827,15 +836,74 @@ class KubejobMixin:
                     )
         return reaped
 
-    async def _has_live_kubejob(self, task_id: str) -> bool:
-        """True when a ``running`` durable job-state row backs this task."""
+    async def _kubejob_liveness(self, task_id: str) -> str:
+        """Tri-state liveness for ``task_id``, per the backend actually in play.
+
+        Returns ``"live"`` (durable row says ``running``), ``"absent"`` (a
+        definite negative — see below), or ``"unknown"`` for every path that
+        cannot prove the build is over. ONLY CALL THIS after the caller has
+        already checked ``is_running(task_id)`` (``reap_abandoned_tasks``
+        does) — the "no store" branch below leans on that having happened.
+
+        #1551: the old ``_has_live_kubejob`` returned a plain ``bool`` and
+        collapsed every uncertain case — a transient store read error, a row
+        in a state this code doesn't recognize — into ``False``, which
+        ``reap_abandoned_tasks`` read as "no live build" and reaped. Three
+        concurrent tasks were killed this way while their Jobs were genuinely
+        ``Running`` in the cluster: the store read raced the concurrent
+        admits/writes for those tasks and the resulting exception (previously
+        swallowed silently — no log at all) was indistinguishable from
+        "definitely nothing running". A watchdog that destroys work must fail
+        toward LEAVING IT ALONE, so only a proven terminal row reaches
+        ``"absent"`` in that configuration.
+
+        No durable store is a DIFFERENT case, not more doubt: the kubejob
+        backend refuses to dispatch a Job without the store (see
+        ``_kubejob_backend_enabled``), so with no store EVERY build in this
+        deployment is an in-pod subprocess — a single-pod-only configuration
+        (``_store_enabled`` gates the durable, multi-replica-safe admission
+        path; its own startup log calls the in-memory fallback "single-pod
+        dev only... NOT multi-replica safe"). ``is_running(task_id)``, which
+        the caller already checked, is therefore the FULL answer for whether
+        this task has a live build anywhere — there is no second replica and
+        no k8s Job that could be holding it open. So "no store" is a definite
+        ``"absent"``, not ``"unknown"``: the leak this would otherwise cause
+        (a dead subprocess staying ``in_progress`` forever, shrinking the cap
+        on every occurrence) is a real regression, not a safe default.
+        """
         if not getattr(self, "_store_enabled", False):
-            return False
+            return "absent"
         try:
             state = await self._store().get_state(task_id)
-        except Exception:  # noqa: BLE001
-            return False
-        return bool(state and state.get("lifecycle_state") == "running")
+        except Exception:  # noqa: BLE001 - never let a doubt read as "absent"
+            _log.warning(
+                "[AgentService] job-state read failed for %s — treating "
+                "liveness as unknown, never reaping on doubt (#1551)",
+                sanitize_log(task_id),
+                exc_info=True,
+            )
+            return "unknown"
+        if state is None:
+            # A row should already exist for anything ever admitted through
+            # the durable path (admit() writes it before the task's status
+            # can flip to in_progress) — a miss here is itself the anomaly
+            # #1551 tracks, not a clean "never built" answer.
+            return "unknown"
+        lifecycle = state.get("lifecycle_state")
+        if lifecycle == "running":
+            return "live"
+        if lifecycle in _TERMINAL_STATES:
+            # A proven negative: mark_terminal is written ONLY by the control
+            # plane (agent_service.py / build_backend.py's _done/_fail) —
+            # never by run.py in the Job pod, which has no job-state write at
+            # all. For a k8s-job row specifically, build_backend's _done/_fail
+            # write this AFTER observing the Job's own status via the batch
+            # API (reap_vanished_jobs / _job_outcome), which runs every
+            # reconcile tick BEFORE the task-level reaper -- so a stranded
+            # "running" row is already cluster-confirmed terminal by the time
+            # this predicate ever sees it as non-running.
+            return "absent"
+        return "unknown"  # e.g. "queued", or a future state this doesn't know
 
     @staticmethod
     def _task_stale(updated_at: str, now: Any, deadline_seconds: int) -> bool:
