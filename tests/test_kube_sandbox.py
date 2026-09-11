@@ -163,6 +163,31 @@ def test_manifest_mounts_warm_nix_store_with_seed_init():
     assert "/warm/store" in init["command"][-1]
 
 
+def test_seed_init_container_seeds_atomically():
+    # #1545: check-then-copy let two concurrent Jobs both see a missing store,
+    # or one see a partially-copied tree. The seed must build the tree in a
+    # scratch dir on the SAME filesystem and `mv` it into place, treating an
+    # already-present target as success (no re-copy, no clobber).
+    m = build_job_manifest(
+        "fsbx-abc", "img", ["nix --version"], nix_store_pvc="aifactory-nix-store"
+    )
+    script = m["spec"]["template"]["spec"]["initContainers"][0]["command"][-1]
+    # Still checks for an already-populated store before doing any work.
+    assert "[ -e /warm/store ]" in script
+    # Builds the tree in a scratch dir under /warm (same filesystem as the
+    # target, so the rename below is atomic) rather than copying straight
+    # onto /warm/store.
+    assert "tmp=/warm/.seed-$$" in script
+    assert "cp -a /nix/." in script
+    # The rename into place uses `mv -n` (no-clobber): a Job that loses the
+    # race to a concurrent seed discards its own copy instead of overwriting
+    # (or partially overwriting) the winner's.
+    assert 'mv -n "$tmp/store" /warm/store' in script
+    assert script.count("mv -n") >= 2  # the store rename, plus its siblings
+    # Scratch dir is always cleaned up, on both the winning and losing paths.
+    assert 'rm -rf "$tmp"' in script
+
+
 def test_pvc_subpath_strips_data_root():
     root = "/home/nonroot/.aifactory"
     wt = root + "/workspaces/proj/.aifactory/worktrees/tasks/spec-x"
@@ -250,3 +275,137 @@ def test_exit_code_falls_back_to_job_flag_when_no_terminated_state():
         SimpleNamespace(status=SimpleNamespace(container_statuses=None)),
         job_succeeded=False,
     ) == (False, 1)
+
+
+def test_job_failure_reason_names_the_deadline():
+    """A Job killed by activeDeadlineSeconds never ran the command to completion.
+
+    It has no terminated container state, so the exit code falls back to a
+    synthetic 1 — the same value a genuinely failing test produces. Without the
+    reason, "the toolchain download did not finish" is indistinguishable from
+    "your tests failed" (AIFactory#1491 family).
+    """
+    from types import SimpleNamespace
+
+    from core.kube_sandbox import _job_failure_reason
+
+    killed = SimpleNamespace(
+        conditions=[SimpleNamespace(type="Failed", reason="DeadlineExceeded")]
+    )
+    assert _job_failure_reason(killed) == "DeadlineExceeded"
+
+    # A Failed condition with no reason still reports something usable.
+    assert (
+        _job_failure_reason(
+            SimpleNamespace(conditions=[SimpleNamespace(type="Failed", reason=None)])
+        )
+        == "Failed"
+    )
+    # A healthy or unknown status must not invent a reason.
+    assert _job_failure_reason(SimpleNamespace(conditions=[])) == ""
+    assert _job_failure_reason(SimpleNamespace(conditions=None)) == ""
+    assert (
+        _job_failure_reason(
+            SimpleNamespace(conditions=[SimpleNamespace(type="Complete", reason="x")])
+        )
+        == ""
+    )
+
+
+class _FakeJobStatus:
+    def __init__(self, *, succeeded=None, failed=None, conditions=None):
+        self.succeeded = succeeded
+        self.failed = failed
+        self.conditions = conditions or []
+
+
+class _FakeJob:
+    def __init__(self, status):
+        self.status = status
+
+
+class _FakeBatchApi:
+    """Feeds one `.status` per `read_namespaced_job` call, in order."""
+
+    def __init__(self, statuses):
+        self._statuses = list(statuses)
+        self._i = 0
+
+    async def create_namespaced_job(self, namespace, manifest):
+        return None
+
+    async def read_namespaced_job(self, name, namespace):
+        status = self._statuses[min(self._i, len(self._statuses) - 1)]
+        self._i += 1
+        return _FakeJob(status)
+
+    async def delete_namespaced_job(self, name, namespace, propagation_policy=None):
+        return None
+
+
+class _FakeCoreApi:
+    async def list_namespaced_pod(self, namespace, label_selector=None):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(items=[])  # no pod -> loop flags decide the result
+
+
+async def _run_seeded(monkeypatch, statuses, *, timeout=3):
+    """Drive `KubeJobSandbox._run_async` with a scripted sequence of Job
+    statuses, one per `read_namespaced_job` call, and a stubbed k8s client."""
+    import kubernetes_asyncio.client as k8s_client
+    import kubernetes_asyncio.config as k8s_config
+    from core.kube_sandbox import KubeJobSandbox
+
+    async def _noop(*_a, **_k):
+        return None
+
+    class _FakeApiClient:
+        async def close(self):
+            return None
+
+    fake_batch = _FakeBatchApi(statuses)
+    fake_core = _FakeCoreApi()
+
+    monkeypatch.setattr(
+        k8s_config,
+        "load_incluster_config",
+        lambda: (_ for _ in ()).throw(Exception("no in-cluster config in tests")),
+    )
+    monkeypatch.setattr(k8s_config, "load_kube_config", _noop)
+    monkeypatch.setattr(k8s_client, "ApiClient", lambda: _FakeApiClient())
+    monkeypatch.setattr(k8s_client, "BatchV1Api", lambda api: fake_batch)
+    monkeypatch.setattr(k8s_client, "CoreV1Api", lambda api: fake_core)
+
+    import asyncio as _asyncio
+
+    monkeypatch.setattr(_asyncio, "sleep", _noop)
+
+    sandbox = KubeJobSandbox(image="img", namespace="ns")
+    return await sandbox._run_async(["pytest", "-q"], timeout=timeout)
+
+
+async def test_a_job_that_fails_during_the_final_sleep_is_still_caught(monkeypatch):
+    """#1545: `timeout // 3 == 1` gives the loop exactly ONE iteration. That
+    read shows the Job still running, so only a read taken AFTER the loop
+    (once the final `asyncio.sleep` has elapsed) can see the Job transition to
+    Failed/DeadlineExceeded. Without the post-loop read, the `[job ...]`
+    reason silently disappears from the output."""
+    running = _FakeJobStatus(succeeded=None, failed=None)
+    failed = _FakeJobStatus(
+        succeeded=None,
+        failed=1,
+        conditions=[SimpleNamespace(type="Failed", reason="DeadlineExceeded")],
+    )
+    result = await _run_seeded(monkeypatch, [running, failed], timeout=3)
+
+    assert result.ok is False
+    assert "[job DeadlineExceeded]" in result.output
+
+
+async def test_a_job_that_succeeds_before_the_deadline_is_unaffected(monkeypatch):
+    succeeded = _FakeJobStatus(succeeded=1, failed=None)
+    result = await _run_seeded(monkeypatch, [succeeded], timeout=3)
+
+    assert result.ok is True
+    assert "[job" not in result.output

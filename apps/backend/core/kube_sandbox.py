@@ -201,17 +201,39 @@ def build_job_manifest(
         # Seed the warm store from the image's baked-in /nix on first use, else
         # the empty PVC overlay would hide nix's own closure (the nix binary
         # itself lives in /nix/store) and the Job could not run.
+        #
+        # Two concurrent gate Jobs can both start this initContainer before
+        # either has populated /warm/store, or one can start while the other
+        # is mid-copy -- a plain check-then-copy lets either see a partial
+        # store (#1545). Copy into a scratch dir on the SAME filesystem first,
+        # then `mv` each top-level entry into place; a `mv` within one
+        # filesystem is an atomic rename, so a concurrent reader either sees
+        # an entry or does not, never a half-written one. `store` moves last
+        # so it keeps meaning "the seed is complete" for the `[ -e /warm/store ]`
+        # check. `mv -n` never overwrites, so a Job that loses the race just
+        # discards its own copy instead of corrupting the winner's.
+        _seed_script = (
+            "if [ -e /warm/store ]; then "
+            "echo 'warm nix store already populated'; "
+            "else "
+            'tmp=/warm/.seed-$$; rm -rf "$tmp" && mkdir -p "$tmp" '
+            '&& cp -a /nix/. "$tmp/" '
+            '&& for e in "$tmp"/*; do '
+            'n=$(basename "$e"); [ "$n" = store ] && continue; '
+            'mv -n "$e" /warm/ 2>/dev/null || rm -rf "$e"; '
+            "done "
+            '&& if [ -d "$tmp/store" ]; then '
+            'mv -n "$tmp/store" /warm/store 2>/dev/null || rm -rf "$tmp/store"; '
+            "fi; "
+            'rm -rf "$tmp"; '
+            "echo 'seeded warm nix store (or lost the race to a concurrent seed)'; "
+            "fi"
+        )
         pod_spec.setdefault("initContainers", []).append(
             {
                 "name": "seed-nix-store",
                 "image": image,
-                "command": [
-                    "sh",
-                    "-c",
-                    "if [ ! -e /warm/store ]; then "
-                    "cp -a /nix/. /warm/ && echo 'seeded warm nix store'; "
-                    "else echo 'warm nix store already populated'; fi",
-                ],
+                "command": ["sh", "-c", _seed_script],
                 # Same image as the gate → same non-root uid; just pin the
                 # escalation/capability hardening (#812).
                 "securityContext": dict(container_hardening),
@@ -282,6 +304,20 @@ def repo_is_mountable(workdir: str | None, data_root: str) -> bool:
     return _pvc_subpath(workdir, data_root) is not None
 
 
+def _job_failure_reason(status: object) -> str:
+    """The k8s reason a Job failed (e.g. ``DeadlineExceeded``), or "".
+
+    A Job that hits ``activeDeadlineSeconds`` is killed with no terminated
+    container state, so the exit code falls back to a synthetic 1 — the same
+    value a genuinely failing test produces. The reason is the only thing that
+    tells those apart.
+    """
+    for cond in getattr(status, "conditions", None) or []:
+        if getattr(cond, "type", "") == "Failed":
+            return str(getattr(cond, "reason", "") or "Failed")
+    return ""
+
+
 def _exit_code_from_pod(pod: object, *, job_succeeded: bool) -> tuple[bool, int]:
     """(succeeded, exit_code) from a Job pod's terminated container state.
 
@@ -320,6 +356,40 @@ class KubeJobSandbox:
         self.data_root = data_root
         self.manifest_kw = manifest_kw
 
+    @staticmethod
+    async def _poll_job(
+        batch: Any, name: str, namespace: str, budget_seconds: int
+    ) -> tuple[bool, str]:
+        """Poll the Job until it succeeds/fails, or the budget runs out.
+
+        Returns (succeeded, failure_reason). A Job can transition to
+        Failed/DeadlineExceeded during the loop's LAST `asyncio.sleep`, after
+        the last in-loop read already found it still running — the `for/else`
+        below (entered only when the loop exhausted its iterations without a
+        `break`) is one more read taken specifically to still catch that,
+        otherwise the `[job ...]` reason silently disappears (#1545).
+        """
+        succeeded = False
+        failure_reason = ""
+        for _ in range(max(1, budget_seconds // 3)):
+            # read the Job object (needs only `get jobs`), not the jobs/status
+            # subresource — keeps the sandbox Role least-privilege.
+            st = (await batch.read_namespaced_job(name, namespace)).status
+            if st and st.succeeded:
+                succeeded = True
+                break
+            if st and st.failed:
+                failure_reason = _job_failure_reason(st)
+                break
+            await asyncio.sleep(3)
+        else:
+            st = (await batch.read_namespaced_job(name, namespace)).status
+            if st and st.succeeded:
+                succeeded = True
+            elif st and st.failed:
+                failure_reason = _job_failure_reason(st)
+        return succeeded, failure_reason
+
     async def _run_async(
         self, commands: list[str], timeout: int, workdir: str | None = None
     ) -> RunResult:
@@ -356,17 +426,9 @@ class KubeJobSandbox:
         batch, core = client.BatchV1Api(api), client.CoreV1Api(api)
         try:
             await batch.create_namespaced_job(self.namespace, manifest)
-            succeeded = False
-            for _ in range(max(1, timeout // 3)):
-                # read the Job object (needs only `get jobs`), not the jobs/status
-                # subresource — keeps the sandbox Role least-privilege.
-                st = (await batch.read_namespaced_job(name, self.namespace)).status
-                if st and st.succeeded:
-                    succeeded = True
-                    break
-                if st and st.failed:
-                    break
-                await asyncio.sleep(3)
+            succeeded, failure_reason = await self._poll_job(
+                batch, name, self.namespace, timeout
+            )
             pods = await core.list_namespaced_pod(
                 self.namespace, label_selector=f"job-name={name}"
             )
@@ -384,7 +446,15 @@ class KubeJobSandbox:
                 # succeeded/failed flag (RFC-0005): the flag collapses every
                 # non-zero to "failed" and loses the actual status.
                 succeeded, exit_code = _exit_code_from_pod(pod, job_succeeded=succeeded)
-            return RunResult(succeeded, exit_code, (output or "").strip(), [])
+            text = (output or "").strip()
+            if failure_reason:
+                # A Job killed by its deadline never finished the command, so its
+                # output is a truncated transcript of whatever it got through —
+                # indistinguishable from a command that ran and failed. Name the
+                # reason, or "the toolchain download did not finish" reads as
+                # "your tests failed" (AIFactory#1491 family).
+                text = f"[job {failure_reason}] {text}"
+            return RunResult(succeeded, exit_code, text, [])
         finally:
             try:
                 await batch.delete_namespaced_job(
