@@ -228,3 +228,137 @@ async def test_rejected_is_never_gated_on_evidence(
     assert "Refusing" not in result["content"][0]["text"]
     plan = json.loads((spec / "implementation_plan.json").read_text())
     assert plan["qa_signoff"]["status"] == "rejected"
+
+
+# =============================================================================
+# Stale evidence gets ONE re-run attempt, never a silent pass (#1546+1)
+#
+# Repro: the coder's trailing-gate step writes a marker bound to the sha it
+# ran gates against. A later commit -- QA's own flake.nix touch-up, a fixer
+# iteration -- moves HEAD, and #1545 correctly stops treating that marker as
+# evidence for the NEW tree. Before this fix nothing ever re-ran the gate, so
+# the build sat unapprovable forever even though the toolchain plainly works
+# here (the ORIGINAL run proves that). These tests stub the coder's own
+# trailing-gate runner (the exact function the refresh delegates to) so no
+# real subprocess/Nix Job is required to prove the wiring.
+# =============================================================================
+
+
+def _head_sha(repo: Path) -> str:
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],  # noqa: S607
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+def _write_marker_for_sha(spec: Path, sha: str, evidence: str) -> None:
+    """A marker bound to an EXPLICIT (possibly stale) sha, not current HEAD."""
+    (spec / ".trailing_gates_done").write_text(f"{sha}\n{evidence}\n", encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_stale_marker_is_refreshed_and_then_approved(
+    tmp_path: Path, built_clone: Path, real_sdk, monkeypatch
+) -> None:
+    """A stale-but-once-passing marker gets refreshed, then approval succeeds."""
+    spec = tmp_path / "spec"
+    _plan(spec)
+    stale_sha = _head_sha(built_clone)
+    _write_marker_for_sha(spec, stale_sha, "pytest: passed")
+
+    # The trivial post-gate commit that invalidated the marker (#1545).
+    (built_clone / "flake.nix").write_text("{ }\n")
+    _git(built_clone, "add", "flake.nix")
+    _git(built_clone, "commit", "-qm", "add flake.nix")
+
+    calls = []
+
+    async def fake_rerun(spec_dir: Path, project_dir: Path) -> None:
+        calls.append((spec_dir, project_dir))
+        _write_marker_for_sha(spec_dir, _head_sha(project_dir), "pytest: passed")
+
+    monkeypatch.setattr(
+        "agents.coder._run_trailing_gates_if_build_complete", fake_rerun
+    )
+
+    handler = real_sdk.create_qa_tools(spec, built_clone)[0].handler
+    result = await handler(
+        {"status": "approved", "issues": "[]", "tests_passed": '{"unit": "3/3"}'}
+    )
+
+    assert calls, "the stale marker must trigger exactly one refresh attempt"
+    text = result["content"][0]["text"]
+    assert "Refusing" not in text, text
+    plan = json.loads((spec / "implementation_plan.json").read_text())
+    assert plan["qa_signoff"]["status"] == "approved"
+
+
+@pytest.mark.asyncio
+async def test_stale_marker_refresh_that_fails_is_refused(
+    tmp_path: Path, built_clone: Path, real_sdk, monkeypatch
+) -> None:
+    """A refreshed run that fails is a real refusal, not a silent pass."""
+    spec = tmp_path / "spec"
+    _plan(spec)
+    stale_sha = _head_sha(built_clone)
+    _write_marker_for_sha(spec, stale_sha, "pytest: passed")
+
+    (built_clone / "flake.nix").write_text("{ }\n")
+    _git(built_clone, "add", "flake.nix")
+    _git(built_clone, "commit", "-qm", "add flake.nix")
+
+    async def fake_rerun(spec_dir: Path, project_dir: Path) -> None:
+        _write_marker_for_sha(spec_dir, _head_sha(project_dir), "pytest: failed")
+
+    monkeypatch.setattr(
+        "agents.coder._run_trailing_gates_if_build_complete", fake_rerun
+    )
+
+    handler = real_sdk.create_qa_tools(spec, built_clone)[0].handler
+    result = await handler(
+        {"status": "approved", "issues": "[]", "tests_passed": '{"unit": "2/3"}'}
+    )
+
+    text = result["content"][0]["text"]
+    assert "Refusing to approve" in text
+    assert "did not all pass" in text
+    plan = json.loads((spec / "implementation_plan.json").read_text())
+    assert "qa_signoff" not in plan
+
+
+@pytest.mark.asyncio
+async def test_absent_marker_is_never_refreshed(
+    tmp_path: Path, built_clone: Path, real_sdk, monkeypatch
+) -> None:
+    """No marker at all must stay a hard refusal -- never a free re-run.
+
+    A build that never ran a gate is the #1496 case this guard exists for.
+    Refreshing here too would spend a full Nix Job retrying a toolchain that
+    may genuinely be absent, on every single approval attempt.
+    """
+
+    async def fail_if_called(spec_dir: Path, project_dir: Path) -> None:
+        raise AssertionError(
+            f"must not attempt a gate run when no marker exists "
+            f"(spec_dir={spec_dir}, project_dir={project_dir})"
+        )
+
+    monkeypatch.setattr(
+        "agents.coder._run_trailing_gates_if_build_complete", fail_if_called
+    )
+
+    spec = tmp_path / "spec"
+    _plan(spec)
+    handler = real_sdk.create_qa_tools(spec, built_clone)[0].handler
+
+    result = await handler(
+        {"status": "approved", "issues": "[]", "tests_passed": '{"unit": "1/1"}'}
+    )
+
+    text = result["content"][0]["text"]
+    assert "Refusing to approve" in text
+    assert "no verification" in text.lower()
