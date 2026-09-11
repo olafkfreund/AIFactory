@@ -88,9 +88,7 @@ class TestGetFileContentAtCommit:
 class TestOrchestratorRefusesInventedBaseline:
     """orchestrator._merge_file must not merge against a fabricated baseline."""
 
-    def test_unreadable_baseline_fails_the_file_not_silently_empty(
-        self, temp_project
-    ):
+    def test_unreadable_baseline_fails_the_file_not_silently_empty(self, temp_project):
         orchestrator = MergeOrchestrator(temp_project)
 
         class _Snapshot:

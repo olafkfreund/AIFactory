@@ -558,8 +558,7 @@ class FileTimelineTracker:
                         )
                     except GitReadError as e:
                         logger.error(
-                            "Skipping worktree capture of %s for task %s "
-                            "at %s: %s",
+                            "Skipping worktree capture of %s for task %s at %s: %s",
                             file_path,
                             task_id,
                             work_ref,

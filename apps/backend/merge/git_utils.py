@@ -94,6 +94,7 @@ def get_file_from_branch(project_dir: Path, file_path: str, branch: str) -> str 
         cwd=project_dir,
         capture_output=True,
         text=True,
+        check=False,
     )
     if result.returncode == 0:
         return result.stdout
