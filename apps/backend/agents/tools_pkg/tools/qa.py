@@ -14,8 +14,10 @@ from typing import Any
 
 from agents.gate_runner import (
     evidence_shows_an_executed_gate,
+    gate_dir_for,
     gate_outcomes_include_a_failure,
     trailing_gate_evidence,
+    trailing_gate_marker_is_current,
 )
 
 from .api_contract import missing_exports
@@ -95,7 +97,46 @@ def _nothing_was_built(project_dir: Path) -> str | None:
     return f"{project_dir} has no commits beyond its base and no uncommitted changes."
 
 
-def _approval_refusal_reason(spec_dir: Path, project_dir: Path) -> str | None:
+async def _refresh_stale_gate_evidence(spec_dir: Path, project_dir: Path) -> str | None:
+    """Re-run the trailing gates once when their evidence went stale (#1546+1).
+
+    Fires ONLY when a marker already EXISTS but no longer binds to the tree's
+    current HEAD -- i.e. gates ran successfully at least once for this build,
+    and a commit landed afterwards (a QA-fixer commit, a QA agent's own
+    trivial normalization -- flake.nix, a stray flake.lock) that invalidated
+    it (#1545). A build whose gate step never ran at all is left untouched
+    here: retrying a genuinely absent toolchain on every approval attempt
+    would spend a full Nix Job, repeatedly, on a spec that never had one --
+    for no better answer than the refusal already gives. This is what keeps
+    the re-run cheap: at most once per distinct commit that reaches approval.
+
+    Delegates to the coder's own trailing-gate runner
+    (``agents.coder._run_trailing_gates_if_build_complete``) -- the SAME
+    dispatch that produced the ORIGINAL marker, so a refreshed run is bound
+    by the same tree-binding rule (#1545) and writes through the same marker
+    format. That function is itself idempotent per HEAD sha, so calling it
+    here is safe even if two approval attempts race.
+    """
+    marker = spec_dir / ".trailing_gates_done"
+    if not marker.exists():
+        return None
+    gate_dir = gate_dir_for(spec_dir, project_dir)
+    if trailing_gate_marker_is_current(spec_dir, gate_dir):
+        return None  # already current -- nothing to refresh
+
+    from agents.coder import _run_trailing_gates_if_build_complete  # noqa: PLC0415
+
+    await _run_trailing_gates_if_build_complete(spec_dir, project_dir)
+    # Explicit annotation, not a bare return: `trailing_gate_evidence` type-checks
+    # fine on its own, but this file's mypy_path scope makes the call itself Any
+    # (see the `bool()` cast note on `_should_require_human_review` in coder.py
+    # for the same gap) -- the declared type here is what keeps `-> str | None`
+    # honest against `no-any-return`.
+    evidence: str | None = trailing_gate_evidence(spec_dir, project_dir)
+    return evidence
+
+
+async def _approval_refusal_reason(spec_dir: Path, project_dir: Path) -> str | None:
     """Why `update_qa_status(status="approved")` must be refused, or None.
 
     Every guard an "approved" write has to pass, in one place, so
@@ -128,6 +169,14 @@ def _approval_refusal_reason(spec_dir: Path, project_dir: Path) -> str | None:
     marker into this one. `trailing_gate_evidence` now only returns evidence
     still bound to `project_dir`'s current git HEAD, so a marker recorded for
     a different tree reads as no evidence, not a stale pass.
+
+    #1546+1: a STALE marker (one that exists but no longer matches HEAD) gets
+    one re-run attempt here via `_refresh_stale_gate_evidence` before this
+    refuses -- see that helper for what it does and does not retry. This
+    closes the dead end where a trivial post-gate commit (the QA agent's own
+    flake.nix edit, a fixer's re-commit) left a build permanently unable to
+    reach a real verdict: nothing ever re-ran the gate, so the build sat in
+    human_review having genuinely passed a run no marker could still prove.
     """
     unbuilt = _nothing_was_built(project_dir)
     if unbuilt:
@@ -152,6 +201,17 @@ def _approval_refusal_reason(spec_dir: Path, project_dir: Path) -> str | None:
         )
 
     gate_evidence = trailing_gate_evidence(spec_dir, project_dir)
+    if not evidence_shows_an_executed_gate(gate_evidence):
+        # #1546+1: a marker that went stale because a commit landed AFTER the
+        # authoritative gate run (a QA-fixer commit, the QA agent's own
+        # flake.nix touch-up) is not the same failure as "no gate ever ran" --
+        # re-running once, bound to the tree that would actually be approved,
+        # is cheap relative to blocking every such build on a human. See
+        # `_refresh_stale_gate_evidence` for why an ABSENT marker is not
+        # retried here.
+        gate_evidence = (
+            await _refresh_stale_gate_evidence(spec_dir, project_dir) or gate_evidence
+        )
     if not evidence_shows_an_executed_gate(gate_evidence):
         why = gate_evidence or "the gate step never ran for this build"
         return (
@@ -276,7 +336,9 @@ def create_qa_tools(
             # branch/return count stays readable -- the ratchet caught the
             # #1496 guard pushing update_qa_status over the complexity caps.
             if status == "approved":
-                refusal = _approval_refusal_reason(get_spec_dir(), get_project_dir())
+                refusal = await _approval_refusal_reason(
+                    get_spec_dir(), get_project_dir()
+                )
                 if refusal:
                     return {"content": [{"type": "text", "text": refusal}]}
 
