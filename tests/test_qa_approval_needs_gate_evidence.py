@@ -17,6 +17,7 @@ file it does (or refuses to) write, matching the style of
 
 from __future__ import annotations
 
+import asyncio
 import json
 import subprocess
 import sys
@@ -25,6 +26,12 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "apps" / "backend"))
+
+import agents.tools_pkg.tools.qa as qa_mod
+from agents.tools_pkg.tools.qa import (
+    _claim_gate_refresh,
+    _release_gate_refresh_claim,
+)
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -290,7 +297,9 @@ async def test_stale_marker_is_refreshed_and_then_approved(
         {"status": "approved", "issues": "[]", "tests_passed": '{"unit": "3/3"}'}
     )
 
-    assert calls, "the stale marker must trigger exactly one refresh attempt"
+    assert len(calls) == 1, (
+        f"the stale marker must trigger EXACTLY one refresh attempt, got {len(calls)}"
+    )
     text = result["content"][0]["text"]
     assert "Refusing" not in text, text
     plan = json.loads((spec / "implementation_plan.json").read_text())
@@ -362,3 +371,92 @@ async def test_absent_marker_is_never_refreshed(
     text = result["content"][0]["text"]
     assert "Refusing to approve" in text
     assert "no verification" in text.lower()
+
+
+# =============================================================================
+# The refresh-dispatch race (Copilot review of #1547, now #1548)
+#
+# The stale check and the coder-runner dispatch are two separate operations
+# with a window between them. Two concurrent `update_qa_status(approved)`
+# calls for the SAME spec_dir can both see "stale" before either writes a
+# fresh marker, and both would dispatch a full gate Job for the same HEAD.
+# `_claim_gate_refresh` / `_release_gate_refresh_claim` are the atomic
+# filesystem claim that closes that window; these tests exercise the claim
+# primitive directly and the actual concurrent-approval path end-to-end.
+# =============================================================================
+
+
+def test_claim_gate_refresh_is_exclusive(tmp_path: Path) -> None:
+    """A second claim attempt must fail while the first is still held."""
+    spec = tmp_path / "spec"
+    spec.mkdir()
+
+    assert _claim_gate_refresh(spec) is True
+    assert _claim_gate_refresh(spec) is False, (
+        "a live claim must block a second claimant"
+    )
+
+    _release_gate_refresh_claim(spec)
+    assert _claim_gate_refresh(spec) is True, "release must free the claim for reuse"
+
+
+def test_stale_claim_past_ttl_is_reclaimed(tmp_path: Path, monkeypatch) -> None:
+    """A claim left behind by a crashed refresh must not block forever."""
+    monkeypatch.setattr(qa_mod, "_STALE_CLAIM_TTL_SECONDS", 0)
+
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    assert (
+        qa_mod._claim_gate_refresh(spec) is True
+    )  # never released -- simulates a crash
+
+    # TTL is 0, so any age at all counts as expired.
+    assert qa_mod._claim_gate_refresh(spec) is True, (
+        "an expired claim must be reclaimable"
+    )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_stale_refresh_dispatches_gate_run_once(
+    tmp_path: Path, built_clone: Path, real_sdk, monkeypatch
+) -> None:
+    """Two simultaneous approval attempts must dispatch at most ONE gate run.
+
+    This is the actual race Copilot flagged: without the claim, both tasks
+    read the marker as stale before either writes a fresh one, and both
+    reach the coder's gate runner. The stub below sleeps mid-"run" to widen
+    that window as far as possible under `asyncio`'s cooperative scheduling.
+    """
+    spec = tmp_path / "spec"
+    _plan(spec)
+    stale_sha = _head_sha(built_clone)
+    _write_marker_for_sha(spec, stale_sha, "pytest: passed")
+
+    (built_clone / "flake.nix").write_text("{ }\n")
+    _git(built_clone, "add", "flake.nix")
+    _git(built_clone, "commit", "-qm", "add flake.nix")
+
+    calls = []
+
+    async def fake_rerun(spec_dir: Path, project_dir: Path) -> None:
+        calls.append((spec_dir, project_dir))
+        await asyncio.sleep(0.05)  # yield control so the second task can race in
+        _write_marker_for_sha(spec_dir, _head_sha(project_dir), "pytest: passed")
+
+    monkeypatch.setattr(
+        "agents.coder._run_trailing_gates_if_build_complete", fake_rerun
+    )
+
+    handler = real_sdk.create_qa_tools(spec, built_clone)[0].handler
+    approve_args = {
+        "status": "approved",
+        "issues": "[]",
+        "tests_passed": '{"unit": "3/3"}',
+    }
+    results = await asyncio.gather(handler(approve_args), handler(approve_args))
+
+    assert len(calls) == 1, f"expected exactly one gate re-run, got {len(calls)}"
+    texts = [r["content"][0]["text"] for r in results]
+    assert any("Refusing" not in t for t in texts), (
+        f"at least one of the two concurrent approvals must succeed: {texts}"
+    )
