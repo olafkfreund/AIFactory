@@ -16,30 +16,17 @@ import logging
 import subprocess
 from pathlib import Path
 
+# NOTE: GitReadError / is_missing_path_error live in timeline_git, not here.
+# That module is allowlisted stdlib-only (#1089) and is exec'd straight off
+# disk with spec_from_file_location by test_control_plane_reads_the_pushed_work,
+# which gives it NO package context -- so it cannot import from this package
+# at all. This module has no such constraint, so the dependency points that way.
+# `as` re-export: under mypy --strict a plain re-import is not an explicit
+# export, and callers import these from here (the natural home for git helpers).
+from .timeline_git import GitReadError as GitReadError
+from .timeline_git import is_missing_path_error as is_missing_path_error
+
 logger = logging.getLogger(__name__)
-
-# `git show <ref>:<path>` exits 128 both when the path is legitimately absent
-# at that ref AND when the read genuinely failed (bad ref, corrupt object,
-# lock contention, I/O error, ...). Both cases raise the same
-# CalledProcessError, so the exit code alone can't tell them apart -- only
-# the stderr text does. Confirmed against a real repo:
-#   - missing path, valid ref:   "fatal: path '<p>' does not exist in '<ref>'"
-#   - path on disk, uncommitted: "fatal: path '<p>' exists on disk, but not in '<ref>'"
-#   - bad/unknown ref:           "fatal: invalid object name '<ref>'."
-_MISSING_PATH_MARKERS = ("does not exist in", "exists on disk, but not in")
-
-
-def is_missing_path_error(stderr: str) -> bool:
-    """True only for git's "the path is absent at this ref" messages."""
-    return any(marker in stderr for marker in _MISSING_PATH_MARKERS)
-
-
-class GitReadError(Exception):
-    """Raised when `git show` fails for a reason other than a missing path.
-
-    Never treat this the same as "file doesn't exist" -- callers must not
-    fall back to an empty/new-file baseline on this error.
-    """
 
 
 def find_worktree(project_dir: Path, task_id: str) -> Path | None:
