@@ -21,10 +21,13 @@ from pathlib import Path
 # disk with spec_from_file_location by test_control_plane_reads_the_pushed_work,
 # which gives it NO package context -- so it cannot import from this package
 # at all. This module has no such constraint, so the dependency points that way.
-# `as` re-export: under mypy --strict a plain re-import is not an explicit
-# export, and callers import these from here (the natural home for git helpers).
-from .timeline_git import GitReadError as GitReadError
-from .timeline_git import is_missing_path_error as is_missing_path_error
+from .timeline_git import GitReadError, is_missing_path_error
+
+# Re-exported deliberately: callers import these from here, the natural home
+# for git helpers, while the definitions must live in the stdlib-only module.
+# __all__ rather than `as` aliases -- mypy --strict wants an explicit export,
+# ruff --strict flags the alias form as PLC0414, and __all__ satisfies both.
+__all__ = ["GitReadError", "is_missing_path_error"]
 
 logger = logging.getLogger(__name__)
 
