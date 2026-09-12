@@ -35,7 +35,6 @@ import os
 import shutil
 import subprocess
 from collections.abc import Sequence
-from functools import lru_cache
 
 _log = logging.getLogger(__name__)
 
@@ -54,7 +53,16 @@ def _bwrap_path() -> str | None:
     return shutil.which("bwrap")
 
 
-@lru_cache(maxsize=1)
+# Sticks once the probe gets a *deterministic* answer (bwrap ran and either
+# succeeded or exited non-zero) — the kernel's userns capability can't change
+# under a running process, so that answer is permanent for this process.
+# Populated as `_bwrap_cache["result"]`; absent means "not yet known / last
+# probe was inconclusive" and is deliberately never stored — see
+# `_bwrap_works` below. (A dict, not a module global rebound via `global`, so
+# mutating it needs no `global` statement.)
+_bwrap_cache: dict[str, bool] = {}
+
+
 def _bwrap_works(bwrap: str) -> bool:
     """True when ``bwrap`` can actually spawn here — not just that it's installed.
 
@@ -63,17 +71,33 @@ def _bwrap_works(bwrap: str) -> bool:
     (``kernel.unprivileged_userns_clone=0`` / ``user.max_user_namespaces=0``) makes
     bwrap fail at exec with *"No permissions to create a new namespace"* — which
     would break EVERY wrapped command (git commit, etc.), not just isolate it.
-    Probe once with a trivial invocation and cache it (the kernel capability can't
-    change under a running process), so we degrade to an unwrapped passthrough
-    instead of failing every command. Same end state as bwrap being absent.
+    Probe once with a trivial invocation and cache a deterministic result (the
+    kernel capability can't change under a running process), so we degrade to
+    an unwrapped passthrough instead of failing every command. Same end state
+    as bwrap being absent.
+
+    A probe that never got to run bwrap at all (``OSError`` /
+    ``SubprocessError`` — e.g. a resource-exhaustion ``OSError`` or a 10s
+    timeout under load) says nothing about the kernel's capability, so that
+    result is *not* cached: the next call probes again instead of leaving the
+    sandbox silently and permanently disabled by one bad moment.
     """
+    if "result" in _bwrap_cache:
+        return _bwrap_cache["result"]
     try:
         r = subprocess.run(  # noqa: S603 - fixed argv, no shell
             [bwrap, "--ro-bind", "/", "/", "--tmpfs", "/tmp", "--", "true"],
             capture_output=True,
             timeout=10,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError) as exc:
+        _log.warning(
+            "bwrap probe failed to run (%s: %s) — the agent sandbox is "
+            "DISABLED for this command; will retry the probe next time since "
+            "this may be transient (e.g. a timeout under load).",
+            type(exc).__name__,
+            exc,
+        )
         return False
     if r.returncode != 0:
         _log.warning(
@@ -84,7 +108,9 @@ def _bwrap_works(bwrap: str) -> bool:
             r.returncode,
             (r.stderr or b"").decode(errors="replace").strip()[:200],
         )
+        _bwrap_cache["result"] = False
         return False
+    _bwrap_cache["result"] = True
     return True
 
 
