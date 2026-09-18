@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1466
 intent: intent/2026-09-18-1466-rest-task-audit.md
 ---
