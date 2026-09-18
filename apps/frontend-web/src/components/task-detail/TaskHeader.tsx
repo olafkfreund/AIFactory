@@ -3,7 +3,7 @@ import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { cn, extractTaskNumber, formatTaskTitleWithNumber } from '../../lib/utils';
-import { TASK_STATUS_LABELS } from '../../shared/constants';
+import { reviewReasonBadge, TASK_STATUS_LABELS } from '../../shared/constants';
 import type { Task } from '../../shared/types';
 
 interface TaskHeaderProps {
@@ -25,6 +25,7 @@ export function TaskHeader({
   onClose,
   onEdit
 }: TaskHeaderProps) {
+  const reviewBadge = reviewReasonBadge(task.reviewReason);
   return (
     <div className="flex items-start justify-between p-4 pb-3">
       <div className="flex-1 min-w-0 pr-2">
@@ -73,14 +74,9 @@ export function TaskHeader({
               >
                 {TASK_STATUS_LABELS[task.status]}
               </Badge>
-              {task.status === 'human_review' && task.reviewReason && (
-                <Badge
-                  variant={task.reviewReason === 'completed' ? 'success' : task.reviewReason === 'errors' ? 'destructive' : 'warning'}
-                  className="text-xs"
-                >
-                  {task.reviewReason === 'completed' ? 'Completed' :
-                   task.reviewReason === 'errors' ? 'Has Errors' :
-                   task.reviewReason === 'plan_review' ? 'Approve Plan' : 'QA Issues'}
+              {task.status === 'human_review' && reviewBadge && (
+                <Badge variant={reviewBadge.variant} className="text-xs">
+                  {reviewBadge.label}
                 </Badge>
               )}
             </>
