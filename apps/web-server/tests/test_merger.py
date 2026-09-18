@@ -8,6 +8,7 @@ runner (reused from ``pr_endgame``), so these tests touch no network/git.
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -15,6 +16,7 @@ _WS = Path(__file__).resolve().parents[1]
 if str(_WS) not in sys.path:
     sys.path.insert(0, str(_WS))
 
+import pytest  # noqa: E402
 from server.services import merger as mg  # noqa: E402
 from server.services.pr_endgame import CmdResult  # noqa: E402
 
@@ -139,19 +141,20 @@ def test_branch_ahead_and_changed_measures(tmp_path):
             "diff --name-only": CmdResult(0, "a.py\nb.py\n", ""),
         }
     )
-    ahead, changed = mg._branch_ahead_and_changed(tmp_path, "main", "aifactory/1", r)
-    assert (ahead, changed) == (3, 2)
+    got = mg._branch_ahead_and_changed(tmp_path, "main", "aifactory/1", r)
+    assert got == (3, 2, 3)
 
 
-def test_branch_ahead_and_changed_unmeasurable_when_branch_not_on_origin(tmp_path):
+def test_branch_ahead_and_changed_unmeasurable_when_branch_nowhere(tmp_path):
     r = FakeRunner(
         {
             "fetch origin main": CmdResult(0, "", ""),
             "fetch origin aifactory/1": CmdResult(1, "", "couldn't find remote ref"),
+            "rev-parse --verify": CmdResult(1, "", ""),
         }
     )
-    ahead, changed = mg._branch_ahead_and_changed(tmp_path, "main", "aifactory/1", r)
-    assert (ahead, changed) == (None, None)
+    got = mg._branch_ahead_and_changed(tmp_path, "main", "aifactory/1", r)
+    assert got == (None, None, None)
 
 
 def test_branch_ahead_and_changed_zero_is_measured_not_unmeasurable(tmp_path):
@@ -164,8 +167,8 @@ def test_branch_ahead_and_changed_zero_is_measured_not_unmeasurable(tmp_path):
             "diff --name-only": CmdResult(0, "", ""),
         }
     )
-    ahead, changed = mg._branch_ahead_and_changed(tmp_path, "main", "aifactory/1", r)
-    assert (ahead, changed) == (0, 0)
+    got = mg._branch_ahead_and_changed(tmp_path, "main", "aifactory/1", r)
+    assert got == (0, 0, 0)
 
 
 def test_branch_ahead_and_changed_unmeasurable_when_base_fetch_fails(tmp_path):
@@ -179,8 +182,8 @@ def test_branch_ahead_and_changed_unmeasurable_when_base_fetch_fails(tmp_path):
             "diff --name-only": CmdResult(0, "a.py\n", ""),
         }
     )
-    ahead, changed = mg._branch_ahead_and_changed(tmp_path, "main", "aifactory/1", r)
-    assert (ahead, changed) == (None, None)
+    got = mg._branch_ahead_and_changed(tmp_path, "main", "aifactory/1", r)
+    assert got == (None, None, None)
 
 
 def test_branch_ahead_and_changed_unmeasurable_when_diff_fails(tmp_path):
@@ -196,8 +199,8 @@ def test_branch_ahead_and_changed_unmeasurable_when_diff_fails(tmp_path):
             "diff --name-only": CmdResult(1, "", "ambiguous argument"),
         }
     )
-    ahead, changed = mg._branch_ahead_and_changed(tmp_path, "main", "aifactory/1", r)
-    assert (ahead, changed) == (None, None)
+    got = mg._branch_ahead_and_changed(tmp_path, "main", "aifactory/1", r)
+    assert got == (None, None, None)
 
 
 # ── honest_pr_title_and_body ─────────────────────────────────────────────────
@@ -263,7 +266,13 @@ def test_process_spec_opens_pr_for_stranded_branch(tmp_path, monkeypatch):
     spec_dir = _spec(tmp_path, "001-x")
     r = FakeRunner(_routes())
     out = mg._process_spec("proj", tmp_path, spec_dir, dry_run=False, runner=r)
-    assert out == {"task": "proj:001-x", "action": "opened", "pr": 5, "reason": None}
+    assert out == {
+        "task": "proj:001-x",
+        "action": "opened",
+        "pr": 5,
+        "reason": None,
+        "unpushed": 3,
+    }
     assert r.saw("pr create")
 
 
@@ -332,7 +341,12 @@ def test_process_spec_never_drops_silently_when_unmeasurable(tmp_path, monkeypat
     monkeypatch.setenv("AIFACTORY_AUTO_PR", "true")
     spec_dir = _spec(tmp_path, "001-x")
     r = FakeRunner(
-        _routes(**{"fetch origin aifactory/001-x": CmdResult(1, "", "no such ref")})
+        _routes(
+            **{
+                "fetch origin aifactory/001-x": CmdResult(1, "", "no such ref"),
+                "rev-parse --verify": CmdResult(1, "", ""),
+            }
+        )
     )
     out = mg._process_spec("proj", tmp_path, spec_dir, dry_run=False, runner=r)
     assert out["action"] == "skipped"
@@ -633,3 +647,113 @@ def test_sweep_unreadable_tenant_stamp_never_processed_by_default_sweep(
         and r["reason"] == "tenant_stamp_unreadable (see logs)"
         for r in report["results"]
     ), "the unreadable spec must be recorded, not silently dropped"
+
+
+# ── measuring against real git (#2586) ──────────────────────────────────────
+
+
+def _git(cwd: Path, *args: str) -> str:
+    # Fixed argv against a test-owned tmp repo; check=True so a failed git
+    # setup step fails the test instead of passing on an empty repo.
+    return subprocess.run(  # noqa: S603
+        ["git", *args],  # noqa: S607
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _commit(repo: Path, name: str) -> None:
+    (repo / name).write_text(name)
+    _git(repo, "add", name)
+    _git(repo, "commit", "-qm", name)
+
+
+@pytest.fixture
+def repos(tmp_path):
+    """A bare origin with `main`, plus a clone on `aifactory/1` pushed at base."""
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
+    wt = tmp_path / "wt"
+    _git(tmp_path, "clone", "-q", str(origin), str(wt))
+    _git(wt, "config", "user.email", "t@t")
+    _git(wt, "config", "user.name", "t")
+    _git(wt, "checkout", "-qb", "main")
+    _commit(wt, "base.txt")
+    _git(wt, "push", "-q", "origin", "main")
+    _git(wt, "checkout", "-qb", "aifactory/1")
+    _git(wt, "push", "-q", "origin", "aifactory/1")
+    return wt
+
+
+def _measure(wt: Path):
+    return mg._branch_ahead_and_changed(
+        wt, "main", "aifactory/1", mg.pe._default_runner
+    )
+
+
+def test_real_git_unpushed_local_commits_are_work_not_no_content(repos):
+    """#2586's five stranded tasks: commits only in the local branch, origin
+    still at base. The origin-only measurement said ahead_by=0."""
+    for n in ("a.py", "b.py", "c.py"):
+        _commit(repos, n)
+    assert _measure(repos) == (3, 3, 3)
+
+
+def test_real_git_pushed_branch_has_nothing_unpushed(repos):
+    _commit(repos, "a.py")
+    _git(repos, "push", "-q", "origin", "aifactory/1")
+    assert _measure(repos) == (1, 1, 0)
+
+
+def test_real_git_stale_local_ref_uses_origin(repos, tmp_path):
+    """Packed path: the Job pushed to origin, this worktree's ref is stale.
+    Measuring only the local ref would report the Job's work as empty."""
+    other = tmp_path / "job"
+    _git(
+        tmp_path,
+        "clone",
+        "-q",
+        "-b",
+        "aifactory/1",
+        str(tmp_path / "origin.git"),
+        str(other),
+    )
+    _git(other, "config", "user.email", "t@t")
+    _git(other, "config", "user.name", "t")
+    _commit(other, "job.py")
+    _git(other, "push", "-q", "origin", "aifactory/1")
+    assert _measure(repos) == (1, 1, 0)
+
+
+def test_real_git_diverged_is_a_skip_never_a_force(repos, tmp_path):
+    other = tmp_path / "job"
+    _git(
+        tmp_path,
+        "clone",
+        "-q",
+        "-b",
+        "aifactory/1",
+        str(tmp_path / "origin.git"),
+        str(other),
+    )
+    _git(other, "config", "user.email", "t@t")
+    _git(other, "config", "user.name", "t")
+    _commit(other, "theirs.py")
+    _git(other, "push", "-q", "origin", "aifactory/1")
+    _commit(repos, "ours.py")
+    with pytest.raises(mg._SkipTask, match="diverged"):
+        _measure(repos)
+
+
+def test_real_git_base_advancing_is_not_counted_as_branch_work(repos):
+    """Three-dot diff: files that reached main after the branch point are not
+    this task's changes."""
+    _commit(repos, "task.py")
+    _git(repos, "checkout", "-q", "main")
+    _commit(repos, "later-on-main.py")
+    _git(repos, "push", "-q", "origin", "main")
+    _git(repos, "checkout", "-q", "aifactory/1")
+    ahead, changed, _unpushed = _measure(repos)
+    assert (ahead, changed) == (1, 1)

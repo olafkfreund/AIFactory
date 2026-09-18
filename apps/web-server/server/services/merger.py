@@ -99,40 +99,82 @@ def _find_pr(
     return True, int(pick["number"]), str(pick.get("state") or "")
 
 
+def _pick_ref(
+    worktree: Path, branch: str, on_origin: bool, runner: Runner
+) -> str | None:
+    """The ref that holds this task's work, or None when that cannot be decided.
+
+    #2586: the build on the co-mount path commits in this worktree and never
+    pushes, so ``origin/<branch>`` can sit at the base while the local branch
+    holds all the work. On the packed path the reverse happens: the Job pushed
+    to origin and the local ref here is stale. So take whichever ref CONTAINS
+    the other. If they have diverged, neither is safe to push or PR without a
+    force, and a force can destroy work -- that is a human's call.
+    """
+    local = f"refs/heads/{branch}"
+    remote = f"origin/{branch}"
+    has_local = runner(
+        ["git", "rev-parse", "--verify", "--quiet", local], str(worktree)
+    ).ok
+    if not has_local:
+        return remote if on_origin else None
+    if not on_origin:
+        return local
+
+    def contains(ancestor: str, ref: str) -> bool:
+        return runner(
+            ["git", "merge-base", "--is-ancestor", ancestor, ref], str(worktree)
+        ).ok
+
+    if contains(remote, local):
+        return local
+    if contains(local, remote):
+        return remote
+    raise _SkipTask("diverged (local and origin branch both have unique commits)")
+
+
 def _branch_ahead_and_changed(
     worktree: Path, base: str, branch: str, runner: Runner
-) -> tuple[int | None, int | None]:
-    """``(ahead_by, changed_files)`` of ``branch`` over ``base``, measured locally.
+) -> tuple[int | None, int | None, int | None]:
+    """``(ahead_by, changed_files, unpushed)`` of the task's work over ``base``.
 
-    Mirrors what GitHub's ``compare/{base}...{head}`` reports (``ahead_by`` and
-    changed file count), but from ``git`` directly so no PR needs to exist yet
-    to measure it. Both fetched fresh from origin, since the build pushed the
-    branch but this worktree may never have seen it. ``(None, None)`` means
-    unmeasurable (branch not on origin, or git refused) -- the caller must
-    treat that as "don't know", never as "empty" (#5 is about a MEASURED
-    ahead_by of 0, not an absent measurement).
+    Measures the ref that holds the work (see ``_pick_ref``), not merely the
+    origin copy: #2586 found five tasks whose commits existed only in the
+    local branch, which the origin-only measurement reported as
+    ``no_content`` -- dropping real work while claiming there was none.
+    ``changed_files`` is a three-dot diff, so changes that reached ``base``
+    after the branch point are not counted. ``unpushed`` is how many of those
+    commits origin does not have yet (``create_pr`` pushes them).
+
+    ``(None, None, None)`` means unmeasurable (base not fetchable, no branch
+    anywhere, or git refused) -- the caller must treat that as "don't know",
+    never as "empty" (#5 is about a MEASURED ahead_by of 0).
     """
-    fetched_base = runner(["git", "fetch", "origin", base], str(worktree))
-    fetched_head = runner(["git", "fetch", "origin", branch], str(worktree))
-    if not fetched_base.ok or not fetched_head.ok:
-        return None, None
-    base_ref, head_ref = f"origin/{base}", f"origin/{branch}"
-    ahead = runner(
-        ["git", "rev-list", "--count", f"{base_ref}..{head_ref}"], str(worktree)
-    )
-    if not ahead.ok or not ahead.out.strip().isdigit():
-        return None, None
+    unmeasurable = (None, None, None)
+    if not runner(["git", "fetch", "origin", base], str(worktree)).ok:
+        return unmeasurable
+    on_origin = runner(["git", "fetch", "origin", branch], str(worktree)).ok
+    ref = _pick_ref(worktree, branch, on_origin, runner)
+    if ref is None:
+        return unmeasurable
+
+    def count(rng: str) -> int | None:
+        res = runner(["git", "rev-list", "--count", rng], str(worktree))
+        text = res.out.strip()
+        return int(text) if res.ok and text.isdigit() else None
+
+    ahead = count(f"origin/{base}..{ref}")
+    unpushed = count(f"origin/{branch}..{ref}") if on_origin else ahead
     changed = runner(
-        ["git", "diff", "--name-only", f"{base_ref}...{head_ref}"], str(worktree)
+        ["git", "diff", "--name-only", f"origin/{base}...{ref}"], str(worktree)
     )
-    if not changed.ok:
-        # A failed diff must not be read as "measured, zero changed files" --
-        # that reported a real branch as empty (the same class of bug as
-        # #1/#2 above). Unmeasurable in EITHER dimension means the whole pair
-        # is unmeasurable, not half a measurement.
-        return None, None
+    if ahead is None or unpushed is None or not changed.ok:
+        # A failed diff or count must not be read as "measured, zero" --
+        # that reported a real branch as empty. Unmeasurable in ANY
+        # dimension means the whole triple is unmeasurable.
+        return unmeasurable
     changed_files = len([line for line in changed.out.splitlines() if line.strip()])
-    return int(ahead.out.strip()), changed_files
+    return ahead, changed_files, unpushed
 
 
 def _gate_evidence_for(spec_dir: Path, project_path: Path) -> str | None:
@@ -274,11 +316,11 @@ def _decide(
         )
         return {"action": action, "pr": existing}
 
-    ahead_by, changed_files = _branch_ahead_and_changed(
+    ahead_by, changed_files, unpushed = _branch_ahead_and_changed(
         ctx["worktree"], base, branch, runner
     )
     if ahead_by is None:
-        raise _SkipTask("ahead_by_unmeasurable (branch not fetchable from origin)")
+        raise _SkipTask("ahead_by_unmeasurable (branch not found locally or on origin)")
     if ahead_by == 0 or not changed_files:
         raise _SkipTask(
             f"no_content (ahead_by={ahead_by}, changed_files={changed_files or 0})"
@@ -292,6 +334,7 @@ def _decide(
             "pr": None,
             "ahead_by": ahead_by,
             "changed_files": changed_files,
+            "unpushed": unpushed,
         }
 
     title, body = honest_pr_title_and_body(
@@ -311,7 +354,7 @@ def _decide(
         raise _SkipTask(f"create_pr_error:{exc}") from exc
     if pr is None:
         raise _SkipTask("pr_not_created (gh pr create failed)")
-    return {"action": "opened", "pr": pr}
+    return {"action": "opened", "pr": pr, "unpushed": unpushed}
 
 
 def _process_spec(
