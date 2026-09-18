@@ -80,6 +80,73 @@ Code: `apps/web-server/server/services/pr_endgame.py`, wired into the completion
 hook in `agent_service.py` (the terminal `COMPLETED` branch), guarded by a
 fire-once `.terminal_side_effects_done` marker in the spec dir.
 
+## The merger: landing work the endgame never reached
+
+**User story.** *As the person reviewing the factory's output, I want every
+finished build to reach me as a pull request, and each task's board status to
+say what happened to that PR, so I never have to go looking in worktrees for
+work that was done and then forgotten.*
+
+The endgame above runs only on a clean, QA-approved build. Anything else used
+to stop at "branch in a worktree". On the co-mount path the build commits
+locally and never pushes, so the work was invisible. In September 2026 five
+tasks sat for a week holding 2-10 real commits each (Factory#2586).
+
+The merger (`server/services/merger.py`) is the landing path for everything
+else. For each task it:
+
+1. **Looks up the branch's PR in every state.** An open PR is left alone. A
+   merged or closed PR is a decision already made, so no second PR is opened.
+2. **Measures the work where it actually is**, whichever of the local and
+   origin branch contains the other. If the two have diverged, the task is
+   skipped with `diverged` and nothing is force-pushed. If the branch cannot
+   be found or fetched, the result is `unmeasurable`, never "empty".
+3. **Pushes and opens a PR** if there is unmerged work and `AIFACTORY_AUTO_PR`
+   is on. The PR body states what was and was not verified: it is a review
+   surface, not a certificate.
+4. **Makes the task's status follow the PR**, only for tasks in
+   `human_review`. A status a person set is never overwritten.
+
+| PR state | Task becomes |
+|---|---|
+| open (new or existing) | `human_review` / `awaiting_merge` ("PR Open") |
+| merged | `done` |
+| closed without merging | `human_review` / `pr_closed` ("PR Closed") |
+| no work to land | `human_review` / `no_work` ("No Work Produced") |
+| could not measure | unchanged |
+
+**It never merges.** `AIFACTORY_AUTO_MERGE` is not read by the merger.
+
+### When it runs
+
+- **At the end of every completed build**, after the endgame. After an endgame
+  PR it just records `awaiting_merge`. Failed builds are left to the sweep.
+- **On a periodic sweep** (optional), which catches failed builds with real
+  work, builds from before 3.6.82, and a build-end call that errored.
+- **On demand:** `POST /api/maintenance/merger/run?dry_run=false` (member role).
+  `GET /api/maintenance/merger` reports what it would do and opens nothing.
+
+### Options
+
+| Variable | Default (unset) | Effect |
+|---|---|---|
+| `AIFACTORY_AUTO_PR` | off | Unset: the merger reports and syncs status but opens no PR (`auto_pr_disabled`). |
+| `AIFACTORY_MERGER_SWEEP` | off | Unset: no periodic sweep. Build-end landing still happens. |
+| `AIFACTORY_MERGER_SWEEP_DRY_RUN` | `true` | Anything except exactly `false` is report-only: the tick is logged, and nothing is pushed, opened or written. |
+| `AIFACTORY_MERGER_SWEEP_INTERVAL_S` | `900` | Seconds between ticks. Zero or non-numeric falls back to 900. |
+
+Recommended rollout: enable the sweep report-only, read one `merger-sweep {...}`
+log line, and flip `DRY_RUN` to `false` only when the report is what you
+expect.
+
+### Is the sweep alive?
+
+The loop runs inside the web-server pod, not as a CronJob: the spec tree is on
+a ReadWriteOnce volume, so a separate pod could see nothing and still report
+success. `job-watchdog` therefore cannot see it. Check
+`GET /api/maintenance/merger`: `last_tick_at` advances once per interval, and
+`null` means it has never ticked.
+
 ## Safety properties
 
 - **Default OFF** — inert until a flag is explicitly set.

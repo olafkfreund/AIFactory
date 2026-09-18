@@ -314,6 +314,9 @@ set per-project in `.aifactory/.env`.
 | `AIFACTORY_PR_REVIEWER` | `aifactory` | no | Which review gates merge: `aifactory`, `copilot`, or `any`. |
 | `AIFACTORY_AUTO_DEPLOY` | off | no | Deploy-then-verify to AWS App Runner on a clean build, then tear down. |
 | `AIFACTORY_COPILOT_DISPATCH_ENABLED` | off | no | Enable GitHub Copilot dispatch for reviews. |
+| `AIFACTORY_MERGER_SWEEP` | off | no | Periodic merger sweep: push and open PRs for finished work with no PR, and sync task status to PR state. See `guides/pr-endgame.md`. |
+| `AIFACTORY_MERGER_SWEEP_DRY_RUN` | `true` | no | Report-only unless exactly `false`. |
+| `AIFACTORY_MERGER_SWEEP_INTERVAL_S` | `900` | no | Seconds between sweep ticks. |
 
 ## Completion events & outbox
 
