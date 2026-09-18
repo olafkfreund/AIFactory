@@ -28,6 +28,10 @@ from typing import Any
 from factory_common.logsafe import sanitize_log
 
 from server.background import spawn
+from server.services.review_redrive_service import (
+    sync_spec_file_from_worktree,
+    worktree_spec_dir,
+)
 
 from .task_control import write_control
 
@@ -92,6 +96,18 @@ async def run_terminal_completion(
     asked for, or the plan says "completed" for a build this function already
     ruled failed (#1430).
     """
+    # #1550: on the co-mount Job path the gate marker is written into the task
+    # worktree's spec dir and nothing else brings it home (the packed path's
+    # object-store fetch is a no-op here). Copy it before anything reads it --
+    # the merger (#1566) runs below. Newer-only and never raises, so a repeat,
+    # a retried completion or a missing worktree is a no-op.
+    try:
+        sync_spec_file_from_worktree(
+            spec_dir, worktree_spec_dir(project_path, spec_id), ".trailing_gates_done"
+        )
+    except Exception:  # noqa: BLE001 - never break the completion path
+        logger.debug("gate-marker copy-back failed", exc_info=True)
+
     # Evidence gate (#1070): a build with nothing to show is a FAILED build, not
     # a review request. Downgrading here covers both build backends at once —
     # the in-pod subprocess path and the kubejob path both finish through this
