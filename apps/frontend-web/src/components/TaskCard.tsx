@@ -18,7 +18,8 @@ import {
   TASK_PRIORITY_COLORS,
   TASK_PRIORITY_LABELS,
   EXECUTION_PHASE_LABELS,
-  EXECUTION_PHASE_BADGE_COLORS
+  EXECUTION_PHASE_BADGE_COLORS,
+  reviewReasonBadge
 } from '../shared/constants';
 import { startTask, stopTask, checkTaskRunning, recoverStuckTask, isIncompleteHumanReview, archiveTasks } from '../stores/task-store';
 import type { Task, TaskCategory, ReviewReason } from '../shared/types';
@@ -284,25 +285,8 @@ export const TaskCard = memo(function TaskCard({ task, onClick }: TaskCardProps)
   };
 
   const getReviewReasonLabel = (reason?: ReviewReason): { label: string; variant: 'success' | 'destructive' | 'warning' | 'default' } | null => {
-    if (!reason) return null;
-    switch (reason) {
-      case 'completed':
-        return { label: t('reviewReason.completed'), variant: 'success' };
-      case 'errors':
-        return { label: t('reviewReason.hasErrors'), variant: 'destructive' };
-      case 'qa_rejected':
-        return { label: t('reviewReason.qaIssues'), variant: 'warning' };
-      case 'plan_review':
-        return { label: t('reviewReason.approvePlan'), variant: 'warning' };
-      case 'awaiting_merge':
-        return { label: t('reviewReason.prOpen'), variant: 'default' };
-      case 'pr_closed':
-        return { label: t('reviewReason.prClosed'), variant: 'warning' };
-      case 'no_work':
-        return { label: t('reviewReason.noWork'), variant: 'destructive' };
-      default:
-        return null;
-    }
+    const badge = reviewReasonBadge(reason);
+    return badge ? { label: t(badge.labelKey), variant: badge.variant } : null;
   };
 
   const reviewReasonInfo = task.status === 'human_review' ? getReviewReasonLabel(task.reviewReason) : null;
