@@ -210,7 +210,8 @@
   },
   "tokenUsage": {
     "title": "Uso de Tokens",
-    "empty": "Nenhum dado de uso de tokens ainda. Inicie a tarefa para começar a rastrear."
+    "empty": "Nenhum dado de uso de tokens ainda. Inicie a tarefa para começar a rastrear.",
+    "cache": "Cache: {{read}} lidos · {{written}} gravados · {{rate}}% de acerto"
   },
   "resourceUsage": {
     "title": "Uso de Recursos",

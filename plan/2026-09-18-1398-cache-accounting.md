@@ -80,3 +80,29 @@ Expected: all pass. Existing token-usage tests pass unchanged.
 
 Revert the commit. Files written with the new keys stay readable by the old code, which
 ignores unknown keys. No migration.
+
+## Implementation notes
+
+**Step 0 finding:** CFactory's `TokenUsage` (`apps/backend/cfactory/models.py`) sets
+`ConfigDict(extra="ignore")`. Unknown `usage` keys are **accepted and dropped, not
+rejected**, so step 5 ships. CFactory needs its own follow-up to store and surface the two
+fields.
+
+**Deviations:**
+- Per-worker records use `cache_read_tokens` / `cache_creation_tokens`, matching that
+  record's existing snake_case keys (`input_tokens`, ...). The top-level aggregate and API
+  shape stay camelCase, as planned.
+- The UI uses **one** interpolated i18n key, `tasks:tokenUsage.cache`
+  (`{{read}}`, `{{written}}`, `{{rate}}`), in en/fr/pt-BR, instead of three keys. It is less
+  code, and translators control word order. The line renders only when either count is
+  greater than 0, so the hit rate is never null where it is shown.
+- The completion `usage` block gains the two keys **only when a cache was reported**. A
+  no-cache provider's block, or one from a pre-#1398 file, stays byte-identical, and the
+  existing golden tests pass unchanged.
+
+**Environment notes (not changes):** `apps/frontend-web` is an npm workspace member, so
+`npm ci` hoists to the repo root. In this checkout no `.bin` shims were created, so the
+tools were run with `node <pkg entry>` from `apps/frontend-web`. `tsc --noEmit` passes.
+eslint shows 0 errors and 2010 warnings (cap 2039). The panel's 3 warnings are all on
+pre-existing lines and are identical on `dev`. vitest: 339 passed and 7 failed; the same 7
+fail on `dev` (`project-store.test.ts`, `localStorage` undefined in the test env).
