@@ -56,3 +56,17 @@ Expected: all pass. Python projects' gates and flakes are unchanged.
 ## Rollback
 
 Revert the implementation commit. There are no data or config changes.
+
+## Deviations (recorded during implementation)
+
+- **Steps 3-4 moved into `core/nix_env.py`, with the same decision.** An unset language
+  sends `generate_flake` down the *python* branch before `_python_libs` runs. Turning off
+  `py_harness` there would still yield a Python shell with no node. Threading `project_dir`
+  into `generate_flake` (step 4) would also add pyproject deps and pip to *Python* flakes,
+  which breaks "Python flakes unchanged". Instead, `materialize_flake_into` fills an unset
+  language with `javascript` when the project has a `package.json`, no Python marker
+  (`pyproject.toml`, `requirements.txt`, `setup.py`, `pytest.ini`) and no `pytest` in its
+  verify commands. `nix_provisioner.py` is untouched, so its self-test is unchanged. The
+  new cases live in `tests/test_test_script_language.py`.
+- **Step 2: the gate message is passed to `sh` as `$0`**, not interpolated into the
+  script, so a `package.json` script value cannot inject shell.

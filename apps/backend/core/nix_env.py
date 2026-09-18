@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from typing import Any
 
 from core.nix_provisioner import Manifest, generate_flake
 
@@ -80,9 +81,35 @@ def materialize_flake_into(project_dir: Path, env: dict | None) -> bool:
     if flake_path.exists() and not m.provisioning_generated:
         logger.info("nix_env: respecting repo-owned %s", _FLAKE)
         return True
-    flake_path.write_text(generate_flake(env), encoding="utf-8")
+    flake_path.write_text(
+        generate_flake(_with_language_from_project(env, Path(project_dir))),
+        encoding="utf-8",
+    )
     logger.info("nix_env: wrote generated %s into %s", _FLAKE, project_dir)
     return True
+
+
+_PY_PROJECT_MARKERS = ("pyproject.toml", "requirements.txt", "setup.py", "pytest.ini")
+
+
+def _with_language_from_project(
+    env: dict[str, Any], project_dir: Path
+) -> dict[str, Any]:
+    """Fill an UNSET language from the project when it proves JavaScript (#1443).
+
+    `generate_flake` treats an unset language as python, deliberately, for
+    manifests that omit it. That is wrong for a project that is plainly JS: it
+    got a python + pytest shell and no node, which is how a JS build came to
+    offer `pytest -q` as its test command. Only a package.json with no python
+    marker overrides the default; anything else keeps it.
+    """
+    if env.get("language") or "pytest" in " ".join(env.get("verify_commands") or []):
+        return env
+    if not (project_dir / "package.json").is_file():
+        return env
+    if any((project_dir / m).exists() for m in _PY_PROJECT_MARKERS):
+        return env
+    return {**env, "language": "javascript"}
 
 
 def infer_environment(project_dir: Path) -> dict[str, object] | None:
