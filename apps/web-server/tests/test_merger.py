@@ -69,25 +69,62 @@ def _spec(
     return spec_dir
 
 
-# ── _find_open_pr ────────────────────────────────────────────────────────────
+# ── _find_pr ────────────────────────────────────────────────────────────────
 
 
-def test_find_open_pr_none():
-    r = FakeRunner({"pr list": CmdResult(0, "", "")})
-    assert mg._find_open_pr("o", "r", "b", r) == (True, None)
+def _prs(*items: tuple[int, str, str]) -> CmdResult:
+    return CmdResult(
+        0,
+        json.dumps(
+            [{"number": n, "state": st, "createdAt": at} for n, st, at in items]
+        ),
+        "",
+    )
 
 
-def test_find_open_pr_found():
-    r = FakeRunner({"pr list": CmdResult(0, "42\n", "")})
-    assert mg._find_open_pr("o", "r", "b", r) == (True, 42)
+def test_find_pr_none():
+    r = FakeRunner({"pr list": CmdResult(0, "[]", "")})
+    assert mg._find_pr("o", "r", "b", r) == (True, None, None)
 
 
-def test_find_open_pr_query_failure_is_unmeasured_not_none():
+def test_find_pr_found_open():
+    r = FakeRunner({"pr list": _prs((42, "OPEN", "2026-09-01"))})
+    assert mg._find_pr("o", "r", "b", r) == (True, 42, "OPEN")
+
+
+def test_find_pr_queries_every_state():
+    """#2586: an open-only query cannot see a merged PR, and a merged branch
+    measured locally looks like fresh work."""
+    r = FakeRunner({"pr list": CmdResult(0, "[]", "")})
+    mg._find_pr("o", "r", "b", r)
+    assert r.saw("--state all")
+
+
+def test_find_pr_prefers_open_over_newer_merged():
+    r = FakeRunner(
+        {"pr list": _prs((7, "MERGED", "2026-09-10"), (9, "OPEN", "2026-09-01"))}
+    )
+    assert mg._find_pr("o", "r", "b", r) == (True, 9, "OPEN")
+
+
+def test_find_pr_most_recent_when_none_open():
+    r = FakeRunner(
+        {"pr list": _prs((3, "CLOSED", "2026-09-01"), (8, "MERGED", "2026-09-08"))}
+    )
+    assert mg._find_pr("o", "r", "b", r) == (True, 8, "MERGED")
+
+
+def test_find_pr_query_failure_is_unmeasured_not_none():
     """Finding #1: a failed `gh pr list` must be distinguishable from a
     successful query that found nothing -- else the sweep proceeds to
     `gh pr create` on an idempotency check that was never actually made."""
     r = FakeRunner({"pr list": CmdResult(1, "", "rate limited")})
-    assert mg._find_open_pr("o", "r", "b", r) == (False, None)
+    assert mg._find_pr("o", "r", "b", r) == (False, None, None)
+
+
+def test_find_pr_garbled_output_is_unmeasured_not_none():
+    r = FakeRunner({"pr list": CmdResult(0, "<html>502</html>", "")})
+    assert mg._find_pr("o", "r", "b", r) == (False, None, None)
 
 
 # ── _branch_ahead_and_changed ────────────────────────────────────────────────
@@ -233,7 +270,7 @@ def test_process_spec_opens_pr_for_stranded_branch(tmp_path, monkeypatch):
 def test_process_spec_idempotent_when_pr_already_open(tmp_path, monkeypatch):
     monkeypatch.setenv("AIFACTORY_AUTO_PR", "true")
     spec_dir = _spec(tmp_path, "001-x")
-    r = FakeRunner(_routes(**{"pr list": CmdResult(0, "9\n", "")}))
+    r = FakeRunner(_routes(**{"pr list": _prs((9, "OPEN", "2026-09-01"))}))
     out = mg._process_spec("proj", tmp_path, spec_dir, dry_run=False, runner=r)
     assert out == {
         "task": "proj:001-x",
@@ -242,6 +279,31 @@ def test_process_spec_idempotent_when_pr_already_open(tmp_path, monkeypatch):
         "reason": None,
     }
     assert not r.saw("pr create"), "an already-open PR must never be re-opened"
+
+
+def test_process_spec_merged_pr_opens_nothing_even_when_branch_ahead(
+    tmp_path, monkeypatch
+):
+    """#2586: task 001 was squash-merged; its local branch still carries the
+    commits under other SHAs, so it measures as 'ahead'. A merged PR is a
+    decision already made -- never open a second one."""
+    monkeypatch.setenv("AIFACTORY_AUTO_PR", "true")
+    spec_dir = _spec(tmp_path, "001-x")
+    r = FakeRunner(_routes(**{"pr list": _prs((35, "MERGED", "2026-09-08"))}))
+    out = mg._process_spec("proj", tmp_path, spec_dir, dry_run=False, runner=r)
+    assert out == {"task": "proj:001-x", "action": "merged", "pr": 35, "reason": None}
+    assert not r.saw("pr create")
+    assert not r.saw("git push")
+
+
+def test_process_spec_closed_pr_opens_nothing(tmp_path, monkeypatch):
+    monkeypatch.setenv("AIFACTORY_AUTO_PR", "true")
+    spec_dir = _spec(tmp_path, "003-x")
+    r = FakeRunner(_routes(**{"pr list": _prs((38, "CLOSED", "2026-09-08"))}))
+    out = mg._process_spec("proj", tmp_path, spec_dir, dry_run=False, runner=r)
+    assert out["action"] == "closed"
+    assert out["pr"] == 38
+    assert not r.saw("pr create")
 
 
 def test_process_spec_skips_empty_branch_no_pr_opened(tmp_path, monkeypatch):

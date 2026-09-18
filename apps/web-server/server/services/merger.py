@@ -48,17 +48,22 @@ def _skip(task: str, reason: str) -> dict[str, Any]:
     return {"task": task, "action": "skipped", "pr": None, "reason": reason}
 
 
-def _find_open_pr(
+def _find_pr(
     owner: str, name: str, branch: str, runner: Runner
-) -> tuple[bool, int | None]:
-    """``(measured, pr_number)`` for an already-open PR on ``branch``.
+) -> tuple[bool, int | None, str | None]:
+    """``(measured, pr_number, state)`` of the PR for ``branch``, in ANY state.
+
+    An OPEN PR wins; otherwise the most recently created one, so a branch
+    whose PR was MERGED or CLOSED is recognised as already decided (#2586).
+    Without this, measuring the local branch would re-open squash-merged work:
+    its commits survive locally under SHAs that ``main`` never received.
 
     ``measured`` is False when the ``gh pr list`` query itself failed --
-    network blip, rate limit, bad token. That is NOT the same as "queried
-    successfully and found nothing": treating a failed query as "no open PR"
-    is exactly the bug this module exists to not repeat (a failed measurement
-    read as a definite negative), so the caller must skip rather than proceed
-    to ``gh pr create`` on an unmeasured idempotency check.
+    network blip, rate limit, bad token, unparseable output. That is NOT the
+    same as "queried successfully and found nothing": treating a failed query
+    as "no PR" is exactly the bug this module exists to not repeat (a failed
+    measurement read as a definite negative), so the caller must skip rather
+    than proceed to ``gh pr create`` on an unmeasured idempotency check.
     """
     res = runner(
         [
@@ -70,18 +75,28 @@ def _find_open_pr(
             "--head",
             branch,
             "--state",
-            "open",
+            "all",
             "--json",
-            "number",
-            "--jq",
-            ".[0].number",
+            "number,state,createdAt",
         ],
         None,
     )
     if not res.ok:
-        return False, None
-    text = res.out.strip()
-    return True, (int(text) if text.isdigit() else None)
+        return False, None, None
+    try:
+        prs = json.loads(res.out or "[]")
+    except ValueError:
+        return False, None, None
+    if not isinstance(prs, list):
+        return False, None, None
+    prs = [p for p in prs if isinstance(p, dict) and isinstance(p.get("number"), int)]
+    if not prs:
+        return True, None, None
+    open_prs = [p for p in prs if p.get("state") == "OPEN"]
+    pick = (
+        open_prs[0] if open_prs else max(prs, key=lambda p: str(p.get("createdAt", "")))
+    )
+    return True, int(pick["number"]), str(pick.get("state") or "")
 
 
 def _branch_ahead_and_changed(
@@ -248,11 +263,16 @@ def _decide(
     owner, name = parts
     branch, base = ctx["branch"], ctx["base"]
 
-    pr_list_measured, existing = _find_open_pr(owner, name, branch, runner)
+    pr_list_measured, existing, state = _find_pr(owner, name, branch, runner)
     if not pr_list_measured:
         raise _SkipTask("open_pr_check_unmeasurable (gh pr list failed)")
     if existing is not None:
-        return {"action": "already_open", "pr": existing}
+        # A merged or closed PR is a decision already made by a human: never
+        # open a second PR for the same branch (#2586).
+        action = {"MERGED": "merged", "CLOSED": "closed"}.get(
+            state or "", "already_open"
+        )
+        return {"action": action, "pr": existing}
 
     ahead_by, changed_files = _branch_ahead_and_changed(
         ctx["worktree"], base, branch, runner
