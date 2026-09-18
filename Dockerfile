@@ -37,7 +37,7 @@
 # surface. The runtime stage stays on Chainguard, where it does matter.
 # Digest bumps land via Dependabot PRs (.github/dependabot.yml).
 
-FROM docker.io/node:24-bookworm-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03 AS frontend-build
+FROM docker.io/node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS frontend-build
 
 USER root
 WORKDIR /build
@@ -71,7 +71,7 @@ RUN mkdir -p apps/web-server/static \
 # ---------------------------------------------------------------------------
 # Runtime Node comes from the official image, not apk (Factory#1710). Same
 # digest as frontend-build, so both move together in one Dependabot bump.
-FROM docker.io/node:24-bookworm-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03 AS node-runtime
+FROM docker.io/node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS node-runtime
 
 FROM cgr.dev/chainguard/python:latest-dev@sha256:aa89119db7f7fb4a6628ac82e2c38404cc64cd56ccd858d2c78646776b3fffef AS runtime
 
@@ -103,6 +103,12 @@ COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-runtime /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
 RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
  && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+# Every node:24 image to date bundles an npm (<=11.19.0) whose own deps carry
+# HIGH CVEs the P0 Trivy gate rejects (brace-expansion, ip-address, tar).
+# npm 11.19.1 has them fixed. Pinned exactly because Dependabot cannot track a
+# version inside RUN. REMOVE this line once `docker run node:24-bookworm-slim
+# npm -v` prints >= 11.19.1 (Factory#1710).
+RUN npm install -g npm@11.19.1 && npm --version
 # .nvmrc is the one declaration of the Node major: fail the build on drift.
 COPY .nvmrc /tmp/.nvmrc
 RUN want="$(tr -dc '0-9.' < /tmp/.nvmrc | cut -d. -f1)" \
