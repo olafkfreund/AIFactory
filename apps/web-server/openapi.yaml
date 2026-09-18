@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: AIFactory Web API
   description: Web API for AIFactory — self-hosted AI task management + agent orchestration
-  version: 3.6.81
+  version: 3.6.82
 paths:
   /api/auth/register:
     post:
@@ -8351,7 +8351,14 @@ paths:
   /api/maintenance/merger:
     get:
       summary: Report Merger
-      description: What the merger would do. Opens nothing.
+      description: 'What the merger would do. Opens nothing.
+
+
+        ``last_tick_at`` is when the backstop loop last finished a sweep (None if
+
+        it never ran or is disabled) -- job-watchdog cannot see an in-process
+
+        loop, so a stale value here is how a dead one shows (Factory#2586).'
       operationId: report_merger_api_maintenance_merger_get
       responses:
         '200':

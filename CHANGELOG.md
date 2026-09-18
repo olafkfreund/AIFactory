@@ -1,5 +1,30 @@
 ## [Unreleased]
 
+## 3.6.82 - 2026-09-18
+
+### Fixed
+
+- **Finished work now reaches a pull request.** The merger (#1552) existed but
+  nothing ran it, and it measured only the branch on origin. On the co-mount
+  path the build commits locally and never pushes, so five live tasks holding
+  2-10 real commits were reported as `no_content` and skipped for a week. The
+  merger now measures whichever of the local and origin refs contains the
+  other (diverged refs are skipped, never force-pushed), and it runs at the
+  end of every completed build. (Factory#2586)
+
+### Added
+
+- **Task status follows the PR.** Once the merger knows a task's PR state, a
+  task in `human_review` gets `awaiting_merge` (PR open), `done` (merged),
+  `pr_closed` (closed without merging) or `no_work` (nothing to land). A status
+  a human set is never overwritten. The board shows the new reasons as badges.
+  (Factory#2586)
+- **Backstop merger sweep.** `AIFACTORY_MERGER_SWEEP=true` runs the sweep
+  in-process every `AIFACTORY_MERGER_SWEEP_INTERVAL_S` (default 900). It is
+  report-only unless `AIFACTORY_MERGER_SWEEP_DRY_RUN=false`.
+  `GET /api/maintenance/merger` returns `last_tick_at`, so a dead loop is
+  visible. (Factory#2586)
+
 ## 3.6.81 - 2026-08-25
 
 ### Fixed
