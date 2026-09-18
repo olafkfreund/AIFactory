@@ -248,6 +248,31 @@ def test_read_usage_maps_token_attribution_fields(tmp_path):
     }
 
 
+def test_read_usage_carries_the_cache_split_when_reported(tmp_path):
+    """#1398: the split rides along; every pre-existing key is unchanged."""
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    _write_usage(
+        spec,
+        totalInputTokens=2400,
+        outputTokens=100,
+        totalTokens=2500,
+        totalCostUsd=1.25,
+        model="claude-sonnet-4-6",
+        cacheReadTokens=1800,
+        cacheCreationTokens=200,
+    )
+    assert read_usage(spec) == {
+        "input_tokens": 2400,
+        "output_tokens": 100,
+        "total_tokens": 2500,
+        "cost_usd": 1.25,
+        "model": "claude-sonnet-4-6",
+        "cache_read_tokens": 1800,
+        "cache_creation_tokens": 200,
+    }
+
+
 def test_read_usage_none_when_absent_or_empty(tmp_path):
     spec = tmp_path / "spec"
     spec.mkdir()
