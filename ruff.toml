@@ -144,6 +144,15 @@ ignore = [
     "UP035",  # deprecated typing imports (legacy modules use typing.List/Dict)
 ]
 
+[lint.isort]
+# The repo root holds the artifact workflow's `spec/` folder (intent/ spec/
+# plan/). Ruff's first-party detection treats any root directory as a module,
+# so with `spec/` present it reclassified the backend's own `spec` package and
+# demanded a different import order in runners/spec_runner.py -- a red
+# `backend (ruff + pytest)` on every PR that carries artifacts. Pin it to the
+# group it sorts in today so the order no longer depends on which folders exist.
+known-third-party = ["spec"]
+
 # ---------------------------------------------------------------------------
 # Feature Architecture Standard — enforced import boundary (issue #261)
 # ---------------------------------------------------------------------------
