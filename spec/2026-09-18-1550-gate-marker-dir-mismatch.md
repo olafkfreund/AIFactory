@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1550
 intent: intent/2026-09-18-1550-gate-marker-dir-mismatch.md
 ---
