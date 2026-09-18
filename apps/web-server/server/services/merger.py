@@ -158,6 +158,18 @@ def _branch_ahead_and_changed(
     if not runner(["git", "fetch", "origin", base], str(worktree)).ok:
         return unmeasurable
     on_origin = runner(["git", "fetch", "origin", branch], str(worktree)).ok
+    if not on_origin:
+        # A failed fetch is not proof the branch is absent: a transient
+        # network/auth error would otherwise send a stale local ref to be
+        # measured, and real work could be labelled no_work. ls-remote
+        # --exit-code exits 2 ONLY when the ref does not exist; anything else
+        # is "don't know".
+        probe = runner(
+            ["git", "ls-remote", "--exit-code", "--heads", "origin", branch],
+            str(worktree),
+        )
+        if probe.rc != 2:  # noqa: PLR2004 - git's documented "no such ref"
+            return unmeasurable
     ref = _pick_ref(worktree, branch, on_origin, runner)
     if ref is None:
         return unmeasurable
