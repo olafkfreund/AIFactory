@@ -76,3 +76,33 @@ spec: spec/2026-09-18-1541-gate-toolchain-closures.md
   The old image remains in GHCR.
 - The guard script is CI-only; revert its PR.
 - The AIFactory change is a comment; revert it.
+
+## Deviations and results (recorded during implementation)
+
+- **Step 2, hub pin:** `factory-runners`' `hub-pin.sh` moved `3834c61` → `19f5c409`. The old
+  pin predates `contracts/languages/`, so its generator could not produce a Kotlin or Swift
+  shell at all. `19f5c409` is exactly what AIFactory vendors (`verification-core-drift.yml:78`).
+  (factory-runners#9)
+- **Step 3, size:** the new image (`sha-80ff501`, `sha256:efef8c43…`) is **2.25 GB with 75
+  layers, unchanged**. `Dispatch` and `Foundation` were already inside Swift's closure. The
+  derived-package guard is still the lasting fix: it catches the next drift.
+- **Step 3, signing gap:** `:latest` pointed at the new image **unsigned for about 8 minutes**,
+  because the signature lands after the push. Kyverno refused my probes in that window, and it
+  would have refused every gate Job. None were running.
+- **Step 4, result:** with `--option substitute false` and the same capabilities as a real gate
+  Job (`kube_sandbox.py:107-111`):
+  - **Kotlin:** rc=0 in 22 s, 0 downloaded, 0 built.
+  - **Swift:** rc=0 in 2 s, 0 downloaded; the only local build was the per-shell
+    `nix-shell-env.drv`.
+  - A first Swift run failed with `setting uid: Operation not permitted`, because the probe
+    dropped **all** capabilities and real gates add back SETUID/SETGID for Nix build users.
+    That was a probe artifact, not an image defect.
+- **Step 5:** pinned by `tag@digest` in factory-gitops#264, applied at 21:38 UTC while
+  AIFactory reported 0 running tasks. **Instead of the plan's README note**, the
+  `factory-runners` CD pin step now also writes `AIFACTORY_SANDBOX_IMAGE`
+  (factory-runners#10). That step runs only after the signature is verified, so a pinned
+  gate never sees the unsigned window, and the pin can't go stale. Nothing else writes this
+  variable.
+- **Step 6:** confirmed that nothing in the AIFactory image runs a language `nix develop`
+  (the build Job has `nix_develop=False`, `build_backend.py:698,761`), so the `Dockerfile`
+  pin stays, and a comment records why.
