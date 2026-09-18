@@ -19,6 +19,7 @@ if str(_WS) not in sys.path:
 import pytest  # noqa: E402
 from server.services import merger as mg  # noqa: E402
 from server.services.pr_endgame import CmdResult  # noqa: E402
+from server.services.task_control import read_control, write_control  # noqa: E402
 
 
 class FakeRunner:
@@ -757,3 +758,111 @@ def test_real_git_base_advancing_is_not_counted_as_branch_work(repos):
     _git(repos, "checkout", "-q", "aifactory/1")
     ahead, changed, _unpushed = _measure(repos)
     assert (ahead, changed) == (1, 1)
+
+
+# ── status follows the PR (#2586) ───────────────────────────────────────────
+
+
+def _in_review(spec_dir: Path, reason: str = "errors") -> Path:
+    write_control(spec_dir, status="human_review", review_reason=reason)
+    return spec_dir
+
+
+@pytest.mark.parametrize(
+    ("result", "status", "reason"),
+    [
+        ({"action": "opened", "pr": 5}, "human_review", "awaiting_merge"),
+        ({"action": "already_open", "pr": 5}, "human_review", "awaiting_merge"),
+        ({"action": "merged", "pr": 5}, "done", None),
+        ({"action": "closed", "pr": 5}, "human_review", "pr_closed"),
+        (
+            {"action": "skipped", "reason": "no_content (ahead_by=0, changed_files=0)"},
+            "human_review",
+            "no_work",
+        ),
+    ],
+)
+def test_sync_status_maps_each_pr_outcome(tmp_path, result, status, reason):
+    spec_dir = _in_review(_spec(tmp_path, "001-x"))
+    assert mg._sync_status(spec_dir, result) is True
+    control = read_control(spec_dir)
+    assert control["status"] == status
+    assert control.get("reviewReason") == reason
+    assert control["updatedBy"] == "merger"
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "ahead_by_unmeasurable (branch not found locally or on origin)",
+        "open_pr_check_unmeasurable (gh pr list failed)",
+        "diverged (local and origin branch both have unique commits)",
+        "auto_pr_disabled",
+    ],
+)
+def test_sync_status_undecided_skips_leave_status_alone(tmp_path, reason):
+    """An unmeasured outcome says nothing about the task -- #2586's task 019
+    (no branch anywhere) must not be relabelled as `no_work`."""
+    spec_dir = _in_review(_spec(tmp_path, "019-x"))
+    before = read_control(spec_dir)
+    assert mg._sync_status(spec_dir, {"action": "skipped", "reason": reason}) is False
+    assert read_control(spec_dir) == before
+
+
+@pytest.mark.parametrize("status", ["in_progress", "backlog", "done"])
+def test_sync_status_never_overrules_a_status_outside_human_review(tmp_path, status):
+    spec_dir = _spec(tmp_path, "001-x")
+    write_control(spec_dir, status=status)
+    assert mg._sync_status(spec_dir, {"action": "opened", "pr": 5}) is False
+    assert read_control(spec_dir)["status"] == status
+
+
+def test_sync_status_unchanged_target_is_not_rewritten(tmp_path):
+    spec_dir = _in_review(_spec(tmp_path, "001-x"), "awaiting_merge")
+    assert mg._sync_status(spec_dir, {"action": "already_open", "pr": 5}) is False
+
+
+def test_sync_status_write_failure_is_reported_not_raised(tmp_path, monkeypatch):
+    spec_dir = _in_review(_spec(tmp_path, "001-x"))
+
+    def boom(*_a, **_k):
+        raise OSError("read-only fs")
+
+    monkeypatch.setattr(mg, "write_control", boom)
+    assert mg._sync_status(spec_dir, {"action": "opened", "pr": 5}) is False
+
+
+def test_process_one_opens_and_syncs(tmp_path, monkeypatch):
+    monkeypatch.setenv("AIFACTORY_AUTO_PR", "true")
+    spec_dir = _in_review(_spec(tmp_path, "001-x"))
+    out = mg.process_one("proj", tmp_path, spec_dir, runner=FakeRunner(_routes()))
+    assert out["action"] == "opened"
+    assert out["status_written"] is True
+    assert read_control(spec_dir)["reviewReason"] == "awaiting_merge"
+
+
+def _sweep_env(tmp_path, monkeypatch, pr_list: CmdResult):
+    monkeypatch.setenv("AIFACTORY_AUTO_PR", "true")
+    proj = tmp_path / "proj"
+    spec_dir = _in_review(_spec(proj, "001-x"))
+    monkeypatch.setattr(mg, "load_projects", lambda: {"p1": {"path": str(proj)}})
+    monkeypatch.setattr(mg, "resolve_project_path", lambda _pid: proj)
+    return spec_dir, FakeRunner(_routes(**{"pr list": pr_list}))
+
+
+def test_sweep_writes_status_and_counts_it(tmp_path, monkeypatch):
+    spec_dir, r = _sweep_env(tmp_path, monkeypatch, _prs((35, "MERGED", "2026-09-08")))
+    report = mg.sweep(dry_run=False, runner=r)
+    assert report["counts"]["merged"] == 1
+    assert report["counts"]["status_written"] == 1
+    assert read_control(spec_dir)["status"] == "done"
+
+
+def test_sweep_dry_run_never_writes_status(tmp_path, monkeypatch):
+    spec_dir, r = _sweep_env(tmp_path, monkeypatch, _prs((35, "MERGED", "2026-09-08")))
+    control_file = spec_dir / "task_control.json"
+    before = (control_file.read_bytes(), control_file.stat().st_mtime_ns)
+    report = mg.sweep(dry_run=True, runner=r)
+    assert report["counts"]["merged"] == 1
+    assert report["counts"]["status_written"] == 0
+    assert (control_file.read_bytes(), control_file.stat().st_mtime_ns) == before

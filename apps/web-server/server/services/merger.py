@@ -39,6 +39,7 @@ from server.project_registry import load_projects, resolve_project_path
 from server.routes.task_service import get_spec_dirs
 from server.services import pr_endgame as pe
 from server.services.pr_endgame import Runner
+from server.services.task_control import read_control, write_control
 from server.tenancy import UNREADABLE_TENANT, spec_tenant
 
 logger = logging.getLogger(__name__)
@@ -376,6 +377,75 @@ def _process_spec(
     return {"task": task, "reason": None, **outcome}
 
 
+# #2586: what a task's board status should say once its PR state is known.
+# ``None`` as the reason means "clear it". Only these outcomes are decisive;
+# every other skip (unmeasurable, diverged, ...) says nothing about the task,
+# so its status is left exactly as it was.
+_STATUS_FOR_ACTION: dict[str, tuple[str, str | None]] = {
+    "opened": ("human_review", "awaiting_merge"),
+    "already_open": ("human_review", "awaiting_merge"),
+    "merged": ("done", None),
+    "closed": ("human_review", "pr_closed"),
+}
+_NO_WORK = ("human_review", "no_work")
+
+
+def _sync_status(spec_dir: Path, result: dict[str, Any]) -> bool:
+    """Make the task's board status follow its PR. True when it wrote.
+
+    Writes only over ``human_review``: a status a human set (dragged to
+    ``done``, back to ``backlog``) or a task still ``in_progress`` is never
+    overwritten -- the merger reports, it does not overrule. An unchanged
+    target is not rewritten, so ``status_written`` counts real changes.
+    Never raises: a failed write must not turn a PR outcome into an error.
+    """
+    action = result.get("action")
+    if action == "skipped" and str(result.get("reason") or "").startswith("no_content"):
+        target: tuple[str, str | None] | None = _NO_WORK
+    else:
+        target = _STATUS_FOR_ACTION.get(str(action))
+    if target is None:
+        return False
+    status, reason = target
+    try:
+        current = read_control(spec_dir)
+        if current.get("status") != "human_review":
+            return False
+        if current.get("status") == status and current.get("reviewReason") == reason:
+            return False
+        write_control(
+            spec_dir,
+            status=status,
+            review_reason=reason,
+            clear_review_reason=reason is None,
+            updated_by="merger",
+        )
+    except Exception:
+        # A status write never breaks the sweep; logged with its traceback.
+        logger.exception("[merger] status sync failed for %s", spec_dir.name)
+        return False
+    return True
+
+
+def process_one(
+    project_id: str,
+    project_path: Path,
+    spec_dir: Path,
+    *,
+    runner: Runner = pe._default_runner,
+) -> dict[str, Any]:
+    """Land one task: open its PR if due, then make its status follow the PR.
+
+    The build-end entry point (#2586) -- the same decision the sweep makes,
+    for a single spec, for real (never a dry run).
+    """
+    result = _process_spec(
+        project_id, project_path, spec_dir, dry_run=False, runner=runner
+    )
+    result["status_written"] = _sync_status(spec_dir, result)
+    return result
+
+
 def sweep(
     *,
     dry_run: bool = True,
@@ -451,15 +521,16 @@ def sweep(
             spec_dirs = kept
         for spec_dir in spec_dirs:
             try:
-                results.append(
-                    _process_spec(
-                        project_id,
-                        project_path,
-                        spec_dir,
-                        dry_run=dry_run,
-                        runner=runner,
-                    )
+                result = _process_spec(
+                    project_id,
+                    project_path,
+                    spec_dir,
+                    dry_run=dry_run,
+                    runner=runner,
                 )
+                if not dry_run:
+                    result["status_written"] = _sync_status(spec_dir, result)
+                results.append(result)
             except Exception:
                 logger.exception(
                     "[merger] sweep failed for %s:%s", project_id, spec_dir.name
@@ -468,7 +539,16 @@ def sweep(
                     _skip(f"{project_id}:{spec_dir.name}", "sweep_error (see logs)")
                 )
 
-    counts = {"opened": 0, "already_open": 0, "would_open": 0, "skipped": 0}
+    counts = {
+        "opened": 0,
+        "already_open": 0,
+        "would_open": 0,
+        "merged": 0,
+        "closed": 0,
+        "skipped": 0,
+        "status_written": 0,
+    }
     for r in results:
         counts[r["action"]] = counts.get(r["action"], 0) + 1
+        counts["status_written"] += bool(r.get("status_written"))
     return {"dry_run": dry_run, "results": results, "counts": counts}
