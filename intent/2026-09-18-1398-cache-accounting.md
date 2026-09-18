@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1398
 author: Olaf Krasicki-Freund
 ---
@@ -56,3 +56,10 @@ how often the cache is re-created, and so whether the 1-hour TTL (item 2) is wor
    My recommendation is yes, because it needs a route around the SDK's str-only
    `system_prompt` and is an architecture decision, not a cleanup. I'd also retitle #1398
    to "Split cache creation from cache reads in token accounting".
+
+## Decisions (at approval, 2026-09-18)
+
+1. `system_instructions` **keeps its current meaning** (creation + reads, for compatibility).
+   Two new fields, `cache_creation` and `cache_read`, are added beside it.
+2. The 1-hour TTL is **out of scope**. It gets its own intent once the split data shows how
+   often the cache is re-created. #1398 is retitled to match.
