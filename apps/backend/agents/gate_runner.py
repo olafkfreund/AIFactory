@@ -721,35 +721,38 @@ def _current_head_sha(gate_dir: Path) -> str | None:
     return sha or None
 
 
-def _task_branch_sha(project_dir: Path, spec_name: str) -> str | None:
-    """Tip sha of the task branch ``aifactory/<spec>`` in `project_dir` (#1550).
+def _task_branch_shas(project_dir: Path, spec_name: str) -> set[str]:
+    """Tip shas of the task branch ``aifactory/<spec>`` in `project_dir` (#1550).
 
     Lets a reader with no working copy of the task (the web-server merger, a
     packed-path build whose Job tree is gone) still name the tree the evidence
-    is about. Same best-effort contract as `_current_head_sha`.
+    is about. Both the local branch and ``origin/aifactory/<spec>`` count: the
+    co-mount path commits locally and never pushes, while the packed path
+    pushes to origin and leaves the control plane's local ref stale or absent
+    (the merger fetches it before it reads evidence). Same best-effort contract
+    as `_current_head_sha`: an unresolvable ref contributes nothing.
     """
-    try:
-        # Fixed argv, no shell; only the ref name varies, and it is a ref lookup.
-        result = subprocess.run(  # noqa: S603
-            [  # noqa: S607
-                "git",
-                "rev-parse",
-                "--verify",
-                "--quiet",
-                f"refs/heads/aifactory/{spec_name}",
-            ],
-            cwd=project_dir,
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if result.returncode != 0:
-        return None
-    sha = result.stdout.strip()
-    return sha or None
+    shas: set[str] = set()
+    for ref in (
+        f"refs/heads/aifactory/{spec_name}",
+        f"refs/remotes/origin/aifactory/{spec_name}",
+    ):
+        try:
+            # Fixed argv, no shell; only the ref name varies, and it is a ref lookup.
+            result = subprocess.run(  # noqa: S603
+                ["git", "rev-parse", "--verify", "--quiet", ref],  # noqa: S607
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        sha = result.stdout.strip() if result.returncode == 0 else ""
+        if sha:
+            shas.add(sha)
+    return shas
 
 
 def write_trailing_gate_marker(spec_dir: Path, gate_dir: Path, evidence: str) -> None:
@@ -797,7 +800,7 @@ def trailing_gate_marker_is_current(
     if (
         project_dir is not None
         and gate_dir == project_dir
-        and _task_branch_sha(project_dir, spec_dir.name) == recorded_sha
+        and recorded_sha in _task_branch_shas(project_dir, spec_dir.name)
     ):
         return True
     current_sha = _current_head_sha(gate_dir)

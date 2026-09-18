@@ -99,3 +99,18 @@ still reads them.
   no evidence on that path. It is not fixed here (out of the approved scope). Follow-up:
   copy the marker to the source spec dir at build end on the co-mount path, as
   `check_review_obligation` already does for `qa_review_cycle.json` (#1249).
+
+### Deviation: bind to the origin tip too (found after #1566 landed on dev)
+
+Step 1 resolved only `refs/heads/aifactory/<spec>`. On the **packed** path the Job pushes
+its branch to **origin** (`workspace_fetch.maybe_push_workspace_branch`), and the control
+plane's local ref is absent or stale, so a correctly fetched marker still read as
+"no evidence". That falsified this PR's own packed-path claim. `_task_branch_shas` now
+returns the tips of both `refs/heads/aifactory/<spec>` and
+`refs/remotes/origin/aifactory/<spec>`, and a marker counts if its sha equals either. The
+merger fetches `origin <branch>` while measuring (`merger.py:160`), before it reads
+evidence (`:268`), so the origin ref is current when it matters. The #1496 strictness is
+unchanged: only an exact tip match counts, and a worktree HEAD check still decides alone
+where a worktree exists. New tests cover a packed-path origin-only tip, a stale local
+branch behind origin, and a marker matching neither. Mutation-checked: dropping the origin
+ref fails the first two.

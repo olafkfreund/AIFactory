@@ -102,6 +102,49 @@ def test_no_task_branch_falls_back_to_head_and_stays_absent(tmp_path):
     assert trailing_gate_evidence(spec_dir, repo) is None
 
 
+def test_packed_path_origin_tip_counts_without_a_local_branch(tmp_path):
+    """#1550: the packed Job pushes to origin; the control plane has no local
+    task branch, only the ``origin/aifactory/<spec>`` ref the merger fetched."""
+    repo, spec_dir, task_sha = _repo(tmp_path)
+    _git(repo, "branch", "-D", f"aifactory/{SPEC}")
+    _git(repo, "update-ref", f"refs/remotes/origin/aifactory/{SPEC}", task_sha)
+    _mark(spec_dir, task_sha)
+    assert trailing_gate_evidence(spec_dir, repo) == "pytest: passed"
+
+
+def test_origin_tip_counts_over_a_stale_local_branch(tmp_path):
+    """A stale local ref must not hide evidence for the commit origin holds."""
+    repo, spec_dir, task_sha = _repo(tmp_path)
+    # The Job built one more commit and pushed it; the local branch still sits
+    # at the pre-build tip, and main's HEAD is elsewhere.
+    _git(repo, "checkout", "-q", f"aifactory/{SPEC}")
+    _git(
+        repo,
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "user.name=t",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "built in the Job",
+    )
+    pushed = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "update-ref", f"refs/remotes/origin/aifactory/{SPEC}", pushed)
+    _git(repo, "branch", "-f", f"aifactory/{SPEC}", task_sha)
+    _mark(spec_dir, pushed)
+    assert trailing_gate_evidence(spec_dir, repo) == "pytest: passed"
+
+
+def test_marker_matching_neither_tip_stays_absent(tmp_path):
+    repo, spec_dir, task_sha = _repo(tmp_path)
+    _git(repo, "update-ref", f"refs/remotes/origin/aifactory/{SPEC}", task_sha)
+    _mark(spec_dir, "0" * 40)
+    assert trailing_gate_evidence(spec_dir, repo) is None
+
+
 def test_writer_binding_unchanged_in_project_dir(tmp_path):
     repo, spec_dir, _ = _repo(tmp_path)
     write_trailing_gate_marker(spec_dir, repo, "pytest: passed")
