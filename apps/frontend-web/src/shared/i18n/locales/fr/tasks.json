@@ -31,7 +31,10 @@
     "completed": "Terminé",
     "hasErrors": "Contient des erreurs",
     "qaIssues": "Problèmes QA",
-    "approvePlan": "Approuver le plan"
+    "approvePlan": "Approuver le plan",
+    "prOpen": "PR ouverte",
+    "prClosed": "PR fermée",
+    "noWork": "Aucun travail produit"
   },
   "tooltips": {
     "archiveTask": "Archiver la tâche",

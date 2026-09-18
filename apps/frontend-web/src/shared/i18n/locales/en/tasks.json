@@ -33,7 +33,10 @@
     "completed": "Completed",
     "hasErrors": "Has Errors",
     "qaIssues": "QA Issues",
-    "approvePlan": "Approve Plan"
+    "approvePlan": "Approve Plan",
+    "prOpen": "PR Open",
+    "prClosed": "PR Closed",
+    "noWork": "No Work Produced"
   },
   "tooltips": {
     "archiveTask": "Archive task",
