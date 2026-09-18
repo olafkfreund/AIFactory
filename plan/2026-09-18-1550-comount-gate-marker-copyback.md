@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1550
 spec: spec/2026-09-18-1550-comount-gate-marker-copyback.md
 ---
