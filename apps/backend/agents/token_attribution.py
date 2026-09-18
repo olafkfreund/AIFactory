@@ -189,6 +189,10 @@ class TurnAttribution:
     total_input_tokens: int = 0
     output_tokens: int = 0
     cost_usd: float = 0.0
+    # #1398: the two halves of the cached figure, kept apart. They differ ~12.5x
+    # in price, and `system_instructions` (their sum) cannot tell them apart.
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
 
 
 def attribute_turn(segments: PromptSegments, usage: TurnUsage) -> TurnAttribution:
@@ -264,6 +268,8 @@ def attribute_turn(segments: PromptSegments, usage: TurnUsage) -> TurnAttributio
         total_input_tokens=real_input,
         output_tokens=usage.output_tokens,
         cost_usd=usage.cost_usd,
+        cache_read_tokens=usage.cache_read_tokens,
+        cache_creation_tokens=usage.cache_creation_tokens,
     )
 
 
@@ -290,6 +296,9 @@ def _empty_aggregate() -> dict[str, Any]:
         "outputTokens": 0,
         "totalTokens": 0,
         "totalCostUsd": 0.0,
+        # #1398: cache writes vs reads (their sum stays in system_instructions).
+        "cacheReadTokens": 0,
+        "cacheCreationTokens": 0,
         "categories": {k: {"tokens": 0, "costUsd": 0.0} for k in CATEGORY_LABELS},
         "model": None,
         "maxTokens": 200_000,
@@ -331,6 +340,9 @@ def _read_aggregate(usage_path: Path) -> dict[str, Any]:
             data.setdefault("workers", {})
             # ... and the fallback list for files written before #1374.
             data.setdefault("fallbacks", [])
+            # ... and the cache split for files written before #1398.
+            data.setdefault("cacheReadTokens", 0)
+            data.setdefault("cacheCreationTokens", 0)
             return data
     return _empty_aggregate()
 
@@ -371,6 +383,8 @@ def _fold_worker(
     output_tokens: int,
     cost_usd: float,
     duration_ms: int | None,
+    cache_read_tokens: int = 0,
+    cache_creation_tokens: int = 0,
 ) -> None:
     """Fold one turn's usage into the per-worker record (in-place, additive).
 
@@ -413,6 +427,12 @@ def _fold_worker(
     rec["output_tokens"] = int(rec.get("output_tokens", 0)) + int(output_tokens)
     rec["total_tokens"] = int(rec["input_tokens"]) + int(rec["output_tokens"])
     rec["cost_usd"] = round(float(rec.get("cost_usd", 0.0)) + float(cost_usd or 0.0), 6)
+    rec["cache_read_tokens"] = int(rec.get("cache_read_tokens", 0)) + int(
+        cache_read_tokens
+    )
+    rec["cache_creation_tokens"] = int(rec.get("cache_creation_tokens", 0)) + int(
+        cache_creation_tokens
+    )
     if duration_ms is not None:
         rec["duration_ms"] = int(rec.get("duration_ms", 0)) + int(duration_ms)
 
@@ -514,6 +534,12 @@ def record_turn(
         agg["totalCostUsd"] = round(
             float(agg.get("totalCostUsd", 0.0)) + attribution.cost_usd, 6
         )
+        agg["cacheReadTokens"] = (
+            int(agg.get("cacheReadTokens", 0)) + attribution.cache_read_tokens
+        )
+        agg["cacheCreationTokens"] = (
+            int(agg.get("cacheCreationTokens", 0)) + attribution.cache_creation_tokens
+        )
         for key, cat in attribution.categories.items():
             slot = agg["categories"].setdefault(key, {"tokens": 0, "costUsd": 0.0})
             slot["tokens"] = int(slot.get("tokens", 0)) + cat.tokens
@@ -533,6 +559,8 @@ def record_turn(
             output_tokens=attribution.output_tokens,
             cost_usd=attribution.cost_usd,
             duration_ms=duration_ms,
+            cache_read_tokens=attribution.cache_read_tokens,
+            cache_creation_tokens=attribution.cache_creation_tokens,
         )
         _stamp_fallback(agg, wid)
         agg["updatedAt"] = datetime.now(UTC).isoformat()
@@ -560,6 +588,8 @@ def record_turn(
             attribution.total_input_tokens + attribution.output_tokens
         )
         single["totalCostUsd"] = round(attribution.cost_usd, 6)
+        single["cacheReadTokens"] = attribution.cache_read_tokens
+        single["cacheCreationTokens"] = attribution.cache_creation_tokens
         single["model"] = model
         single["maxTokens"] = window
         for key, cat in attribution.categories.items():
@@ -579,6 +609,8 @@ def record_turn(
             output_tokens=attribution.output_tokens,
             cost_usd=attribution.cost_usd,
             duration_ms=duration_ms,
+            cache_read_tokens=attribution.cache_read_tokens,
+            cache_creation_tokens=attribution.cache_creation_tokens,
         )
         return render_breakdown(single)
 
@@ -603,6 +635,9 @@ def render_breakdown(agg: dict[str, Any]) -> dict[str, Any]:
         categories.append(cb.as_dict(key, max_tokens))
 
     total_tokens = total_input + int(agg.get("outputTokens", 0))
+    cache_read = int(agg.get("cacheReadTokens", 0) or 0)
+    cache_creation = int(agg.get("cacheCreationTokens", 0) or 0)
+    cached = cache_read + cache_creation
     return {
         "version": agg.get("version", 1),
         "turns": int(agg.get("turns", 0)),
@@ -616,6 +651,10 @@ def render_breakdown(agg: dict[str, Any]) -> dict[str, Any]:
             (total_input / max_tokens * 100.0) if max_tokens else 0.0, 2
         ),
         "categories": categories,
+        "cacheReadTokens": cache_read,
+        "cacheCreationTokens": cache_creation,
+        # None, not 0.0, when nothing was cached: "no cache" is not "all misses".
+        "cacheHitRate": round(cache_read / cached, 4) if cached else None,
         "updatedAt": agg.get("updatedAt"),
     }
 
