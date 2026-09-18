@@ -78,3 +78,24 @@ Live check after deploy: one packed-path build on the cluster. The merger's PR b
 Revert the implementation commit. Object-store keys written for the marker are inert
 without the fetch. Markers on disk keep their format (first line = sha), so older code
 still reads them.
+
+## Implementation notes (deviations, recorded with the code)
+
+- **Step 2, narrowed.** The task-branch check is consulted only when `gate_dir_for` fell
+  back to `project_dir` (the caller has no task worktree), and it only *adds* a way to be
+  current: branch tip == recorded sha → current; otherwise the unchanged HEAD check decides.
+  Where a task worktree exists, its HEAD is the task branch and the stricter read, so
+  #1496's QA guard and the coder's re-run check behave exactly as before there.
+- **Step 6, dropped.** `agent_worktree_sync.py:221-231` already copies *every* file in the
+  worktree spec dir that is not in `files_to_sync`, dotfiles included, so the in-pod path
+  already synced `.trailing_gates_done`. Adding it to the list would change nothing.
+- **Step 5.** "The fetch is called" is covered by
+  `apps/web-server/tests/test_completion_emitter.py::test_emit_fetches_the_jobs_gate_marker`.
+- **Step 8 finding: a gap remains on the co-mount Job path.** `build_backend.py:681-690`
+  still selects the #671 PVC co-mount when `workspace_uri` is None (the default). There,
+  `WORKSPACE_URI` is unset, so `maybe_push_gate_marker` is a no-op, and under kubejob the
+  generic worktree sync never runs (`agent_kubejob.py:680-683`). The marker stays in the
+  worktree's spec dir on the PVC, and the merger reading the source spec dir still reports
+  no evidence on that path. It is not fixed here (out of the approved scope). Follow-up:
+  copy the marker to the source spec dir at build end on the co-mount path, as
+  `check_review_obligation` already does for `qa_review_cycle.json` (#1249).

@@ -405,6 +405,73 @@ def maybe_fetch_plan(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
         return False
 
 
+_GATE_MARKER_FILE = ".trailing_gates_done"
+
+
+def _gate_marker_key(spec_id: str) -> str:
+    """Deterministic object key for a task's gate-evidence marker (#1550)."""
+    from core.artifact_store import ArtifactRef  # noqa: PLC0415
+
+    return str(
+        ArtifactRef(
+            service="aifactory", job_id=spec_id, role="build", path=_GATE_MARKER_FILE
+        ).key()
+    )
+
+
+def maybe_push_gate_marker(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
+    """Push the Job's trailing-gate evidence marker to object storage (#1550).
+
+    Same packed-path gap as the plan: the marker is written into the Job's
+    ephemeral ``/work`` and died with it, so the merger's PR body and the QA
+    guard on the control plane never saw the gates that DID run. No marker
+    (gates never ran) pushes nothing -- absence stays absence. No-op off the
+    packed path. Best-effort: never raises.
+    """
+    if not os.environ.get(WORKSPACE_URI_ENV, "").strip():
+        return False
+    src = Path(spec_dir) / _GATE_MARKER_FILE
+    if not src.is_file():
+        return False
+    try:
+        from core.artifact_store import ArtifactStore  # noqa: PLC0415
+
+        ArtifactStore().put_bytes(
+            _gate_marker_key(spec_id), src.read_bytes(), "text/plain", role="build"
+        )
+        _log.info("[workspace_fetch] pushed %s (packed path)", _GATE_MARKER_FILE)
+        return True
+    except Exception as exc:  # noqa: BLE001 - must never break a green build
+        _log.warning("[workspace_fetch] gate marker push failed: %s", exc)
+        return False
+
+
+def maybe_fetch_gate_marker(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
+    """Control-plane counterpart to :func:`maybe_push_gate_marker` (#1550).
+
+    OVERWRITES, like :func:`maybe_fetch_plan`: a marker the control plane holds
+    from worktree setup or an earlier run is stale by definition, and the Job's
+    copy is the one bound to the tree that was actually gated. No-op when
+    nothing was pushed. Best-effort: never raises.
+    """
+    try:
+        from core.artifact_store import ArtifactStore  # noqa: PLC0415
+
+        data = ArtifactStore().get_bytes(_gate_marker_key(spec_id))
+    except Exception as exc:  # noqa: BLE001 - nothing pushed / store unreachable
+        _log.debug("[workspace_fetch] no pushed gate marker to fetch: %s", exc)
+        return False
+    dest = Path(spec_dir) / _GATE_MARKER_FILE
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(data)
+        _log.info("[workspace_fetch] fetched %s (packed path)", _GATE_MARKER_FILE)
+        return True
+    except OSError as exc:
+        _log.warning("[workspace_fetch] could not write fetched gate marker: %s", exc)
+        return False
+
+
 # ── memory (#1038) ───────────────────────────────────────────────────────────
 #
 # The FIFTH artefact with the same packed-path propagation gap as the branch,

@@ -721,6 +721,37 @@ def _current_head_sha(gate_dir: Path) -> str | None:
     return sha or None
 
 
+def _task_branch_sha(project_dir: Path, spec_name: str) -> str | None:
+    """Tip sha of the task branch ``aifactory/<spec>`` in `project_dir` (#1550).
+
+    Lets a reader with no working copy of the task (the web-server merger, a
+    packed-path build whose Job tree is gone) still name the tree the evidence
+    is about. Same best-effort contract as `_current_head_sha`.
+    """
+    try:
+        # Fixed argv, no shell; only the ref name varies, and it is a ref lookup.
+        result = subprocess.run(  # noqa: S603
+            [  # noqa: S607
+                "git",
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                f"refs/heads/aifactory/{spec_name}",
+            ],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    sha = result.stdout.strip()
+    return sha or None
+
+
 def write_trailing_gate_marker(spec_dir: Path, gate_dir: Path, evidence: str) -> None:
     """Persist gate evidence bound to `gate_dir`'s current tree (#1545).
 
@@ -736,8 +767,17 @@ def write_trailing_gate_marker(spec_dir: Path, gate_dir: Path, evidence: str) ->
     marker.write_text(f"{sha}\n{evidence}\n", encoding="utf-8")
 
 
-def trailing_gate_marker_is_current(spec_dir: Path, gate_dir: Path) -> bool:
+def trailing_gate_marker_is_current(
+    spec_dir: Path, gate_dir: Path, *, project_dir: Path | None = None
+) -> bool:
     """True when the recorded marker is bound to `gate_dir`'s CURRENT HEAD.
+
+    #1550: when the caller has no working copy of the task (`gate_dir_for`
+    fell back to `project_dir`), `project_dir`'s HEAD is some other branch
+    (main, on the control plane) and never matches. The task branch tip is the
+    tree the evidence is about there, so a marker recorded for that tip also
+    counts. Where a task worktree exists the HEAD check alone decides, as
+    before -- that worktree IS the branch, and its HEAD is the stricter read.
 
     Also true when the binding cannot be checked at all -- no marker sha was
     recorded ("-"), or `gate_dir`'s HEAD cannot be read now. Git is not always
@@ -753,6 +793,12 @@ def trailing_gate_marker_is_current(spec_dir: Path, gate_dir: Path) -> bool:
         return False
     recorded_sha = text.split("\n", 1)[0].strip()
     if not recorded_sha or recorded_sha == "-":
+        return True
+    if (
+        project_dir is not None
+        and gate_dir == project_dir
+        and _task_branch_sha(project_dir, spec_dir.name) == recorded_sha
+    ):
         return True
     current_sha = _current_head_sha(gate_dir)
     if current_sha is None:
@@ -780,7 +826,7 @@ def trailing_gate_evidence(spec_dir: Path, project_dir: Path) -> str | None:
         return None
     if not text:
         return None
-    if not trailing_gate_marker_is_current(spec_dir, gate_dir):
+    if not trailing_gate_marker_is_current(spec_dir, gate_dir, project_dir=project_dir):
         return None
     _, _, evidence = text.partition("\n")
     evidence = evidence.strip()

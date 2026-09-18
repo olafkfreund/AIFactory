@@ -175,6 +175,34 @@ def test_honest_body_states_no_gate_evidence_and_qa_not_run(tmp_path):
     assert "QA sign-off: not run" in body
 
 
+def test_honest_body_reports_gate_evidence_without_a_worktree(tmp_path, monkeypatch):
+    """#1550: the control plane has no task worktree, so the marker used to be
+    compared with main's HEAD and always read as absent. It is bound to the
+    task branch tip, which the control plane can name."""
+    import subprocess
+
+    # The backend is on PYTHONPATH in production; the merger imports it lazily.
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "backend"))
+
+    def git(*a):
+        return subprocess.run(
+            ["git", "-c", "user.email=t@t", "-c", "user.name=t", *a],
+            cwd=tmp_path, check=True, capture_output=True, text=True,
+        ).stdout.strip()
+
+    git("init", "-q", "-b", "main")
+    git("commit", "-q", "--allow-empty", "-m", "task")
+    git("branch", "aifactory/005-x")
+    task_sha = git("rev-parse", "HEAD")
+    git("commit", "-q", "--allow-empty", "-m", "main moves on")
+    spec_dir = tmp_path / ".aifactory" / "specs" / "005-x"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "requirements.json").write_text(json.dumps({"title": "Task 005-x"}))
+    (spec_dir / ".trailing_gates_done").write_text(f"{task_sha}\npytest: passed\n")
+    _title, body = mg.honest_pr_title_and_body(spec_dir, "005-x", tmp_path, None)
+    assert "Gate evidence: pytest: passed" in body
+
+
 def test_honest_body_reports_qa_signoff_status(tmp_path):
     spec_dir = _spec(tmp_path, "002-x")
     (spec_dir / "implementation_plan.json").write_text(
