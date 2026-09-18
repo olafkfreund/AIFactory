@@ -29,9 +29,12 @@ existing open PR (idempotency), checking the branch actually has content
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import os
 from collections.abc import Iterable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -552,3 +555,85 @@ def sweep(
         counts[r["action"]] = counts.get(r["action"], 0) + 1
         counts["status_written"] += bool(r.get("status_written"))
     return {"dry_run": dry_run, "results": results, "counts": counts}
+
+
+# ── backstop loop (Factory#2586) ─────────────────────────────────────────────
+#
+# In-process, like services/stale_reaper: the spec tree lives on an RWO
+# local-path PVC, so a CronJob pod scheduled off-node would see no specs,
+# open nothing and exit green. The build-end hook in completion_orchestration
+# is the primary trigger; this catches what it cannot (failed builds with
+# real work, builds that finished before this shipped, a hook that errored).
+
+_DEFAULT_INTERVAL_S = 900.0
+_last_tick_at: str | None = None
+
+
+def merger_sweep_enabled() -> bool:
+    """Off unless explicitly switched on, like the other lifespan loops."""
+    return os.environ.get("AIFACTORY_MERGER_SWEEP", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+def dry_run() -> bool:
+    """Anything other than an explicit "false" means report-only.
+
+    Fails closed on a typo, like the reaper: a typo that reports wastes a
+    tick, a typo that writes pushes branches and opens PRs.
+    """
+    raw = os.environ.get("AIFACTORY_MERGER_SWEEP_DRY_RUN", "true")
+    return raw.strip().lower() != "false"
+
+
+def interval_s() -> float:
+    raw = os.environ.get("AIFACTORY_MERGER_SWEEP_INTERVAL_S", "").strip()
+    try:
+        value = float(raw) if raw else _DEFAULT_INTERVAL_S
+    except ValueError:
+        value = 0.0
+    if value <= 0:
+        # A zero or unparseable interval would spin against `gh`.
+        logger.warning(
+            "AIFACTORY_MERGER_SWEEP_INTERVAL_S=%r is not a positive number; using %s",
+            raw,
+            _DEFAULT_INTERVAL_S,
+        )
+        return _DEFAULT_INTERVAL_S
+    return value
+
+
+def last_tick_at() -> str | None:
+    """When the loop last completed a sweep; None if it never has.
+
+    job-watchdog cannot see an in-process loop, so this is how a dead one
+    shows: the GET report returns it, and a stale value means no tick.
+    """
+    return _last_tick_at
+
+
+def sweep_once() -> dict[str, Any]:
+    """One loop tick. The whole report goes to the log as one JSON line."""
+    global _last_tick_at  # noqa: PLW0603 - the loop's one piece of state
+    report = sweep(dry_run=dry_run())
+    logger.info("merger-sweep %s", json.dumps(report, sort_keys=True, default=str))
+    _last_tick_at = datetime.now(UTC).isoformat()
+    return report
+
+
+async def merger_loop(*, stop: asyncio.Event | None = None) -> None:
+    """One sweep per interval until stopped. A failed tick never kills it."""
+    stop = stop or asyncio.Event()
+    interval = interval_s()
+    while not stop.is_set():
+        try:
+            # Shells out to git/gh per spec: blocking, so off the event loop.
+            await asyncio.to_thread(sweep_once)
+        except Exception:
+            logger.exception("merger-sweep tick failed; continuing")
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=interval)
+        except TimeoutError:
+            continue

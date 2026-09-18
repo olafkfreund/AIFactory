@@ -7,6 +7,7 @@ runner (reused from ``pr_endgame``), so these tests touch no network/git.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import subprocess
 import sys
@@ -866,3 +867,70 @@ def test_sweep_dry_run_never_writes_status(tmp_path, monkeypatch):
     assert report["counts"]["merged"] == 1
     assert report["counts"]["status_written"] == 0
     assert (control_file.read_bytes(), control_file.stat().st_mtime_ns) == before
+
+
+# ── backstop loop (#2586) ───────────────────────────────────────────────────
+
+
+def test_loop_is_off_unless_switched_on(monkeypatch):
+    monkeypatch.delenv("AIFACTORY_MERGER_SWEEP", raising=False)
+    assert mg.merger_sweep_enabled() is False
+    monkeypatch.setenv("AIFACTORY_MERGER_SWEEP", "true")
+    assert mg.merger_sweep_enabled() is True
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [(None, True), ("true", True), ("flase", True), ("", True), ("false", False)],
+)
+def test_dry_run_fails_closed(monkeypatch, raw, expected):
+    """Only an explicit "false" writes; a typo reports rather than opening PRs."""
+    if raw is None:
+        monkeypatch.delenv("AIFACTORY_MERGER_SWEEP_DRY_RUN", raising=False)
+    else:
+        monkeypatch.setenv("AIFACTORY_MERGER_SWEEP_DRY_RUN", raw)
+    assert mg.dry_run() is expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"), [("60", 60.0), ("0", 900.0), ("x", 900.0)]
+)
+def test_interval_rejects_nonsense(monkeypatch, raw, expected):
+    monkeypatch.setenv("AIFACTORY_MERGER_SWEEP_INTERVAL_S", raw)
+    assert mg.interval_s() == expected
+
+
+def test_sweep_once_honours_dry_run_and_records_the_tick(monkeypatch):
+    seen = []
+    monkeypatch.setenv("AIFACTORY_MERGER_SWEEP_DRY_RUN", "false")
+    monkeypatch.setattr(mg, "_last_tick_at", None)
+
+    def fake_sweep(*, dry_run):
+        seen.append(dry_run)
+        return {"dry_run": dry_run, "results": [], "counts": {}}
+
+    monkeypatch.setattr(mg, "sweep", fake_sweep)
+    mg.sweep_once()
+    assert seen == [False]
+    assert mg.last_tick_at() is not None
+
+
+def test_loop_survives_a_failing_tick_and_stops_cleanly(monkeypatch):
+    monkeypatch.setenv("AIFACTORY_MERGER_SWEEP_INTERVAL_S", "0.01")
+    ticks = []
+
+    async def run() -> None:
+        stop = asyncio.Event()
+
+        def tick():
+            ticks.append(1)
+            if len(ticks) == 1:
+                raise RuntimeError("gh down")
+            stop.set()
+            return {}
+
+        monkeypatch.setattr(mg, "sweep_once", tick)
+        await asyncio.wait_for(mg.merger_loop(stop=stop), timeout=5)
+
+    asyncio.run(run())
+    assert len(ticks) == 2, "a failed tick must not kill the loop"
