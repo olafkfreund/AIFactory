@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import shlex
 import subprocess
 from collections.abc import Callable, Mapping
@@ -132,7 +133,22 @@ def detect_gates(project_dir: Path) -> list[Gate]:
         scripts = _package_scripts(pkg)
         if "lint" in scripts:
             gates.append(Gate("lint", ["npm", "run", "lint", "--if-present"]))
-        if "test" in scripts:
+        test_script = str(scripts.get("test") or "")
+        if _PY_TEST_RUNNER.search(test_script) and not _has_python_test_harness(p):
+            # #1443: a JS project whose `test` script runs a Python runner. `npm
+            # test` would only run pytest over JavaScript; fail with the reason
+            # instead, so the QA fixer gets a defect it can act on.
+            msg = (
+                f'package.json "test" runs {test_script!r} but this is not a Python '
+                "project; use the project's JS test runner"
+            )
+            gates.append(
+                Gate(
+                    "test-script-language",
+                    ["sh", "-c", 'printf "%s\\n" "$0" >&2; exit 1', msg],
+                )
+            )
+        elif "test" in scripts:
             gates.append(Gate("test", ["npm", "test", "--if-present"]))
 
     # --- Rust / Go ---
@@ -251,6 +267,45 @@ def _descriptor_gates(project_dir: Path, *, already: set[str]) -> list[Gate]:
         out.append(Gate(name, shlex.split(unit.command), cwd=module_dir))
         already.add(name)
     return out
+
+
+# A package.json `test` script that invokes a Python test runner (#1443).
+_PY_TEST_RUNNER = re.compile(
+    r"(^|[\s;&|])(pytest|py\.test|python3?\s+-m\s+(pytest|unittest))\b"
+)
+_HARNESS_SKIP_DIRS = frozenset({"node_modules", ".git"})
+
+
+def _has_python_test_harness(p: Path, max_depth: int = 3) -> bool:
+    """True when the project really carries Python tests (#1443)."""
+    if (p / "pytest.ini").exists():
+        return True
+    if _file_contains(p / "setup.cfg", "[tool:pytest]"):
+        return True
+    if _file_contains(p / "pyproject.toml", "[tool.pytest"):
+        return True
+
+    def walk(d: Path, depth: int) -> bool:
+        try:
+            entries = list(d.iterdir())
+        except OSError:
+            return False
+        for e in entries:
+            if (
+                e.is_file()
+                and e.suffix == ".py"
+                and (e.name.startswith("test_") or e.stem.endswith("_test"))
+            ):
+                return True
+        if depth >= max_depth:
+            return False
+        return any(
+            walk(e, depth + 1)
+            for e in entries
+            if e.is_dir() and e.name not in _HARNESS_SKIP_DIRS
+        )
+
+    return walk(p, 0)
 
 
 def _file_contains(path: Path, needle: str) -> bool:
@@ -721,6 +776,40 @@ def _current_head_sha(gate_dir: Path) -> str | None:
     return sha or None
 
 
+def _task_branch_shas(project_dir: Path, spec_name: str) -> set[str]:
+    """Tip shas of the task branch ``aifactory/<spec>`` in `project_dir` (#1550).
+
+    Lets a reader with no working copy of the task (the web-server merger, a
+    packed-path build whose Job tree is gone) still name the tree the evidence
+    is about. Both the local branch and ``origin/aifactory/<spec>`` count: the
+    co-mount path commits locally and never pushes, while the packed path
+    pushes to origin and leaves the control plane's local ref stale or absent
+    (the merger fetches it before it reads evidence). Same best-effort contract
+    as `_current_head_sha`: an unresolvable ref contributes nothing.
+    """
+    shas: set[str] = set()
+    for ref in (
+        f"refs/heads/aifactory/{spec_name}",
+        f"refs/remotes/origin/aifactory/{spec_name}",
+    ):
+        try:
+            # Fixed argv, no shell; only the ref name varies, and it is a ref lookup.
+            result = subprocess.run(  # noqa: S603
+                ["git", "rev-parse", "--verify", "--quiet", ref],  # noqa: S607
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        sha = result.stdout.strip() if result.returncode == 0 else ""
+        if sha:
+            shas.add(sha)
+    return shas
+
+
 def write_trailing_gate_marker(spec_dir: Path, gate_dir: Path, evidence: str) -> None:
     """Persist gate evidence bound to `gate_dir`'s current tree (#1545).
 
@@ -736,8 +825,17 @@ def write_trailing_gate_marker(spec_dir: Path, gate_dir: Path, evidence: str) ->
     marker.write_text(f"{sha}\n{evidence}\n", encoding="utf-8")
 
 
-def trailing_gate_marker_is_current(spec_dir: Path, gate_dir: Path) -> bool:
+def trailing_gate_marker_is_current(
+    spec_dir: Path, gate_dir: Path, *, project_dir: Path | None = None
+) -> bool:
     """True when the recorded marker is bound to `gate_dir`'s CURRENT HEAD.
+
+    #1550: when the caller has no working copy of the task (`gate_dir_for`
+    fell back to `project_dir`), `project_dir`'s HEAD is some other branch
+    (main, on the control plane) and never matches. The task branch tip is the
+    tree the evidence is about there, so a marker recorded for that tip also
+    counts. Where a task worktree exists the HEAD check alone decides, as
+    before -- that worktree IS the branch, and its HEAD is the stricter read.
 
     Also true when the binding cannot be checked at all -- no marker sha was
     recorded ("-"), or `gate_dir`'s HEAD cannot be read now. Git is not always
@@ -753,6 +851,12 @@ def trailing_gate_marker_is_current(spec_dir: Path, gate_dir: Path) -> bool:
         return False
     recorded_sha = text.split("\n", 1)[0].strip()
     if not recorded_sha or recorded_sha == "-":
+        return True
+    if (
+        project_dir is not None
+        and gate_dir == project_dir
+        and recorded_sha in _task_branch_shas(project_dir, spec_dir.name)
+    ):
         return True
     current_sha = _current_head_sha(gate_dir)
     if current_sha is None:
@@ -780,7 +884,7 @@ def trailing_gate_evidence(spec_dir: Path, project_dir: Path) -> str | None:
         return None
     if not text:
         return None
-    if not trailing_gate_marker_is_current(spec_dir, gate_dir):
+    if not trailing_gate_marker_is_current(spec_dir, gate_dir, project_dir=project_dir):
         return None
     _, _, evidence = text.partition("\n")
     evidence = evidence.strip()
