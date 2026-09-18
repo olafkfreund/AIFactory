@@ -183,7 +183,7 @@ def test_honest_body_reports_gate_evidence_without_a_worktree(tmp_path, monkeypa
     # The backend is on PYTHONPATH in production; the merger imports it lazily.
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "backend"))
 
-    def git(*a):
+    def git(*a: str) -> str:
         return subprocess.run(  # noqa: S603 - fixed git argv in a tmp repo
             ["git", "-c", "user.email=t@t", "-c", "user.name=t", *a],  # noqa: S607
             cwd=tmp_path,
