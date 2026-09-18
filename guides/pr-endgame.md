@@ -92,7 +92,7 @@ to stop at "branch in a worktree". On the co-mount path the build commits
 locally and never pushes, so the work was invisible. In September 2026 five
 tasks sat for a week holding 2-10 real commits each (Factory#2586).
 
-The merger (`server/services/merger.py`) is the landing path for everything
+The merger (`apps/web-server/server/services/merger.py`) is the landing path for everything
 else. For each task it:
 
 1. **Looks up the branch's PR in every state.** An open PR is left alone. A
@@ -130,7 +130,7 @@ else. For each task it:
 
 | Variable | Default (unset) | Effect |
 |---|---|---|
-| `AIFACTORY_AUTO_PR` | off | Unset: the merger reports and syncs status but opens no PR (`auto_pr_disabled`). |
+| `AIFACTORY_AUTO_PR` | off | Unset: no PR is opened. A task that would need one is skipped as `auto_pr_disabled`, with no status write. Tasks that already have a PR (open, merged or closed) still get their status synced. |
 | `AIFACTORY_MERGER_SWEEP` | off | Unset: no periodic sweep. Build-end landing still happens. |
 | `AIFACTORY_MERGER_SWEEP_DRY_RUN` | `true` | Anything except exactly `false` is report-only: the tick is logged, and nothing is pushed, opened or written. |
 | `AIFACTORY_MERGER_SWEEP_INTERVAL_S` | `900` | Seconds between ticks. Zero or non-numeric falls back to 900. |
