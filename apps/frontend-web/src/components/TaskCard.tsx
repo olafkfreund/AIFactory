@@ -294,6 +294,12 @@ export const TaskCard = memo(function TaskCard({ task, onClick }: TaskCardProps)
         return { label: t('reviewReason.qaIssues'), variant: 'warning' };
       case 'plan_review':
         return { label: t('reviewReason.approvePlan'), variant: 'warning' };
+      case 'awaiting_merge':
+        return { label: t('reviewReason.prOpen'), variant: 'default' };
+      case 'pr_closed':
+        return { label: t('reviewReason.prClosed'), variant: 'warning' };
+      case 'no_work':
+        return { label: t('reviewReason.noWork'), variant: 'destructive' };
       default:
         return null;
     }

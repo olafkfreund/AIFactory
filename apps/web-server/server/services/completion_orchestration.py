@@ -520,4 +520,28 @@ async def run_terminal_completion(
                         )
             except Exception:
                 logger.debug("PR endgame failed (best-effort)", exc_info=True)
+
+            # Factory#2586: land the work even when the endgame did not run
+            # (QA refused, no clean-build context). The merger is idempotent,
+            # so after an endgame PR it only sees `already_open` and records
+            # `awaiting_merge`; otherwise it pushes the branch and opens the
+            # PR. Runs after the endgame on purpose, never instead of it.
+            try:
+                import asyncio  # noqa: PLC0415
+
+                from .merger import process_one  # noqa: PLC0415
+
+                landed = await asyncio.to_thread(
+                    process_one,
+                    task_id.split(":", 1)[0] if ":" in task_id else project_path.name,
+                    project_path,
+                    spec_dir,
+                )
+                logger.info(
+                    "[AgentService] merger for %s: %s",
+                    sanitize_log(spec_id),
+                    sanitize_log(landed),
+                )
+            except Exception:  # noqa: BLE001 - landing never breaks completion
+                logger.debug("merger landing failed (best-effort)", exc_info=True)
     return terminal_status
