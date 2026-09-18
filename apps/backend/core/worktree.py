@@ -986,12 +986,18 @@ class WorktreeManager:
 
         # Security pre-merge gate (#415, default-off via AIFACTORY_SELF_HEAL):
         # scan the branch diff for secrets/injection and refuse to merge a
-        # high-severity finding. No-op unless the flag is enabled.
-        try:
-            from agents.self_heal_integration import security_pre_merge_gate_sync
+        # high-severity finding. When on, a merge that could not be scanned is
+        # refused too (#1454); when off, this is a no-op.
+        from agents.self_heal_integration import (
+            is_self_heal_enabled,
+            security_pre_merge_gate_sync,
+        )
 
+        try:
             _diff = self._run_git(["diff", f"{self.base_branch}...{info.branch}"])
-            _decision = security_pre_merge_gate_sync(_diff.stdout or "")
+            _decision = security_pre_merge_gate_sync(
+                _diff.stdout or "", diff_ok=_diff.returncode == 0
+            )
             if _decision is not None and _decision.blocked:
                 print(
                     f"Security gate BLOCKED merge of {info.branch}: {_decision.summary}"
@@ -1002,7 +1008,9 @@ class WorktreeManager:
                 )
                 return False
         except Exception:
-            pass  # gate must never crash a merge that was otherwise fine
+            logger.exception(f"Security pre-merge gate crashed for spec '{spec_name}'")
+            if is_self_heal_enabled():
+                return False  # an unscanned merge is refused when the gate is on
 
         if no_commit:
             print(
