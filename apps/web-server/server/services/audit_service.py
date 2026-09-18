@@ -33,6 +33,7 @@ Usage::
 import json
 import logging
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from factory_common.logsafe import sanitize_log
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -295,7 +296,7 @@ async def audit_task_action(
     action: str,
     task_id: str | None,
     request: object | None = None,
-    details: dict | None = None,
+    details: dict[str, Any] | None = None,
 ) -> None:
     """Write one ``task.*`` row for a REST task action (#1466).
 

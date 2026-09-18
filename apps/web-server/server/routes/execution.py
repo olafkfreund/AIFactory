@@ -287,7 +287,7 @@ async def _start_task(
     task_id: str,
     request: StartTaskRequest,
     raw_request: Request,
-):
+) -> Any:
     """Body of :func:`start_task`, unaudited (#1466)."""
 
     logger = logging.getLogger(__name__)

@@ -35,6 +35,7 @@ import shutil
 import subprocess
 from contextlib import suppress
 from pathlib import Path
+from typing import Any
 
 from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, Depends
@@ -1744,8 +1745,8 @@ async def merge_worktree(
 
 async def _merge_worktree(
     task_id: str,
-    options: WorktreeMergeOptions = None,
-):
+    options: WorktreeMergeOptions | None = None,
+) -> Any:
     """Body of :func:`merge_worktree`, unaudited (#1466)."""
     import subprocess
 

@@ -102,3 +102,24 @@ append-only. There is no schema change.
   routes get a source check that each calls `audit_task_action` with its action.
 - **Found, out of scope.** `routes/changelog.py:1056` (create task from insights) calls
   `create_task` in-process with no request, so it stays unaudited, as it was before.
+
+### Deviation: Postgres acceptance cleanup and typing (after the first CI run)
+
+- **`tests/postgres/test_p1_suite_against_postgres.py`: the P1 runner now deletes the
+  audit rows its inner suite wrote.** That suite runs every test with
+  `APP_DISABLE_AUTH=true`, so `require_task_access` returns a real principal and the REST
+  task routes write real `task.*` rows, with composite task ids longer than 36 chars. Left
+  in the shared database, they made the later downgrade tests
+  (`test_per_tenant_audit_anchor_schema`, `test_tenant_states_schema`) hit the
+  `c1f5a3d7b924` guard, which correctly refuses to narrow `resource_id`. The guard is
+  untouched. The cleanup is keyed on the row ids that existed before the run, not on a time
+  window: `created_at` is a naive UTC timestamp and a non-UTC session kept the new rows. It
+  tolerates a fresh database where `audit_logs` does not exist yet. Verified against a local
+  Postgres 17: both downgrade tests went from failing to passing, 40/41 total. The one
+  remaining local failure is five `tests/rmux/` tests that pass in isolation and in CI
+  (a local-environment ordering effect, not this change).
+- **mypy/ruff ratchet:** splitting routes into a wrapper and a body duplicated their existing
+  untyped signatures. The new private bodies (`_start_task`, `_create_pr_from_task`,
+  `_merge_worktree`) are typed `-> Any` with `X | None` defaults, and the helper uses
+  `dict[str, Any]`. Public route signatures are left exactly as on `dev`, so the OpenAPI
+  schema is unchanged. Both ratchets report 0 regressed.

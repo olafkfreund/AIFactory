@@ -22,6 +22,7 @@ compatibility (``mcp_stdio/router.py`` imports them from ``..routes.tasks``).
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -70,8 +71,8 @@ async def create_pr_from_task(
 
 async def _create_pr_from_task(
     task_id: str,
-    options: CreatePRFromTaskOptions = None,
-):
+    options: CreatePRFromTaskOptions | None = None,
+) -> Any:
     """Body of :func:`create_pr_from_task`, unaudited (#1466)."""
     import subprocess
 
