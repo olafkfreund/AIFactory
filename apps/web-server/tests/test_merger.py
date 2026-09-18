@@ -8,6 +8,7 @@ runner (reused from ``pr_endgame``), so these tests touch no network/git.
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -179,15 +180,16 @@ def test_honest_body_reports_gate_evidence_without_a_worktree(tmp_path, monkeypa
     """#1550: the control plane has no task worktree, so the marker used to be
     compared with main's HEAD and always read as absent. It is bound to the
     task branch tip, which the control plane can name."""
-    import subprocess
-
     # The backend is on PYTHONPATH in production; the merger imports it lazily.
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "backend"))
 
     def git(*a):
-        return subprocess.run(
-            ["git", "-c", "user.email=t@t", "-c", "user.name=t", *a],
-            cwd=tmp_path, check=True, capture_output=True, text=True,
+        return subprocess.run(  # noqa: S603 - fixed git argv in a tmp repo
+            ["git", "-c", "user.email=t@t", "-c", "user.name=t", *a],  # noqa: S607
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
         ).stdout.strip()
 
     git("init", "-q", "-b", "main")

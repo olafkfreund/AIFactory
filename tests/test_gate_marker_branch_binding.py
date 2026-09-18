@@ -34,10 +34,32 @@ def _repo(tmp_path: Path) -> tuple[Path, Path, str]:
     repo = tmp_path / "proj"
     repo.mkdir()
     _git(repo, "init", "-q", "-b", "main")
-    _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "x")
+    _git(
+        repo,
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "user.name=t",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "x",
+    )
     task_sha = _git(repo, "rev-parse", "HEAD")
     _git(repo, "branch", f"aifactory/{SPEC}")
-    _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "main moves on")
+    _git(
+        repo,
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "user.name=t",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "main moves on",
+    )
     spec_dir = repo / ".aifactory" / "specs" / SPEC
     spec_dir.mkdir(parents=True)
     return repo, spec_dir, task_sha
@@ -57,7 +79,18 @@ def test_marker_is_stale_once_the_branch_moves_on(tmp_path):
     repo, spec_dir, task_sha = _repo(tmp_path)
     _mark(spec_dir, task_sha)
     _git(repo, "checkout", "-q", f"aifactory/{SPEC}")
-    _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "fix")
+    _git(
+        repo,
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "user.name=t",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "fix",
+    )
     _git(repo, "checkout", "-q", "main")
     assert trailing_gate_evidence(spec_dir, repo) is None
 
@@ -114,6 +147,8 @@ def test_push_is_noop_off_packed_path_or_without_marker(tmp_path, monkeypatch):
 
 
 def test_fetch_with_nothing_pushed_writes_nothing(tmp_path, monkeypatch):
-    monkeypatch.setattr("core.artifact_store.ArtifactStore", lambda *_a, **_k: _FakeStore())
+    monkeypatch.setattr(
+        "core.artifact_store.ArtifactStore", lambda *_a, **_k: _FakeStore()
+    )
     assert wf.maybe_fetch_gate_marker(tmp_path, SPEC) is False
     assert not (tmp_path / ".trailing_gates_done").exists()
