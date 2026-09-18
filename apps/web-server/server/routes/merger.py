@@ -50,7 +50,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from server.database.engine import get_db
 from server.project_registry import load_projects
 from server.routes.project_authz import accessible_org_ids
-from server.services.merger import sweep
+from server.services.merger import last_tick_at, sweep
 from server.tenancy import multi_tenant_enabled, resolve_tenant
 
 router = APIRouter()
@@ -85,11 +85,17 @@ async def report_merger(
     request: Request,
     db: AsyncSession = _DB_DEP,
 ) -> dict[str, Any]:
-    """What the merger would do. Opens nothing."""
+    """What the merger would do. Opens nothing.
+
+    ``last_tick_at`` is when the backstop loop last finished a sweep (None if
+    it never ran or is disabled) -- job-watchdog cannot see an in-process
+    loop, so a stale value here is how a dead one shows (Factory#2586).
+    """
     project_ids = await _visible_project_ids(request, db)
-    return await asyncio.to_thread(
+    report = await asyncio.to_thread(
         sweep, dry_run=True, project_ids=project_ids, tenant=_tenant_scope(request)
     )
+    return {**report, "last_tick_at": last_tick_at()}
 
 
 @router.post("/api/maintenance/merger/run")
