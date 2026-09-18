@@ -28,6 +28,7 @@ from pydantic import BaseModel
 
 from server.error_ref import client_error
 from server.project_registry import get_projects_file
+from server.services.audit_service import ACTION_TASK_CREATE_PR, audit_task_route
 from server.services.build_backend import task_repo_dir
 from server.services.http_verdict import honest_status
 from server.services.task_branch import resolve_task_branch
@@ -50,6 +51,7 @@ class CreatePRFromTaskOptions(BaseModel):
 
 @router.post("/{task_id}/worktree/create-pr")
 @honest_status
+@audit_task_route(ACTION_TASK_CREATE_PR)
 async def create_pr_from_task(
     task_id: str,
     options: CreatePRFromTaskOptions = None,

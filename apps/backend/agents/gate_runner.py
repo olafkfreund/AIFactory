@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import shlex
 import subprocess
 from collections.abc import Callable, Mapping
@@ -132,7 +133,22 @@ def detect_gates(project_dir: Path) -> list[Gate]:
         scripts = _package_scripts(pkg)
         if "lint" in scripts:
             gates.append(Gate("lint", ["npm", "run", "lint", "--if-present"]))
-        if "test" in scripts:
+        test_script = str(scripts.get("test") or "")
+        if _PY_TEST_RUNNER.search(test_script) and not _has_python_test_harness(p):
+            # #1443: a JS project whose `test` script runs a Python runner. `npm
+            # test` would only run pytest over JavaScript; fail with the reason
+            # instead, so the QA fixer gets a defect it can act on.
+            msg = (
+                f'package.json "test" runs {test_script!r} but this is not a Python '
+                "project; use the project's JS test runner"
+            )
+            gates.append(
+                Gate(
+                    "test-script-language",
+                    ["sh", "-c", 'printf "%s\\n" "$0" >&2; exit 1', msg],
+                )
+            )
+        elif "test" in scripts:
             gates.append(Gate("test", ["npm", "test", "--if-present"]))
 
     # --- Rust / Go ---
@@ -251,6 +267,45 @@ def _descriptor_gates(project_dir: Path, *, already: set[str]) -> list[Gate]:
         out.append(Gate(name, shlex.split(unit.command), cwd=module_dir))
         already.add(name)
     return out
+
+
+# A package.json `test` script that invokes a Python test runner (#1443).
+_PY_TEST_RUNNER = re.compile(
+    r"(^|[\s;&|])(pytest|py\.test|python3?\s+-m\s+(pytest|unittest))\b"
+)
+_HARNESS_SKIP_DIRS = frozenset({"node_modules", ".git"})
+
+
+def _has_python_test_harness(p: Path, max_depth: int = 3) -> bool:
+    """True when the project really carries Python tests (#1443)."""
+    if (p / "pytest.ini").exists():
+        return True
+    if _file_contains(p / "setup.cfg", "[tool:pytest]"):
+        return True
+    if _file_contains(p / "pyproject.toml", "[tool.pytest"):
+        return True
+
+    def walk(d: Path, depth: int) -> bool:
+        try:
+            entries = list(d.iterdir())
+        except OSError:
+            return False
+        for e in entries:
+            if (
+                e.is_file()
+                and e.suffix == ".py"
+                and (e.name.startswith("test_") or e.stem.endswith("_test"))
+            ):
+                return True
+        if depth >= max_depth:
+            return False
+        return any(
+            walk(e, depth + 1)
+            for e in entries
+            if e.is_dir() and e.name not in _HARNESS_SKIP_DIRS
+        )
+
+    return walk(p, 0)
 
 
 def _file_contains(path: Path, needle: str) -> bool:
