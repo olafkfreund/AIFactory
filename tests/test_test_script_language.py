@@ -1,6 +1,7 @@
 """#1443: a Python test command in a JavaScript project is refused, not run."""
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -73,7 +74,10 @@ def test_unset_language_js_project_gets_node_not_pytest(tmp_path):
     assert "nodejs" in flake and "pytest" not in flake
 
 
-@pytest.mark.parametrize("marker", ["pyproject.toml", "requirements.txt"])
+@pytest.mark.parametrize(
+    "marker",
+    ["pyproject.toml", "requirements.txt", "setup.py", "setup.cfg", "pytest.ini"],
+)
 def test_unset_language_with_python_marker_keeps_python_default(tmp_path, marker):
     (tmp_path / "package.json").write_text("{}")
     (tmp_path / marker).write_text("")
@@ -84,3 +88,14 @@ def test_unset_language_with_python_marker_keeps_python_default(tmp_path, marker
 def test_unset_language_no_package_json_keeps_python_default(tmp_path):
     assert materialize_flake_into(tmp_path, dict(_GENERATED))
     assert "pytest" in (tmp_path / "flake.nix").read_text()
+
+
+def test_gate_message_is_printed_literally_never_run(tmp_path):
+    """The script text is agent-written: it reaches sh as $0, printed by printf,
+    so a backslash, a leading -n or a command substitution is only text."""
+    _pkg(tmp_path, "-n pytest -q \\t $(touch pwned)")
+    gate = next(g for g in detect_gates(tmp_path) if g.name == "test-script-language")
+    r = subprocess.run(gate.command, cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 1
+    assert "-n pytest -q" in r.stderr and "\\t" in r.stderr
+    assert not (tmp_path / "pwned").exists()

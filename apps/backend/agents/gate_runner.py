@@ -143,7 +143,10 @@ def detect_gates(project_dir: Path) -> list[Gate]:
                 "project; use the project's JS test runner"
             )
             gates.append(
-                Gate("test-script-language", ["sh", "-c", 'echo "$0" >&2; exit 1', msg])
+                Gate(
+                    "test-script-language",
+                    ["sh", "-c", 'printf "%s\\n" "$0" >&2; exit 1', msg],
+                )
             )
         elif "test" in scripts:
             gates.append(Gate("test", ["npm", "test", "--if-present"]))

@@ -89,7 +89,13 @@ def materialize_flake_into(project_dir: Path, env: dict | None) -> bool:
     return True
 
 
-_PY_PROJECT_MARKERS = ("pyproject.toml", "requirements.txt", "setup.py", "pytest.ini")
+_PY_PROJECT_MARKERS = (
+    "pyproject.toml",
+    "requirements.txt",
+    "setup.py",
+    "setup.cfg",
+    "pytest.ini",
+)
 
 
 def _with_language_from_project(

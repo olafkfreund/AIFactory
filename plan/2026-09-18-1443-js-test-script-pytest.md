@@ -70,3 +70,9 @@ Revert the implementation commit. There are no data or config changes.
   new cases live in `tests/test_test_script_language.py`.
 - **Step 2: the gate message is passed to `sh` as `$0`**, not interpolated into the
   script, so a `package.json` script value cannot inject shell.
+- **Review follow-up (Copilot on #1562):** `setup.cfg` is added to the Python markers that
+  keep an unset language on its Python default (a package.json project whose pytest config
+  lives in `setup.cfg` was being reclassified as JS). The gate prints its message with
+  `printf '%s\n' "$0"` rather than `echo "$0"`, since `echo` interprets backslashes under
+  dash. Tests: every marker is parametrised (dropping `setup.cfg` fails its case), and the
+  gate's message is shown to print literally and never execute (`-n`, backslash, `$(...)`).
