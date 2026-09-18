@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1541
 intent: intent/2026-09-18-1541-gate-toolchain-closures.md
 ---
