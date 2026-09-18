@@ -22,6 +22,16 @@ from server.specpath import safe_spec_component
 
 from ..services import task_control
 from ..services.agent_service import get_agent_service
+from ..services.audit_service import (
+    ACTION_TASK_APPLY_CORRECTION,
+    ACTION_TASK_CREATE,
+    ACTION_TASK_DISPATCH,
+    ACTION_TASK_HANDOFF,
+    ACTION_TASK_RECOVER,
+    ACTION_TASK_START,
+    ACTION_TASK_STOP,
+    audit_task_action,
+)
 from ..tenancy import resolve_tenant, stamp_spec_tenant
 from ..websockets.events import emit_task_status
 from .from_issue import _intake_auto_handoff_enabled, _set_task_metadata_flag
@@ -266,6 +276,19 @@ async def start_task(
     The task must already exist (have a spec directory).
     This will run the planner, coder, and QA agents.
     """
+    # ponytail: audit lives in this thin wrapper (#1466), not at each of the
+    # body's many return sites; the body is ``_start_task``.
+    result = await _start_task(task_id, request, raw_request)
+    await audit_task_action(_access, ACTION_TASK_START, task_id, raw_request)
+    return result
+
+
+async def _start_task(
+    task_id: str,
+    request: StartTaskRequest,
+    raw_request: Request,
+):
+    """Body of :func:`start_task`, unaudited (#1466)."""
 
     logger = logging.getLogger(__name__)
     logger.info(
@@ -913,6 +936,7 @@ async def handoff_to_tfactory(
             sanitize_log(task_id),
             sanitize_log(e),
         )
+    await audit_task_action(_access, ACTION_TASK_HANDOFF, task_id)
     return {
         **result,
         "tfactory_spec_id": payload.get("spec_id"),
@@ -947,6 +971,7 @@ async def stop_task(
     # Emit status change for real-time frontend update
     await emit_task_status(task_id, "backlog")
 
+    await audit_task_action(_access, ACTION_TASK_STOP, task_id)
     return {
         "success": True,
         "task_id": task_id,
@@ -1091,6 +1116,7 @@ async def recover_task(
     await emit_task_status(task_id, reset_status)
 
     # Return wrapped response to match frontend expectations
+    await audit_task_action(_access, ACTION_TASK_RECOVER, task_id)
     return {
         "success": True,
         "data": {
@@ -1217,6 +1243,13 @@ async def create_and_run_task(
             detail=client_error(logger, "Failed to start task creation", e),
         )
 
+    await audit_task_action(
+        _access,
+        ACTION_TASK_CREATE,
+        task_id,
+        raw_request,
+        details={"project_id": project_id, "title": title, "via": "create-and-run"},
+    )
     return {
         "success": True,
         "task_id": task_id,
@@ -1441,6 +1474,13 @@ async def create_from_trusted_plan(
             detail=client_error(logger, "Failed to start build from trusted plan", e),
         )
 
+    await audit_task_action(
+        _access,
+        ACTION_TASK_CREATE,
+        task_id,
+        raw_request,
+        details={"project_id": project_id, "title": title, "via": "from-plan"},
+    )
     return {
         "success": True,
         "task_id": task_id,
@@ -1471,6 +1511,12 @@ async def apply_task_correction(
         triage=request.triage,
         manifest_hash=request.manifest_hash,
         correlation_key=request.correlation_key,
+    )
+    await audit_task_action(
+        _access,
+        ACTION_TASK_APPLY_CORRECTION,
+        task_id,
+        details={"source": request.source},
     )
     return {**result, "task_id": task_id, "source": request.source}
 
@@ -1576,6 +1622,12 @@ async def dispatch_task_to_copilot(
         )
     )
 
+    await audit_task_action(
+        _access,
+        ACTION_TASK_DISPATCH,
+        task_id,
+        details={"repo": request.repo_full_name, "issue_number": request.issue_number},
+    )
     return {
         "task_id": task_id,
         "dispatched": True,

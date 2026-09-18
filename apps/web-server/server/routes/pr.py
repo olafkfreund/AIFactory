@@ -33,6 +33,7 @@ from server.services.http_verdict import honest_status
 from server.services.task_branch import resolve_task_branch
 from server.specpath import safe_spec_component
 
+from ..services.audit_service import ACTION_TASK_CREATE_PR, audit_task_action
 from .project_authz import require_task_access
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,19 @@ async def create_pr_from_task(
     Push the worktree branch and create a GitHub Pull Request.
     Does NOT delete the worktree or branch after PR creation.
     """
+    # ponytail: audit lives in this thin wrapper (#1466), not at each of the
+    # body's many return sites; the body is ``_create_pr_from_task``.
+    result = await _create_pr_from_task(task_id, options)
+    if isinstance(result, dict) and result.get("success"):
+        await audit_task_action(_access, ACTION_TASK_CREATE_PR, task_id)
+    return result
+
+
+async def _create_pr_from_task(
+    task_id: str,
+    options: CreatePRFromTaskOptions = None,
+):
+    """Body of :func:`create_pr_from_task`, unaudited (#1466)."""
     import subprocess
 
     if options is None:

@@ -52,6 +52,7 @@ from server.services.task_branch import (
 from server.specpath import safe_spec_component
 
 from ..paths import get_data_dir
+from ..services.audit_service import ACTION_TASK_MERGE, audit_task_action
 from .project_authz import require_task_access
 
 logger = logging.getLogger(__name__)
@@ -1733,6 +1734,19 @@ async def merge_worktree(
     """
     Merge the worktree branch into the base branch.
     """
+    # ponytail: audit lives in this thin wrapper (#1466), not at each of the
+    # body's many return sites; the body is ``_merge_worktree``.
+    result = await _merge_worktree(task_id, options)
+    if isinstance(result, dict) and result.get("success"):
+        await audit_task_action(_access, ACTION_TASK_MERGE, task_id)
+    return result
+
+
+async def _merge_worktree(
+    task_id: str,
+    options: WorktreeMergeOptions = None,
+):
+    """Body of :func:`merge_worktree`, unaudited (#1466)."""
     import subprocess
 
     # This handler uses ``logger`` (e.g. when clearing internal merge-blocking

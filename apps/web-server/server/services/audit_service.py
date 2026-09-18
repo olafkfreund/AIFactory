@@ -62,6 +62,17 @@ ACTION_PROJECT_DELETE = "project.delete"
 ACTION_TASK_CREATE = "task.create"
 ACTION_TASK_START = "task.start"
 ACTION_TASK_MERGE = "task.merge"
+# REST task actions (#1466). Before these, the only task-action audit sink was
+# the MCP proxy, so the same action through ``/api/tasks/*`` left no row.
+ACTION_TASK_STOP = "task.stop"
+ACTION_TASK_RECOVER = "task.recover"
+ACTION_TASK_UPDATE = "task.update"
+ACTION_TASK_DELETE = "task.delete"
+ACTION_TASK_APPROVE_PLAN = "task.approve_plan"
+ACTION_TASK_CREATE_PR = "task.create_pr"
+ACTION_TASK_APPLY_CORRECTION = "task.apply_correction"
+ACTION_TASK_HANDOFF = "task.handoff"
+ACTION_TASK_DISPATCH = "task.dispatch"
 
 ACTION_API_KEY_CREATE = "api_key.create"
 ACTION_API_KEY_REVOKE = "api_key.revoke"
@@ -277,3 +288,32 @@ async def log_audit_event_bg(
             sanitize_log(resource_id),
             exc_info=True,
         )
+
+
+async def audit_task_action(
+    access: object,
+    action: str,
+    task_id: str | None,
+    request: object | None = None,
+    details: dict | None = None,
+) -> None:
+    """Write one ``task.*`` row for a REST task action (#1466).
+
+    ``access`` is the principal a route's ``require_*_access`` dependency
+    resolved. When the MCP proxy calls a route function DIRECTLY, that
+    parameter is left at its ``Depends(...)`` default -- not a dict -- and the
+    proxy writes its own ``mcp.task.*`` row, so skipping here keeps it to
+    exactly one row per action. Never raises (``log_audit_event_bg`` swallows).
+    """
+    if not isinstance(access, dict):
+        return
+    client = getattr(request, "client", None)
+    await log_audit_event_bg(
+        user_id=access.get("id"),
+        org_id=access.get("org_id"),
+        action=action,
+        resource_type="task",
+        resource_id=task_id,
+        details=details,
+        ip=client.host if client else None,
+    )

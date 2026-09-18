@@ -84,3 +84,21 @@ Expected: all pass. The existing MCP audit tests are unchanged.
 
 Revert the implementation commit. Audit rows already written stay, which is harmless and
 append-only. There is no schema change.
+
+## Deviations during implementation
+
+- **Steps 2-3, many-return handlers.** `start_task` (six success returns),
+  `create_pr_from_task` (10 returns) and `merge_worktree` (~35) are not edited at each
+  return. Each became a thin audited wrapper keeping the route's name, signature,
+  docstring and `Depends`, over an unaudited body `_<name>`. The proxy imports the
+  route by name, so it is unaffected. `create_pr_from_task` and `merge_worktree` report
+  failure as `{"success": False}` rather than raising, so their wrapper audits only
+  when `result["success"]` is truthy. `start_task` has no such return, so it audits
+  whenever the body did not raise.
+- **Step 5, test shape.** Driving all 16 routes to their success path through the HTTP
+  client needs a per-route project/agent fixture. The test file instead covers live:
+  the helper, REST vs proxied `stop` (one `task.stop` row vs one `mcp.task.stop` row),
+  `delete`, and all three wrappers, including the success-false case. The remaining
+  routes get a source check that each calls `audit_task_action` with its action.
+- **Found, out of scope.** `routes/changelog.py:1056` (create task from insights) calls
+  `create_task` in-process with no request, so it stays unaudited, as it was before.

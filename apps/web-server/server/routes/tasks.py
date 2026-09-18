@@ -20,6 +20,12 @@ from server.specpath import safe_spec_component
 
 from ..database.engine import get_db
 from ..services import task_control
+from ..services.audit_service import (
+    ACTION_TASK_CREATE,
+    ACTION_TASK_DELETE,
+    ACTION_TASK_UPDATE,
+    audit_task_action,
+)
 from ..tenancy import (
     multi_tenant_enabled,
     resolve_tenant,
@@ -316,6 +322,16 @@ Created via Magestic AI Web UI
     # Multi-tenancy (#925): record the creating tenant (no-op unless enabled).
     stamp_spec_tenant(spec_dir, resolve_tenant(request))
 
+    # #1466: no route dependency resolves a principal here, so read it off the
+    # request; ``request is None`` is an in-process caller (insights), not a user
+    # action. Auth disabled leaves no user -- still write the row, unattributed.
+    if request is not None:
+        await audit_task_action(
+            getattr(request.state, "user", None) or {"id": None},
+            ACTION_TASK_CREATE,
+            f"{task.project_id}:{spec_dir.name}",
+            request,
+        )
     return spec_to_task(task.project_id, spec_dir)
 
 
@@ -467,6 +483,7 @@ async def update_task_status(
 
             logging.getLogger(__name__).debug("completion emit failed", exc_info=True)
 
+    await audit_task_action(_access, ACTION_TASK_UPDATE, task_id)
     return spec_to_task(project_id, spec_dir)
 
 
@@ -647,6 +664,7 @@ async def update_task(
 
         requirements_file.write_text(json.dumps(requirements, indent=2))
 
+    await audit_task_action(_access, ACTION_TASK_UPDATE, task_id)
     return spec_to_task(project_id, spec_dir)
 
 
@@ -692,6 +710,7 @@ async def delete_task(
     # Remove directory (recursively)
 
     shutil.rmtree(spec_dir)
+    await audit_task_action(_access, ACTION_TASK_DELETE, task_id)
 
 
 # Plan-approval routes (POST /{task_id}/approve-plan, /{task_id}/reject-plan)
