@@ -58,14 +58,15 @@ spec: spec/2026-09-18-1550-comount-gate-marker-copyback.md
    Use a local import only if a module-level import would create a cycle; otherwise import
    at module level (the cq-ratchet flags PLC0415).
    → verify by step 3.
-3. New `apps/web-server/tests/test_gate_marker_copyback.py`:
+3. New `tests/test_gate_marker_copyback.py` (repo-root `tests/`, beside the #1249 and
+   completion tests it mirrors):
    - a worktree spec dir with a marker and a main spec dir without one → after
      `run_terminal_completion(..., is_terminal=True)`, main holds the same bytes;
    - main already has a **newer** marker → it is not overwritten;
    - no worktree dir → no marker appears in main, and nothing raises;
    - `sync_spec_file_from_worktree` patched to raise → `run_terminal_completion` still returns.
    Patch `emit_terminal_completion` and the other side effects the way
-   `tests/test_terminal_completion_characterization.py` does.
+   `tests/test_terminal_completion_characterization.py` (repo root) does.
    → verify: the new tests pass. The first one fails if step 2's call is removed.
 4. Merger end-to-end: a test in `apps/web-server/tests/test_merger.py`. A marker copied home
    whose sha equals `aifactory/<spec>`'s tip → the PR body contains `Gate evidence:`. A
@@ -80,9 +81,12 @@ spec: spec/2026-09-18-1550-comount-gate-marker-copyback.md
 ## Tests
 
 ```bash
-cd apps/web-server && /mnt/data/Source-home/GitHub/AIFactory/apps/web-server/.venv/bin/pytest \
-  tests/test_gate_marker_copyback.py tests/test_review_redrive.py tests/test_kubejob_review_redrive.py \
-  tests/test_terminal_completion_characterization.py tests/test_merger.py -v
+# repo-root tests (the #1249, completion and new copy-back tests live here)
+/mnt/data/Source-home/GitHub/AIFactory/apps/backend/.venv/bin/pytest \
+  tests/test_gate_marker_copyback.py tests/test_review_redrive.py \
+  tests/test_kubejob_review_redrive.py tests/test_terminal_completion_characterization.py -v
+# merger test lives with the web-server suite
+(cd apps/web-server && /mnt/data/Source-home/GitHub/AIFactory/apps/web-server/.venv/bin/pytest tests/test_merger.py -v)
 ```
 Expected: all pass. The #1249 tests are unchanged apart from renamed imports.
 
