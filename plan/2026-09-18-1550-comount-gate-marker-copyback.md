@@ -94,3 +94,18 @@ Expected: all pass. The #1249 tests are unchanged apart from renamed imports.
 
 Revert the implementation commit. The helper rename reverts with it. Markers already copied
 into main spec dirs are harmless: they are data, and still validated against the branch tip.
+
+## Deviations (recorded during implementation)
+
+- **Step 4 reuses #1563's positive test.** `test_honest_body_reports_gate_evidence_without_a_worktree`
+  (now on `dev`) already covers a marker in the **main** spec dir matching the branch tip,
+  which is exactly where the copy-back puts it. So only the negative is new:
+  `test_copied_home_marker_for_another_commit_is_no_evidence`, where a copied-home marker for
+  another commit reads as "no verification gates recorded".
+- **Step 2 uses an absolute module-level import**
+  (`server.services.review_redrive_service`): there is no cycle (checked by importing the
+  app), and a relative import would count against the TID252 ratchet.
+- **Step 3's ordering assertion is explicit:** the merger stub records whether the marker is
+  already in the main spec dir when the merger is called (#1566 runs it inside
+  `run_terminal_completion`). Mutation-checked: disabling the copy fails it, and removing
+  #1249's newer-only guard fails the no-overwrite test.
