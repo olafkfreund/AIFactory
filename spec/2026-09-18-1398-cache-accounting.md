@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1398
 intent: intent/2026-09-18-1398-cache-accounting.md
 ---
