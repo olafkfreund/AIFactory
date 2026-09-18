@@ -934,3 +934,48 @@ def test_loop_survives_a_failing_tick_and_stops_cleanly(monkeypatch):
 
     asyncio.run(run())
     assert len(ticks) == 2, "a failed tick must not kill the loop"
+
+
+# ── a failed branch fetch is not proof the branch is absent (#2586 review) ──
+
+
+def _local_only_routes(ls_remote_rc: int) -> dict[str, CmdResult]:
+    return {
+        "fetch origin main": CmdResult(0, "", ""),
+        "fetch origin aifactory/1": CmdResult(1, "", "fetch failed"),
+        "ls-remote": CmdResult(ls_remote_rc, "", ""),
+        "rev-parse --verify": CmdResult(0, "", ""),
+        "rev-list --count": CmdResult(0, "2\n", ""),
+        "diff --name-only": CmdResult(0, "a.py\n", ""),
+    }
+
+
+def test_branch_proven_absent_on_origin_measures_the_local_ref(tmp_path):
+    r = FakeRunner(_local_only_routes(2))
+    got = mg._branch_ahead_and_changed(tmp_path, "main", "aifactory/1", r)
+    assert got == (2, 1, 2)
+
+
+@pytest.mark.parametrize("rc", [0, 1, 128])
+def test_fetch_failure_without_proof_of_absence_is_unmeasurable(tmp_path, rc):
+    """A transient network/auth error must not send a possibly stale local ref
+    to be measured -- that could label real work `no_work`."""
+    r = FakeRunner(_local_only_routes(rc))
+    got = mg._branch_ahead_and_changed(tmp_path, "main", "aifactory/1", r)
+    assert got == (None, None, None)
+
+
+def test_real_git_never_pushed_branch_is_measured_locally(tmp_path):
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
+    wt = tmp_path / "wt"
+    _git(tmp_path, "clone", "-q", str(origin), str(wt))
+    _git(wt, "config", "user.email", "t@t")
+    _git(wt, "config", "user.name", "t")
+    _git(wt, "checkout", "-qb", "main")
+    _commit(wt, "base.txt")
+    _git(wt, "push", "-q", "origin", "main")
+    _git(wt, "checkout", "-qb", "aifactory/1")
+    _commit(wt, "a.py")
+    _commit(wt, "b.py")
+    assert _measure(wt) == (2, 2, 2)
