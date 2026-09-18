@@ -45,6 +45,16 @@ export const REVIEW_REASON_BADGES: Record<
   no_work: { label: 'No Work Produced', labelKey: 'reviewReason.noWork', variant: 'destructive' },
 };
 
+// The badge for a reason, or null for one this build does not know. Runtime
+// values are cast at the IPC/WebSocket boundary, so a newer backend can send a
+// reason outside the union; that must omit the badge, never crash a render.
+export function reviewReasonBadge(
+  reason: ReviewReason | null | undefined,
+): (typeof REVIEW_REASON_BADGES)[ReviewReason] | null {
+  if (!reason || !Object.hasOwn(REVIEW_REASON_BADGES, reason)) return null;
+  return REVIEW_REASON_BADGES[reason];
+}
+
 // Reasons the merger writes once a task's PR state is known. The PR, not the
 // subtask count, is authoritative for these (Factory#2586).
 export const PR_STATE_REVIEW_REASONS: ReadonlySet<ReviewReason> = new Set([

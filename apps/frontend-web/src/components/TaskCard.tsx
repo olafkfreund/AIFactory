@@ -19,7 +19,7 @@ import {
   TASK_PRIORITY_LABELS,
   EXECUTION_PHASE_LABELS,
   EXECUTION_PHASE_BADGE_COLORS,
-  REVIEW_REASON_BADGES
+  reviewReasonBadge
 } from '../shared/constants';
 import { startTask, stopTask, checkTaskRunning, recoverStuckTask, isIncompleteHumanReview, archiveTasks } from '../stores/task-store';
 import type { Task, TaskCategory, ReviewReason } from '../shared/types';
@@ -285,9 +285,7 @@ export const TaskCard = memo(function TaskCard({ task, onClick }: TaskCardProps)
   };
 
   const getReviewReasonLabel = (reason?: ReviewReason): { label: string; variant: 'success' | 'destructive' | 'warning' | 'default' } | null => {
-    if (!reason) return null;
-    const badge = REVIEW_REASON_BADGES[reason] as (typeof REVIEW_REASON_BADGES)[ReviewReason] | undefined;
-    // An unknown reason from a newer backend renders no badge.
+    const badge = reviewReasonBadge(reason);
     return badge ? { label: t(badge.labelKey), variant: badge.variant } : null;
   };
 

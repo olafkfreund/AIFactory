@@ -36,7 +36,7 @@ import { cn } from '../../lib/utils';
 import { calculateProgress } from '../../lib/utils';
 import { startTask, stopTask, submitReview, recoverStuckTask, deleteTask, persistTaskStatus } from '../../stores/task-store';
 import { useProjectStore } from '../../stores/project-store';
-import { REVIEW_REASON_BADGES, TASK_STATUS_LABELS } from '../../shared/constants';
+import { reviewReasonBadge, TASK_STATUS_LABELS } from '../../shared/constants';
 import { TaskEditDialog } from '../TaskEditDialog';
 import { useTaskDetail } from './hooks/useTaskDetail';
 import { TaskMetadata } from './TaskMetadata';
@@ -144,8 +144,8 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
 
   // Memoize review reason badge variant and label - ensures proper reactivity for review states
   const { reviewBadgeVariant, reviewLabel } = useMemo(() => {
-    if (!task.reviewReason) return { reviewBadgeVariant: null, reviewLabel: null };
-    const badge = REVIEW_REASON_BADGES[task.reviewReason];
+    const badge = reviewReasonBadge(task.reviewReason);
+    if (!badge) return { reviewBadgeVariant: null, reviewLabel: null };
     return { reviewBadgeVariant: badge.variant, reviewLabel: badge.label };
   }, [task.reviewReason]);
 
