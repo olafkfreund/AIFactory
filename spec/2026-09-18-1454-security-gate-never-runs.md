@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1454
 intent: intent/2026-09-18-1454-security-gate-never-runs.md
 ---
