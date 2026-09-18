@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1541
 author: Olaf Krasicki-Freund
 ---
@@ -62,3 +62,9 @@ fails because Swift couldn't download.
    - **C. Status quo plus a larger deadline.** Cheapest; keeps paying minutes per gate.
 2. For A: which languages go in the image, all supported ones or the ones seen in real
    builds, and what image-size ceiling is acceptable?
+
+## Decisions (at approval, 2026-09-18)
+
+1. **Option A:** bake the supported languages' toolchain closures into `factory-runner-nix`.
+2. Which languages, and the image-size ceiling, are for the spec to propose from
+   measurement. They are not assumed here.
