@@ -27,6 +27,7 @@ from server.services.audit_service import (
     ACTION_TASK_START,
     ACTION_TASK_STOP,
     audit_task_action,
+    audit_task_route,
 )
 from server.specpath import safe_spec_component
 
@@ -265,6 +266,7 @@ async def is_task_running(
 
 
 @router.post("/{task_id}/start")
+@audit_task_route(ACTION_TASK_START)
 async def start_task(
     task_id: str,
     request: StartTaskRequest,
@@ -276,19 +278,6 @@ async def start_task(
     The task must already exist (have a spec directory).
     This will run the planner, coder, and QA agents.
     """
-    # ponytail: audit lives in this thin wrapper (#1466), not at each of the
-    # body's many return sites; the body is ``_start_task``.
-    result = await _start_task(task_id, request, raw_request)
-    await audit_task_action(_access, ACTION_TASK_START, task_id, raw_request)
-    return result
-
-
-async def _start_task(
-    task_id: str,
-    request: StartTaskRequest,
-    raw_request: Request,
-) -> Any:
-    """Body of :func:`start_task`, unaudited (#1466)."""
 
     logger = logging.getLogger(__name__)
     logger.info(

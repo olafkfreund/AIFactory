@@ -8,9 +8,11 @@ handler, ``mcp.task.*`` from the proxy, never both.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import importlib
 import inspect
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -122,33 +124,59 @@ def test_rest_delete_writes_one_task_row(rows, monkeypatch, tmp_path):
 # -- the thin wrappers around many-return bodies -----------------------------
 
 
+# -- @audit_task_route: the routes with many return sites ----------------------
+
+
 @pytest.mark.parametrize(
-    ("module", "route", "body", "action"),
-    [
-        (pr, "create_pr_from_task", "_create_pr_from_task", "task.create_pr"),
-        (worktree_merge, "merge_worktree", "_merge_worktree", "task.merge"),
-    ],
+    ("result", "expected"),
+    [({"success": True}, 1), ({"success": False}, 0), ("not a dict", 0)],
 )
-@pytest.mark.parametrize(("success", "expected"), [(True, 1), (False, 0)])
-def test_wrapper_audits_only_a_reported_success(
-    rows, monkeypatch, module, route, body, action, success, expected
-):
-    async def _body(*_a, **_k):
-        return {"success": success}
+def test_route_decorator_audits_only_a_reported_success(rows, result, expected):
+    @audit_service.audit_task_route("task.merge")
+    async def route(task_id, options=None, _access=None):
+        return result
 
-    monkeypatch.setattr(module, body, _body)
-    _run(getattr(module, route)("p:001", None, _access=USER))
-    assert [r["action"] for r in rows] == [action] * expected
+    assert _run(route("p:001", None, _access=USER)) == result
+    assert [r["action"] for r in rows] == ["task.merge"] * expected
 
 
-def test_start_wrapper_audits(rows, monkeypatch):
-    async def _body(*_a, **_k):
+def test_route_decorator_skips_a_proxied_positional_call(rows):
+    """The MCP proxy calls ``merge_worktree(task_id, options)`` directly:
+    ``_access`` stays at its Depends default, so only the proxy's row exists."""
+    marker = object()  # stands in for Depends(...)
+
+    @audit_service.audit_task_route("task.merge")
+    async def route(task_id, options=None, _access=marker):
         return {"success": True}
 
-    monkeypatch.setattr(execution, "_start_task", _body)
-    req = SimpleNamespace(client=None)
-    _run(execution.start_task("p:001", None, req, _access=USER))
-    assert [r["action"] for r in rows] == ["task.start"]
+    _run(route("p:001", None))
+    assert rows == []
+
+
+@pytest.mark.parametrize(
+    ("module", "route", "const"),
+    [
+        (execution, "start_task", "ACTION_TASK_START"),
+        (pr, "create_pr_from_task", "ACTION_TASK_CREATE_PR"),
+        (worktree_merge, "merge_worktree", "ACTION_TASK_MERGE"),
+    ],
+)
+def test_many_return_routes_carry_the_decorator_under_honest_status(
+    module, route, const
+):
+    """The body stays whole (so the #1126 guard still sees its refusals) and
+    the audit decorator sits below ``@honest_status`` so it sees the raw dict."""
+    tree = ast.parse(Path(inspect.getfile(module)).read_text(encoding="utf-8"))
+    fn = next(
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.AsyncFunctionDef) and n.name == route
+    )
+    names = [ast.unparse(d) for d in fn.decorator_list]
+    audit = f"audit_task_route({const})"
+    assert audit in names, names
+    if "honest_status" in names:
+        assert names.index("honest_status") < names.index(audit), names
 
 
 # -- every audited route names its action ------------------------------------

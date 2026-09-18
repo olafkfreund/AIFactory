@@ -22,14 +22,13 @@ compatibility (``mcp_stdio/router.py`` imports them from ``..routes.tasks``).
 import json
 import logging
 from pathlib import Path
-from typing import Any
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from server.error_ref import client_error
 from server.project_registry import get_projects_file
-from server.services.audit_service import ACTION_TASK_CREATE_PR, audit_task_action
+from server.services.audit_service import ACTION_TASK_CREATE_PR, audit_task_route
 from server.services.build_backend import task_repo_dir
 from server.services.http_verdict import honest_status
 from server.services.task_branch import resolve_task_branch
@@ -52,6 +51,7 @@ class CreatePRFromTaskOptions(BaseModel):
 
 @router.post("/{task_id}/worktree/create-pr")
 @honest_status
+@audit_task_route(ACTION_TASK_CREATE_PR)
 async def create_pr_from_task(
     task_id: str,
     options: CreatePRFromTaskOptions = None,
@@ -61,19 +61,6 @@ async def create_pr_from_task(
     Push the worktree branch and create a GitHub Pull Request.
     Does NOT delete the worktree or branch after PR creation.
     """
-    # ponytail: audit lives in this thin wrapper (#1466), not at each of the
-    # body's many return sites; the body is ``_create_pr_from_task``.
-    result = await _create_pr_from_task(task_id, options)
-    if isinstance(result, dict) and result.get("success"):
-        await audit_task_action(_access, ACTION_TASK_CREATE_PR, task_id)
-    return result
-
-
-async def _create_pr_from_task(
-    task_id: str,
-    options: CreatePRFromTaskOptions | None = None,
-) -> Any:
-    """Body of :func:`create_pr_from_task`, unaudited (#1466)."""
     import subprocess
 
     if options is None:

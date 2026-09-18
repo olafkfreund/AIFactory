@@ -123,3 +123,27 @@ append-only. There is no schema change.
   `_merge_worktree`) are typed `-> Any` with `X | None` defaults, and the helper uses
   `dict[str, Any]`. Public route signatures are left exactly as on `dev`, so the OpenAPI
   schema is unchanged. Both ratchets report 0 regressed.
+
+### Deviation: a route decorator replaces the wrapper split (found by the full web-server suite)
+
+The earlier deviation split `start_task`, `create_pr_from_task` and `merge_worktree` into
+an audited wrapper around an unaudited `_<name>` body. Behaviour was intact, since
+`@honest_status` stayed on the wrapper, but it moved each route's `{"success": False}`
+returns out of the decorated function. #1126's completeness guard
+(`apps/web-server/tests/test_route_refusals_are_not_http_200.py`) finds refusing routes by
+reading each decorated route's own body. It lost them
+(`test_the_inventory_is_not_empty` fell below 80), and it could no longer catch
+`@honest_status` being removed from those routes.
+
+Now: the three route bodies are **byte-identical to `dev`**, with one new decorator,
+`audit_service.audit_task_route(action)`, stacked **under** `@honest_status` so it sees
+the handler's raw dict. It writes a row only for a dict with truthy `success`, and binds
+arguments to the route's signature, so the MCP proxy's direct positional calls (where
+`_access` stays at its `Depends` default) are skipped. `functools.wraps` keeps FastAPI's
+parameter and dependency resolution unchanged (checked on the built app: the same path,
+body and `TaskAccessChecker` for all three). The `-> Any` typing added for the old bodies
+is gone with them.
+
+Verified: the #1126 guard passes (29), `tests/audit/` passes (103), the full
+`apps/web-server/tests` has 0 failures, and ruff/mypy ratchets report 0 regressed.
+Mutation-checked: removing the merge route's decorator fails the new structural test.

@@ -30,9 +30,12 @@ Usage::
     )
 """
 
+import inspect
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from functools import wraps
 from typing import Any
 
 from factory_common.logsafe import sanitize_log
@@ -318,3 +321,45 @@ async def audit_task_action(
         details=details,
         ip=client.host if client else None,
     )
+
+
+def audit_task_route(
+    action: str,
+) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
+    """Audit an ``async`` task route that reports success in its own body (#1466).
+
+    For routes with many return sites (start, create-pr, merge) a call before
+    each ``return`` is noise, and splitting the body into a helper hides its
+    ``{"success": False}`` returns from the #1126 guard that checks every
+    refusing route carries ``@honest_status``. So the body stays as written and
+    this decorator writes the row. Stack it UNDER ``@honest_status`` so it sees
+    the handler's own dict before a refusal becomes a 409.
+
+    A row is written only for a dict with truthy ``success``. Arguments are
+    bound to the route's signature, so the MCP proxy's direct positional calls
+    leave ``_access`` at its ``Depends`` default and are skipped by
+    :func:`audit_task_action` -- the proxy writes its own ``mcp.task.*`` row.
+    ``functools.wraps`` keeps ``__wrapped__``, so FastAPI still sees the real
+    parameters and dependencies.
+    """
+
+    def decorate(
+        handler: Callable[..., Awaitable[Any]],
+    ) -> Callable[..., Awaitable[Any]]:
+        sig = inspect.signature(handler)
+
+        @wraps(handler)
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            result = await handler(*args, **kwargs)
+            if isinstance(result, dict) and result.get("success"):
+                bound = sig.bind_partial(*args, **kwargs)
+                bound.apply_defaults()
+                a = bound.arguments
+                await audit_task_action(
+                    a.get("_access"), action, a.get("task_id"), a.get("raw_request")
+                )
+            return result
+
+        return wrapper
+
+    return decorate
