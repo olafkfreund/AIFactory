@@ -114,3 +114,15 @@ unchanged: only an exact tip match counts, and a worktree HEAD check still decid
 where a worktree exists. New tests cover a packed-path origin-only tip, a stale local
 branch behind origin, and a marker matching neither. Mutation-checked: dropping the origin
 ref fails the first two.
+
+### Deviation: push the marker the build actually wrote (Copilot review on #1563)
+
+Step 5's `maybe_push_gate_marker(spec_dir, ...)` in `cli/main.py` was handed the
+**source** spec dir. In isolated mode `handle_build_command` rebinds its own `spec_dir` to
+the worktree copy (`build_commands.py:403-404`,
+`copy_spec_to_worktree` → `<worktree>/.aifactory/specs/<spec>`), and the trailing gates
+write the marker there. Unlike the plan, nothing syncs the marker back, so the packed push
+uploaded nothing and step 5 did not work. New `workspace_fetch.gate_marker_spec_dir`
+prefers the worktree copy when it holds a marker and otherwise keeps the given dir (direct
+mode). `main.py` pushes from it. Test: a marker only in the worktree copy is pushed and
+fetched home. Mutation-checked: pushing from the source dir fails it.

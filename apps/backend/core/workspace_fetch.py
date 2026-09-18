@@ -419,6 +419,35 @@ def _gate_marker_key(spec_id: str) -> str:
     )
 
 
+def gate_marker_spec_dir(
+    project_dir: str | os.PathLike[str], spec_dir: str | os.PathLike[str]
+) -> Path:
+    """The spec dir the build actually wrote its gate marker into (#1550).
+
+    In isolated mode ``handle_build_command`` builds from a copy of the spec
+    INSIDE the task worktree (``copy_spec_to_worktree``:
+    ``<worktree>/.aifactory/specs/<spec>``, worktree
+    ``.aifactory/worktrees/tasks/<spec>`` as in ``gate_dir_for``) and the
+    trailing gates write the marker there. The caller's ``spec_dir`` is the
+    SOURCE copy, which no sync brings the marker back to. Prefer the worktree
+    copy when it holds a marker; otherwise (direct mode) keep ``spec_dir``.
+    """
+    spec = Path(spec_dir)
+    worktree_spec = (
+        Path(project_dir)
+        / ".aifactory"
+        / "worktrees"
+        / "tasks"
+        / spec.name
+        / ".aifactory"
+        / "specs"
+        / spec.name
+    )
+    if (worktree_spec / _GATE_MARKER_FILE).is_file():
+        return worktree_spec
+    return spec
+
+
 def maybe_push_gate_marker(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
     """Push the Job's trailing-gate evidence marker to object storage (#1550).
 

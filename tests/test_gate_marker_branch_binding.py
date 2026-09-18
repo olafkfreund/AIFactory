@@ -195,3 +195,45 @@ def test_fetch_with_nothing_pushed_writes_nothing(tmp_path, monkeypatch):
     )
     assert wf.maybe_fetch_gate_marker(tmp_path, SPEC) is False
     assert not (tmp_path / ".trailing_gates_done").exists()
+
+
+def _source_and_worktree_spec(project: Path) -> tuple[Path, Path]:
+    source = project / ".aifactory" / "specs" / SPEC
+    worktree = (
+        project
+        / ".aifactory"
+        / "worktrees"
+        / "tasks"
+        / SPEC
+        / ".aifactory"
+        / "specs"
+        / SPEC
+    )
+    source.mkdir(parents=True)
+    worktree.mkdir(parents=True)
+    return source, worktree
+
+
+def test_isolated_build_pushes_the_worktree_marker(tmp_path, monkeypatch):
+    """#1550 (Copilot on #1563): isolated mode writes the marker into the
+    worktree's spec copy; the build-end push is handed the SOURCE spec dir.
+    It must still upload what the build wrote."""
+    store = _FakeStore()
+    monkeypatch.setattr("core.artifact_store.ArtifactStore", lambda *_a, **_k: store)
+    monkeypatch.setenv(wf.WORKSPACE_URI_ENV, "s3://b/ws.tar.gz")
+    source, worktree = _source_and_worktree_spec(tmp_path)
+    (worktree / ".trailing_gates_done").write_text("abc\npytest: passed\n")
+
+    chosen = wf.gate_marker_spec_dir(tmp_path, source)
+    assert chosen == worktree
+    assert wf.maybe_push_gate_marker(chosen, SPEC) is True
+    ctrl = tmp_path / "ctrl"
+    ctrl.mkdir()
+    assert wf.maybe_fetch_gate_marker(ctrl, SPEC) is True
+    assert (ctrl / ".trailing_gates_done").read_text() == "abc\npytest: passed\n"
+
+
+def test_direct_mode_keeps_the_given_spec_dir(tmp_path):
+    source, _worktree = _source_and_worktree_spec(tmp_path)  # no marker in worktree
+    (source / ".trailing_gates_done").write_text("abc\npytest: passed\n")
+    assert wf.gate_marker_spec_dir(tmp_path, source) == source

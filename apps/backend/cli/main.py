@@ -530,6 +530,7 @@ def main() -> None:
     # for planning-only runs (no build branch yet).
     if not args.stop_after_planning:
         from core.workspace_fetch import (  # noqa: PLC0415
+            gate_marker_spec_dir,
             maybe_push_gate_marker,
             maybe_push_memory,
             maybe_push_plan,
@@ -557,7 +558,9 @@ def main() -> None:
         maybe_push_usage(spec_dir, spec_dir.name)
         # #1550: and the trailing-gate evidence marker, so the merger's PR body
         # and the QA guard on the control plane see the gates that ran here.
-        maybe_push_gate_marker(spec_dir, spec_dir.name)
+        maybe_push_gate_marker(
+            gate_marker_spec_dir(project_dir, spec_dir), spec_dir.name
+        )
         # W1 (Factory #218): task_logs.json carries the authoritative per-phase
         # status; push it so the control plane reports done/failed instead of
         # leaving the task stuck at backlog/queued.
