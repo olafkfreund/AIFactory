@@ -73,7 +73,7 @@ RUN mkdir -p apps/web-server/static \
 # digest as frontend-build, so both move together in one Dependabot bump.
 FROM docker.io/node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS node-runtime
 
-FROM cgr.dev/chainguard/python:latest-dev@sha256:aa89119db7f7fb4a6628ac82e2c38404cc64cd56ccd858d2c78646776b3fffef AS runtime
+FROM cgr.dev/chainguard/python:latest-dev@sha256:075c08ad4c1d529dfb0ee3aaeab034268c912771256132765bb0751d0dba6572 AS runtime
 
 USER root
 
@@ -161,6 +161,13 @@ RUN apk add --no-cache \
         gnupg \
         socat \
         "wget>=1.25.0-r15"
+
+# Node must come only from the node-runtime COPY above, never from apk: an apk
+# nodejs would be rebuilt against a glibc newer than this base pins and break
+# the build (Factory#1710). Checked AFTER the apk block, where it could appear.
+RUN if apk info 2>/dev/null | grep -q '^nodejs'; then \
+      echo "apk nodejs is installed; runtime Node must come from node-runtime (Factory#1710)"; exit 1; \
+    fi
 
 # RFC-0016 #674: the per-language build toolchains (go/rust/maven/openjdk/cmake/
 # build-base) that USED to be baked here have been REMOVED. AIFactory builds and

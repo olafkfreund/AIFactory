@@ -974,6 +974,7 @@ def emit_terminal_completion(
     # already present) and best-effort (never raises).
     try:
         from core.workspace_fetch import (  # noqa: PLC0415
+            maybe_fetch_gate_marker,
             maybe_fetch_memory,
             maybe_fetch_plan,
             maybe_fetch_task_logs,
@@ -981,6 +982,8 @@ def emit_terminal_completion(
         )
 
         maybe_fetch_usage(spec_dir, spec_id)
+        # #1550: the gate-evidence marker, which the merger reads for its PR body.
+        maybe_fetch_gate_marker(spec_dir, spec_id)
         # W1 (Factory #218): also pull the Job's task_logs.json so spec_to_task
         # reports the real terminal status (done/failed) on the packed path
         # instead of defaulting to backlog/queued.
