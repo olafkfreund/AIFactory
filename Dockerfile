@@ -162,6 +162,13 @@ RUN apk add --no-cache \
         socat \
         "wget>=1.25.0-r15"
 
+# Node must come only from the node-runtime COPY above, never from apk: an apk
+# nodejs would be rebuilt against a glibc newer than this base pins and break
+# the build (Factory#1710). Checked AFTER the apk block, where it could appear.
+RUN if apk info 2>/dev/null | grep -q '^nodejs'; then \
+      echo "apk nodejs is installed; runtime Node must come from node-runtime (Factory#1710)"; exit 1; \
+    fi
+
 # RFC-0016 #674: the per-language build toolchains (go/rust/maven/openjdk/cmake/
 # build-base) that USED to be baked here have been REMOVED. AIFactory builds and
 # gates now run on the Nix Job-per-task substrate (AIFACTORY_SANDBOX_BACKEND=
