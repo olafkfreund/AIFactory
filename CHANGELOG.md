@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## 3.6.82 - 2026-09-18
+
 ### Fixed
 
 - **Finished work now reaches a pull request.** The merger (#1552) existed but
