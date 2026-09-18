@@ -304,6 +304,7 @@ Read in `apps/web-server/server/services/intake_poller.py`,
 ## PR endgame, deploy & Copilot
 
 Read in `apps/web-server/server/services/pr_endgame.py`,
+`services/merger.py`, `server/main.py` (merger sweep startup),
 `services/copilot_dispatch_service.py`, `routes/github.py`. These are commonly
 set per-project in `.aifactory/.env`.
 
@@ -314,6 +315,9 @@ set per-project in `.aifactory/.env`.
 | `AIFACTORY_PR_REVIEWER` | `aifactory` | no | Which review gates merge: `aifactory`, `copilot`, or `any`. |
 | `AIFACTORY_AUTO_DEPLOY` | off | no | Deploy-then-verify to AWS App Runner on a clean build, then tear down. |
 | `AIFACTORY_COPILOT_DISPATCH_ENABLED` | off | no | Enable GitHub Copilot dispatch for reviews. |
+| `AIFACTORY_MERGER_SWEEP` | off | no | Periodic merger sweep: sync task status to PR state and, where `AIFACTORY_AUTO_PR` is on for the project, push and open PRs for finished work with no PR. See `guides/pr-endgame.md`. |
+| `AIFACTORY_MERGER_SWEEP_DRY_RUN` | `true` | no | Report-only unless exactly `false`. |
+| `AIFACTORY_MERGER_SWEEP_INTERVAL_S` | `900` | no | Seconds between sweep ticks. |
 
 ## Completion events & outbox
 
