@@ -28,12 +28,12 @@ from pydantic import BaseModel
 
 from server.error_ref import client_error
 from server.project_registry import get_projects_file
+from server.services.audit_service import ACTION_TASK_CREATE_PR, audit_task_action
 from server.services.build_backend import task_repo_dir
 from server.services.http_verdict import honest_status
 from server.services.task_branch import resolve_task_branch
 from server.specpath import safe_spec_component
 
-from ..services.audit_service import ACTION_TASK_CREATE_PR, audit_task_action
 from .project_authz import require_task_access
 
 logger = logging.getLogger(__name__)

@@ -18,11 +18,7 @@ from pydantic import BaseModel, Field
 from server.background import spawn
 from server.error_ref import client_error
 from server.project_registry import load_projects, resolve_project_id
-from server.specpath import safe_spec_component
-
-from ..services import task_control
-from ..services.agent_service import get_agent_service
-from ..services.audit_service import (
+from server.services.audit_service import (
     ACTION_TASK_APPLY_CORRECTION,
     ACTION_TASK_CREATE,
     ACTION_TASK_DISPATCH,
@@ -32,6 +28,10 @@ from ..services.audit_service import (
     ACTION_TASK_STOP,
     audit_task_action,
 )
+from server.specpath import safe_spec_component
+
+from ..services import task_control
+from ..services.agent_service import get_agent_service
 from ..tenancy import resolve_tenant, stamp_spec_tenant
 from ..websockets.events import emit_task_status
 from .from_issue import _intake_auto_handoff_enabled, _set_task_metadata_flag

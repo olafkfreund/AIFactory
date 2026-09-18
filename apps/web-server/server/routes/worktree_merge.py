@@ -43,6 +43,7 @@ from pydantic import BaseModel
 from server.error_ref import client_error
 from server.project_registry import get_projects_file
 from server.services.approval import approved, merge_pull_request
+from server.services.audit_service import ACTION_TASK_MERGE, audit_task_action
 from server.services.http_verdict import honest_status
 from server.services.task_branch import (
     current_branch,
@@ -52,7 +53,6 @@ from server.services.task_branch import (
 from server.specpath import safe_spec_component
 
 from ..paths import get_data_dir
-from ..services.audit_service import ACTION_TASK_MERGE, audit_task_action
 from .project_authz import require_task_access
 
 logger = logging.getLogger(__name__)

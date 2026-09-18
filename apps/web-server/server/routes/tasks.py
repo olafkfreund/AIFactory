@@ -16,16 +16,16 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.project_registry import load_projects
-from server.specpath import safe_spec_component
-
-from ..database.engine import get_db
-from ..services import task_control
-from ..services.audit_service import (
+from server.services.audit_service import (
     ACTION_TASK_CREATE,
     ACTION_TASK_DELETE,
     ACTION_TASK_UPDATE,
     audit_task_action,
 )
+from server.specpath import safe_spec_component
+
+from ..database.engine import get_db
+from ..services import task_control
 from ..tenancy import (
     multi_tenant_enabled,
     resolve_tenant,

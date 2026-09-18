@@ -25,10 +25,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from server.project_registry import load_projects
+from server.services.audit_service import ACTION_TASK_APPROVE_PLAN, audit_task_action
 from server.specpath import safe_spec_component
 
 from ..services import task_control
-from ..services.audit_service import ACTION_TASK_APPROVE_PLAN, audit_task_action
 from .project_authz import require_task_access
 
 router = APIRouter()
