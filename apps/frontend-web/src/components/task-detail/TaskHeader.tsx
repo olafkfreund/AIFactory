@@ -3,7 +3,7 @@ import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { cn, extractTaskNumber, formatTaskTitleWithNumber } from '../../lib/utils';
-import { TASK_STATUS_LABELS } from '../../shared/constants';
+import { REVIEW_REASON_BADGES, TASK_STATUS_LABELS } from '../../shared/constants';
 import type { Task } from '../../shared/types';
 
 interface TaskHeaderProps {
@@ -75,12 +75,10 @@ export function TaskHeader({
               </Badge>
               {task.status === 'human_review' && task.reviewReason && (
                 <Badge
-                  variant={task.reviewReason === 'completed' ? 'success' : task.reviewReason === 'errors' ? 'destructive' : 'warning'}
+                  variant={REVIEW_REASON_BADGES[task.reviewReason].variant}
                   className="text-xs"
                 >
-                  {task.reviewReason === 'completed' ? 'Completed' :
-                   task.reviewReason === 'errors' ? 'Has Errors' :
-                   task.reviewReason === 'plan_review' ? 'Approve Plan' : 'QA Issues'}
+                  {REVIEW_REASON_BADGES[task.reviewReason].label}
                 </Badge>
               )}
             </>
