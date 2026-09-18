@@ -38,7 +38,7 @@ spec: spec/2026-09-18-1443-js-test-script-pytest.md
    Python markers exist (`pyproject.toml`, `requirements.txt`, `setup.py`, `pytest.ini`), and
    `"pytest"` is not in the verify commands → `py_harness = False`. Otherwise unchanged.
    Add a self-test `_test_js_unset_language_with_project_dir()` next to the existing
-   `_test_*` fixtures.
+   `_test_*` fixtures, and call it from `_test()` (the `__main__` entrypoint, `:1030`).
    → verify: `python -m core.nix_provisioner` (the self-test entrypoint) passes.
 4. `apps/backend/core/nix_env.py:83`: pass `project_dir=project_dir` to `generate_flake`
    (it already accepts it at `nix_provisioner.py:501`, but the call site omits it).
