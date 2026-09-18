@@ -147,3 +147,20 @@ is gone with them.
 Verified: the #1126 guard passes (29), `tests/audit/` passes (103), the full
 `apps/web-server/tests` has 0 failures, and ruff/mypy ratchets report 0 regressed.
 Mutation-checked: removing the merge route's decorator fails the new structural test.
+
+### Deviation: review follow-ups (Copilot on #1564): audit only actions that happened
+
+- **Handoff:** `send_handoff` reports a failed or unconfigured transport as
+  `{"sent": False}` rather than raising, so `task.handoff` is written only when `sent`.
+- **Apply-correction:** a `confirm=False` preview returns `success: True` but writes nothing,
+  and a rejected triage returns `success: False`. The row is written only for
+  `success and confirm`.
+- **New route in scope:** the web UI creates tasks through
+  `POST /api/projects/{project_id}/tasks` (`routes/projects.create_project_task`), which
+  never calls `routes.tasks.create_task`. That was the most common create path, and it wrote
+  no row. It now writes `task.create` with the same `project:spec` id. The MCP proxy never
+  calls it, so this is still one row per action.
+
+Tests: executed tests for handoff (sent / not sent) and apply-correction (confirmed /
+preview / rejected), plus `create_project_task` in the source check. Mutation-checked:
+making either guard unconditional fails exactly its negative cases.

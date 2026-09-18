@@ -16,7 +16,14 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from server.routes import execution, plan_approval, pr, tasks, worktree_merge
+from server.routes import (
+    execution,
+    plan_approval,
+    pr,
+    projects,
+    tasks,
+    worktree_merge,
+)
 from server.services import audit_service
 
 pytestmark = pytest.mark.audit
@@ -197,6 +204,7 @@ def test_many_return_routes_carry_the_decorator_under_honest_status(
         (execution.dispatch_task_to_copilot, "ACTION_TASK_DISPATCH"),
         (plan_approval.approve_plan, "ACTION_TASK_APPROVE_PLAN"),
         (tasks.create_task, "ACTION_TASK_CREATE"),
+        (projects.create_project_task, "ACTION_TASK_CREATE"),
         (tasks.update_task_status, "ACTION_TASK_UPDATE"),
         (tasks.update_task, "ACTION_TASK_UPDATE"),
     ],
@@ -204,3 +212,51 @@ def test_many_return_routes_carry_the_decorator_under_honest_status(
 def test_route_emits_its_action(fn, action):
     src = inspect.getsource(inspect.unwrap(fn))
     assert "audit_task_action(" in src and action in src
+
+
+# -- review follow-ups (Copilot on #1564): only an action that happened -------
+
+
+@pytest.mark.parametrize(("sent", "expected"), [(True, 1), (False, 0)])
+def test_handoff_audits_only_a_sent_handoff(
+    rows, monkeypatch, tmp_path, sent, expected
+):
+    """``send_handoff`` reports a failed transport as ``sent: False``; no row."""
+    import pfactory.tfactory_client as tc
+
+    monkeypatch.setattr(
+        execution, "load_projects", lambda: {"p": {"path": str(tmp_path)}}
+    )
+    (tmp_path / ".aifactory" / "specs" / "001").mkdir(parents=True)
+    monkeypatch.setattr(tc, "build_ingest_payload", lambda *_a: {"spec_id": "001"})
+
+    async def _send(_payload):
+        return {"sent": sent, "reason": None if sent else "not_configured"}
+
+    monkeypatch.setattr(tc, "send_handoff", _send)
+    _run(execution.handoff_to_tfactory("p:001", _access=USER))
+    assert [r["action"] for r in rows] == ["task.handoff"] * expected
+
+
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        ({"success": True, "confirm": True}, 1),
+        ({"success": True, "confirm": False}, 0),  # preview: nothing written
+        ({"success": False, "confirm": True}, 0),  # rejected triage
+    ],
+)
+def test_apply_correction_audits_only_a_confirmed_success(
+    rows, monkeypatch, tmp_path, result, expected
+):
+    monkeypatch.setattr(execution, "_resolve_task", lambda _t: (None, None, tmp_path))
+
+    async def _apply(*_a, **_k):
+        return dict(result)
+
+    monkeypatch.setattr(execution, "apply_correction", _apply)
+    req = execution.ApplyCorrectionRequest(
+        fix_request_md="# fix", source="tfactory", confirm=result["confirm"]
+    )
+    _run(execution.apply_task_correction("p:001", req, _access=USER))
+    assert [r["action"] for r in rows] == ["task.apply_correction"] * expected

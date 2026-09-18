@@ -925,7 +925,8 @@ async def handoff_to_tfactory(
             sanitize_log(task_id),
             sanitize_log(e),
         )
-    await audit_task_action(_access, ACTION_TASK_HANDOFF, task_id)
+    if result.get("sent"):  # send_handoff reports failure, it doesn't raise
+        await audit_task_action(_access, ACTION_TASK_HANDOFF, task_id)
     return {
         **result,
         "tfactory_spec_id": payload.get("spec_id"),
@@ -1501,12 +1502,14 @@ async def apply_task_correction(
         manifest_hash=request.manifest_hash,
         correlation_key=request.correlation_key,
     )
-    await audit_task_action(
-        _access,
-        ACTION_TASK_APPLY_CORRECTION,
-        task_id,
-        details={"source": request.source},
-    )
+    # A confirm=False preview and a rejected triage write nothing: not an action.
+    if result.get("success") and result.get("confirm"):
+        await audit_task_action(
+            _access,
+            ACTION_TASK_APPLY_CORRECTION,
+            task_id,
+            details={"source": request.source},
+        )
     return {**result, "task_id": task_id, "source": request.source}
 
 
