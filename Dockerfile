@@ -488,6 +488,14 @@ USER root
 # not already in the substrate) can't write new paths. Warm builds — the packed
 # multi-node case we're unblocking — work; cold-write support is a follow-up
 # (writable overlay at Job runtime) tracked on the slice-3 issue.
+#
+# This pin DELIBERATELY lags the gate image (AIFactory#1541). Language toolchain
+# closures (python/kotlin/swift) are warmed into factory-runner-nix for the GATE
+# Job, which runs AIFACTORY_SANDBOX_IMAGE (pinned by digest in factory-gitops and
+# bumped by factory-runners' CD after signing). Nothing in this image runs a
+# language `nix develop`: the build Job is not nix-develop wrapped
+# (build_backend.py, nix_develop=False) and gates run in their own Job (#1525).
+# Bumping this digest would add ~1.7 GB of toolchains here for no reader.
 COPY --from=ghcr.io/olafkfreund/factory-runner-nix:latest@sha256:28c94cf7552f81dcf24c556ae74a5220b84eb1ebe9e9bb6e58d67c346d143e1e /nix/store /nix/store
 COPY --from=ghcr.io/olafkfreund/factory-runner-nix:latest@sha256:28c94cf7552f81dcf24c556ae74a5220b84eb1ebe9e9bb6e58d67c346d143e1e --chown=65532:65532 /nix/var /nix/var
 
