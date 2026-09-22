@@ -13692,6 +13692,11 @@ components:
           type: string
           title: Created At
           description: ISO timestamp
+        created_at_is_estimate:
+          type: boolean
+          title: Created At Is Estimate
+          description: created_at is inferred, not recorded at creation
+          default: false
         updated_at:
           type: string
           title: Updated At
