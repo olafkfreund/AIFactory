@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1569
 intent: intent/2026-09-23-1569-task-created-at-stamp.md
 ---
