@@ -14,6 +14,7 @@ import ast
 import contextlib
 import json
 import logging
+import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -505,6 +506,8 @@ def load_spec_metadata(spec_dir: Path) -> dict:
         "archivedInVersion": None,
         "reviewReason": None,
         "github_issue": None,
+        # #1569: the creation time RECORDED at intake, if this spec has one.
+        "created_at": None,
     }
 
     # Try to load requirements.json for title/description (most accurate source)
@@ -523,6 +526,11 @@ def load_spec_metadata(spec_dir: Path) -> dict:
             prov = requirements.get("provenance")
             if isinstance(prov, dict) and prov.get("issue_number") is not None:
                 metadata["github_issue"] = prov.get("issue_number")
+            # #1569: every creation path stamps this at intake. The directory's
+            # ctime is NOT a creation time -- it moves on any write inside the
+            # spec dir -- so the stamp is the only recorded one.
+            if requirements.get("created_at"):
+                metadata["created_at"] = requirements["created_at"]
         except (json.JSONDecodeError, KeyError) as exc:
             logger.warning(
                 "unreadable requirements.json for %s, metadata may be incomplete: %s",
@@ -916,6 +924,58 @@ def project_repo(project_data: dict) -> str | None:
     return None
 
 
+def _iso_from_timestamp(ts: float) -> str:
+    """A filesystem timestamp as a naive local ISO string.
+
+    Naive on purpose: `updated_at` has always been reported this way, and the
+    frontend/CFactory parse that shape. One place to change if the API ever
+    moves to tz-aware timestamps.
+    """
+    return datetime.fromtimestamp(ts).isoformat()
+
+
+def _creation_time(
+    spec_dir: Path, stamped: str | None, stat: os.stat_result
+) -> tuple[str, bool]:
+    """(ISO creation time, is_estimate) for a spec (#1569).
+
+    Three sources, best first. The directory's ``st_ctime`` -- what this used to
+    report -- is the inode CHANGE time: a control-plane status write, an agent
+    sync or a restore moves it, so 18 specs created over three days all read as
+    created the moment the merger touched them. It stays only as the last resort.
+
+    1. the ``created_at`` every creation path stamps into ``requirements.json``;
+    2. the oldest mtime of the spec's own ``requirements.json``/``spec.md``, both
+       written when the task is created (an estimate, but one that does not move
+       when something else in the directory is written);
+    3. the directory's ctime (an estimate).
+
+    Never raises: each source falls through to the next.
+    """
+    if stamped:
+        try:
+            datetime.fromisoformat(stamped)
+        except (TypeError, ValueError):
+            logger.debug(
+                "ignoring unparseable created_at %s for %s",
+                sanitize_log(stamped),
+                sanitize_log(spec_dir),
+            )
+        else:
+            return stamped, False
+
+    mtimes = []
+    for name in ("requirements.json", "spec.md"):
+        try:
+            mtimes.append((spec_dir / name).stat().st_mtime)
+        except OSError:
+            continue
+    if mtimes:
+        return _iso_from_timestamp(min(mtimes)), True
+
+    return _iso_from_timestamp(stat.st_ctime), True
+
+
 def spec_to_task(project_id: str, spec_dir: Path) -> Task:
     """Convert a spec directory to a Task model."""
     metadata = load_spec_metadata(spec_dir)
@@ -939,6 +999,9 @@ def spec_to_task(project_id: str, spec_dir: Path) -> Task:
 
     # Get timestamps from directory
     stat = spec_dir.stat()
+    created_at, created_at_is_estimate = _creation_time(
+        spec_dir, metadata.get("created_at"), stat
+    )
 
     # Map backend status to frontend-compatible status
     frontend_status = map_backend_status_to_frontend(metadata["status"])
@@ -957,8 +1020,9 @@ def spec_to_task(project_id: str, spec_dir: Path) -> Task:
         status=frontend_status,
         phase=metadata["phase"],
         subtasks=metadata["subtasks"],
-        created_at=datetime.fromtimestamp(stat.st_ctime).isoformat(),
-        updated_at=datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        created_at=created_at,
+        created_at_is_estimate=created_at_is_estimate,
+        updated_at=_iso_from_timestamp(stat.st_mtime),
         worktree_path=metadata["worktree_path"],
         branch_name=metadata["branch_name"],
         metadata=task_metadata,
