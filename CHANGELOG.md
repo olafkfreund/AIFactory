@@ -12,6 +12,12 @@
   `resolve_task_branch_fetching`, which fetches origin and retries once on a
   miss. `resolve_work_ref` shares it. (CFactory#457, #1598)
 
+- **CI: SBOMs are uploaded where they are generated.** After the SBOM job
+  split, the `release` job still uploaded SBOM files that only `sbom-attest`
+  creates, which would fail every release and skip attestation. The TechDocs
+  Dependabot write-back also committed the base-branch generator by restoring
+  it from the index. Both fixed. (#1600)
+
 ### Changed
 
 - CI: the SBOM attestations retry and are re-runnable (#1583, #1595), and the
