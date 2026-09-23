@@ -4530,7 +4530,12 @@ paths:
       tags:
       - Tasks
       summary: Merge Worktree
-      description: Merge the worktree branch into the base branch.
+      description: 'Merge the worktree branch into the base branch.
+
+
+        When a PR exists for the task branch, the PR is merged on GitHub and no
+
+        worktree is needed (CFactory#457). Only the no-PR local merge requires it.'
       operationId: merge_worktree_api_tasks__task_id__worktree_merge_post
       parameters:
       - name: task_id
@@ -5139,7 +5144,14 @@ paths:
       summary: Create Pr From Task
       description: 'Push the worktree branch and create a GitHub Pull Request.
 
-        Does NOT delete the worktree or branch after PR creation.'
+        Does NOT delete the worktree or branch after PR creation.
+
+
+        If an open or already-merged PR exists for the task branch, it is returned
+
+        (``existing: true``) without pushing, so calling this again is safe and
+
+        works after the worktree was cleaned up (CFactory#457).'
       operationId: create_pr_from_task_api_tasks__task_id__worktree_create_pr_post
       parameters:
       - name: task_id
