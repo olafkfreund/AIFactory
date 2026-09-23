@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1583
 intent: intent/2026-09-23-1583-release-sbom-retry.md
 ---
