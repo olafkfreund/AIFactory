@@ -103,3 +103,26 @@ against a digest and nothing depends on their absence.
 - **A GHCR login step** was added to `sbom-attest`: split out of `release`, it no longer
   inherits that job's login, and both `syft scan` and the dispatch-path digest resolution read
   from the registry.
+
+## Step 6 (backfill), executed 2026-09-23 — and what measuring first changed
+
+**The gap was a quarter of what the issue assumed.** Before dispatching anything, every
+image of both releases was checked with `cosign verify-attestation`:
+
+| image | v3.6.82 | v3.6.83 |
+|---|---|---|
+| app | present | present |
+| `-rmux` | present | present |
+| `-nix` | **MISSING** (both types) | **MISSING** (both types) |
+
+So **4 attestations are missing, not 12**. That matches the failure exactly: the run died on
+the `-nix` image's first attest (the error named `sha256:8edfb0d8…`, which is `v3.6.83-nix`),
+and everything attested before that point had already succeeded. #1583's "releases ship
+without SBOM attestations" was broader than the truth.
+
+**Deviation:** the dispatch attested all three images per version, so backfilling would have
+written **8 duplicate attestations** onto images that already had them — permanently, because
+the transparency log is append-only. So the dispatch gains an optional `images` input
+(`all` by default, or a comma list of `app,rmux,nix`), and the backfill runs with
+`images: nix`. Verified before committing: the attest script still parses, and the selection
+skips correctly for `all`, one image, and a list.
