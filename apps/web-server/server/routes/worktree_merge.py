@@ -1734,6 +1734,9 @@ async def merge_worktree(
 ):
     """
     Merge the worktree branch into the base branch.
+
+    When a PR exists for the task branch, the PR is merged on GitHub and no
+    worktree is needed (CFactory#457). Only the no-PR local merge requires it.
     """
     import subprocess
 
@@ -1788,11 +1791,11 @@ async def merge_worktree(
     if not spec_dir.exists():
         return {"success": False, "error": f"Task {task_id} not found"}
 
-    # Find the worktree
+    # Find the worktree. CFactory#457: its absence is checked only on the
+    # local-merge fallback below. Merging the PR (#1076) and resolving the
+    # branch (#1073) need no worktree, and cleanups remove it long before the
+    # reviewer clicks Approve.
     worktree_path = project_path / ".aifactory" / "worktrees" / "tasks" / spec_id
-
-    if not worktree_path.exists():
-        return {"success": False, "error": "No worktree found for this task"}
 
     # Get the branch name from the worktree
     try:
@@ -1860,7 +1863,11 @@ async def merge_worktree(
         # success for something GitHub declined.
         return {"success": False, "error": pr_detail}
 
-    # No PR for this branch: the historical local-merge path.
+    # No PR for this branch: the historical local-merge path, which merges the
+    # branch into this checkout and so does need the task's worktree.
+    if not worktree_path.exists():
+        return {"success": False, "error": "No worktree found for this task"}
+
     try:
         merge_cmd = ["git", "merge", worktree_branch]
         if options.noCommit:
