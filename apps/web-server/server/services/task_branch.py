@@ -170,6 +170,38 @@ def resolve_task_branch(
     return _discover(project_path, spec_id, base_branch, worktree_path)
 
 
+def resolve_task_branch_fetching(
+    *,
+    worktree_path: Path,
+    project_path: Path,
+    spec_id: str,
+    base_branch: str,
+) -> tuple[str | None, str | None]:
+    """``resolve_task_branch``, fetching origin and retrying once on a miss.
+
+    Discovery only sees refs that are already fetched. A kubejob build pushes
+    the task branch from its own pod, so the control-plane checkout may never
+    have seen it (CFactory#457). Unlike :func:`resolve_work_ref`, this does NOT
+    also require the branch to be readable in the project repo: a branch that
+    lives only in the task's worktree clone still resolves, as before.
+    """
+    branch, reason = resolve_task_branch(
+        worktree_path=worktree_path,
+        project_path=project_path,
+        spec_id=spec_id,
+        base_branch=base_branch,
+    )
+    if branch is None:
+        _git(["fetch", "--prune", "origin"], project_path)
+        branch, reason = resolve_task_branch(
+            worktree_path=worktree_path,
+            project_path=project_path,
+            spec_id=spec_id,
+            base_branch=base_branch,
+        )
+    return branch, reason
+
+
 def resolve_work_ref(
     *,
     worktree_path: Path,
@@ -197,20 +229,12 @@ def resolve_work_ref(
     Both fetches are best-effort (``_git`` swallows failures): offline, this
     degrades to whatever the local refs say instead of erroring.
     """
-    branch, reason = resolve_task_branch(
+    branch, reason = resolve_task_branch_fetching(
         worktree_path=worktree_path,
         project_path=project_path,
         spec_id=spec_id,
         base_branch=base_branch,
     )
-    if branch is None:
-        _git(["fetch", "--prune", "origin"], project_path)
-        branch, reason = resolve_task_branch(
-            worktree_path=worktree_path,
-            project_path=project_path,
-            spec_id=spec_id,
-            base_branch=base_branch,
-        )
     if branch is None:
         return None, None, reason
 
