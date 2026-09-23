@@ -48,6 +48,7 @@ from server.services.http_verdict import honest_status
 from server.services.task_branch import (
     current_branch,
     resolve_task_branch,
+    resolve_task_branch_fetching,
     resolve_work_ref,
 )
 from server.specpath import safe_spec_component
@@ -1813,7 +1814,8 @@ async def merge_worktree(
     # #1073: same defect as create-pr -- the worktree's HEAD is the base branch
     # under the kubejob backend, so merging it would have been a no-op merge of
     # main into main. Resolve the branch that actually holds the work.
-    worktree_branch, branch_error = resolve_task_branch(
+    # CFactory#457: fetch origin and retry on a miss (kubejob builds).
+    worktree_branch, branch_error = resolve_task_branch_fetching(
         worktree_path=worktree_path,
         project_path=project_path,
         spec_id=spec_id,

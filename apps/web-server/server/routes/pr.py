@@ -33,7 +33,7 @@ from server.services.approval import find_pr
 from server.services.audit_service import ACTION_TASK_CREATE_PR, audit_task_route
 from server.services.build_backend import task_repo_dir
 from server.services.http_verdict import honest_status
-from server.services.task_branch import resolve_task_branch
+from server.services.task_branch import resolve_task_branch_fetching
 from server.specpath import safe_spec_component
 
 from .project_authz import require_task_access
@@ -147,7 +147,9 @@ async def create_pr_from_task(
     # the kubejob build backend the build runs in a separate pod and pushes; the
     # control plane's worktree is never switched off the base branch, so that
     # read yielded "main" and this endpoint asked GitHub to open main -> main.
-    worktree_branch, branch_error = resolve_task_branch(
+    # CFactory#457: fetch origin and retry on a miss -- a kubejob build pushed
+    # the branch from its own pod, and this checkout may never have seen it.
+    worktree_branch, branch_error = resolve_task_branch_fetching(
         worktree_path=worktree_path or expected_worktree,
         project_path=project_path,
         spec_id=spec_id,

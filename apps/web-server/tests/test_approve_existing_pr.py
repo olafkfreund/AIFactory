@@ -113,7 +113,7 @@ def _create_pr(tmp_path: Path, gh: FakeGh, git: FakeGit, *, worktree: bool) -> A
     with (
         patch.object(pr, "get_projects_file", return_value=projects_file),
         patch.object(pr, "task_repo_dir", return_value=repo_dir),
-        patch.object(pr, "resolve_task_branch", return_value=(BRANCH, None)),
+        patch.object(pr, "resolve_task_branch_fetching", return_value=(BRANCH, None)),
         patch("server.routes.github.run_gh_command", gh),
         patch("server.services.approval.run_gh_command", gh),
         patch("server.routes.github._use_provider_api", return_value=False),
@@ -127,7 +127,9 @@ def _merge(tmp_path: Path, gh: FakeGh, git: FakeGit, *, worktree: bool) -> Any:
     with (
         patch.object(worktree_merge, "get_projects_file", return_value=projects_file),
         patch.object(
-            worktree_merge, "resolve_task_branch", return_value=(BRANCH, None)
+            worktree_merge,
+            "resolve_task_branch_fetching",
+            return_value=(BRANCH, None),
         ),
         patch("server.services.approval.run_gh_command", gh),
         patch("subprocess.run", git),
