@@ -132,6 +132,11 @@ class Task(TaskBase):
     phase: str | None = Field(None, description="Current execution phase")
     subtasks: list[Subtask] = Field(default_factory=list)
     created_at: str = Field(..., description="ISO timestamp")
+    # #1569: false when created_at is the value stamped at intake; true when it
+    # had to be inferred (the spec's own file mtimes, or the directory's ctime).
+    created_at_is_estimate: bool = Field(
+        False, description="created_at is inferred, not recorded at creation"
+    )
     updated_at: str = Field(..., description="ISO timestamp")
     worktree_path: str | None = Field(
         None, description="Path to git worktree if active"

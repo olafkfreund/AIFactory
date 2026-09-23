@@ -393,3 +393,66 @@ def test_same_worker_accumulates_across_turns(tmp_path: Path):
     assert rec["cost_usd"] == pytest.approx(0.2)
     # Wall-clock accumulates alongside the tokens (#1100).
     assert rec["duration_ms"] == 1500
+
+
+# -- #1398: cache creation vs cache reads, kept apart -------------------------
+
+
+def _split_turn(spec_dir: Path, read: int, creation: int, worker: str = "main"):
+    seg = PromptSegments(user_prompt="u" * 400)
+    usage = TurnUsage(
+        input_tokens=100,
+        output_tokens=10,
+        cache_read_tokens=read,
+        cache_creation_tokens=creation,
+    )
+    return record_turn(
+        spec_dir, seg, usage, model="claude-sonnet-4-5", worker_id=worker, duration_ms=1
+    )
+
+
+def test_cache_split_is_stored_and_system_instructions_is_still_the_sum(tmp_path):
+    b = _split_turn(tmp_path, read=900, creation=100)
+    assert (b["cacheReadTokens"], b["cacheCreationTokens"]) == (900, 100)
+    assert b["cacheHitRate"] == pytest.approx(0.9)
+    assert _cat(b, "system_instructions")["tokens"] == 1000
+    assert sum(c["tokens"] for c in b["categories"]) == b["totalInputTokens"] + 10
+    on_disk = json.loads(usage_file_path(tmp_path).read_text())
+    assert (on_disk["cacheReadTokens"], on_disk["cacheCreationTokens"]) == (900, 100)
+
+
+def test_cache_split_accumulates_across_turns_and_per_worker(tmp_path):
+    _split_turn(tmp_path, read=900, creation=100, worker="s1")
+    b = _split_turn(tmp_path, read=50, creation=950, worker="s2")
+    assert (b["cacheReadTokens"], b["cacheCreationTokens"]) == (950, 1050)
+    workers = json.loads(usage_file_path(tmp_path).read_text())["workers"]
+    assert (
+        workers["s1"]["cache_read_tokens"],
+        workers["s1"]["cache_creation_tokens"],
+    ) == (
+        900,
+        100,
+    )
+    assert (
+        workers["s2"]["cache_read_tokens"],
+        workers["s2"]["cache_creation_tokens"],
+    ) == (
+        50,
+        950,
+    )
+
+
+def test_legacy_file_without_the_split_loads_as_zero(tmp_path):
+    legacy = {"version": 1, "turns": 3, "totalInputTokens": 10, "categories": {}}
+    usage_file_path(tmp_path).write_text(json.dumps(legacy))
+    b = read_breakdown(tmp_path)
+    assert (b["cacheReadTokens"], b["cacheCreationTokens"]) == (0, 0)
+    assert b["cacheHitRate"] is None
+
+
+def test_provider_without_cache_reports_zero_split_and_no_hit_rate(tmp_path):
+    b = _split_turn(tmp_path, read=0, creation=0)
+    assert (b["cacheReadTokens"], b["cacheCreationTokens"]) == (0, 0)
+    assert b["cacheHitRate"] is None
+    # The no-cache path still estimates system_instructions from its segment.
+    assert "system_instructions" in {c["key"] for c in b["categories"]}

@@ -1,5 +1,41 @@
 ## [Unreleased]
 
+## 3.6.84 - 2026-09-23
+
+### Fixed
+
+- **Approve works on a task whose PR already exists, and after its worktree
+  was cleaned up.** `create-pr` now returns an open or merged PR for the task
+  branch (`existing: true`) instead of failing with "already exists", which
+  stopped CFactory's Approve before its merge step. `merge` merges the PR
+  without needing the worktree; only the no-PR local merge still requires one.
+  GitHub projects only. (CFactory#457, #1596)
+- Gates: evidence is read from the tree it describes (#1550, #1563), and the
+  gate marker comes home on the co-mount Job path (#1550, #1579). A Python test
+  script is refused in a JavaScript project (#1443, #1562). Gates no longer
+  download their toolchains (#1541, #1581).
+- Security: an unscanned merge is no longer reported as a clean one. (#1454, #1561)
+- Audit: task actions on the REST API now write an audit row. (#1466, #1564)
+- Tasks report their recorded creation time, not the spec dir's ctime. (#1569, #1584)
+- Docker: the build fails if apk ever installs nodejs. (Factory#1710, #1575)
+- CI: runsc's helper binaries are copied into the Kind node (#1585, #1589), and
+  the backend spec package's isort group is pinned. (#1565)
+
+### Added
+
+- Usage records cache creation and cache reads separately. (#1398, #1580)
+
+### Changed
+
+- Deploy ships on a version bump, not on every merge (#1559, #1591), and one
+  deploy writes one gitops commit. (#1465, #1587)
+- Digest auto-merge applies only to PRs into `dev`, and is disarmed when a
+  Dependabot PR is retargeted off `dev`. (Factory#1710, #1574, #1576)
+- `kotlin.yaml` re-vendored from hub `19f5c409` (Factory#1712, #1577); hub pins
+  refreshed to `5477f12a`. (#1592, #1593)
+- Dependencies: chainguard/python base `c9be3f0` (#1582, #1590), GitHub Actions
+  group (#1578), js-yaml 4.3.2 (#1535), postcss-selector-parser 6.1.4 in `docs/`. (#1586)
+
 ## 3.6.83 - 2026-09-18
 
 ### Fixed

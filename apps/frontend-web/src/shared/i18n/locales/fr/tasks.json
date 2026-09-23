@@ -210,7 +210,8 @@
   },
   "tokenUsage": {
     "title": "Utilisation des tokens",
-    "empty": "Aucune donnée de tokens disponible. Démarrez la tâche pour commencer le suivi."
+    "empty": "Aucune donnée de tokens disponible. Démarrez la tâche pour commencer le suivi.",
+    "cache": "Cache : {{read}} lus · {{written}} écrits · {{rate}} % de succès"
   },
   "resourceUsage": {
     "title": "Utilisation des ressources",

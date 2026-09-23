@@ -4,6 +4,15 @@ name: Deploy (CD → ArgoCD)
 # pushes it to GHCR, then bumps the image tag in the factory-gitops repo.
 # ArgoCD (auto-sync) redeploys aifactory on the p510 k3d cluster.
 #
+# FOUR JOBS, ONE GITOPS COMMIT (#1465). The `-nix` build image used to be built
+# and pinned by build-nix.yml, which triggers on the same push. Two workflows
+# therefore wrote two pins for this app minutes apart (the `-nix` build is ~9-11
+# min vs ~4-5 here), ArgoCD synced each, and the SECOND rollout restarted pods
+# while the first deploy's build was still running -- killing it mid-flight.
+# So: `changes` decides whether the `-nix` image needs rebuilding, `build-push`
+# and `build-nix` run in parallel, and `pin` writes BOTH values in ONE commit.
+# build-nix.yml keeps only its workflow_dispatch path for a manual rebuild.
+#
 # One-time setup: add a repo secret GITOPS_PAT — a token (fine-grained PAT
 # is best) with `contents: write` on olafkfreund/factory-gitops:
 #   gh secret set GITOPS_PAT --repo olafkfreund/AIFactory
@@ -22,7 +31,13 @@ on:
       # image, so a change to one of them must ship. '*' does not cross '/'
       # here, so nested markdown still triggers a deploy. See Factory#454.
       - '*.md'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Commit or branch to deploy (default: this workflow's ref). The manual path for a hotfix that does not bump the version (#1559)."
+        type: string
+        required: false
+        default: ""
 
 concurrency:
   group: deploy-${{ github.ref }}
@@ -38,20 +53,108 @@ env:
   GITOPS_REPO: olafkfreund/factory-gitops
   GITOPS_PATH: apps/aifactory/manifests
 
+
 jobs:
-  build-push-bump:
+  # Does the `-nix` build image need rebuilding? Same paths build-nix.yml used to
+  # filter on. Fail SAFE: anything we cannot diff (dispatch, a first push, a
+  # force-push, any git error) rebuilds, because a stale AIFACTORY_BUILD_IMAGE is
+  # the drift #856 automated away.
+  changes:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 5
+    outputs:
+      nix: ${{ steps.decide.outputs.nix }}
+      deploy: ${{ steps.deployable.outputs.deploy }}
+      ref: ${{ steps.deployable.outputs.ref }}
     steps:
       - name: Checkout AIFactory
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.ref || github.sha }}
+
+      # #1559: landing on main no longer deploys. Every promotion used to build,
+      # sign, pin and RESTART the pods -- 28 commits in 14 days, of which only 4
+      # were releases -- and that restart is what kills a running build (#1465)
+      # and makes a quiet window scarce (#1425). Ship on the same signal
+      # release.yml already gates on: package.json's version changed. A hotfix
+      # that should not carry a bump goes through workflow_dispatch instead.
+      - name: Decide whether this commit deploys
+        id: deployable
+        run: |
+          set -uo pipefail
+          SHA=$(git rev-parse HEAD)
+          echo "ref=${SHA}" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" != "push" ]; then
+            echo "manual deploy (${{ github.event_name }}) of ${SHA} — deploying"
+            echo "deploy=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          NEW=$(jq -r '.version // empty' package.json)
+          OLD=$(git show "HEAD^:package.json" 2>/dev/null | jq -r '.version // empty')
+          if [ -z "${NEW}" ]; then
+            echo "::error::package.json has no version field"
+            exit 1
+          fi
+          if [ "${NEW}" = "${OLD}" ]; then
+            {
+              echo "### Not deploying"
+              echo "Version unchanged (\`${NEW}\`), so this commit did not ship (#1559)."
+              echo ""
+              echo "To deploy it: bump the version (\`node scripts/bump-version.js patch\`)"
+              echo "or run this workflow manually:"
+              echo "\`gh workflow run deploy.yml -f ref=${SHA}\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "version unchanged (${NEW}) — not deploying"
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "version bumped ${OLD:-<none>} -> ${NEW} — deploying"
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Decide whether to rebuild the -nix image
+        id: decide
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -uo pipefail
+          if [ "${{ github.event_name }}" != "push" ] \
+             || [ -z "${BEFORE:-}" ] \
+             || [ "${BEFORE}" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            echo "cannot diff (event=${{ github.event_name }}, before=${BEFORE:-unset}) — rebuilding"
+            echo "nix=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          CHANGED=$(git diff --name-only "${BEFORE}" "${{ github.sha }}" -- Dockerfile 'apps/backend/**' || echo FAILED)
+          if [ "$CHANGED" = "FAILED" ]; then
+            echo "git diff failed — rebuilding"
+            echo "nix=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ -n "$CHANGED" ]; then
+            echo "-nix inputs changed:"; echo "$CHANGED"
+            echo "nix=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "no Dockerfile/apps/backend change — skipping the -nix build"
+            echo "nix=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-push:
+    needs: changes
+    if: needs.changes.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.tags.outputs.sha }}
+    steps:
+      - name: Checkout AIFactory
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.changes.outputs.ref }}
 
       - name: Compute tags
         id: tags
         run: echo "sha=sha-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -74,7 +177,7 @@ jobs:
 
       - name: Build + push image
         id: build
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: Dockerfile
@@ -125,6 +228,103 @@ jobs:
       - name: Assert the signature is where Kyverno looks (Factory#804)
         run: ./.github/scripts/assert-signature-location.sh "${IMAGE}" "${{ steps.build.outputs.digest }}"
 
+
+  # The `-nix` build image (build Jobs run this one). Body moved verbatim from
+  # build-nix.yml, minus its pin steps -- `pin` below writes that value.
+  build-nix:
+    needs: changes
+    if: needs.changes.outputs.deploy == 'true' && needs.changes.outputs.nix == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tags.outputs.sha }}-nix
+    timeout-minutes: 120
+    steps:
+      - name: Checkout AIFactory
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.changes.outputs.ref }}
+
+      - name: Compute tags
+        id: tags
+        run: echo "sha=sha-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: "${{ secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}"
+
+      # amd64 only — the substrate (factory-runner-nix) is amd64-only and the
+      # p510 k3d cluster is amd64. The gha cache (scope=aifactory-nix) lets a
+      # re-run reuse the heavy /nix/store COPY layer instead of re-pulling it.
+      # Rebuild the base-security layer at most once a day. Without a
+      # daily-changing build arg the `apt-get upgrade` layer is served from
+      # the build cache indefinitely, so Debian security fixes never reach the
+      # image (CFactory#440).
+      - name: Compute security-refresh token
+        run: echo "SECURITY_REFRESH=$(date -u +%Y-%m-%d)" >> "$GITHUB_ENV"
+
+      - name: Build + push -nix build image (target build-runtime)
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile
+          target: build-runtime
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.tags.outputs.sha }}-nix
+            ${{ env.IMAGE }}:latest-nix
+          build-args: |
+            SECURITY_REFRESH=${{ env.SECURITY_REFRESH }}
+          cache-from: type=gha,scope=aifactory-nix
+          cache-to: type=gha,mode=max,scope=aifactory-nix
+
+      # Factory#430 — the Kyverno policy matches `ghcr.io/olafkfreund/aifactory:*`,
+      # which includes the `-nix` tags published here. Build Jobs run this image,
+      # so it is code execution and must be signed like any other.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+
+      - name: Sign -nix image (cosign keyless via Sigstore + GitHub OIDC)
+        run: cosign sign --yes "${IMAGE}@${{ steps.build.outputs.digest }}"
+
+      - name: Verify signature (self-test)
+        run: |
+          cosign verify \
+            --certificate-identity-regexp "^https://github\.com/${{ github.repository_owner }}/AIFactory/" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${IMAGE}@${{ steps.build.outputs.digest }}"
+
+      # Proves the CLUSTER can read it, not just cosign. See Factory#804.
+      - name: Assert the signature is where Kyverno looks (Factory#804)
+        run: ./.github/scripts/assert-signature-location.sh "${IMAGE}" "${{ steps.build.outputs.digest }}"
+
+
+  # ONE commit for both pins (#1465). Runs when the app image built and the
+  # `-nix` job did not FAIL: skipped is normal (its inputs did not change) and
+  # pins the app image alone, exactly as before. A failed `-nix` build writes
+  # nothing -- half a pin is worse than a red deploy.
+  #
+  # Only main pins. A workflow_dispatch from a branch still builds and signs, so
+  # the workflow can be exercised end to end without repinning production.
+  pin:
+    needs: [changes, build-push, build-nix]
+    if: >-
+      always()
+      && github.ref == 'refs/heads/main'
+      && needs.changes.outputs.deploy == 'true'
+      && needs.build-push.result == 'success'
+      && needs.build-nix.result != 'failure'
+      && needs.build-nix.result != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
       - name: Checkout factory-gitops
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -137,21 +337,38 @@ jobs:
 
       - name: Bump image tag in gitops
         working-directory: gitops/${{ env.GITOPS_PATH }}
-        run: kustomize edit set image ${{ env.IMAGE }}=${{ env.IMAGE }}:${{ steps.tags.outputs.sha }}
+        run: kustomize edit set image ${{ env.IMAGE }}=${{ env.IMAGE }}:${{ needs.build-push.outputs.sha }}
 
-      - name: Commit + push the bump
+      # Only when the -nix image was actually rebuilt. Replaces the tag portion
+      # of the pinned build-image env value; the value is a fixed inline-map line.
+      - name: Pin AIFACTORY_BUILD_IMAGE to the new -nix tag
+        if: needs.build-nix.result == 'success'
+        working-directory: gitops/${{ env.GITOPS_PATH }}
+        env:
+          TAG: ${{ needs.build-nix.outputs.tag }}
+        run: |
+          sed -i -E \
+            's|(AIFACTORY_BUILD_IMAGE, value: "ghcr\.io/olafkfreund/aifactory:)sha-[0-9a-f]+-nix(")|\1'"${TAG}"'\2|' \
+            manifests.yaml
+          echo "Pinned AIFACTORY_BUILD_IMAGE -> :${TAG}"
+          grep -n 'AIFACTORY_BUILD_IMAGE' manifests.yaml
+
+      - name: Commit + push both pins
         working-directory: gitops
+        env:
+          SHA: ${{ needs.build-push.outputs.sha }}
+          NIX_TAG: ${{ needs.build-nix.outputs.tag }}
+          NIX_RESULT: ${{ needs.build-nix.result }}
         run: |
           set -euo pipefail
-          SHA="${{ steps.tags.outputs.sha }}"
 
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           if git diff --quiet; then
-            # "No image change" had two causes and treated both as success:
-            # already pinned to this sha (fine), or the kustomize edit matched
-            # nothing (a broken bump reporting green). Tell them apart.
+            # "No change" had two causes and treated both as success: already
+            # pinned to this sha (fine), or the edit matched nothing (a broken
+            # bump reporting green). Tell them apart.
             if grep -rq "${{ env.IMAGE }}:${SHA}" "${{ env.GITOPS_PATH }}/"; then
               echo "gitops already pinned to ${SHA}; nothing to do."
               exit 0
@@ -161,17 +378,20 @@ jobs:
             exit 1
           fi
 
-          git add ${{ env.GITOPS_PATH }}/kustomization.yaml
+          BODY="From olafkfreund/AIFactory@${{ github.sha }}"
+          if [ "${NIX_RESULT}" = "success" ]; then
+            BODY="${BODY}"$'\n'"Also pins AIFACTORY_BUILD_IMAGE -> ${NIX_TAG} (#856)"
+          fi
+
+          git add "${{ env.GITOPS_PATH }}/"
           git commit -m "cd(aifactory): ${SHA} [skip ci]
 
-          From olafkfreund/AIFactory@${{ github.sha }}"
+          ${BODY}"
 
-          # Factory#527: every service bumps this same repo, so two deploys in
-          # flight together race and the loser gets `! [rejected] (fetch first)`,
-          # leaving its pin on the previous sha while the build reports success.
-          # Unlike the sibling services this is a FULL checkout (actions/checkout,
-          # not a shallow clone), so a rebase is clean and cheap -- our single
-          # commit replays on top of whoever landed first, preserving their bump.
+          # Factory#527: other services (and factory-runners' CD) bump this same
+          # repo, so two writers in flight race and the loser gets `! [rejected]`.
+          # A full checkout means a rebase is clean: our single commit replays on
+          # top of whoever landed first, preserving their bump.
           pushed=""
           for attempt in 1 2 3 4 5; do
             if git push --quiet; then
@@ -184,26 +404,45 @@ jobs:
           done
 
           if [ -z "$pushed" ]; then
-            echo "::error::could not push the image bump after 5 attempts (Factory#527)."
+            echo "::error::could not push the pins after 5 attempts (Factory#527)."
             exit 1
           fi
 
           # A deploy that cannot prove the pin moved must not report success
           # (Factory#433). Re-read from the remote rather than trusting the push.
           git fetch --quiet origin
-          if git show "origin/HEAD:${{ env.GITOPS_PATH }}/kustomization.yaml" 2>/dev/null | grep -q "${SHA}" \
-             || git show "origin/main:${{ env.GITOPS_PATH }}/kustomization.yaml" | grep -q "${SHA}"; then
+          if git show "origin/main:${{ env.GITOPS_PATH }}/kustomization.yaml" | grep -q "${SHA}"; then
             echo "verified: factory-gitops pins ${SHA}"
           else
             echo "::error::pushed, but factory-gitops does not pin ${SHA}."
             exit 1
           fi
 
+          if [ "${NIX_RESULT}" = "success" ]; then
+            if git show "origin/main:${{ env.GITOPS_PATH }}/manifests.yaml" | grep -q "${NIX_TAG}"; then
+              echo "verified: factory-gitops pins AIFACTORY_BUILD_IMAGE ${NIX_TAG}"
+            else
+              echo "::error::pushed, but AIFACTORY_BUILD_IMAGE is not ${NIX_TAG}."
+              exit 1
+            fi
+          fi
+
       - name: Summary
+        env:
+          SHA: ${{ needs.build-push.outputs.sha }}
+          NIX_TAG: ${{ needs.build-nix.outputs.tag }}
+          NIX_RESULT: ${{ needs.build-nix.result }}
         run: |
-          echo "### Deployed aifactory \`${{ steps.tags.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "Image: \`${{ env.IMAGE }}:${{ steps.tags.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "factory-gitops bumped → ArgoCD will auto-sync (or run \`argocd app sync aifactory\`)." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### Deployed aifactory \`${SHA}\`"
+            echo "Image: \`${{ env.IMAGE }}:${SHA}\`"
+            if [ "${NIX_RESULT}" = "success" ]; then
+              echo "Build image: \`${{ env.IMAGE }}:${NIX_TAG}\`"
+            else
+              echo "Build image: unchanged (the -nix build was skipped)"
+            fi
+            echo "One factory-gitops commit → ONE ArgoCD sync (#1465)."
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # Post-deploy PARR seam smoke check (Factory#44). Steps-based on purpose: a
   # cross-repo reusable-workflow `uses:` call fails the deploy at startup, so we
@@ -221,7 +460,7 @@ jobs:
   # animal: it is never transient, no re-run fixes it, and it means the check did
   # not run. That fails the job (standards/coding-standards.md rule 4.7).
   seam-check:
-    needs: build-push-bump
+    needs: pin
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

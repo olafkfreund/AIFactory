@@ -132,6 +132,41 @@ async def test_security_gate_empty_diff_is_noop(monkeypatch):
     assert await shi.security_pre_merge_gate("") is None
 
 
+def _boom(*_a, **_k):
+    raise RuntimeError("scanner down")
+
+
+async def test_security_gate_async_scanner_failure_blocks(monkeypatch, tmp_path):
+    # #1454: a scan that did not run must never read as a clean verdict.
+    _enable(monkeypatch)
+    monkeypatch.setattr(shi, "review_diff", _boom)
+    decision = await shi.security_pre_merge_gate(_SECRET_DIFF, project_dir=tmp_path)
+    assert decision is not None and decision.blocked is True
+    assert "not scanned" in decision.summary
+
+
+def test_security_gate_sync_scanner_failure_blocks(monkeypatch):
+    _enable(monkeypatch)
+    monkeypatch.setattr(shi, "scan_diff_static", _boom)
+    decision = shi.security_pre_merge_gate_sync(_SECRET_DIFF)
+    assert decision is not None and decision.blocked is True
+    assert "scanner failed" in decision.summary
+
+
+def test_security_gate_sync_diff_unavailable_blocks(monkeypatch):
+    _enable(monkeypatch)
+    decision = shi.security_pre_merge_gate_sync("", diff_ok=False)
+    assert decision is not None and decision.blocked is True
+    assert "diff unavailable" in decision.summary
+
+
+def test_security_gate_sync_failure_noop_when_disabled(monkeypatch):
+    monkeypatch.delenv("AIFACTORY_SELF_HEAL", raising=False)
+    monkeypatch.setattr(shi, "scan_diff_static", _boom)
+    assert shi.security_pre_merge_gate_sync(_SECRET_DIFF) is None
+    assert shi.security_pre_merge_gate_sync("", diff_ok=False) is None
+
+
 # ---- item 4: artifacts ---------------------------------------------------
 
 

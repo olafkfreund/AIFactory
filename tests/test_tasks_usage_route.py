@@ -30,3 +30,32 @@ def test_usage_routes_still_mounted_on_tasks_router():
     paths = {r.path for r in tasks_router.routes}
     assert "/{task_id}/token-usage" in paths
     assert "/{task_id}/resource-usage" in paths
+
+
+def test_token_usage_route_serves_the_cache_split(tmp_path, monkeypatch):
+    """#1398: the route returns read_breakdown, which now carries the split."""
+    import asyncio
+    import json
+
+    from server.routes import tasks as tasks_routes
+
+    spec_dir = tmp_path / ".aifactory" / "specs" / "001"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "token_usage.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "turns": 1,
+                "totalInputTokens": 1100,
+                "categories": {},
+                "cacheReadTokens": 900,
+                "cacheCreationTokens": 100,
+            }
+        )
+    )
+    monkeypatch.setattr(
+        tasks_routes, "_resolve_task", lambda _t: ("p", "001", tmp_path, spec_dir)
+    )
+    body = asyncio.run(tasks_usage.get_task_token_usage("p:001", _access={}))
+    assert (body["cacheReadTokens"], body["cacheCreationTokens"]) == (900, 100)
+    assert body["cacheHitRate"] == 0.9

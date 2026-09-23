@@ -73,7 +73,7 @@ RUN mkdir -p apps/web-server/static \
 # digest as frontend-build, so both move together in one Dependabot bump.
 FROM docker.io/node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS node-runtime
 
-FROM cgr.dev/chainguard/python:latest-dev@sha256:075c08ad4c1d529dfb0ee3aaeab034268c912771256132765bb0751d0dba6572 AS runtime
+FROM cgr.dev/chainguard/python:latest-dev@sha256:c9be3f0eab022db93387c863d190b164c259e70dd533bdf9d8d42b87f9559567 AS runtime
 
 USER root
 
@@ -161,6 +161,13 @@ RUN apk add --no-cache \
         gnupg \
         socat \
         "wget>=1.25.0-r15"
+
+# Node must come only from the node-runtime COPY above, never from apk: an apk
+# nodejs would be rebuilt against a glibc newer than this base pins and break
+# the build (Factory#1710). Checked AFTER the apk block, where it could appear.
+RUN if apk info 2>/dev/null | grep -q '^nodejs'; then \
+      echo "apk nodejs is installed; runtime Node must come from node-runtime (Factory#1710)"; exit 1; \
+    fi
 
 # RFC-0016 #674: the per-language build toolchains (go/rust/maven/openjdk/cmake/
 # build-base) that USED to be baked here have been REMOVED. AIFactory builds and
@@ -481,6 +488,14 @@ USER root
 # not already in the substrate) can't write new paths. Warm builds — the packed
 # multi-node case we're unblocking — work; cold-write support is a follow-up
 # (writable overlay at Job runtime) tracked on the slice-3 issue.
+#
+# This pin DELIBERATELY lags the gate image (AIFactory#1541). Language toolchain
+# closures (python/kotlin/swift) are warmed into factory-runner-nix for the GATE
+# Job, which runs AIFACTORY_SANDBOX_IMAGE (pinned by digest in factory-gitops and
+# bumped by factory-runners' CD after signing). Nothing in this image runs a
+# language `nix develop`: the build Job is not nix-develop wrapped
+# (build_backend.py, nix_develop=False) and gates run in their own Job (#1525).
+# Bumping this digest would add ~1.7 GB of toolchains here for no reader.
 COPY --from=ghcr.io/olafkfreund/factory-runner-nix:latest@sha256:28c94cf7552f81dcf24c556ae74a5220b84eb1ebe9e9bb6e58d67c346d143e1e /nix/store /nix/store
 COPY --from=ghcr.io/olafkfreund/factory-runner-nix:latest@sha256:28c94cf7552f81dcf24c556ae74a5220b84eb1ebe9e9bb6e58d67c346d143e1e --chown=65532:65532 /nix/var /nix/var
 

@@ -215,7 +215,8 @@
   },
   "tokenUsage": {
     "title": "Token Usage",
-    "empty": "No token usage data yet. Start the task to begin tracking."
+    "empty": "No token usage data yet. Start the task to begin tracking.",
+    "cache": "Cache: {{read}} read · {{written}} written · {{rate}}% hit"
   },
   "resourceUsage": {
     "title": "Resource Usage",
