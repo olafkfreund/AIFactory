@@ -30,9 +30,13 @@ Usage::
     )
 """
 
+import inspect
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from functools import wraps
+from typing import Any
 
 from factory_common.logsafe import sanitize_log
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -62,6 +66,17 @@ ACTION_PROJECT_DELETE = "project.delete"
 ACTION_TASK_CREATE = "task.create"
 ACTION_TASK_START = "task.start"
 ACTION_TASK_MERGE = "task.merge"
+# REST task actions (#1466). Before these, the only task-action audit sink was
+# the MCP proxy, so the same action through ``/api/tasks/*`` left no row.
+ACTION_TASK_STOP = "task.stop"
+ACTION_TASK_RECOVER = "task.recover"
+ACTION_TASK_UPDATE = "task.update"
+ACTION_TASK_DELETE = "task.delete"
+ACTION_TASK_APPROVE_PLAN = "task.approve_plan"
+ACTION_TASK_CREATE_PR = "task.create_pr"
+ACTION_TASK_APPLY_CORRECTION = "task.apply_correction"
+ACTION_TASK_HANDOFF = "task.handoff"
+ACTION_TASK_DISPATCH = "task.dispatch"
 
 ACTION_API_KEY_CREATE = "api_key.create"
 ACTION_API_KEY_REVOKE = "api_key.revoke"
@@ -277,3 +292,74 @@ async def log_audit_event_bg(
             sanitize_log(resource_id),
             exc_info=True,
         )
+
+
+async def audit_task_action(
+    access: object,
+    action: str,
+    task_id: str | None,
+    request: object | None = None,
+    details: dict[str, Any] | None = None,
+) -> None:
+    """Write one ``task.*`` row for a REST task action (#1466).
+
+    ``access`` is the principal a route's ``require_*_access`` dependency
+    resolved. When the MCP proxy calls a route function DIRECTLY, that
+    parameter is left at its ``Depends(...)`` default -- not a dict -- and the
+    proxy writes its own ``mcp.task.*`` row, so skipping here keeps it to
+    exactly one row per action. Never raises (``log_audit_event_bg`` swallows).
+    """
+    if not isinstance(access, dict):
+        return
+    client = getattr(request, "client", None)
+    await log_audit_event_bg(
+        user_id=access.get("id"),
+        org_id=access.get("org_id"),
+        action=action,
+        resource_type="task",
+        resource_id=task_id,
+        details=details,
+        ip=client.host if client else None,
+    )
+
+
+def audit_task_route(
+    action: str,
+) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
+    """Audit an ``async`` task route that reports success in its own body (#1466).
+
+    For routes with many return sites (start, create-pr, merge) a call before
+    each ``return`` is noise, and splitting the body into a helper hides its
+    ``{"success": False}`` returns from the #1126 guard that checks every
+    refusing route carries ``@honest_status``. So the body stays as written and
+    this decorator writes the row. Stack it UNDER ``@honest_status`` so it sees
+    the handler's own dict before a refusal becomes a 409.
+
+    A row is written only for a dict with truthy ``success``. Arguments are
+    bound to the route's signature, so the MCP proxy's direct positional calls
+    leave ``_access`` at its ``Depends`` default and are skipped by
+    :func:`audit_task_action` -- the proxy writes its own ``mcp.task.*`` row.
+    ``functools.wraps`` keeps ``__wrapped__``, so FastAPI still sees the real
+    parameters and dependencies.
+    """
+
+    def decorate(
+        handler: Callable[..., Awaitable[Any]],
+    ) -> Callable[..., Awaitable[Any]]:
+        sig = inspect.signature(handler)
+
+        @wraps(handler)
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            result = await handler(*args, **kwargs)
+            if isinstance(result, dict) and result.get("success"):
+                bound = sig.bind_partial(*args, **kwargs)
+                bound.apply_defaults()
+                a = bound.arguments
+                await audit_task_action(
+                    a.get("_access"), action, a.get("task_id"), a.get("raw_request")
+                )
+            return result
+
+        return wrapper
+
+    return decorate

@@ -3,6 +3,8 @@
  * Includes status, categories, complexity, priority, and execution phases
  */
 
+import type { ReviewReason } from '../types/task';
+
 // ============================================
 // Task Status (Kanban columns)
 // ============================================
@@ -26,6 +28,40 @@ export const TASK_STATUS_LABELS: Record<string, string> = {
   copilot_running: 'Copilot Running',
   copilot_pr_opened: 'Copilot PR Opened',
 };
+
+// Review-reason badges. A Record over the full ReviewReason union, so adding a
+// reason without a badge is a type error rather than a silent "QA Issues"
+// label in whichever component still switched on the old set (Factory#2586).
+export const REVIEW_REASON_BADGES: Record<
+  ReviewReason,
+  { label: string; labelKey: string; variant: 'success' | 'destructive' | 'warning' | 'default' }
+> = {
+  completed: { label: 'Completed', labelKey: 'reviewReason.completed', variant: 'success' },
+  errors: { label: 'Has Errors', labelKey: 'reviewReason.hasErrors', variant: 'destructive' },
+  qa_rejected: { label: 'QA Issues', labelKey: 'reviewReason.qaIssues', variant: 'warning' },
+  plan_review: { label: 'Approve Plan', labelKey: 'reviewReason.approvePlan', variant: 'warning' },
+  awaiting_merge: { label: 'PR Open', labelKey: 'reviewReason.prOpen', variant: 'default' },
+  pr_closed: { label: 'PR Closed', labelKey: 'reviewReason.prClosed', variant: 'warning' },
+  no_work: { label: 'No Work Produced', labelKey: 'reviewReason.noWork', variant: 'destructive' },
+};
+
+// The badge for a reason, or null for one this build does not know. Runtime
+// values are cast at the IPC/WebSocket boundary, so a newer backend can send a
+// reason outside the union; that must omit the badge, never crash a render.
+export function reviewReasonBadge(
+  reason: ReviewReason | null | undefined,
+): (typeof REVIEW_REASON_BADGES)[ReviewReason] | null {
+  if (!reason || !Object.hasOwn(REVIEW_REASON_BADGES, reason)) return null;
+  return REVIEW_REASON_BADGES[reason];
+}
+
+// Reasons the merger writes once a task's PR state is known. The PR, not the
+// subtask count, is authoritative for these (Factory#2586).
+export const PR_STATE_REVIEW_REASONS: ReadonlySet<ReviewReason> = new Set([
+  'awaiting_merge',
+  'pr_closed',
+  'no_work',
+]);
 
 // Status colors for UI
 export const TASK_STATUS_COLORS: Record<string, string> = {

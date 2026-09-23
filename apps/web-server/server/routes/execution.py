@@ -18,6 +18,17 @@ from pydantic import BaseModel, Field
 from server.background import spawn
 from server.error_ref import client_error
 from server.project_registry import load_projects, resolve_project_id
+from server.services.audit_service import (
+    ACTION_TASK_APPLY_CORRECTION,
+    ACTION_TASK_CREATE,
+    ACTION_TASK_DISPATCH,
+    ACTION_TASK_HANDOFF,
+    ACTION_TASK_RECOVER,
+    ACTION_TASK_START,
+    ACTION_TASK_STOP,
+    audit_task_action,
+    audit_task_route,
+)
 from server.specpath import safe_spec_component
 
 from ..services import task_control
@@ -255,6 +266,7 @@ async def is_task_running(
 
 
 @router.post("/{task_id}/start")
+@audit_task_route(ACTION_TASK_START)
 async def start_task(
     task_id: str,
     request: StartTaskRequest,
@@ -913,6 +925,8 @@ async def handoff_to_tfactory(
             sanitize_log(task_id),
             sanitize_log(e),
         )
+    if result.get("sent"):  # send_handoff reports failure, it doesn't raise
+        await audit_task_action(_access, ACTION_TASK_HANDOFF, task_id)
     return {
         **result,
         "tfactory_spec_id": payload.get("spec_id"),
@@ -947,6 +961,7 @@ async def stop_task(
     # Emit status change for real-time frontend update
     await emit_task_status(task_id, "backlog")
 
+    await audit_task_action(_access, ACTION_TASK_STOP, task_id)
     return {
         "success": True,
         "task_id": task_id,
@@ -1091,6 +1106,7 @@ async def recover_task(
     await emit_task_status(task_id, reset_status)
 
     # Return wrapped response to match frontend expectations
+    await audit_task_action(_access, ACTION_TASK_RECOVER, task_id)
     return {
         "success": True,
         "data": {
@@ -1217,6 +1233,13 @@ async def create_and_run_task(
             detail=client_error(logger, "Failed to start task creation", e),
         )
 
+    await audit_task_action(
+        _access,
+        ACTION_TASK_CREATE,
+        task_id,
+        raw_request,
+        details={"project_id": project_id, "title": title, "via": "create-and-run"},
+    )
     return {
         "success": True,
         "task_id": task_id,
@@ -1441,6 +1464,13 @@ async def create_from_trusted_plan(
             detail=client_error(logger, "Failed to start build from trusted plan", e),
         )
 
+    await audit_task_action(
+        _access,
+        ACTION_TASK_CREATE,
+        task_id,
+        raw_request,
+        details={"project_id": project_id, "title": title, "via": "from-plan"},
+    )
     return {
         "success": True,
         "task_id": task_id,
@@ -1472,6 +1502,14 @@ async def apply_task_correction(
         manifest_hash=request.manifest_hash,
         correlation_key=request.correlation_key,
     )
+    # A confirm=False preview and a rejected triage write nothing: not an action.
+    if result.get("success") and result.get("confirm"):
+        await audit_task_action(
+            _access,
+            ACTION_TASK_APPLY_CORRECTION,
+            task_id,
+            details={"source": request.source},
+        )
     return {**result, "task_id": task_id, "source": request.source}
 
 
@@ -1576,6 +1614,12 @@ async def dispatch_task_to_copilot(
         )
     )
 
+    await audit_task_action(
+        _access,
+        ACTION_TASK_DISPATCH,
+        task_id,
+        details={"repo": request.repo_full_name, "issue_number": request.issue_number},
+    )
     return {
         "task_id": task_id,
         "dispatched": True,

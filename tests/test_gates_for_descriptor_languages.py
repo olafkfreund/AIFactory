@@ -24,6 +24,7 @@ from agents.gate_runner import (  # noqa: E402
     _mounted_at,
     detect_gates,
     run_gates,
+    write_trailing_gate_marker,
 )
 from cli.build_commands import _trailing_gate_evidence  # noqa: E402
 
@@ -65,15 +66,15 @@ def test_an_unknown_language_still_yields_nothing(tmp_path):
 
 
 def test_gate_evidence_is_none_when_the_step_never_ran(tmp_path):
-    assert _trailing_gate_evidence(tmp_path) is None
+    assert _trailing_gate_evidence(tmp_path, tmp_path) is None
 
 
 def test_gate_evidence_reports_an_empty_gate_run(tmp_path):
     # The sentence the gate step writes when it found nothing to run. A
     # pre-approval must be able to tell this from a real summary.
-    (tmp_path / ".trailing_gates_done").write_text(f"no gates detected in {tmp_path}\n")
+    write_trailing_gate_marker(tmp_path, tmp_path, f"no gates detected in {tmp_path}")
 
-    evidence = _trailing_gate_evidence(tmp_path)
+    evidence = _trailing_gate_evidence(tmp_path, tmp_path)
 
     assert evidence is not None
     assert evidence.startswith("no gates detected")
@@ -104,7 +105,7 @@ def test_gate_evidence_survives_a_corrupt_marker(tmp_path):
     # Unreadable evidence is no evidence — but it must not crash finalization.
     (tmp_path / ".trailing_gates_done").write_bytes(b"\xff\xfe\x00binary")
 
-    assert _trailing_gate_evidence(tmp_path) is None
+    assert _trailing_gate_evidence(tmp_path, tmp_path) is None
 
 
 def test_the_flake_root_is_the_ancestor_that_has_the_flake(tmp_path):

@@ -23,6 +23,7 @@ from server.error_ref import InputRejectedError, client_error
 # call sites unchanged -- and so `patch("server.routes.projects.load_projects")`
 # still works for tests that drive THIS module's handlers.
 from server.project_registry import load_projects, save_projects
+from server.services.audit_service import ACTION_TASK_CREATE, audit_task_action
 from server.services.http_verdict import honest_status
 from server.specpath import browse_roots, safe_spec_component, within_roots
 
@@ -1338,6 +1339,11 @@ Created via Magestic AI Web UI
     stamp_spec_tenant(spec_dir, resolve_tenant(raw_request))
 
     task = tasks_module.spec_to_task(project_id, spec_dir)
+    # #1466: this is the web UI's create path; it never goes through
+    # routes.tasks.create_task, so it audits the same row itself.
+    await audit_task_action(
+        _access, ACTION_TASK_CREATE, f"{project_id}:{spec_dir.name}", raw_request
+    )
     return tasks_module.task_to_dict(task)
 
 

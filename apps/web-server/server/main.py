@@ -46,6 +46,7 @@ from .routes import (
     git_credentials,
     github,
     mcp,
+    merger,
     notifications,
     organizations,
     projects,
@@ -246,6 +247,26 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Stale-task reaper disabled (AIFACTORY_STALE_REAPER unset)")
 
+    # Factory#2586: backstop for the merger's build-end call. In-process for
+    # the reaper's reason: the spec tree is on an RWO local-path PVC.
+    # Off by default; report-only until AIFACTORY_MERGER_SWEEP_DRY_RUN=false.
+    from .services import merger as _merger  # noqa: PLC0415
+
+    app.state.merger_stop = None
+    app.state.merger_task = None
+    if _merger.merger_sweep_enabled():
+        merger_stop = _asyncio.Event()
+        app.state.merger_stop = merger_stop
+        app.state.merger_task = _asyncio.create_task(
+            _merger.merger_loop(stop=merger_stop)
+        )
+        logger.info(
+            "Merger sweep enabled (%s)",
+            "report-only" if _merger.dry_run() else "WRITING: pushes + opens PRs",
+        )
+    else:
+        logger.info("Merger sweep disabled (AIFACTORY_MERGER_SWEEP unset)")
+
     yield
 
     # Shutdown
@@ -271,6 +292,12 @@ async def lifespan(app: FastAPI):
             await _asyncio.wait_for(app.state.stale_reaper_task, timeout=5.0)
         except (TimeoutError, _asyncio.CancelledError):
             app.state.stale_reaper_task.cancel()
+    if app.state.merger_task is not None:
+        app.state.merger_stop.set()
+        try:
+            await _asyncio.wait_for(app.state.merger_task, timeout=5.0)
+        except (TimeoutError, _asyncio.CancelledError):
+            app.state.merger_task.cancel()
     if app.state.intake_poller_task is not None:
         app.state.intake_poller_stop.set()
         try:
@@ -564,6 +591,9 @@ def create_app() -> FastAPI:
     # Orphaned-task reaper: a task whose worker died stays in a
     # machine-owned state forever and shows as active in the cockpit.
     app.include_router(stale.router)
+    # Merger: opens PRs for stranded task branches (pushed, committed work
+    # with no open PR) -- see server.services.merger.
+    app.include_router(merger.router)
 
     app.include_router(search.router, tags=["Search"])
     app.include_router(mcp.router)
