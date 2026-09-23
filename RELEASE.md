@@ -62,6 +62,24 @@ AIFactory uses a simplified release process with version bumping and changelog m
 
 ---
 
+## What deploys, and when (#1559)
+
+**Landing a commit on `main` does not deploy it.** `deploy.yml` ships a commit only when it
+changes `package.json`'s version — the same signal `release.yml` already gates on. Before
+#1559 every promotion to `main` built, signed, pinned and **restarted the pods**: 28 commits
+in 14 days, of which 4 were releases. That restart is what kills a running build (#1465) and
+what made "wait for a quiet window" a routine cost (#1425).
+
+So there are exactly two ways to ship:
+
+| you want to | do this |
+|---|---|
+| release (the normal path) | bump the version as below; the merge to `main` deploys and cuts the release |
+| ship one commit without a version bump (a hotfix) | `gh workflow run deploy.yml -f ref=<sha>` |
+
+A push to `main` that does not bump the version reports success with its jobs skipped, and
+says so in the run summary, including the two commands above. That is not a broken deploy.
+
 ## Creating a Release
 
 ### Step 1: Bump the Version

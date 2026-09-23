@@ -21,6 +21,7 @@ compatibility (``mcp_stdio/router.py`` imports them from ``..routes.tasks``).
 
 import json
 import logging
+from contextlib import suppress
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
@@ -28,10 +29,11 @@ from pydantic import BaseModel
 
 from server.error_ref import client_error
 from server.project_registry import get_projects_file
+from server.services.approval import find_pr
 from server.services.audit_service import ACTION_TASK_CREATE_PR, audit_task_route
 from server.services.build_backend import task_repo_dir
 from server.services.http_verdict import honest_status
-from server.services.task_branch import resolve_task_branch
+from server.services.task_branch import resolve_task_branch_fetching
 from server.specpath import safe_spec_component
 
 from .project_authz import require_task_access
@@ -60,6 +62,10 @@ async def create_pr_from_task(
     """
     Push the worktree branch and create a GitHub Pull Request.
     Does NOT delete the worktree or branch after PR creation.
+
+    If an open or already-merged PR exists for the task branch, it is returned
+    (``existing: true``) without pushing, so calling this again is safe and
+    works after the worktree was cleaned up (CFactory#457).
     """
     import subprocess
 
@@ -116,9 +122,10 @@ async def create_pr_from_task(
     # built there, else the kubejob build clone (#1467 moved it to
     # worktrees/builds so it stops clobbering the worktree).
     worktree_path = task_repo_dir(project_path, spec_id)
-
-    if worktree_path is None:
-        return {"success": False, "error": "No worktree found for this task"}
+    # CFactory#457: a missing worktree only blocks the PUSH below. Returning an
+    # existing PR, and resolving the branch (#1073), need no worktree, so the
+    # refusal moves down to where it is actually true.
+    expected_worktree = project_path / ".aifactory" / "worktrees" / "tasks" / spec_id
 
     # Base branch first: resolving the task branch needs to know which branch
     # does NOT count as one.
@@ -140,17 +147,52 @@ async def create_pr_from_task(
     # the kubejob build backend the build runs in a separate pod and pushes; the
     # control plane's worktree is never switched off the base branch, so that
     # read yielded "main" and this endpoint asked GitHub to open main -> main.
-    worktree_branch, branch_error = resolve_task_branch(
-        worktree_path=worktree_path,
+    # CFactory#457: fetch origin and retry on a miss -- a kubejob build pushed
+    # the branch from its own pod, and this checkout may never have seen it.
+    worktree_branch, branch_error = resolve_task_branch_fetching(
+        worktree_path=worktree_path or expected_worktree,
         project_path=project_path,
         spec_id=spec_id,
         base_branch=base_branch,
     )
     if not worktree_branch:
+        if worktree_path is None:
+            return {"success": False, "error": "No worktree found for this task"}
         return {
             "success": False,
             "error": f"Could not determine task branch: {branch_error}",
         }
+
+    # CFactory#457: an open (or already merged) PR for this branch IS the
+    # result. Hand it back instead of rebasing and pushing under it and then
+    # failing on "a pull request ... already exists" -- which stopped the
+    # cockpit's Approve before its merge step. A CLOSED PR falls through: a
+    # fresh PR is a legitimate outcome.
+    # Lazy import: see the module docstring (routes/github).
+    from .github import _get_project_provider, _use_provider_api, run_gh_command
+
+    # find_pr speaks gh; on GitLab/Azure DevOps it would ask the wrong remote.
+    is_github = not _use_provider_api(project_id)
+    if not is_github:
+        with suppress(Exception):  # unknown provider: keep today's path
+            ptype = _get_project_provider(project_id).provider_type
+            is_github = getattr(ptype, "value", str(ptype)) == "github"
+    if is_github:
+        existing = find_pr(project_path, worktree_branch, options.targetRepo)
+        if existing and existing[1] in {"OPEN", "MERGED"}:
+            return {
+                "success": True,
+                "data": {
+                    "prUrl": existing[2],
+                    "prNumber": existing[0],
+                    "branch": worktree_branch,
+                    "baseBranch": base_branch,
+                    "existing": True,
+                },
+            }
+
+    if worktree_path is None:
+        return {"success": False, "error": "No worktree found for this task"}
 
     # Fetch latest base branch from remote
     try:
@@ -333,8 +375,6 @@ async def create_pr_from_task(
     # is on GitLab or Azure DevOps the gh CLI path can't open the PR (we
     # pushed to the GitLab `origin`, not to a GitHub remote). Only fall back
     # to `gh pr create` when the project is actually a GitHub project.
-    from .github import _get_project_provider, _use_provider_api, run_gh_command
-
     if _use_provider_api(project_id):
         try:
             provider = _get_project_provider(project_id)
