@@ -280,14 +280,6 @@ jobs:
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             "$IMAGE"
 
-      - name: Upload SBOM artifacts to GitHub release
-        if: steps.detect.outputs.should_release == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          V="${{ steps.detect.outputs.new }}"
-          gh release upload "v$V" sbom.spdx.json sbom.cyclonedx.json --clobber
-
   # #1583: SBOMs + attestation, split out of `release` on purpose.
   #
   # Both 2026-09-18 releases went RED here while the tag, the GitHub release and
@@ -314,7 +306,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
-      contents: read
+      contents: write  # gh release upload of the SBOM files
       packages: write
       id-token: write
       attestations: write
@@ -413,6 +405,15 @@ jobs:
           syft scan "$IMAGE_NIX" -o cyclonedx-json=sbom-nix.cyclonedx.json
           attest spdxjson  sbom-nix.spdx.json      "$IMAGE_NIX"
           attest cyclonedx sbom-nix.cyclonedx.json "$IMAGE_NIX"
+
+      # The SBOM files exist only in THIS job since #1583 moved syft here; the
+      # upload used to stay behind in `release`, which then failed on every
+      # release looking for files it no longer generated.
+      - name: Upload SBOM artifacts to GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          V: ${{ github.event_name == 'workflow_dispatch' && inputs.version || needs.release.outputs.version }}
+        run: gh release upload "v${V}" sbom.spdx.json sbom.cyclonedx.json --clobber
 
       - name: Summary
         env:

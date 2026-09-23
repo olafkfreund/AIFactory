@@ -101,8 +101,10 @@ jobs:
           # branch, never from the PR (see the job comment).
           git checkout "origin/${BASE_REF}" -- scripts/generate-techdocs-deps.py
           python3 scripts/generate-techdocs-deps.py
-          # Restore it before anything is staged, so it can never be committed.
-          git checkout -- scripts/generate-techdocs-deps.py
+          # Restore it FROM HEAD before anything is staged, so it can never be
+          # committed. The checkout above also staged the base copy; a plain
+          # `git checkout -- <path>` restores from that index and is a no-op.
+          git checkout HEAD -- scripts/generate-techdocs-deps.py
 
       - name: Commit + push the regenerated page
         env:
