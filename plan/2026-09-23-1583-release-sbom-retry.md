@@ -88,3 +88,18 @@ Expected: verification succeeds for all six; it fails for all six today.
 Revert the commit: the SBOM steps return inside `release` with no retry, which is today's
 behaviour. Attestations already written by the backfill stay — they are additive evidence
 against a digest and nothing depends on their absence.
+
+## Deviations (recorded during implementation)
+
+- **Four attempts, not three.** The plan said "3 attempts (5s → 20s → 60s)", but three
+  back-offs means four tries. Tested with a stubbed `cosign`: the helper calls it 4 times,
+  sleeps 5/20/60 between, and then fails. The behaviour is what was wanted (three retries
+  after the first try); the **message** was the thing that would have lied in the logs, so it
+  now says "after 4 attempts (5s/20s/60s backoff)". Worst case per attest is ~85s of sleeping,
+  so ~8.5 min across all six if rekor is down — versus the spec's estimate of ~5 min.
+- **`release` now carries `should_release` as a job output**, because `sbom-attest` must
+  distinguish "the release job ran and released" from "it ran and skipped (no version bump)".
+  Without it, a push with no bump would try to attest empty digests.
+- **A GHCR login step** was added to `sbom-attest`: split out of `release`, it no longer
+  inherits that job's login, and both `syft scan` and the dispatch-path digest resolution read
+  from the registry.
