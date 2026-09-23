@@ -188,6 +188,22 @@ def test_failed_terminal_emits_failed_status(tmp_path, monkeypatch):
     assert ev["correlation_key"] == "412"
 
 
+def test_emit_fetches_the_jobs_gate_marker(tmp_path, monkeypatch):
+    """#1550: the packed Job's gate-evidence marker is pulled before emitting."""
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "backend"))
+    monkeypatch.delenv("AIFACTORY_COMPLETION_WEBHOOK", raising=False)
+    monkeypatch.delenv("AIFACTORY_COMPLETION_SENTINEL", raising=False)
+    calls = []
+    monkeypatch.setattr(
+        "core.workspace_fetch.maybe_fetch_gate_marker", lambda _d, s: calls.append(s)
+    )
+    spec = _spec_with_issue(tmp_path, 412)
+    emit_terminal_completion(
+        spec, task_id="proj:spec-9", project_id="proj", spec_id="spec-9", status="done"
+    )
+    assert calls == ["spec-9"]
+
+
 def test_emit_terminal_completion_builds_from_spec(tmp_path, monkeypatch):
     monkeypatch.delenv("AIFACTORY_COMPLETION_WEBHOOK", raising=False)
     monkeypatch.delenv("AIFACTORY_COMPLETION_SENTINEL", raising=False)
@@ -229,6 +245,31 @@ def test_read_usage_maps_token_attribution_fields(tmp_path):
         "total_tokens": 2500,
         "cost_usd": 1.25,
         "model": "claude-sonnet-4-6",
+    }
+
+
+def test_read_usage_carries_the_cache_split_when_reported(tmp_path):
+    """#1398: the split rides along; every pre-existing key is unchanged."""
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    _write_usage(
+        spec,
+        totalInputTokens=2400,
+        outputTokens=100,
+        totalTokens=2500,
+        totalCostUsd=1.25,
+        model="claude-sonnet-4-6",
+        cacheReadTokens=1800,
+        cacheCreationTokens=200,
+    )
+    assert read_usage(spec) == {
+        "input_tokens": 2400,
+        "output_tokens": 100,
+        "total_tokens": 2500,
+        "cost_usd": 1.25,
+        "model": "claude-sonnet-4-6",
+        "cache_read_tokens": 1800,
+        "cache_creation_tokens": 200,
     }
 
 

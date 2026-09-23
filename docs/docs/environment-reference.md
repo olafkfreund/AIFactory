@@ -209,7 +209,7 @@ Read across `apps/backend/` (`routing_policy.py`, `core/model_config.py`,
 | `AIFACTORY_CONTEXT_SUMMARY` | off | no | Enable rolling context summarization (`agents/context_summary.py`). |
 | `AIFACTORY_MUTATION_LEDGER` | off | no | Record agent file mutations to a ledger (`agents/mutation_ledger.py`). |
 | `AIFACTORY_TEST_EVIDENCE_GATE` | on (set to `off`/`0`/`false`/`no` to disable) | no | Honesty gate (`agents/test_evidence.py`). Two checks, both at `update_subtask_status(... "completed")`: (1) #851 — a test/verification subtask needs a real, non-failing test command recorded this build; (2) #1111 — a subtask naming an HTTP path needs at least one Python test mentioning that path which reaches the shipped app (imports an application entrypoint without building its own, or calls a live server), so a suite asserting against a `FastAPI()` built inside the test file no longer counts. Inert when the subtask names no HTTP path or no Python test mentions it. (3) #1123 — one post-merge gate (`agents/route_wiring.py`), run once at the trailing-gate step when every wave has merged, that imports the application entrypoint the repo's own tests name and asserts every HTTP path the plan promised resolves on the real app. No gate at all when the plan promises no HTTP path or no test names an entrypoint; reported `skipped` (never `passed`) when the app cannot be imported. |
-| `AIFACTORY_SELF_HEAL` | off | no | Enable the pre-merge security self-heal gate (`agents/self_heal_integration.py`, `core/worktree.py`). |
+| `AIFACTORY_SELF_HEAL` | off | no | **Off in all deployments today — merges are not security-scanned.** When on, the pre-merge gate blocks a merge with a high-severity finding **or** one that could not be scanned (scanner failure, unreadable diff), and the flag also enables review-tier gating and plan-artifact emission (`agents/self_heal_integration.py`, `core/worktree.py`, #1454). |
 | `AIFACTORY_CLAUDE_ENFORCEMENT_ENABLED` | off | no | Enable per-org Claude enforcement (`core/enforcement.py`). |
 | `AIFACTORY_CLAUDE_ENFORCEMENT_FAILURE_MODE` | `open` | no | `open` (fail-open) or `closed` (fail-closed) when enforcement can't decide. |
 | `AIFACTORY_GRAPHIFY_ENABLED` | off | no | Opt into the Graphify code-graph MCP tool for the coder (`core/client.py`); forwarded to build Jobs. |
@@ -304,6 +304,7 @@ Read in `apps/web-server/server/services/intake_poller.py`,
 ## PR endgame, deploy & Copilot
 
 Read in `apps/web-server/server/services/pr_endgame.py`,
+`services/merger.py`, `server/main.py` (merger sweep startup),
 `services/copilot_dispatch_service.py`, `routes/github.py`. These are commonly
 set per-project in `.aifactory/.env`.
 
@@ -314,6 +315,9 @@ set per-project in `.aifactory/.env`.
 | `AIFACTORY_PR_REVIEWER` | `aifactory` | no | Which review gates merge: `aifactory`, `copilot`, or `any`. |
 | `AIFACTORY_AUTO_DEPLOY` | off | no | Deploy-then-verify to AWS App Runner on a clean build, then tear down. |
 | `AIFACTORY_COPILOT_DISPATCH_ENABLED` | off | no | Enable GitHub Copilot dispatch for reviews. |
+| `AIFACTORY_MERGER_SWEEP` | off | no | Periodic merger sweep: sync task status to PR state and, where `AIFACTORY_AUTO_PR` is on for the project, push and open PRs for finished work with no PR. See `guides/pr-endgame.md`. |
+| `AIFACTORY_MERGER_SWEEP_DRY_RUN` | `true` | no | Report-only unless exactly `false`. |
+| `AIFACTORY_MERGER_SWEEP_INTERVAL_S` | `900` | no | Seconds between sweep ticks. |
 
 ## Completion events & outbox
 

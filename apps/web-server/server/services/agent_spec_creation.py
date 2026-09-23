@@ -30,6 +30,20 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
+def build_chain_args(kubejob_enabled: bool) -> list[str]:
+    """Extra spec_runner args controlling whether it chains into the build.
+
+    ``spec_runner`` runs the build itself via ``os.execv(run.py …)`` unless
+    ``--no-build``. Under the kubejob backend that chain is a SECOND execution
+    of the same task: the build runs in-pod on the data-PVC worktree while the
+    dispatched Job re-runs it from a main-based clone, finds the build already
+    complete, gates a tree holding none of the work and pushes that tree's HEAD
+    — landing the task branch at main with the real commits stranded on the PVC
+    (#1538). Empty in-pod (today's behaviour), ``--no-build`` under kubejob.
+    """
+    return ["--no-build"] if kubejob_enabled else []
+
+
 class SpecCreationMixin:
     """Spec-creation entry point for AgentService."""
 
@@ -47,6 +61,7 @@ class SpecCreationMixin:
         _monitor_process: Callable[..., Any]
         _process_output: Callable[..., Any]
         _resolve_claude_token_pooled: Callable[..., Any]
+        _kubejob_backend_enabled: Callable[..., bool]
 
     async def start_spec_creation(
         self,
@@ -145,6 +160,22 @@ class SpecCreationMixin:
             "--project-dir",
             str(project_path),
         ]
+
+        # RFC-0016 control/execution split: spec_runner chains straight into the
+        # build via os.execv(run.py) unless told not to. With the kubejob backend
+        # on, that chain runs the WHOLE build in-pod on the data-PVC worktree
+        # while the Job separately re-runs it from a main-based clone — two
+        # executions of the same task. The Job then finds the build "already
+        # complete", gates a tree holding none of the work, and pushes that
+        # tree's HEAD, so the task branch lands at main with the real commits
+        # stranded on the PVC (#1538). Spec here, build in the Job.
+        chain_args = build_chain_args(self._kubejob_backend_enabled())
+        cmd.extend(chain_args)
+        if chain_args:
+            logger.info(
+                "[AgentService] kubejob backend on — spec creation stops after the "
+                "spec; the build runs in the Job (#1538)"
+            )
 
         # Pass spec phase model if configured (multi-model support)
         if spec_phase_model:
