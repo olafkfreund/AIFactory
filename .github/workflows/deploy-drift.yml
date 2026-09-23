@@ -32,5 +32,11 @@ jobs:
     uses: olafkfreund/Factory/.github/workflows/deploy-drift.yml@main
     with:
       gitops_path: apps/aifactory/manifests
+      # #1559: a commit ships only when it bumps package.json's version, so
+      # main's newest deployable commit is NOT what should be live. Without
+      # this the watchdog reports drift for every merge that deliberately did
+      # not deploy -- and a watchdog that is always wrong gets muted.
+      # Requires Factory#2939 (the input) to be merged first.
+      deploys_on: version-bump
     secrets:
       GITOPS_PAT: ${{ secrets.GITOPS_PAT }}

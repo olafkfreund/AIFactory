@@ -1,6 +1,6 @@
 {
   "name": "aifactory-web",
-  "version": "3.6.81",
+  "version": "3.6.84",
   "type": "module",
   "description": "Web UI for AIFactory autonomous coding framework",
   "scripts": {
@@ -89,6 +89,6 @@
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.61.1",
     "vite": "^7.3.6",
-    "vitest": "^4.0.16"
+    "vitest": "^4.1.11"
   }
 }

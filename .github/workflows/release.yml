@@ -17,6 +17,16 @@ name: Release
 on:
   push:
     branches: [main]
+  # #1583: attest an EXISTING release. cosign keyless needs this workflow's OIDC
+  # identity, so an attestation can only be produced from inside a run here --
+  # a laptop cannot do it. Backfills v3.6.82/v3.6.83, whose attest step failed
+  # against rekor, and is the recovery path for the next outage.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Attest an already-released version instead of releasing, e.g. 3.6.83 (resolves v<version>, -rmux and -nix tags)"
+        type: string
+        required: true
 
 concurrency:
   group: release-${{ github.ref }}
@@ -31,8 +41,15 @@ permissions:
 jobs:
   release:
     name: Tag + GitHub release
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    outputs:
+      should_release: ${{ steps.detect.outputs.should_release }}
+      version: ${{ steps.detect.outputs.new }}
+      app: ${{ steps.build.outputs.digest }}
+      rmux: ${{ steps.build_rmux.outputs.digest }}
+      nix: ${{ steps.build_nix.outputs.digest }}
     steps:
       - name: Checkout with parent commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -133,13 +150,13 @@ jobs:
 
       - name: Set up QEMU
         if: steps.detect.outputs.should_release == 'true'
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         with:
           platforms: linux/amd64
 
       - name: Set up Docker Buildx
         if: steps.detect.outputs.should_release == 'true'
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GHCR
         if: steps.detect.outputs.should_release == 'true'
@@ -155,7 +172,7 @@ jobs:
       - name: Build + push bank-pilot image (WITH_RMUX=false, amd64-only)
         if: steps.detect.outputs.should_release == 'true'
         id: build
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: Dockerfile
@@ -182,7 +199,7 @@ jobs:
       - name: Build + push dev/demo image (WITH_RMUX=true, amd64-only)
         if: steps.detect.outputs.should_release == 'true'
         id: build_rmux
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: Dockerfile
@@ -211,7 +228,7 @@ jobs:
       - name: Build + push -nix build image (baked Nix store, amd64-only)
         if: steps.detect.outputs.should_release == 'true'
         id: build_nix
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: Dockerfile
@@ -252,34 +269,6 @@ jobs:
           ./.github/scripts/assert-signature-location.sh "$repo" "${{ steps.build_rmux.outputs.digest }}"
           ./.github/scripts/assert-signature-location.sh "$repo" "${{ steps.build_nix.outputs.digest }}"
 
-      - name: Install Syft
-        if: steps.detect.outputs.should_release == 'true'
-        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610  # v0.24.0
-
-      - name: Generate SBOMs + attest both images with cosign
-        if: steps.detect.outputs.should_release == 'true'
-        env:
-          COSIGN_EXPERIMENTAL: "1"
-        run: |
-          IMAGE="ghcr.io/${{ github.repository_owner }}/aifactory@${{ steps.build.outputs.digest }}"
-          IMAGE_RMUX="ghcr.io/${{ github.repository_owner }}/aifactory@${{ steps.build_rmux.outputs.digest }}"
-          IMAGE_NIX="ghcr.io/${{ github.repository_owner }}/aifactory@${{ steps.build_nix.outputs.digest }}"
-          # Bank-pilot image
-          syft scan "$IMAGE" -o spdx-json=sbom.spdx.json
-          syft scan "$IMAGE" -o cyclonedx-json=sbom.cyclonedx.json
-          cosign attest --yes --type spdxjson    --predicate sbom.spdx.json      "$IMAGE"
-          cosign attest --yes --type cyclonedx   --predicate sbom.cyclonedx.json "$IMAGE"
-          # Dev/demo image (rmux variant)
-          syft scan "$IMAGE_RMUX" -o spdx-json=sbom-rmux.spdx.json
-          syft scan "$IMAGE_RMUX" -o cyclonedx-json=sbom-rmux.cyclonedx.json
-          cosign attest --yes --type spdxjson    --predicate sbom-rmux.spdx.json      "$IMAGE_RMUX"
-          cosign attest --yes --type cyclonedx   --predicate sbom-rmux.cyclonedx.json "$IMAGE_RMUX"
-          # -nix build image (baked Nix store; RFC-0017 #190)
-          syft scan "$IMAGE_NIX" -o spdx-json=sbom-nix.spdx.json
-          syft scan "$IMAGE_NIX" -o cyclonedx-json=sbom-nix.cyclonedx.json
-          cosign attest --yes --type spdxjson    --predicate sbom-nix.spdx.json      "$IMAGE_NIX"
-          cosign attest --yes --type cyclonedx   --predicate sbom-nix.cyclonedx.json "$IMAGE_NIX"
-
       - name: Verify signature (release self-test)
         if: steps.detect.outputs.should_release == 'true'
         env:
@@ -291,10 +280,148 @@ jobs:
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             "$IMAGE"
 
+  # #1583: SBOMs + attestation, split out of `release` on purpose.
+  #
+  # Both 2026-09-18 releases went RED here while the tag, the GitHub release and
+  # all three images had already been created -- so "released, evidence missing"
+  # was indistinguishable from "release failed", at ~33 min per run to find out.
+  # Six `cosign attest` calls ran with no retry against rekor.sigstore.dev, a
+  # public service: one bad response failed the release.
+  #
+  # Split, this job is the only red thing when evidence is missing, and it can be
+  # re-run alone (~16 min, mostly syft scanning the 2.25 GB -nix image). Each
+  # attest now retries; an exhausted retry still FAILS -- attestation is a gate,
+  # and `continue-on-error` is what hid a broken OpenAPI generation for 20+
+  # releases (see the comment in techdocs/#906).
+  #
+  # Re-attesting adds a SECOND attestation rather than replacing the first, so a
+  # dispatch backfill is a once-per-release action, run knowingly.
+  sbom-attest:
+    name: SBOMs + attestation
+    needs: release
+    if: >-
+      always()
+      && (github.event_name == 'workflow_dispatch'
+          || (needs.release.result == 'success' && needs.release.outputs.should_release == 'true'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write  # gh release upload of the SBOM files
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26  # v0.24.2
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: "${{ secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}"
+
+      # On a push the digests come from the release job. On a dispatch they are
+      # RESOLVED from the release's own tags, so a version that was never
+      # released fails here rather than attesting the wrong thing.
+      - name: Resolve the three image digests
+        id: refs
+        env:
+          EVENT: ${{ github.event_name }}
+          VERSION: ${{ inputs.version }}
+          OWNER: ${{ github.repository_owner }}
+          APP: ${{ needs.release.outputs.app }}
+          RMUX: ${{ needs.release.outputs.rmux }}
+          NIX: ${{ needs.release.outputs.nix }}
+        run: |
+          set -euo pipefail
+          repo="ghcr.io/${OWNER}/aifactory"
+          if [ "${EVENT}" = "workflow_dispatch" ]; then
+            for pair in "app:v${VERSION}" "rmux:v${VERSION}-rmux" "nix:v${VERSION}-nix"; do
+              name="${pair%%:*}"; tag="${pair#*:}"
+              digest=$(docker buildx imagetools inspect --format '{{json .Manifest.Digest}}' "${repo}:${tag}" | tr -d '"')
+              if [ -z "${digest}" ]; then
+                echo "::error::no image at ${repo}:${tag} — was ${VERSION} released?"
+                exit 1
+              fi
+              echo "${name}=${repo}@${digest}" >> "$GITHUB_OUTPUT"
+              echo "resolved ${tag} -> ${digest}"
+            done
+          else
+            {
+              echo "app=${repo}@${APP}"
+              echo "rmux=${repo}@${RMUX}"
+              echo "nix=${repo}@${NIX}"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate SBOMs + attest all three images
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+          IMAGE: ${{ steps.refs.outputs.app }}
+          IMAGE_RMUX: ${{ steps.refs.outputs.rmux }}
+          IMAGE_NIX: ${{ steps.refs.outputs.nix }}
+        run: |
+          set -euo pipefail
+
+          # rekor.sigstore.dev is a public service and this step makes six calls
+          # to it; one bad response used to fail the whole release (#1583). Retry
+          # each, then fail loudly -- never silently continue.
+          attest() {  # $1=type  $2=predicate  $3=image
+            for delay in 5 20 60 stop; do
+              if cosign attest --yes --type "$1" --predicate "$2" "$3"; then
+                return 0
+              fi
+              if [ "${delay}" = stop ]; then
+                break
+              fi
+              echo "::warning::attest $1 for $3 failed; retrying in ${delay}s (rekor is a public service)"
+              sleep "${delay}"
+            done
+            echo "::error::could not attest $1 for $3 after 4 attempts (5s/20s/60s backoff)"
+            return 1
+          }
+
+          # Bank-pilot image
+          syft scan "$IMAGE" -o spdx-json=sbom.spdx.json
+          syft scan "$IMAGE" -o cyclonedx-json=sbom.cyclonedx.json
+          attest spdxjson  sbom.spdx.json      "$IMAGE"
+          attest cyclonedx sbom.cyclonedx.json "$IMAGE"
+
+          # Dev/demo image (rmux variant)
+          syft scan "$IMAGE_RMUX" -o spdx-json=sbom-rmux.spdx.json
+          syft scan "$IMAGE_RMUX" -o cyclonedx-json=sbom-rmux.cyclonedx.json
+          attest spdxjson  sbom-rmux.spdx.json      "$IMAGE_RMUX"
+          attest cyclonedx sbom-rmux.cyclonedx.json "$IMAGE_RMUX"
+
+          # -nix build image (baked Nix store; RFC-0017 #190)
+          syft scan "$IMAGE_NIX" -o spdx-json=sbom-nix.spdx.json
+          syft scan "$IMAGE_NIX" -o cyclonedx-json=sbom-nix.cyclonedx.json
+          attest spdxjson  sbom-nix.spdx.json      "$IMAGE_NIX"
+          attest cyclonedx sbom-nix.cyclonedx.json "$IMAGE_NIX"
+
+      # The SBOM files exist only in THIS job since #1583 moved syft here; the
+      # upload used to stay behind in `release`, which then failed on every
+      # release looking for files it no longer generated.
       - name: Upload SBOM artifacts to GitHub release
-        if: steps.detect.outputs.should_release == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          V: ${{ github.event_name == 'workflow_dispatch' && inputs.version || needs.release.outputs.version }}
+        run: gh release upload "v${V}" sbom.spdx.json sbom.cyclonedx.json --clobber
+
+      - name: Summary
+        env:
+          IMAGE: ${{ steps.refs.outputs.app }}
+          IMAGE_RMUX: ${{ steps.refs.outputs.rmux }}
+          IMAGE_NIX: ${{ steps.refs.outputs.nix }}
         run: |
-          V="${{ steps.detect.outputs.new }}"
-          gh release upload "v$V" sbom.spdx.json sbom.cyclonedx.json --clobber
+          {
+            echo "### SBOM attestations"
+            for i in "$IMAGE" "$IMAGE_RMUX" "$IMAGE_NIX"; do echo "- \`${i}\`"; done
+          } >> "$GITHUB_STEP_SUMMARY"
