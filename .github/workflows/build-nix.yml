@@ -18,19 +18,21 @@ name: Publish -nix build image
 # this heavy image, as the Job never runs them). The gha cache
 # (scope=aifactory-nix) keeps the incremental rebuild to the code layers.
 #
-# After publishing, this AUTO-PINS ``AIFACTORY_BUILD_IMAGE`` in factory-gitops to
-# the new ``:sha-<short>-nix`` tag (#856 half 2) — the pin was manual and drifted
-# 18 days. deploy.yml pushes to the same gitops repo on the same main commit, so
-# the pin push retries on conflict. Pair stays ``AIFACTORY_PACKED_NIX_IN_IMAGE=true``.
+# MANUAL PATH ONLY (#1465). The automatic build+pin now lives in deploy.yml,
+# which builds this image alongside the app image and writes BOTH pins in ONE
+# gitops commit. It used to trigger on the same push as deploy.yml and pin
+# separately: two commits, two ArgoCD syncs, and the second rollout restarted
+# pods while the first deploy's build was still running, killing it (#1465).
+#
+# Kept dispatchable so a `-nix` image can still be rebuilt and pinned by hand
+# (a base-image refresh, or re-pinning after a revert). After publishing, this
+# AUTO-PINS ``AIFACTORY_BUILD_IMAGE`` in factory-gitops to the new
+# ``:sha-<short>-nix`` tag (#856 half 2) — the pin was manual and drifted 18
+# days. The push retries on conflict, since other services bump the same repo.
+# Pair stays ``AIFACTORY_PACKED_NIX_IN_IMAGE=true``.
 
 on:
   workflow_dispatch: {}
-  push:
-    branches: [main]
-    paths:
-      - 'Dockerfile'
-      - 'apps/backend/**'
-      - '.github/workflows/build-nix.yml'
 
 concurrency:
   group: build-nix-${{ github.ref }}

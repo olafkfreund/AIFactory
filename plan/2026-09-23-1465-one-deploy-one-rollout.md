@@ -86,3 +86,21 @@ produces two of each (`4d46ea1`/`3b58108`; history 17:01:51/17:06:59).
 Revert the commit: `build-nix.yml` regains its `push` trigger and `deploy.yml` its inline pin,
 which is exactly today's behaviour. Nothing in gitops or the cluster needs undoing — the pins
 written by either shape are identical in content.
+
+## Decisions and deviations (recorded during implementation)
+
+- **Step 8's open decision, settled: the `pin` job is gated to `main`**
+  (`github.ref == 'refs/heads/main'`). A `workflow_dispatch` from a branch therefore builds
+  and signs both images but writes nothing to factory-gitops, so the whole workflow can be
+  exercised end to end without repinning production. On `main`, a dispatch still pins, which
+  is the manual-deploy escape hatch #1559's spec relies on.
+- **`changes` fails safe in four ways, not one:** a non-`push` event, an empty `before`, the
+  all-zeroes `before` (first push), or a `before` commit git cannot read (force-push, shallow
+  history) all rebuild the `-nix` image. It also checks out with `fetch-depth: 0`, since the
+  default shallow clone cannot diff two arbitrary commits.
+- **`pin` needs `changes` as well**, so `needs.build-nix.result` is meaningful when the job
+  was skipped rather than absent.
+- **The commit adds the whole manifests dir** (`git add <path>/`) rather than only
+  `kustomization.yaml`, because one commit can now touch both that and `manifests.yaml`.
+- **`build-nix.yml` keeps its own pin steps** for the manual path; only its `push` trigger is
+  removed. A hand-run rebuild still pins, exactly as before.
