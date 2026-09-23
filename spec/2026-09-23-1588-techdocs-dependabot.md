@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1588
 intent: intent/2026-09-23-1588-techdocs-dependabot.md
 ---
