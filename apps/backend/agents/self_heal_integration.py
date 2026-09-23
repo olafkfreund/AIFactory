@@ -16,6 +16,7 @@ executor changes nothing until an operator opts in for a validation run.
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -31,6 +32,8 @@ from .security_reviewer import (
 from .verifier import verify_unit
 
 _TRUTHY = {"1", "true", "yes", "on"}
+
+logger = logging.getLogger(__name__)
 
 
 def is_self_heal_enabled(env: dict | None = None) -> bool:
@@ -119,7 +122,8 @@ async def security_pre_merge_gate(
 ) -> GateDecision | None:
     """Scan a pre-merge diff and decide whether to block. No-op (None) when the
     flag is off or the diff is empty. Static scan always runs; an optional
-    ``llm_scan`` subagent augments it. Never raises into the merge path."""
+    ``llm_scan`` subagent augments it. A scanner failure blocks (#1454). Never
+    raises into the merge path."""
     if not is_self_heal_enabled() or not diff_text:
         return None
     try:
@@ -128,22 +132,38 @@ async def security_pre_merge_gate(
         )
         return report.decision
     except Exception:
-        # A scanner failure must not block a merge that was otherwise fine.
-        return gate_decision([], threshold=threshold)
+        # #1454: a scan that did not run is not a clean scan -- fail closed.
+        logger.error("security pre-merge scan failed", exc_info=True)
+        return _not_scanned(threshold, "scanner failed")
 
 
 def security_pre_merge_gate_sync(
-    diff_text: str, *, threshold: str = "high"
+    diff_text: str, *, threshold: str = "high", diff_ok: bool = True
 ) -> GateDecision | None:
     """Synchronous static-only security gate for sync call sites (the worktree
-    merge path). No-op (None) when the flag is off or the diff is empty; never
-    raises into the merge."""
-    if not is_self_heal_enabled() or not diff_text:
+    merge path). No-op (None) when the flag is off, or the diff is empty and was
+    read successfully. When enabled, a diff that could not be read (``diff_ok``
+    false) or a scanner failure BLOCKS (#1454). Never raises into the merge."""
+    if not is_self_heal_enabled():
+        return None
+    if not diff_ok:
+        return _not_scanned(threshold, "diff unavailable")
+    if not diff_text:
         return None
     try:
         return gate_decision(scan_diff_static(diff_text), threshold=threshold)
     except Exception:
-        return gate_decision([], threshold=threshold)
+        logger.error("security pre-merge scan failed", exc_info=True)
+        return _not_scanned(threshold, "scanner failed")
+
+
+def _not_scanned(threshold: str, reason: str) -> GateDecision:
+    """Blocked decision for a merge whose diff was never actually scanned."""
+    return GateDecision(
+        blocked=True,
+        threshold=threshold,
+        summary=f"security scan did not run ({reason}); merge not scanned",
+    )
 
 
 # ---------------------------------------------------------------------------

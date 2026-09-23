@@ -481,8 +481,24 @@ def assert_job_policy(manifest: dict[str, Any]) -> None:
     )
 
 
+def _validate_spec(spec: JobSpec) -> None:
+    """Reject spec combinations that would silently grant more than asked.
+
+    A token without an explicit service account mounts the NAMESPACE DEFAULT
+    SA's token, which is not the scoped identity the caller meant to grant and
+    may carry wider permissions.
+    """
+    if spec.automount_service_account_token and not spec.service_account:
+        raise ValueError(
+            "automount_service_account_token requires an explicit service_account: "
+            "without one the pod would receive the namespace default "
+            "ServiceAccount's API token instead of a scoped identity"
+        )
+
+
 def build_job_manifest(spec: JobSpec) -> dict[str, Any]:
     """Return a complete k8s Job manifest dict for one PARR task. Pure."""
+    _validate_spec(spec)
     name = job_name(spec.service, spec.job_id)
 
     inner = nix_develop_wrap(spec.commands) if spec.nix_develop else " && ".join(spec.commands)
@@ -732,6 +748,19 @@ def _selftest_service_account(spec: JobSpec, ps: dict[str, Any]) -> None:
     """
     _require(ps["serviceAccountName"] == "aifactory-sandbox", "SA")
     _require(ps["automountServiceAccountToken"] is False, "no token automount")
+    # A token with no explicit SA would mount the namespace default's token —
+    # a wider grant than the caller asked for, so the builder must refuse.
+    try:
+        build_job_manifest(
+            replace(spec, service_account=None, automount_service_account_token=True)
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(
+            "build_job_manifest ACCEPTED automount_service_account_token with no "
+            "service_account — the pod would get the namespace default SA's token"
+        )
     manifest = build_job_manifest(replace(spec, automount_service_account_token=True))
     _require(
         manifest["spec"]["template"]["spec"]["automountServiceAccountToken"] is True,

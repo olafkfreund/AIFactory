@@ -43,6 +43,7 @@ from pydantic import BaseModel
 from server.error_ref import client_error
 from server.project_registry import get_projects_file
 from server.services.approval import approved, merge_pull_request
+from server.services.audit_service import ACTION_TASK_MERGE, audit_task_route
 from server.services.http_verdict import honest_status
 from server.services.task_branch import (
     current_branch,
@@ -1725,6 +1726,7 @@ async def abort_worktree_merge(
 
 @router.post("/{task_id}/worktree/merge")
 @honest_status
+@audit_task_route(ACTION_TASK_MERGE)
 async def merge_worktree(
     task_id: str,
     options: WorktreeMergeOptions = None,

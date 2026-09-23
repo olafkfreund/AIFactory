@@ -413,6 +413,14 @@ def usage_from_aggregate(
         "cost_usd": round(float(agg.get("totalCostUsd", 0.0) or 0.0), 6),
         "model": agg.get("model"),
     }
+    # #1398: cache writes vs reads. Additive, and only when a cache was actually
+    # reported, so the block for a no-cache provider or a pre-#1398 file stays
+    # byte-identical. CFactory's TokenUsage ignores unknown keys today.
+    cache_read = int(agg.get("cacheReadTokens", 0) or 0)
+    cache_creation = int(agg.get("cacheCreationTokens", 0) or 0)
+    if cache_read or cache_creation:
+        block["cache_read_tokens"] = cache_read
+        block["cache_creation_tokens"] = cache_creation
     workers = _worker_records(agg)
     if workers:
         block["workers"] = workers
@@ -966,6 +974,7 @@ def emit_terminal_completion(
     # already present) and best-effort (never raises).
     try:
         from core.workspace_fetch import (  # noqa: PLC0415
+            maybe_fetch_gate_marker,
             maybe_fetch_memory,
             maybe_fetch_plan,
             maybe_fetch_task_logs,
@@ -973,6 +982,8 @@ def emit_terminal_completion(
         )
 
         maybe_fetch_usage(spec_dir, spec_id)
+        # #1550: the gate-evidence marker, which the merger reads for its PR body.
+        maybe_fetch_gate_marker(spec_dir, spec_id)
         # W1 (Factory #218): also pull the Job's task_logs.json so spec_to_task
         # reports the real terminal status (done/failed) on the packed path
         # instead of defaulting to backlog/queued.

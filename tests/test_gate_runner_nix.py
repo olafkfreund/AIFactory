@@ -318,3 +318,89 @@ def test_no_build_image_falls_back_instead_of_dispatching(monkeypatch, tmp_path)
         0,
         "ran in-process",
     )
+
+
+def test_gate_timeout_is_configurable():
+    """Every gate cold-fetches its closure; the budget must be raisable without
+    a release (#1541). Parsed from a mapping, so no module reload is needed —
+    reloading swaps module identity and breaks sibling tests' monkeypatching."""
+    from agents.gate_runner import _timeout_from_env
+
+    assert _timeout_from_env({}) == 600
+    assert _timeout_from_env({"AIFACTORY_GATE_TIMEOUT_SECONDS": "1800"}) == 1800
+    # Junk must not crash a build; fall back to the default.
+    assert _timeout_from_env({"AIFACTORY_GATE_TIMEOUT_SECONDS": "soon"}) == 600
+    assert _timeout_from_env({"AIFACTORY_GATE_TIMEOUT_SECONDS": ""}) == 600
+    # #1545: 0 would time out every gate instantly, and a negative value is
+    # invalid as Kubernetes `activeDeadlineSeconds` -- both fall back the same
+    # as unparseable input, not through as a broken budget.
+    assert _timeout_from_env({"AIFACTORY_GATE_TIMEOUT_SECONDS": "0"}) == 600
+    assert _timeout_from_env({"AIFACTORY_GATE_TIMEOUT_SECONDS": "-30"}) == 600
+
+
+def test_packed_path_uses_the_warm_store_even_with_nix_in_image(monkeypatch, tmp_path):
+    """#1541: the runner image bakes NO language closures, so without a
+    persistent store every gate re-downloads its whole toolchain and Swift never
+    finishes inside the Job deadline.
+
+    #253 dropped the warm store because the pod already mounted the RWO repo
+    PVC and two RWO PVs stranded on different nodes. The packed path mounts no
+    repo PVC at all — the code arrives in an emptyDir — so the nix store is the
+    pod's only PVC and has nothing to strand against.
+    """
+    import agents.gate_runner as gr
+    import core.kube_sandbox as ks
+
+    (tmp_path / "flake.nix").write_text("{}")
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", "/home/nonroot/.aifactory")
+    monkeypatch.setenv("S3_ENDPOINT", "http://minio:9000")
+    monkeypatch.setenv("AIFACTORY_BUILD_IMAGE", "aifactory:sha-x-nix")
+    monkeypatch.setenv("AIFACTORY_NIX_STORE_PVC", "aifactory-nix-store")
+    # Nix IS in the image — the old rule dropped the warm store on that alone.
+    monkeypatch.setenv("AIFACTORY_PACKED_NIX_IN_IMAGE", "true")
+    monkeypatch.setattr(gr, "_packed_workspace_for", lambda _r: "s3://b/w.tar.gz")
+
+    seen: dict = {}
+
+    class FakeSandbox:
+        def __init__(self, image, **kw):
+            seen.update(kw)
+
+        def run(self, *_a, **_k):
+            return SimpleNamespace(ok=True, exit_code=0, output="ok")
+
+    monkeypatch.setattr(ks, "KubeJobSandbox", FakeSandbox)
+    gr._nix_kube_runner("gate-image")(["gradle", "test"], tmp_path)
+
+    assert seen["nix_store_pvc"] == "aifactory-nix-store"
+    # And it is genuinely the only PVC on the pod.
+    assert "repo_pvc" not in seen
+
+
+def test_co_mount_path_still_drops_the_warm_store(monkeypatch, tmp_path):
+    """#253's hazard is real where it applies: with the repo PVC mounted, a
+    second RWO PVC can strand the pod unschedulable."""
+    import agents.gate_runner as gr
+    import core.kube_sandbox as ks
+
+    root = tmp_path / "data"
+    work = root / "workspaces" / "p" / "worktrees" / "tasks" / "007"
+    work.mkdir(parents=True)
+    (work / "flake.nix").write_text("{}")
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", str(root))
+    monkeypatch.setenv("AIFACTORY_NIX_STORE_PVC", "aifactory-nix-store")
+    monkeypatch.setenv("AIFACTORY_PACKED_NIX_IN_IMAGE", "true")
+
+    seen: dict = {}
+
+    class FakeSandbox:
+        def __init__(self, image, **kw):
+            seen.update(kw)
+
+        def run(self, *_a, **_k):
+            return SimpleNamespace(ok=True, exit_code=0, output="ok")
+
+    monkeypatch.setattr(ks, "KubeJobSandbox", FakeSandbox)
+    gr._nix_kube_runner("gate-image")(["gradle", "test"], work)
+
+    assert seen["nix_store_pvc"] is None, "co-mount path must not add a 2nd RWO PVC"

@@ -266,21 +266,45 @@ def require_task_access(minimum_role: str = "viewer") -> TaskAccessChecker:
 DEFAULT_ORG_ID = "default"
 
 
-async def accessible_org_ids(request: Request, db: AsyncSession) -> set[str] | None:
+def _roles_at_or_above(minimum_role: str) -> list[str]:
+    """Every ``ROLE_LEVELS`` name whose level is >= ``minimum_role``'s.
+
+    Pure function pulled out of ``accessible_org_ids`` so the role-floor
+    logic (#1554 finding 2) is unit-testable without a database session.
+    An unrecognised ``minimum_role`` floors at level 0 (``viewer``), same as
+    ``check_project_access``'s existing ``ROLE_LEVELS.get(role, 0)`` default.
+    """
+    threshold = ROLE_LEVELS.get(minimum_role, 0)
+    return [role for role, level in ROLE_LEVELS.items() if level >= threshold]
+
+
+async def accessible_org_ids(
+    request: Request, db: AsyncSession, minimum_role: str = "viewer"
+) -> set[str] | None:
     """Org ids the caller may see, or ``None`` meaning "all" (#319 list filter).
 
     - Service principal → ``None`` (sees every project; local UI + M2M).
-    - Human JWT user → the set of orgs they're a member of.
+    - Human JWT user → the set of orgs where their role is at least
+      ``minimum_role`` (default ``"viewer"`` — any membership, unchanged
+      behaviour for every existing caller).
     - No identity → empty set.
+
+    ``minimum_role`` exists for fleet-wide WRITE endpoints that have no single
+    ``project_id``/``task_id`` to hang ``require_project_access``/
+    ``require_task_access`` off of (e.g. the merger's PR-opening sweep, #1554
+    finding 2) — those still need "more than viewer" the same way the
+    per-task PR endpoint does, just applied across every org at once instead
+    of one project's membership row.
     """
     user = getattr(request.state, "user", None)
     if _auth_disabled() or is_service_principal(user):
         return None
     if not isinstance(user, dict) or not user.get("id"):
         return set()
-    result = await db.execute(
-        select(OrgMember.org_id).where(OrgMember.user_id == user["id"])
-    )
+    query = select(OrgMember.org_id).where(OrgMember.user_id == user["id"])
+    if minimum_role != "viewer":
+        query = query.where(OrgMember.role.in_(_roles_at_or_above(minimum_role)))
+    result = await db.execute(query)
     return set(result.scalars().all())
 
 

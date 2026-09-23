@@ -130,5 +130,30 @@ class TestSummaries:
         assert summarize_gates([]) == "no gates detected"
 
 
+class TestEvidenceFailsClosedOnAnUnknownOutcome:
+    """#1545: a marker outcome outside {passed, failed, skipped} -- a hand
+    edit, a truncated write, a reformatted marker -- must never read as an
+    executed, passing gate."""
+
+    def test_an_unknown_outcome_is_not_an_executed_gate(self):
+        from agents.gate_runner import evidence_shows_an_executed_gate
+
+        assert evidence_shows_an_executed_gate("pytest: unknown") is False
+
+    def test_one_unknown_outcome_poisons_the_whole_record(self):
+        from agents.gate_runner import evidence_shows_an_executed_gate
+
+        # A mix of a real pass and a garbled entry must not let the real pass
+        # carry the record -- the marker as a whole is unparseable evidence.
+        assert evidence_shows_an_executed_gate("mypy: passed, pytest: unknown") is False
+
+    def test_known_outcomes_still_count(self):
+        from agents.gate_runner import evidence_shows_an_executed_gate
+
+        assert evidence_shows_an_executed_gate("pytest: passed") is True
+        assert evidence_shows_an_executed_gate("pytest: failed") is True
+        assert evidence_shows_an_executed_gate("pytest: skipped") is False
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

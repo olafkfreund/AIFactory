@@ -37,7 +37,7 @@
 # surface. The runtime stage stays on Chainguard, where it does matter.
 # Digest bumps land via Dependabot PRs (.github/dependabot.yml).
 
-FROM docker.io/node:24-bookworm-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03 AS frontend-build
+FROM docker.io/node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS frontend-build
 
 USER root
 WORKDIR /build
@@ -69,7 +69,11 @@ RUN mkdir -p apps/web-server/static \
 # Stage 2: Runtime (Chainguard Python, dev variant for now — minimal split
 # happens in P0.5 once we know what the runtime *actually* needs)
 # ---------------------------------------------------------------------------
-FROM cgr.dev/chainguard/python:latest-dev@sha256:aa89119db7f7fb4a6628ac82e2c38404cc64cd56ccd858d2c78646776b3fffef AS runtime
+# Runtime Node comes from the official image, not apk (Factory#1710). Same
+# digest as frontend-build, so both move together in one Dependabot bump.
+FROM docker.io/node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS node-runtime
+
+FROM cgr.dev/chainguard/python:latest-dev@sha256:8af5085c793a9b501253117ccceabff2340400f3ef92fb0e09df690dd1e961a4 AS runtime
 
 USER root
 
@@ -89,14 +93,35 @@ ARG SECURITY_REFRESH=0
 RUN echo "security refresh: ${SECURITY_REFRESH}" \
     && apk upgrade --no-cache
 
+# Node from the official image (Factory#1710). apk `nodejs` is rebuilt on the
+# rolling index against the newest glibc, while this base pins glibc exactly in
+# /etc/apk/world, and apk deps are unversioned sonames. apk node needed exactly
+# the image's GLIBC_2.44 (zero headroom) and broke every PR on 2026-09-03. The
+# official binary needs GLIBC_2.28 and only libc/libm/libdl/libpthread/
+# libstdc++/libgcc_s/libatomic (all in the base); libuv/OpenSSL/ICU are bundled.
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-runtime /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+ && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+# Every node:24 image to date bundles an npm (<=11.19.0) whose own deps carry
+# HIGH CVEs the P0 Trivy gate rejects (brace-expansion, ip-address, tar).
+# npm 11.19.1 has them fixed. Pinned exactly because Dependabot cannot track a
+# version inside RUN. REMOVE this line once `docker run node:24-bookworm-slim
+# npm -v` prints >= 11.19.1 (Factory#1710).
+RUN npm install -g npm@11.19.1 && npm --version
+# .nvmrc is the one declaration of the Node major: fail the build on drift.
+COPY .nvmrc /tmp/.nvmrc
+RUN want="$(tr -dc '0-9.' < /tmp/.nvmrc | cut -d. -f1)" \
+ && have="$(node -p 'process.versions.node.split(".")[0]')" \
+ && [ -n "$want" ] && [ "$want" = "$have" ] \
+ || { echo "Node major drift: .nvmrc=$want runtime=$have (Factory#1710)"; exit 1; } \
+ && rm /tmp/.nvmrc
+
 # System packages from Wolfi APK index. Build tools come bundled in :latest-dev.
 #   git           — worktree operations
 #   curl, wget    — downloads (HEALTHCHECK uses curl)
 #   gh            — GitHub CLI (Wolfi apk package name)
-#   nodejs, npm   — runtime Node for `npm install -g @anthropic-ai/claude-code`
-#                   spawned by the agent. Installed via apk instead of
-#                   binary-copying from the frontend stage so dynamic linker
-#                   deps (libuv etc.) resolve correctly.
+#   (Node is NOT from apk: see the node-runtime COPY below, Factory#1710.)
 #   ca-certificates — TLS roots
 #   bash          — entrypoint script (will be removed in P0.3)
 #   bubblewrap    — OS-level bash sandbox for agent commands. Without it the
@@ -134,10 +159,15 @@ RUN apk add --no-cache \
         git \
         gh \
         gnupg \
-        nodejs \
-        npm \
         socat \
         "wget>=1.25.0-r15"
+
+# Node must come only from the node-runtime COPY above, never from apk: an apk
+# nodejs would be rebuilt against a glibc newer than this base pins and break
+# the build (Factory#1710). Checked AFTER the apk block, where it could appear.
+RUN if apk info 2>/dev/null | grep -q '^nodejs'; then \
+      echo "apk nodejs is installed; runtime Node must come from node-runtime (Factory#1710)"; exit 1; \
+    fi
 
 # RFC-0016 #674: the per-language build toolchains (go/rust/maven/openjdk/cmake/
 # build-base) that USED to be baked here have been REMOVED. AIFactory builds and
@@ -458,6 +488,14 @@ USER root
 # not already in the substrate) can't write new paths. Warm builds — the packed
 # multi-node case we're unblocking — work; cold-write support is a follow-up
 # (writable overlay at Job runtime) tracked on the slice-3 issue.
+#
+# This pin DELIBERATELY lags the gate image (AIFactory#1541). Language toolchain
+# closures (python/kotlin/swift) are warmed into factory-runner-nix for the GATE
+# Job, which runs AIFACTORY_SANDBOX_IMAGE (pinned by digest in factory-gitops and
+# bumped by factory-runners' CD after signing). Nothing in this image runs a
+# language `nix develop`: the build Job is not nix-develop wrapped
+# (build_backend.py, nix_develop=False) and gates run in their own Job (#1525).
+# Bumping this digest would add ~1.7 GB of toolchains here for no reader.
 COPY --from=ghcr.io/olafkfreund/factory-runner-nix:latest@sha256:28c94cf7552f81dcf24c556ae74a5220b84eb1ebe9e9bb6e58d67c346d143e1e /nix/store /nix/store
 COPY --from=ghcr.io/olafkfreund/factory-runner-nix:latest@sha256:28c94cf7552f81dcf24c556ae74a5220b84eb1ebe9e9bb6e58d67c346d143e1e --chown=65532:65532 /nix/var /nix/var
 

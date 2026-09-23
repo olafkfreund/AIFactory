@@ -75,6 +75,27 @@ def test_spec_tenant_missing_means_default(tmp_path):
     assert tenancy.spec_tenant(tmp_path) == "default"
 
 
+def test_spec_tenant_corrupt_stamp_fails_closed_not_default(tmp_path):
+    """#1554/#1555 finding 1: a stamp that exists but cannot be parsed is
+    NOT proof of "no stamp" -- it must never resolve to "default" (or any
+    other real tenant), which is what every spec_tenant(d) == tenant filter
+    in this codebase (routes/tasks.py, routes/projects.py,
+    services/merger.py) is a security boundary over."""
+    (tmp_path / "task_metadata.json").write_text("{not valid json")
+    assert tenancy.read_spec_tenant(tmp_path) == tenancy.UNREADABLE_TENANT
+    assert tenancy.spec_tenant(tmp_path) == tenancy.UNREADABLE_TENANT
+    assert tenancy.spec_tenant(tmp_path) != tenancy.DEFAULT_TENANT
+
+
+def test_spec_tenant_unreadable_stamp_fails_closed_not_default(tmp_path):
+    # A directory where the stamp file is expected: read_text() raises
+    # IsADirectoryError (an OSError) -- simulates "exists but unreadable"
+    # without relying on chmod, which root/CI can bypass.
+    (tmp_path / "task_metadata.json").mkdir()
+    assert tenancy.read_spec_tenant(tmp_path) == tenancy.UNREADABLE_TENANT
+    assert tenancy.spec_tenant(tmp_path) == tenancy.UNREADABLE_TENANT
+
+
 # ------------------------------------------------------------- list scoping
 
 

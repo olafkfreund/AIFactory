@@ -25,6 +25,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from server.project_registry import load_projects
+from server.services.audit_service import ACTION_TASK_APPROVE_PLAN, audit_task_action
 from server.specpath import safe_spec_component
 
 from ..services import task_control
@@ -211,6 +212,7 @@ async def approve_plan(
                 f"Auto-restart failed for {sanitize_log(task_id)}: {sanitize_log(e)}"
             )
 
+    await audit_task_action(_access, ACTION_TASK_APPROVE_PLAN, task_id)
     return {
         "success": True,
         "task_id": task_id,
