@@ -31,7 +31,13 @@ on:
       # image, so a change to one of them must ship. '*' does not cross '/'
       # here, so nested markdown still triggers a deploy. See Factory#454.
       - '*.md'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Commit or branch to deploy (default: this workflow's ref). The manual path for a hotfix that does not bump the version (#1559)."
+        type: string
+        required: false
+        default: ""
 
 concurrency:
   group: deploy-${{ github.ref }}
@@ -58,11 +64,52 @@ jobs:
     timeout-minutes: 5
     outputs:
       nix: ${{ steps.decide.outputs.nix }}
+      deploy: ${{ steps.deployable.outputs.deploy }}
+      ref: ${{ steps.deployable.outputs.ref }}
     steps:
       - name: Checkout AIFactory
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          ref: ${{ inputs.ref || github.sha }}
+
+      # #1559: landing on main no longer deploys. Every promotion used to build,
+      # sign, pin and RESTART the pods -- 28 commits in 14 days, of which only 4
+      # were releases -- and that restart is what kills a running build (#1465)
+      # and makes a quiet window scarce (#1425). Ship on the same signal
+      # release.yml already gates on: package.json's version changed. A hotfix
+      # that should not carry a bump goes through workflow_dispatch instead.
+      - name: Decide whether this commit deploys
+        id: deployable
+        run: |
+          set -uo pipefail
+          SHA=$(git rev-parse HEAD)
+          echo "ref=${SHA}" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" != "push" ]; then
+            echo "manual deploy (${{ github.event_name }}) of ${SHA} — deploying"
+            echo "deploy=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          NEW=$(jq -r '.version // empty' package.json)
+          OLD=$(git show "HEAD^:package.json" 2>/dev/null | jq -r '.version // empty')
+          if [ -z "${NEW}" ]; then
+            echo "::error::package.json has no version field"
+            exit 1
+          fi
+          if [ "${NEW}" = "${OLD}" ]; then
+            {
+              echo "### Not deploying"
+              echo "Version unchanged (\`${NEW}\`), so this commit did not ship (#1559)."
+              echo ""
+              echo "To deploy it: bump the version (\`node scripts/bump-version.js patch\`)"
+              echo "or run this workflow manually:"
+              echo "\`gh workflow run deploy.yml -f ref=${SHA}\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "version unchanged (${NEW}) — not deploying"
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "version bumped ${OLD:-<none>} -> ${NEW} — deploying"
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Decide whether to rebuild the -nix image
         id: decide
@@ -92,12 +139,15 @@ jobs:
 
   build-push:
     needs: changes
+    if: needs.changes.outputs.deploy == 'true'
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.tags.outputs.sha }}
     steps:
       - name: Checkout AIFactory
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.changes.outputs.ref }}
 
       - name: Compute tags
         id: tags
@@ -183,7 +233,7 @@ jobs:
   # build-nix.yml, minus its pin steps -- `pin` below writes that value.
   build-nix:
     needs: changes
-    if: needs.changes.outputs.nix == 'true'
+    if: needs.changes.outputs.deploy == 'true' && needs.changes.outputs.nix == 'true'
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.tags.outputs.sha }}-nix
@@ -191,6 +241,8 @@ jobs:
     steps:
       - name: Checkout AIFactory
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.changes.outputs.ref }}
 
       - name: Compute tags
         id: tags
@@ -266,6 +318,7 @@ jobs:
     if: >-
       always()
       && github.ref == 'refs/heads/main'
+      && needs.changes.outputs.deploy == 'true'
       && needs.build-push.result == 'success'
       && needs.build-nix.result != 'failure'
       && needs.build-nix.result != 'cancelled'
