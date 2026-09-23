@@ -1,5 +1,33 @@
 ## [Unreleased]
 
+## 3.6.83 - 2026-09-18
+
+### Fixed
+
+- **The runtime image's Node can no longer outrun its glibc.** Node came from
+  apk, rebuilt on the rolling Wolfi index against the newest glibc, while the
+  chainguard base pins glibc exactly in `/etc/apk/world` and apk deps are
+  unversioned sonames. apk Node needed exactly the image's `GLIBC_2.44`, zero
+  headroom; that broke every PR on 2026-09-03. Node now comes from the official
+  `node:24` image (this repo's `.nvmrc`), which needs `GLIBC_2.28`. A build-time
+  guard fails on `.nvmrc` drift, and npm is pinned to 11.19.1 because every
+  `node:24` image to date bundles an npm with HIGH CVEs. (Factory#1710, #1571)
+
+### Added
+
+- **Green Dependabot base-image digest bumps merge themselves.** Digest bumps
+  used to sit for weeks, which is the window in which the glibc break recurs.
+  A workflow enables auto-merge only for Dependabot docker PRs that touch only
+  Dockerfiles; required checks still decide. Verified live. (Factory#1710, #1572)
+- **Docs: the merger**, its options and how to tell the sweep is alive
+  (`guides/pr-endgame.md`). (Factory#2586, #1570)
+
+### Changed
+
+- Chainguard python base bumped to `075c08a`. (#1452)
+
+## 3.6.82 - 2026-09-18
+
 ### Fixed
 
 - **Finished work now reaches a pull request.** The merger (#1552) existed but
