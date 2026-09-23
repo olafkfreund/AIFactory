@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1559
 spec: spec/2026-09-23-1559-integration-vs-release.md
 ---
