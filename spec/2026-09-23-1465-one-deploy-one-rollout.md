@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1465
 intent: intent/2026-09-23-1465-one-deploy-one-rollout.md
 ---
