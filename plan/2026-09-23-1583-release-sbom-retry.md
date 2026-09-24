@@ -126,3 +126,24 @@ the transparency log is append-only. So the dispatch gains an optional `images` 
 (`all` by default, or a comma list of `app,rmux,nix`), and the backfill runs with
 `images: nix`. Verified before committing: the attest script still parses, and the selection
 skips correctly for `all`, one image, and a list.
+
+### Backfill run 1 (v3.6.83): attestations written, run red for an unrelated reason
+
+`images: nix` worked — **both `-nix` attestations for v3.6.83 are now present** (verified with
+`cosign verify-attestation`). The run still went red, at a step added after this plan was
+written: "Upload SBOM artifacts to GitHub release" names `sbom.spdx.json` /
+`sbom.cyclonedx.json` unconditionally, and a `nix`-only backfill never generates the **app**
+image's SBOMs. So the run failed *after* the evidence was written — the exact
+"red for a reason that is not the evidence" shape #1583 was about. Fixed by uploading only
+the files the run actually produced.
+
+### Backfill run 2 (v3.6.82): the retry did its job, and rekor is genuinely down for writes
+
+The attest failed after **4 attempts**, each of which was itself cosign retrying 4 times
+("giving up after 4 attempt(s)") — 16 failed `POST https://rekor.sigstore.dev/api/v1/log/entries`
+calls. Reads are fine (`GET /api/v1/log` → HTTP 200 in 0.17 s), so this is the write path.
+
+This is the first time the new retry has been exercised for real, and it behaved as designed:
+it persisted, then failed **loudly** rather than recording a green run with no evidence.
+v3.6.82's `-nix` attestations remain MISSING; the backfill must be re-run when Sigstore's
+write path recovers. That is a wait, not a defect.

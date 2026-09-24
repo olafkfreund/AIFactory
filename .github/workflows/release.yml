@@ -435,11 +435,29 @@ jobs:
       # The SBOM files exist only in THIS job since #1583 moved syft here; the
       # upload used to stay behind in `release`, which then failed on every
       # release looking for files it no longer generated.
+      # Upload whichever SBOMs this run actually generated. A backfill with
+      # `images: nix` never produces the app image's sbom.*.json, and naming
+      # them unconditionally failed the run AFTER the attestations had already
+      # been written -- red for a reason that had nothing to do with the
+      # evidence (#1583, observed backfilling v3.6.83).
       - name: Upload SBOM artifacts to GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           V: ${{ github.event_name == 'workflow_dispatch' && inputs.version || needs.release.outputs.version }}
-        run: gh release upload "v${V}" sbom.spdx.json sbom.cyclonedx.json --clobber
+        run: |
+          set -euo pipefail
+          files=()
+          for f in sbom.spdx.json sbom.cyclonedx.json \
+                   sbom-rmux.spdx.json sbom-rmux.cyclonedx.json \
+                   sbom-nix.spdx.json sbom-nix.cyclonedx.json; do
+            [ -f "$f" ] && files+=("$f")
+          done
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "no SBOMs were generated in this run; nothing to upload."
+            exit 0
+          fi
+          echo "uploading: ${files[*]}"
+          gh release upload "v${V}" "${files[@]}" --clobber
 
       - name: Summary
         env:
