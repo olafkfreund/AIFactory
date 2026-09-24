@@ -27,6 +27,11 @@ on:
         description: "Attest an already-released version instead of releasing, e.g. 3.6.83 (resolves v<version>, -rmux and -nix tags)"
         type: string
         required: true
+      images:
+        description: "Which images to attest: all (default), or a comma list of app,rmux,nix. Attesting one that already has an attestation ADDS a second one -- the transparency log is append-only -- so backfill only what is missing (#1583)."
+        type: string
+        required: false
+        default: all
 
 concurrency:
   group: release-${{ github.ref }}
@@ -335,6 +340,7 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           VERSION: ${{ inputs.version }}
+          IMAGES: ${{ inputs.images }}
           OWNER: ${{ github.repository_owner }}
           APP: ${{ needs.release.outputs.app }}
           RMUX: ${{ needs.release.outputs.rmux }}
@@ -343,8 +349,14 @@ jobs:
           set -euo pipefail
           repo="ghcr.io/${OWNER}/aifactory"
           if [ "${EVENT}" = "workflow_dispatch" ]; then
+            want="${IMAGES:-all}"
             for pair in "app:v${VERSION}" "rmux:v${VERSION}-rmux" "nix:v${VERSION}-nix"; do
               name="${pair%%:*}"; tag="${pair#*:}"
+              # Skip anything not selected: re-attesting adds a duplicate.
+              if [ "${want}" != "all" ] && ! printf '%s' ",${want}," | grep -q ",${name},"; then
+                echo "skipping ${name} (not in images=${want})"
+                continue
+              fi
               digest=$(docker buildx imagetools inspect --format '{{json .Manifest.Digest}}' "${repo}:${tag}" | tr -d '"')
               if [ -z "${digest}" ]; then
                 echo "::error::no image at ${repo}:${tag} — was ${VERSION} released?"
@@ -389,22 +401,36 @@ jobs:
           }
 
           # Bank-pilot image
+          if [ -z "${IMAGE:-}" ]; then
+            echo "app image not selected; skipping"
+          else
           syft scan "$IMAGE" -o spdx-json=sbom.spdx.json
           syft scan "$IMAGE" -o cyclonedx-json=sbom.cyclonedx.json
           attest spdxjson  sbom.spdx.json      "$IMAGE"
           attest cyclonedx sbom.cyclonedx.json "$IMAGE"
 
+          fi
+
           # Dev/demo image (rmux variant)
+          if [ -z "${IMAGE_RMUX:-}" ]; then
+            echo "rmux image not selected; skipping"
+          else
           syft scan "$IMAGE_RMUX" -o spdx-json=sbom-rmux.spdx.json
           syft scan "$IMAGE_RMUX" -o cyclonedx-json=sbom-rmux.cyclonedx.json
           attest spdxjson  sbom-rmux.spdx.json      "$IMAGE_RMUX"
           attest cyclonedx sbom-rmux.cyclonedx.json "$IMAGE_RMUX"
 
+          fi
+
           # -nix build image (baked Nix store; RFC-0017 #190)
+          if [ -z "${IMAGE_NIX:-}" ]; then
+            echo "nix image not selected; skipping"
+          else
           syft scan "$IMAGE_NIX" -o spdx-json=sbom-nix.spdx.json
           syft scan "$IMAGE_NIX" -o cyclonedx-json=sbom-nix.cyclonedx.json
           attest spdxjson  sbom-nix.spdx.json      "$IMAGE_NIX"
           attest cyclonedx sbom-nix.cyclonedx.json "$IMAGE_NIX"
+          fi
 
       # The SBOM files exist only in THIS job since #1583 moved syft here; the
       # upload used to stay behind in `release`, which then failed on every
@@ -423,5 +449,7 @@ jobs:
         run: |
           {
             echo "### SBOM attestations"
-            for i in "$IMAGE" "$IMAGE_RMUX" "$IMAGE_NIX"; do echo "- \`${i}\`"; done
+            for i in "$IMAGE" "$IMAGE_RMUX" "$IMAGE_NIX"; do
+              [ -n "${i}" ] && echo "- \`${i}\`"
+            done
           } >> "$GITHUB_STEP_SUMMARY"
