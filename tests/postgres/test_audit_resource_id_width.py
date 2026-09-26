@@ -31,6 +31,7 @@ from tests.postgres.helpers import (
     WEB_SERVER_ROOT,
     alembic_available,
     run_alembic,
+    sync_url,
 )
 
 if str(WEB_SERVER_ROOT) not in sys.path:
