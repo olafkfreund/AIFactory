@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1606
 intent: intent/2026-09-26-1606-unreapable-slot-leak.md
 ---
