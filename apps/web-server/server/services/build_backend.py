@@ -1407,7 +1407,9 @@ class KubeJobBuildBackend:
         )
         return False
 
-    async def _repair_worker_ref(self, job_id: str, job_name: str, namespace: str) -> None:
+    async def _repair_worker_ref(
+        self, job_id: str, job_name: str, namespace: str
+    ) -> None:
         """Persist a verified reconstructed reference so later ticks take the
         ordinary path (#1606). Best-effort: reconciliation already works without
         it, so a failed write must not abort this pass."""

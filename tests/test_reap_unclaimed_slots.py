@@ -244,9 +244,7 @@ async def test_colliding_job_name_does_not_decide_this_rows_verdict(
     store = await _store_with_refless_row(tmp_path / "g.db")
     backend = bb.KubeJobBuildBackend(store)
     # Same name, but the Job belongs to a different task and has FAILED.
-    batch = _FakeBatch(
-        {_JOB_NAME: {"failed": 1, "job_id_label": "some-other-task"}}
-    )
+    batch = _FakeBatch({_JOB_NAME: {"failed": 1, "job_id_label": "some-other-task"}})
 
     with caplog.at_level("WARNING"):
         reaped = await backend.reap_vanished_jobs(batch=batch)
