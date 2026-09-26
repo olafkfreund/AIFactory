@@ -1360,6 +1360,118 @@ class KubeJobBuildBackend:
 
     # -- reaper -------------------------------------------------------------
 
+    async def _reconstructed_job_is_ours(
+        self, batch: Any, namespace: str, job_name: str, job_id: str
+    ) -> bool:
+        """True when the Job found under a RECONSTRUCTED name really is this row's.
+
+        ``job_dispatch._short`` keeps only the last 20 characters of the job_id, so
+        two ids can produce one Job name. The Job object carries the same short id
+        as its ``factory.io/job-id`` label, so compare them before this row's
+        verdict is written from that Job's status (#1606).
+
+        Fails CLOSED: an unreadable Job, a missing label or any error returns
+        False, which leaves the row untouched for a later tick. A missed reap
+        costs a slot until the next pass; failing the wrong build is unrecoverable.
+        """
+        # ``job_labels`` is the function that STAMPED the label at dispatch, so
+        # asking it for the expected value cannot drift from the labelling rule the
+        # way a second copy of ``_short`` would. Lazy import: see _reconstructed_ref.
+        from core.job_dispatch import job_labels  # noqa: PLC0415
+
+        try:
+            job = await batch.read_namespaced_job(job_name, namespace)
+        except Exception as exc:  # noqa: BLE001 - never crash the reaper
+            _log.warning(
+                "[build_backend] #1606 could not re-read reconstructed Job %s/%s "
+                "for %s (%s) — leaving the row for a later tick",
+                namespace,
+                job_name,
+                sanitize_log(job_id),
+                exc,
+            )
+            return False
+        found = _job_id_label(job)
+        expected = job_labels("aifactory", job_id)["factory.io/job-id"]
+        if found == expected:
+            return True
+        _log.warning(
+            "[build_backend] #1606 reconstructed Job %s/%s belongs to another task "
+            "(factory.io/job-id=%r, expected %r) — leaving %s alone rather than "
+            "reading another build's verdict",
+            namespace,
+            job_name,
+            found,
+            expected,
+            sanitize_log(job_id),
+        )
+        return False
+
+    async def _repair_worker_ref(
+        self, job_id: str, job_name: str, namespace: str
+    ) -> None:
+        """Persist a verified reconstructed reference so later ticks take the
+        ordinary path (#1606). Best-effort: reconciliation already works without
+        it, so a failed write must not abort this pass."""
+        try:
+            await self._store.set_worker_ref(
+                job_id,
+                {"kind": "k8s-job", "job_name": job_name, "namespace": namespace},
+            )
+        except Exception:  # noqa: BLE001 - never crash the reaper
+            _log.exception(
+                "[build_backend] #1606 could not persist the reconstructed ref for %s",
+                sanitize_log(job_id),
+            )
+            return
+        _log.info(
+            "[build_backend] #1606 repaired the lost worker reference for %s -> %s/%s "
+            "(crashed between Job creation and the ref write)",
+            sanitize_log(job_id),
+            namespace,
+            job_name,
+        )
+
+    async def _resolve_row_ref(
+        self, batch: Any, row: dict[str, Any]
+    ) -> tuple[str, str, str, bool] | None:
+        """``(job_name, namespace, outcome, reconstructed)`` for one active row.
+
+        Returns ``None`` when the row must be left alone this pass.
+
+        #1606: dispatch creates the Job and only then writes the ref, so a crash
+        between the two leaves a granted slot nobody claimed. Such a row used to be
+        skipped here ("leave for the deadline path" — a path nested under
+        ``outcome == "running"`` that cannot be reached without a job_name) and it
+        held its concurrency slot forever. The Job name is deterministic, so
+        rebuild it and ASK the API: the row may still have a live Job, and assuming
+        otherwise would orphan a real build.
+
+        A reconstructed name is not proof of identity — ``_short`` keeps only the
+        last 20 characters of the id, so another task's Job can answer to it — so
+        the label is checked before the caller may write a verdict from that Job's
+        status. There is no Job to read when the outcome is ``gone``; the caller
+        distinguishes that case by ``reconstructed``.
+        """
+        recorded_name = row.get("job_name")
+        recorded_ns = row.get("namespace")
+        reconstructed = not recorded_name or not recorded_ns
+        job_name, namespace = (
+            _reconstructed_ref(row["job_id"])
+            if reconstructed
+            else (str(recorded_name), str(recorded_ns))
+        )
+
+        outcome = await self._job_outcome(batch, namespace, job_name)
+        if reconstructed and outcome != "gone":
+            job_id = row["job_id"]
+            if not await self._reconstructed_job_is_ours(
+                batch, namespace, job_name, job_id
+            ):
+                return None
+            await self._repair_worker_ref(job_id, job_name, namespace)
+        return job_name, namespace, outcome, reconstructed
+
     async def reap_vanished_jobs(
         self,
         *,
@@ -1393,13 +1505,10 @@ class KubeJobBuildBackend:
         try:
             for row in rows:
                 job_id = row["job_id"]
-                job_name = row.get("job_name")
-                namespace = row.get("namespace")
-                if not job_name or not namespace:
-                    # No usable ref — can't verify; leave for the deadline path.
+                resolved = await self._resolve_row_ref(batch, row)
+                if resolved is None:
                     continue
-
-                outcome = await self._job_outcome(batch, namespace, job_name)
+                job_name, namespace, outcome, reconstructed = resolved
 
                 # #857: reconcile from the Job's OWN status. The Job cannot write
                 # its job-state row (mark_terminal lives only in the control
@@ -1440,9 +1549,7 @@ class KubeJobBuildBackend:
                 # GENUINE anomaly (evicted / GC'd before any tick observed it),
                 # not the everyday path it used to be.
                 await self._fail(
-                    job_id,
-                    f"k8s Job {namespace}/{job_name} disappeared without a "
-                    "terminal write (evicted / GC'd / crashed before report)",
+                    job_id, _vanished_reason(namespace, job_name, reconstructed)
                 )
                 reaped.append(job_id)
         finally:
@@ -1537,6 +1644,64 @@ class KubeJobBuildBackend:
         if (getattr(status, "failed", None) or 0) >= 1:
             return "failed"
         return "running"
+
+
+def _dispatch_namespace() -> str:
+    """The namespace builds are dispatched into — same resolution as dispatch.
+
+    Read from the environment rather than remembered on the row, so a
+    reconstructed reference (#1606) lands where ``_build_manifest`` put the Job.
+    """
+    return (
+        os.environ.get(_ENV_NAMESPACE, _DEFAULT_NAMESPACE).strip() or _DEFAULT_NAMESPACE
+    )
+
+
+def _reconstructed_ref(job_id: str) -> tuple[str, str]:
+    """Rebuild the (job_name, namespace) a build's Job was created with.
+
+    ``job_dispatch.job_name`` is deterministic — ``factory-<service>-<short id>``
+    — and a build dispatches with ``job_id=task_id``, so the inputs that named
+    the Job are still on the row even when the ref write never happened (#1606).
+
+    The name alone is NOT proof of identity: ``_short`` keeps only the last 20
+    characters of the id, so two ids can collide. Callers must check the Job's
+    ``factory.io/job-id`` label before writing any terminal state.
+    """
+    # Lazy for the same reason as the other core.* imports in this file: ``core``
+    # joins sys.path at startup, so a module-level import would not resolve on a
+    # pure web-server import path.
+    from core.job_dispatch import job_name as build_job_name  # noqa: PLC0415
+
+    return build_job_name("aifactory", job_id), _dispatch_namespace()
+
+
+def _vanished_reason(namespace: str, job_name: str, reconstructed: bool) -> str:
+    """Why a ``running`` row is being failed when its Job is not there.
+
+    #1606: for a RECONSTRUCTED reference a 404 is consistent with "the Job was
+    never created" (the leak this frees) and, less likely, "created under a
+    colliding name" — the label check cannot run with nothing to read. Name the
+    case so the two stay separable in the logs afterwards.
+    """
+    if reconstructed:
+        return (
+            f"no k8s Job {namespace}/{job_name}: no worker ever claimed this slot "
+            "and no Job exists under the name dispatch would have used (crashed "
+            "between Job creation and the ref write, or never dispatched)"
+        )
+    return (
+        f"k8s Job {namespace}/{job_name} disappeared without a terminal write "
+        "(evicted / GC'd / crashed before report)"
+    )
+
+
+def _job_id_label(job: Any) -> str | None:
+    """The ``factory.io/job-id`` label off a fetched Job object, if present."""
+    meta = getattr(job, "metadata", None)
+    labels = getattr(meta, "labels", None) or {}
+    value = labels.get("factory.io/job-id")
+    return str(value) if value is not None else None
 
 
 def _to_epoch(value: Any) -> float | None:

@@ -33,6 +33,16 @@ SERVICE = "aifactory"
 KIND = "build"
 
 # Canonical lifecycle states (subset AIFactory uses) from status-taxonomy.json.
+# #1606: the worker_ref ``kind`` a granted-but-unclaimed slot carries. ``admit``
+# runs before any backend is chosen, so it must not name one: it used to stamp
+# "subprocess", which is indistinguishable from a live subprocess build, so a
+# dispatch that crashed before ``set_worker_ref`` left a ``running`` row that no
+# reaper could safely touch and that held its concurrency slot forever.
+# ``mark_running`` still writes "subprocess" — that is the subprocess path
+# declaring ITSELF — and the kubejob backend writes "k8s-job". Only "pending"
+# means "nobody has claimed this yet", which is what makes it reapable.
+_KIND_PENDING = "pending"
+
 ACTIVE_STATES = ("queued", "running")
 
 # Stable 64-bit key for the per-service admission advisory lock (Postgres).
@@ -249,7 +259,7 @@ class JobStateStore:
                             phase="coding" if grant else None,
                             attempt=1,
                             admission=admission,
-                            worker_ref={"kind": "subprocess"} if grant else None,
+                            worker_ref={"kind": _KIND_PENDING} if grant else None,
                             spawn_args=spawn_args.to_json(),
                         )
                     )
@@ -262,7 +272,7 @@ class JobStateStore:
                     existing.lifecycle_state = lifecycle
                     existing.phase = "coding" if grant else None
                     existing.admission = admission
-                    existing.worker_ref = {"kind": "subprocess"} if grant else None
+                    existing.worker_ref = {"kind": _KIND_PENDING} if grant else None
                     existing.spawn_args = spawn_args.to_json()
                     existing.result = None
                     existing.error = None
@@ -271,7 +281,12 @@ class JobStateStore:
                 return "started" if grant else "queued"
 
     async def mark_running(self, job_id: str) -> None:
-        """Mark a granted slot as actually running (worker_ref=subprocess)."""
+        """Mark a granted slot as actually running (worker_ref=subprocess).
+
+        Deliberately the one place that stamps ``subprocess``: this is the
+        subprocess path declaring itself, which is what distinguishes it from a
+        slot nobody has claimed (``_KIND_PENDING``) — see that constant (#1606).
+        """
         from ..database.models import JobState
 
         async with self._session_factory() as session:
@@ -325,7 +340,7 @@ class JobStateStore:
                 for row in queued:
                     row.lifecycle_state = "running"
                     row.phase = "coding"
-                    row.worker_ref = {"kind": "subprocess"}
+                    row.worker_ref = {"kind": _KIND_PENDING}
                     adm = dict(row.admission or {})
                     adm["started_at"] = _iso(_now())
                     adm["queue_position"] = None
@@ -411,12 +426,24 @@ class JobStateStore:
             }
 
     async def get_active_kubejobs(self) -> list[dict[str, Any]]:
-        """Active (``running``) rows whose worker is a k8s Job (#671 reaper).
+        """Active (``running``) rows the k8s-Job reaper owns (#671, #1606).
 
         Returns ``{job_id, job_name, namespace, updated_at}`` for each running
         build executed as a k8s Job, so the reaper can check whether the Job
         still exists / has exceeded its deadline and, if it vanished without a
         terminal write, mark the row failed (never strand a build).
+
+        Rows stamped ``_KIND_PENDING`` are included too, with ``job_name`` and
+        ``namespace`` as ``None``. Dispatch creates the Job and only then writes
+        the ref, so a crash between the two leaves a granted slot nobody claimed.
+        Such a row was skipped here, the reaper never saw it, and every other
+        reaper read its ``running`` state as proof of life — a permanent, silent
+        loss of capacity (#1606). The reaper rebuilds the deterministic Job name
+        and asks the API rather than assuming the Job is absent.
+
+        ``subprocess`` rows are still skipped: that stamp means the subprocess
+        path claimed the slot, and reaping a live build is the one outcome worse
+        than leaking one.
         """
         from ..database.models import JobState
 
@@ -436,7 +463,7 @@ class JobStateStore:
             )
             for row in rows:
                 ref = dict(row.worker_ref or {})
-                if ref.get("kind") != "k8s-job":
+                if ref.get("kind") not in ("k8s-job", _KIND_PENDING):
                     continue
                 out.append(
                     {

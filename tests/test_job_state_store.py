@@ -111,7 +111,10 @@ async def test_round_trip_row(tmp_path: Path) -> None:
         assert row.lifecycle_state == "running"
         assert row.correlation_key == "612"
         assert row.attempt == 1
-        assert row.worker_ref == {"kind": "subprocess"}
+        # #1606: admit() runs before a backend is chosen, so it stamps "pending"
+        # rather than claiming the subprocess path. mark_running / set_worker_ref
+        # are what name a real worker.
+        assert row.worker_ref == {"kind": "pending"}
         assert row.spawn_args["spec_id"] == "spec-1"
         assert row.spawn_args["parallel"] is True
         assert row.spawn_args["workers"] == 3
