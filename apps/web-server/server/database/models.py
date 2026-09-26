@@ -1188,7 +1188,10 @@ class JobState(Base):
     )
     # admission{enqueued_at, queue_position, started_at} per the schema.
     admission: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    # worker_ref{kind="subprocess"|"k8s-job", ...}. Phase 1 = subprocess.
+    # worker_ref{kind="pending"|"subprocess"|"k8s-job", ...}. "pending" (#1606) is
+    # a granted slot no worker has claimed yet: admit() runs before the backend is
+    # chosen, so it names none. "subprocess" is mark_running() declaring itself and
+    # "k8s-job" is set_worker_ref() after dispatch. NULL only on a queued row.
     worker_ref: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # Persisted args needed to (re)spawn a queued/running build on drain or
     # restart-recovery. Small JSON (paths + flags), never a blob.
