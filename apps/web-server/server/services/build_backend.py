@@ -1543,25 +1543,8 @@ class KubeJobBuildBackend:
                 # writing a terminal state. Don't strand it. Post-#857 this is a
                 # GENUINE anomaly (evicted / GC'd before any tick observed it),
                 # not the everyday path it used to be.
-                if reconstructed:
-                    # #1606: no Job under the reconstructed name. Consistent with
-                    # "the Job was never created" (the leak this frees) and, less
-                    # likely, "created under a colliding name" — the label check
-                    # cannot run with nothing to read. Reap it, but say which case
-                    # this was so the two stay separable afterwards.
-                    await self._fail(
-                        job_id,
-                        f"no k8s Job {namespace}/{job_name}: no worker ever "
-                        "claimed this slot and no Job exists under the name "
-                        "dispatch would have used (crashed between Job creation "
-                        "and the ref write, or never dispatched)",
-                    )
-                    reaped.append(job_id)
-                    continue
                 await self._fail(
-                    job_id,
-                    f"k8s Job {namespace}/{job_name} disappeared without a "
-                    "terminal write (evicted / GC'd / crashed before report)",
+                    job_id, _vanished_reason(namespace, job_name, reconstructed)
                 )
                 reaped.append(job_id)
         finally:
@@ -1686,6 +1669,26 @@ def _reconstructed_ref(job_id: str) -> tuple[str, str]:
     from core.job_dispatch import job_name as build_job_name  # noqa: PLC0415
 
     return build_job_name("aifactory", job_id), _dispatch_namespace()
+
+
+def _vanished_reason(namespace: str, job_name: str, reconstructed: bool) -> str:
+    """Why a ``running`` row is being failed when its Job is not there.
+
+    #1606: for a RECONSTRUCTED reference a 404 is consistent with "the Job was
+    never created" (the leak this frees) and, less likely, "created under a
+    colliding name" — the label check cannot run with nothing to read. Name the
+    case so the two stay separable in the logs afterwards.
+    """
+    if reconstructed:
+        return (
+            f"no k8s Job {namespace}/{job_name}: no worker ever claimed this slot "
+            "and no Job exists under the name dispatch would have used (crashed "
+            "between Job creation and the ref write, or never dispatched)"
+        )
+    return (
+        f"k8s Job {namespace}/{job_name} disappeared without a terminal write "
+        "(evicted / GC'd / crashed before report)"
+    )
 
 
 def _job_id_label(job: Any) -> str | None:
