@@ -1377,7 +1377,7 @@ class KubeJobBuildBackend:
         # ``job_labels`` is the function that STAMPED the label at dispatch, so
         # asking it for the expected value cannot drift from the labelling rule the
         # way a second copy of ``_short`` would. Lazy import: see _reconstructed_ref.
-        from core.job_dispatch import job_labels
+        from core.job_dispatch import job_labels  # noqa: PLC0415
 
         try:
             job = await batch.read_namespaced_job(job_name, namespace)
@@ -1430,6 +1430,43 @@ class KubeJobBuildBackend:
             job_name,
         )
 
+    async def _resolve_row_ref(
+        self, batch: Any, row: dict[str, Any]
+    ) -> tuple[str, str, str, bool] | None:
+        """``(job_name, namespace, outcome, reconstructed)`` for one active row.
+
+        Returns ``None`` when the row must be left alone this pass.
+
+        #1606: dispatch creates the Job and only then writes the ref, so a crash
+        between the two leaves a granted slot nobody claimed. Such a row used to be
+        skipped here ("leave for the deadline path" — a path nested under
+        ``outcome == "running"`` that cannot be reached without a job_name) and it
+        held its concurrency slot forever. The Job name is deterministic, so
+        rebuild it and ASK the API: the row may still have a live Job, and assuming
+        otherwise would orphan a real build.
+
+        A reconstructed name is not proof of identity — ``_short`` keeps only the
+        last 20 characters of the id, so another task's Job can answer to it — so
+        the label is checked before the caller may write a verdict from that Job's
+        status. There is no Job to read when the outcome is ``gone``; the caller
+        distinguishes that case by ``reconstructed``.
+        """
+        job_name = row.get("job_name")
+        namespace = row.get("namespace")
+        reconstructed = not job_name or not namespace
+        if reconstructed:
+            job_name, namespace = _reconstructed_ref(row["job_id"])
+
+        outcome = await self._job_outcome(batch, namespace, job_name)
+        if reconstructed and outcome != "gone":
+            job_id = row["job_id"]
+            if not await self._reconstructed_job_is_ours(
+                batch, namespace, job_name, job_id
+            ):
+                return None
+            await self._repair_worker_ref(job_id, job_name, namespace)
+        return job_name, namespace, outcome, reconstructed
+
     async def reap_vanished_jobs(
         self,
         *,
@@ -1463,33 +1500,10 @@ class KubeJobBuildBackend:
         try:
             for row in rows:
                 job_id = row["job_id"]
-                job_name = row.get("job_name")
-                namespace = row.get("namespace")
-                # #1606: dispatch creates the Job and only then writes the ref, so
-                # a crash between the two leaves a running row with no reference.
-                # It used to be skipped here ("leave for the deadline path" — a
-                # path nested under ``outcome == "running"`` that cannot be reached
-                # without a job_name), and it held its concurrency slot forever.
-                # The name is deterministic, so rebuild it and ASK the API: a
-                # ref-less row may still have a live Job, and assuming otherwise
-                # would orphan a real build.
-                reconstructed = not job_name or not namespace
-                if reconstructed:
-                    job_name, namespace = _reconstructed_ref(job_id)
-
-                outcome = await self._job_outcome(batch, namespace, job_name)
-
-                # A reconstructed name is not proof of identity: ``_short`` keeps
-                # only the last 20 characters of the id, so a different task's Job
-                # can answer to it. Verify the label before writing any terminal
-                # state — a missed reap is recoverable, failing the wrong build is
-                # not. (No Job to read when it is ``gone``; handled below.)
-                if reconstructed and outcome != "gone":
-                    if not await self._reconstructed_job_is_ours(
-                        batch, namespace, job_name, job_id
-                    ):
-                        continue
-                    await self._repair_worker_ref(job_id, job_name, namespace)
+                resolved = await self._resolve_row_ref(batch, row)
+                if resolved is None:
+                    continue
+                job_name, namespace, outcome, reconstructed = resolved
 
                 # #857: reconcile from the Job's OWN status. The Job cannot write
                 # its job-state row (mark_terminal lives only in the control
@@ -1669,7 +1683,7 @@ def _reconstructed_ref(job_id: str) -> tuple[str, str]:
     # Lazy for the same reason as the other core.* imports in this file: ``core``
     # joins sys.path at startup, so a module-level import would not resolve on a
     # pure web-server import path.
-    from core.job_dispatch import job_name as build_job_name
+    from core.job_dispatch import job_name as build_job_name  # noqa: PLC0415
 
     return build_job_name("aifactory", job_id), _dispatch_namespace()
 
