@@ -14,11 +14,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import create_engine, text
 
-from tests.postgres.helpers import alembic_available, run_alembic
-
-
-def _sync_url(url: str) -> str:
-    return url.replace("+asyncpg", "")
+from tests.postgres.helpers import alembic_available, run_alembic, sync_url
 
 
 @pytest.mark.postgres
@@ -33,7 +29,7 @@ def test_tenant_states_table_created(test_postgres_url: str) -> None:
     )
     assert result.returncode == 0, f"upgrade failed: {result.stderr[-1000:]}"
 
-    engine = create_engine(_sync_url(test_postgres_url))
+    engine = create_engine(sync_url(test_postgres_url))
     with engine.connect() as conn:
         cols = (
             conn.execute(
@@ -70,7 +66,7 @@ def test_organizations_new_columns(test_postgres_url: str) -> None:
 
     run_alembic(["upgrade", "head"], env={"DATABASE_URL": test_postgres_url})
 
-    engine = create_engine(_sync_url(test_postgres_url))
+    engine = create_engine(sync_url(test_postgres_url))
     with engine.connect() as conn:
         cols = conn.execute(
             text("""
@@ -96,7 +92,7 @@ def test_isolation_mode_defaults_to_shared(test_postgres_url: str) -> None:
 
     run_alembic(["upgrade", "head"], env={"DATABASE_URL": test_postgres_url})
 
-    engine = create_engine(_sync_url(test_postgres_url))
+    engine = create_engine(sync_url(test_postgres_url))
     with engine.begin() as conn:
         # Need a User + Org for the FK.
         conn.execute(
@@ -142,7 +138,7 @@ def test_cascade_delete_wipes_tenant_state(test_postgres_url: str) -> None:
 
     run_alembic(["upgrade", "head"], env={"DATABASE_URL": test_postgres_url})
 
-    engine = create_engine(_sync_url(test_postgres_url))
+    engine = create_engine(sync_url(test_postgres_url))
     with engine.begin() as conn:
         conn.execute(
             text("""
@@ -190,7 +186,7 @@ def test_downgrade_drops_everything(test_postgres_url: str) -> None:
     down = run_alembic(["downgrade", "d4f8c1a3e2b7"], env=env)
     assert down.returncode == 0, f"downgrade failed: {down.stderr[-1000:]}"
 
-    engine = create_engine(_sync_url(test_postgres_url))
+    engine = create_engine(sync_url(test_postgres_url))
     with engine.connect() as conn:
         tables = (
             conn.execute(
