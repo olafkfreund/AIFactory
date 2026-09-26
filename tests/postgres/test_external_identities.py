@@ -16,13 +16,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import create_engine, text
 
-from tests.postgres.helpers import alembic_available, run_alembic
-
-
-def _sync_url(url: str) -> str:
-    """Strip the asyncpg driver suffix so we can use a sync engine for
-    the verification queries (alembic + manual SQL)."""
-    return url.replace("+asyncpg", "")
+from tests.postgres.helpers import alembic_available, run_alembic, sync_url
 
 
 @pytest.mark.postgres
@@ -38,7 +32,7 @@ def test_external_identities_table_created(test_postgres_url: str) -> None:
     )
     assert result.returncode == 0, f"upgrade failed: {result.stderr[-1000:]}"
 
-    engine = create_engine(_sync_url(test_postgres_url))
+    engine = create_engine(sync_url(test_postgres_url))
     with engine.connect() as conn:
         cols = conn.execute(
             text("""
@@ -68,7 +62,7 @@ def test_unique_kind_subject_constraint(test_postgres_url: str) -> None:
 
     run_alembic(["upgrade", "head"], env={"DATABASE_URL": test_postgres_url})
 
-    engine = create_engine(_sync_url(test_postgres_url))
+    engine = create_engine(sync_url(test_postgres_url))
     with engine.begin() as conn:
         # Create a user to satisfy the FK.
         conn.execute(
@@ -115,7 +109,7 @@ def test_cascade_delete_on_user(test_postgres_url: str) -> None:
 
     run_alembic(["upgrade", "head"], env={"DATABASE_URL": test_postgres_url})
 
-    engine = create_engine(_sync_url(test_postgres_url))
+    engine = create_engine(sync_url(test_postgres_url))
     with engine.begin() as conn:
         conn.execute(
             text("""
@@ -162,7 +156,7 @@ def test_downgrade_drops_table(test_postgres_url: str) -> None:
     down = run_alembic(["downgrade", "b2d4f7e9c3a1"], env=env)
     assert down.returncode == 0, f"downgrade failed: {down.stderr[-1000:]}"
 
-    engine = create_engine(_sync_url(test_postgres_url))
+    engine = create_engine(sync_url(test_postgres_url))
     with engine.connect() as conn:
         exists = conn.execute(
             text("""
