@@ -1451,11 +1451,14 @@ class KubeJobBuildBackend:
         status. There is no Job to read when the outcome is ``gone``; the caller
         distinguishes that case by ``reconstructed``.
         """
-        job_name = row.get("job_name")
-        namespace = row.get("namespace")
-        reconstructed = not job_name or not namespace
-        if reconstructed:
-            job_name, namespace = _reconstructed_ref(row["job_id"])
+        recorded_name = row.get("job_name")
+        recorded_ns = row.get("namespace")
+        reconstructed = not recorded_name or not recorded_ns
+        job_name, namespace = (
+            _reconstructed_ref(row["job_id"])
+            if reconstructed
+            else (str(recorded_name), str(recorded_ns))
+        )
 
         outcome = await self._job_outcome(batch, namespace, job_name)
         if reconstructed and outcome != "gone":
