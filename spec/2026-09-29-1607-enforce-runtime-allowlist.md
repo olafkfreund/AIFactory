@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1607
 intent: intent/2026-09-29-1607-enforce-runtime-allowlist.md
 ---
