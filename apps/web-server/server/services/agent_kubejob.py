@@ -72,6 +72,7 @@ class KubejobMixin:
         # Attributes/methods provided by the concrete host (AgentService);
         # declared here so mypy can resolve the self.* references in a mixin.
         _kubejob_log_streamers: dict[str, Any]
+        _active_kubejob_task_ids: set[str]
         _task_current_phases: dict[str, Any]
         _task_log_writers: dict[str, Any]
         _handle_output_line: Callable[..., Any]
@@ -640,6 +641,7 @@ class KubejobMixin:
             _log.exception("[AgentService] kubejob reconcile: store read failed")
             return out
         backend = self._build_backend()
+        live: set[str] = set()
         for row in rows:
             job_id = row["job_id"]
             try:
@@ -658,6 +660,7 @@ class KubejobMixin:
                 # dispatch now that the Job is done (mirrors the subprocess path).
                 self._release_task_credential(job_id)
             else:
+                live.add(job_id)  # #1619: still running → is_running() says so
                 # #1249: still running → this IS the tick that used to be the
                 # ONLY route into check_review_obligation (monitor_process's
                 # subprocess-tied loop), which never runs for a kubejob build.
@@ -667,6 +670,14 @@ class KubejobMixin:
                 # this is the one place that fixes it for both the direct
                 # and queue-drained paths.
                 await self._redrive_kubejob_review(job_id)
+        # #1619: replace the live set wholesale from THIS tick's rows, never
+        # mutate it incrementally. A set that is only added to drifts into
+        # claiming dead builds are alive, and `is_running` saying "running"
+        # about a finished build strands it and blocks /start. Only reached
+        # when the poll above succeeded: an early return leaves the previous
+        # tick's answer standing rather than reporting every build dead
+        # because the store hiccuped.
+        self._active_kubejob_task_ids = live
         if out:
             # Builds finished → fill freed slots from the FIFO queue.
             await self._drain_queue()

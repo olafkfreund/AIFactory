@@ -99,6 +99,12 @@ class AgentService(
     def __init__(self):
         self.settings = get_settings()
         self.running_tasks: dict[str, asyncio.subprocess.Process] = {}
+        # #1619: kubejob builds run as k8s Jobs, never as an entry in
+        # ``running_tasks`` (only ``_spawn_task_execution``'s subprocess writes
+        # there). The reconcile loop replaces this set wholesale each tick from
+        # the rows it just polled, so ``is_running`` can answer for both
+        # backends without a Kubernetes call or a DB round-trip per request.
+        self._active_kubejob_task_ids: set[str] = set()
         self._log_callbacks: dict[str, list[Callable]] = {}
         self._progress_callbacks: dict[str, list[Callable]] = {}
         self._task_log_writers: dict[str, tuple[TaskLogWriter, TaskLogWriter]] = {}
@@ -1498,8 +1504,15 @@ class AgentService(
         return {"running": running, "queued": queued}
 
     def is_running(self, task_id: str) -> bool:
-        """Check if a task is currently running."""
-        return task_id in self.running_tasks
+        """Check if a task is currently running, on either build backend.
+
+        ``running_tasks`` holds only in-pod subprocess builds. A kubejob build
+        is a k8s Job the reconcile loop tracks, so asking the dict alone
+        answered ``False`` for its entire run — which the cockpit renders as
+        "Stuck", offering a Recover button that resets the record out from
+        under a live Job (#1619).
+        """
+        return task_id in self.running_tasks or task_id in self._active_kubejob_task_ids
 
     def get_running_tasks(self) -> list[str]:
         """Get list of running task IDs."""
