@@ -58,6 +58,45 @@ Self-contained summary of the approved decisions.
   there were.
 - Headroom swings ±15 GB in six minutes (six samples 60 s apart), all host-side.
 
+## Deviation, found during implementation: job_dispatch.py is VENDORED
+
+The spec said "blast radius: control plane only". Wrong, and CI caught it:
+`apps/backend/core/job_dispatch.py` is a byte-exact vendored copy of the Factory
+hub's `scripts/job_dispatch.py`, guarded by the blocking
+"vendored copies match the hub canonical" gate:
+
+```
+job_dispatch.py -> apps/backend/core/job_dispatch.py
+  [canonical sha256:c9c5791fae27 52277B | service sha256:85837deb2cc9 53217B]
+```
+
+The gate's own instruction is explicit: *"Never hand-edit one copy to make this
+gate pass: that is the silent divergence the gate exists to catch."*
+
+Scope of the correction, established rather than assumed:
+
+- **Vendored:** `job_dispatch.py` (with `artifact_store.py`, `cost_router_core.py`,
+  `factory_sandbox.py`, `job_tracing.py`, `language_descriptors.py`,
+  `nix_provisioner.py`, `scripts/ratchet_helpers.py`).
+- **Not vendored:** `core/kube_sandbox.py`. The 2Gi gate-pod limit stays an
+  AIFactory-local change.
+- **Other consumers:** TFactory, PFactory and CFactory do **not** vendor
+  `job_dispatch.py`, so re-vendoring is AIFactory-only. Smaller than feared.
+- `origin/dev`'s copy is byte-identical to the hub canonical, so the base is
+  clean and the change is exactly two hunks.
+
+**Revised route for the build-Job half** (steps 1-2 below):
+
+1. Land `ephemeral_storage_limit` in `Factory/scripts/job_dispatch.py` via a
+   CODEOWNERS-reviewed PR.
+2. Re-vendor into `apps/backend/core/job_dispatch.py` by copy, not by hand.
+3. Bump `HUB_PIN_SHA` (currently `5477f12a2e8436222b7839b61e07cba9e5aaee03`) in
+   the verification-core-drift workflow to the hub commit carrying it.
+
+This belongs in the hub on its merits, not as a workaround: every consumer that
+dispatches build Jobs onto a node has the same scheduler-blindness, so declaring
+`ephemeral-storage` is a hub-level improvement rather than an AIFactory quirk.
+
 ## Steps
 
 1. `apps/backend/core/job_dispatch.py:168-169` — add
