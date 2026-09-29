@@ -83,11 +83,13 @@ default flip (``AIFACTORY_BUILD_BACKEND=kubejob``, RFC-0016 #671) is now READY
 pending a live validation run (a real build green Job-native with the console
 intact) — deliberately NOT flipped in this change.
 
-#777: the build Job now also gets an ``install-clis`` initContainer (mirroring
-the control-plane pod's provisioning) so non-``claude`` runtimes selectable via
-``core/runtime_gating.py`` (``codex``, ``antigravity``/gemini) have their CLI
-binary on PATH in the Job, not just a valid API credential. See
-``_inject_install_clis``.
+#777 gave the build Job an ``install-clis`` initContainer so non-``claude``
+runtimes selectable via ``core/runtime_gating.py`` (``codex``,
+``antigravity``/gemini) had their CLI binary on PATH, not just a valid API
+credential. #1621 removed it: the Dockerfile bakes all of them at pinned
+versions and the ``-nix`` build stage inherits them, so the initContainer was
+re-fetching the same packages unpinned on every build and shadowing the pinned
+copies. The Job now gets them from its image. See ``_inject_build_path``.
 """
 
 from __future__ import annotations
@@ -471,39 +473,38 @@ _SEED_HOME_VOLUMES: tuple[tuple[str, str], ...] = (
 )
 
 
-# -- provider CLI provisioning (#777) ----------------------------------------- #
+# -- provider CLI availability (#777, #1621) ---------------------------------- #
 #
 # The coding phase can select the ``codex`` runtime (core/runtime_gating.py), whose
-# provider spawns the ``codex`` CLI binary directly (not just the API). The
-# control-plane Deployment provisions ``claude``/``codex``/``gemini`` (+ the
-# ``antigravity`` alias) into a shared ``/clis`` emptyDir via an ``install-clis``
-# initContainer (factory-gitops apps/aifactory/manifests/manifests.yaml) and
-# prepends ``/clis/bin`` to ``PATH``. The dispatched build Job is a FRESH pod that
-# never got this treatment, so a build routed to ``codex`` died ``Fatal error:
-# Codex CLI executable not found: 'codex'`` even though OPENAI_API_KEY was valid —
-# the CLI just was not on PATH. This mirrors that SAME provisioning into the build
-# Job pod, unconditionally (the control plane always runs it on every pod start,
-# so the build Job does too — no opt-in flag). The -nix build image bakes
-# ``claude`` already (a claude build works), but not ``codex``/``gemini`` — this
-# closes that gap for every runtime.
-_INSTALL_CLIS_IMAGE = "node:22-bookworm-slim"
-_INSTALL_CLIS_SCRIPT = (
-    "set -e\n"
-    "export npm_config_prefix=/clis\n"
-    "npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli\n"
-    # antigravity CLI == gemini-cli, invoked as `antigravity` (matches gitops).
-    "ln -sf /clis/bin/gemini /clis/bin/antigravity\n"
-)
-_CLIS_VOLUME_NAME = "clis"
-_CLIS_MOUNT_PATH = "/clis"
+# provider spawns the ``codex`` CLI binary directly (not just the API). A build
+# routed to it once died ``Fatal error: Codex CLI executable not found: 'codex'``
+# with a perfectly valid OPENAI_API_KEY — the binary was simply not on PATH in the
+# freshly dispatched Job pod. #777 fixed that by mirroring the control plane's
+# ``install-clis`` initContainer into the build Job: an npm install into a shared
+# ``/clis`` emptyDir, with ``/clis/bin`` prepended to PATH.
+#
+# #1621 removed it. The Dockerfile bakes claude-code, codex and gemini-cli at
+# pinned versions and the ``-nix`` build stage inherits them via ``FROM runtime``,
+# so the initContainer was re-fetching the same three packages UNPINNED on every
+# build and shadowing the pinned copies — 790 MB per pod, a live npm dependency on
+# the critical path, and no guarantee two builds ran the same CLI version. The
+# claim that this image bakes ``claude`` but not ``codex``/``gemini`` was true when
+# #777 landed and stopped being true without anything noticing, because the rescue
+# kept working. factory-gitops dropped the same initContainer from the
+# control-plane Deployment under #791 for the same reason.
+#
+# The binaries now come from the image and nowhere else, so the Dockerfile asserts
+# each one with ``--version`` at build time: a missing CLI fails the image once, in
+# CI, instead of failing every build that needs it.
 # Prepends /clis/bin to the -nix BUILD image's own default PATH (Dockerfile
 # build-runtime stage), NOT the control-plane Deployment's — the build image
 # additionally carries /nix/var/nix/profiles/default/bin (where ``nix`` lives; the
-# build runs ``nix develop`` for the SUT toolchain) and /home/nonroot/.npm-global/bin.
-# Dropping either breaks the packed build, so keep the image's exact PATH and only
-# prepend /clis/bin for the provisioned provider CLIs.
+# build runs ``nix develop`` for the SUT toolchain) and /home/nonroot/.npm-global/bin
+# (the baked provider CLIs). Dropping either breaks the packed build, so this is the
+# image's exact PATH. #1621 removed the /clis/bin prefix that used to shadow the
+# baked, pinned CLIs with unpinned ones fetched per pod.
 _BUILD_PATH_ENV = (
-    "/clis/bin:/nix/var/nix/profiles/default/bin:/home/nonroot/.npm-global/bin:"
+    "/nix/var/nix/profiles/default/bin:/home/nonroot/.npm-global/bin:"
     "/home/projects/MagesticAI/.venv/bin:/usr/local/sbin:/usr/local/bin:"
     "/usr/bin:/usr/sbin:/sbin:/bin"
 )
@@ -571,34 +572,26 @@ def _inject_seed_creds(manifest: dict[str, Any]) -> dict[str, Any]:
     return manifest
 
 
-def _inject_install_clis(manifest: dict[str, Any]) -> dict[str, Any]:
-    """Add the ``install-clis`` initContainer so the build Job has the same
-    provider CLIs (``claude``/``codex``/``gemini``/``antigravity``) on PATH that
-    the control-plane pod is provisioned with (#777). Unconditional — mirrors the
-    control plane, which runs this on every pod start with no opt-in flag.
-    Mutates + returns the manifest. Pure (no env / no I/O) → unit-testable.
+def _inject_build_path(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Set the build container's ``PATH`` to the build image's own layout.
+
+    Until #1621 this also added an ``install-clis`` initContainer that
+    npm-installed claude-code/codex/gemini-cli into a ``/clis`` emptyDir and
+    prepended it here, so the build Job would have the provider CLIs on PATH
+    (#777). That became redundant when the Dockerfile started baking all three at
+    pinned versions (``Dockerfile`` ``npm install -g …@2.1.238/@0.149.0/@0.56.0``,
+    inherited by the ``-nix`` build stage via ``FROM runtime``): the initContainer
+    re-fetched the same packages UNPINNED on every build and shadowed the pinned
+    copies, 790 MB per pod. The control plane dropped it under #791 for the same
+    reason; this is the build path catching up.
+
+    What remains is load-bearing and must not be dropped with it: the build image
+    additionally carries ``/nix/var/nix/profiles/default/bin`` (where ``nix``
+    lives — the build runs ``nix develop`` for the SUT toolchain) and
+    ``/home/nonroot/.npm-global/bin`` (the baked CLIs). Losing either breaks the
+    packed build. Mutates + returns the manifest. Pure (no env / no I/O).
     """
-    pod = manifest["spec"]["template"]["spec"]
-    pod.setdefault("volumes", []).append({"name": _CLIS_VOLUME_NAME, "emptyDir": {}})
-    pod.setdefault("initContainers", []).insert(
-        0,
-        {
-            "name": "install-clis",
-            "image": _INSTALL_CLIS_IMAGE,
-            "command": ["sh", "-c"],
-            "args": [_INSTALL_CLIS_SCRIPT],
-            # node image's "node" user (uid 1000): HOME=/home/node stays
-            # writable for the npm cache; /clis is a world-writable emptyDir.
-            "securityContext": _init_container_security_context(1000),
-            "volumeMounts": [
-                {"name": _CLIS_VOLUME_NAME, "mountPath": _CLIS_MOUNT_PATH}
-            ],
-        },
-    )
-    container = pod["containers"][0]
-    container.setdefault("volumeMounts", []).append(
-        {"name": _CLIS_VOLUME_NAME, "mountPath": _CLIS_MOUNT_PATH}
-    )
+    container = manifest["spec"]["template"]["spec"]["containers"][0]
     container.setdefault("env", []).append({"name": "PATH", "value": _BUILD_PATH_ENV})
     return manifest
 
@@ -773,7 +766,7 @@ def build_run_py_job_manifest(
         # in-process has no reason to hold an API token.
         automount_service_account_token=_gates_dispatch_jobs(),
     )
-    return _inject_install_clis(_inject_seed_creds(build_job_manifest(spec)))
+    return _inject_build_path(_inject_seed_creds(build_job_manifest(spec)))
 
 
 def _gates_dispatch_jobs() -> bool:
