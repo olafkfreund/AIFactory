@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1628
 spec: spec/2026-09-29-1628-running-row-survives-dispatch.md
 ---
