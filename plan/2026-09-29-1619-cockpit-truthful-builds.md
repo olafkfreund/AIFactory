@@ -130,6 +130,35 @@ Branch `fix/1619-cockpit-truthful-builds` off `dev`, one commit per step.
   raw line is consumed but never fanned out. Caught by the existing suite, not
   by the new tests.
 
+- **Step 7 is split: what the cluster could prove now, and what needs the image.**
+  The control plane runs a baked image (`ghcr.io/olafkfreund/aifactory:sha-cc8ea52`),
+  so the card-level checks — `/running` answering true to the cockpit,
+  `task_logs.json` growing, the phase leaving `planning`, `recover` returning
+  409 over HTTP — cannot run until this lands and deploys. Hand-patching the
+  running deployment to manufacture them was rejected: it would prove a
+  deployment nobody will ever run. They are carried into the PR as
+  post-deploy verification instead of being dropped.
+
+- **Step 7 found a defect that changes what the fix covers: #1628.** A build
+  dispatched through `POST /start` (spec creation, then build) has its
+  job-state row marked `done` **at dispatch** — measured three times over a
+  minute with its Job `active=1`, `ended_at` one millisecond after
+  `updated_at`. `get_active_kubejobs` selects `lifecycle_state == "running"`,
+  so on that path this change's live set is empty and `is_running` still
+  answers False.
+
+  Measured scope rather than assumed: `_done` logs "k8s Job reported
+  succeeded" only for a row the store returned as running, and since the pod
+  started there is exactly one such line — for the **022** build, dispatched by
+  the contract handoff, which kept a correct `running` row for its full 145
+  minutes. So the handoff path (every PFactory-driven build, including the
+  whole demo) is correct today and this change fixes the cockpit for it; the
+  `/start` path needs #1628, which also restores the reaper, the #1249 review
+  re-drive, streamer cancellation and credential release for those builds.
+
+  This change is therefore landing with a known, measured gap rather than a
+  suspected one, and #1628 follows immediately.
+
 ## Tests
 
 ```sh
