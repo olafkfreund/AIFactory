@@ -473,21 +473,29 @@ _SEED_HOME_VOLUMES: tuple[tuple[str, str], ...] = (
 )
 
 
-# -- provider CLI provisioning (#777) ----------------------------------------- #
+# -- provider CLI availability (#777, #1621) ---------------------------------- #
 #
 # The coding phase can select the ``codex`` runtime (core/runtime_gating.py), whose
-# provider spawns the ``codex`` CLI binary directly (not just the API). The
-# control-plane Deployment provisions ``claude``/``codex``/``gemini`` (+ the
-# ``antigravity`` alias) into a shared ``/clis`` emptyDir via an ``install-clis``
-# initContainer (factory-gitops apps/aifactory/manifests/manifests.yaml) and
-# prepends ``/clis/bin`` to ``PATH``. The dispatched build Job is a FRESH pod that
-# never got this treatment, so a build routed to ``codex`` died ``Fatal error:
-# Codex CLI executable not found: 'codex'`` even though OPENAI_API_KEY was valid —
-# the CLI just was not on PATH. This mirrors that SAME provisioning into the build
-# Job pod, unconditionally (the control plane always runs it on every pod start,
-# so the build Job does too — no opt-in flag). The -nix build image bakes
-# ``claude`` already (a claude build works), but not ``codex``/``gemini`` — this
-# closes that gap for every runtime.
+# provider spawns the ``codex`` CLI binary directly (not just the API). A build
+# routed to it once died ``Fatal error: Codex CLI executable not found: 'codex'``
+# with a perfectly valid OPENAI_API_KEY — the binary was simply not on PATH in the
+# freshly dispatched Job pod. #777 fixed that by mirroring the control plane's
+# ``install-clis`` initContainer into the build Job: an npm install into a shared
+# ``/clis`` emptyDir, with ``/clis/bin`` prepended to PATH.
+#
+# #1621 removed it. The Dockerfile bakes claude-code, codex and gemini-cli at
+# pinned versions and the ``-nix`` build stage inherits them via ``FROM runtime``,
+# so the initContainer was re-fetching the same three packages UNPINNED on every
+# build and shadowing the pinned copies — 790 MB per pod, a live npm dependency on
+# the critical path, and no guarantee two builds ran the same CLI version. The
+# claim that this image bakes ``claude`` but not ``codex``/``gemini`` was true when
+# #777 landed and stopped being true without anything noticing, because the rescue
+# kept working. factory-gitops dropped the same initContainer from the
+# control-plane Deployment under #791 for the same reason.
+#
+# The binaries now come from the image and nowhere else, so the Dockerfile asserts
+# each one with ``--version`` at build time: a missing CLI fails the image once, in
+# CI, instead of failing every build that needs it.
 # Prepends /clis/bin to the -nix BUILD image's own default PATH (Dockerfile
 # build-runtime stage), NOT the control-plane Deployment's — the build image
 # additionally carries /nix/var/nix/profiles/default/bin (where ``nix`` lives; the
