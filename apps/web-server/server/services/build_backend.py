@@ -262,6 +262,10 @@ _PASSTHROUGH_BUILD_ENV: tuple[str, ...] = (
     # silently chose the subprocess, found no toolchain, and recorded
     # `kotlin-unit skipped (tool not available)` — a gate that ran and verified
     # nothing (#1491).
+    # #1607: the allowlist is enforced in the coder, which runs HERE — an
+    # unforwarded value means every dispatched build sees an empty allowlist
+    # and gates everything to claude regardless of the Deployment.
+    "AIFACTORY_RUNTIMES",
     "AIFACTORY_SANDBOX_GATES",
     "AIFACTORY_SANDBOX_IMAGE",
     "AIFACTORY_SANDBOX_BACKEND",
