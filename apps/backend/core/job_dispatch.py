@@ -167,6 +167,17 @@ class JobSpec:
     workspace_uri: str | None = None
     cpu_limit: str = "2"
     mem_limit: str = "4Gi"
+    # #1425: a LIMIT, deliberately not a request. The node advertises 933.7 GB of
+    # allocatable ephemeral-storage and actually has ~185 GB free — its filesystem
+    # IS the host root, and ~747 GB of that is workstation data the scheduler
+    # cannot see. A request is evaluated against that fiction and would admit
+    # ~200 builds against a pool that does not exist. A limit is kubelet-enforced
+    # per pod, so a runaway build is evicted by itself instead of the node
+    # crossing evictionHard nodefs.available=5% and evicting arbitrary pods —
+    # postgres and minio among them. 4Gi covers the measured 2.4 GB worst case
+    # (build pod + its overlapping gate pod) with margin for in-build /work
+    # growth, the one term nobody has measured.
+    ephemeral_storage_limit: str = "4Gi"
     ttl_seconds: int = 300
     deadline_seconds: int = 3600
     image_pull_secret: str | None = "ghcr-pull"  # noqa: S105 — k8s secret name, not a credential
@@ -574,7 +585,13 @@ def build_job_manifest(spec: JobSpec) -> dict[str, Any]:
         "command": ["bash", "-c", inner],
         "workingDir": "/work" if (work_co_mount or spec.workspace_uri) else "/",
         "env": env,
-        "resources": {"limits": {"cpu": spec.cpu_limit, "memory": spec.mem_limit}},
+        "resources": {
+            "limits": {
+                "cpu": spec.cpu_limit,
+                "memory": spec.mem_limit,
+                "ephemeral-storage": spec.ephemeral_storage_limit,
+            }
+        },
         # #812 (Factory#274 compensating controls): pin the hardening in the
         # manifest instead of relying on the image alone. No
         # readOnlyRootFilesystem — nix writes /nix/var (builder db) and the

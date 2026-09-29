@@ -409,3 +409,17 @@ async def test_a_job_that_succeeds_before_the_deadline_is_unaffected(monkeypatch
 
     assert result.ok is True
     assert "[job" not in result.output
+
+
+def test_gate_pod_declares_an_ephemeral_storage_limit():
+    """#1425: the gate Job is the other half of a concurrency slot.
+
+    It runs in its OWN pod (AIFACTORY_SANDBOX_BACKEND=nixjob), so the build pod's
+    limit does not cover it — its chroot Nix store and repo emptyDir land on the
+    same node overlay and were equally invisible to the scheduler.
+    """
+    m = build_job_manifest("fsbx-abc", "ghcr.io/x/rust:1.90", ["cargo test"])
+    limits = m["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"]
+
+    assert limits["ephemeral-storage"] == "2Gi"
+    assert limits["memory"] == "2Gi"  # unchanged
