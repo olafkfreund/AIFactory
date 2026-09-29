@@ -21,14 +21,23 @@ def test_claude_shorthands_resolve_to_latest():
     assert resolve_model_id("sonnet-4.6") == "claude-sonnet-4-6"
 
 
-def test_default_phase_models_use_opus():
-    # All PARR stages default to Opus 4.8 (current flagship). Per-task
-    # phase_models still overrides.
+def test_opus_judges_and_sonnet_codes():
+    """Opus on the stages that decide; Sonnet on the stage that executes.
+
+    Coding is where the volume is — the 21-subtask demo build spent 145 minutes
+    almost entirely there — while spec/planning/qa are single long-context
+    judgements. Per-task `phaseModels` still overrides both.
+    """
     from phase_config import DEFAULT_PHASE_MODELS, resolve_model_id
 
-    assert {resolve_model_id(m) for m in DEFAULT_PHASE_MODELS.values()} == {
+    judgement = {"spec", "planning", "qa", "qa_fixer"}
+    assert {resolve_model_id(DEFAULT_PHASE_MODELS[p]) for p in judgement} == {
         "claude-opus-4-8"
     }
+    assert resolve_model_id(DEFAULT_PHASE_MODELS["coding"]) == "claude-sonnet-5"
+    assert set(DEFAULT_PHASE_MODELS) == judgement | {"coding"}, (
+        "a new stage needs a deliberate model choice, not a silent default"
+    )
 
 
 def test_antigravity_agentic_default_is_latest():

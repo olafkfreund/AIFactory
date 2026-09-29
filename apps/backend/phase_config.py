@@ -82,11 +82,21 @@ SPEC_PHASE_THINKING_LEVELS: dict[str, str] = {
 
 # Default phase configuration (fallback, matches 'Balanced' profile)
 DEFAULT_PHASE_MODELS: dict[str, str] = {
-    # Default to Opus 4.8 (current flagship) for all stages — highest-capability
-    # coding/agentic model. Override per-task via the contract `phase_models`.
+    # Opus plans and judges; Sonnet writes the code.
+    #
+    # The stages differ in what they are actually hard at. `spec`, `planning`
+    # and `qa` decide WHAT to build and whether it is right — one long-context
+    # judgement each, where a better call changes the whole run. `coding`
+    # executes a decision already made, across many small, well-specified
+    # subtasks, and it is where nearly all the wall-clock and tokens go: the
+    # 21-subtask demo build spent 145 minutes almost entirely in coding.
+    #
+    # So the flagship is spent where judgement compounds, and the faster model
+    # where volume dominates. Per-task `phaseModels` still overrides either
+    # (RFC-0014 precedence, #1397), so a task that needs Opus to code can say so.
     "spec": "opus",
     "planning": "opus",
-    "coding": "opus",
+    "coding": "sonnet",
     "qa": "opus",
     "qa_fixer": "opus",
 }

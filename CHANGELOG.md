@@ -1,5 +1,17 @@
 ## [Unreleased]
 
+### Changed
+
+- **Opus plans, Sonnet codes.** `DEFAULT_PHASE_MODELS` sent every PARR stage to
+  Opus 4.8. The stages differ in what they are hard at: `spec`, `planning` and
+  `qa` are single long-context judgements where a better call changes the whole
+  run, while `coding` executes decisions already made across many small,
+  well-specified subtasks — and it is where the wall-clock and the tokens go
+  (the 21-subtask demo build spent 145 minutes almost entirely in coding). The
+  default now spends the flagship where judgement compounds and Sonnet 5 where
+  volume dominates. Per-task `phaseModels` still overrides either, so a task
+  that needs Opus to code can say so (RFC-0014 precedence, #1397).
+
 ## 3.6.84 - 2026-09-23
 
 ### Fixed
