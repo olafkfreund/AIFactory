@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -24,6 +25,13 @@ from server.services import review_redrive_service
 from server.specpath import spec_dir_for
 
 from .build_backend import _TERMINAL_STATES, orphaned_worktree_registrations
+
+# #1619: how long after dispatch an unknown task id still counts as active,
+# covering the window before the first reconcile tick (interval 15s) publishes
+# it. One tick plus headroom — long enough that a just-dispatched build is
+# never called dead, short enough that a build which never registered stops
+# being followed promptly.
+_DISPATCH_GRACE_SECONDS = 45.0
 from .build_log_stream import PlanSync
 from .task_log_writer import TaskLogWriter
 from .task_phase import TaskPhase
@@ -495,6 +503,12 @@ class KubejobMixin:
             # Pull it on the stream's own clock instead — the push and the pull
             # both already exist, they were just each called once.
             plan_sync=self._kubejob_plan_sync(project_path, spec_id),
+            # #1619: without this the pump stopped on the FIRST end-of-stream,
+            # which for a build pod arrives while its init containers are still
+            # running — so nothing was followed for the rest of the build. The
+            # authority on "is this Job alive" is the reconcile loop's own set,
+            # refreshed every 15s from the job-state rows.
+            job_active=self._kubejob_still_active(task_id),
         )
 
         async def _run_stream() -> None:
@@ -597,6 +611,28 @@ class KubejobMixin:
             return _feed if _on() else None
         except Exception:  # noqa: BLE001 - rmux integration optional
             return None
+
+    def _kubejob_still_active(self, task_id: str) -> Callable[[], Any]:
+        """A liveness check for ``KubeJobLogStreamer`` (#1619).
+
+        Reads the set the reconcile loop republishes each tick, so it costs
+        nothing and cannot disagree with what ``is_running`` tells the cockpit.
+
+        The set is empty until the first tick after dispatch (≤15s), and the
+        streamer may hit its first EOF inside that window — so an id that is
+        not yet known counts as active. Being briefly optimistic here costs one
+        extra reattach; being pessimistic would reproduce the very bug this
+        fixes. The bounded empty-reattach counter stops a genuinely dead
+        stream either way.
+        """
+        started = time.monotonic()
+
+        async def _active() -> bool:
+            if task_id in self._active_kubejob_task_ids:
+                return True
+            return (time.monotonic() - started) < _DISPATCH_GRACE_SECONDS
+
+        return _active
 
     def _cancel_kubejob_log_stream(self, task_id: str) -> None:
         """Cancel + drop a build's Job-native log streamer if present (#680)."""

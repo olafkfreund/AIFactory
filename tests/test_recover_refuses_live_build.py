@@ -48,7 +48,9 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     spec_dir = tmp_path / "proj" / ".aifactory" / "specs" / "022-some-spec"
     spec_dir.mkdir(parents=True)
     monkeypatch.setattr(
-        execution, "load_projects", lambda: {"proj-uuid": {"path": str(tmp_path / "proj")}}
+        execution,
+        "load_projects",
+        lambda: {"proj-uuid": {"path": str(tmp_path / "proj")}},
     )
 
 

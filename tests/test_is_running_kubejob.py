@@ -57,7 +57,9 @@ def _service(
 
     class _FakeStore:
         async def get_active_kubejobs(self) -> list[dict[str, Any]]:
-            return [{"job_id": r, "job_name": "j", "namespace": "factory"} for r in rows]
+            return [
+                {"job_id": r, "job_name": "j", "namespace": "factory"} for r in rows
+            ]
 
     monkeypatch.setattr(service, "_store", lambda: _FakeStore())
     monkeypatch.setattr(service, "_build_backend", lambda: backend)
@@ -154,3 +156,44 @@ async def test_store_failure_leaves_the_previous_answer_standing(
     await service.reconcile_kubejob_builds()
 
     assert service.is_running(TASK) is True
+
+
+@pytest.mark.asyncio
+async def test_streamer_liveness_check_follows_the_same_set(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """#1619: the log streamer's reattach authority is the same live set.
+
+    If these two could disagree, the cockpit would say "running" while the
+    streamer gave up (or the reverse), which is how the original defect stayed
+    invisible — two views of the same build, neither checked against the other.
+    """
+    service = _service(monkeypatch, [TASK], _StillRunningBackend())
+    await service.reconcile_kubejob_builds()
+
+    active = service._kubejob_still_active(TASK)
+    assert await active() is True
+    assert service.is_running(TASK) is True
+
+    # A build that has left the rows is no longer followed...
+    gone = service._kubejob_still_active(OTHER)
+    import server.services.agent_kubejob as kj
+
+    monkeypatch.setattr(kj, "_DISPATCH_GRACE_SECONDS", 0.0)
+    assert await gone() is False
+    assert service.is_running(OTHER) is False
+
+
+@pytest.mark.asyncio
+async def test_just_dispatched_build_counts_as_active(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The set is empty until the first tick; a fresh dispatch is not "dead".
+
+    The streamer's first EOF arrives inside that window — it is exactly the
+    container-still-initialising case — so treating an unknown id as dead would
+    reproduce #1619 rather than fix it.
+    """
+    service = _service(monkeypatch, [], _StillRunningBackend())
+    active = service._kubejob_still_active("proj-uuid:999-never-polled")
+    assert await active() is True, "within the dispatch grace window"

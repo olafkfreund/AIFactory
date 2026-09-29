@@ -97,6 +97,39 @@ Branch `fix/1619-cockpit-truthful-builds` off `dev`, one commit per step.
    typecheck + vitest only if a frontend file changed (none is expected).
 9. **PR → `dev`** carrying the step 7 evidence; close #1619, #1618 and #1617.
 
+## Deviations recorded during implementation
+
+- **Reattach skips already-consumed lines instead of passing `since_time`.**
+  The spec and steps 3–4 said to pass `since_time` so a reattach does not
+  replay. Implementing it meant widening the injectable `LineSource` signature
+  — which every existing streamer test constructs — and depending on the k8s
+  API's second-granularity timestamp, where a line written inside the same
+  second as the cut is either duplicated or **lost**. Counting what has already
+  been read costs one integer, needs no signature change, cannot drop a line at
+  the seam, and works for any injected source. The trade is re-reading the log
+  on each reattach, which only happens on an unexpected EOF.
+
+- **Reattach is gated on an injected `job_active` check, not on cancellation
+  alone.** The first implementation looped until cancelled by the reconcile
+  loop's terminal path. That is the real lifecycle, but it made every existing
+  streamer test hang for the full give-up window, and it would keep a streamer
+  alive for a minute after any missed cancel. A liveness predicate makes the
+  exit explicit; absent one, the pump makes a single pass, which is exactly the
+  pre-#1619 behaviour, so nothing else changes.
+
+- **A just-dispatched task counts as active for 45s.** The live set is empty
+  until the first reconcile tick (15s), and the streamer's first EOF lands
+  inside that window — it *is* the container-still-initialising case. Treating
+  an unknown id as dead would have reproduced the bug instead of fixing it.
+  Being briefly optimistic costs one extra reattach; the bounded empty-reattach
+  counter still stops a genuinely dead stream.
+
+- **`delivered` and `consumed` are separate counters.** The first version
+  reused `delivered` as the replay offset, which inflated the value `stream()`
+  returns and broke `test_empty_and_blank_lines_skipped_for_cockpit` — an empty
+  raw line is consumed but never fanned out. Caught by the existing suite, not
+  by the new tests.
+
 ## Tests
 
 ```sh
