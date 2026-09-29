@@ -72,28 +72,65 @@ jobs:
       - name: Ruff lint
         run: apps/backend/.venv/bin/ruff check apps/backend apps/web-server scripts tests
 
-      # MinIO for the S3-workspaces integration tests (Epic #35 #40
-      # half-B). Started as a regular ``docker run`` rather than a
-      # service container because (a) bitnami/minio:latest was retired
-      # mid-2026, and (b) GHA service containers can't pass the
-      # ``server /data`` command upstream minio/minio needs.
-      - name: Start MinIO
+      # An S3 server for the workspace integration tests (Epic #35 #40
+      # half-B). Started as a regular ``docker run`` rather than a service
+      # container because GHA service containers can't pass the ``server``
+      # subcommand these images need.
+      #
+      # THIRD image in this slot: bitnami/minio was retired mid-2026, then
+      # minio/minio itself was gated (quay.io AND docker.io now 401 an
+      # anonymous pull, and quay denies even the tag list), which turned this
+      # step into `exit 125` and took the whole job — lint and unit tests
+      # included — down on every PR in the repo (#1612). SeaweedFS is a real
+      # S3 server that still pulls anonymously; both workspace integration
+      # tests pass against it. Pinned by DIGEST so the next vendor policy
+      # change is a deliberate bump rather than an outage.
+      #
+      # Non-fatal on purpose, and the reason is the same one the bubblewrap
+      # step below documents: a step whose failure mode is worse than the
+      # thing it guards. A third party's registry terms must not be able to
+      # redden a lint job. If the store does not come up, the tests SKIP
+      # themselves — _live_s3_reachable() socket-probes TEST_S3_ENDPOINT_URL
+      # and pytest.skip()s the fixture — and the ::warning:: below makes that
+      # skip visible instead of silent (#597/#1496: never silently green).
+      # On main we do NOT tolerate it: ci.yml runs on push to main, and a
+      # release must not be cut on S3 evidence that was never gathered.
+      - name: Start S3 (SeaweedFS) for the workspace integration tests
+        env:
+          # renovate: datasource=docker depName=chrislusf/seaweedfs
+          S3_IMAGE: "chrislusf/seaweedfs:4.47@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882"
         run: |
-          docker run -d --name aif-minio \
-            -p 9000:9000 \
-            -e MINIO_ROOT_USER=minio \
-            -e MINIO_ROOT_PASSWORD=minio12345 \
-            quay.io/minio/minio:latest server /data
-          # Wait for healthcheck to pass before pytest fires the
-          # integration tests. Times out after ~30s if MinIO never
-          # comes up — the tests would just skip in that case.
-          for i in $(seq 1 30); do
-            if curl -fsSL "http://localhost:9000/minio/health/live" >/dev/null 2>&1; then
-              echo "MinIO ready after ${i}s"
-              break
+          # No `set -e` fallthrough: every failure here is reported, not fatal.
+          # NB: -dir must name a directory that EXISTS in the image; passing a
+          # missing one exits 255 and would read as "store unavailable".
+          if ! docker run -d --name aif-s3 -p 8333:8333 "${S3_IMAGE}" server -s3; then
+            echo "::warning::could not start the S3 test server from ${S3_IMAGE}; the workspace integration tests will skip"
+            docker logs aif-s3 2>&1 | tail -20 || true
+            if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+              echo "::error::S3 test server unavailable on main — refusing to release on S3 coverage that was never gathered"
+              exit 1
+            fi
+            exit 0
+          fi
+          # Answers in ~5s; 15 is headroom, not a hope.
+          for i in $(seq 1 15); do
+            if curl -fsSL "http://localhost:8333/" >/dev/null 2>&1; then
+              echo "S3 (SeaweedFS) ready after ${i}s"
+              # The tests' bucket. Plain S3 PUT — no `mc` client needed.
+              curl -fsS -X PUT "http://localhost:8333/aifactory-test" >/dev/null \
+                && echo "bucket aifactory-test created" \
+                || echo "::warning::bucket create failed; the test fixture will retry"
+              exit 0
             fi
             sleep 1
           done
+          echo "::warning::S3 test server did not answer within 15s; the workspace integration tests will skip"
+          docker logs aif-s3 2>&1 | tail -20 || true
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            echo "::error::S3 test server unavailable on main — refusing to release on S3 coverage that was never gathered"
+            exit 1
+          fi
+          exit 0
 
       # bubblewrap powers the agent OS sandbox (#363). Installed here so the
       # sandbox-escape corpus exercises a real bwrap boundary instead of
@@ -126,14 +163,19 @@ jobs:
           # services.redis container above. Test still skips on local
           # dev runs that don't have a Redis available.
           TEST_REDIS_URL: "redis://localhost:6379/15"
-          # Workspace-storage integration test points at the
-          # services.minio container. MINIO_DEFAULT_BUCKETS on the
-          # service auto-creates the bucket; the test fixture
-          # idempotently re-creates it if needed.
+          # Workspace-storage integration test points at the SeaweedFS
+          # container started by the "Start S3" step above (there is no
+          # services.minio container — that comment outlived the service it
+          # described). The step creates the bucket; the fixture re-creates it
+          # idempotently if needed. These stay set even when the store failed
+          # to start: _live_s3_reachable() socket-probes the endpoint and
+          # skips the suite, which is what makes the step safe to be
+          # non-fatal. SeaweedFS accepts the credentials as supplied.
           TEST_S3_URI_BASE: "s3://aifactory-test/workspaces"
-          TEST_S3_ENDPOINT_URL: "http://localhost:9000"
-          AWS_ACCESS_KEY_ID: "minio"
-          AWS_SECRET_ACCESS_KEY: "minio12345"
+          TEST_S3_ENDPOINT_URL: "http://localhost:8333"
+          AWS_ACCESS_KEY_ID: "aifactory-test"
+          AWS_SECRET_ACCESS_KEY: "aifactory-test-secret"
+          AWS_DEFAULT_REGION: "us-east-1"
         run: apps/backend/.venv/bin/pytest tests/ -m "not slow" -q
 
       # #854: the co-located tests under apps/backend (next to the code they
