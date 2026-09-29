@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1619
 author: olafkfreund
 ---
@@ -87,6 +87,20 @@ that read fails says so rather than continuing quietly.
   precisely that unit-level reasoning about `running_tasks` looked correct.
 - The timezone fix must not renumber or re-render existing stored timestamps
   inconsistently; mixed naive and aware values in one store is its own bug.
+
+## Approved answers (2026-09-29)
+
+All four answered with the recommendation as written:
+
+1. `is_running` reads the dict **or** a set of active kubejob task ids that the
+   existing reconcile poll maintains — no Kubernetes call or database
+   round-trip on the request path.
+2. `recover` **refuses** while a Job for that task is live, with an explicit
+   `force: true` to override.
+3. The frozen progress bar stays **out of scope**, with #1618 owning it; the
+   card will stop saying "Stuck" before it starts showing progress.
+4. The timezone fix covers **new writes**, reading tolerantly, with no
+   migration of rows already stored.
 
 ## Open questions
 
