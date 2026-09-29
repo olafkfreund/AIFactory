@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1621
 intent: intent/2026-09-29-1621-drop-install-clis.md
 ---
