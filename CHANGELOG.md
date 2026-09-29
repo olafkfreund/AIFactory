@@ -1,5 +1,72 @@
 ## [Unreleased]
 
+## 3.7.0 - 2026-09-29
+
+### Added
+
+- **The operator runtime allowlist is enforced.** RFC-0014's allowlist governed
+  nothing: `get_runtime_provider()` consulted it and had no production caller,
+  while the live path — `infer_provider_from_model` → `get_provider`, from eight
+  call sites — never did, so a `codex:`/`copilot:` model string selected a
+  provider with nothing in the way. It is now enforced at the one point both
+  factory entry points converge on. `claude` is always enabled, so a deployment
+  that names no runtimes is unaffected. Set `AIFACTORY_RUNTIMES` to opt in.
+  (#1607)
+
+  The gate's vocabulary is now **derived** from the provider registries rather
+  than restated: the two lists had already drifted, and `copilot`,
+  `github-models`, `openai-compatible` and `opencode` were resolvable by
+  `get_provider` and absent from the gate — so enforcing without this would have
+  made them permanently unreachable. Allowlist tokens also normalise through the
+  factory's alias table, so `gemini` enables `antigravity`.
+
+- **GitHub Copilot is selectable as a coder runtime.** Its provider, credential
+  and CLI were already present; only the registry entry was missing. (#790)
+
+- **Build Jobs declare the disk they need.** The Job asked for cpu and memory and
+  said nothing about ephemeral storage, so the scheduler could not refuse a build
+  that would fill the node — the first sign would have been the kubelet evicting
+  arbitrary pods. A 4Gi limit (not a request: a node can advertise far more
+  allocatable ephemeral storage than it really has) now bounds it, with 2Gi on
+  the gate pod. Landed in the Factory hub canonical first (Factory#3207).
+  (#1425)
+
+### Fixed
+
+- **A crashed dispatch no longer leaks a concurrency slot.** Dispatch created the
+  Kubernetes Job and only then wrote `worker_ref`; a crash between the two left a
+  `job_states` row `running` that no reaper could touch, holding a slot against
+  the global cap forever, silently, recoverable only by editing Postgres. The
+  root cause was `admit()` stamping `worker_ref={"kind": "subprocess"}` before any
+  backend had been chosen, which made the leaked row indistinguishable from a live
+  subprocess build. Admission now stamps `pending`, and the reaper rebuilds the
+  deterministic Job name and asks the API rather than assuming the Job is absent.
+  (#1606)
+
+- **Builds no longer re-download the CLIs the image already pins.** An
+  `install-clis` initContainer npm-installed claude-code, codex and gemini-cli
+  into a `/clis` emptyDir and prepended it to `PATH`, shadowing the pinned copies
+  the Dockerfile bakes — 790 MB per pod, unpinned, on the critical path of every
+  build, so two builds an hour apart could run different CLI versions. The
+  control plane dropped the same initContainer under #791; the build path has
+  caught up. `codex` and `gemini` now carry build-time `--version` assertions, so
+  a missing CLI fails the image once in CI rather than every build that needs it.
+  (#1621)
+
+- **CI: four required checks failed on every PR.** MinIO gated its images at
+  every registry, and the S3 step's `docker run` exit took lint and unit tests
+  down with it despite the step's own claim that the tests would skip. Replaced
+  with SeaweedFS, pinned by digest, and the step can no longer fail the job — the
+  tests skip visibly instead, while `main` stays strict. Separately, seven copies
+  of a test helper produced a bare `postgresql://` URL and left the driver to
+  SQLAlchemy, whose default moved from psycopg2 to psycopg v3; the suite now names
+  the driver in one place. (#1612)
+
+### Changed
+
+- A signed Task Contract's `execution.runtime` reaches the executor instead of
+  being silently dropped in translation. (#1607)
+
 ## 3.6.85 - 2026-09-23
 
 ### Fixed
