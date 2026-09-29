@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -354,6 +355,42 @@ async def _capture_memory(
         logger.debug("[parallel] memory save skipped for %s: %s", subtask.id, exc)
 
 
+def _seed_child_spec(spec_dir: Path, child_spec_dir: Path) -> Path:
+    """Copy the spec and plan into a subtask worktree; return the dir to use.
+
+    Returns ``child_spec_dir`` when the copy lands, else the shared ``spec_dir``
+    — the previous behaviour, which works for a coder that happens to use an
+    absolute path but not for one resolving against its own worktree.
+
+    Only the two documents the coding prompt names are copied: everything else
+    in a spec dir is control-plane state (task_logs, memory, task_control) that
+    a subtask must not fork.
+    """
+    try:
+        child_spec_dir.mkdir(parents=True, exist_ok=True)
+        copied = 0
+        for name in ("spec.md", "implementation_plan.json"):
+            source = spec_dir / name
+            if source.exists():
+                shutil.copy2(source, child_spec_dir / name)
+                copied += 1
+        if copied:
+            return child_spec_dir
+        logger.warning(
+            "[parallel] neither spec.md nor implementation_plan.json found in %s "
+            "— the subtask coder will run without its spec (#1617)",
+            spec_dir,
+        )
+    except OSError:
+        logger.warning(
+            "[parallel] could not seed the subtask spec dir %s; falling back to "
+            "the shared spec dir, which is outside the worktree (#1617)",
+            child_spec_dir,
+            exc_info=True,
+        )
+    return spec_dir
+
+
 def _child_spec_name(spec_name: str, subtask_id: str) -> str:
     """Build a filesystem/branch-safe child worktree name for a subtask."""
     safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", subtask_id).strip("-")
@@ -464,7 +501,15 @@ async def run_parallel_coding_phase(
             child_path = info.path
             child_spec_dir = child_path / ".aifactory" / "specs" / spec_dir.name
             if not child_spec_dir.exists():
-                child_spec_dir = spec_dir  # fallback: shared spec (read-only use)
+                # #1617/#1619: a fresh worktree carries no .aifactory/specs, and
+                # falling straight back to the shared spec_dir leaves the coder's
+                # spec OUTSIDE its worktree — which is also its sandbox root and
+                # the base any repo-relative path resolves against. Measured on
+                # task 022: every Read of spec.md and implementation_plan.json
+                # failed, and the agent coded the whole build without either,
+                # silently. Copy the two documents in so they resolve however the
+                # path is expressed; fall back only if the copy itself fails.
+                child_spec_dir = _seed_child_spec(spec_dir, child_spec_dir)
 
             # Plan-driven allowlist: grant the plan's declared verification
             # commands into THIS child worktree's security profile (its cwd ==
