@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1619
 spec: spec/2026-09-29-1619-cockpit-truthful-builds.md
 ---
