@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1425
 intent: intent/2026-09-29-1425-concurrency-cap.md
 ---
