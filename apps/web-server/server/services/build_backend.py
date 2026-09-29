@@ -83,11 +83,13 @@ default flip (``AIFACTORY_BUILD_BACKEND=kubejob``, RFC-0016 #671) is now READY
 pending a live validation run (a real build green Job-native with the console
 intact) — deliberately NOT flipped in this change.
 
-#777: the build Job now also gets an ``install-clis`` initContainer (mirroring
-the control-plane pod's provisioning) so non-``claude`` runtimes selectable via
-``core/runtime_gating.py`` (``codex``, ``antigravity``/gemini) have their CLI
-binary on PATH in the Job, not just a valid API credential. See
-``_inject_install_clis``.
+#777 gave the build Job an ``install-clis`` initContainer so non-``claude``
+runtimes selectable via ``core/runtime_gating.py`` (``codex``,
+``antigravity``/gemini) had their CLI binary on PATH, not just a valid API
+credential. #1621 removed it: the Dockerfile bakes all of them at pinned
+versions and the ``-nix`` build stage inherits them, so the initContainer was
+re-fetching the same packages unpinned on every build and shadowing the pinned
+copies. The Job now gets them from its image. See ``_inject_build_path``.
 """
 
 from __future__ import annotations
@@ -486,24 +488,15 @@ _SEED_HOME_VOLUMES: tuple[tuple[str, str], ...] = (
 # so the build Job does too — no opt-in flag). The -nix build image bakes
 # ``claude`` already (a claude build works), but not ``codex``/``gemini`` — this
 # closes that gap for every runtime.
-_INSTALL_CLIS_IMAGE = "node:22-bookworm-slim"
-_INSTALL_CLIS_SCRIPT = (
-    "set -e\n"
-    "export npm_config_prefix=/clis\n"
-    "npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli\n"
-    # antigravity CLI == gemini-cli, invoked as `antigravity` (matches gitops).
-    "ln -sf /clis/bin/gemini /clis/bin/antigravity\n"
-)
-_CLIS_VOLUME_NAME = "clis"
-_CLIS_MOUNT_PATH = "/clis"
 # Prepends /clis/bin to the -nix BUILD image's own default PATH (Dockerfile
 # build-runtime stage), NOT the control-plane Deployment's — the build image
 # additionally carries /nix/var/nix/profiles/default/bin (where ``nix`` lives; the
-# build runs ``nix develop`` for the SUT toolchain) and /home/nonroot/.npm-global/bin.
-# Dropping either breaks the packed build, so keep the image's exact PATH and only
-# prepend /clis/bin for the provisioned provider CLIs.
+# build runs ``nix develop`` for the SUT toolchain) and /home/nonroot/.npm-global/bin
+# (the baked provider CLIs). Dropping either breaks the packed build, so this is the
+# image's exact PATH. #1621 removed the /clis/bin prefix that used to shadow the
+# baked, pinned CLIs with unpinned ones fetched per pod.
 _BUILD_PATH_ENV = (
-    "/clis/bin:/nix/var/nix/profiles/default/bin:/home/nonroot/.npm-global/bin:"
+    "/nix/var/nix/profiles/default/bin:/home/nonroot/.npm-global/bin:"
     "/home/projects/MagesticAI/.venv/bin:/usr/local/sbin:/usr/local/bin:"
     "/usr/bin:/usr/sbin:/sbin:/bin"
 )
@@ -571,34 +564,26 @@ def _inject_seed_creds(manifest: dict[str, Any]) -> dict[str, Any]:
     return manifest
 
 
-def _inject_install_clis(manifest: dict[str, Any]) -> dict[str, Any]:
-    """Add the ``install-clis`` initContainer so the build Job has the same
-    provider CLIs (``claude``/``codex``/``gemini``/``antigravity``) on PATH that
-    the control-plane pod is provisioned with (#777). Unconditional — mirrors the
-    control plane, which runs this on every pod start with no opt-in flag.
-    Mutates + returns the manifest. Pure (no env / no I/O) → unit-testable.
+def _inject_build_path(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Set the build container's ``PATH`` to the build image's own layout.
+
+    Until #1621 this also added an ``install-clis`` initContainer that
+    npm-installed claude-code/codex/gemini-cli into a ``/clis`` emptyDir and
+    prepended it here, so the build Job would have the provider CLIs on PATH
+    (#777). That became redundant when the Dockerfile started baking all three at
+    pinned versions (``Dockerfile`` ``npm install -g …@2.1.238/@0.149.0/@0.56.0``,
+    inherited by the ``-nix`` build stage via ``FROM runtime``): the initContainer
+    re-fetched the same packages UNPINNED on every build and shadowed the pinned
+    copies, 790 MB per pod. The control plane dropped it under #791 for the same
+    reason; this is the build path catching up.
+
+    What remains is load-bearing and must not be dropped with it: the build image
+    additionally carries ``/nix/var/nix/profiles/default/bin`` (where ``nix``
+    lives — the build runs ``nix develop`` for the SUT toolchain) and
+    ``/home/nonroot/.npm-global/bin`` (the baked CLIs). Losing either breaks the
+    packed build. Mutates + returns the manifest. Pure (no env / no I/O).
     """
-    pod = manifest["spec"]["template"]["spec"]
-    pod.setdefault("volumes", []).append({"name": _CLIS_VOLUME_NAME, "emptyDir": {}})
-    pod.setdefault("initContainers", []).insert(
-        0,
-        {
-            "name": "install-clis",
-            "image": _INSTALL_CLIS_IMAGE,
-            "command": ["sh", "-c"],
-            "args": [_INSTALL_CLIS_SCRIPT],
-            # node image's "node" user (uid 1000): HOME=/home/node stays
-            # writable for the npm cache; /clis is a world-writable emptyDir.
-            "securityContext": _init_container_security_context(1000),
-            "volumeMounts": [
-                {"name": _CLIS_VOLUME_NAME, "mountPath": _CLIS_MOUNT_PATH}
-            ],
-        },
-    )
-    container = pod["containers"][0]
-    container.setdefault("volumeMounts", []).append(
-        {"name": _CLIS_VOLUME_NAME, "mountPath": _CLIS_MOUNT_PATH}
-    )
+    container = manifest["spec"]["template"]["spec"]["containers"][0]
     container.setdefault("env", []).append({"name": "PATH", "value": _BUILD_PATH_ENV})
     return manifest
 
@@ -773,7 +758,7 @@ def build_run_py_job_manifest(
         # in-process has no reason to hold an API token.
         automount_service_account_token=_gates_dispatch_jobs(),
     )
-    return _inject_install_clis(_inject_seed_creds(build_job_manifest(spec)))
+    return _inject_build_path(_inject_seed_creds(build_job_manifest(spec)))
 
 
 def _gates_dispatch_jobs() -> bool:

@@ -52,6 +52,16 @@ Self-contained summary of the approved decisions.
   (`mount_paths == {"/work", "/nix/store", "/clis"}`), `:175-176`, `:286`, `:940`.
   No other test file references `/clis`.
 
+**Deviation, recorded during implementation (step 1).** The list above was
+incomplete: the enumeration grepped for `/clis`, which missed three sites that
+name `install-clis` without the path. All in the same file:
+`test_install_clis_initcontainer_present` (:1004) and
+`test_install_clis_unaffected_by_seed_creds_flag` (:1109) assert the removed
+behaviour and are deleted; `test_build_job_pod_hardening` (:1066) loops over
+`("install-clis", 1000), ("seed-creds", 65532)` and is narrowed to seed-creds.
+Seven sites, not four. The step-1-first ordering is what surfaced them, which is
+the argument for that ordering.
+
 ## Steps
 
 1. `tests/test_build_backend_kubejob.py` — **update the assertions first, so they

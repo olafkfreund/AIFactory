@@ -172,9 +172,10 @@ def test_manifest_runs_run_py_on_build_image_with_mounts(
     assert "nix develop" not in cmd
 
     mount_paths = {mt["mountPath"] for mt in c["volumeMounts"]}
-    # /clis is the always-on install-clis provisioning (#777), alongside the
-    # worktree + warm-store mounts.
-    assert mount_paths == {"/work", "/nix/store", "/clis"}
+    # #1621: the install-clis initContainer and its /clis emptyDir are gone —
+    # the provider CLIs are baked into the image (Dockerfile), as the control
+    # plane already assumed under #791. Only the worktree + warm-store remain.
+    assert mount_paths == {"/work", "/nix/store"}
     # /work subPath is the data-root-relative BUILD CLONE dir — deliberately not
     # worktrees/tasks/<spec>, which belongs to the linked task worktree (#1467).
     work_mt = next(mt for mt in c["volumeMounts"] if mt["mountPath"] == "/work")
@@ -283,10 +284,9 @@ def test_manifest_outside_data_root_has_no_worktree_mount(
         spec_id="s",
     )
     pod = m["spec"]["template"]["spec"]
-    # No worktree / warm-store volume — only the always-on install-clis emptyDir
-    # (#777) is present.
+    # No worktree / warm-store volume, and since #1621 no /clis emptyDir either.
     vol_names = {v["name"] for v in pod.get("volumes", [])}
-    assert vol_names == {"clis"}
+    assert vol_names == set()
 
 
 # --------------------------------------------------------------------------- #
@@ -937,8 +937,8 @@ def _seed_env(monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def test_seed_creds_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     # No AIFACTORY_CLI_CREDS_SECRET → env-auth-only path unchanged: no seed-creds
-    # initContainer, no cc-* volumes. install-clis is unconditional (#777) so it
-    # is present regardless.
+    # initContainer, no cc-* volumes. Since #1621 there is no install-clis
+    # initContainer either, so the pod has none at all.
     monkeypatch.delenv("AIFACTORY_CLI_CREDS_SECRET", raising=False)
     project_path = _seed_env(monkeypatch)
     m = bb.build_run_py_job_manifest(
@@ -946,7 +946,7 @@ def test_seed_creds_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     pod = m["spec"]["template"]["spec"]
     init_names = {c["name"] for c in pod.get("initContainers", [])}
-    assert init_names == {"install-clis"}
+    assert init_names == set()
     vol_names = {v["name"] for v in pod.get("volumes", [])}
     assert "cli-creds" not in vol_names
     assert "cc-claude" not in vol_names
@@ -998,46 +998,6 @@ def test_seed_creds_injected_when_secret_configured(
 # --------------------------------------------------------------------------- #
 
 
-def test_install_clis_initcontainer_present(monkeypatch: pytest.MonkeyPatch) -> None:
-    # A build routed to a non-claude runtime (e.g. codex — core/runtime_gating.py)
-    # dies "Codex CLI executable not found" because the dispatched Job pod is
-    # FRESH and never got the control-plane's CLI provisioning. The build Job
-    # must carry the SAME install-clis initContainer, unconditionally (no flag).
-    project_path = _seed_env(monkeypatch)
-    m = bb.build_run_py_job_manifest(
-        task_id="proj-1:s", project_path=project_path, spec_id="s"
-    )
-    pod = m["spec"]["template"]["spec"]
-
-    init = next(c for c in pod["initContainers"] if c["name"] == "install-clis")
-    assert init["image"] == "node:22-bookworm-slim"
-    script = init["args"][0]
-    assert "npm install -g" in script
-    assert "@anthropic-ai/claude-code" in script
-    assert "@openai/codex" in script
-    assert "@google/gemini-cli" in script
-    assert "ln -sf /clis/bin/gemini /clis/bin/antigravity" in script
-    init_mount = next(mt for mt in init["volumeMounts"] if mt["name"] == "clis")
-    assert init_mount["mountPath"] == "/clis"
-
-    # /clis is a shared emptyDir (writable, node-agnostic — no PVC).
-    clis_vol = next(v for v in pod["volumes"] if v["name"] == "clis")
-    assert clis_vol == {"name": "clis", "emptyDir": {}}
-
-    # The build container mounts /clis and has /clis/bin prepended to PATH so
-    # the provisioned `codex`/`claude`/`gemini`/`antigravity` binaries resolve.
-    container = pod["containers"][0]
-    build_mounts = {mt["mountPath"] for mt in container["volumeMounts"]}
-    assert "/clis" in build_mounts
-    path_env = next(e for e in container["env"] if e["name"] == "PATH")
-    assert path_env["value"].startswith("/clis/bin:")
-    # Regression guard: prepending /clis/bin must NOT drop the -nix build image's
-    # own PATH — `nix` lives at /nix/var/nix/profiles/default/bin and the build
-    # runs `nix develop` for the SUT toolchain (dropping it breaks the build).
-    assert "/nix/var/nix/profiles/default/bin" in path_env["value"]
-    assert "/home/nonroot/.npm-global/bin" in path_env["value"]
-
-
 def test_build_job_pod_hardening(monkeypatch: pytest.MonkeyPatch) -> None:
     # #812 (Factory#274 compensating controls): the Job pod pins runAsNonRoot +
     # RuntimeDefault seccomp, every container drops all capabilities and forbids
@@ -1063,7 +1023,8 @@ def test_build_job_pod_hardening(monkeypatch: pytest.MonkeyPatch) -> None:
         "capabilities": {"drop": ["ALL"]},
     }
     by_name = {c["name"]: c for c in pod["initContainers"]}
-    for name, uid in (("install-clis", 1000), ("seed-creds", 65532)):
+    # #1621 removed install-clis (uid 1000); seed-creds is the only one left.
+    for name, uid in (("seed-creds", 65532),):
         sc = by_name[name]["securityContext"]
         assert sc["runAsUser"] == uid
         assert sc["allowPrivilegeEscalation"] is False
@@ -1104,25 +1065,6 @@ def test_build_job_pins_a_numeric_uid_not_just_runasnonroot(
     )
 
 
-def test_install_clis_unaffected_by_seed_creds_flag(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # install-clis has no opt-in flag: it is present whether or not the
-    # unrelated file-auth seed-creds path (#690) is configured.
-    monkeypatch.setenv("AIFACTORY_CLI_CREDS_SECRET", "factory-cli-creds")
-    project_path = _seed_env(monkeypatch)
-    m = bb.build_run_py_job_manifest(
-        task_id="proj-1:s", project_path=project_path, spec_id="s"
-    )
-    pod = m["spec"]["template"]["spec"]
-    init_names = [c["name"] for c in pod["initContainers"]]
-    assert "install-clis" in init_names
-    assert "seed-creds" in init_names
-
-
-# --------------------------------------------------------------------------- #
-# 6. Self-contained build worktree (#671 — /work has a real .git, not a
-#    dangling linked-worktree pointer). Real-git integration test.
 # --------------------------------------------------------------------------- #
 
 import subprocess as _sp  # noqa: E402
@@ -1859,3 +1801,45 @@ def test_token_only_when_gates_dispatch_jobs(monkeypatch):
     monkeypatch.setenv("AIFACTORY_SANDBOX_GATES", "true")
     monkeypatch.setenv("AIFACTORY_SANDBOX_IMAGE", "")
     assert _gates_dispatch_jobs() is False
+
+
+def test_no_install_clis_initcontainer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#1621: the build Job uses the CLIs its image pins, and fetches nothing.
+
+    The initContainer npm-installed claude-code/codex/gemini-cli into a /clis
+    emptyDir and prepended it to PATH, shadowing the pinned copies the Dockerfile
+    already bakes — 790 MB per pod, unpinned, on the critical path of every build.
+    The control plane dropped the same initContainer under #791; this is the
+    build path catching up.
+    """
+    project_path = _seed_env(monkeypatch)
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:s", project_path=project_path, spec_id="s"
+    )
+    pod = m["spec"]["template"]["spec"]
+
+    assert "install-clis" not in {c["name"] for c in pod.get("initContainers", [])}
+    assert "clis" not in {v["name"] for v in pod.get("volumes", [])}
+    container = pod["containers"][0]
+    assert "/clis" not in {mt["mountPath"] for mt in container.get("volumeMounts", [])}
+
+
+def test_build_path_keeps_the_image_entries(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PATH is still injected, and still carries what the packed build needs.
+
+    _inject_install_clis did two jobs and only one was removed (#1621). Dropping
+    /nix/var/nix/profiles/default/bin would take `nix` off PATH and break
+    `nix develop`; dropping /home/nonroot/.npm-global/bin would take the baked
+    CLIs off it — the very thing this change relies on.
+    """
+    project_path = _seed_env(monkeypatch)
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:s", project_path=project_path, spec_id="s"
+    )
+    container = m["spec"]["template"]["spec"]["containers"][0]
+    path = next(e["value"] for e in container["env"] if e["name"] == "PATH")
+
+    assert not path.startswith("/clis/bin")
+    assert "/clis" not in path
+    assert "/nix/var/nix/profiles/default/bin" in path
+    assert "/home/nonroot/.npm-global/bin" in path
