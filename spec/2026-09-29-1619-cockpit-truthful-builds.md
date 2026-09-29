@@ -14,6 +14,7 @@ intent: intent/2026-09-29-1619-cockpit-truthful-builds.md
 | Can `is_running` read it without a round-trip per call? | **Yes.** `kubejob_reconcile_loop` (`agent_kubejob.py:704`) ticks every **15s** and already calls `get_active_kubejobs()`. A set maintained there is at most 15s stale — far fresher than the 30s cadence of the card's own poll. |
 | Is a job row's key the task id? | **Yes.** `row["job_id"]` is `project_id:spec_id` — `_redrive_kubejob_review` partitions it on `":"`. No mapping layer is needed. |
 | Why does the coder's spec read fail? | **Not the reason #1617 first gave.** The per-subtask worktree is created at `<task-worktree>/.aifactory/worktrees/tasks/<spec>__w__<subtask>`, i.e. the template is applied relative to the task worktree, which is already `/work/.aifactory/worktrees/tasks/<spec>`. The agent's cwd is two levels below the repo root, and the sandbox root is that doubled path. |
+| Why is the phase frozen at `planning`? | **The log streamer dies before the build starts.** #1110 already parses the Job's `[PHASE_EVENT]` lines into `task_logs.json`; `_await_pod_name` (`build_log_stream.py:125`) waits only for the **pod object**, not for the `task` container. Measured: pod created 09:22:35, `"log stream completed (1 line(s))"` 09:22:37, container started 09:24:03 — 86s later, after three init containers. `stream()` treats a clean EOF as success and never reattaches, so 145 minutes of phase events went nowhere. |
 | Are the timestamps naive? | **Yes.** `agent_service.py:1200` writes `datetime.now().isoformat()`; `formatRelativeTime` (`lib/utils.ts:45`) parses with `new Date(...)`, which reads an offset-less string as local time. Pod UTC + operator BST = every age an hour old. |
 
 ## Design
@@ -41,14 +42,33 @@ answers **409** when `is_running(task_id)` is true, naming the live Job. With it
 the current behaviour is unchanged. This is deliberately expressed in terms of
 the *fixed* `is_running`, so the refusal and the card's verdict cannot disagree.
 
-### 3. Timestamps are written timezone-aware
+### 3. The log streamer waits for the container, and reattaches until the Job is terminal
+
+Three changes in `build_log_stream.py`, and nothing outside it:
+
+- `_await_pod_name` also waits for the pod's `task` container to be `running`
+  (or already terminated), not merely for the pod object to exist.
+- `stream()` treats a clean end-of-stream as **reattach**, not completion: while
+  the Job is still active it re-follows with backoff, passing `since_time` so
+  lines already delivered are not repeated.
+- The terminal log line becomes a **warning** when the stream ends while the Job
+  is still running. `"log stream completed (1 line(s))"` was logged at INFO
+  against a build that then ran for 145 minutes; the message read like success.
+
+This is the whole of the progress fix. `#1110` already writes the parsed events
+to `task_logs.json`, which `get_execution_progress` reads, so phase, subtask
+states, the progress bar and the live console all begin working once the lines
+arrive. No heartbeat, no S3 progress object, no change to `run.py`, no new
+storage — see the correction on #1618.
+
+### 4. Timestamps are written timezone-aware
 
 `datetime.now()` becomes `datetime.now(UTC)` at `agent_service.py:1200` and at
 every sibling writer of a task/subtask timestamp found by the same sweep. Reads
 stay tolerant: a stored value without an offset is still parsed, treated as UTC,
 so rows written before this change do not jump an hour in the other direction.
 
-### 4. The coder's spec path
+### 5. The coder's spec path
 
 The measurement above rules out the fix #1617 first proposed. Two candidates
 remain, and **the choice depends on one unmeasured fact**: whether the sandbox
@@ -88,6 +108,14 @@ run is distinguishable from a healthy one in the log.
   hammer; and killing a healthy build is exactly the outcome to prevent.
 - **Widening the sandbox root to reach the specs directory.** Enlarges the
   security boundary to solve a path-composition problem.
+- **A heartbeat from the Job to S3** (the original #1618 design). Adds storage,
+  a writer in `run.py` and a reader in the control plane, to carry information
+  the Job is *already emitting* on stdout and the control plane is *already*
+  equipped to parse. It would have worked, and it would have left the broken
+  streamer in place behind it.
+- **Polling the Job's log on a timer** instead of following it. Simpler than
+  reattach logic, but it either duplicates lines or drops them at the seam, and
+  the parser is not idempotent about phase transitions.
 
 ## Risks
 
@@ -98,9 +126,13 @@ run is distinguishable from a healthy one in the log.
 - **`recover` refusing is a behaviour change on an existing endpoint.** Anything
   automating recovery against a live build starts getting 409s. That is the
   point, but it is a contract change and belongs in the changelog.
-- **The task looks inert even once it stops saying "Stuck"**, because progress
-  still cannot flow (#1618). Accepted and stated in the intent; the card will
-  read "running, no detail" rather than "stuck, press Recover".
+- **Reattach could duplicate log lines** if `since_time` is coarse (the API's
+  granularity is seconds). A duplicated `[PHASE_EVENT]` re-asserts a phase the
+  task already has, which is harmless; a duplicated console line is cosmetic.
+  Dropping lines at the seam would be worse, so the seam favours duplication.
+- **Reattach could spin** if a Job stays active while its pod cannot be followed.
+  The backoff and the existing cancel-on-terminal path bound it, and the new
+  warning makes a spinning streamer visible rather than silent.
 - **Copying the spec into the subtask worktree duplicates it**, so a run could
   read a stale copy if the spec changed mid-run. Specs are written at dispatch
   and not edited during a run, so the window is empty in practice — but it is a
@@ -138,6 +170,14 @@ about `running_tasks` is exactly what looked correct while the cockpit lied:
 9. A coding phase in that build reads `spec.md` and `implementation_plan.json`
    successfully — measured as zero "File does not exist" failures for those two
    paths, against 26 failures in one window today.
+10. **`task_logs.json` grows while the build runs**, rather than staying at 0
+    entries for 145 minutes: sampled twice, minutes apart, the entry count must
+    increase. This is the check the current code passes vacuously.
+11. **The task's `phase` leaves `planning`** while the Job is still running, and
+    subtask states move from `pending` as the build completes each one.
+12. **A streamer that ends early is loud**: with the container start delayed,
+    the log carries a warning rather than an INFO "completed", and the stream
+    reattaches rather than exiting.
 
 Gates: ruff, ruff format over the CI path list, `ratchet_lint.py --base
 origin/dev` with its `--package` flags, the frontend's typecheck and vitest if
