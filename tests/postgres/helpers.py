@@ -87,3 +87,22 @@ def run_alembic(
         env=full_env,
         timeout=120,
     )
+
+
+def sync_url(url: str) -> str:
+    """The async test URL as a SYNC one, with the driver named explicitly.
+
+    The column-migration tests seed pre-migration rows through a sync
+    ``create_engine``, so they need the async URL without ``+asyncpg``.
+
+    Naming ``+psycopg2`` rather than dropping the driver entirely is the point
+    (#1612): a bare ``postgresql://`` delegates the choice to SQLAlchemy, whose
+    default moved from psycopg2 to psycopg v3 in 2.1 while only
+    ``psycopg2-binary`` is installed (``tests/requirements-test.txt``). Since
+    ``apps/web-server/requirements.txt`` declares a floor and no ceiling, CI took
+    2.1 as soon as it shipped and every postgres test that opened a connection
+    died on ``ModuleNotFoundError: No module named 'psycopg'`` — while a local
+    venv on 2.0 kept passing. Say which driver the suite means and no library's
+    default can decide whether CI is green.
+    """
+    return url.replace("+asyncpg", "+psycopg2")

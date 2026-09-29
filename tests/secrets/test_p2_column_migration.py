@@ -28,6 +28,9 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
+# One definition of the driver-naming rule for the whole test tree; see its
+# docstring for why the driver is named rather than inferred (#1612).
+from tests.postgres.helpers import sync_url
 from tests.secrets.helpers import WEB_SERVER_ROOT, reimport_crypto
 
 # Required for these tests — set in CI's postgres-acceptance job.
@@ -80,8 +83,7 @@ def _run_alembic(target: str, url: str, fernet_key: str) -> subprocess.Completed
 def _seed_email_account(url: str, plaintext: str) -> str:
     """Insert one EmailAccount row with a plaintext access_token. Returns id."""
     # Sync URL for sync create_engine (the test URL is async-driver-prefixed).
-    sync_url = url.replace("+asyncpg", "")
-    engine = create_engine(sync_url)
+    engine = create_engine(sync_url(url))
     owner_id = str(uuid.uuid4())
     row_id = str(uuid.uuid4())
     try:
@@ -129,8 +131,7 @@ def test_migration_backfills_plaintext_to_encrypted(
     from server.database.models import EmailAccount  # noqa: E402
     from sqlalchemy.orm import Session
 
-    sync_url = pg_url.replace("+asyncpg", "")
-    engine = create_engine(sync_url)
+    engine = create_engine(sync_url(pg_url))
     try:
         with Session(engine) as session:
             row = session.get(EmailAccount, row_id)
@@ -159,8 +160,7 @@ def test_pg_dump_contains_no_plaintext_credentials(
     result = _run_alembic("head", pg_url, fernet_key)
     assert result.returncode == 0, f"P2.3 alembic failed:\n{result.stderr[-1500:]}"
 
-    sync_url = pg_url.replace("+asyncpg", "")
-    engine = create_engine(sync_url)
+    engine = create_engine(sync_url(pg_url))
     try:
         with engine.connect() as conn:
             raw = conn.execute(
