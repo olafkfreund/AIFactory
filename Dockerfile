@@ -73,7 +73,7 @@ RUN mkdir -p apps/web-server/static \
 # digest as frontend-build, so both move together in one Dependabot bump.
 FROM docker.io/node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS node-runtime
 
-FROM cgr.dev/chainguard/python:latest-dev@sha256:0b39915a883dc2dbbe6c43be2ef82a37126409818cb66f5919e84cfa3e394ea5 AS runtime
+FROM cgr.dev/chainguard/python:latest-dev@sha256:e55c66e1405ff03cf60c56c8c11bba46a272796ace158cd913dad5998caaf58a AS runtime
 
 USER root
 
