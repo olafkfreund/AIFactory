@@ -31,6 +31,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from server.database.models import Base, JobState  # noqa: E402
 from server.services.job_state_store import (  # noqa: E402
+    _KIND_PENDING,
     JobStateStore,
     SpawnArgs,
     store_enabled,
@@ -279,3 +280,73 @@ async def test_increment_attempt(tmp_path: Path) -> None:
     async with factory() as session:
         row = await session.get(JobState, "p:a")
         assert row.attempt == 3
+
+
+# --------------------------------------------------------------------------
+# #1628 — a row carrying a live k8s-job ref is not terminal
+# --------------------------------------------------------------------------
+
+
+async def test_k8s_job_ref_returns_a_terminal_row_to_running(tmp_path: Path) -> None:
+    """THE regression: a build's Job was dispatched onto a row already `done`.
+
+    On the /start path spec creation runs as an in-pod subprocess; its exit
+    marks the task terminal, and the build then dispatches its Job and records
+    the ref here. Measured live: `Job active=1` with `lifecycle_state="done"`
+    and `ended_at` 1 ms after `updated_at`, unchanged ten minutes later — so
+    `get_active_kubejobs` returned nothing and the reconcile loop, the reaper,
+    the review re-drive, streamer cancellation and credential release were all
+    blind to that build for its whole life.
+    """
+    store = JobStateStore(session_factory=await _make_factory(tmp_path / "s.db"))
+    job_id = "proj:023-some-spec"
+    await store.admit(job_id, _spawn("023-some-spec", tmp_path), cap=1)
+    await store.mark_terminal(job_id, "done")
+
+    await store.set_worker_ref(
+        job_id,
+        {"kind": "k8s-job", "namespace": "factory", "job_name": "factory-aifactory-x"},
+    )
+
+    state = await store.get_state(job_id)
+    assert state is not None
+    assert state["lifecycle_state"] == "running"
+    assert state.get("ended_at") in (None, ""), "a running row has not ended"
+
+
+async def test_pending_ref_does_not_resurrect_a_terminal_row(tmp_path: Path) -> None:
+    """`_KIND_PENDING` means a granted slot nobody claimed (#1606), not running."""
+    store = JobStateStore(session_factory=await _make_factory(tmp_path / "s.db"))
+    job_id = "proj:024-some-spec"
+    await store.admit(job_id, _spawn("024-some-spec", tmp_path), cap=1)
+    await store.mark_terminal(job_id, "done")
+
+    await store.set_worker_ref(job_id, {"kind": _KIND_PENDING})
+
+    state = await store.get_state(job_id)
+    assert state is not None
+    assert state["lifecycle_state"] == "done"
+
+
+async def test_the_repaired_row_is_visible_to_get_active_kubejobs(
+    tmp_path: Path,
+) -> None:
+    """Checked at the level that actually failed, not only at the setter.
+
+    `get_active_kubejobs` is what reconcile reads; a fix that repairs the row
+    but leaves this query empty would change nothing that matters.
+    """
+    store = JobStateStore(session_factory=await _make_factory(tmp_path / "s.db"))
+    job_id = "proj:025-some-spec"
+    await store.admit(job_id, _spawn("025-some-spec", tmp_path), cap=1)
+    await store.mark_terminal(job_id, "done")
+    assert [r["job_id"] for r in await store.get_active_kubejobs()] == []
+
+    await store.set_worker_ref(
+        job_id,
+        {"kind": "k8s-job", "namespace": "factory", "job_name": "factory-aifactory-y"},
+    )
+
+    active = await store.get_active_kubejobs()
+    assert [r["job_id"] for r in active] == [job_id]
+    assert active[0]["job_name"] == "factory-aifactory-y"

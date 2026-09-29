@@ -402,6 +402,23 @@ class JobStateStore:
                 row = await session.get(JobState, job_id)
                 if row is not None:
                     row.worker_ref = worker_ref
+                    # #1628: a row carrying a live k8s-job ref is running, and
+                    # saying so here is what keeps the two facts from
+                    # disagreeing. On the /start path the spec-creation
+                    # subprocess exits and marks the task terminal, then the
+                    # build dispatches its Job and lands here — so without this
+                    # the row ends up with a live Job reference AND `done`.
+                    # `get_active_kubejobs` selects on `running`, so that build
+                    # was invisible to reconcile, the reaper, the #1249 review
+                    # re-drive, streamer cancellation and credential release for
+                    # its whole life. Measured: Job active, row done, for 10+
+                    # minutes.
+                    #
+                    # _KIND_PENDING is deliberately excluded: that stamp means a
+                    # granted slot nobody has claimed (#1606), not a running one.
+                    if worker_ref.get("kind") == "k8s-job":
+                        row.lifecycle_state = "running"
+                        row.ended_at = None
 
     async def get_state(self, job_id: str) -> dict[str, Any] | None:
         """Read a job-state row's salient fields (reconcile-by-poll, #671).
