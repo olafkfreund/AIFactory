@@ -11,11 +11,11 @@ Covers:
 
 from __future__ import annotations
 
-import pytest
-
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 _BACKEND = Path(__file__).parent.parent / "apps" / "backend"
 if str(_BACKEND) not in sys.path:
@@ -215,7 +215,7 @@ def test_get_provider_github_models_model_without_prefix(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _enable_every_runtime(monkeypatch: "pytest.MonkeyPatch") -> None:
+def _enable_every_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
     """Opt this module's tests into every runtime.
 
     The factory now enforces the RFC-0014 operator allowlist, so constructing a

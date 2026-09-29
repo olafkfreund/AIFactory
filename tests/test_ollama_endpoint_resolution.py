@@ -270,7 +270,7 @@ def test_explicit_base_url_still_wins_for_cloud(
 
 
 @pytest.fixture(autouse=True)
-def _enable_every_runtime(monkeypatch: "pytest.MonkeyPatch") -> None:
+def _enable_every_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
     """Opt this module's tests into every runtime.
 
     The factory now enforces the RFC-0014 operator allowlist, so constructing a
