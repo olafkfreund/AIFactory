@@ -31,14 +31,11 @@ from tests.postgres.helpers import (
     WEB_SERVER_ROOT,
     alembic_available,
     run_alembic,
+    sync_url,
 )
 
 if str(WEB_SERVER_ROOT) not in sys.path:
     sys.path.insert(0, str(WEB_SERVER_ROOT))
-
-
-def _sync_url(url: str) -> str:
-    return url.replace("+asyncpg", "")
 
 
 def _upgrade_head(test_postgres_url: str) -> None:
@@ -54,7 +51,7 @@ def test_resource_id_is_as_wide_as_resource_type(test_postgres_url: str) -> None
         pytest.skip("alembic CLI not on PATH")
     _upgrade_head(test_postgres_url)
 
-    engine = create_engine(_sync_url(test_postgres_url))
+    engine = create_engine(sync_url(test_postgres_url))
     with engine.connect() as conn:
         widths = dict(
             conn.execute(

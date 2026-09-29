@@ -699,6 +699,9 @@ def baseline_drift_rejects(drift: BaselineDrift, policy: str | None = None) -> b
 # Maps Task Contract v2 `execution` keys to the task_metadata.json keys the
 # executor already honors (phase_config + agent_service._read_parallel_opts).
 _EXECUTION_TO_METADATA = {
+    # #1607: without this a signed contract's execution.runtime was silently
+    # dropped, so the gate could never see what the contract asked for.
+    "runtime": "runtime",
     "model": "model",
     "phase_models": "phaseModels",
     "phase_thinking": "phaseThinking",

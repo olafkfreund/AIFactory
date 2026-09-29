@@ -103,3 +103,47 @@ against a digest and nothing depends on their absence.
 - **A GHCR login step** was added to `sbom-attest`: split out of `release`, it no longer
   inherits that job's login, and both `syft scan` and the dispatch-path digest resolution read
   from the registry.
+
+## Step 6 (backfill), executed 2026-09-23 — and what measuring first changed
+
+**The gap was a quarter of what the issue assumed.** Before dispatching anything, every
+image of both releases was checked with `cosign verify-attestation`:
+
+| image | v3.6.82 | v3.6.83 |
+|---|---|---|
+| app | present | present |
+| `-rmux` | present | present |
+| `-nix` | **MISSING** (both types) | **MISSING** (both types) |
+
+So **4 attestations are missing, not 12**. That matches the failure exactly: the run died on
+the `-nix` image's first attest (the error named `sha256:8edfb0d8…`, which is `v3.6.83-nix`),
+and everything attested before that point had already succeeded. #1583's "releases ship
+without SBOM attestations" was broader than the truth.
+
+**Deviation:** the dispatch attested all three images per version, so backfilling would have
+written **8 duplicate attestations** onto images that already had them — permanently, because
+the transparency log is append-only. So the dispatch gains an optional `images` input
+(`all` by default, or a comma list of `app,rmux,nix`), and the backfill runs with
+`images: nix`. Verified before committing: the attest script still parses, and the selection
+skips correctly for `all`, one image, and a list.
+
+### Backfill run 1 (v3.6.83): attestations written, run red for an unrelated reason
+
+`images: nix` worked — **both `-nix` attestations for v3.6.83 are now present** (verified with
+`cosign verify-attestation`). The run still went red, at a step added after this plan was
+written: "Upload SBOM artifacts to GitHub release" names `sbom.spdx.json` /
+`sbom.cyclonedx.json` unconditionally, and a `nix`-only backfill never generates the **app**
+image's SBOMs. So the run failed *after* the evidence was written — the exact
+"red for a reason that is not the evidence" shape #1583 was about. Fixed by uploading only
+the files the run actually produced.
+
+### Backfill run 2 (v3.6.82): the retry did its job, and rekor is genuinely down for writes
+
+The attest failed after **4 attempts**, each of which was itself cosign retrying 4 times
+("giving up after 4 attempt(s)") — 16 failed `POST https://rekor.sigstore.dev/api/v1/log/entries`
+calls. Reads are fine (`GET /api/v1/log` → HTTP 200 in 0.17 s), so this is the write path.
+
+This is the first time the new retry has been exercised for real, and it behaved as designed:
+it persisted, then failed **loudly** rather than recording a green run with no evidence.
+v3.6.82's `-nix` attestations remain MISSING; the backfill must be re-run when Sigstore's
+write path recovers. That is a wait, not a defect.
