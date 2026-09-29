@@ -2,6 +2,26 @@
 
 ### Changed
 
+- **Opus 5.5 is the flagship.** The `opus` shorthand now resolves to
+  `claude-opus-5-5` everywhere it is read: the phase resolver, the approved-model
+  registry, the budget catalog and the enforcement pricing table. `opus-4.8` was
+  added as a pin so the previous flagship stays selectable, alongside the
+  existing `opus-4.7` / `opus-4.5` pins. Adaptive thinking and the
+  interleaved-thinking beta now key off a named set of Opus ids rather than a
+  pair of `in (...)` tests, so the next bump is one line instead of three.
+
+  Two things the bump surfaced and fixed: `budget_enforcement` pinned `sonnet`
+  to `claude-sonnet-4-6` while the phase resolver meant `claude-sonnet-5`, so a
+  `sonnet` run was budgeted against the wrong catalog row — which matters now
+  that Sonnet is the default coding model; and the registry-override test keyed
+  on a hard-coded flagship id, so a model bump failed it with a different
+  refusal than the one it was written to check.
+
+  **Pricing for opus-5.5 is provisional**: it mirrors Opus 4.8 in both the
+  catalog and the enforcement table, and is marked as an assumption in each.
+  Any `$` figure reported for this model is not a quote until the published
+  rates are confirmed.
+
 - **Opus plans, Sonnet codes.** `DEFAULT_PHASE_MODELS` sent every PARR stage to
   Opus 4.8. The stages differ in what they are hard at: `spec`, `planning` and
   `qa` are single long-context judgements where a better call changes the whole

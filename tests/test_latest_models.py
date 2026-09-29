@@ -13,10 +13,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps" / "backend")
 def test_claude_shorthands_resolve_to_latest():
     from phase_config import resolve_model_id
 
-    assert resolve_model_id("opus") == "claude-opus-4-8"
+    assert resolve_model_id("opus") == "claude-opus-5-5"
     assert resolve_model_id("sonnet") == "claude-sonnet-5"
     assert resolve_model_id("haiku") == "claude-haiku-4-5-20251001"
     # previous flagships still pinnable
+    assert resolve_model_id("opus-4.8") == "claude-opus-4-8"
     assert resolve_model_id("opus-4.7") == "claude-opus-4-7"
     assert resolve_model_id("sonnet-4.6") == "claude-sonnet-4-6"
 
@@ -32,7 +33,7 @@ def test_opus_judges_and_sonnet_codes():
 
     judgement = {"spec", "planning", "qa", "qa_fixer"}
     assert {resolve_model_id(DEFAULT_PHASE_MODELS[p]) for p in judgement} == {
-        "claude-opus-4-8"
+        "claude-opus-5-5"
     }
     assert resolve_model_id(DEFAULT_PHASE_MODELS["coding"]) == "claude-sonnet-5"
     assert set(DEFAULT_PHASE_MODELS) == judgement | {"coding"}, (
