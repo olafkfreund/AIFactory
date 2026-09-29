@@ -11,6 +11,8 @@ Covers:
 
 from __future__ import annotations
 
+import pytest
+
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -205,3 +207,24 @@ def test_get_provider_github_models_model_without_prefix(monkeypatch):
 
     # model passes through unchanged (no double-stripping)
     assert captured["model"] == "openai/gpt-4.1"
+
+
+# --------------------------------------------------------------------------- #
+# #1607: these tests exercise provider RESOLUTION, not operator policy.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture(autouse=True)
+def _enable_every_runtime(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Opt this module's tests into every runtime.
+
+    The factory now enforces the RFC-0014 operator allowlist, so constructing a
+    non-claude provider requires the operator to have enabled it. Opting in here,
+    rather than blanket-enabling in conftest, keeps the gate load-bearing in every
+    other test — where an unexpected refusal should still be a failure.
+    """
+    import core.runtime_gating as rg
+
+    monkeypatch.setenv(
+        rg.ALLOWLIST_ENV, ",".join(sorted(rg.known_runtimes() - rg.MANUAL_ENABLE_ONLY))
+    )

@@ -6,6 +6,8 @@ prefix/model handling so a refactor can't silently break Copilot selection or
 re-route ``copilot:gpt-5`` to the Codex provider.
 """
 
+import pytest
+
 import sys
 from pathlib import Path
 
@@ -59,3 +61,24 @@ def test_copilot_command_is_non_interactive():
     assert "-p" in cmd
     assert "--model" in cmd and "gpt-5.3-codex" in cmd
     assert "--add-dir" in cmd and "/tmp/x" in cmd
+
+
+# --------------------------------------------------------------------------- #
+# #1607: these tests exercise provider RESOLUTION, not operator policy.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture(autouse=True)
+def _enable_every_runtime(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Opt this module's tests into every runtime.
+
+    The factory now enforces the RFC-0014 operator allowlist, so constructing a
+    non-claude provider requires the operator to have enabled it. Opting in here,
+    rather than blanket-enabling in conftest, keeps the gate load-bearing in every
+    other test — where an unexpected refusal should still be a failure.
+    """
+    import core.runtime_gating as rg
+
+    monkeypatch.setenv(
+        rg.ALLOWLIST_ENV, ",".join(sorted(rg.known_runtimes() - rg.MANUAL_ENABLE_ONLY))
+    )
