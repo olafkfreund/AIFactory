@@ -283,6 +283,35 @@ class AgentService(
         await self._free_durable_slot_on_exit(task_id, spec_dir_hint)
         await self._drain_queue()
 
+    async def _k8s_job_owns(self, task_id: str) -> bool:
+        """True when this task's row carries a live k8s-job reference (#1628).
+
+        On the ``/start`` path the subprocess whose exit calls the caller is
+        **spec creation**, not the build — the build that follows runs as a
+        Kubernetes Job on the same row. Marking the task terminal there left a
+        row holding a live Job reference AND ``done``, which
+        ``get_active_kubejobs`` (it selects ``running``) never returns, so
+        reconcile, the reaper, the #1249 review re-drive, streamer cancellation
+        and credential release were all blind to that build. A Job owns its
+        task's lifecycle; the reconcile loop marks it terminal.
+
+        A read failure answers False: the terminal write is the safer default,
+        because leaving a dead build ``running`` strands its slot.
+        """
+        try:
+            state = await self._store().get_state(task_id)
+        except Exception:  # noqa: BLE001 - a read failure must not skip the write
+            return False
+        ref = (state or {}).get("worker_ref") or {}
+        if not (isinstance(ref, dict) and ref.get("kind") == "k8s-job"):
+            return False
+        _log.debug(
+            "[AgentService] not marking %s terminal on subprocess exit: a "
+            "k8s Job owns this task (#1628)",
+            sanitize_log(task_id),
+        )
+        return True
+
     async def _free_durable_slot_on_exit(
         self, task_id: str, spec_dir: Path | None = None
     ) -> None:
@@ -332,17 +361,7 @@ class AgentService(
         # #1249 review re-drive, streamer cancellation and credential release
         # were all blind to that build. A Job owns its task's lifecycle; the
         # reconcile loop is what marks it terminal.
-        try:
-            state = await self._store().get_state(task_id)
-        except Exception:  # noqa: BLE001 - a read failure must not skip the write
-            state = None
-        ref = (state or {}).get("worker_ref") or {}
-        if isinstance(ref, dict) and ref.get("kind") == "k8s-job":
-            _log.debug(
-                "[AgentService] not marking %s terminal on subprocess exit: a "
-                "k8s Job owns this task (#1628)",
-                sanitize_log(task_id),
-            )
+        if await self._k8s_job_owns(task_id):
             return
         try:
             await self._store().mark_terminal(task_id, lifecycle, error=error)
