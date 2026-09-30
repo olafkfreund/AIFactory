@@ -1843,3 +1843,46 @@ def test_build_path_keeps_the_image_entries(monkeypatch: pytest.MonkeyPatch) -> 
     assert "/clis" not in path
     assert "/nix/var/nix/profiles/default/bin" in path
     assert "/home/nonroot/.npm-global/bin" in path
+
+
+# --------------------------------------------------------------------------- #
+# #1425: the scheduler must be able to see the resource that actually binds
+# --------------------------------------------------------------------------- #
+
+
+def test_build_job_declares_an_ephemeral_storage_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without this the node reports `ephemeral-storage 0 (0%)` requested and
+    cannot refuse a build that would fill the disk — it discovers the problem by
+    evicting pods, which on a single node means postgres and minio too.
+
+    A LIMIT rather than a request is the point: allocatable ephemeral-storage
+    (933.7 GB) overstates the real headroom (~185 GB) fivefold, because the
+    node's filesystem is the host root. A request would be evaluated against the
+    fiction; the limit is enforced per pod by the kubelet.
+    """
+    project_path = _seed_env(monkeypatch)
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:s", project_path=project_path, spec_id="s"
+    )
+    limits = m["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"]
+
+    assert limits["ephemeral-storage"] == "4Gi"
+    # cpu/memory are unchanged — this adds a key, it does not restate the others.
+    assert limits["cpu"] == "2"
+    assert limits["memory"] == "4Gi"
+
+
+def test_ephemeral_storage_is_not_hand_written_as_a_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Kubernetes derives an equal request from a limit; the manifest must not
+    set one itself, exactly as it does not for cpu/memory today."""
+    project_path = _seed_env(monkeypatch)
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:s", project_path=project_path, spec_id="s"
+    )
+    resources = m["spec"]["template"]["spec"]["containers"][0]["resources"]
+
+    assert set(resources) == {"limits"}
