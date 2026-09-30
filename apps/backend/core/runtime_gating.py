@@ -30,26 +30,52 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
+from functools import lru_cache
 
 # The runtime that is ALWAYS available without any allowlist entry. Selecting it
 # never requires operator opt-in (RFC-0014 §6: "All non-claude runtimes are
 # disabled unless ...").
 DEFAULT_RUNTIME = "claude"
 
-# Every runtime RFC-0014 §6 names as selectable. ``claude`` is included so the
-# set is the full universe of valid ``execution.runtime`` values; it is always
-# enabled regardless of the allowlist.
-KNOWN_RUNTIMES: frozenset[str] = frozenset(
-    {
-        "claude",
-        "codex",
-        "antigravity",
-        "ollama",
-        "ollama-cloud",
-        "claude-subagents",
-        "dynamic-workflow",
-    }
-)
+# Every runtime RFC-0014 §6 names as selectable, DERIVED from the provider factory
+# rather than restated here (#1607). The two used to be hand-maintained lists and
+# they drifted: ``copilot``, ``github-models``, ``openai-compatible`` and
+# ``opencode`` were resolvable by ``get_provider`` and absent from this set, and
+# because ``operator_allowlist`` drops tokens it does not recognise, enforcing the
+# gate in that state would have made all four PERMANENTLY unreachable — no value an
+# operator could set would have re-enabled them. A provider that exists is now a
+# runtime the gate can name, by construction.
+#
+# ``claude`` is included so the set is the full universe of valid
+# ``execution.runtime`` values; it is always enabled regardless of the allowlist.
+# ``MANUAL_ENABLE_ONLY`` has no factory entry (both map to the ``claude``
+# provider), so it is unioned in explicitly.
+
+
+@lru_cache(maxsize=1)
+def known_runtimes() -> frozenset[str]:
+    """The full universe of valid ``execution.runtime`` values.
+
+    Lazy because ``providers.factory`` imports this module at module scope, so
+    importing it back at module scope here would be a cycle. Cached because the
+    registries are static for the life of the process.
+    """
+    # Lazy by necessity, not preference: see the docstring — a module-level
+    # import would cycle (factory imports this module at module scope).
+    from providers import factory  # noqa: PLC0415
+
+    canonicals = frozenset(factory._AGENTIC_REGISTRY) | frozenset(
+        factory._TEXT_REGISTRY
+    )
+    return canonicals | MANUAL_ENABLE_ONLY
+
+
+def __getattr__(name: str) -> frozenset[str]:
+    """Keep ``runtime_gating.KNOWN_RUNTIMES`` working now that it is derived."""
+    if name == "KNOWN_RUNTIMES":
+        return known_runtimes()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # The "speed-up" runtimes (RFC-0014 §6): parallel sub-agent fan-out / scripted
 # multi-agent orchestration. They multiply spend, so a broad allowlist token
@@ -73,12 +99,36 @@ def normalize_runtime(runtime: str | None) -> str:
     return name or DEFAULT_RUNTIME
 
 
+def _canonical_token(token: str) -> str | None:
+    """A runtime name for an allowlist token, or ``None`` if it names nothing.
+
+    Tokens go through the SAME alias table ``get_provider`` uses (#1607), so an
+    operator writing ``gemini`` gets ``antigravity`` — the canonical it would
+    actually resolve to — rather than silently nothing. Without this the gate and
+    the factory keep two vocabularies and drift apart again.
+    """
+    from providers import factory  # noqa: PLC0415 - see known_runtimes()
+
+    resolved = factory._PROVIDER_ALIASES.get(token, token)
+    return resolved if resolved in known_runtimes() else None
+
+
 def operator_allowlist(env: Mapping[str, str] | None = None) -> frozenset[str]:
     """Resolve the operator-enabled runtime set from ``AIFACTORY_RUNTIMES``.
 
     Always includes ``claude``. The token ``all`` expands to every known runtime
     EXCEPT the manual-only speed-up runtimes (those must be named explicitly).
-    Unknown tokens are ignored (a typo can never *enable* an unintended runtime).
+
+    An unrecognised token RAISES (#1607). This reverses the original rule, which
+    dropped them so "a typo can never *enable* an unintended runtime". That
+    protects the wrong failure: once the gate is enforced, the realistic operator
+    error is not a typo enabling codex, it is ``AIFACTORY_RUNTMIES=codex`` or
+    ``AIFACTORY_RUNTIMES=gemini`` silently DISABLING what the operator believes
+    they just enabled, surfacing hours later as a build failure that points
+    nowhere near the variable. Silent drop is how this module became dead code.
+
+    Safe to raise: this is called lazily at provider construction, never at import
+    or startup, so a bad value costs one build rather than crash-looping the pod.
     """
     raw = (_env_source(env).get(ALLOWLIST_ENV) or "").strip()
     enabled: set[str] = {DEFAULT_RUNTIME}
@@ -86,9 +136,32 @@ def operator_allowlist(env: Mapping[str, str] | None = None) -> frozenset[str]:
         return frozenset(enabled)
     tokens = {t.strip().lower() for t in raw.split(",") if t.strip()}
     if _ALLOW_ALL_TOKEN in tokens:
-        enabled |= KNOWN_RUNTIMES - MANUAL_ENABLE_ONLY
-    enabled |= {t for t in tokens if t in KNOWN_RUNTIMES}
+        enabled |= known_runtimes() - MANUAL_ENABLE_ONLY
+    unknown: list[str] = []
+    for token in tokens - {_ALLOW_ALL_TOKEN}:
+        canonical = _canonical_token(token)
+        if canonical is None:
+            unknown.append(token)
+        else:
+            enabled.add(canonical)
+    if unknown:
+        raise ValueError(
+            f"{ALLOWLIST_ENV} names {len(unknown)} unknown runtime(s): "
+            f"{', '.join(sorted(unknown))}. Known runtimes: "
+            f"{', '.join(sorted(known_runtimes()))}."
+        )
     return frozenset(enabled)
+
+
+def require_enabled(runtime: str, env: Mapping[str, str] | None = None) -> None:
+    """Raise unless ``runtime`` is operator-enabled (#1607).
+
+    The enforcement entry point for ``providers.factory``. ``claude`` is always
+    enabled, so a fleet that names no runtimes is unaffected.
+    """
+    if is_runtime_enabled(runtime, env):
+        return
+    raise RuntimeNotEnabledError(runtime, operator_allowlist(env))
 
 
 def is_runtime_enabled(
@@ -168,7 +241,7 @@ def selectable_runtimes(env: Mapping[str, str] | None = None) -> dict[str, bool]
     ``aifactory runtimes`` view / CFactory billing-mode panel).
     """
     enabled = operator_allowlist(env)
-    return {name: (name in enabled) for name in sorted(KNOWN_RUNTIMES)}
+    return {name: (name in enabled) for name in sorted(known_runtimes())}
 
 
 # --------------------------------------------------------------------------- #
@@ -194,11 +267,19 @@ def _test_allowlist() -> None:
     _check(is_runtime_enabled("codex", env), "codex must be on when allowlisted")
     _check(is_runtime_enabled("ollama", env), "ollama must be on when allowlisted")
     _check(not is_runtime_enabled("antigravity", env), "antigravity off (not listed)")
-    # Unknown tokens are ignored and cannot enable anything.
-    _check(
+    # #1607: an unknown token RAISES rather than being dropped — a typo that
+    # silently disables what the operator meant to enable is the failure that
+    # actually happens, and it surfaces far from its cause.
+    try:
         operator_allowlist({ALLOWLIST_ENV: "nope, codex"})
-        == frozenset({"claude", "codex"}),
-        "unknown token ignored",
+    except ValueError as exc:
+        _check("nope" in str(exc), "unknown token names itself in the error")
+    else:
+        raise AssertionError("unknown token did not raise")
+    # An alias resolves to its canonical rather than to nothing.
+    _check(
+        "antigravity" in operator_allowlist({ALLOWLIST_ENV: "gemini"}),
+        "alias token normalises to its canonical",
     )
 
 
@@ -247,7 +328,7 @@ def _test_selectable_report() -> None:
     _check(report["claude"] is True, "claude always selectable")
     _check(report["codex"] is True, "codex selectable when allowlisted")
     _check(report["ollama"] is False, "ollama not selectable")
-    _check(set(report) == set(KNOWN_RUNTIMES), "report covers every known runtime")
+    _check(set(report) == set(known_runtimes()), "report covers every known runtime")
 
 
 def _test() -> None:

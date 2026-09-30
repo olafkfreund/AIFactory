@@ -325,6 +325,15 @@ def get_provider(provider_name: str, phase: str, **kwargs: Any) -> BaseLLMProvid
     # cannot route the same name differently (#1213).
     canonical = _apply_endpoint_defaults(canonical, kwargs)
 
+    # #1607: the RFC-0014 operator allowlist is enforced HERE, at the one point
+    # both entry points converge on with the canonical in hand. It used to be
+    # enforced nowhere: ``get_runtime_provider`` consulted it and had no
+    # production caller, while the live path (``infer_provider_from_model`` ->
+    # here, from eight call sites) never did. ``claude`` never reaches this
+    # function — every caller short-circuits to ``create_client`` — so the two
+    # claude-mapped MANUAL_ENABLE_ONLY runtimes are not gated at this seam.
+    runtime_gating.require_enabled(canonical)
+
     if phase in _AGENTIC_PHASES:
         registry = _AGENTIC_REGISTRY
         if canonical not in registry:
@@ -379,6 +388,15 @@ def get_qa_llm_provider(provider_name: str, **kwargs: Any) -> BaseLLMProvider:
         )
 
     canonical = _apply_endpoint_defaults(canonical, kwargs)
+
+    # #1607: the RFC-0014 operator allowlist is enforced HERE, at the one point
+    # both entry points converge on with the canonical in hand. It used to be
+    # enforced nowhere: ``get_runtime_provider`` consulted it and had no
+    # production caller, while the live path (``infer_provider_from_model`` ->
+    # here, from eight call sites) never did. ``claude`` never reaches this
+    # function — every caller short-circuits to ``create_client`` — so the two
+    # claude-mapped MANUAL_ENABLE_ONLY runtimes are not gated at this seam.
+    runtime_gating.require_enabled(canonical)
 
     module_path, class_name = _TEXT_REGISTRY[canonical]
 
