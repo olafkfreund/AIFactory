@@ -206,9 +206,7 @@ class KubeJobLogStreamer:
         line_source: LineSource | None = None,
         plan_sync: PlanSync | None = None,
         plan_sync_interval: float = _PLAN_SYNC_INTERVAL_SECONDS,
-        job_active: JobActive | None = None,
     ) -> None:
-        self._job_active = job_active
         self._log_sink = log_sink
         self._rmux_feed = rmux_feed
         self._line_source = line_source or _default_line_source
@@ -221,7 +219,42 @@ class KubeJobLogStreamer:
         # fully-pending DAG for that whole interval. None means "never synced".
         self._plan_synced_at: float | None = None
 
-    async def stream(self, *, namespace: str, job_name: str, spec_id: str) -> int:
+    async def _should_reattach(
+        self, empty_reattaches: int, namespace: str, job_name: str, delivered: int
+    ) -> bool:
+        """Whether a clean end-of-stream means "go round again" (#1619).
+
+        False in three cases: no liveness authority was injected (one pass, the
+        pre-#1619 behaviour, which keeps the streamer usable and its tests
+        honest); the Job is done, so this EOF really was the end; or an active
+        Job has produced nothing across enough reattaches that following it is
+        pointless — which is said out loud rather than silently abandoned.
+        """
+        if self._job_active is None:
+            return False
+        if not await self._job_active():
+            return False
+        if empty_reattaches >= _MAX_EMPTY_REATTACHES:
+            _log.warning(
+                "[build_log_stream] Job %s/%s reports active but produced "
+                "nothing across %d reattaches — giving up on live logs "
+                "(build unaffected, %d line(s) delivered)",
+                namespace,
+                job_name,
+                empty_reattaches,
+                delivered,
+            )
+            return False
+        return True
+
+    async def stream(
+        self,
+        *,
+        namespace: str,
+        job_name: str,
+        spec_id: str,
+        job_active: JobActive | None = None,
+    ) -> int:
         """Pump the Job pod's logs into both sinks. Returns lines streamed.
 
         Best-effort: a failing line-source, a sink that raises, or a mid-stream
@@ -230,6 +263,7 @@ class KubeJobLogStreamer:
         delivered (for observability + tests).
         """
         delivered = 0
+        self._job_active = job_active
         try:
             # #1619: a clean end-of-stream is NOT proof the build ended. The
             # only authority on that is the reconcile loop, which cancels this
@@ -260,24 +294,9 @@ class KubeJobLogStreamer:
                     await self._fan_out(spec_id, raw)
                     delivered += 1
                 empty_reattaches = 0 if seen > 0 else empty_reattaches + 1
-                if self._job_active is None:
-                    # No liveness authority injected: one pass, as before. The
-                    # production caller always injects one; this keeps the
-                    # streamer usable (and its tests honest) without it.
-                    break
-                if not await self._job_active():
-                    # The Job is done — this EOF really was the end.
-                    break
-                if empty_reattaches >= _MAX_EMPTY_REATTACHES:
-                    _log.warning(
-                        "[build_log_stream] Job %s/%s reports active but "
-                        "produced nothing across %d reattaches — giving up on "
-                        "live logs (build unaffected, %d line(s) delivered)",
-                        namespace,
-                        job_name,
-                        empty_reattaches,
-                        delivered,
-                    )
+                if not await self._should_reattach(
+                    empty_reattaches, namespace, job_name, delivered
+                ):
                     break
                 await asyncio.sleep(_REATTACH_INTERVAL_SECONDS)
         except asyncio.CancelledError:

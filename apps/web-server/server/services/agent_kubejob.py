@@ -25,6 +25,9 @@ from server.services import review_redrive_service
 from server.specpath import spec_dir_for
 
 from .build_backend import _TERMINAL_STATES, orphaned_worktree_registrations
+from .build_log_stream import PlanSync
+from .task_log_writer import TaskLogWriter
+from .task_phase import TaskPhase
 
 # #1619: how long after dispatch an unknown task id still counts as active,
 # covering the window before the first reconcile tick (interval 15s) publishes
@@ -32,9 +35,6 @@ from .build_backend import _TERMINAL_STATES, orphaned_worktree_registrations
 # never called dead, short enough that a build which never registered stops
 # being followed promptly.
 _DISPATCH_GRACE_SECONDS = 45.0
-from .build_log_stream import PlanSync
-from .task_log_writer import TaskLogWriter
-from .task_phase import TaskPhase
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -503,18 +503,21 @@ class KubejobMixin:
             # Pull it on the stream's own clock instead — the push and the pull
             # both already exist, they were just each called once.
             plan_sync=self._kubejob_plan_sync(project_path, spec_id),
-            # #1619: without this the pump stopped on the FIRST end-of-stream,
-            # which for a build pod arrives while its init containers are still
-            # running — so nothing was followed for the rest of the build. The
-            # authority on "is this Job alive" is the reconcile loop's own set,
-            # refreshed every 15s from the job-state rows.
-            job_active=self._kubejob_still_active(task_id),
         )
 
         async def _run_stream() -> None:
             try:
                 await streamer.stream(
-                    namespace=namespace, job_name=job_name, spec_id=spec_id
+                    namespace=namespace,
+                    job_name=job_name,
+                    spec_id=spec_id,
+                    # #1619: without this the pump stopped on the FIRST
+                    # end-of-stream, which for a build pod arrives while its
+                    # init containers are still running — so nothing was
+                    # followed for the rest of the build. The authority on "is
+                    # this Job alive" is the reconcile loop's own set,
+                    # refreshed every 15s from the job-state rows.
+                    job_active=self._kubejob_still_active(task_id),
                 )
             finally:
                 self._kubejob_log_streamers.pop(task_id, None)

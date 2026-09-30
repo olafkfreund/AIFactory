@@ -97,10 +97,10 @@ async def test_reattaches_while_the_job_is_active(monkeypatch: pytest.MonkeyPatc
         if len(seen) == 2:
             active["v"] = False  # the Job finishes after its last line
 
-    streamer = KubeJobLogStreamer(
-        log_sink=_sink, line_source=src, job_active=_job_active
+    streamer = KubeJobLogStreamer(log_sink=_sink, line_source=src)
+    delivered = await streamer.stream(
+        namespace="f", job_name="j", spec_id="s", job_active=_job_active
     )
-    delivered = await streamer.stream(namespace="f", job_name="j", spec_id="s")
 
     assert seen == ["phase: coding", "done"]
     assert delivered == 2
@@ -118,10 +118,10 @@ async def test_stops_when_the_job_is_no_longer_active(monkeypatch: pytest.Monkey
         return False
 
     src = _source([[b"only line\n"]])
-    streamer = KubeJobLogStreamer(
-        log_sink=_noop_sink, line_source=src, job_active=_job_active
+    streamer = KubeJobLogStreamer(log_sink=_noop_sink, line_source=src)
+    delivered = await streamer.stream(
+        namespace="f", job_name="j", spec_id="s", job_active=_job_active
     )
-    delivered = await streamer.stream(namespace="f", job_name="j", spec_id="s")
 
     assert delivered == 1
     assert src.calls["n"] == 1, "must not reattach once the Job is done"
@@ -154,10 +154,10 @@ async def test_replayed_lines_are_not_delivered_twice(
     async def _sink(line: str) -> None:
         seen.append(line)
 
-    streamer = KubeJobLogStreamer(
-        log_sink=_sink, line_source=src, job_active=_job_active
+    streamer = KubeJobLogStreamer(log_sink=_sink, line_source=src)
+    await streamer.stream(
+        namespace="f", job_name="j", spec_id="s", job_active=_job_active
     )
-    await streamer.stream(namespace="f", job_name="j", spec_id="s")
 
     assert seen == ["one", "two"], f"line replayed to the cockpit: {seen}"
 
@@ -180,11 +180,11 @@ async def test_gives_up_loudly_after_persistent_silence(
         return True
 
     src = _source([[]])
-    streamer = KubeJobLogStreamer(
-        log_sink=_noop_sink, line_source=src, job_active=_job_active
-    )
+    streamer = KubeJobLogStreamer(log_sink=_noop_sink, line_source=src)
     with caplog.at_level("WARNING"):
-        delivered = await streamer.stream(namespace="f", job_name="j", spec_id="s")
+        delivered = await streamer.stream(
+            namespace="f", job_name="j", spec_id="s", job_active=_job_active
+        )
 
     assert delivered == 0
     assert src.calls["n"] <= 5, "the reattach loop must be bounded"
