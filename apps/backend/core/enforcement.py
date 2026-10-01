@@ -50,7 +50,21 @@ _NO_KEY_WARNED: set[str] = set()
 # ---------------------------------------------------------------------------
 
 _CLAUDE_PRICING: dict[str, dict[str, float]] = {
-    # Opus 4.8 — current flagship. $5 / $25 per MTok (Anthropic price list).
+    # Opus 5.5 — current flagship.
+    #
+    # PROVISIONAL: these rates mirror Opus 4.8 because the published per-token
+    # price for 5.5 has not been confirmed here. Every $ figure this module
+    # reports for opus-5.5 is therefore an assumption, not a quote — replace
+    # from the Anthropic price list before anyone bills against it. Mirroring
+    # the previous flagship beats omitting the entry, which would make the cost
+    # silently read as zero.
+    "claude-opus-5-5": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.50,  # 0.1x input rate
+        "cache_creation": 6.25,  # 1.25x input rate
+    },
+    # Opus 4.8 — previous flagship. $5 / $25 per MTok (Anthropic price list).
     "claude-opus-4-8": {
         "input": 5.0,
         "output": 25.0,
