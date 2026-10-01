@@ -272,14 +272,25 @@ RUN mkdir -p /home/nonroot/.npm-global \
 # `claude --version` is the point of the fix, not decoration: this shipped broken
 # because nothing asserted the CLI works. Full path, since PATH is set for the
 # runtime user rather than for RUN.
+#
+# #1621 extends that assertion to codex and gemini. They had none, and they are
+# exactly the two the build Job's install-clis initContainer was re-fetching per
+# pod — its stale justification claimed this image lacked them. With that
+# initContainer gone, a build gets its CLIs from here and nowhere else, so a
+# missing one must fail the IMAGE build (once, in CI) rather than every build
+# that needs it. The `antigravity` symlink is asserted through gemini, which it
+# points at.
 RUN npm install -g \
         @anthropic-ai/claude-code@2.1.283 \
         @openai/codex@0.158.0 \
         @google/gemini-cli@0.61.0 \
  && node /home/nonroot/.npm-global/lib/node_modules/@anthropic-ai/claude-code/install.cjs \
  && /home/nonroot/.npm-global/bin/claude --version \
+ && /home/nonroot/.npm-global/bin/codex --version \
+ && /home/nonroot/.npm-global/bin/gemini --version \
  && npm cache clean --force \
- && ln -sf /home/nonroot/.npm-global/bin/gemini /home/nonroot/.npm-global/bin/antigravity
+ && ln -sf /home/nonroot/.npm-global/bin/gemini /home/nonroot/.npm-global/bin/antigravity \
+ && /home/nonroot/.npm-global/bin/antigravity --version
 
 # Google Antigravity CLI (`agy`) — a SEPARATE product from @google/gemini-cli,
 # despite the `antigravity` alias above suggesting otherwise. That alias makes

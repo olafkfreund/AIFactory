@@ -45,6 +45,9 @@ def build_job_manifest(
     image_pull_secret: str = "ghcr-pull",
     cpus: str = "2",
     memory: str = "2Gi",
+    # #1425: the other half of a concurrency slot. Same limit-not-request
+    # reasoning as JobSpec.ephemeral_storage_limit — see it for the arithmetic.
+    ephemeral_storage: str = "2Gi",
     ttl_seconds: int = 120,
     timeout: int = 600,
     repo_pvc: str | None = None,
@@ -115,7 +118,13 @@ def build_job_manifest(
         "name": "gate",
         "image": image,
         "command": ["bash", "-c", command],
-        "resources": {"limits": {"cpu": cpus, "memory": memory}},
+        "resources": {
+            "limits": {
+                "cpu": cpus,
+                "memory": memory,
+                "ephemeral-storage": ephemeral_storage,
+            }
+        },
         "securityContext": dict(container_hardening),
     }
     pod_spec: dict[str, Any] = {

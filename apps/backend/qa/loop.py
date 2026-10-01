@@ -625,7 +625,7 @@ async def run_qa_validation_loop(
                     get_phase_model(spec_dir, "qa", model)
                 )
                 failover_used.add(current_provider)
-                candidate = next_provider(current_provider, failover_used)
+                candidate = next_provider(current_provider, failover_used, gated=True)
                 if (
                     should_failover(response)
                     and not failover_deadline.expired()
