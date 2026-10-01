@@ -3906,6 +3906,7 @@ paths:
               default:
                 targetStatus: backlog
                 autoRestart: false
+                force: false
       responses:
         '200':
           description: Successful Response
@@ -12864,6 +12865,13 @@ components:
           type: boolean
           title: Autorestart
           description: Auto-restart the task after recovery
+          default: false
+        force:
+          type: boolean
+          title: Force
+          description: Recover even while a build for this task is still running. Recovery resets the
+            task's record but does NOT stop the Job, so forcing it can leave a live build writing against
+            a reset task (#1619).
           default: false
       type: object
       title: RecoverTaskRequest

@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -27,6 +28,13 @@ from .build_backend import _TERMINAL_STATES, orphaned_worktree_registrations
 from .build_log_stream import PlanSync
 from .task_log_writer import TaskLogWriter
 from .task_phase import TaskPhase
+
+# #1619: how long after dispatch an unknown task id still counts as active,
+# covering the window before the first reconcile tick (interval 15s) publishes
+# it. One tick plus headroom — long enough that a just-dispatched build is
+# never called dead, short enough that a build which never registered stops
+# being followed promptly.
+_DISPATCH_GRACE_SECONDS = 45.0
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -72,6 +80,7 @@ class KubejobMixin:
         # Attributes/methods provided by the concrete host (AgentService);
         # declared here so mypy can resolve the self.* references in a mixin.
         _kubejob_log_streamers: dict[str, Any]
+        _active_kubejob_task_ids: set[str]
         _task_current_phases: dict[str, Any]
         _task_log_writers: dict[str, Any]
         _handle_output_line: Callable[..., Any]
@@ -499,7 +508,16 @@ class KubejobMixin:
         async def _run_stream() -> None:
             try:
                 await streamer.stream(
-                    namespace=namespace, job_name=job_name, spec_id=spec_id
+                    namespace=namespace,
+                    job_name=job_name,
+                    spec_id=spec_id,
+                    # #1619: without this the pump stopped on the FIRST
+                    # end-of-stream, which for a build pod arrives while its
+                    # init containers are still running — so nothing was
+                    # followed for the rest of the build. The authority on "is
+                    # this Job alive" is the reconcile loop's own set,
+                    # refreshed every 15s from the job-state rows.
+                    job_active=self._kubejob_still_active(task_id),
                 )
             finally:
                 self._kubejob_log_streamers.pop(task_id, None)
@@ -597,6 +615,28 @@ class KubejobMixin:
         except Exception:  # noqa: BLE001 - rmux integration optional
             return None
 
+    def _kubejob_still_active(self, task_id: str) -> Callable[[], Any]:
+        """A liveness check for ``KubeJobLogStreamer`` (#1619).
+
+        Reads the set the reconcile loop republishes each tick, so it costs
+        nothing and cannot disagree with what ``is_running`` tells the cockpit.
+
+        The set is empty until the first tick after dispatch (≤15s), and the
+        streamer may hit its first EOF inside that window — so an id that is
+        not yet known counts as active. Being briefly optimistic here costs one
+        extra reattach; being pessimistic would reproduce the very bug this
+        fixes. The bounded empty-reattach counter stops a genuinely dead
+        stream either way.
+        """
+        started = time.monotonic()
+
+        async def _active() -> bool:
+            if task_id in self._active_kubejob_task_ids:
+                return True
+            return (time.monotonic() - started) < _DISPATCH_GRACE_SECONDS
+
+        return _active
+
     def _cancel_kubejob_log_stream(self, task_id: str) -> None:
         """Cancel + drop a build's Job-native log streamer if present (#680)."""
         streamer = self._kubejob_log_streamers.pop(task_id, None)
@@ -640,6 +680,7 @@ class KubejobMixin:
             _log.exception("[AgentService] kubejob reconcile: store read failed")
             return out
         backend = self._build_backend()
+        live: set[str] = set()
         for row in rows:
             job_id = row["job_id"]
             try:
@@ -658,6 +699,7 @@ class KubejobMixin:
                 # dispatch now that the Job is done (mirrors the subprocess path).
                 self._release_task_credential(job_id)
             else:
+                live.add(job_id)  # #1619: still running → is_running() says so
                 # #1249: still running → this IS the tick that used to be the
                 # ONLY route into check_review_obligation (monitor_process's
                 # subprocess-tied loop), which never runs for a kubejob build.
@@ -667,6 +709,14 @@ class KubejobMixin:
                 # this is the one place that fixes it for both the direct
                 # and queue-drained paths.
                 await self._redrive_kubejob_review(job_id)
+        # #1619: replace the live set wholesale from THIS tick's rows, never
+        # mutate it incrementally. A set that is only added to drifts into
+        # claiming dead builds are alive, and `is_running` saying "running"
+        # about a finished build strands it and blocks /start. Only reached
+        # when the poll above succeeded: an early return leaves the previous
+        # tick's answer standing rather than reporting every build dead
+        # because the store hiccuped.
+        self._active_kubejob_task_ids = live
         if out:
             # Builds finished → fill freed slots from the FIFO queue.
             await self._drain_queue()
