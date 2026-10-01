@@ -16,7 +16,7 @@ import json
 import logging
 import os
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -925,13 +925,21 @@ def project_repo(project_data: dict) -> str | None:
 
 
 def _iso_from_timestamp(ts: float) -> str:
-    """A filesystem timestamp as a naive local ISO string.
+    """A filesystem timestamp as a tz-aware UTC ISO string.
 
-    Naive on purpose: `updated_at` has always been reported this way, and the
-    frontend/CFactory parse that shape. One place to change if the API ever
-    moves to tz-aware timestamps.
+    #1619: this used to render the server's LOCAL clock with no offset, and the
+    cockpit parses it with ``new Date(...)``, which reads an offset-less ISO
+    string as the *browser's* local time. The pod runs UTC and the operator was
+    on BST, so every age was an hour older than reality — a task dispatched 32
+    minutes earlier rendered "1h ago", and anything time-based tripped an hour
+    early.
+
+    Carrying the offset removes the guess. ``datetime.fromisoformat`` (CFactory's
+    reader) accepts it, and JavaScript's ``Date`` honours it; CFactory's own
+    fallback on that path is already ``datetime.now(UTC)``, so an aware value is
+    what the rest of its comparison expects.
     """
-    return datetime.fromtimestamp(ts).isoformat()
+    return datetime.fromtimestamp(ts, UTC).isoformat()
 
 
 def _creation_time(

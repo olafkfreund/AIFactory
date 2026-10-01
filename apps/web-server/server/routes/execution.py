@@ -189,6 +189,15 @@ class RecoverTaskRequest(BaseModel):
         "backlog", description="Target status after recovery"
     )
     autoRestart: bool = Field(False, description="Auto-restart the task after recovery")
+    force: bool = Field(
+        False,
+        description=(
+            "Recover even while a build for this task is still running. "
+            "Recovery resets the task's record but does NOT stop the Job, so "
+            "forcing it can leave a live build writing against a reset task "
+            "(#1619)."
+        ),
+    )
 
 
 class CopilotDispatchRequest(BaseModel):
@@ -969,6 +978,33 @@ async def stop_task(
     }
 
 
+def _refuse_recovery_while_running(
+    task_id: str, agent_service: Any, *, force: bool
+) -> None:
+    """409 when a build for ``task_id`` is still running and ``force`` is unset.
+
+    #1619: recovery resets the task record and never deletes the k8s Job, so
+    recovering a live build leaves the Job writing against a reset task and,
+    with autoRestart, can put a second Job on it. Reads the same
+    ``is_running`` the cockpit's card reads, so the refusal and the badge
+    cannot disagree.
+
+    A separate function rather than an inline branch: ``recover_task`` is
+    already at the strict-ruff branch ceiling, and a guard that gets
+    inlined-and-forgotten is how the badge and the refusal drift apart.
+    """
+    if force or not agent_service.is_running(task_id):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=(
+            f"Task {task_id} is still running — recovery would reset its "
+            "record while the build keeps writing. Wait for it to finish, "
+            "or pass force=true if you are certain it is dead."
+        ),
+    )
+
+
 @router.post("/{task_id}/recover")
 async def recover_task(
     task_id: str,
@@ -1018,6 +1054,14 @@ async def recover_task(
 
     # Clean up from running_tasks if present
     agent_service = get_agent_service()
+
+    # #1619: recovery resets the task's record and does NOT delete the k8s Job,
+    # so recovering a build that is still running leaves a live Job writing
+    # against a reset task — and, with autoRestart, can put a second Job on the
+    # same task. The cockpit offered exactly this over healthy builds while
+    # is_running() could not see them. Expressed against the same predicate the
+    # card reads, so the refusal and the badge can never disagree.
+    _refuse_recovery_while_running(task_id, agent_service, force=request.force)
     if task_id in agent_service.running_tasks:
         try:
             proc = agent_service.running_tasks[task_id]
