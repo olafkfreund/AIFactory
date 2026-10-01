@@ -103,12 +103,36 @@ COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-runtime /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
 RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
  && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
-# Every node:24 image to date bundles an npm (<=11.19.0) whose own deps carry
-# HIGH CVEs the P0 Trivy gate rejects (brace-expansion, ip-address, tar).
-# npm 11.19.1 has them fixed. Pinned exactly because Dependabot cannot track a
-# version inside RUN. REMOVE this line once `docker run node:24-bookworm-slim
-# npm -v` prints >= 11.19.1 (Factory#1710).
-RUN npm install -g npm@11.19.1 && npm --version
+# Every node:24 image to date bundles an npm whose own vendored deps carry HIGH
+# CVEs the P0 Trivy gate rejects. npm 11.19.1 fixed ip-address and tar, but NOT
+# brace-expansion: measured against the registry, 11.19.1, 11.21.0 and 12.2.0
+# all still bundle brace-expansion 5.0.9 and undici 6.28.0. So no npm release
+# clears these two, and no lockfile of ours can either — Trivy attributes them
+# to usr/local/lib/node_modules/npm/node_modules/*, which is npm's own bundle,
+# not a dependency of this application.
+#
+# Patched upstream versions of the PACKAGES do exist (brace-expansion 5.0.10+,
+# undici 6.28.1), they are simply not in any npm tarball. So we replace npm's
+# vendored copies with the patched ones rather than allow-listing the CVEs: the
+# .trivyignore precedent is for "no known patched version exists", which is not
+# true here, and silencing a report leaves the vulnerable code in an image that
+# runs npm against untrusted repository content.
+#
+# Both bumps are same-major/same-minor patch releases. The trailing `npm
+# --version` is the check: it runs npm after the surgery, so a broken bundle
+# fails the build here rather than in a lane. REMOVE a line once a shipped npm
+# bundles that version or later (Factory#1710, #1634).
+RUN npm install -g npm@11.19.1 \
+ && M=/usr/local/lib/node_modules/npm/node_modules \
+ && for p in brace-expansion@5.0.12 undici@6.28.1; do \
+      n="${p%@*}"; \
+      npm pack "$p" --pack-destination /tmp >/dev/null \
+   && rm -rf "$M/$n" && mkdir -p "$M/$n" \
+   && tar xzf /tmp/"$n"-*.tgz -C "$M/$n" --strip-components=1 \
+   && rm -f /tmp/"$n"-*.tgz; \
+    done \
+ && node -e "const want={'brace-expansion':'5.0.12','undici':'6.28.1'}; let bad=0; for (const [n,v] of Object.entries(want)) { const got=require('/usr/local/lib/node_modules/npm/node_modules/'+n+'/package.json').version; console.log(n, got, got===v?'ok':'EXPECTED '+v); if (got!==v) bad=1; } process.exit(bad)" \
+ && npm --version
 # .nvmrc is the one declaration of the Node major: fail the build on drift.
 COPY .nvmrc /tmp/.nvmrc
 RUN want="$(tr -dc '0-9.' < /tmp/.nvmrc | cut -d. -f1)" \
