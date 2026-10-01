@@ -16,6 +16,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
+from .git_utils import GitReadError
 from .timeline_git import TimelineGitHelper
 from .timeline_models import (
     BranchPoint,
@@ -132,9 +133,24 @@ class FileTimelineTracker:
             timeline = self._get_or_create_timeline(file_path)
 
             # Get file content at branch point
-            content = self.git.get_file_content_at_commit(
-                file_path, branch_point_commit
-            )
+            try:
+                content = self.git.get_file_content_at_commit(
+                    file_path, branch_point_commit
+                )
+            except GitReadError as e:
+                # The read genuinely failed -- this is NOT "file is new".
+                # Recording "" here would become a wrong branch-point
+                # baseline for this file's timeline, so skip registering it
+                # rather than invent one. Loud in the log; never silent.
+                logger.error(
+                    "Skipping timeline registration of %s for task %s: "
+                    "could not read branch point %s: %s",
+                    file_path,
+                    task_id,
+                    branch_point_commit,
+                    e,
+                )
+                continue
             if content is None:
                 # File doesn't exist at this commit - might be created by task
                 content = ""
@@ -186,7 +202,16 @@ class FileTimelineTracker:
             timeline = self._timelines[file_path]
 
             # Get file content at this commit
-            content = self.git.get_file_content_at_commit(file_path, commit_hash)
+            try:
+                content = self.git.get_file_content_at_commit(file_path, commit_hash)
+            except GitReadError as e:
+                logger.error(
+                    "Skipping main-branch event for %s at %s: %s",
+                    file_path,
+                    commit_hash,
+                    e,
+                )
+                continue
             if content is None:
                 continue
 
@@ -281,7 +306,16 @@ class FileTimelineTracker:
             task_view.merged_at = datetime.now()
 
             # Add main branch event for the merge
-            content = self.git.get_file_content_at_commit(file_path, merge_commit)
+            try:
+                content = self.git.get_file_content_at_commit(file_path, merge_commit)
+            except GitReadError as e:
+                logger.error(
+                    "Skipping merged-task event for %s at %s: %s",
+                    file_path,
+                    merge_commit,
+                    e,
+                )
+                content = None
             if content:
                 event = MainBranchEvent(
                     commit_hash=merge_commit,
@@ -518,7 +552,19 @@ class FileTimelineTracker:
                 # recording base content as the task's version, which asserts
                 # the task changed nothing rather than merely failing to see it.
                 if work_ref:
-                    content = self.git.get_file_content_at_commit(file_path, work_ref)
+                    try:
+                        content = self.git.get_file_content_at_commit(
+                            file_path, work_ref
+                        )
+                    except GitReadError as e:
+                        logger.error(
+                            "Skipping worktree capture of %s for task %s at %s: %s",
+                            file_path,
+                            task_id,
+                            work_ref,
+                            e,
+                        )
+                        continue
                     if content is not None:
                         self.on_task_worktree_change(task_id, file_path, content)
                     continue
