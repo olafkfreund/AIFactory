@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1638
 intent: intent/2026-10-01-1638-verify-models-reach-tfactory.md
 ---
