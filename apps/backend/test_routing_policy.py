@@ -73,7 +73,7 @@ def test_absent_policy_is_noop_for_every_phase(tmp_path: Path) -> None:
 def test_absent_policy_preserves_metadata_and_cli_paths(tmp_path: Path) -> None:
     spec = _spec_dir(tmp_path, {"model": "haiku"})
     assert get_phase_model(spec, "coding") == "claude-haiku-4-5-20251001"
-    assert get_phase_model(spec, "coding", cli_model="opus") == "claude-opus-4-8"
+    assert get_phase_model(spec, "coding", cli_model="opus") == "claude-opus-5-5"
     assert load_policy() is None
     assert policy_route("coding") is None
     assert tier_for_model("claude-sonnet-4-6") is None
@@ -89,7 +89,7 @@ def test_policy_routes_stage_to_tier_model(
 ) -> None:
     monkeypatch.setenv(ENV_VAR, json.dumps(_POLICY))
     spec = _spec_dir(tmp_path)
-    assert get_phase_model(spec, "planning") == "claude-opus-4-8"
+    assert get_phase_model(spec, "planning") == "claude-opus-5-5"
     assert get_phase_model(spec, "coding") == "claude-sonnet-5"
     assert get_phase_model(spec, "qa") == "claude-haiku-4-5-20251001"
 
@@ -117,7 +117,7 @@ def test_pinned_model_outranks_everything(
             "model": "haiku",
         },
     )
-    assert get_phase_model(spec, "coding", cli_model="haiku") == "claude-opus-4-8"
+    assert get_phase_model(spec, "coding", cli_model="haiku") == "claude-opus-5-5"
 
 
 def test_explicit_choices_outrank_policy(
@@ -239,7 +239,11 @@ def test_tier_for_model_matches_shorthand_and_full_id(
     monkeypatch.setenv(ENV_VAR, json.dumps(_POLICY))
     assert tier_for_model("sonnet") == "mid"
     assert tier_for_model("claude-sonnet-5") == "mid"
-    assert tier_for_model("claude-opus-4-8") == "frontier"
+    assert tier_for_model("claude-opus-5-5") == "frontier"
+    # A superseded flagship is no longer any tier's model, so it stamps
+    # nothing — this is a reverse lookup of the tier map, not a capability
+    # classification.
+    assert tier_for_model("claude-opus-4-8") is None
     assert tier_for_model("ollama:qwen3:14b") is None
     assert tier_for_model(None) is None
 
@@ -340,7 +344,7 @@ def test_tier_for_model_stamps_from_contract_without_env_policy() -> None:
     # A contract routing block makes the tier stampable even with no env policy.
     meta = {"routingRequested": {"coding": "mid"}}
     assert tier_for_model("claude-sonnet-5", meta) == "mid"
-    assert tier_for_model("claude-opus-4-8", meta) == "frontier"
+    assert tier_for_model("claude-opus-5-5", meta) == "frontier"
     # Still None when neither a policy nor a contract block is present.
     assert tier_for_model("claude-sonnet-5", None) is None
 
@@ -398,7 +402,7 @@ def test_get_phase_model_applies_floor_from_metadata(
     cheap = {"tiers": _POLICY["tiers"], "stages": {"coding": "small"}}
     monkeypatch.setenv(ENV_VAR, json.dumps(cheap))
     spec = _spec_dir(tmp_path, {"model": "sonnet", "difficultyTier": "hard"})
-    assert get_phase_model(spec, "coding") == "claude-opus-4-8"
+    assert get_phase_model(spec, "coding") == "claude-opus-5-5"
 
 
 def test_floored_tier_falls_back_to_default_tiers_map(
@@ -483,7 +487,7 @@ class TestPhaseModelsApplyWithoutACompanionFlag:
 
         assert get_phase_model(spec, "planning") == "claude-sonnet-5"
         assert get_phase_model(spec, "coding") == "claude-haiku-4-5-20251001"
-        assert get_phase_model(spec, "qa") == "claude-opus-4-8"
+        assert get_phase_model(spec, "qa") == "claude-opus-5-5"
 
     def test_an_empty_phase_models_map_is_not_a_selection(self, tmp_path: Path) -> None:
         """`{}` must not swallow the CLI argument."""
