@@ -624,13 +624,23 @@ def build_ingest_payload(spec_dir: Path, spec_id: str) -> dict:
     # silently falling back to TFactory's default (sonnet). The choice lives in
     # task_metadata.json's phaseModels; carry it on the contract's
     # execution.phase_models, which TFactory's ingest turns into its own
-    # task_metadata.json (get_phase_model reads that). Additive: a real signed
-    # contract's execution block is preserved; we only fill phase_models we add.
+    # task_metadata.json (TFactory task_control.py:472 projects five of these
+    # keys into it, and get_phase_model reads that).
+    #
+    # verify_pm WINS the merge (#1638). The operand order is the whole fix: it
+    # used to be {**verify_pm, **incoming}, so an incoming contract already
+    # carrying phase_models beat the verify models — backwards for a field whose
+    # only purpose is to override the build's choice FOR verification. Measured
+    # on spec 025: the build planned on gemini, the contract arrived carrying
+    # `planning: gemini`, verification inherited it, and TFactory's planner died
+    # on an invalid Gemini credential having produced nothing. The tell was
+    # `qa_fixer`: the observed map held the build's claude-sonnet-4-5-20250929
+    # rather than the qa model, so the incoming map had won that key too.
     verify_pm = _verify_phase_models(spec_dir)
     if verify_pm:
         contract = dict(contract or {})
         execution = dict(contract.get("execution") or {})
-        merged = {**verify_pm, **(execution.get("phase_models") or {})}
+        merged = {**(execution.get("phase_models") or {}), **verify_pm}
         execution["phase_models"] = merged
         contract["execution"] = execution
     # Thread the origin GitHub issue so TFactory can correlate the verify task
