@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -68,7 +68,11 @@ def test_no_stamp_falls_back_to_the_spec_s_own_files(tmp_path: Path) -> None:
 
     task = spec_to_task("proj", spec_dir)
 
-    assert task.created_at == datetime.fromtimestamp(oldest).isoformat()
+    # #1619: task timestamps carry their zone now — an offset-less ISO string
+    # is read as the BROWSER's local time by the cockpit, which made every age
+    # an hour wrong. `created_at` and `updated_at` share one producer, so both
+    # moved together rather than the API mixing two shapes.
+    assert task.created_at == datetime.fromtimestamp(oldest, UTC).isoformat()
     assert task.created_at_is_estimate is True
 
 
@@ -89,7 +93,8 @@ def test_without_its_own_files_the_dir_ctime_is_the_last_resort(
 
     assert task.created_at_is_estimate is True
     assert (
-        task.created_at == datetime.fromtimestamp(spec_dir.stat().st_ctime).isoformat()
+        task.created_at
+        == datetime.fromtimestamp(spec_dir.stat().st_ctime, UTC).isoformat()
     )
 
 
