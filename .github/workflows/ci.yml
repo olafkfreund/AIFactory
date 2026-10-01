@@ -14,6 +14,17 @@ concurrency:
 permissions:
   contents: read
 
+# uv's default HTTP timeout is 30s, which this repo's dependency set exceeds on
+# a slow runner: the `oidc (P3 acceptance)` job failed on 2026-10-01 with
+# "Failed to download graphiti-core==0.30.2 ... network timeout. Try increasing
+# UV_HTTP_TIMEOUT (current value: 30s)". The same resolve pulls a 98 MiB
+# claude-agent-sdk plus 16 MiB and 15 MiB wheels, so 30s per request is simply
+# too tight rather than a sign of anything wrong. Raised fleet-wide for this
+# workflow because the failure is per-request and lands in whichever job happens
+# to draw the slow transfer.
+env:
+  UV_HTTP_TIMEOUT: "120"
+
 jobs:
   backend-lint-test:
     name: backend (ruff + pytest)
