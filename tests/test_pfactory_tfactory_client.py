@@ -172,3 +172,107 @@ async def test_send_transport_exception_is_caught():
     assert res["sent"] is False
     assert res["reason"] == "error"
     assert "refused" in res["error"]
+
+
+# ── the verify models must WIN the merge (#1638) ─────────────────────────────
+# The three tests above exercise _verify_phase_models in isolation, and they all
+# passed while the defect was live: the function produced the right map and the
+# merge then threw most of it away. These test the MERGED result, and the last
+# one tests what TFactory would STORE — the assertion whose absence let a wrong
+# diagnosis stand (the issue first blamed an unread field; the field is read).
+
+from pfactory.tfactory_client import build_ingest_payload  # noqa: E402
+
+# The real data from spec 025-myfriends-web-remediation-v2-o.
+_BUILD_PHASE_MODELS = {
+    "coding": "claude-sonnet-4-6",
+    "qa": "claude-sonnet-4-6",
+    "qa_fixer": "claude-sonnet-4-5-20250929",
+    "planning": "gemini",
+    "test_gen": "claude-sonnet-4-6",
+}
+# TFactory agents/tools_pkg/tools/task_control.py:472 copies exactly these five
+# keys into its own task_metadata.json. test_gen is deliberately excluded there,
+# which is why its presence downstream proves nothing either way.
+_TFACTORY_PROJECTED_KEYS = ("spec", "planning", "coding", "qa", "qa_fixer")
+
+
+def _spec_dir_with_contract_phase_models(tmp_path, incoming: dict) -> object:
+    """A spec dir whose build declares _BUILD_PHASE_MODELS and whose stashed
+    contract already carries ``incoming`` under execution.phase_models."""
+    (tmp_path / "task_metadata.json").write_text(
+        json.dumps({"isAutoProfile": True, "phaseModels": _BUILD_PHASE_MODELS})
+    )
+    (tmp_path / "requirements.json").write_text(json.dumps({"acceptance_criteria": []}))
+    ctx = tmp_path / "context"
+    ctx.mkdir(exist_ok=True)
+    (ctx / "task_contract.json").write_text(
+        json.dumps(
+            {
+                "contract_version": "2",
+                "approval": {"approved_by": "pfactory"},
+                "execution": {"phase_models": dict(incoming)},
+            }
+        )
+    )
+    return tmp_path
+
+
+def _merged_phase_models(tmp_path) -> dict:
+    payload = build_ingest_payload(tmp_path, "025-spec")
+    contract = payload.get("contract") or {}
+    return ((contract.get("execution") or {}).get("phase_models")) or {}
+
+
+def test_verify_models_beat_an_incoming_contract_phase_models(tmp_path):
+    """Every phase runs on the build's qa model, even when the contract disagrees.
+
+    The incoming contract carries the BUILD's map, including planning=gemini.
+    Before the fix the incoming map won and verification planned on gemini.
+    """
+    _spec_dir_with_contract_phase_models(tmp_path, _BUILD_PHASE_MODELS)
+    merged = _merged_phase_models(tmp_path)
+    qa_model = _BUILD_PHASE_MODELS["qa"]
+
+    # Named individually rather than asserted in bulk: these two are the keys
+    # that carried the defect, and a bulk assertion would not say which broke.
+    assert merged.get("planning") == qa_model, (
+        f"planning is {merged.get('planning')!r}; the incoming contract won the "
+        "merge, so verification would run on the build's planning provider"
+    )
+    assert merged.get("qa_fixer") == qa_model, (
+        f"qa_fixer is {merged.get('qa_fixer')!r} — the build's value, which is "
+        "the tell that the incoming map won the merge"
+    )
+    assert all(v == qa_model for v in merged.values()), merged
+
+
+def test_test_gen_survives_the_merge(tmp_path):
+    """Guards against satisfying the above by dropping keys instead of winning."""
+    _spec_dir_with_contract_phase_models(tmp_path, _BUILD_PHASE_MODELS)
+    merged = _merged_phase_models(tmp_path)
+    assert set(merged) >= {
+        "spec",
+        "planning",
+        "coding",
+        "qa",
+        "qa_fixer",
+        "test_gen",
+    }, merged
+
+
+def test_what_tfactory_would_store_uses_the_qa_model(tmp_path):
+    """Assert on the value TFactory ends up with, not the one we send.
+
+    TFactory projects five keys out of the contract into its own
+    task_metadata.json, and `get_phase_model` reads that. A test of what
+    AIFactory sends passes whether or not the projection yields the right
+    planning model — which is exactly how the original defect survived.
+    """
+    _spec_dir_with_contract_phase_models(tmp_path, _BUILD_PHASE_MODELS)
+    merged = _merged_phase_models(tmp_path)
+    stored = {
+        k: merged[k] for k in _TFACTORY_PROJECTED_KEYS if isinstance(merged.get(k), str)
+    }
+    assert stored.get("planning") == _BUILD_PHASE_MODELS["qa"], stored
+    assert "gemini" not in stored.values(), stored
