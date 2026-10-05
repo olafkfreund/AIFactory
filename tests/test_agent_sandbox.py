@@ -135,6 +135,69 @@ class TestPidNamespace:
         assert not _has_triplet(out, "--ro-bind-try", "/proc", "/proc")
 
 
+class TestBwrapProbe:
+    """The real `_bwrap_works` probe (not the monkeypatched fixtures above):
+    logging on failure, and which failures get cached for the process
+    lifetime vs. retried (#997 — a silent, permanently-disabled sandbox)."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_cache(self):
+        sandbox._bwrap_cache.clear()
+        yield
+        sandbox._bwrap_cache.clear()
+
+    def test_exception_is_logged_and_not_cached(self, monkeypatch, caplog):
+        calls = []
+
+        def _boom(*a, **k):
+            calls.append(1)
+            raise TimeoutError("probe timed out")
+
+        monkeypatch.setattr(sandbox.subprocess, "run", _boom)
+        with caplog.at_level("WARNING"):
+            assert sandbox._bwrap_works("/usr/bin/bwrap") is False
+            assert sandbox._bwrap_works("/usr/bin/bwrap") is False
+
+        assert len(calls) == 2  # not cached — probed again on the 2nd call
+        assert any("bwrap probe failed to run" in r.message for r in caplog.records)
+        assert any("TimeoutError" in r.message for r in caplog.records)
+
+    def test_nonzero_returncode_is_cached(self, monkeypatch, caplog):
+        calls = []
+
+        class _Result:
+            returncode = 1
+            stderr = b"No permissions to create a new namespace"
+
+        def _run(*a, **k):
+            calls.append(1)
+            return _Result()
+
+        monkeypatch.setattr(sandbox.subprocess, "run", _run)
+        with caplog.at_level("WARNING"):
+            assert sandbox._bwrap_works("/usr/bin/bwrap") is False
+            assert sandbox._bwrap_works("/usr/bin/bwrap") is False
+
+        assert len(calls) == 1  # deterministic failure — cached, no re-probe
+        assert any("cannot create a namespace" in r.message for r in caplog.records)
+
+    def test_success_is_cached(self, monkeypatch):
+        calls = []
+
+        class _Result:
+            returncode = 0
+            stderr = b""
+
+        def _run(*a, **k):
+            calls.append(1)
+            return _Result()
+
+        monkeypatch.setattr(sandbox.subprocess, "run", _run)
+        assert sandbox._bwrap_works("/usr/bin/bwrap") is True
+        assert sandbox._bwrap_works("/usr/bin/bwrap") is True
+        assert len(calls) == 1
+
+
 def _pair(args, flag):
     i = args.index(flag)
     return (args[i + 1], args[i + 2])

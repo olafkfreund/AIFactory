@@ -28,7 +28,7 @@ from .auto_merger import AutoMerger
 from .conflict_detector import ConflictDetector
 from .conflict_resolver import ConflictResolver
 from .file_evolution import FileEvolutionTracker
-from .git_utils import find_worktree, get_file_from_branch
+from .git_utils import GitReadError, find_worktree, get_file_from_branch
 from .merge_pipeline import MergePipeline
 
 # Re-export models for backwards compatibility
@@ -38,6 +38,7 @@ from .types import (
     ConflictRegion,
     FileAnalysis,
     MergeDecision,
+    MergeResult,
 )
 
 # Import debug utilities
@@ -425,9 +426,29 @@ class MergeOrchestrator:
         baseline_content = self.evolution_tracker.get_baseline_content(file_path)
         if baseline_content is None:
             # Try to get from target branch
-            baseline_content = get_file_from_branch(
-                self.project_dir, file_path, target_branch
-            )
+            try:
+                baseline_content = get_file_from_branch(
+                    self.project_dir, file_path, target_branch
+                )
+            except GitReadError as e:
+                # The read genuinely failed -- this is NOT "file is new".
+                # Inventing an empty baseline here would merge only the
+                # task's own diff and silently drop everything already on
+                # target_branch. Fail this file loudly instead.
+                logger.error(
+                    "Refusing to merge %s: could not read baseline from %s: %s",
+                    file_path,
+                    target_branch,
+                    e,
+                )
+                return MergeResult(
+                    decision=MergeDecision.FAILED,
+                    file_path=file_path,
+                    error=(
+                        f"Could not read baseline for {file_path} from "
+                        f"{target_branch}: {e}"
+                    ),
+                )
 
         if baseline_content is None:
             # File is new - created by task(s)
