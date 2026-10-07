@@ -11,9 +11,14 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import inspect
 import itertools
+import json
+import os
 import sys
+import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -36,7 +41,7 @@ except ImportError as _e:
     print(f"FATAL: cannot import review_tier: {_e}")  # noqa: T201
     sys.exit(2)
 try:
-    import server.services.pr_endgame as pe  # noqa: F401  (used by later sections)
+    import server.services.pr_endgame as pe
 except ImportError as _e:
     print(f"FATAL: cannot import server.services.pr_endgame: {_e}")  # noqa: T201
     sys.exit(2)
@@ -191,10 +196,128 @@ def _section_paths() -> tuple[list[str], int]:
     return lines, len(rows)
 
 
+# ponytail: pr_endgame has no constant for this name (is_auto_merge_enabled
+# inlines the literal), so it is restated here; the flag call below still reads
+# the live code, so a rename makes the "set" row go False rather than lie.
+_AUTO_MERGE_ENV = "AIFACTORY_AUTO_MERGE"
+
+_GREEN_META = {
+    "tfactoryVerdict": "pass",
+    "achievedVal": 2,
+    "valFloor": 1,
+    "ciParity": True,
+    "hostCiGreen": True,
+}
+
+
+@contextlib.contextmanager
+def _env(**values: str | None) -> Iterator[None]:
+    """Set (or, for None, remove) env vars; restore the originals on exit."""
+    saved = {k: os.environ.get(k) for k in values}
+    try:
+        for k, v in values.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        yield
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def _section_wiring() -> tuple[list[str], int]:
+    from cli import workspace_commands as wc  # noqa: PLC0415
+
+    lines = ["## B. Live wiring (pr_endgame)", ""]
+    n = 0
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        # Blank vs low
+        green = root / "green"
+        green.mkdir()
+        (green / "task_metadata.json").write_text(json.dumps(_GREEN_META))
+        disp = {t: pe.merge_disposition(green, t) for t in (None, "", "low")}
+        same = disp[None] == disp[""] == disp["low"]
+        lines += ["### B1. Blank tier vs `low` (all-green signals)", ""]
+        lines += _table(
+            ["reviewTier", "disposition"],
+            [[f"`{t!r}`", f"`{d}`"] for t, d in disp.items()],
+        )
+        lines += ["", f"blank == low: **{same}**", ""]
+        n += len(disp)
+
+        # Unmeasured defaults
+        empty = root / "empty"
+        empty.mkdir()
+        sig = pe.merge_gate_signals(empty)
+        lines += ["### B2. Signals when nothing was measured", ""]
+        lines += _table(
+            ["signal", "default"], [[f"`{k}`", f"`{sig[k]!r}`"] for k in sorted(sig)]
+        )
+        lines += [""]
+        n += len(sig)
+
+        # Flag defaults
+        names = {
+            "auto-merge": (_AUTO_MERGE_ENV, pe.is_auto_merge_enabled),
+            "path-floor enforcement": (pe.PATH_RISK_FLOOR_ENV, pe.path_floor_enforced),
+        }
+        rows = []
+        for label, (env, fn) in sorted(names.items()):
+            with _env(**{env: None}):
+                unset = fn(None)
+            with _env(**{env: "1"}):
+                on = fn(None)
+            rows.append([label, f"`{env}`", str(unset), str(on)])
+        lines += ["### B3. Flags", ""]
+        lines += _table(["flag", "env var", "unset", 'set to "1"'], rows)
+        lines += [""]
+        n += len(rows)
+
+        # Path floor, advisory vs enforced
+        probe = review_tier.HIGH_RISK_PATTERNS[0]
+        orig = wc._get_changed_files_from_git
+        rows = []
+        try:
+            wc._get_changed_files_from_git = lambda *a, **k: [probe]
+            for label, val in (("advisory (unset)", None), ("enforced (`1`)", "1")):
+                spec = root / f"spec-{len(rows)}"
+                spec.mkdir()
+                with _env(**{pe.PATH_RISK_FLOOR_ENV: val}):
+                    eff, floor = pe.apply_path_risk_floor(
+                        root, spec, "probe", "dev", "low"
+                    )
+                rows.append([label, f"`{eff!r}`", f"`{floor!r}`"])
+        finally:
+            wc._get_changed_files_from_git = orig
+        lines += [
+            "### B4. Path floor on a `low` task touching "
+            f"`{probe}`: (effective tier, floor)",
+            "",
+        ]
+        lines += _table(["enforcement", "effective tier", "floor"], rows)
+        lines += [
+            "",
+            "Defaults shown; per-project settings and per-deployment env override them.",
+        ]
+        n += len(rows)
+    return lines, n
+
+
 def render() -> str:
     _check_signature()
     out = [f"<!--\n{_GENERATED_BANNER}\n-->", "", "# Autonomy matrix (generated)", ""]
-    for section in (_section_tiers, _section_overlay, _section_val, _section_paths):
+    for section in (
+        _section_tiers,
+        _section_overlay,
+        _section_val,
+        _section_paths,
+        _section_wiring,
+    ):
         lines, _n = section()
         out += lines + [""]
     return "\n".join(out)
