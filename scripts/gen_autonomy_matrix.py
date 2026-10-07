@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import ast
 import contextlib
+import functools
 import inspect
 import itertools
 import json
@@ -63,6 +64,8 @@ _PROBED_PARAMS = frozenset(
         "satisfied_gates",
     }
 )
+
+_REQUIRED_GATES = ("human-approval", "security-scan")
 
 _VAL_PROBES: tuple[tuple[object, object], ...] = (
     (2, None),
@@ -151,14 +154,14 @@ def _section_tiers(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
 
 def _section_overlay(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
     seen: dict[tuple[tuple[str, ...], str], list[str]] = {}
-    gate_sets = ([], ["security-scan"], ["human-approval", "security-scan"])
+    gate_sets = ([], [_REQUIRED_GATES[1]], list(_REQUIRED_GATES))
     for risk, prod, sat in itertools.product(
         ("high", "medium", "low", ""), ("production", "staging", "dev", ""), gate_sets
     ):
         dep = {
             "risk_class": risk,
             "production_classification": prod,
-            "system_gates": ["human-approval", "security-scan"],
+            "system_gates": list(_REQUIRED_GATES),
         }
         reasons = tuple(mp.deployment_block_reasons(dep, satisfied_gates=sat))
         result = mp.decide_merge(
@@ -185,7 +188,7 @@ def _section_overlay(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
     lines = [
         "## A2. Deployment overlay (applied before the tier; all-green `low` change)",
         "",
-        "Required gates: `human-approval`, `security-scan`.",
+        "Required gates: " + ", ".join(f"`{g}`" for g in _REQUIRED_GATES) + ".",
         "",
     ]
     lines += _table(tabs, ["block reasons", "result", "inputs"], rows)
@@ -393,12 +396,33 @@ def _find(name: str, roots: tuple[Path, ...] = _ROOTS) -> tuple[Path, bool] | No
     return None
 
 
+def _dynamic_imports(tree: ast.AST) -> list[int]:
+    """Line numbers of importlib.import_module / __import__ calls."""
+    return [
+        n.lineno
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and (
+            (
+                isinstance(n.func, ast.Name)
+                and n.func.id in {"__import__", "import_module"}
+            )
+            or (isinstance(n.func, ast.Attribute) and n.func.attr == "import_module")
+        )
+    ]
+
+
+@functools.cache
 def _closure(
     module_name: str, roots: tuple[Path, ...] = _ROOTS
-) -> tuple[set[str], set[str]]:
-    """Return (local modules walked, every imported name incl. third-party leaves)."""
+) -> tuple[frozenset[str], frozenset[str], tuple[str, ...]]:
+    """(local modules walked, every imported name, dynamic-import sites).
+
+    Results are cached and immutable; callers must not mutate them.
+    """
     local: set[str] = set()
     names: set[str] = set()
+    dynamic: list[str] = []
     queue = [module_name]
     while queue:
         mod = queue.pop()
@@ -411,6 +435,7 @@ def _closure(
         local.add(mod)
         pkg = mod if is_pkg else mod.rpartition(".")[0]
         tree = ast.parse(path.read_text(encoding="utf-8"))
+        dynamic += [f"{mod}:{ln}" for ln in _dynamic_imports(tree)]
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 found_names = [a.name for a in node.names]
@@ -429,57 +454,136 @@ def _closure(
                 names.add(n)
                 if _find(n, roots):
                     queue.append(n)
-    return local, names
+    return frozenset(local), frozenset(names), tuple(sorted(dynamic))
+
+
+def _simple_stmts(tree: ast.AST) -> list[ast.stmt]:
+    """Statements with no nested body (so 'one statement' means one statement)."""
+    compound = ("body", "orelse", "handlers", "finalbody")
+    return [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.stmt) and not any(hasattr(n, a) for a in compound)
+    ]
+
+
+def _strings(node: ast.AST) -> set[str]:
+    return {
+        n.value
+        for n in ast.walk(node)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str)
+    }
+
+
+def _assigned(stmt: ast.stmt) -> set[str]:
+    targets = (
+        stmt.targets
+        if isinstance(stmt, ast.Assign)
+        else [stmt.target]
+        if isinstance(stmt, ast.AnnAssign)
+        else []
+    )
+    return {t.id for t in targets if isinstance(t, ast.Name)}
+
+
+def _name_ids(node: ast.AST) -> set[str]:
+    return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
 
 
 def _verify_spawn_edge(
     caller: Path, edge: dict[str, object], repo: Path = _REPO_ROOT
 ) -> None:
-    """Raise ValueError unless *caller*'s source still spawns the declared script."""
+    """Raise ValueError unless *caller*'s source still spawns the declared script.
+
+    The script path constants must sit in ONE statement that assigns a variable,
+    and a spawn call must reference that variable (directly, or via a list built
+    from it). Each extra root's last two path parts must likewise appear in one
+    statement (the PYTHONPATH build).
+    """
+    stale = ValueError("spawn edge no longer matches its source - update _SPAWN_EDGES")
     tree = ast.parse(caller.read_text(encoding="utf-8"))
-    strings = {n.value for n in ast.walk(tree) if isinstance(n, ast.Constant)}
-    spawns = any(
-        isinstance(n, ast.Call)
-        and isinstance(n.func, ast.Attribute)
-        and (
-            n.func.attr == "create_subprocess_exec"
-            or (isinstance(n.func.value, ast.Name) and n.func.value.id == "subprocess")
-        )
-        for n in ast.walk(tree)
-    )
-    script = repo / str(edge["script"])
-    if not (
-        {"runners", "github", "runner.py"} <= strings and spawns and script.is_file()
-    ):
-        raise ValueError(
-            "spawn edge no longer matches its source - update _SPAWN_EDGES"
-        )
+    stmts = _simple_stmts(tree)
+    if not (repo / str(edge["script"])).is_file():
+        raise stale
+    script_parts = set(Path(str(edge["script"])).parts[-3:])
+    script_vars: set[str] = set()
+    for st in stmts:
+        if script_parts <= _strings(st):
+            script_vars |= _assigned(st)
+    for root in edge["extra_roots"]:  # type: ignore[attr-defined]
+        if not any(set(Path(str(root)).parts[-2:]) <= _strings(st) for st in stmts):
+            raise stale
+    for call in (n for n in ast.walk(tree) if isinstance(n, ast.Call)):
+        f = call.func
+        if not isinstance(f, ast.Attribute) or not (
+            f.attr == "create_subprocess_exec"
+            or (isinstance(f.value, ast.Name) and f.value.id == "subprocess")
+        ):
+            continue
+        used = set().union(*(_name_ids(a) for a in call.args)) if call.args else set()
+        via = {
+            v
+            for st in stmts
+            for v in _assigned(st)
+            if v in used and _name_ids(st) & script_vars
+        }
+        if used & script_vars or via:
+            return
+    raise stale
 
 
-def _entry_closure(entry: str) -> tuple[set[str], set[str], str]:
-    """(local modules, imported names, spawn-edge label) for a gate entry point."""
-    local, names = _closure(entry)
+def _parent_reach(
+    local: frozenset[str], roots: tuple[Path, ...]
+) -> dict[str, list[str]]:
+    """Parent package __init__s of the closure that reach a pinned model client."""
+    parents = {
+        ".".join(m.split(".")[:i]) for m in local for i in range(1, len(m.split(".")))
+    }
+    out: dict[str, list[str]] = {}
+    for parent in sorted(parents):
+        found = _find(parent, roots)
+        if found is None:
+            continue
+        hit = _hits(_closure(parent, roots)[1])
+        if hit:
+            f = found[0]
+            out[
+                str(f.relative_to(_REPO_ROOT) if f.is_relative_to(_REPO_ROOT) else f)
+            ] = hit
+    return out
+
+
+def _entry_closure(
+    entry: str,
+) -> tuple[frozenset[str], frozenset[str], str, tuple[str, ...], dict[str, list[str]]]:
+    """(local modules, names, spawn label, dynamic imports, parent-__init__ reach)."""
+    local, names, dynamic = _closure(entry)
+    reach = _parent_reach(local, _ROOTS)
     edge = _SPAWN_EDGES.get(entry)
     if edge is None:
-        return local, names, "-"
+        return local, names, "-", dynamic, reach
     found = _find(entry)
     try:
         if found is None:
             raise ValueError("caller not found")
         _verify_spawn_edge(found[0], edge)
     except ValueError as e:
-        print(
-            f"spawn edge for {entry} no longer matches its source - update _SPAWN_EDGES ({e})"
-        )  # noqa: T201
+        print(  # noqa: T201
+            f"spawn edge for {entry} no longer matches its source - "
+            f"update _SPAWN_EDGES ({e})"
+        )
         sys.exit(4)
     script = _REPO_ROOT / str(edge["script"])
     roots = (*_ROOTS, *(_REPO_ROOT / str(r) for r in edge["extra_roots"]))  # type: ignore[attr-defined]
     mod = ".".join(script.relative_to(_ROOTS[0]).with_suffix("").parts)
-    sub_local, sub_names = _closure(mod, roots)
+    sub_local, sub_names, sub_dyn = _closure(mod, roots)
+    reach = {**reach, **_parent_reach(sub_local, roots)}
     return (
         local | sub_local,
         names | sub_names,
         f"`{script.relative_to(_REPO_ROOT / 'apps/backend')}`",
+        tuple(sorted({*dynamic, *sub_dyn})),
+        dict(sorted(reach.items())),
     )
 
 
@@ -489,14 +593,22 @@ def _hits(names: set[str]) -> list[str]:
     )
 
 
-def _label(names: set[str]) -> str:
-    return "model-assisted" if _hits(names) else "deterministic"
+def _label(names: frozenset[str] | set[str], dynamic: tuple[str, ...] = ()) -> str:
+    """model-assisted / undetermined / deterministic for the gate's own imports."""
+    dyn = ""
+    if dynamic:
+        more = f" (+{len(dynamic) - 1} more)" if len(dynamic) > 1 else ""
+        dyn = f"dynamic import: {dynamic[0]}{more}"
+    if _hits(names):
+        return f"model-assisted ({dyn})" if dyn else "model-assisted"
+    return f"undetermined ({dyn})" if dyn else "deterministic"
 
 
 def _section_gates(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
     rows = []
+    meta: list[dict[str, object]] = []
     for entry in _ENTRY_POINTS:
-        local, names, via = _entry_closure(entry)
+        local, names, via, dynamic, reach = _entry_closure(entry)
         if len(local) < _MIN_CLOSURE[entry]:
             print(  # noqa: T201
                 f"prober resolved {len(local)} modules for {entry} "
@@ -504,21 +616,49 @@ def _section_gates(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
             )
             sys.exit(4)
         hit = _hits(names)
+        init_hits = sorted({h for hs in reach.values() for h in hs})
+        where = (
+            ", ".join(f"`{p}`" for p in reach)
+            if len(reach) <= 3
+            else "see JSON `gates[].init_reach`"
+        )
+        init_cell = (
+            f"yes ({len(reach)}): {where}; reaches "
+            + ", ".join(f"`{h}`" for h in init_hits)
+            if reach
+            else "no"
+        )
+        meta.append({"entry": entry, "init_reach": sorted(reach)})
         rows.append(
             [
                 f"`{entry}`",
-                _label(names),
+                _label(names, dynamic),
                 ", ".join(f"`{h}`" for h in hit) or "-",
+                init_cell,
                 str(len(local)),
                 via,
             ]
         )
-    lines = ["## C. Gate determinism (static import closure)", ""]
+    lines = [
+        "## C. Gate determinism (static import closure)",
+        "",
+        "label = the gate module's own transitive imports; package `__init__` side "
+        "effects are reported separately in the next column.",
+        "",
+    ]
     lines += _table(
         tabs,
-        ["gate", "label", "model clients imported", "local modules", "via spawn"],
+        [
+            "gate",
+            "label",
+            "model clients imported",
+            "package __init__ reaches a model client",
+            "local modules",
+            "via spawn",
+        ],
         rows,
     )
+    tabs[0]["gates"] = meta  # lifted to the top level of the JSON by build()
     lines += ["", "Declared, unverified (cross-repo, not probed):", ""]
     lines += _table(tabs, ["repo", "gate"], [[r, f"`{g}`"] for r, g in _DECLARED_GATES])
     lines += [
@@ -548,14 +688,20 @@ def build() -> tuple[str, str, dict[str, int]]:
     _check_signature()
     out = ["# Autonomy matrix (generated)", ""]
     sections: list[dict[str, object]] = []
+    gates: object = []
     counts: dict[str, int] = {}
     for key, fn in _SECTIONS:
         tabs: list[dict[str, object]] = []
         lines, counts[key] = fn(tabs)
         out += [*lines, ""]
+        if key == "gates":
+            gates = tabs[0].pop("gates")
         sections.append({"id": key, "title": lines[0].lstrip("# "), "tables": tabs})
     md = _FRONT_MATTER + "\n".join(out)
-    js = json.dumps({"sections": sections}, indent=2, sort_keys=True) + "\n"
+    js = (
+        json.dumps({"gates": gates, "sections": sections}, indent=2, sort_keys=True)
+        + "\n"
+    )
     return md, js, counts
 
 

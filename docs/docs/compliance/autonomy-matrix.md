@@ -136,11 +136,13 @@ Defaults shown; per-project settings and per-deployment env override them.
 
 ## C. Gate determinism (static import closure)
 
-| gate | label | model clients imported | local modules | via spawn |
-|---|---|---|---|---|
-| `merge.merge_policy` | deterministic | - | 2 | - |
-| `server.services.pr_review_service` | model-assisted | `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | 263 | `runners/github/runner.py` |
-| `server.services.pr_endgame` | model-assisted | `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | 352 | - |
+label = the gate module's own transitive imports; package `__init__` side effects are reported separately in the next column.
+
+| gate | label | model clients imported | package __init__ reaches a model client | local modules | via spawn |
+|---|---|---|---|---|---|
+| `merge.merge_policy` | deterministic | - | yes (1): `apps/backend/merge/__init__.py`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | 2 | - |
+| `server.services.pr_review_service` | model-assisted (dynamic import: core.auth:300 (+2 more)) | `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | yes (13): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | 263 | `runners/github/runner.py` |
+| `server.services.pr_endgame` | model-assisted (dynamic import: core.auth:300 (+3 more)) | `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | yes (19): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | 352 | - |
 
 Declared, unverified (cross-repo, not probed):
 

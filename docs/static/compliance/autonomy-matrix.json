@@ -1,4 +1,54 @@
 {
+  "gates": [
+    {
+      "entry": "merge.merge_policy",
+      "init_reach": [
+        "apps/backend/merge/__init__.py"
+      ]
+    },
+    {
+      "entry": "server.services.pr_review_service",
+      "init_reach": [
+        "apps/backend/agents/__init__.py",
+        "apps/backend/agents/tools_pkg/__init__.py",
+        "apps/backend/agents/tools_pkg/tools/__init__.py",
+        "apps/backend/core/__init__.py",
+        "apps/backend/integrations/graphiti/__init__.py",
+        "apps/backend/integrations/graphiti/providers_pkg/__init__.py",
+        "apps/backend/integrations/graphiti/providers_pkg/embedder_providers/__init__.py",
+        "apps/backend/integrations/graphiti/providers_pkg/llm_providers/__init__.py",
+        "apps/backend/integrations/graphiti/queries_pkg/__init__.py",
+        "apps/backend/memory/__init__.py",
+        "apps/backend/providers/__init__.py",
+        "apps/backend/runners/__init__.py",
+        "apps/backend/runners/github/__init__.py"
+      ]
+    },
+    {
+      "entry": "server.services.pr_endgame",
+      "init_reach": [
+        "apps/backend/agents/__init__.py",
+        "apps/backend/agents/tools_pkg/__init__.py",
+        "apps/backend/agents/tools_pkg/tools/__init__.py",
+        "apps/backend/cli/__init__.py",
+        "apps/backend/core/__init__.py",
+        "apps/backend/core/workspace/__init__.py",
+        "apps/backend/integrations/graphiti/__init__.py",
+        "apps/backend/integrations/graphiti/providers_pkg/__init__.py",
+        "apps/backend/integrations/graphiti/providers_pkg/embedder_providers/__init__.py",
+        "apps/backend/integrations/graphiti/providers_pkg/llm_providers/__init__.py",
+        "apps/backend/integrations/graphiti/queries_pkg/__init__.py",
+        "apps/backend/memory/__init__.py",
+        "apps/backend/merge/__init__.py",
+        "apps/backend/merge/ai_resolver/__init__.py",
+        "apps/backend/pfactory/__init__.py",
+        "apps/backend/providers/__init__.py",
+        "apps/backend/spec/__init__.py",
+        "apps/backend/spec/phases/__init__.py",
+        "apps/backend/spec/pipeline/__init__.py"
+      ]
+    }
+  ],
   "sections": [
     {
       "id": "tiers",
@@ -436,6 +486,7 @@
             "gate",
             "label",
             "model clients imported",
+            "package __init__ reaches a model client",
             "local modules",
             "via spawn"
           ],
@@ -444,20 +495,23 @@
               "`merge.merge_policy`",
               "deterministic",
               "-",
+              "yes (1): `apps/backend/merge/__init__.py`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
               "2",
               "-"
             ],
             [
               "`server.services.pr_review_service`",
-              "model-assisted",
+              "model-assisted (dynamic import: core.auth:300 (+2 more))",
               "`anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
+              "yes (13): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
               "263",
               "`runners/github/runner.py`"
             ],
             [
               "`server.services.pr_endgame`",
-              "model-assisted",
+              "model-assisted (dynamic import: core.auth:300 (+3 more))",
               "`anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
+              "yes (19): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
               "352",
               "-"
             ]
