@@ -11,6 +11,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import ast
 import contextlib
 import inspect
 import itertools
@@ -308,6 +309,200 @@ def _section_wiring() -> tuple[list[str], int]:
     return lines, n
 
 
+# ---- Section C: gate determinism (ast import closure) ----------------------
+_ROOTS = (_REPO_ROOT / "apps" / "backend", _REPO_ROOT / "apps" / "web-server")
+
+# Importing any of these (or a submodule) makes a gate model-assisted.
+_MODEL_CLIENTS = (
+    "anthropic",
+    "openai",
+    "claude_agent_sdk",
+    "google.genai",
+    "ollama",
+    "core.client",
+    "core.simple_client",
+    "providers",
+)
+
+_ENTRY_POINTS = (
+    "merge.merge_policy",
+    "server.services.pr_review_service",
+    "server.services.pr_endgame",
+)
+
+# Minimum resolved local modules per entry point: floor(0.5 * measured).
+# max(2, floor(0.5 * measured)); measured 2026-10-07: merge_policy 2,
+# pr_review_service 263 (incl. runner via spawn edge), pr_endgame 352. A walk under its minimum means the
+# prober is broken, and it must never emit a label.
+_MIN_CLOSURE: dict[str, int] = {
+    "merge.merge_policy": 2,
+    "server.services.pr_review_service": 131,
+    "server.services.pr_endgame": 176,
+}
+
+# DECLARED spawn edge, verified against the caller's source below.
+# pr_review_service runs the reviewer as a subprocess, so its model client is
+# invisible to a static import walk. extra_roots mirror the PYTHONPATH the
+# service sets (backend + runners/github), so the runner's bare imports resolve.
+_SPAWN_EDGES: dict[str, dict[str, object]] = {
+    "server.services.pr_review_service": {
+        "script": "apps/backend/runners/github/runner.py",
+        "extra_roots": ["apps/backend/runners/github"],
+    },
+}
+
+# DECLARED, not derived - cross-repo (PFactory / TFactory are not probed here).
+_DECLARED_GATES = (
+    ("PFactory", "plan/review/gates.py::run_gates"),
+    ("TFactory", "apps/backend/agents/evaluator.py::_run_evaluator_session"),
+)
+
+
+def _find(name: str, roots: tuple[Path, ...] = _ROOTS) -> tuple[Path, bool] | None:
+    """Resolve a dotted module name to (file, is_package) under *roots*."""
+    rel = Path(*name.split("."))
+    for root in roots:
+        if (root / rel / "__init__.py").is_file():
+            return root / rel / "__init__.py", True
+        if (root / rel).with_suffix(".py").is_file():
+            return (root / rel).with_suffix(".py"), False
+    return None
+
+
+def _closure(
+    module_name: str, roots: tuple[Path, ...] = _ROOTS
+) -> tuple[set[str], set[str]]:
+    """Return (local modules walked, every imported name incl. third-party leaves)."""
+    local: set[str] = set()
+    names: set[str] = set()
+    queue = [module_name]
+    while queue:
+        mod = queue.pop()
+        if mod in local:
+            continue
+        found = _find(mod, roots)
+        if found is None:
+            continue
+        path, is_pkg = found
+        local.add(mod)
+        pkg = mod if is_pkg else mod.rpartition(".")[0]
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                found_names = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                base = node.module or ""
+                if node.level:
+                    parts = pkg.split(".") if pkg else []
+                    parts = parts[: len(parts) - (node.level - 1)]
+                    base = ".".join([*parts, *([base] if base else [])])
+                found_names = [base, *(f"{base}.{a.name}" for a in node.names)]
+            else:
+                continue
+            for n in found_names:
+                if not n:
+                    continue
+                names.add(n)
+                if _find(n, roots):
+                    queue.append(n)
+    return local, names
+
+
+def _verify_spawn_edge(
+    caller: Path, edge: dict[str, object], repo: Path = _REPO_ROOT
+) -> None:
+    """Raise ValueError unless *caller*'s source still spawns the declared script."""
+    tree = ast.parse(caller.read_text(encoding="utf-8"))
+    strings = {n.value for n in ast.walk(tree) if isinstance(n, ast.Constant)}
+    spawns = any(
+        isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and (
+            n.func.attr == "create_subprocess_exec"
+            or (isinstance(n.func.value, ast.Name) and n.func.value.id == "subprocess")
+        )
+        for n in ast.walk(tree)
+    )
+    script = repo / str(edge["script"])
+    if not (
+        {"runners", "github", "runner.py"} <= strings and spawns and script.is_file()
+    ):
+        raise ValueError(
+            "spawn edge no longer matches its source - update _SPAWN_EDGES"
+        )
+
+
+def _entry_closure(entry: str) -> tuple[set[str], set[str], str]:
+    """(local modules, imported names, spawn-edge label) for a gate entry point."""
+    local, names = _closure(entry)
+    edge = _SPAWN_EDGES.get(entry)
+    if edge is None:
+        return local, names, "-"
+    found = _find(entry)
+    try:
+        if found is None:
+            raise ValueError("caller not found")
+        _verify_spawn_edge(found[0], edge)
+    except ValueError as e:
+        print(
+            f"spawn edge for {entry} no longer matches its source - update _SPAWN_EDGES ({e})"
+        )  # noqa: T201
+        sys.exit(4)
+    script = _REPO_ROOT / str(edge["script"])
+    roots = (*_ROOTS, *(_REPO_ROOT / str(r) for r in edge["extra_roots"]))  # type: ignore[attr-defined]
+    mod = ".".join(script.relative_to(_ROOTS[0]).with_suffix("").parts)
+    sub_local, sub_names = _closure(mod, roots)
+    return (
+        local | sub_local,
+        names | sub_names,
+        f"`{script.relative_to(_REPO_ROOT / 'apps/backend')}`",
+    )
+
+
+def _hits(names: set[str]) -> list[str]:
+    return sorted(
+        c for c in _MODEL_CLIENTS if any(n == c or n.startswith(c + ".") for n in names)
+    )
+
+
+def _label(names: set[str]) -> str:
+    return "model-assisted" if _hits(names) else "deterministic"
+
+
+def _section_gates() -> tuple[list[str], int]:
+    rows = []
+    for entry in _ENTRY_POINTS:
+        local, names, via = _entry_closure(entry)
+        if len(local) < _MIN_CLOSURE[entry]:
+            print(  # noqa: T201
+                f"prober resolved {len(local)} modules for {entry} "
+                f"(min {_MIN_CLOSURE[entry]}) - refusing to label"
+            )
+            sys.exit(4)
+        hit = _hits(names)
+        rows.append(
+            [
+                f"`{entry}`",
+                _label(names),
+                ", ".join(f"`{h}`" for h in hit) or "-",
+                str(len(local)),
+                via,
+            ]
+        )
+    lines = ["## C. Gate determinism (static import closure)", ""]
+    lines += _table(
+        ["gate", "label", "model clients imported", "local modules", "via spawn"], rows
+    )
+    lines += ["", "Declared, unverified (cross-repo, not probed):", ""]
+    lines += _table(["repo", "gate"], [[r, f"`{g}`"] for r, g in _DECLARED_GATES])
+    lines += [
+        "",
+        "`pr_endgame`'s review verdict is injected, not computed there; the review "
+        "component is the separate `pr_review_service` row.",
+    ]
+    return lines, len(rows)
+
+
 def render() -> str:
     _check_signature()
     out = [f"<!--\n{_GENERATED_BANNER}\n-->", "", "# Autonomy matrix (generated)", ""]
@@ -317,6 +512,7 @@ def render() -> str:
         _section_val,
         _section_paths,
         _section_wiring,
+        _section_gates,
     ):
         lines, _n = section()
         out += lines + [""]
