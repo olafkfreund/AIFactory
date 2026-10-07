@@ -5,7 +5,9 @@ Every row is produced by CALLING ``merge.merge_policy`` / ``review_tier``;
 nothing is transcribed, so the page cannot drift from the code.
 
 Usage:
+    python scripts/gen_autonomy_matrix.py            # write the outputs
     python scripts/gen_autonomy_matrix.py --stdout   # print the markdown
+    python scripts/gen_autonomy_matrix.py --check    # fail if outputs are stale
 """
 
 from __future__ import annotations
@@ -90,7 +92,10 @@ def _tf(b: bool) -> str:
     return "T" if b else "F"
 
 
-def _table(header: list[str], rows: list[list[str]]) -> list[str]:
+def _table(
+    tabs: list[dict[str, object]], header: list[str], rows: list[list[str]]
+) -> list[str]:
+    tabs.append({"header": header, "rows": rows})
     out = [
         "| " + " | ".join(header) + " |",
         "|" + "|".join("---" for _ in header) + "|",
@@ -99,7 +104,7 @@ def _table(header: list[str], rows: list[list[str]]) -> list[str]:
     return out
 
 
-def _section_tiers() -> tuple[list[str], int]:
+def _section_tiers(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
     combos = list(
         itertools.product(
             (True, False), ("pass", "fail"), ((2, 1), (1, 2)), (True, False)
@@ -126,11 +131,11 @@ def _section_tiers() -> tuple[list[str], int]:
             cell = "always" if len(conds) == len(combos) else "; ".join(conds)
             rows.append([f"`{tier}`" if tier else "`(blank)`", f"`{result}`", cell])
     lines = ["## A1. Tier decision (no deployment block)", ""]
-    lines += _table(["tier", "result", "when"], rows)
+    lines += _table(tabs, ["tier", "result", "when"], rows)
     return lines, len(rows)
 
 
-def _section_overlay() -> tuple[list[str], int]:
+def _section_overlay(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
     seen: dict[tuple[tuple[str, ...], str], list[str]] = {}
     gate_sets = ([], ["security-scan"], ["human-approval", "security-scan"])
     for risk, prod, sat in itertools.product(
@@ -169,20 +174,20 @@ def _section_overlay() -> tuple[list[str], int]:
         "Required gates: `human-approval`, `security-scan`.",
         "",
     ]
-    lines += _table(["block reasons", "result", "inputs"], rows)
+    lines += _table(tabs, ["block reasons", "result", "inputs"], rows)
     return lines, len(rows)
 
 
-def _section_val() -> tuple[list[str], int]:
+def _section_val(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
     rows = [
         [f"`{a!r}`", f"`{f!r}`", str(mp._val_meets_floor(a, f))] for a, f in _VAL_PROBES
     ]
     lines = ["## A3. VAL floor semantics", ""]
-    lines += _table(["achieved", "floor", "meets floor"], rows)
+    lines += _table(tabs, ["achieved", "floor", "meets floor"], rows)
     return lines, len(rows)
 
 
-def _section_paths() -> tuple[list[str], int]:
+def _section_paths(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
     patterns = review_tier.HIGH_RISK_PATTERNS
     probes = [*patterns, "README.md"]
     rows = [[f"`{p}`", f"`{mp.floor_from_paths([p])}`"] for p in probes]
@@ -193,7 +198,7 @@ def _section_paths() -> tuple[list[str], int]:
         "High-risk patterns: " + ", ".join(f"`{p}`" for p in patterns),
         "",
     ]
-    lines += _table(["changed path", "floor"], rows)
+    lines += _table(tabs, ["changed path", "floor"], rows)
     return lines, len(rows)
 
 
@@ -230,7 +235,7 @@ def _env(**values: str | None) -> Iterator[None]:
                 os.environ[k] = v
 
 
-def _section_wiring() -> tuple[list[str], int]:
+def _section_wiring(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
     from cli import workspace_commands as wc  # noqa: PLC0415
 
     lines = ["## B. Live wiring (pr_endgame)", ""]
@@ -245,10 +250,13 @@ def _section_wiring() -> tuple[list[str], int]:
         same = disp[None] == disp[""] == disp["low"]
         lines += ["### B1. Blank tier vs `low` (all-green signals)", ""]
         lines += _table(
+            tabs,
             ["reviewTier", "disposition"],
             [[f"`{t!r}`", f"`{d}`"] for t, d in disp.items()],
         )
-        lines += ["", f"blank == low: **{same}**", ""]
+        lines += [""]
+        lines += _table(tabs, ["check", "result"], [["blank == low", f"**{same}**"]])
+        lines += [""]
         n += len(disp)
 
         # Unmeasured defaults
@@ -257,7 +265,9 @@ def _section_wiring() -> tuple[list[str], int]:
         sig = pe.merge_gate_signals(empty)
         lines += ["### B2. Signals when nothing was measured", ""]
         lines += _table(
-            ["signal", "default"], [[f"`{k}`", f"`{sig[k]!r}`"] for k in sorted(sig)]
+            tabs,
+            ["signal", "default"],
+            [[f"`{k}`", f"`{sig[k]!r}`"] for k in sorted(sig)],
         )
         lines += [""]
         n += len(sig)
@@ -275,7 +285,7 @@ def _section_wiring() -> tuple[list[str], int]:
                 on = fn(None)
             rows.append([label, f"`{env}`", str(unset), str(on)])
         lines += ["### B3. Flags", ""]
-        lines += _table(["flag", "env var", "unset", 'set to "1"'], rows)
+        lines += _table(tabs, ["flag", "env var", "unset", 'set to "1"'], rows)
         lines += [""]
         n += len(rows)
 
@@ -300,7 +310,7 @@ def _section_wiring() -> tuple[list[str], int]:
             f"`{probe}`: (effective tier, floor)",
             "",
         ]
-        lines += _table(["enforcement", "effective tier", "floor"], rows)
+        lines += _table(tabs, ["enforcement", "effective tier", "floor"], rows)
         lines += [
             "",
             "Defaults shown; per-project settings and per-deployment env override them.",
@@ -469,7 +479,7 @@ def _label(names: set[str]) -> str:
     return "model-assisted" if _hits(names) else "deterministic"
 
 
-def _section_gates() -> tuple[list[str], int]:
+def _section_gates(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
     rows = []
     for entry in _ENTRY_POINTS:
         local, names, via = _entry_closure(entry)
@@ -491,10 +501,12 @@ def _section_gates() -> tuple[list[str], int]:
         )
     lines = ["## C. Gate determinism (static import closure)", ""]
     lines += _table(
-        ["gate", "label", "model clients imported", "local modules", "via spawn"], rows
+        tabs,
+        ["gate", "label", "model clients imported", "local modules", "via spawn"],
+        rows,
     )
     lines += ["", "Declared, unverified (cross-repo, not probed):", ""]
-    lines += _table(["repo", "gate"], [[r, f"`{g}`"] for r, g in _DECLARED_GATES])
+    lines += _table(tabs, ["repo", "gate"], [[r, f"`{g}`"] for r, g in _DECLARED_GATES])
     lines += [
         "",
         "`pr_endgame`'s review verdict is injected, not computed there; the review "
@@ -503,29 +515,97 @@ def _section_gates() -> tuple[list[str], int]:
     return lines, len(rows)
 
 
-def render() -> str:
+_SECTIONS = (
+    ("tiers", _section_tiers),
+    ("overlay", _section_overlay),
+    ("val", _section_val),
+    ("paths", _section_paths),
+    ("wiring", _section_wiring),
+    ("gates", _section_gates),
+)
+
+_OUT_MD = _REPO_ROOT / "docs" / "docs" / "compliance" / "autonomy-matrix.md"
+_OUT_JSON = _REPO_ROOT / "docs" / "static" / "compliance" / "autonomy-matrix.json"
+_FRONT_MATTER = f"---\ntitle: Autonomy matrix (generated)\ndraft: true\n---\n\n<!--\n{_GENERATED_BANNER}\n-->\n\n"
+
+
+def build() -> tuple[str, str, dict[str, int]]:
+    """Return (markdown, json text, row counts)."""
     _check_signature()
-    out = [f"<!--\n{_GENERATED_BANNER}\n-->", "", "# Autonomy matrix (generated)", ""]
-    for section in (
-        _section_tiers,
-        _section_overlay,
-        _section_val,
-        _section_paths,
-        _section_wiring,
-        _section_gates,
-    ):
-        lines, _n = section()
-        out += lines + [""]
-    return "\n".join(out)
+    out = ["# Autonomy matrix (generated)", ""]
+    sections: list[dict[str, object]] = []
+    counts: dict[str, int] = {}
+    for key, fn in _SECTIONS:
+        tabs: list[dict[str, object]] = []
+        lines, counts[key] = fn(tabs)
+        out += [*lines, ""]
+        sections.append({"id": key, "title": lines[0].lstrip("# "), "tables": tabs})
+    md = _FRONT_MATTER + "\n".join(out)
+    js = json.dumps({"sections": sections}, indent=2, sort_keys=True) + "\n"
+    return md, js, counts
 
 
-def main(argv: list[str] | None = None) -> int:
+def render() -> str:
+    return build()[0]
+
+
+def _first_diff(name: str, want: str, have: str) -> str:
+    w, h = want.splitlines(), have.splitlines()
+    for i in range(max(len(w), len(h))):
+        a = w[i] if i < len(w) else "<eof>"
+        b = h[i] if i < len(h) else "<eof>"
+        if a != b:
+            return f"{name}: line {i + 1} differs\n  generated: {a[:200]}\n  committed: {b[:200]}"
+    return f"{name}: differs"
+
+
+def check(md_path: Path = _OUT_MD, json_path: Path = _OUT_JSON) -> int:
+    md, js, c = build()
+    floors = {
+        "tiers": (c["tiers"] >= 8),
+        "overlay": (c["overlay"] >= 12),
+        "val": (c["val"] == 8),
+        "paths": (c["paths"] >= len(review_tier.HIGH_RISK_PATTERNS) + 2),
+        "gates": (c["gates"] == 3),
+    }
+    bad = [k for k, ok in floors.items() if not ok]
+    if bad:
+        print(f"row-count minimum violated: {', '.join(bad)} ({c})")  # noqa: T201
+        return 1
+    for path, want in ((md_path, md), (json_path, js)):
+        have = path.read_text(encoding="utf-8") if path.is_file() else ""
+        if have != want:
+            print(_first_diff(str(path), want, have))  # noqa: T201
+            return 1
+    print(  # noqa: T201
+        f"ok: tiers={c['tiers']} overlay={c['overlay']} val={c['val']} "
+        f"paths={c['paths']} gates={c['gates']}"
+    )
+    return 0
+
+
+def main(
+    argv: list[str] | None = None,
+    *,
+    md_path: Path = _OUT_MD,
+    json_path: Path = _OUT_JSON,
+) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stdout", action="store_true", help="Print the markdown.")
+    parser.add_argument(
+        "--check", action="store_true", help="Fail if outputs are stale."
+    )
     args = parser.parse_args(argv)
-    text = render()
+    if args.check:
+        return check(md_path, json_path)
+    md, js, _ = build()
     if args.stdout:
-        sys.stdout.write(text)
+        sys.stdout.write(md)
+        return 0
+    for path, text in ((md_path, md), (json_path, js)):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        print(f"wrote {path}")  # noqa: T201
     return 0
 
 
