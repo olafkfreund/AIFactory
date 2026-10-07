@@ -28,7 +28,7 @@
             [
               "`auto`",
               "`hold-async`",
-              "ci=T verdict=pass val=2/1 parity=F; ci=T verdict=pass val=1/2 parity=T; ci=T verdict=pass val=1/2 parity=F; ci=T verdict=fail val=2/1 parity=T; ci=T verdict=fail val=2/1 parity=F; ci=T verdict=fail val=1/2 parity=T; ci=T verdict=fail val=1/2 parity=F; ci=F verdict=pass val=2/1 parity=T; ci=F verdict=pass val=2/1 parity=F; ci=F verdict=pass val=1/2 parity=T; ci=F verdict=pass val=1/2 parity=F; ci=F verdict=fail val=2/1 parity=T; ci=F verdict=fail val=2/1 parity=F; ci=F verdict=fail val=1/2 parity=T; ci=F verdict=fail val=1/2 parity=F"
+              "otherwise"
             ],
             [
               "`blocking`",
@@ -53,7 +53,7 @@
             [
               "`low`",
               "`hold-async`",
-              "ci=T verdict=pass val=2/1 parity=F; ci=T verdict=pass val=1/2 parity=T; ci=T verdict=pass val=1/2 parity=F; ci=T verdict=fail val=2/1 parity=T; ci=T verdict=fail val=2/1 parity=F; ci=T verdict=fail val=1/2 parity=T; ci=T verdict=fail val=1/2 parity=F; ci=F verdict=pass val=2/1 parity=T; ci=F verdict=pass val=2/1 parity=F; ci=F verdict=pass val=1/2 parity=T; ci=F verdict=pass val=1/2 parity=F; ci=F verdict=fail val=2/1 parity=T; ci=F verdict=fail val=2/1 parity=F; ci=F verdict=fail val=1/2 parity=T; ci=F verdict=fail val=1/2 parity=F"
+              "otherwise"
             ],
             [
               "`medium`",

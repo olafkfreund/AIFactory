@@ -126,11 +126,25 @@ def _section_tiers(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
             by_result.setdefault(result, []).append(
                 f"ci={_tf(ci)} verdict={verdict} val={val}/{floor} parity={_tf(parity)}"
             )
+        every = {c for conds in by_result.values() for c in conds}
+        widest = max(sorted(by_result), key=lambda r: len(by_result[r]))
         for result in sorted(by_result):
             conds = by_result[result]
-            cell = "always" if len(conds) == len(combos) else "; ".join(conds)
+            others = {c for r, cs in by_result.items() if r != result for c in cs}
+            if len(conds) == len(combos):
+                cell = "always"
+            elif result == widest and set(conds) == every - others and others:
+                cell = "otherwise"
+            else:
+                cell = "; ".join(conds)
             rows.append([f"`{tier}`" if tier else "`(blank)`", f"`{result}`", cell])
-    lines = ["## A1. Tier decision (no deployment block)", ""]
+    lines = [
+        "## A1. Tier decision (no deployment block)",
+        "",
+        "ci = host CI green; verdict = TFactory verdict; val = achieved/floor VAL; "
+        "parity = CI parity (T = true, F = false).",
+        "",
+    ]
     lines += _table(tabs, ["tier", "result", "when"], rows)
     return lines, len(rows)
 

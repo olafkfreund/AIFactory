@@ -12,17 +12,19 @@ DO NOT EDIT BY HAND - rerun the generator (Factory#1962).
 
 ## A1. Tier decision (no deployment block)
 
+ci = host CI green; verdict = TFactory verdict; val = achieved/floor VAL; parity = CI parity (T = true, F = false).
+
 | tier | result | when |
 |---|---|---|
 | `(blank)` | `hold-blocking` | always |
 | `async` | `hold-async` | always |
 | `auto` | `auto-merge` | ci=T verdict=pass val=2/1 parity=T |
-| `auto` | `hold-async` | ci=T verdict=pass val=2/1 parity=F; ci=T verdict=pass val=1/2 parity=T; ci=T verdict=pass val=1/2 parity=F; ci=T verdict=fail val=2/1 parity=T; ci=T verdict=fail val=2/1 parity=F; ci=T verdict=fail val=1/2 parity=T; ci=T verdict=fail val=1/2 parity=F; ci=F verdict=pass val=2/1 parity=T; ci=F verdict=pass val=2/1 parity=F; ci=F verdict=pass val=1/2 parity=T; ci=F verdict=pass val=1/2 parity=F; ci=F verdict=fail val=2/1 parity=T; ci=F verdict=fail val=2/1 parity=F; ci=F verdict=fail val=1/2 parity=T; ci=F verdict=fail val=1/2 parity=F |
+| `auto` | `hold-async` | otherwise |
 | `blocking` | `hold-blocking` | always |
 | `bogus` | `hold-blocking` | always |
 | `hard` | `hold-blocking` | always |
 | `low` | `auto-merge` | ci=T verdict=pass val=2/1 parity=T |
-| `low` | `hold-async` | ci=T verdict=pass val=2/1 parity=F; ci=T verdict=pass val=1/2 parity=T; ci=T verdict=pass val=1/2 parity=F; ci=T verdict=fail val=2/1 parity=T; ci=T verdict=fail val=2/1 parity=F; ci=T verdict=fail val=1/2 parity=T; ci=T verdict=fail val=1/2 parity=F; ci=F verdict=pass val=2/1 parity=T; ci=F verdict=pass val=2/1 parity=F; ci=F verdict=pass val=1/2 parity=T; ci=F verdict=pass val=1/2 parity=F; ci=F verdict=fail val=2/1 parity=T; ci=F verdict=fail val=2/1 parity=F; ci=F verdict=fail val=1/2 parity=T; ci=F verdict=fail val=1/2 parity=F |
+| `low` | `hold-async` | otherwise |
 | `medium` | `hold-async` | always |
 
 ## A2. Deployment overlay (applied before the tier; all-green `low` change)
