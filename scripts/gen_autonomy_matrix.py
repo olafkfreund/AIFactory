@@ -24,6 +24,7 @@ import sys
 import tempfile
 from collections.abc import Iterator
 from pathlib import Path
+from types import ModuleType
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 for _p in (_REPO_ROOT / "apps" / "backend", _REPO_ROOT / "apps" / "web-server"):
@@ -252,6 +253,23 @@ def _env(**values: str | None) -> Iterator[None]:
                 os.environ[k] = v
 
 
+def _path_floor_rows(wc: ModuleType, root: Path, probe: str) -> list[list[str]]:
+    """apply_path_risk_floor on a `low` task touching *probe*, advisory vs enforced."""
+    orig = wc._get_changed_files_from_git
+    rows: list[list[str]] = []
+    try:
+        wc._get_changed_files_from_git = lambda *_a, **_k: [probe]
+        for label, val in (("advisory (unset)", None), ("enforced (`1`)", "1")):
+            spec = root / f"spec-{len(rows)}"
+            spec.mkdir()
+            with _env(**{pe.PATH_RISK_FLOOR_ENV: val}):
+                eff, floor = pe.apply_path_risk_floor(root, spec, "probe", "dev", "low")
+            rows.append([label, f"`{eff!r}`", f"`{floor!r}`"])
+    finally:
+        wc._get_changed_files_from_git = orig
+    return rows
+
+
 def _section_wiring(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
     from cli import workspace_commands as wc  # noqa: PLC0415
 
@@ -306,22 +324,8 @@ def _section_wiring(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
         lines += [""]
         n += len(rows)
 
-        # Path floor, advisory vs enforced
         probe = review_tier.HIGH_RISK_PATTERNS[0]
-        orig = wc._get_changed_files_from_git
-        rows = []
-        try:
-            wc._get_changed_files_from_git = lambda *a, **k: [probe]
-            for label, val in (("advisory (unset)", None), ("enforced (`1`)", "1")):
-                spec = root / f"spec-{len(rows)}"
-                spec.mkdir()
-                with _env(**{pe.PATH_RISK_FLOOR_ENV: val}):
-                    eff, floor = pe.apply_path_risk_floor(
-                        root, spec, "probe", "dev", "low"
-                    )
-                rows.append([label, f"`{eff!r}`", f"`{floor!r}`"])
-        finally:
-            wc._get_changed_files_from_git = orig
+        rows = _path_floor_rows(wc, root, probe)
         lines += [
             "### B4. Path floor on a `low` task touching "
             f"`{probe}`: (effective tier, floor)",
@@ -359,8 +363,8 @@ _ENTRY_POINTS = (
 
 # Minimum resolved local modules per entry point: floor(0.5 * measured).
 # max(2, floor(0.5 * measured)); measured 2026-10-07: merge_policy 2,
-# pr_review_service 263 (incl. runner via spawn edge), pr_endgame 352. A walk under its minimum means the
-# prober is broken, and it must never emit a label.
+# pr_review_service 263 (incl. runner via spawn edge), pr_endgame 352. A walk
+# under its minimum means the prober is broken, and it must never emit a label.
 _MIN_CLOSURE: dict[str, int] = {
     "merge.merge_policy": 2,
     "server.services.pr_review_service": 131,
@@ -619,7 +623,7 @@ def _section_gates(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
         init_hits = sorted({h for hs in reach.values() for h in hs})
         where = (
             ", ".join(f"`{p}`" for p in reach)
-            if len(reach) <= 3
+            if len(reach) <= _MAX_INLINE_INITS
             else "see JSON `gates[].init_reach`"
         )
         init_cell = (
@@ -680,7 +684,13 @@ _SECTIONS = (
 
 _OUT_MD = _REPO_ROOT / "docs" / "docs" / "compliance" / "autonomy-matrix.md"
 _OUT_JSON = _REPO_ROOT / "docs" / "static" / "compliance" / "autonomy-matrix.json"
-_FRONT_MATTER = f"---\ntitle: Autonomy matrix (generated)\ndraft: true\n---\n\n<!--\n{_GENERATED_BANNER}\n-->\n\n"
+_FRONT_MATTER = (
+    "---\ntitle: Autonomy matrix (generated)\ndraft: true\n---\n\n"
+    f"<!--\n{_GENERATED_BANNER}\n-->\n\n"
+)
+# Row-count floors asserted by --check before the byte comparison.
+_MIN_TIER_ROWS, _MIN_OVERLAY_ROWS, _VAL_ROWS, _GATE_ROWS = 8, 12, 8, 3
+_MAX_INLINE_INITS = 3
 
 
 def build() -> tuple[str, str, dict[str, int]]:
@@ -715,18 +725,21 @@ def _first_diff(name: str, want: str, have: str) -> str:
         a = w[i] if i < len(w) else "<eof>"
         b = h[i] if i < len(h) else "<eof>"
         if a != b:
-            return f"{name}: line {i + 1} differs\n  generated: {a[:200]}\n  committed: {b[:200]}"
+            return (
+                f"{name}: line {i + 1} differs\n"
+                f"  generated: {a[:200]}\n  committed: {b[:200]}"
+            )
     return f"{name}: differs"
 
 
 def check(md_path: Path = _OUT_MD, json_path: Path = _OUT_JSON) -> int:
     md, js, c = build()
     floors = {
-        "tiers": (c["tiers"] >= 8),
-        "overlay": (c["overlay"] >= 12),
-        "val": (c["val"] == 8),
+        "tiers": (c["tiers"] >= _MIN_TIER_ROWS),
+        "overlay": (c["overlay"] >= _MIN_OVERLAY_ROWS),
+        "val": (c["val"] == _VAL_ROWS),
         "paths": (c["paths"] >= len(review_tier.HIGH_RISK_PATTERNS) + 2),
-        "gates": (c["gates"] == 3),
+        "gates": (c["gates"] == _GATE_ROWS),
     }
     bad = [k for k, ok in floors.items() if not ok]
     if bad:

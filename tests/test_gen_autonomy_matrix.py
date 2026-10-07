@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import sys
 from pathlib import Path
 
@@ -41,7 +42,7 @@ def test_closure_below_minimum_refuses_to_label(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     tiny = (frozenset({"merge.merge_policy"}), frozenset(), "-", (), {})
-    monkeypatch.setattr(gam, "_entry_closure", lambda entry: tiny)
+    monkeypatch.setattr(gam, "_entry_closure", lambda _entry: tiny)
     monkeypatch.setitem(gam._MIN_CLOSURE, "merge.merge_policy", 2)
     with pytest.raises(SystemExit) as e:
         gam._section_gates([])
@@ -117,14 +118,14 @@ def _pkg(tmp_path: Path) -> tuple[Path, ...]:
 
 def test_prober_resolves_relative_imports(tmp_path: Path) -> None:
     roots = _pkg(tmp_path)
-    local, names, dynamic = gam._closure("pkg.a", roots)
+    local, _names, dynamic = gam._closure("pkg.a", roots)
     assert {"pkg.a", "pkg.b", "pkg.c"} <= local
     assert dynamic == ()
 
 
 def test_dynamic_import_is_undetermined(tmp_path: Path) -> None:
     roots = _pkg(tmp_path)
-    local, names, dynamic = gam._closure("pkg.dyn", roots)
+    _local, names, dynamic = gam._closure("pkg.dyn", roots)
     assert dynamic == ("pkg.dyn:2",)
     assert gam._label(names, dynamic).startswith(
         "undetermined (dynamic import: pkg.dyn:2"
@@ -155,23 +156,16 @@ def test_check_detects_tampering(tmp_path: Path) -> None:
 
 
 def test_signature_guard(monkeypatch: pytest.MonkeyPatch) -> None:
-    orig = gam.mp.decide_merge
+    real = inspect.signature(gam.mp.decide_merge)
+    extra = inspect.Parameter("new_param", inspect.Parameter.KEYWORD_ONLY, default=None)
 
-    # Same parameter names as decide_merge plus one more.
-    def widened(
-        tier,
-        *,
-        host_ci_green,
-        tfactory_verdict,
-        achieved_val,
-        val_floor,
-        ci_parity,
-        deployment=None,
-        satisfied_gates=None,
-        new_param=None,
-    ):  # noqa: ANN001, ANN202
-        return orig(tier)
+    def widened(*_args: object, **_kwargs: object) -> str:
+        return gam.mp.HOLD_BLOCKING
 
+    # Report decide_merge's real signature plus one more keyword.
+    widened.__signature__ = real.replace(  # type: ignore[attr-defined]
+        parameters=[*real.parameters.values(), extra]
+    )
     monkeypatch.setattr(gam.mp, "decide_merge", widened)
     with pytest.raises(SystemExit) as e:
         gam.render()
