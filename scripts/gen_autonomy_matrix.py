@@ -22,7 +22,7 @@ import json
 import os
 import sys
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from pathlib import Path
 from types import ModuleType
 
@@ -155,7 +155,11 @@ def _section_tiers(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
 
 def _section_overlay(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
     seen: dict[tuple[tuple[str, ...], str], list[str]] = {}
-    gate_sets = ([], [_REQUIRED_GATES[1]], list(_REQUIRED_GATES))
+    gate_sets: tuple[list[str], ...] = (
+        [],
+        [_REQUIRED_GATES[1]],
+        list(_REQUIRED_GATES),
+    )
     for risk, prod, sat in itertools.product(
         ("high", "medium", "low", ""), ("production", "staging", "dev", ""), gate_sets
     ):
@@ -255,10 +259,11 @@ def _env(**values: str | None) -> Iterator[None]:
 
 def _path_floor_rows(wc: ModuleType, root: Path, probe: str) -> list[list[str]]:
     """apply_path_risk_floor on a `low` task touching *probe*, advisory vs enforced."""
-    orig = wc._get_changed_files_from_git
+    attr = "_get_changed_files_from_git"
+    orig = getattr(wc, attr)
     rows: list[list[str]] = []
     try:
-        wc._get_changed_files_from_git = lambda *_a, **_k: [probe]
+        setattr(wc, attr, lambda *_a, **_k: [probe])
         for label, val in (("advisory (unset)", None), ("enforced (`1`)", "1")):
             spec = root / f"spec-{len(rows)}"
             spec.mkdir()
@@ -266,7 +271,7 @@ def _path_floor_rows(wc: ModuleType, root: Path, probe: str) -> list[list[str]]:
                 eff, floor = pe.apply_path_risk_floor(root, spec, "probe", "dev", "low")
             rows.append([label, f"`{eff!r}`", f"`{floor!r}`"])
     finally:
-        wc._get_changed_files_from_git = orig
+        setattr(wc, attr, orig)
     return rows
 
 
@@ -591,13 +596,13 @@ def _entry_closure(
     )
 
 
-def _hits(names: set[str]) -> list[str]:
+def _hits(names: Collection[str]) -> list[str]:
     return sorted(
         c for c in _MODEL_CLIENTS if any(n == c or n.startswith(c + ".") for n in names)
     )
 
 
-def _label(names: frozenset[str] | set[str], dynamic: tuple[str, ...] = ()) -> str:
+def _label(names: Collection[str], dynamic: tuple[str, ...] = ()) -> str:
     """model-assisted / undetermined / deterministic for the gate's own imports."""
     dyn = ""
     if dynamic:
