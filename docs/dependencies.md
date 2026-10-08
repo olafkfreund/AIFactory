@@ -13,7 +13,7 @@ AIFactory **declares** **17** backend, **36** web-server, and **47** frontend ru
 | `anthropic` | `>=0.84.0` |
 | `bashlex` | `>=0.18` |
 | `boto3` | `>=1.43.0` |
-| `claude-agent-sdk` | `>=0.1.16` |
+| `claude-agent-sdk` | `>=0.2.164` |
 | `google-generativeai` | `>=0.8.0` |
 | `graphiti-core` | `>=0.5.0; python_version >= "3.12"` |
 | `hvac` | `>=2.3.0` |

@@ -668,13 +668,13 @@ charset-normalizer==3.5.1 \
     --hash=sha256:fd0a274c0e5f9a21565cd9d3dd749b61f96b7aa1e20a93aa1ba4029518f2e5c0 \
     --hash=sha256:fdb8a068947befafba9952162645dc2fecaeb400e64584829ed5e9b2fbe21a7f
     # via requests
-claude-agent-sdk==0.2.140 \
-    --hash=sha256:1eb420b70b431351b7f807e28f635754367e9509d7b57878016b6a88efbbbf1d \
-    --hash=sha256:93b646e34bb39e37c868d67dc736de29a655529a4c986857e83a9d5bcf1f4e2b \
-    --hash=sha256:a873fd3f7378a6320b73193a1502115979567f9b52ea1f25dc225e69cd4a2920 \
-    --hash=sha256:b55ed0333ba235e992455f990ec5cea557736fb9207c73878b96876a4cdb1c15 \
-    --hash=sha256:c3feb45d7dc7564b66e161fcb9ea976e39faae40a64d429137cb0d85fb955e1f \
-    --hash=sha256:da83b7657728f4a12f90b147743c7b3bd292adbadfd11b6b235789b68b5e3058
+claude-agent-sdk==0.2.164 \
+    --hash=sha256:1a24aa955dac8a231c1d782d89cb2cae8d875159398317fbaa8cd777cb94c311 \
+    --hash=sha256:3c9523749c4163c990b937b7408907f8a4c5dc09123ad9eba7150630b5c2c86a \
+    --hash=sha256:6e45da8ffe8bf3b0472e291584af4ee40d315e02c3f1aa7b4cc86b5a0425f552 \
+    --hash=sha256:b810e357691aa54ae34739fdeac747819707099903e0621f31989354b9153f05 \
+    --hash=sha256:d425982a50f804a28b538248fed96a74778beaca5c14830d0b5a52d1c64d511f \
+    --hash=sha256:eeb967a43c3d1e5589b95ca3c050ec45ce72e242bfab1ded2205b33c61c8b430
     # via -r apps/backend/requirements.txt
 click==8.4.2 \
     --hash=sha256:9a6cea6e60b17ebe0a44c5cc636d94f09bd66142c1cd7d8b4cd731c4917a15f6 \
@@ -2335,9 +2335,9 @@ pydantic-settings==2.15.0 \
     --hash=sha256:0ba092c291c94baceb5eff768aa0d56400a457585bc0175925a5a5510303da42 \
     --hash=sha256:694b793e84f766ba76a90ebdefc01d0a9a045dab0382bee70393da93712ad117
     # via -r apps/web-server/requirements.txt
-pyjwt==2.13.0 \
-    --hash=sha256:41571c89ca91598c79e8ef18a2d07367d4810fbbd6f637794879baf1b7703423 \
-    --hash=sha256:66adcc2aff09b3f1bbd95fc1e1577df8ac8723c978552fd43304c8a290ac5728
+pyjwt==2.15.1 \
+    --hash=sha256:42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193 \
+    --hash=sha256:4f259e80cdfb6b3fc18a7de51fd1ef9ec79652f25019bae68975ca2468a34df8
     # via
     #   mcp
     #   msal
@@ -3177,9 +3177,9 @@ uritemplate==4.2.0 \
     --hash=sha256:480c2ed180878955863323eea31b0ede668795de182617fef9c6ca09e6ec9d0e \
     --hash=sha256:962201ba1c4edcab02e60f9a0d3821e82dfc5d2d6662a21abd533879bdb8a686
     # via google-api-python-client
-urllib3==2.7.0 \
-    --hash=sha256:231e0ec3b63ceb14667c67be60f2f2c40a518cb38b03af60abc813da26505f4c \
-    --hash=sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897
+urllib3==2.8.0 \
+    --hash=sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3 \
+    --hash=sha256:63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63
     # via
     #   botocore
     #   kubernetes-asyncio

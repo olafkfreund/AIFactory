@@ -1,5 +1,67 @@
 ## [Unreleased]
 
+## 3.8.0 - 2026-10-08
+
+### Changed
+
+- **Opus 5.5 is the flagship.** The `opus` shorthand now resolves to
+  `claude-opus-5-5` everywhere it is read: the phase resolver, the approved-model
+  registry, the budget catalog and the enforcement pricing table. `opus-4.8` was
+  added as a pin so the previous flagship stays selectable, alongside the
+  existing `opus-4.7` / `opus-4.5` pins. Adaptive thinking and the
+  interleaved-thinking beta now key off a named set of Opus ids rather than a
+  pair of `in (...)` tests, so the next bump is one line instead of three.
+
+  Two things the bump surfaced and fixed: `budget_enforcement` pinned `sonnet`
+  to `claude-sonnet-4-6` while the phase resolver meant `claude-sonnet-5`, so a
+  `sonnet` run was budgeted against the wrong catalog row — which matters now
+  that Sonnet is the default coding model; and the registry-override test keyed
+  on a hard-coded flagship id, so a model bump failed it with a different
+  refusal than the one it was written to check.
+
+  **Pricing for opus-5.5 is provisional**: it mirrors Opus 4.8 in both the
+  catalog and the enforcement table, and is marked as an assumption in each.
+  Any `$` figure reported for this model is not a quote until the published
+  rates are confirmed.
+
+- **Opus plans, Sonnet codes.** `DEFAULT_PHASE_MODELS` sent every PARR stage to
+  Opus 4.8. The stages differ in what they are hard at: `spec`, `planning` and
+  `qa` are single long-context judgements where a better call changes the whole
+  run, while `coding` executes decisions already made across many small,
+  well-specified subtasks — and it is where the wall-clock and the tokens go
+  (the 21-subtask demo build spent 145 minutes almost entirely in coding). The
+  default now spends the flagship where judgement compounds and Sonnet 5 where
+  volume dominates. Per-task `phaseModels` still overrides either, so a task
+  that needs Opus to code can say so (RFC-0014 precedence, #1397).
+
+### Added
+
+- **A generated autonomy matrix** (Factory#1962). `scripts/gen_autonomy_matrix.py`
+  calls `merge_policy` over probe inputs and renders what it returns — tiers →
+  disposition, the RFC-0013 overlay, VAL-floor semantics, the path floor, gate
+  determinism and a control-objective mapping — to
+  `docs/docs/compliance/autonomy-matrix.md` and a JSON twin for Fides. The
+  required `autonomy matrix matches the policy` check fails any PR that changes
+  the policy without regenerating. It also states one live gap plainly: the
+  deployment overlay is advisory on the live path (#1658).
+
+### Fixed
+
+- **Opus 5.5 is callable from the image** (#1661). The API refuses
+  `claude-opus-5-5` from Claude Code older than 2.1.280, and the image ran
+  2.1.235 (bundled with claude-agent-sdk 0.2.140) and 2.1.238 (on PATH). The
+  SDK is now floored at 0.2.164, which bundles 2.1.292, and the PATH CLI is
+  pinned to 2.1.293. Without this, every Opus phase would return 400.
+- The web Auto profile now sends `coding: 'sonnet'`. It used to send `'opus'`,
+  which overrode the backend default, so web tasks never got the Sonnet
+  coding default (#1661).
+- A build row carrying a live Job reference is no longer treated as terminal (#1635).
+- The cockpit reports a running build truthfully (#1629).
+- 11 of 12 npm lockfile CVEs closed, including a shipped DOM XSS (#1643);
+  PyJWT and brace-expansion bumped off their CVEs (#1637).
+- CI: uv's HTTP timeout raised off its 30 s default (#1642); chainguard/python
+  base image bumps.
+
 ## 3.7.0 - 2026-09-29
 
 ### Added
