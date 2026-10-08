@@ -1,5 +1,21 @@
 ## [Unreleased]
 
+## 3.8.2 - 2026-10-08
+
+### Security
+
+- **Agents no longer inherit the trusted-plan signing keys or the poller
+  token.** The agent environment scrub missed `AIFACTORY_TRUSTED_PLAN_KEY_*`
+  and `AIFACTORY_TOKEN`, both set in production. An agent running in the
+  web-server process could read the plan HMAC key and re-sign a task contract
+  it had edited, or call the API with the poller token. Kubejob builds pass an
+  explicit environment and were not exposed (#1668, part of #1667).
+
+### Fixed
+
+- The model picker labels `opus` and `sonnet` with the models they resolve to
+  (Claude Opus 5.5, Claude Sonnet 5) instead of Opus 4.8 and Sonnet 4.6 (#1666).
+
 ## 3.8.1 - 2026-10-08
 
 ### Fixed
