@@ -15,6 +15,7 @@ stops being reported running on the very next tick.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 from typing import Any
@@ -197,3 +198,104 @@ async def test_just_dispatched_build_counts_as_active(
     service = _service(monkeypatch, [], _StillRunningBackend())
     active = service._kubejob_still_active("proj-uuid:999-never-polled")
     assert await active() is True, "within the dispatch grace window"
+
+
+class _DispatchingBackend(_StillRunningBackend):
+    """A backend whose dispatch succeeds, or raises when ``fail`` is set."""
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+
+    async def dispatch(self, **_kwargs: Any) -> str:
+        if self.fail:
+            raise RuntimeError("k8s api unavailable")
+        return "aifactory-build-job"
+
+
+def _dispatchable(
+    monkeypatch: pytest.MonkeyPatch, backend: _DispatchingBackend, rows: list[str]
+) -> AgentService:
+    service = _service(monkeypatch, rows, backend)
+    monkeypatch.setattr(service, "_write_skill_context", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        service, "_resolve_claude_token_pooled", lambda *_a, **_k: (None, None, None)
+    )
+    monkeypatch.setattr(service, "_start_kubejob_log_stream", _noop)
+    monkeypatch.setattr(service, "_safe_emit_task_status", _noop)
+    return service
+
+
+async def _dispatch(service: AgentService) -> None:
+    await service._dispatch_build_job(
+        task_id=TASK,
+        project_path=Path("/nonexistent-project"),
+        spec_id="022-some-spec",
+        correlation_key=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_dispatched_build_is_running_before_any_tick(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """#1662: recovery must refuse a build dispatched seconds ago."""
+    from fastapi import HTTPException
+    from server.routes import execution
+
+    service = _dispatchable(monkeypatch, _DispatchingBackend(), rows=[])
+    await _dispatch(service)
+
+    assert service.is_running(TASK) is True
+    with pytest.raises(HTTPException) as exc:
+        execution._refuse_recovery_while_running(TASK, service, force=False)
+    assert exc.value.status_code == 409
+    # force still overrides the guard
+    execution._refuse_recovery_while_running(TASK, service, force=True)
+
+
+@pytest.mark.asyncio
+async def test_tick_in_flight_does_not_drop_a_fresh_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """#1662: a tick that read rows before dispatch must not clear it."""
+    service = _dispatchable(monkeypatch, _DispatchingBackend(), rows=[])
+
+    class _GatedStore:
+        def __init__(self) -> None:
+            self.reading = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def get_active_kubejobs(self) -> list[dict[str, Any]]:
+            self.reading.set()
+            await self.release.wait()
+            return []  # read before set_worker_ref committed
+
+    store = _GatedStore()
+    monkeypatch.setattr(service, "_store", lambda: store)
+    tick = asyncio.create_task(service.reconcile_kubejob_builds())
+    await store.reading.wait()
+    await _dispatch(service)
+    store.release.set()
+    await tick
+
+    assert service.is_running(TASK) is True
+
+    # Bounded: the next tick reads rows without TASK (its Job is gone)
+    # and drops it, so the set never only grows.
+    class _EmptyStore:
+        async def get_active_kubejobs(self) -> list[dict[str, Any]]:
+            return []
+
+    monkeypatch.setattr(service, "_store", lambda: _EmptyStore())
+    await service.reconcile_kubejob_builds()
+    assert service.is_running(TASK) is False
+
+
+@pytest.mark.asyncio
+async def test_failed_dispatch_is_not_marked_running(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service = _dispatchable(monkeypatch, _DispatchingBackend(fail=True), rows=[])
+    with pytest.raises(RuntimeError):
+        await _dispatch(service)
+    assert service.is_running(TASK) is False
