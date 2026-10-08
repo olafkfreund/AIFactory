@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
+import re
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -170,3 +172,75 @@ def test_signature_guard(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(SystemExit) as e:
         gam.render()
     assert e.value.code == 3
+
+
+def _toml_copy(tmp_path: Path, edit: Callable[[str], str]) -> Path:
+    out = tmp_path / "controls.toml"
+    out.write_text(edit(gam._CONTROLS_TOML.read_text(encoding="utf-8")))
+    return out
+
+
+def _run_check(tmp_path: Path, toml: Path) -> int:
+    md, js = tmp_path / "m.md", tmp_path / "m.json"
+    assert gam.main([], md_path=md, json_path=js) == 0
+    return gam.main(["--check"], md_path=md, json_path=js, controls_path=toml)
+
+
+def test_orphan_toml_entry_fails_naming_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    toml = _toml_copy(
+        tmp_path,
+        lambda t: t + '\n[controls."bogus.control"]\nobjective = "x"\n'
+        'evidence = "y"\nframeworks = []\n',
+    )
+    assert _run_check(tmp_path, toml) == 1
+    assert "orphan control (no derived id): bogus.control" in capsys.readouterr().out
+
+
+def test_derived_control_without_entry_fails_naming_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    toml = _toml_copy(
+        tmp_path, lambda t: t.replace("policy.val_floor", "policy.val_floor_x")
+    )
+    assert _run_check(tmp_path, toml) == 1
+    out = capsys.readouterr().out
+    assert "derived control has no entry: policy.val_floor" in out
+    assert "orphan control (no derived id): policy.val_floor_x" in out
+
+
+def test_malformed_control_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    toml = _toml_copy(
+        tmp_path, lambda t: t.replace("frameworks = [", "frameworkz = [", 1)
+    )
+    assert _run_check(tmp_path, toml) == 1
+    assert "malformed" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("edit", "message"),
+    [
+        # A non-table entry must be a named error, not an AttributeError traceback.
+        (
+            lambda t: t + '\n[controls]\nstray = "value"\n',
+            "control 'stray' is malformed",
+        ),
+        # `claim` is published verbatim, so it must be text.
+        (
+            lambda t: re.sub(r'^claim = ".*"$', "claim = 1", t, count=1, flags=re.M),
+            "control 'policy.tier.low' is malformed",
+        ),
+    ],
+)
+def test_malformed_shapes_are_named_errors(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    edit: Callable[[str], str],
+    message: str,
+) -> None:
+    toml = _toml_copy(tmp_path, edit)
+    assert _run_check(tmp_path, toml) == 1
+    assert message in capsys.readouterr().out

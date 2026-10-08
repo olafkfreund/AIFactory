@@ -22,9 +22,11 @@ import json
 import os
 import sys
 import tempfile
+import tomllib
 from collections.abc import Collection, Iterator
 from pathlib import Path
 from types import ModuleType
+from typing import cast
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 for _p in (_REPO_ROOT / "apps" / "backend", _REPO_ROOT / "apps" / "web-server"):
@@ -184,7 +186,7 @@ def _section_overlay(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
         )
     rows = [
         [
-            "<br>".join(r) if r else "(none)",
+            "<br/>".join(r) if r else "(none)",
             f"`{result}`",
             f"{len(ex)} combos, e.g. {ex[0]}",
         ]
@@ -228,6 +230,17 @@ def _section_paths(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
 # inlines the literal), so it is restated here; the flag call below still reads
 # the live code, so a rename makes the "set" row go False rather than lie.
 _AUTO_MERGE_ENV = "AIFACTORY_AUTO_MERGE"
+
+# (control id, label, env var, reader). Shared by Section B3 and the control ids.
+_FLAGS = (
+    ("wiring.auto_merge_flag", "auto-merge", _AUTO_MERGE_ENV, pe.is_auto_merge_enabled),
+    (
+        "wiring.path_floor_flag",
+        "path-floor enforcement",
+        pe.PATH_RISK_FLOOR_ENV,
+        pe.path_floor_enforced,
+    ),
+)
 
 _GREEN_META = {
     "tfactoryVerdict": "pass",
@@ -313,12 +326,8 @@ def _section_wiring(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
         n += len(sig)
 
         # Flag defaults
-        names = {
-            "auto-merge": (_AUTO_MERGE_ENV, pe.is_auto_merge_enabled),
-            "path-floor enforcement": (pe.PATH_RISK_FLOOR_ENV, pe.path_floor_enforced),
-        }
         rows = []
-        for label, (env, fn) in sorted(names.items()):
+        for _cid, label, env, fn in sorted(_FLAGS, key=lambda f: f[1]):
             with _env(**{env: None}):
                 unset = fn(None)
             with _env(**{env: "1"}):
@@ -678,6 +687,83 @@ def _section_gates(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
     return lines, len(rows)
 
 
+# ---- Section D: control objectives joined from TOML ------------------------
+_CONTROLS_TOML = _REPO_ROOT / "docs" / "compliance" / "control-objectives.toml"
+_CONTROL_KEYS = {"objective", "evidence", "frameworks", "claim"}
+
+
+class ControlsError(Exception):
+    """The control-objectives file is malformed or disagrees with the code."""
+
+
+def _derived_ids() -> list[str]:
+    """Control ids for what Sections A-C render."""
+    ids = [f"policy.tier.{b}" for b in sorted(set(mp._TIER_ALIASES.values()))]
+    ids += ["policy.overlay", "policy.val_floor", "policy.path_floor"]
+    ids += ["wiring.blank_tier", *(f[0] for f in _FLAGS)]
+    ids += [f"gate.{e}" for e in _ENTRY_POINTS]
+    return sorted(ids)
+
+
+def _load_controls(path: Path) -> dict[str, dict[str, object]]:
+    """Read and validate the TOML, then join it against the derived ids."""
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as e:
+        raise ControlsError(f"cannot read {path}: {e}") from e
+    raw = data.get("controls", {})
+    if not isinstance(raw, dict):
+        raise ControlsError(f"`controls` is not a table in {path.name}")
+    controls: dict[str, dict[str, object]] = {}
+    for cid, c in sorted(raw.items()):
+        if not isinstance(c, dict):
+            raise ControlsError(f"control {cid!r} is malformed in {path.name}")
+        controls[cid] = c
+    for cid, c in sorted(controls.items()):
+        fw = c.get("frameworks")
+        if (
+            not set(c) <= _CONTROL_KEYS
+            or not isinstance(c.get("claim", ""), str)
+            or not isinstance(c.get("objective"), str)
+            or not isinstance(c.get("evidence"), str)
+            or not isinstance(fw, list)
+            or not all(isinstance(x, str) for x in fw)
+        ):
+            raise ControlsError(f"control {cid!r} is malformed in {path.name}")
+    derived = set(_derived_ids())
+    problems = [
+        f"orphan control (no derived id): {cid}"
+        for cid in sorted(set(controls) - derived)
+    ]
+    problems += [
+        f"derived control has no entry: {cid}"
+        for cid in sorted(derived - set(controls))
+    ]
+    if problems:
+        raise ControlsError("\n".join(problems))
+    return controls
+
+
+def _section_controls(
+    tabs: list[dict[str, object]], controls: dict[str, dict[str, object]]
+) -> tuple[list[str], int]:
+    rows = [
+        [
+            f"`{cid}`",
+            str(c["objective"]),
+            "; ".join(cast("list[str]", c["frameworks"])),
+            f"`{c['evidence']}`",
+            str(c.get("claim", "-")),
+        ]
+        for cid, c in sorted(controls.items())
+    ]
+    lines = ["## D. Control objectives", ""]
+    lines += _table(
+        tabs, ["control", "objective", "frameworks", "evidence", "claim"], rows
+    )
+    return lines, len(rows)
+
+
 _SECTIONS = (
     ("tiers", _section_tiers),
     ("overlay", _section_overlay),
@@ -690,22 +776,29 @@ _SECTIONS = (
 _OUT_MD = _REPO_ROOT / "docs" / "docs" / "compliance" / "autonomy-matrix.md"
 _OUT_JSON = _REPO_ROOT / "docs" / "static" / "compliance" / "autonomy-matrix.json"
 _FRONT_MATTER = (
-    "---\ntitle: Autonomy matrix (generated)\ndraft: true\n---\n\n"
-    f"<!--\n{_GENERATED_BANNER}\n-->\n\n"
+    "---\ntitle: Autonomy matrix (generated)\n---\n\n"
+    f"{{/*\n{_GENERATED_BANNER}\n*/}}\n\n"
 )
 # Row-count floors asserted by --check before the byte comparison.
 _MIN_TIER_ROWS, _MIN_OVERLAY_ROWS, _VAL_ROWS, _GATE_ROWS = 8, 12, 8, 3
 _MAX_INLINE_INITS = 3
 
 
-def build() -> tuple[str, str, dict[str, int]]:
+def build(
+    controls_path: Path = _CONTROLS_TOML,
+) -> tuple[str, str, dict[str, int]]:
     """Return (markdown, json text, row counts)."""
     _check_signature()
+    controls = _load_controls(controls_path)
     out = ["# Autonomy matrix (generated)", ""]
     sections: list[dict[str, object]] = []
     gates: object = []
     counts: dict[str, int] = {}
-    for key, fn in _SECTIONS:
+    steps = [
+        *_SECTIONS,
+        ("controls", lambda tabs: _section_controls(tabs, controls)),
+    ]
+    for key, fn in steps:
         tabs: list[dict[str, object]] = []
         lines, counts[key] = fn(tabs)
         out += [*lines, ""]
@@ -713,11 +806,8 @@ def build() -> tuple[str, str, dict[str, int]]:
             gates = tabs[0].pop("gates")
         sections.append({"id": key, "title": lines[0].lstrip("# "), "tables": tabs})
     md = _FRONT_MATTER + "\n".join(out)
-    js = (
-        json.dumps({"gates": gates, "sections": sections}, indent=2, sort_keys=True)
-        + "\n"
-    )
-    return md, js, counts
+    doc = {"controls": controls, "gates": gates, "sections": sections}
+    return md, json.dumps(doc, indent=2, sort_keys=True) + "\n", counts
 
 
 def render() -> str:
@@ -737,14 +827,23 @@ def _first_diff(name: str, want: str, have: str) -> str:
     return f"{name}: differs"
 
 
-def check(md_path: Path = _OUT_MD, json_path: Path = _OUT_JSON) -> int:
-    md, js, c = build()
+def check(
+    md_path: Path = _OUT_MD,
+    json_path: Path = _OUT_JSON,
+    controls_path: Path = _CONTROLS_TOML,
+) -> int:
+    try:
+        md, js, c = build(controls_path)
+    except ControlsError as e:
+        print(e)  # noqa: T201
+        return 1
     floors = {
         "tiers": (c["tiers"] >= _MIN_TIER_ROWS),
         "overlay": (c["overlay"] >= _MIN_OVERLAY_ROWS),
         "val": (c["val"] == _VAL_ROWS),
         "paths": (c["paths"] >= len(review_tier.HIGH_RISK_PATTERNS) + 2),
         "gates": (c["gates"] == _GATE_ROWS),
+        "controls": (c["controls"] == len(_derived_ids())),
     }
     bad = [k for k, ok in floors.items() if not ok]
     if bad:
@@ -757,7 +856,7 @@ def check(md_path: Path = _OUT_MD, json_path: Path = _OUT_JSON) -> int:
             return 1
     print(  # noqa: T201
         f"ok: tiers={c['tiers']} overlay={c['overlay']} val={c['val']} "
-        f"paths={c['paths']} gates={c['gates']}"
+        f"paths={c['paths']} gates={c['gates']} controls={c['controls']}"
     )
     return 0
 
@@ -767,6 +866,7 @@ def main(
     *,
     md_path: Path = _OUT_MD,
     json_path: Path = _OUT_JSON,
+    controls_path: Path = _CONTROLS_TOML,
 ) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stdout", action="store_true", help="Print the markdown.")
@@ -775,8 +875,12 @@ def main(
     )
     args = parser.parse_args(argv)
     if args.check:
-        return check(md_path, json_path)
-    md, js, _ = build()
+        return check(md_path, json_path, controls_path)
+    try:
+        md, js, _ = build(controls_path)
+    except ControlsError as e:
+        print(e)  # noqa: T201
+        return 1
     if args.stdout:
         sys.stdout.write(md)
         return 0

@@ -1,0 +1,90 @@
+# Control objectives for the generated autonomy matrix (Factory#1962).
+#
+# This is the ONLY hand-maintained input to docs/compliance/autonomy-matrix.md.
+# Every table below must match a control id the generator derives from the merge
+# policy code (scripts/gen_autonomy_matrix.py, `_derived_ids`), and every derived
+# id must have a table here. `--check` fails on an orphan in either direction and
+# names it, so the mapping cannot silently rot.
+#
+# Keys: objective (one line), evidence (repo path or URL), frameworks (array),
+# claim (optional text carried verbatim to the page).
+#
+# Framework vocabulary and the change-management mapping follow the hub's
+# docs/compliance/control-matrix.md ("Change mgmt & SoD (#316)": ISO 27001:2022
+# A.8.32, SOC 2 CC8.1, SOX ITGC change mgmt / SoD, NYDFS 500.3, NIST 800-53 CM;
+# "Agentic-AI governance (#323)": NIST 800-53 SA / RA). A framework is listed only
+# where the control plausibly supports it. The hub's #323 row also cites ISO
+# A.5.23, which is "information security for use of cloud services" and does not
+# describe a model-assisted merge gate, so it is deliberately not carried here.
+# The SEC column is omitted throughout (it covers disclosure, which none of
+# these controls evidence).
+
+# The branch-protection `claim` is verbatim from the step 0 measurement
+# (Factory#943), repeated on every control whose enforcement relies on required
+# status checks (the policy.tier.* and gate.* controls).
+
+[controls."policy.tier.low"]
+objective = "A low-tier change auto-merges only when host CI is green, TFactory passed, the achieved VAL meets the floor and CI parity holds; otherwise it is held for async review."
+evidence = "apps/backend/merge/merge_policy.py"
+frameworks = ["ISO 27001:2022 A.8.32", "SOC 2 CC8.1", "SOX ITGC change management", "NIST 800-53 CM"]
+claim = "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943)."
+
+[controls."policy.tier.medium"]
+objective = "A medium-tier change is never auto-merged; it is always held for asynchronous human review."
+evidence = "apps/backend/merge/merge_policy.py"
+frameworks = ["ISO 27001:2022 A.8.32", "SOC 2 CC8.1", "SOX ITGC change management", "NIST 800-53 CM"]
+claim = "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943)."
+
+[controls."policy.tier.hard"]
+objective = "A hard-tier change is never auto-merged; it is held for blocking human approval, which separates the author from the approver."
+evidence = "apps/backend/merge/merge_policy.py"
+frameworks = ["ISO 27001:2022 A.8.32", "SOC 2 CC8.1", "SOX ITGC change management", "SOX ITGC segregation of duties", "NYDFS 500.3", "NIST 800-53 CM"]
+claim = "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943)."
+
+[controls."policy.overlay"]
+objective = "A high-risk or production deployment block, or an unsatisfied required system gate, holds the change for blocking approval before the tier is consulted; it can only tighten the decision."
+evidence = "apps/backend/merge/merge_policy.py"
+frameworks = ["ISO 27001:2022 A.8.32", "SOC 2 CC8.1", "SOX ITGC change management", "SOX ITGC segregation of duties", "NIST 800-53 CM"]
+
+[controls."policy.val_floor"]
+objective = "A change whose achieved Verification Assurance Level is missing or below its declared floor is not auto-merged, and an unreadable floor fails closed."
+evidence = "apps/backend/merge/merge_policy.py"
+frameworks = ["ISO 27001:2022 A.8.32", "SOC 2 CC8.1", "NIST 800-53 CM"]
+
+[controls."policy.path_floor"]
+objective = "A change touching auth, secrets, migrations, infrastructure or CI paths is floored at blocking review, so a change cannot declare itself routine."
+evidence = "apps/backend/review_tier.py"
+frameworks = ["ISO 27001:2022 A.8.32", "SOC 2 CC8.1", "SOX ITGC change management", "NIST 800-53 CM"]
+
+[controls."wiring.blank_tier"]
+objective = "A task with no recorded review tier is decided as low, so the live merge path treats a blank tier exactly as the policy treats low."
+evidence = "apps/web-server/server/services/pr_endgame.py"
+frameworks = ["ISO 27001:2022 A.8.32", "SOC 2 CC8.1", "NIST 800-53 CM"]
+
+[controls."wiring.auto_merge_flag"]
+objective = "Auto-merge is off by default and is enabled only by an explicit per-project or per-deployment setting."
+evidence = "apps/web-server/server/services/pr_endgame.py"
+frameworks = ["ISO 27001:2022 A.8.32", "SOC 2 CC8.1", "NIST 800-53 CM"]
+
+[controls."wiring.path_floor_flag"]
+objective = "The path-derived risk floor is advisory by default and changes the merge tier only when enforcement is explicitly switched on."
+evidence = "apps/web-server/server/services/pr_endgame.py"
+frameworks = ["ISO 27001:2022 A.8.32", "SOC 2 CC8.1", "NIST 800-53 CM"]
+
+[controls."gate.merge.merge_policy"]
+objective = "The merge decision itself is deterministic: its own import closure reaches no model client."
+evidence = "apps/backend/merge/merge_policy.py"
+frameworks = ["ISO 27001:2022 A.8.32", "SOC 2 CC8.1", "NIST 800-53 CM"]
+claim = "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943)."
+
+[controls."gate.server.services.pr_review_service"]
+objective = "The review that feeds the merge verdict is model-assisted, and the page says so; it runs as a spawned runner whose model clients are found by following the declared spawn edge."
+evidence = "apps/web-server/server/services/pr_review_service.py"
+frameworks = ["ISO 27001:2022 A.8.32", "SOC 2 CC8.1", "NIST 800-53 SA", "NIST 800-53 RA"]
+claim = "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943)."
+
+[controls."gate.server.services.pr_endgame"]
+objective = "The endgame that applies the merge decision imports model clients; the review verdict it consumes is injected, not computed there."
+evidence = "apps/web-server/server/services/pr_endgame.py"
+frameworks = ["ISO 27001:2022 A.8.32", "SOC 2 CC8.1", "NIST 800-53 SA", "NIST 800-53 RA"]
+claim = "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943)."
