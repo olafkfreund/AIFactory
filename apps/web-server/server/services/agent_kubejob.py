@@ -628,9 +628,10 @@ class KubejobMixin:
         Reads the set the reconcile loop republishes each tick, so it costs
         nothing and cannot disagree with what ``is_running`` tells the cockpit.
 
-        The set is empty until the first tick after dispatch (≤15s), and the
-        streamer may hit its first EOF inside that window — so an id that is
-        not yet known counts as active. Being briefly optimistic here costs one
+        Dispatch adds the id to the set (#1662), but after a web-server restart
+        the set is empty until the first tick, and the streamer may hit its
+        first EOF inside that window — so for _DISPATCH_GRACE_SECONDS an id
+        that is not yet known counts as active. Being briefly optimistic here costs one
         extra reattach; being pessimistic would reproduce the very bug this
         fixes. The bounded empty-reattach counter stops a genuinely dead
         stream either way.
