@@ -157,7 +157,7 @@ Commands, run in the worktree:
 
 ```
 apps/backend/.venv/bin/pytest tests/test_is_running_kubejob.py -v
-apps/backend/.venv/bin/ruff check apps/web-server/server/services/agent_kubejob.py apps/web-server/server/services/agent_service.py
+ruff check apps/web-server/server/services/agent_kubejob.py apps/web-server/server/services/agent_service.py
 ```
 
 Runtime check after deploy: dispatch a build, then call
