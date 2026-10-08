@@ -711,11 +711,19 @@ def _load_controls(path: Path) -> dict[str, dict[str, object]]:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as e:
         raise ControlsError(f"cannot read {path}: {e}") from e
-    controls: dict[str, dict[str, object]] = data.get("controls", {})
+    raw = data.get("controls", {})
+    if not isinstance(raw, dict):
+        raise ControlsError(f"`controls` is not a table in {path.name}")
+    controls: dict[str, dict[str, object]] = {}
+    for cid, c in sorted(raw.items()):
+        if not isinstance(c, dict):
+            raise ControlsError(f"control {cid!r} is malformed in {path.name}")
+        controls[cid] = c
     for cid, c in sorted(controls.items()):
         fw = c.get("frameworks")
         if (
             not set(c) <= _CONTROL_KEYS
+            or not isinstance(c.get("claim", ""), str)
             or not isinstance(c.get("objective"), str)
             or not isinstance(c.get("evidence"), str)
             or not isinstance(fw, list)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
+import re
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -217,3 +218,29 @@ def test_malformed_control_fails(
     )
     assert _run_check(tmp_path, toml) == 1
     assert "malformed" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("edit", "message"),
+    [
+        # A non-table entry must be a named error, not an AttributeError traceback.
+        (
+            lambda t: t + '\n[controls]\nstray = "value"\n',
+            "control 'stray' is malformed",
+        ),
+        # `claim` is published verbatim, so it must be text.
+        (
+            lambda t: re.sub(r'^claim = ".*"$', "claim = 1", t, count=1, flags=re.M),
+            "control 'policy.tier.low' is malformed",
+        ),
+    ],
+)
+def test_malformed_shapes_are_named_errors(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    edit: Callable[[str], str],
+    message: str,
+) -> None:
+    toml = _toml_copy(tmp_path, edit)
+    assert _run_check(tmp_path, toml) == 1
+    assert message in capsys.readouterr().out
