@@ -25,7 +25,7 @@ from pathlib import Path
 
 from agents.tools_pkg import get_agent_config, get_default_thinking_level
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
-from core.auth import get_sdk_env_vars, require_auth_token
+from core.auth import get_agent_env_blanks, get_sdk_env_vars, require_auth_token
 from core.model_config import DEFAULT_UTILITY_MODEL
 from core.outbound_scrub import wrap_client_outbound_scrub
 from phase_config import get_thinking_budget
@@ -79,6 +79,8 @@ def create_simple_client(
 
     # Get environment variables for SDK
     sdk_env = get_sdk_env_vars()
+    # Same host-secret scrub as create_client: these agents get read tools too.
+    sdk_env.update(get_agent_env_blanks())
 
     # Get agent configuration (raises ValueError if unknown type)
     config = get_agent_config(agent_type)
