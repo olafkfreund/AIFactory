@@ -42,6 +42,10 @@ SECRETS = {
     "FOO_CREDENTIAL": "x",
     "BAR_KMS_KEY": "x",
     "SSH_PASSPHRASE": "x",
+    # trusted-plan HMAC keys, legacy and keyed forms (#1667)
+    "AIFACTORY_TRUSTED_PLAN_KEY_PFACTORY": "x",
+    "AIFACTORY_TRUSTED_PLAN_KEY_PFACTORY__2026Q3": "x",
+    "AIFACTORY_TOKEN": "x",
 }
 
 KEEP = {
