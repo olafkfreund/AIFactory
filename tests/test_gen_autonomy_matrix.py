@@ -253,13 +253,13 @@ def test_live_overlay_rows_match_the_live_code(tmp_path: Path) -> None:
     assert len(rows) == 4  # two deployment probes x enforce unset / "1"
     unset = [r for r in rows if r[1] == "unset"]
     assert unset
-    # The disposition is whatever merge_disposition returns for the tier shown.
-    for r in rows:
+    # Recompute each row from its own probe directory (it holds the contract).
+    for i, r in enumerate(rows):
         tier = r[2].strip("`").strip("'")
-        green = tmp_path / "check"
-        green.mkdir(exist_ok=True)
-        (green / "task_metadata.json").write_text(gam.json.dumps(gam._GREEN_META))
-        assert r[4] == f"`{gam.pe.merge_disposition(green, tier)}`"
+        val = None if r[1] == "unset" else "1"
+        with gam._env(**{gam.pe.PATH_RISK_FLOOR_ENV: val}):
+            live = gam.pe.merge_disposition(tmp_path / f"live-{i}", tier)
+        assert r[4] == f"`{live}`"
 
 
 def test_live_overlay_sentence_tracks_unset_auto_merge() -> None:

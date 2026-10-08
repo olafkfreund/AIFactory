@@ -252,6 +252,86 @@ def test_satisfied_gates_of_an_unreadable_spec_is_empty(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# The RFC-0013 deployment overlay holds on the live merge path (#1658)
+# --------------------------------------------------------------------------- #
+
+_GREEN = {
+    "tfactoryVerdict": "pass",
+    "achievedVal": 2,
+    "valFloor": 1,
+    "ciParity": True,
+    "hostCiGreen": True,
+}
+
+
+def _contracted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    contract: object,
+    **extra: object,
+) -> Path:
+    """A green-signal spec whose context/task_contract.json is ``contract``."""
+    monkeypatch.delenv(pe.PATH_RISK_FLOOR_ENV, raising=False)
+    spec = _spec(tmp_path, **_GREEN, **extra)
+    (spec / "context").mkdir()
+    text = contract if isinstance(contract, str) else json.dumps(contract)
+    (spec / "context" / "task_contract.json").write_text(text)
+    return spec
+
+
+def _deployment(**dep: object) -> dict[str, object]:
+    return {"contract_version": "2", "deployment": dep}
+
+
+def test_a_production_deployment_holds_on_the_live_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _contracted(
+        tmp_path, monkeypatch, _deployment(production_classification="production")
+    )
+    assert pe.merge_disposition(spec, "low") == pe.HOLD_BLOCKING_DISPOSITION
+
+
+def test_a_high_risk_deployment_holds_on_the_live_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _contracted(tmp_path, monkeypatch, _deployment(risk_class="high"))
+    assert pe.merge_disposition(spec, "low") == pe.HOLD_BLOCKING_DISPOSITION
+
+
+def test_a_satisfied_system_gate_clears_only_its_own_hold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dep = _deployment(system_gates=["human-approval"])
+    held = _contracted(tmp_path / "a", monkeypatch, dep)
+    assert pe.merge_disposition(held, "low") == pe.HOLD_BLOCKING_DISPOSITION
+    cleared = _contracted(
+        tmp_path / "b", monkeypatch, dep, satisfiedSystemGates=["human-approval"]
+    )
+    assert pe.merge_disposition(cleared, "low") == pe.AUTO_MERGE_DISPOSITION
+
+
+@pytest.mark.parametrize("text", ["{not json", "[]"])
+def test_an_unreadable_contract_holds_on_the_live_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text: str
+) -> None:
+    spec = _contracted(tmp_path, monkeypatch, text)
+    assert pe.merge_disposition(spec, "low") == pe.HOLD_BLOCKING_DISPOSITION
+
+
+def test_a_satisfied_gate_never_clears_production(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _contracted(
+        tmp_path,
+        monkeypatch,
+        _deployment(production_classification="production"),
+        satisfiedSystemGates=["human-approval"],
+    )
+    assert pe.merge_disposition(spec, "low") == pe.HOLD_BLOCKING_DISPOSITION
+
+
+# --------------------------------------------------------------------------- #
 # The background watcher must survive the garbage collector
 # --------------------------------------------------------------------------- #
 

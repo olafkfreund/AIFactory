@@ -72,7 +72,7 @@ evidence = "apps/web-server/server/services/pr_endgame.py"
 frameworks = ["ISO 27001:2022 A.8.32", "SOC 2 CC8.1", "NIST 800-53 CM"]
 
 [controls."wiring.live_overlay"]
-objective = "On the live merge path the deployment overlay (high risk or production) raises the merge tier only when path-floor enforcement is on; with it off the overlay is advisory and the change can still auto-merge."
+objective = "On the live merge path a high risk or production deployment holds the merge for a human regardless of the path-floor flag; an unreadable contract holds it too."
 evidence = "apps/web-server/server/services/pr_endgame.py"
 frameworks = ["ISO 27001:2022 A.8.32", "SOC 2 CC8.1", "NIST 800-53 CM"]
 
