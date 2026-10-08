@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1658
 author: olafkfreund
 ---
@@ -77,3 +77,8 @@ The published autonomy matrix (section B5) now states this gap in public.
      exists but can't be parsed. An absent file stays back-compat. "We couldn't
      read the production flag" is not "it isn't production".
    - **B:** match the path floor's fail-open behaviour, for consistency.
+
+## Decision on approval (2026-10-08)
+
+1. **Option A.** A `context/task_contract.json` that exists but can't be parsed
+   holds the merge (`hold-blocking`). An absent contract stays back-compat.
