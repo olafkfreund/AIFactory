@@ -192,3 +192,28 @@ only this plan and `git diff`. Merge to `dev`; it ships in the next release.
 Revert the PR. It's code plus regenerated docs, with no data or config
 migration. After a revert, the next release returns `merge_disposition` to
 today's behaviour, and the matrix check forces B5 back with it.
+
+## Deviations (recorded during implementation)
+
+1. **Contract reads that raise now hold** (fresh Opus review, finding N1).
+   - **The problem:** step 2 followed `satisfied_system_gates` and caught only
+     `(OSError, ValueError)`. Three inputs still raised out of
+     `merge_disposition`:
+     - a contract nested past Python's recursion limit raises `RecursionError`;
+     - a non-UTF-8 `implementation_plan.json` raises `UnicodeDecodeError` from
+       `load_task_contract`, which catches only `JSONDecodeError`;
+     - a deeply nested `implementation_plan.json` raises `RecursionError` too.
+
+     Nothing merged, but the endgame aborted before the PR was opened.
+   - **The fix:** the three reads are wrapped in `except Exception`, which
+     holds the merge. That matches how `apply_path_risk_floor` treats the
+     same read.
+   - **New test:** `test_a_contract_that_raises_on_read_holds_instead`, which
+     covers both files with both inputs. Narrowing the catch fails both cases.
+2. **Log text** (finding N3). The `ImportError` warning now names the
+   task-contract loader as well as `merge_policy`.
+3. **Not done here.**
+   - Finding N2 (a contract can list its own `satisfied_gates`) predates this
+     change and doesn't loosen anything; it's filed as a follow-up.
+   - Finding N4 (the generator's now-unreachable advisory branch) is left for
+     a later cleanup, consistent with "generator code unchanged".

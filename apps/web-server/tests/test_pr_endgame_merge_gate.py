@@ -377,3 +377,21 @@ async def test_the_background_watcher_is_strongly_referenced(
     # ...and is released when it completes, so the set cannot grow unbounded.
     assert not pe._BACKGROUND_TASKS
     assert started.is_set()
+
+
+@pytest.mark.parametrize(
+    "where",
+    [("context", "task_contract.json"), ("implementation_plan.json",)],
+)
+def test_a_contract_that_raises_on_read_holds_instead(
+    tmp_path: Path, where: tuple[str, ...]
+) -> None:
+    """#1658 review: a nested-past-the-recursion-limit or non-UTF-8 contract
+    raised out of merge_disposition, aborting the endgame before the PR opened."""
+    spec = _spec(tmp_path)
+    target = spec.joinpath(*where)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("[" * 100_000)
+    assert pe.merge_disposition(spec, "low") == pe.HOLD_BLOCKING_DISPOSITION
+    target.write_bytes(b"\xff\xfe not utf-8")
+    assert pe.merge_disposition(spec, "low") == pe.HOLD_BLOCKING_DISPOSITION

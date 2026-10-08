@@ -487,22 +487,30 @@ def merge_disposition(spec_dir: Path, tier: str | None) -> str:
         )
     except ImportError:
         logger.warning(
-            "[pr-endgame] merge_policy unavailable; auto-merge withheld "
+            "[pr-endgame] merge_policy or task-contract loader unavailable; "
+            "auto-merge withheld "
             "(reviewTier=%s)",
             sanitize_log(_describe_tier(tier)),
         )
         return HOLD_BLOCKING_DISPOSITION
     effective = tier if tier is not None and str(tier).strip() else "low"
-    if _contract_unreadable(spec_dir):
+    try:
+        unreadable = _contract_unreadable(spec_dir)
+        deployment = (load_task_contract(spec_dir) or {}).get("deployment")
+        gates = satisfied_system_gates(spec_dir, deployment)
+    except Exception:  # noqa: BLE001 - e.g. RecursionError, UnicodeDecodeError
+        # Hold, never raise: an exception here would abort the endgame before
+        # the PR is opened, and "we could not read it" is not "not production".
+        unreadable = True
+    if unreadable:
         logger.warning("[pr-endgame] task contract unreadable; auto-merge withheld")
         return HOLD_BLOCKING_DISPOSITION
-    deployment = (load_task_contract(spec_dir) or {}).get("deployment")
     return str(
         decide_merge(
             str(effective),
             **merge_gate_signals(spec_dir),
             deployment=deployment,
-            satisfied_gates=satisfied_system_gates(spec_dir, deployment),
+            satisfied_gates=gates,
         )
     )
 
