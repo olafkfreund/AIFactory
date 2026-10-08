@@ -1,4 +1,130 @@
 {
+  "controls": {
+    "gate.merge.merge_policy": {
+      "claim": "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943).",
+      "evidence": "apps/backend/merge/merge_policy.py",
+      "frameworks": [
+        "ISO 27001:2022 A.8.32",
+        "SOC 2 CC8.1",
+        "NIST 800-53 CM"
+      ],
+      "objective": "The merge decision itself is deterministic: its own import closure reaches no model client."
+    },
+    "gate.server.services.pr_endgame": {
+      "claim": "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943).",
+      "evidence": "apps/web-server/server/services/pr_endgame.py",
+      "frameworks": [
+        "ISO 27001:2022 A.8.32",
+        "SOC 2 CC8.1",
+        "NIST 800-53 SA",
+        "NIST 800-53 RA"
+      ],
+      "objective": "The endgame that applies the merge decision imports model clients; the review verdict it consumes is injected, not computed there."
+    },
+    "gate.server.services.pr_review_service": {
+      "claim": "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943).",
+      "evidence": "apps/web-server/server/services/pr_review_service.py",
+      "frameworks": [
+        "ISO 27001:2022 A.8.32",
+        "SOC 2 CC8.1",
+        "NIST 800-53 SA",
+        "NIST 800-53 RA"
+      ],
+      "objective": "The review that feeds the merge verdict is model-assisted, and the page says so; it runs as a spawned runner whose model clients are found by following the declared spawn edge."
+    },
+    "policy.overlay": {
+      "evidence": "apps/backend/merge/merge_policy.py",
+      "frameworks": [
+        "ISO 27001:2022 A.8.32",
+        "SOC 2 CC8.1",
+        "SOX ITGC change management",
+        "SOX ITGC segregation of duties",
+        "NIST 800-53 CM"
+      ],
+      "objective": "A high-risk or production deployment block, or an unsatisfied required system gate, holds the change for blocking approval before the tier is consulted; it can only tighten the decision."
+    },
+    "policy.path_floor": {
+      "evidence": "apps/backend/review_tier.py",
+      "frameworks": [
+        "ISO 27001:2022 A.8.32",
+        "SOC 2 CC8.1",
+        "SOX ITGC change management",
+        "NIST 800-53 CM"
+      ],
+      "objective": "A change touching auth, secrets, migrations, infrastructure or CI paths is floored at blocking review, so a change cannot declare itself routine."
+    },
+    "policy.tier.hard": {
+      "claim": "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943).",
+      "evidence": "apps/backend/merge/merge_policy.py",
+      "frameworks": [
+        "ISO 27001:2022 A.8.32",
+        "SOC 2 CC8.1",
+        "SOX ITGC change management",
+        "SOX ITGC segregation of duties",
+        "NYDFS 500.3",
+        "NIST 800-53 CM"
+      ],
+      "objective": "A hard-tier change is never auto-merged; it is held for blocking human approval, which separates the author from the approver."
+    },
+    "policy.tier.low": {
+      "claim": "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943).",
+      "evidence": "apps/backend/merge/merge_policy.py",
+      "frameworks": [
+        "ISO 27001:2022 A.8.32",
+        "SOC 2 CC8.1",
+        "SOX ITGC change management",
+        "NIST 800-53 CM"
+      ],
+      "objective": "A low-tier change auto-merges only when host CI is green, TFactory passed, the achieved VAL meets the floor and CI parity holds; otherwise it is held for async review."
+    },
+    "policy.tier.medium": {
+      "claim": "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943).",
+      "evidence": "apps/backend/merge/merge_policy.py",
+      "frameworks": [
+        "ISO 27001:2022 A.8.32",
+        "SOC 2 CC8.1",
+        "SOX ITGC change management",
+        "NIST 800-53 CM"
+      ],
+      "objective": "A medium-tier change is never auto-merged; it is always held for asynchronous human review."
+    },
+    "policy.val_floor": {
+      "evidence": "apps/backend/merge/merge_policy.py",
+      "frameworks": [
+        "ISO 27001:2022 A.8.32",
+        "SOC 2 CC8.1",
+        "NIST 800-53 CM"
+      ],
+      "objective": "A change whose achieved Verification Assurance Level is missing or below its declared floor is not auto-merged, and an unreadable floor fails closed."
+    },
+    "wiring.auto_merge_flag": {
+      "evidence": "apps/web-server/server/services/pr_endgame.py",
+      "frameworks": [
+        "ISO 27001:2022 A.8.32",
+        "SOC 2 CC8.1",
+        "NIST 800-53 CM"
+      ],
+      "objective": "Auto-merge is off by default and is enabled only by an explicit per-project or per-deployment setting."
+    },
+    "wiring.blank_tier": {
+      "evidence": "apps/web-server/server/services/pr_endgame.py",
+      "frameworks": [
+        "ISO 27001:2022 A.8.32",
+        "SOC 2 CC8.1",
+        "NIST 800-53 CM"
+      ],
+      "objective": "A task with no recorded review tier is decided as low, so the live merge path treats a blank tier exactly as the policy treats low."
+    },
+    "wiring.path_floor_flag": {
+      "evidence": "apps/web-server/server/services/pr_endgame.py",
+      "frameworks": [
+        "ISO 27001:2022 A.8.32",
+        "SOC 2 CC8.1",
+        "NIST 800-53 CM"
+      ],
+      "objective": "The path-derived risk floor is advisory by default and changes the merge tier only when enforcement is explicitly switched on."
+    }
+  },
   "gates": [
     {
       "entry": "merge.merge_policy",
@@ -136,27 +262,27 @@
               "3 combos, e.g. risk=high prod=staging satisfied=human-approval,security-scan"
             ],
             [
-              "deployment risk_class=high is never auto-merged<br>production change is VAL-4 / never autonomous (human-approval required)",
+              "deployment risk_class=high is never auto-merged<br/>production change is VAL-4 / never autonomous (human-approval required)",
               "`hold-blocking`",
               "1 combos, e.g. risk=high prod=production satisfied=human-approval,security-scan"
             ],
             [
-              "deployment risk_class=high is never auto-merged<br>production change is VAL-4 / never autonomous (human-approval required)<br>required system gate 'human-approval' is not satisfied (only a human can clear it)",
+              "deployment risk_class=high is never auto-merged<br/>production change is VAL-4 / never autonomous (human-approval required)<br/>required system gate 'human-approval' is not satisfied (only a human can clear it)",
               "`hold-blocking`",
               "1 combos, e.g. risk=high prod=production satisfied=security-scan"
             ],
             [
-              "deployment risk_class=high is never auto-merged<br>production change is VAL-4 / never autonomous (human-approval required)<br>required system gate 'human-approval' is not satisfied (only a human can clear it)<br>required system gate 'security-scan' is not satisfied",
+              "deployment risk_class=high is never auto-merged<br/>production change is VAL-4 / never autonomous (human-approval required)<br/>required system gate 'human-approval' is not satisfied (only a human can clear it)<br/>required system gate 'security-scan' is not satisfied",
               "`hold-blocking`",
               "1 combos, e.g. risk=high prod=production satisfied=-"
             ],
             [
-              "deployment risk_class=high is never auto-merged<br>required system gate 'human-approval' is not satisfied (only a human can clear it)",
+              "deployment risk_class=high is never auto-merged<br/>required system gate 'human-approval' is not satisfied (only a human can clear it)",
               "`hold-blocking`",
               "3 combos, e.g. risk=high prod=staging satisfied=security-scan"
             ],
             [
-              "deployment risk_class=high is never auto-merged<br>required system gate 'human-approval' is not satisfied (only a human can clear it)<br>required system gate 'security-scan' is not satisfied",
+              "deployment risk_class=high is never auto-merged<br/>required system gate 'human-approval' is not satisfied (only a human can clear it)<br/>required system gate 'security-scan' is not satisfied",
               "`hold-blocking`",
               "3 combos, e.g. risk=high prod=staging satisfied=-"
             ],
@@ -166,12 +292,12 @@
               "3 combos, e.g. risk=medium prod=production satisfied=human-approval,security-scan"
             ],
             [
-              "production change is VAL-4 / never autonomous (human-approval required)<br>required system gate 'human-approval' is not satisfied (only a human can clear it)",
+              "production change is VAL-4 / never autonomous (human-approval required)<br/>required system gate 'human-approval' is not satisfied (only a human can clear it)",
               "`hold-blocking`",
               "3 combos, e.g. risk=medium prod=production satisfied=security-scan"
             ],
             [
-              "production change is VAL-4 / never autonomous (human-approval required)<br>required system gate 'human-approval' is not satisfied (only a human can clear it)<br>required system gate 'security-scan' is not satisfied",
+              "production change is VAL-4 / never autonomous (human-approval required)<br/>required system gate 'human-approval' is not satisfied (only a human can clear it)<br/>required system gate 'security-scan' is not satisfied",
               "`hold-blocking`",
               "3 combos, e.g. risk=medium prod=production satisfied=-"
             ],
@@ -181,7 +307,7 @@
               "9 combos, e.g. risk=medium prod=staging satisfied=security-scan"
             ],
             [
-              "required system gate 'human-approval' is not satisfied (only a human can clear it)<br>required system gate 'security-scan' is not satisfied",
+              "required system gate 'human-approval' is not satisfied (only a human can clear it)<br/>required system gate 'security-scan' is not satisfied",
               "`hold-blocking`",
               "9 combos, e.g. risk=medium prod=staging satisfied=-"
             ]
@@ -535,6 +661,107 @@
         }
       ],
       "title": "C. Gate determinism (static import closure)"
+    },
+    {
+      "id": "controls",
+      "tables": [
+        {
+          "header": [
+            "control",
+            "objective",
+            "frameworks",
+            "evidence",
+            "claim"
+          ],
+          "rows": [
+            [
+              "`gate.merge.merge_policy`",
+              "The merge decision itself is deterministic: its own import closure reaches no model client.",
+              "ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 CM",
+              "`apps/backend/merge/merge_policy.py`",
+              "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943)."
+            ],
+            [
+              "`gate.server.services.pr_endgame`",
+              "The endgame that applies the merge decision imports model clients; the review verdict it consumes is injected, not computed there.",
+              "ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 SA; NIST 800-53 RA",
+              "`apps/web-server/server/services/pr_endgame.py`",
+              "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943)."
+            ],
+            [
+              "`gate.server.services.pr_review_service`",
+              "The review that feeds the merge verdict is model-assisted, and the page says so; it runs as a spawned runner whose model clients are found by following the declared spawn edge.",
+              "ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 SA; NIST 800-53 RA",
+              "`apps/web-server/server/services/pr_review_service.py`",
+              "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943)."
+            ],
+            [
+              "`policy.overlay`",
+              "A high-risk or production deployment block, or an unsatisfied required system gate, holds the change for blocking approval before the tier is consulted; it can only tighten the decision.",
+              "ISO 27001:2022 A.8.32; SOC 2 CC8.1; SOX ITGC change management; SOX ITGC segregation of duties; NIST 800-53 CM",
+              "`apps/backend/merge/merge_policy.py`",
+              "-"
+            ],
+            [
+              "`policy.path_floor`",
+              "A change touching auth, secrets, migrations, infrastructure or CI paths is floored at blocking review, so a change cannot declare itself routine.",
+              "ISO 27001:2022 A.8.32; SOC 2 CC8.1; SOX ITGC change management; NIST 800-53 CM",
+              "`apps/backend/review_tier.py`",
+              "-"
+            ],
+            [
+              "`policy.tier.hard`",
+              "A hard-tier change is never auto-merged; it is held for blocking human approval, which separates the author from the approver.",
+              "ISO 27001:2022 A.8.32; SOC 2 CC8.1; SOX ITGC change management; SOX ITGC segregation of duties; NYDFS 500.3; NIST 800-53 CM",
+              "`apps/backend/merge/merge_policy.py`",
+              "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943)."
+            ],
+            [
+              "`policy.tier.low`",
+              "A low-tier change auto-merges only when host CI is green, TFactory passed, the achieved VAL meets the floor and CI parity holds; otherwise it is held for async review.",
+              "ISO 27001:2022 A.8.32; SOC 2 CC8.1; SOX ITGC change management; NIST 800-53 CM",
+              "`apps/backend/merge/merge_policy.py`",
+              "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943)."
+            ],
+            [
+              "`policy.tier.medium`",
+              "A medium-tier change is never auto-merged; it is always held for asynchronous human review.",
+              "ISO 27001:2022 A.8.32; SOC 2 CC8.1; SOX ITGC change management; NIST 800-53 CM",
+              "`apps/backend/merge/merge_policy.py`",
+              "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943)."
+            ],
+            [
+              "`policy.val_floor`",
+              "A change whose achieved Verification Assurance Level is missing or below its declared floor is not auto-merged, and an unreadable floor fails closed.",
+              "ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 CM",
+              "`apps/backend/merge/merge_policy.py`",
+              "-"
+            ],
+            [
+              "`wiring.auto_merge_flag`",
+              "Auto-merge is off by default and is enabled only by an explicit per-project or per-deployment setting.",
+              "ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 CM",
+              "`apps/web-server/server/services/pr_endgame.py`",
+              "-"
+            ],
+            [
+              "`wiring.blank_tier`",
+              "A task with no recorded review tier is decided as low, so the live merge path treats a blank tier exactly as the policy treats low.",
+              "ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 CM",
+              "`apps/web-server/server/services/pr_endgame.py`",
+              "-"
+            ],
+            [
+              "`wiring.path_floor_flag`",
+              "The path-derived risk floor is advisory by default and changes the merge tier only when enforcement is explicitly switched on.",
+              "ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 CM",
+              "`apps/web-server/server/services/pr_endgame.py`",
+              "-"
+            ]
+          ]
+        }
+      ],
+      "title": "D. Control objectives"
     }
   ]
 }
