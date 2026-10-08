@@ -10,6 +10,10 @@
   web-server process could read the plan HMAC key and re-sign a task contract
   it had edited, or call the API with the poller token. Kubejob builds pass an
   explicit environment and were not exposed (#1668, part of #1667).
+- **Simple-client agents get the same scrub.** `create_simple_client` never
+  applied it, so batch analysis, conflict resolution, commit-message and other
+  simple-client agents inherited every host secret, including `API_TOKEN`,
+  `JWT_SECRET` and `DATABASE_URL` (#1676).
 
 ### Fixed
 
