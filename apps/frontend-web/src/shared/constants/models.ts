@@ -178,13 +178,13 @@ export const THINKING_LEVELS = [
 // ============================================
 
 // Default phase model configuration for Auto profile
-// Uses a high-capability model across all phases for maximum quality
+// Mirrors the backend DEFAULT_PHASE_MODELS (apps/backend/phase_config.py)
 export const DEFAULT_PHASE_MODELS: PhaseModelConfig = {
   spec: 'opus',       // Best quality for spec creation
   planning: 'opus',   // Complex architecture decisions benefit from highest-capability model
-  coding: 'opus',     // Highest quality implementation
+  coding: 'sonnet',   // Executes decided plans; Sonnet where volume dominates (#1626)
   qa: 'opus',         // Thorough QA review
-  qa_fixer: 'opus'    // Opus 4.8 across all phases (Auto = highest-capability everywhere)
+  qa_fixer: 'opus'    // Opus plans and judges, Sonnet codes -- mirrors backend DEFAULT_PHASE_MODELS
 };
 
 // Default phase thinking configuration for Auto profile
