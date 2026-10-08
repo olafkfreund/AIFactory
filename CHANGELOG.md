@@ -47,6 +47,14 @@
 
 ### Fixed
 
+- **Opus 5.5 is callable from the image** (#1661). The API refuses
+  `claude-opus-5-5` from Claude Code older than 2.1.280, and the image ran
+  2.1.235 (bundled with claude-agent-sdk 0.2.140) and 2.1.238 (on PATH). The
+  SDK is now floored at 0.2.164, which bundles 2.1.292, and the PATH CLI is
+  pinned to 2.1.293. Without this, every Opus phase would return 400.
+- The web Auto profile now sends `coding: 'sonnet'`. It used to send `'opus'`,
+  which overrode the backend default, so web tasks never got the Sonnet
+  coding default (#1661).
 - A build row carrying a live Job reference is no longer treated as terminal (#1635).
 - The cockpit reports a running build truthfully (#1629).
 - 11 of 12 npm lockfile CVEs closed, including a shipped DOM XSS (#1643);
