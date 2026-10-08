@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1662
 author: olafkfreund
 ---
@@ -107,3 +107,12 @@ around the gap with a 45-second grace period (`_DISPATCH_GRACE_SECONDS`,
    after the task was marked active, would replace the set without that task.
    Is closing this race in scope, or is it narrow enough to accept? (#1606 has
    `get_active_kubejobs` include rows that are still pending.)
+
+### Answers (approved by olafkfreund, 2026-10-08)
+
+1. Out of scope. The loop ticks at startup, so the restart window is one tick;
+   record it as an accepted gap in the spec.
+2. Out of scope. Keep `_DISPATCH_GRACE_SECONDS`; unifying the log streamer's
+   check with the set is a follow-up issue.
+3. In scope. It is the same bug (a live Job missing from the set), and #1606
+   already treats pending rows as active.
