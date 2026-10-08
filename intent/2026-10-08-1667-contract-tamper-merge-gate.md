@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1667
 author: olafkfreund
 ---
@@ -153,3 +153,11 @@ human", holds only while the agent leaves the contract alone.
 5. In-flight tasks ingested before this ships have no tamper-proof record that
    they were trusted. Should they be treated as trusted (hold if the contract is
    missing or invalid) or as legacy (decide as today)?
+
+### Answers (approved by olafkfreund, 2026-10-08)
+
+1. Hold. A retired or removed kid fails verification at merge; the remedy is a re-sign or a human merge.
+2. The scrub of `AIFACTORY_TRUSTED_PLAN_KEY_*` (and `AIFACTORY_TOKEN`) from the agent env ships ahead as a hotfix (#1668, release 3.8.2). The spec assumes it has landed.
+3. Only the contract and `satisfiedSystemGates`. The other agent-writable merge signals in `task_metadata.json` are a separate issue.
+4. Only the merge path enforces. The TFactory handoff sends the verified contract when there is one and does not block; `deploy_scaffold` is a follow-up.
+5. In-flight tasks with an `approval` envelope or trusted provenance in `requirements.json` are treated as trusted (hold if the contract is missing or invalid); legacy only when there is no trace of a trusted ingest.
