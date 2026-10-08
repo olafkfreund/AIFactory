@@ -244,3 +244,34 @@ def test_malformed_shapes_are_named_errors(
     toml = _toml_copy(tmp_path, edit)
     assert _run_check(tmp_path, toml) == 1
     assert message in capsys.readouterr().out
+
+
+def test_live_overlay_rows_match_the_live_code(tmp_path: Path) -> None:
+    from cli import workspace_commands as wc  # noqa: PLC0415
+
+    rows = gam._live_overlay_rows(wc, tmp_path)
+    assert len(rows) == 4  # two deployment probes x enforce unset / "1"
+    unset = [r for r in rows if r[1] == "unset"]
+    assert unset
+    # The disposition is whatever merge_disposition returns for the tier shown.
+    for r in rows:
+        tier = r[2].strip("`").strip("'")
+        green = tmp_path / "check"
+        green.mkdir(exist_ok=True)
+        (green / "task_metadata.json").write_text(gam.json.dumps(gam._GREEN_META))
+        assert r[4] == f"`{gam.pe.merge_disposition(green, tier)}`"
+
+
+def test_live_overlay_sentence_tracks_unset_auto_merge() -> None:
+    tabs: list[dict[str, object]] = []
+    lines, n = gam._section_wiring(tabs)
+    text = "\n".join(lines)
+    assert n >= 4
+    assert "### B5." in text
+    unset_auto = any(
+        r[1] == "unset" and r[4] == f"`{gam.mp.AUTO_MERGE}`"
+        for t in tabs
+        if t["header"][0] == "deployment"  # type: ignore[index]
+        for r in t["rows"]  # type: ignore[attr-defined]
+    )
+    assert (gam.pe.PATH_RISK_FLOOR_ENV in text.split("### B5.")[1]) == unset_auto

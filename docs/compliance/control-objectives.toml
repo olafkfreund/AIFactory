@@ -71,6 +71,11 @@ objective = "The path-derived risk floor is advisory by default and changes the 
 evidence = "apps/web-server/server/services/pr_endgame.py"
 frameworks = ["ISO 27001:2022 A.8.32", "SOC 2 CC8.1", "NIST 800-53 CM"]
 
+[controls."wiring.live_overlay"]
+objective = "On the live merge path the deployment overlay (high risk or production) raises the merge tier only when path-floor enforcement is on; with it off the overlay is advisory and the change can still auto-merge."
+evidence = "apps/web-server/server/services/pr_endgame.py"
+frameworks = ["ISO 27001:2022 A.8.32", "SOC 2 CC8.1", "NIST 800-53 CM"]
+
 [controls."gate.merge.merge_policy"]
 objective = "The merge decision itself is deterministic: its own import closure reaches no model client."
 evidence = "apps/backend/merge/merge_policy.py"
