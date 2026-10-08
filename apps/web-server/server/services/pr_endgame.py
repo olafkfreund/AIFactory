@@ -439,6 +439,23 @@ def merge_gate_signals(spec_dir: Path) -> dict[str, object]:
     return signals
 
 
+def _contract_unreadable(spec_dir: Path) -> bool:
+    """True when ``context/task_contract.json`` exists but cannot be used (#1658, option A).
+
+    An absent file is back-compat (False): tasks without a contract decide as
+    before. ``load_task_contract`` skips unparseable files on purpose, because
+    the TFactory handoff relies on that, so the merge path checks separately and
+    fails closed rather than treating a corrupt contract as "no deployment".
+    """
+    path = Path(spec_dir) / "context" / "task_contract.json"
+    if not path.exists():
+        return False
+    try:
+        return not isinstance(json.loads(path.read_text()), dict)
+    except (OSError, ValueError):
+        return True
+
+
 def merge_disposition(spec_dir: Path, tier: str | None) -> str:
     """The RFC-0011/RFC-0013 merge disposition for this task (#637).
 
@@ -458,18 +475,44 @@ def merge_disposition(spec_dir: Path, tier: str | None) -> str:
     tier the task effectively had before RFC-0011 -- rather than as an unknown
     spelling, so a task that never carried a tier still behaves as it did. An
     UNRECOGNISED tier is passed straight through and ``decide_merge`` holds it.
+
+    The RFC-0013 deployment overlay is enforced here, independent of the
+    path-floor flag (#1658): a production or high-risk deployment holds, and
+    satisfied system gates clear only ``system_gates`` holds.
     """
     try:
         from merge.merge_policy import decide_merge  # noqa: PLC0415
+        from pfactory.tfactory_client import (  # type: ignore[import-not-found,unused-ignore] # noqa: PLC0415
+            load_task_contract,
+        )
     except ImportError:
         logger.warning(
-            "[pr-endgame] merge_policy unavailable; auto-merge withheld "
+            "[pr-endgame] merge_policy or task-contract loader unavailable; "
+            "auto-merge withheld "
             "(reviewTier=%s)",
             sanitize_log(_describe_tier(tier)),
         )
         return HOLD_BLOCKING_DISPOSITION
     effective = tier if tier is not None and str(tier).strip() else "low"
-    return str(decide_merge(str(effective), **merge_gate_signals(spec_dir)))
+    try:
+        unreadable = _contract_unreadable(spec_dir)
+        deployment = (load_task_contract(spec_dir) or {}).get("deployment")
+        gates = satisfied_system_gates(spec_dir, deployment)
+    except Exception:  # noqa: BLE001 - e.g. RecursionError, UnicodeDecodeError
+        # Hold, never raise: an exception here would abort the endgame before
+        # the PR is opened, and "we could not read it" is not "not production".
+        unreadable = True
+    if unreadable:
+        logger.warning("[pr-endgame] task contract unreadable; auto-merge withheld")
+        return HOLD_BLOCKING_DISPOSITION
+    return str(
+        decide_merge(
+            str(effective),
+            **merge_gate_signals(spec_dir),
+            deployment=deployment,
+            satisfied_gates=gates,
+        )
+    )
 
 
 # Which reviewer gates the merge. "aifactory" = AIFactory's own review engine
