@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1658
 intent: intent/2026-10-08-1658-live-deployment-overlay.md
 ---
