@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1663
 intent: intent/2026-10-08-1663-contract-self-satisfy-gates.md
 ---
@@ -232,3 +232,9 @@ Then:
   `HOLD_BLOCKING`.
 - `pytest apps/web-server/tests/test_pr_endgame*.py apps/backend/merge` is
   green.
+
+## Decisions (approved by olafkfreund, 2026-10-08)
+
+- A. Accepted: with the path floor enforcing, a declared system gate floors the tier to `blocking`, so those tasks merge by hand. The floor is not loosened.
+- B. Accepted: AIFactory's gh identity is `olafkfreund` (a User, verified in the pod), so no approval can count and human-approval tasks merge by hand until AIFactory has its own bot identity (follow-up issue).
+- C. Accepted: an approval after the 20-minute watch window gets no auto-merge; extending the window is out of scope.
