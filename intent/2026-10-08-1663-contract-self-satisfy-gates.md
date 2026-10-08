@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1663
 author: olafkfreund
 ---
@@ -142,3 +142,15 @@ claim is weaker than it reads.
 4. Should `task_metadata.json` stay a source of gate evidence at all, given
    the agent can write it? If it stays, who is allowed to write the key, and
    how does the merge path tell that writer apart from the agent?
+
+### Answers (approved by olafkfreund, 2026-10-08)
+
+1. Ignore `deployment.satisfied_gates` outright. A gate clears only on
+   evidence recorded after the diff exists.
+2. A GitHub PR review approval by someone other than the bot and the PR
+   author. It already exists and the agent cannot forge it from the spec
+   directory. A UI/API approval action is a later addition, not this issue.
+3. Filed separately as #1667 (re-verify the contract at merge time), to land
+   before this one. This issue assumes the contract is trustworthy.
+4. No. `task_metadata.json` is agent-writable, so it stops being a source of
+   gate evidence.
