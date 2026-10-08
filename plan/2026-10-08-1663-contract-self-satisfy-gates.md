@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1663
 spec: spec/2026-10-08-1663-contract-self-satisfy-gates.md
 ---
