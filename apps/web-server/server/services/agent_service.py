@@ -105,6 +105,10 @@ class AgentService(
         # the rows it just polled, so ``is_running`` can answer for both
         # backends without a Kubernetes call or a DB round-trip per request.
         self._active_kubejob_task_ids: set[str] = set()
+        # #1662: ids dispatched since the current reconcile tick began
+        # its store read; that tick unions them in so it cannot drop a
+        # build whose row it read too early. Reset every tick.
+        self._kubejob_dispatched_this_tick: set[str] = set()
         self._log_callbacks: dict[str, list[Callable]] = {}
         self._progress_callbacks: dict[str, list[Callable]] = {}
         self._task_log_writers: dict[str, tuple[TaskLogWriter, TaskLogWriter]] = {}

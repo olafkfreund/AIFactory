@@ -81,6 +81,7 @@ class KubejobMixin:
         # declared here so mypy can resolve the self.* references in a mixin.
         _kubejob_log_streamers: dict[str, Any]
         _active_kubejob_task_ids: set[str]
+        _kubejob_dispatched_this_tick: set[str]
         _task_current_phases: dict[str, Any]
         _task_log_writers: dict[str, Any]
         _handle_output_line: Callable[..., Any]
@@ -368,6 +369,7 @@ class KubejobMixin:
         # window and recovery reset a live Job despite the #1619 guard.
         # After the except block on purpose: a failed dispatch never marks.
         self._active_kubejob_task_ids.add(task_id)
+        self._kubejob_dispatched_this_tick.add(task_id)
         # RFC-0017 #680: feed the cockpit log stream + rmux Live Console from the
         # Job pod's logs, exactly as the in-pod subprocess path does — the
         # prerequisite to making kubejob the default. Best-effort: any failure
@@ -679,6 +681,10 @@ class KubejobMixin:
         out: dict[str, str] = {}
         if not self._kubejob_backend_enabled():
             return out
+        # #1662: reset BEFORE the first await. Single-threaded asyncio
+        # means every id added from here on was dispatched after this
+        # tick's store read began — exactly the rows it may have missed.
+        self._kubejob_dispatched_this_tick = set()
         try:
             rows = await self._store().get_active_kubejobs()
         except Exception:  # noqa: BLE001 - reconcile must never crash the loop
@@ -721,7 +727,9 @@ class KubejobMixin:
         # when the poll above succeeded: an early return leaves the previous
         # tick's answer standing rather than reporting every build dead
         # because the store hiccuped.
-        self._active_kubejob_task_ids = live
+        # #1662: keep builds dispatched while this tick was reading;
+        # bounded to one tick because the next tick resets the set.
+        self._active_kubejob_task_ids = live | self._kubejob_dispatched_this_tick
         if out:
             # Builds finished → fill freed slots from the FIFO queue.
             await self._drain_queue()
