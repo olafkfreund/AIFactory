@@ -131,6 +131,17 @@ High-risk patterns: `auth`, `login`, `session`, `password`, `secret`, `credentia
 | advisory (unset) | `'low'` | `'blocking'` |
 | enforced (`1`) | `'blocking'` | `'blocking'` |
 
+### B5. Deployment overlay on the live path (`low` task, non-risky diff)
+
+| deployment | enforce | effective tier | floor | live disposition |
+|---|---|---|---|---|
+| production_classification=production | unset | `'low'` | `'blocking'` | `auto-merge` |
+| production_classification=production | `1` | `'blocking'` | `'blocking'` | `hold-blocking` |
+| risk_class=high | unset | `'low'` | `'blocking'` | `auto-merge` |
+| risk_class=high | `1` | `'blocking'` | `'blocking'` | `hold-blocking` |
+
+The RFC-0013 overlay is advisory on the live path unless `AIFACTORY_PATH_RISK_FLOOR_ENFORCE` is set (see AIFactory#1658).
+
 Defaults shown; per-project settings and per-deployment env override them.
 
 ## C. Gate determinism (static import closure)
@@ -167,4 +178,5 @@ Declared, unverified (cross-repo, not probed):
 | `policy.val_floor` | A change whose achieved Verification Assurance Level is missing or below its declared floor is not auto-merged, and an unreadable floor fails closed. | ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 CM | `apps/backend/merge/merge_policy.py` | - |
 | `wiring.auto_merge_flag` | Auto-merge is off by default and is enabled only by an explicit per-project or per-deployment setting. | ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 CM | `apps/web-server/server/services/pr_endgame.py` | - |
 | `wiring.blank_tier` | A task with no recorded review tier is decided as low, so the live merge path treats a blank tier exactly as the policy treats low. | ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 CM | `apps/web-server/server/services/pr_endgame.py` | - |
+| `wiring.live_overlay` | On the live merge path the deployment overlay (high risk or production) raises the merge tier only when path-floor enforcement is on; with it off the overlay is advisory and the change can still auto-merge. | ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 CM | `apps/web-server/server/services/pr_endgame.py` | - |
 | `wiring.path_floor_flag` | The path-derived risk floor is advisory by default and changes the merge tier only when enforcement is explicitly switched on. | ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 CM | `apps/web-server/server/services/pr_endgame.py` | - |

@@ -69,6 +69,9 @@ _PROBED_PARAMS = frozenset(
 )
 
 _REQUIRED_GATES = ("human-approval", "security-scan")
+_RISK_CLASSES = ("high", "medium", "low", "")
+_PROD_CLASSES = ("production", "staging", "dev", "")
+_SAFE_PATH = "README.md"  # matches no high-risk pattern
 
 _VAL_PROBES: tuple[tuple[object, object], ...] = (
     (2, None),
@@ -162,9 +165,7 @@ def _section_overlay(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
         [_REQUIRED_GATES[1]],
         list(_REQUIRED_GATES),
     )
-    for risk, prod, sat in itertools.product(
-        ("high", "medium", "low", ""), ("production", "staging", "dev", ""), gate_sets
-    ):
+    for risk, prod, sat in itertools.product(_RISK_CLASSES, _PROD_CLASSES, gate_sets):
         dep = {
             "risk_class": risk,
             "production_classification": prod,
@@ -213,7 +214,7 @@ def _section_val(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
 
 def _section_paths(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
     patterns = review_tier.HIGH_RISK_PATTERNS
-    probes = [*patterns, "README.md"]
+    probes = [*patterns, _SAFE_PATH]
     rows = [[f"`{p}`", f"`{mp.floor_from_paths([p])}`"] for p in probes]
     rows.append(["(no changed files)", f"`{mp.floor_from_paths([])}`"])
     lines = [
@@ -270,22 +271,93 @@ def _env(**values: str | None) -> Iterator[None]:
                 os.environ[k] = v
 
 
-def _path_floor_rows(wc: ModuleType, root: Path, probe: str) -> list[list[str]]:
-    """apply_path_risk_floor on a `low` task touching *probe*, advisory vs enforced."""
+@contextlib.contextmanager
+def _differ_returns(wc: ModuleType, paths: list[str]) -> Iterator[None]:
+    """Make the endgame's diff reader report *paths*; always restore it."""
     attr = "_get_changed_files_from_git"
     orig = getattr(wc, attr)
-    rows: list[list[str]] = []
     try:
-        setattr(wc, attr, lambda *_a, **_k: [probe])
+        setattr(wc, attr, lambda *_a, **_k: paths)
+        yield
+    finally:
+        setattr(wc, attr, orig)
+
+
+def _path_floor_rows(wc: ModuleType, root: Path, probe: str) -> list[list[str]]:
+    """apply_path_risk_floor on a `low` task touching *probe*, advisory vs enforced."""
+    rows: list[list[str]] = []
+    with _differ_returns(wc, [probe]):
         for label, val in (("advisory (unset)", None), ("enforced (`1`)", "1")):
             spec = root / f"spec-{len(rows)}"
             spec.mkdir()
             with _env(**{pe.PATH_RISK_FLOOR_ENV: val}):
                 eff, floor = pe.apply_path_risk_floor(root, spec, "probe", "dev", "low")
             rows.append([label, f"`{eff!r}`", f"`{floor!r}`"])
-    finally:
-        setattr(wc, attr, orig)
     return rows
+
+
+# DECLARED, not derived: the tracking issue for the finding the next table shows.
+_LIVE_OVERLAY_ISSUE = "AIFactory#1658"
+
+
+def _live_overlay_rows(wc: ModuleType, root: Path) -> list[list[str]]:
+    """The RFC-0013 overlay through apply_path_risk_floor + merge_disposition.
+
+    The diff is a non-risky path, so only the deployment overlay can raise the
+    floor. Each row is deployment | enforce | effective tier | floor | disposition.
+    """
+    probes = (
+        {"production_classification": _PROD_CLASSES[0]},
+        {"risk_class": _RISK_CLASSES[0]},
+    )
+    rows: list[list[str]] = []
+    with _differ_returns(wc, [_SAFE_PATH]):
+        for dep in probes:
+            for val in (None, "1"):
+                spec = root / f"live-{len(rows)}"
+                (spec / "context").mkdir(parents=True)
+                contract = {"contract_version": "1", "deployment": dep}
+                (spec / "context" / "task_contract.json").write_text(
+                    json.dumps(contract)
+                )
+                (spec / "task_metadata.json").write_text(json.dumps(_GREEN_META))
+                with _env(**{pe.PATH_RISK_FLOOR_ENV: val}):
+                    eff, floor = pe.apply_path_risk_floor(
+                        spec, spec, "probe", "dev", "low"
+                    )
+                    disposition = pe.merge_disposition(spec, eff)
+                rows.append(
+                    [
+                        ", ".join(f"{k}={v}" for k, v in dep.items()),
+                        "unset" if val is None else f"`{val}`",
+                        f"`{eff!r}`",
+                        f"`{floor!r}`",
+                        f"`{disposition}`",
+                    ]
+                )
+    return rows
+
+
+def _live_overlay_lines(
+    tabs: list[dict[str, object]], wc: ModuleType, root: Path
+) -> tuple[list[str], int]:
+    rows = _live_overlay_rows(wc, root)
+    lines = [
+        "### B5. Deployment overlay on the live path (`low` task, non-risky diff)",
+        "",
+    ]
+    lines += _table(
+        tabs,
+        ["deployment", "enforce", "effective tier", "floor", "live disposition"],
+        rows,
+    )
+    if any(r[1] == "unset" and r[4] == f"`{mp.AUTO_MERGE}`" for r in rows):
+        lines += [
+            "",
+            "The RFC-0013 overlay is advisory on the live path unless "
+            f"`{pe.PATH_RISK_FLOOR_ENV}` is set (see {_LIVE_OVERLAY_ISSUE}).",
+        ]
+    return lines, len(rows)
 
 
 def _section_wiring(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
@@ -346,6 +418,9 @@ def _section_wiring(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
             "",
         ]
         lines += _table(tabs, ["enforcement", "effective tier", "floor"], rows)
+        live, live_n = _live_overlay_lines(tabs, wc, root)
+        lines += ["", *live]
+        n += live_n
         lines += [
             "",
             "Defaults shown; per-project settings and per-deployment env override them.",
@@ -700,7 +775,7 @@ def _derived_ids() -> list[str]:
     """Control ids for what Sections A-C render."""
     ids = [f"policy.tier.{b}" for b in sorted(set(mp._TIER_ALIASES.values()))]
     ids += ["policy.overlay", "policy.val_floor", "policy.path_floor"]
-    ids += ["wiring.blank_tier", *(f[0] for f in _FLAGS)]
+    ids += ["wiring.blank_tier", "wiring.live_overlay", *(f[0] for f in _FLAGS)]
     ids += [f"gate.{e}" for e in _ENTRY_POINTS]
     return sorted(ids)
 
