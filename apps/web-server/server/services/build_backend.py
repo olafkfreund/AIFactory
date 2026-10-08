@@ -583,7 +583,7 @@ def _inject_build_path(manifest: dict[str, Any]) -> dict[str, Any]:
     npm-installed claude-code/codex/gemini-cli into a ``/clis`` emptyDir and
     prepended it here, so the build Job would have the provider CLIs on PATH
     (#777). That became redundant when the Dockerfile started baking all three at
-    pinned versions (``Dockerfile`` ``npm install -g …@2.1.238/@0.149.0/@0.56.0``,
+    pinned versions (``Dockerfile`` ``npm install -g …@2.1.293/@0.149.0/@0.56.0``,
     inherited by the ``-nix`` build stage via ``FROM runtime``): the initContainer
     re-fetched the same packages UNPINNED on every build and shadowed the pinned
     copies, 790 MB per pod. The control plane dropped it under #791 for the same
