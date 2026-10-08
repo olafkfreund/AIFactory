@@ -1,0 +1,540 @@
+{
+  "gates": [
+    {
+      "entry": "merge.merge_policy",
+      "init_reach": [
+        "apps/backend/merge/__init__.py"
+      ]
+    },
+    {
+      "entry": "server.services.pr_review_service",
+      "init_reach": [
+        "apps/backend/agents/__init__.py",
+        "apps/backend/agents/tools_pkg/__init__.py",
+        "apps/backend/agents/tools_pkg/tools/__init__.py",
+        "apps/backend/core/__init__.py",
+        "apps/backend/integrations/graphiti/__init__.py",
+        "apps/backend/integrations/graphiti/providers_pkg/__init__.py",
+        "apps/backend/integrations/graphiti/providers_pkg/embedder_providers/__init__.py",
+        "apps/backend/integrations/graphiti/providers_pkg/llm_providers/__init__.py",
+        "apps/backend/integrations/graphiti/queries_pkg/__init__.py",
+        "apps/backend/memory/__init__.py",
+        "apps/backend/providers/__init__.py",
+        "apps/backend/runners/__init__.py",
+        "apps/backend/runners/github/__init__.py"
+      ]
+    },
+    {
+      "entry": "server.services.pr_endgame",
+      "init_reach": [
+        "apps/backend/agents/__init__.py",
+        "apps/backend/agents/tools_pkg/__init__.py",
+        "apps/backend/agents/tools_pkg/tools/__init__.py",
+        "apps/backend/cli/__init__.py",
+        "apps/backend/core/__init__.py",
+        "apps/backend/core/workspace/__init__.py",
+        "apps/backend/integrations/graphiti/__init__.py",
+        "apps/backend/integrations/graphiti/providers_pkg/__init__.py",
+        "apps/backend/integrations/graphiti/providers_pkg/embedder_providers/__init__.py",
+        "apps/backend/integrations/graphiti/providers_pkg/llm_providers/__init__.py",
+        "apps/backend/integrations/graphiti/queries_pkg/__init__.py",
+        "apps/backend/memory/__init__.py",
+        "apps/backend/merge/__init__.py",
+        "apps/backend/merge/ai_resolver/__init__.py",
+        "apps/backend/pfactory/__init__.py",
+        "apps/backend/providers/__init__.py",
+        "apps/backend/spec/__init__.py",
+        "apps/backend/spec/phases/__init__.py",
+        "apps/backend/spec/pipeline/__init__.py"
+      ]
+    }
+  ],
+  "sections": [
+    {
+      "id": "tiers",
+      "tables": [
+        {
+          "header": [
+            "tier",
+            "result",
+            "when"
+          ],
+          "rows": [
+            [
+              "`(blank)`",
+              "`hold-blocking`",
+              "always"
+            ],
+            [
+              "`async`",
+              "`hold-async`",
+              "always"
+            ],
+            [
+              "`auto`",
+              "`auto-merge`",
+              "ci=T verdict=pass val=2/1 parity=T"
+            ],
+            [
+              "`auto`",
+              "`hold-async`",
+              "otherwise"
+            ],
+            [
+              "`blocking`",
+              "`hold-blocking`",
+              "always"
+            ],
+            [
+              "`bogus`",
+              "`hold-blocking`",
+              "always"
+            ],
+            [
+              "`hard`",
+              "`hold-blocking`",
+              "always"
+            ],
+            [
+              "`low`",
+              "`auto-merge`",
+              "ci=T verdict=pass val=2/1 parity=T"
+            ],
+            [
+              "`low`",
+              "`hold-async`",
+              "otherwise"
+            ],
+            [
+              "`medium`",
+              "`hold-async`",
+              "always"
+            ]
+          ]
+        }
+      ],
+      "title": "A1. Tier decision (no deployment block)"
+    },
+    {
+      "id": "overlay",
+      "tables": [
+        {
+          "header": [
+            "block reasons",
+            "result",
+            "inputs"
+          ],
+          "rows": [
+            [
+              "(none)",
+              "`auto-merge`",
+              "9 combos, e.g. risk=medium prod=staging satisfied=human-approval,security-scan"
+            ],
+            [
+              "deployment risk_class=high is never auto-merged",
+              "`hold-blocking`",
+              "3 combos, e.g. risk=high prod=staging satisfied=human-approval,security-scan"
+            ],
+            [
+              "deployment risk_class=high is never auto-merged<br>production change is VAL-4 / never autonomous (human-approval required)",
+              "`hold-blocking`",
+              "1 combos, e.g. risk=high prod=production satisfied=human-approval,security-scan"
+            ],
+            [
+              "deployment risk_class=high is never auto-merged<br>production change is VAL-4 / never autonomous (human-approval required)<br>required system gate 'human-approval' is not satisfied (only a human can clear it)",
+              "`hold-blocking`",
+              "1 combos, e.g. risk=high prod=production satisfied=security-scan"
+            ],
+            [
+              "deployment risk_class=high is never auto-merged<br>production change is VAL-4 / never autonomous (human-approval required)<br>required system gate 'human-approval' is not satisfied (only a human can clear it)<br>required system gate 'security-scan' is not satisfied",
+              "`hold-blocking`",
+              "1 combos, e.g. risk=high prod=production satisfied=-"
+            ],
+            [
+              "deployment risk_class=high is never auto-merged<br>required system gate 'human-approval' is not satisfied (only a human can clear it)",
+              "`hold-blocking`",
+              "3 combos, e.g. risk=high prod=staging satisfied=security-scan"
+            ],
+            [
+              "deployment risk_class=high is never auto-merged<br>required system gate 'human-approval' is not satisfied (only a human can clear it)<br>required system gate 'security-scan' is not satisfied",
+              "`hold-blocking`",
+              "3 combos, e.g. risk=high prod=staging satisfied=-"
+            ],
+            [
+              "production change is VAL-4 / never autonomous (human-approval required)",
+              "`hold-blocking`",
+              "3 combos, e.g. risk=medium prod=production satisfied=human-approval,security-scan"
+            ],
+            [
+              "production change is VAL-4 / never autonomous (human-approval required)<br>required system gate 'human-approval' is not satisfied (only a human can clear it)",
+              "`hold-blocking`",
+              "3 combos, e.g. risk=medium prod=production satisfied=security-scan"
+            ],
+            [
+              "production change is VAL-4 / never autonomous (human-approval required)<br>required system gate 'human-approval' is not satisfied (only a human can clear it)<br>required system gate 'security-scan' is not satisfied",
+              "`hold-blocking`",
+              "3 combos, e.g. risk=medium prod=production satisfied=-"
+            ],
+            [
+              "required system gate 'human-approval' is not satisfied (only a human can clear it)",
+              "`hold-blocking`",
+              "9 combos, e.g. risk=medium prod=staging satisfied=security-scan"
+            ],
+            [
+              "required system gate 'human-approval' is not satisfied (only a human can clear it)<br>required system gate 'security-scan' is not satisfied",
+              "`hold-blocking`",
+              "9 combos, e.g. risk=medium prod=staging satisfied=-"
+            ]
+          ]
+        }
+      ],
+      "title": "A2. Deployment overlay (applied before the tier; all-green `low` change)"
+    },
+    {
+      "id": "val",
+      "tables": [
+        {
+          "header": [
+            "achieved",
+            "floor",
+            "meets floor"
+          ],
+          "rows": [
+            [
+              "`2`",
+              "`None`",
+              "True"
+            ],
+            [
+              "`2`",
+              "`''`",
+              "True"
+            ],
+            [
+              "`2`",
+              "`'VAL-three'`",
+              "False"
+            ],
+            [
+              "`1`",
+              "`2`",
+              "False"
+            ],
+            [
+              "`2`",
+              "`2`",
+              "True"
+            ],
+            [
+              "`3`",
+              "`2`",
+              "True"
+            ],
+            [
+              "`None`",
+              "`2`",
+              "False"
+            ],
+            [
+              "`'VAL-2 (3 lanes)'`",
+              "`2`",
+              "True"
+            ]
+          ]
+        }
+      ],
+      "title": "A3. VAL floor semantics"
+    },
+    {
+      "id": "paths",
+      "tables": [
+        {
+          "header": [
+            "changed path",
+            "floor"
+          ],
+          "rows": [
+            [
+              "`auth`",
+              "`blocking`"
+            ],
+            [
+              "`login`",
+              "`blocking`"
+            ],
+            [
+              "`session`",
+              "`blocking`"
+            ],
+            [
+              "`password`",
+              "`blocking`"
+            ],
+            [
+              "`secret`",
+              "`blocking`"
+            ],
+            [
+              "`credential`",
+              "`blocking`"
+            ],
+            [
+              "`token`",
+              "`blocking`"
+            ],
+            [
+              "`oauth`",
+              "`blocking`"
+            ],
+            [
+              "`iam`",
+              "`blocking`"
+            ],
+            [
+              "`rbac`",
+              "`blocking`"
+            ],
+            [
+              "`permission`",
+              "`blocking`"
+            ],
+            [
+              "`migration`",
+              "`blocking`"
+            ],
+            [
+              "`alembic`",
+              "`blocking`"
+            ],
+            [
+              "`schema.prisma`",
+              "`blocking`"
+            ],
+            [
+              "`terraform`",
+              "`blocking`"
+            ],
+            [
+              "`.tf`",
+              "`blocking`"
+            ],
+            [
+              "`dockerfile`",
+              "`blocking`"
+            ],
+            [
+              "`docker-compose`",
+              "`blocking`"
+            ],
+            [
+              "`k8s`",
+              "`blocking`"
+            ],
+            [
+              "`kubernetes`",
+              "`blocking`"
+            ],
+            [
+              "`helm`",
+              "`blocking`"
+            ],
+            [
+              "`.github/workflows`",
+              "`blocking`"
+            ],
+            [
+              "`ci.yml`",
+              "`blocking`"
+            ],
+            [
+              "`deploy`",
+              "`blocking`"
+            ],
+            [
+              "`payment`",
+              "`blocking`"
+            ],
+            [
+              "`billing`",
+              "`blocking`"
+            ],
+            [
+              "`README.md`",
+              "`auto`"
+            ],
+            [
+              "(no changed files)",
+              "`auto`"
+            ]
+          ]
+        }
+      ],
+      "title": "A4. Path floor"
+    },
+    {
+      "id": "wiring",
+      "tables": [
+        {
+          "header": [
+            "reviewTier",
+            "disposition"
+          ],
+          "rows": [
+            [
+              "`None`",
+              "`auto-merge`"
+            ],
+            [
+              "`''`",
+              "`auto-merge`"
+            ],
+            [
+              "`'low'`",
+              "`auto-merge`"
+            ]
+          ]
+        },
+        {
+          "header": [
+            "check",
+            "result"
+          ],
+          "rows": [
+            [
+              "blank == low",
+              "**True**"
+            ]
+          ]
+        },
+        {
+          "header": [
+            "signal",
+            "default"
+          ],
+          "rows": [
+            [
+              "`achieved_val`",
+              "`0`"
+            ],
+            [
+              "`ci_parity`",
+              "`True`"
+            ],
+            [
+              "`host_ci_green`",
+              "`True`"
+            ],
+            [
+              "`tfactory_verdict`",
+              "`'pass'`"
+            ],
+            [
+              "`val_floor`",
+              "`None`"
+            ]
+          ]
+        },
+        {
+          "header": [
+            "flag",
+            "env var",
+            "unset",
+            "set to \"1\""
+          ],
+          "rows": [
+            [
+              "auto-merge",
+              "`AIFACTORY_AUTO_MERGE`",
+              "False",
+              "True"
+            ],
+            [
+              "path-floor enforcement",
+              "`AIFACTORY_PATH_RISK_FLOOR_ENFORCE`",
+              "False",
+              "True"
+            ]
+          ]
+        },
+        {
+          "header": [
+            "enforcement",
+            "effective tier",
+            "floor"
+          ],
+          "rows": [
+            [
+              "advisory (unset)",
+              "`'low'`",
+              "`'blocking'`"
+            ],
+            [
+              "enforced (`1`)",
+              "`'blocking'`",
+              "`'blocking'`"
+            ]
+          ]
+        }
+      ],
+      "title": "B. Live wiring (pr_endgame)"
+    },
+    {
+      "id": "gates",
+      "tables": [
+        {
+          "header": [
+            "gate",
+            "label",
+            "model clients imported",
+            "package __init__ reaches a model client",
+            "local modules",
+            "via spawn"
+          ],
+          "rows": [
+            [
+              "`merge.merge_policy`",
+              "deterministic",
+              "-",
+              "yes (1): `apps/backend/merge/__init__.py`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
+              "2",
+              "-"
+            ],
+            [
+              "`server.services.pr_review_service`",
+              "model-assisted (dynamic import: core.auth:300 (+2 more))",
+              "`anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
+              "yes (13): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
+              "263",
+              "`runners/github/runner.py`"
+            ],
+            [
+              "`server.services.pr_endgame`",
+              "model-assisted (dynamic import: core.auth:300 (+3 more))",
+              "`anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
+              "yes (19): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
+              "352",
+              "-"
+            ]
+          ]
+        },
+        {
+          "header": [
+            "repo",
+            "gate"
+          ],
+          "rows": [
+            [
+              "PFactory",
+              "`plan/review/gates.py::run_gates`"
+            ],
+            [
+              "TFactory",
+              "`apps/backend/agents/evaluator.py::_run_evaluator_session`"
+            ]
+          ]
+        }
+      ],
+      "title": "C. Gate determinism (static import closure)"
+    }
+  ]
+}
