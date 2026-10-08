@@ -363,6 +363,11 @@ class KubejobMixin:
             # now rather than leaking it until a reaper that never fires.
             self._release_task_credential(task_id)
             raise
+        # #1662: the build is live from here, not from the next reconcile
+        # tick (≤15s later). Without this, is_running() said False for that
+        # window and recovery reset a live Job despite the #1619 guard.
+        # After the except block on purpose: a failed dispatch never marks.
+        self._active_kubejob_task_ids.add(task_id)
         # RFC-0017 #680: feed the cockpit log stream + rmux Live Console from the
         # Job pod's logs, exactly as the in-pod subprocess path does — the
         # prerequisite to making kubejob the default. Best-effort: any failure
