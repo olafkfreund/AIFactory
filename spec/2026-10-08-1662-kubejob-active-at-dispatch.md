@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1662
 intent: intent/2026-10-08-1662-kubejob-active-at-dispatch.md
 ---
