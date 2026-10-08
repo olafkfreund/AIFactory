@@ -96,3 +96,23 @@ def test_empty_when_no_secrets(monkeypatch):
     monkeypatch.setenv("PATH", "/usr/bin")
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok")
     assert get_agent_env_blanks() == {}
+
+
+def test_simple_client_env_is_scrubbed(clean_env, monkeypatch, tmp_path):
+    """create_simple_client must blank host secrets like create_client does."""
+    from core import simple_client
+
+    seen = {}
+
+    def _capture(**kw):
+        seen["env"] = kw["options"].env
+        return object()
+
+    monkeypatch.setattr(simple_client, "require_auth_token", lambda: "tok")
+    monkeypatch.setattr(simple_client, "ClaudeSDKClient", _capture)
+    monkeypatch.setattr(simple_client, "wrap_client_outbound_scrub", lambda c: c)
+    simple_client.create_simple_client(
+        agent_type="commit_message", model="claude-haiku-4-5", cwd=tmp_path
+    )
+    for key in SECRETS:
+        assert seen["env"].get(key) == "", f"simple client inherits {key}"
