@@ -54,7 +54,6 @@
 - CI: uv's HTTP timeout raised off its 30 s default (#1642); chainguard/python
   base image bumps.
 
-
 ## 3.7.0 - 2026-09-29
 
 ### Added
