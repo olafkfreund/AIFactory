@@ -1,5 +1,17 @@
 ## [Unreleased]
 
+## 3.8.1 - 2026-10-08
+
+### Fixed
+
+- **The deployment overlay now holds the live merge.** With auto-merge on, a
+  task whose contract declares a production target or a high risk class is held
+  for a human on the live merge path, whether or not the path-floor flag is set;
+  before, only the autonomy matrix applied the overlay. An unreadable task
+  contract (bad JSON, a non-object, deep nesting, non-UTF-8) also holds the
+  merge instead of auto-merging or aborting the PR. The published autonomy
+  matrix now shows hold-blocking in all four B5 rows (#1658, #1664).
+
 ## 3.8.0 - 2026-10-08
 
 ### Changed
