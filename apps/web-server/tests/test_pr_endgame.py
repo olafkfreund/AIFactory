@@ -167,6 +167,96 @@ def test_read_review_verdict_copilot_aware():
     assert rs.verdict == "changes_requested" and rs.copilot_changes_requested
 
 
+# ── human_approval_head (#1663) ──────────────────────────────────────────────
+
+
+def _rv(state, login="alice", type_="User", commit_id="abc"):
+    return {"state": state, "login": login, "type": type_, "commit_id": commit_id}
+
+
+def _approval_runner(*rows, pr_rc=0, rv_rc=0, raw=None, merge=None):
+    """PR route + newline-delimited reviews route (what --paginate --jq emits).
+
+    "--paginate" and ".head.sha" come before "reviews": first match wins.
+    """
+    body = raw if raw is not None else "\n".join(json.dumps(x) for x in rows)
+    pr = json.dumps({"head": "abc", "author": "olafkfreund"})
+    routes = {
+        ".head.sha": CmdResult(pr_rc, pr, ""),
+        "--paginate": CmdResult(rv_rc, body, ""),
+        "reviews": _reviews(("APPROVED", COPILOT)),
+    }
+    if merge:
+        routes["pr merge"] = merge
+    return FakeRunner(routes)
+
+
+def test_human_approval_head_returns_the_approved_sha():
+    r = _approval_runner(_rv("APPROVED"))
+    assert pe.human_approval_head("o", "r", 5, runner=r) == "abc"
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        [_rv("APPROVED", login="olafkfreund")],  # the PR author
+        [_rv("APPROVED", login="dependabot[bot]", type_="Bot")],
+        [_rv("APPROVED", commit_id="old")],  # stale
+        [_rv("APPROVED"), _rv("CHANGES_REQUESTED")],
+        [_rv("APPROVED"), _rv("DISMISSED")],
+    ],
+)
+def test_human_approval_head_rejects(rows):
+    assert pe.human_approval_head("o", "r", 5, runner=_approval_runner(*rows)) is None
+
+
+def test_human_approval_head_ignores_a_later_comment():
+    r = _approval_runner(_rv("APPROVED"), _rv("COMMENTED"))
+    assert pe.human_approval_head("o", "r", 5, runner=r) == "abc"
+
+
+@pytest.mark.parametrize("kw", [{"pr_rc": 1}, {"rv_rc": 1}, {"raw": "not json"}])
+def test_human_approval_head_fails_closed(kw):
+    r = _approval_runner(_rv("APPROVED"), **kw)
+    assert pe.human_approval_head("o", "r", 5, runner=r) is None
+
+
+def _gated_watch(r):
+    return asyncio.run(
+        pe.watch_and_finish(
+            owner="o",
+            repo="r",
+            pr=5,
+            auto_merge=True,
+            human_approval_required=True,
+            runner=r,
+            poll_interval=0,
+            max_minutes=1,
+        )
+    )
+
+
+def test_watcher_without_human_approval_never_merges():
+    r = _approval_runner()
+    res = _gated_watch(r)
+    assert res["merged"] is False
+    assert not r.saw("pr merge")
+
+
+def test_watcher_merges_bound_to_the_approved_commit():
+    r = _approval_runner(_rv("APPROVED"), merge=CmdResult(0, "merged", ""))
+    _gated_watch(r)
+    assert r.saw("--match-head-commit abc")
+
+
+def test_bound_merge_never_updates_the_branch():
+    r = _approval_runner(
+        _rv("APPROVED"), merge=CmdResult(1, "", "not mergeable: behind")
+    )
+    _gated_watch(r)
+    assert not r.saw("update-branch")
+
+
 # ── watch_and_finish (Copilot-gated) ─────────────────────────────────────────
 
 

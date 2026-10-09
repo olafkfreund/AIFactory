@@ -314,6 +314,17 @@ trusted, and does nothing to defend it. Before step 1, rebase the branch:
   has no hits outside tests that assert it is ignored.
 - `PATH="$V/bin:$PATH" pre-commit run --files <changed files>` passes.
 
+## Deviations
+
+Recorded during implementation. Dev was merged into this branch after #1667,
+so `merge_disposition` and the endgame functions also take `trusted=`, and
+the tests run on an isolated host (#1667's `_isolated_host` fixture).
+
+- **Step 1.** `test_recorded_approvals_reach_the_deployment_overlay`, which the
+  plan does not list, expects `satisfiedSystemGates` metadata to lift the path
+  floor. Under decision 7 that no longer happens, so step 2 rewrites it to
+  assert that the floor stays `blocking` despite the metadata.
+
 ## Rollback
 
 Each step is its own commit, so `git revert` the step commits in reverse order

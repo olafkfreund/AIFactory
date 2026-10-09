@@ -52,12 +52,20 @@ async def _endgame_auto_merge(
     spec: Path,
     tier: str | None,
     monkeypatch: pytest.MonkeyPatch,
-) -> bool:
-    """Run the endgame far enough to capture the auto_merge it settled on."""
+    *,
+    both: bool = False,
+) -> bool | tuple[bool, bool]:
+    """Run the endgame far enough to capture the auto_merge it settled on.
+
+    ``both`` also returns the ``human_approval_required`` handed to the watcher.
+    """
     captured: dict[str, bool] = {}
 
     async def _fake_watch(**kwargs: object) -> dict[str, object]:
         captured["auto_merge"] = bool(kwargs["auto_merge"])
+        captured["human_approval_required"] = bool(
+            kwargs.get("human_approval_required")
+        )
         return {"merged": False, "reason": "stub"}
 
     monkeypatch.setattr(pe, "watch_and_finish", _fake_watch)
@@ -78,6 +86,8 @@ async def _endgame_auto_merge(
         background=False,
         trusted=None,
     )
+    if both:
+        return captured["auto_merge"], captured["human_approval_required"]
     return captured["auto_merge"]
 
 
@@ -261,19 +271,6 @@ def test_an_outstanding_gate_still_floors_the_tier(
     assert tier == "blocking"
 
 
-def test_satisfied_gates_reads_both_the_contract_and_the_metadata(
-    tmp_path: Path,
-) -> None:
-    spec = _spec(tmp_path, satisfiedSystemGates=["human-approval"])
-    gates = pe.satisfied_system_gates(spec, {"satisfied_gates": ["sbom"]})
-    assert sorted(gates) == ["human-approval", "sbom"]
-
-
-def test_satisfied_gates_of_an_unreadable_spec_is_empty(tmp_path: Path) -> None:
-    """Unknown approvals must leave the gate OUTSTANDING, never cleared."""
-    assert pe.satisfied_system_gates(tmp_path / "nope") == []
-
-
 # --------------------------------------------------------------------------- #
 # The RFC-0013 deployment overlay holds on the live merge path (#1658)
 # --------------------------------------------------------------------------- #
@@ -334,11 +331,76 @@ def test_a_satisfied_system_gate_clears_only_its_own_hold(
     assert (
         pe.merge_disposition(held, "low", trusted=None) == pe.HOLD_BLOCKING_DISPOSITION
     )
-    cleared = _contracted(
-        tmp_path / "b", monkeypatch, dep, satisfiedSystemGates=["human-approval"]
+    cleared = _contracted(tmp_path / "b", monkeypatch, dep)
+    assert (
+        pe.merge_disposition(
+            cleared, "low", trusted=None, satisfied_gates=["human-approval"]
+        )
+        == pe.AUTO_MERGE_DISPOSITION
+    )
+
+
+def test_a_contract_cannot_satisfy_its_own_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _contracted(
+        tmp_path,
+        monkeypatch,
+        _deployment(
+            system_gates=["human-approval"], satisfied_gates=["human-approval"]
+        ),
     )
     assert (
-        pe.merge_disposition(cleared, "low", trusted=None) == pe.AUTO_MERGE_DISPOSITION
+        pe.merge_disposition(spec, "low", trusted=None) == pe.HOLD_BLOCKING_DISPOSITION
+    )
+
+
+def test_task_metadata_is_not_gate_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _contracted(
+        tmp_path,
+        monkeypatch,
+        _deployment(system_gates=["human-approval"]),
+        satisfiedSystemGates=["human-approval"],
+    )
+    assert (
+        pe.merge_disposition(spec, "low", trusted=None) == pe.HOLD_BLOCKING_DISPOSITION
+    )
+
+
+def test_merge_disposition_takes_explicit_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _contracted(
+        tmp_path, monkeypatch, _deployment(system_gates=["human-approval"])
+    )
+    assert (
+        pe.merge_disposition(
+            spec, "low", trusted=None, satisfied_gates=["human-approval"]
+        )
+        == pe.AUTO_MERGE_DISPOSITION
+    )
+
+
+async def test_a_human_only_hold_keeps_the_watcher_armed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gated = _contracted(
+        tmp_path / "a", monkeypatch, _deployment(system_gates=["human-approval"])
+    )
+    assert await _endgame_auto_merge(gated, "auto", monkeypatch, both=True) == (
+        True,
+        True,
+    )
+    prod = _contracted(
+        tmp_path / "b",
+        monkeypatch,
+        _deployment(production_classification="production"),
+    )
+    assert await _endgame_auto_merge(prod, "auto", monkeypatch, both=True) == (
+        False,
+        False,
     )
 
 
@@ -356,13 +418,13 @@ def test_a_satisfied_gate_never_clears_production(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     spec = _contracted(
-        tmp_path,
-        monkeypatch,
-        _deployment(production_classification="production"),
-        satisfiedSystemGates=["human-approval"],
+        tmp_path, monkeypatch, _deployment(production_classification="production")
     )
     assert (
-        pe.merge_disposition(spec, "low", trusted=None) == pe.HOLD_BLOCKING_DISPOSITION
+        pe.merge_disposition(
+            spec, "low", trusted=None, satisfied_gates=["human-approval"]
+        )
+        == pe.HOLD_BLOCKING_DISPOSITION
     )
 
 
