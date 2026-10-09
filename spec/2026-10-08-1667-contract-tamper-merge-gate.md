@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1667
 intent: intent/2026-10-08-1667-contract-tamper-merge-gate.md
 ---
@@ -267,12 +267,14 @@ Approved (user, 2026-10-08):
 - **(a)** The trusted record lives in the web-server database. In-cluster that
   is Postgres.
 - **(c)** A trusted task is never auto-merged when its build was not isolated.
-  The meaning of "isolated" is narrowed in D4, which is still open.
+  The meaning of "isolated" is narrowed in D4.
 - **D2.** Trusted tasks ignore `satisfiedSystemGates` in `task_metadata.json`. A
   human merge clears a `system_gates` hold.
 - **D3.** A held task hands off to TFactory with `{}`.
 
-Open for the approver:
+Approved (user, 2026-10-09): D4-i and D5. The live cluster runs
+`AIFACTORY_BUILD_BACKEND=kubejob` (checked 2026-10-08), so D4-i does not
+hold auto-merge in production.
 
 - **D4. "Isolated" means kubejob, or a bwrap `fs`/`strict` sandbox *with a PID
   namespace*. A plain `fs` sandbox is not enough.** The finding above shows
