@@ -44,6 +44,8 @@ from server.services import conflict_service, pr_endgame, task_branch  # noqa: E
 def _isolated_host(monkeypatch: pytest.MonkeyPatch) -> None:
     """These tests model a legacy task on an isolated host (#1667, D4-i)."""
     monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "kubejob")
+    # kubejob counts as isolated only with the durable store (#1667).
+    monkeypatch.setattr("server.services.job_state_store.store_enabled", lambda: True)
 
 
 SPEC_ID = "097-add-feature"

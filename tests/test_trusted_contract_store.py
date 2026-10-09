@@ -90,25 +90,5 @@ async def test_13b_put_resets_the_stamp_only_when_the_contract_changes(
         await engine.dispose()
 
 
-class _FailingStore:
-    def __init__(self, *_a: object, **_k: object) -> None:
-        pass
-
-    async def stamp_isolation(self, *_a: object) -> None:
-        raise RuntimeError("db down")
-
-
-async def test_13c_failed_none_stamp_blocks_the_spawn(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An earlier isolated stamp must not survive a non-isolated build."""
-    from server.services import trusted_contract_store as tcs
-
-    monkeypatch.setattr(tcs, "TrustedContractStore", _FailingStore)
-    with pytest.raises(RuntimeError):
-        await tcs.stamp_spawn("/x/.aifactory/specs/001", "none")
-    await tcs.stamp_spawn("/x/.aifactory/specs/001", "kubejob")  # logged, no raise
-
-
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -25,9 +25,11 @@ for _p in (str(_WS), str(_BACKEND)):
 from cli import workspace_commands  # noqa: E402
 from pfactory import tfactory_client as tc  # noqa: E402
 from server.services import pr_endgame as pe  # noqa: E402
+from server.services.trusted_contract import host_isolated  # noqa: E402
 from server.services.trusted_contract_store import (  # noqa: E402
     LOOKUP_FAILED,
     TrustedRecord,
+    spec_key_for_dir,
 )
 from trusted_plan import APPROVAL_KEY, ingest_trusted_plan, sign_plan  # noqa: E402
 
@@ -40,6 +42,8 @@ TS = "2026-10-08T10:00:00Z"
 def _isolated_host(monkeypatch: pytest.MonkeyPatch) -> None:
     """Default to an isolated host (D4-i); tests override to leave it."""
     monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "kubejob")
+    # kubejob counts as isolated only with the durable store (#1667).
+    monkeypatch.setattr("server.services.job_state_store.store_enabled", lambda: True)
     monkeypatch.delenv("AIFACTORY_AGENT_SANDBOX", raising=False)
     monkeypatch.delenv("AIFACTORY_AGENT_SANDBOX_PIDNS", raising=False)
     monkeypatch.delenv("AIFACTORY_TRUSTED_PLAN_RETIRED_KIDS", raising=False)
@@ -273,6 +277,33 @@ def test_20_handoff_uses_the_record_contract(
     assert payload["contract"]["tfactory"] == signed["tfactory"]
     assert payload["contract"]["execution"]["phase_models"]["qa"] == "ollama:x"
 
-    (spec / "task_metadata.json").write_text("{}")  # no phase_models to add
     held = tc.build_ingest_payload(spec, "001-x", contract={})
     assert not held.get("contract")
+
+
+def test_kubejob_without_the_durable_store_is_not_isolated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """kubejob without DATABASE_URL falls back to in-pod builds (#1667 review)."""
+    monkeypatch.setattr("server.services.job_state_store.store_enabled", lambda: False)
+    assert host_isolated() is False
+
+
+def test_spec_key_ignores_a_symlinked_spec_dir(tmp_path: Path) -> None:
+    real = tmp_path / "elsewhere"
+    real.mkdir()
+    spec = tmp_path / "specs" / "001-x"
+    spec.parent.mkdir()
+    before = spec_key_for_dir(spec)
+    spec.symlink_to(real)
+    assert spec_key_for_dir(spec) == before
+
+
+def test_pid_namespaced_sandbox_host_is_not_isolated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D4 narrowed: run.py in the sandbox carries the server env (#1680)."""
+    monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "subprocess")
+    monkeypatch.setenv("AIFACTORY_AGENT_SANDBOX", "strict")
+    monkeypatch.setenv("AIFACTORY_AGENT_SANDBOX_PIDNS", "1")
+    assert host_isolated() is False

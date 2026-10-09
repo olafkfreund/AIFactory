@@ -640,6 +640,24 @@ Recorded during implementation.
     `ImportError` would otherwise skip the endgame silently after the
     terminal marker.
   - Tests 13b (`put` reset) and 13c (failed `none` stamp) are added.
+- **PR review fixes (Copilot on #1683).**
+  - **D4 narrowed (user-approved 2026-10-09).** `host_isolated()` is
+    `kubejob` **and** `store_enabled()`. The PID-namespaced sandbox branch is
+    dropped until #1680, and the spec records the change. Every test that
+    means "isolated host" now also patches `store_enabled`. The matrix
+    generator's `_ISOLATED_HOST` sets a placeholder asyncpg `DATABASE_URL`,
+    which is never connected to.
+  - **Held handoff.** `contract={}` sends no contract and skips the
+    `phaseModels` and issue enrichment. Test 20 no longer clears
+    `phaseModels` first.
+  - **Symlinks.** `spec_key_for_dir` uses `os.path.abspath` instead of
+    `resolve()`, so a symlinked spec dir cannot change the key.
+  - **Reverted the "failed `none` stamp raises" fix.** It broke in-process
+    spawns without the table and leaked the PTY fds. With D4 narrowed, no
+    host that auto-merges runs in-process builds, so the earlier stamp
+    concern is moot. Test 13c is removed.
+  - `tests/test_baseline_drift.py` patches `TrustedContractStore`, because its
+    Postgres run has no usable loop for the global engine.
 
 ## Rollback
 

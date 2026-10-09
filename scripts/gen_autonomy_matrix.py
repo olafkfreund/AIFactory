@@ -254,7 +254,12 @@ _GREEN_META = {
 
 # The matrix documents legacy tasks (no signed record) on an isolated host, so
 # the numbers do not depend on the machine that regenerates them (#1667, D4-i).
-_ISOLATED_HOST = {"AIFACTORY_BUILD_BACKEND": "kubejob"}
+# kubejob counts as isolated only with the durable store (#1667); the URL is
+# read, never connected to.
+_ISOLATED_HOST = {
+    "AIFACTORY_BUILD_BACKEND": "kubejob",
+    "DATABASE_URL": "postgresql+asyncpg://isolated-host/matrix",
+}
 
 
 @contextlib.contextmanager

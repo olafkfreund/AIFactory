@@ -40,6 +40,8 @@ from server.services import pr_endgame as pe  # noqa: E402
 def _isolated_host(monkeypatch: pytest.MonkeyPatch) -> None:
     """These tests model a legacy task on an isolated host (#1667, D4-i)."""
     monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "kubejob")
+    # kubejob counts as isolated only with the durable store (#1667).
+    monkeypatch.setattr("server.services.job_state_store.store_enabled", lambda: True)
 
 
 def _spec(

@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -31,7 +32,8 @@ class TrustedRecord:
 
 
 def spec_key_for_dir(spec_dir: str | Path) -> str:
-    return hashlib.sha256(str(Path(spec_dir).resolve()).encode()).hexdigest()
+    # Lexical, not resolve(): a symlinked spec dir must not change the key.
+    return hashlib.sha256(os.path.abspath(spec_dir).encode()).hexdigest()  # noqa: PTH100
 
 
 class TrustedContractStore:
@@ -100,16 +102,8 @@ async def lookup(spec_dir: str | Path) -> TrustedRecord | None | Any:
 
 
 async def stamp_spawn(spec_dir: str | Path, kind: str) -> None:
-    """Stamp how a build is isolated.
-
-    A failed isolated stamp is logged and the build goes on: the stamp stays
-    empty (holds) or keeps an earlier isolated value. A failed ``none`` stamp
-    raises, because an earlier isolated stamp would otherwise survive a build
-    that was not isolated.
-    """
+    """Stamp how a build is isolated. A failed stamp is logged; it never blocks."""
     try:
         await TrustedContractStore().stamp_isolation(spec_key_for_dir(spec_dir), kind)
-    except Exception:
+    except Exception:  # noqa: BLE001 - must not block the build
         logger.error("[trusted-contract] isolation stamp not written")
-        if kind == "none":
-            raise

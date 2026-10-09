@@ -622,6 +622,7 @@ def build_ingest_payload(
     # from spec_text. Present only for trusted plans; absent → TFactory infers.
     # `contract` given (#1667): the web server decided it; `{}` means held, so
     # TFactory infers instead of trusting the agent-writable spec copy.
+    held = contract is not None and not contract
     contract = load_task_contract(spec_dir) if contract is None else dict(contract)
     # Propagate the build's per-phase model choice to TFactory's verify lanes so a
     # non-default (e.g. Ollama) build is VERIFIED on the same provider instead of
@@ -630,7 +631,7 @@ def build_ingest_payload(
     # execution.phase_models, which TFactory's ingest turns into its own
     # task_metadata.json (get_phase_model reads that). Additive: a real signed
     # contract's execution block is preserved; we only fill phase_models we add.
-    verify_pm = _verify_phase_models(spec_dir)
+    verify_pm = None if held else _verify_phase_models(spec_dir)
     if verify_pm:
         contract = dict(contract or {})
         execution = dict(contract.get("execution") or {})
@@ -641,7 +642,7 @@ def build_ingest_payload(
     # with its build + plan (it reads contract.provenance.github_issue). The
     # label-driven fast path carries no PFactory plan, so backfill from
     # requirements.json (githubIssue.number / provenance.issue_number). #964
-    _issue_no = _issue_from_requirements(req)
+    _issue_no = None if held else _issue_from_requirements(req)
     if _issue_no is not None:
         contract = dict(contract or {})
         _prov = dict(contract.get("provenance") or {})

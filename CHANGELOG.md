@@ -7,16 +7,17 @@
   (`trusted_contracts`) at `/from-plan`, and the merge gate verifies it and the
   build's isolation instead of reading `context/task_contract.json`, which the
   coding agent can edit. A trusted task is auto-merged only if its build ran as a
-  Job (`kubejob`) or under a PID-namespaced sandbox, its signature still
+  Job (`kubejob`, with `DATABASE_URL` set), its signature still
   verifies (a retired or removed key holds it), and the spec copy of the
   contract is unchanged. Trusted tasks no longer honour
   `satisfiedSystemGates` in `task_metadata.json`; a human merge clears a
   `system_gates` hold. A held task is handed to TFactory without a contract, so
   TFactory infers.
 
-  **Upgrade notes.** On a host that is neither `AIFACTORY_BUILD_BACKEND=kubejob`
-  nor running a PID-namespaced sandbox (`AIFACTORY_AGENT_SANDBOX=fs|strict` with
-  `AIFACTORY_AGENT_SANDBOX_PIDNS` on), auto-merge is now held for **all** tasks.
+  **Upgrade notes.** Unless the host runs `AIFACTORY_BUILD_BACKEND=kubejob` with
+  `DATABASE_URL` set, auto-merge is now held for **all** tasks. A PID-namespaced
+  sandbox does not count yet: `run.py` inside it still carries the server's
+  environment (#1680).
   Trusted tasks in flight at rollout have no stored record and hold once: merge
   them by hand or re-run `/from-plan`. The release runs an Alembic migration
   that adds `trusted_contracts`.

@@ -17,16 +17,14 @@ _ISOLATED_STAMPS = ("kubejob", "sandbox-pidns")
 
 def host_isolated() -> bool:
     """True when THIS web server's environment isolates the agent (D4-i)."""
-    from server.services import sandbox  # noqa: PLC0415
     from server.services.build_backend import selected_backend  # noqa: PLC0415
+    from server.services.job_state_store import store_enabled  # noqa: PLC0415
 
-    if selected_backend() == "kubejob":
-        return True
-    return bool(
-        sandbox.is_enabled()
-        and sandbox._mode() in ("fs", "strict")
-        and sandbox._pidns_enabled()
-    )
+    # Without DATABASE_URL the kubejob backend falls back to in-pod builds.
+    # D4 narrowed (#1667 review): a PID-namespaced sandbox is not enough while
+    # run.py inside it carries the server's env (#1680); the agent could read
+    # DATABASE_URL and rewrite its own record. Revisit when #1680 lands.
+    return selected_backend() == "kubejob" and store_enabled()
 
 
 def _read_json(path: Path) -> Any:

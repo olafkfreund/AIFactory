@@ -273,6 +273,11 @@ def _post(project_path: Path, plan: dict):
         patch.object(execution_routes, "resolve_project_id", return_value="p1"),
         patch.object(execution_routes, "get_agent_service", return_value=fake_service),
         patch.object(execution_routes, "emit_task_status", AsyncMock()),
+        patch.object(
+            execution_routes,
+            "TrustedContractStore",
+            return_value=MagicMock(put=AsyncMock()),
+        ),
     ):
         client = TestClient(app)
         return client.post(
