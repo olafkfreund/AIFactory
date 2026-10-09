@@ -80,7 +80,10 @@ def resolve_contract(spec_dir: Path, trusted: Any) -> tuple[str, dict[str, Any]]
     spec_dir = Path(spec_dir)
     try:
         if isinstance(trusted, TrustedRecord):
-            if _record_verified(spec_dir, trusted):
+            # D4: on a host that does not isolate the agent, the record itself
+            # may be forged, so no consumer (merge, path floor, TFactory
+            # handoff) may treat it as verified.
+            if host_isolated() and _record_verified(spec_dir, trusted):
                 return "verified", trusted.contract
             return "hold", {}
         # LOOKUP_FAILED, or no record but a trusted trace (D5 + (c): no stamp).
