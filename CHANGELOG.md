@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## 3.9.0 - 2026-10-09
+
 ### Security
 
 - **The merge gate acts only on the contract PFactory signed (#1667).** The
@@ -21,6 +23,59 @@
   Trusted tasks in flight at rollout have no stored record and hold once: merge
   them by hand or re-run `/from-plan`. The release runs an Alembic migration
   that adds `trusted_contracts`.
+
+## 3.8.3 - 2026-10-09
+
+### Security
+
+- **Agents in the web-server pod can no longer read the server's secrets
+  through `/proc`.** The server ran dumpable, so any process with its uid,
+  including the in-pod agents with read tools, could read
+  `/proc/1/environ`: `DATABASE_URL`, `JWT_SECRET`, `API_TOKEN` and the
+  trusted-plan keys. The server now sets itself non-dumpable at startup and in
+  the app lifespan, and refuses to start if that fails (#1679). Child
+  processes still inherit the full environment; that is #1680.
+
+### Fixed
+
+- **A kubejob build is marked active from the moment it is dispatched.** A
+  build dispatched between reconcile ticks could be reported as not running,
+  and a racing tick could drop it (#1662).
+
+## 3.8.2 - 2026-10-08
+
+### Security
+
+- **Agents no longer inherit the trusted-plan signing keys or the poller
+  token.** The agent environment scrub missed `AIFACTORY_TRUSTED_PLAN_KEY_*`
+  and `AIFACTORY_TOKEN`, both set in production. An agent running in the
+  web-server process could read the plan HMAC key and re-sign a task contract
+  it had edited, or call the API with the poller token. Kubejob builds pass an
+  explicit environment and were not exposed (#1668, part of #1667).
+- **Simple-client agents get the same scrub.** `create_simple_client` never
+  applied it, so batch analysis, conflict resolution, commit-message and other
+  simple-client agents inherited every host secret, including `API_TOKEN`,
+  `JWT_SECRET` and `DATABASE_URL` (#1676).
+
+### Fixed
+
+- The model picker labels `opus` and `sonnet` with the models they resolve to
+  (Claude Opus 5.5, Claude Sonnet 5) instead of Opus 4.8 and Sonnet 4.6 (#1666).
+
+## 3.8.1 - 2026-10-08
+
+### Fixed
+
+- **The deployment overlay now holds the live merge.** With auto-merge on, a
+  task whose contract declares a production target or a high risk class is held
+  for a human on the live merge path, whether or not the path-floor flag is set;
+  before, the live path applied the overlay only with
+  `AIFACTORY_PATH_RISK_FLOOR_ENFORCE` on. An unreadable task
+  contract (bad JSON, a non-object, deep nesting, non-UTF-8) also holds the
+  merge instead of auto-merging or aborting the PR. The published autonomy
+  matrix now shows hold-blocking in all four B5 rows (#1658, #1664).
+
+## 3.8.0 - 2026-10-08
 
 ### Changed
 
@@ -53,6 +108,124 @@
   default now spends the flagship where judgement compounds and Sonnet 5 where
   volume dominates. Per-task `phaseModels` still overrides either, so a task
   that needs Opus to code can say so (RFC-0014 precedence, #1397).
+
+### Added
+
+- **A generated autonomy matrix** (Factory#1962). `scripts/gen_autonomy_matrix.py`
+  calls `merge_policy` over probe inputs and renders what it returns — tiers →
+  disposition, the RFC-0013 overlay, VAL-floor semantics, the path floor, gate
+  determinism and a control-objective mapping — to
+  `docs/docs/compliance/autonomy-matrix.md` and a JSON twin for Fides. The
+  required `autonomy matrix matches the policy` check fails any PR that changes
+  the policy without regenerating. It also states one live gap plainly: the
+  deployment overlay is advisory on the live path (#1658).
+
+### Fixed
+
+- **Opus 5.5 is callable from the image** (#1661). The API refuses
+  `claude-opus-5-5` from Claude Code older than 2.1.280, and the image ran
+  2.1.235 (bundled with claude-agent-sdk 0.2.140) and 2.1.238 (on PATH). The
+  SDK is now floored at 0.2.164, which bundles 2.1.292, and the PATH CLI is
+  pinned to 2.1.293. Without this, every Opus phase would return 400.
+- The web Auto profile now sends `coding: 'sonnet'`. It used to send `'opus'`,
+  which overrode the backend default, so web tasks never got the Sonnet
+  coding default (#1661).
+- A build row carrying a live Job reference is no longer treated as terminal (#1635).
+- The cockpit reports a running build truthfully (#1629).
+- 11 of 12 npm lockfile CVEs closed, including a shipped DOM XSS (#1643);
+  PyJWT and brace-expansion bumped off their CVEs (#1637).
+- CI: uv's HTTP timeout raised off its 30 s default (#1642); chainguard/python
+  base image bumps.
+
+## 3.7.0 - 2026-09-29
+
+### Added
+
+- **The operator runtime allowlist is enforced.** RFC-0014's allowlist governed
+  nothing: `get_runtime_provider()` consulted it and had no production caller,
+  while the live path — `infer_provider_from_model` → `get_provider`, from eight
+  call sites — never did, so a `codex:`/`copilot:` model string selected a
+  provider with nothing in the way. It is now enforced at the one point both
+  factory entry points converge on. `claude` is always enabled, so a deployment
+  that names no runtimes is unaffected. Set `AIFACTORY_RUNTIMES` to opt in.
+  (#1607)
+
+  The gate's vocabulary is now **derived** from the provider registries rather
+  than restated: the two lists had already drifted, and `copilot`,
+  `github-models`, `openai-compatible` and `opencode` were resolvable by
+  `get_provider` and absent from the gate — so enforcing without this would have
+  made them permanently unreachable. Allowlist tokens also normalise through the
+  factory's alias table, so `gemini` enables `antigravity`.
+
+- **GitHub Copilot is selectable as a coder runtime.** Its provider, credential
+  and CLI were already present; only the registry entry was missing. (#790)
+
+- **Build Jobs declare the disk they need.** The Job asked for cpu and memory and
+  said nothing about ephemeral storage, so the scheduler could not refuse a build
+  that would fill the node — the first sign would have been the kubelet evicting
+  arbitrary pods. A 4Gi limit (not a request: a node can advertise far more
+  allocatable ephemeral storage than it really has) now bounds it, with 2Gi on
+  the gate pod. Landed in the Factory hub canonical first (Factory#3207).
+  (#1425)
+
+### Fixed
+
+- **A crashed dispatch no longer leaks a concurrency slot.** Dispatch created the
+  Kubernetes Job and only then wrote `worker_ref`; a crash between the two left a
+  `job_states` row `running` that no reaper could touch, holding a slot against
+  the global cap forever, silently, recoverable only by editing Postgres. The
+  root cause was `admit()` stamping `worker_ref={"kind": "subprocess"}` before any
+  backend had been chosen, which made the leaked row indistinguishable from a live
+  subprocess build. Admission now stamps `pending`, and the reaper rebuilds the
+  deterministic Job name and asks the API rather than assuming the Job is absent.
+  (#1606)
+
+- **Builds no longer re-download the CLIs the image already pins.** An
+  `install-clis` initContainer npm-installed claude-code, codex and gemini-cli
+  into a `/clis` emptyDir and prepended it to `PATH`, shadowing the pinned copies
+  the Dockerfile bakes — 790 MB per pod, unpinned, on the critical path of every
+  build, so two builds an hour apart could run different CLI versions. The
+  control plane dropped the same initContainer under #791; the build path has
+  caught up. `codex` and `gemini` now carry build-time `--version` assertions, so
+  a missing CLI fails the image once in CI rather than every build that needs it.
+  (#1621)
+
+- **CI: four required checks failed on every PR.** MinIO gated its images at
+  every registry, and the S3 step's `docker run` exit took lint and unit tests
+  down with it despite the step's own claim that the tests would skip. Replaced
+  with SeaweedFS, pinned by digest, and the step can no longer fail the job — the
+  tests skip visibly instead, while `main` stays strict. Separately, seven copies
+  of a test helper produced a bare `postgresql://` URL and left the driver to
+  SQLAlchemy, whose default moved from psycopg2 to psycopg v3; the suite now names
+  the driver in one place. (#1612)
+
+### Changed
+
+- A signed Task Contract's `execution.runtime` reaches the executor instead of
+  being silently dropped in translation. (#1607)
+
+## 3.6.85 - 2026-09-23
+
+### Fixed
+
+- **Approve works for kubejob builds whose branch the control plane never
+  fetched.** A kubejob build pushes the task branch from its own pod, so the
+  control-plane checkout may not have the ref, and `create-pr` and `merge`
+  refused with "Could not determine task branch" before reaching the 3.6.84
+  existing-PR and PR-merge paths. Both now resolve with
+  `resolve_task_branch_fetching`, which fetches origin and retries once on a
+  miss. `resolve_work_ref` shares it. (CFactory#457, #1598)
+
+- **CI: SBOMs are uploaded where they are generated.** After the SBOM job
+  split, the `release` job still uploaded SBOM files that only `sbom-attest`
+  creates, which would fail every release and skip attestation. The TechDocs
+  Dependabot write-back also committed the base-branch generator by restoring
+  it from the index. Both fixed. (#1600)
+
+### Changed
+
+- CI: the SBOM attestations retry and are re-runnable (#1583, #1595), and the
+  TechDocs dependencies page is regenerated on a Dependabot PR. (#1588, #1594)
 
 ## 3.6.84 - 2026-09-23
 
