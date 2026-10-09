@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1680
 intent: intent/2026-10-09-1680-child-process-env.md
 ---
