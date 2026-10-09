@@ -154,7 +154,8 @@ _AGENT_ENV_DENY_EXACT: set[str] = {
 # TRUSTED_PLAN_KEY: the HMAC keys that sign trusted plans; an agent holding one
 # could re-sign a task contract it edited (#1667).
 _AGENT_ENV_DENY_PATTERN = re.compile(
-    r"(SECRET|PASSWORD|PRIVATE_KEY|CREDENTIAL|_KMS|PASSPHRASE|TRUSTED_PLAN_KEY)", re.I
+    r"(SECRET|PASSWORD|PRIVATE_KEY|CREDENTIAL|(?:^|_)KMS|PASSPHRASE|TRUSTED_PLAN_KEY)",
+    re.I,
 )
 
 
@@ -209,7 +210,7 @@ def get_token_from_keychain() -> str | None:
 
 def _get_token_from_macos_keychain() -> str | None:
     """Get token from macOS Keychain."""
-    from core.child_env import child_env  # noqa: PLC0415 - child_env imports this module
+    from core.child_env import child_env  # noqa: PLC0415 - circular import
 
     try:
         result = subprocess.run(

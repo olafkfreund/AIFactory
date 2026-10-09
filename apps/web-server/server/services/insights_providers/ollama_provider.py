@@ -220,7 +220,9 @@ class OllamaProvider(ProviderStrategy):
             last_metrics: dict = {}
             use_tools = True  # Will be set to False if model doesn't support tools
 
-            async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0)) as client:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(300.0, connect=10.0)
+            ) as client:
                 for iteration in range(MAX_TOOL_ITERATIONS):
                     payload = {
                         "model": effective_model,

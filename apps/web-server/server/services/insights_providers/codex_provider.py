@@ -127,9 +127,13 @@ class CodexProvider(ProviderStrategy):
             stderr_output = await proc.stderr.read()
             if proc.returncode != 0 and not accumulated.strip():
                 stderr_text = (
-                    stderr_output.decode("utf-8", errors="replace").strip() if stderr_output else ""
+                    stderr_output.decode("utf-8", errors="replace").strip()
+                    if stderr_output
+                    else ""
                 )
-                error_msg = stderr_text or f"Codex CLI exited with code {proc.returncode}"
+                error_msg = (
+                    stderr_text or f"Codex CLI exited with code {proc.returncode}"
+                )
                 await broadcast_event(
                     "insights:chunk",
                     {

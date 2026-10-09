@@ -252,3 +252,18 @@ builds are untouched, so a revert affects only in-pod spawns.
   project's own hooks no longer run in builds either. Intended.
 - **Git LFS (user decision):** with hooks off, LFS objects are not uploaded
   on push. Known limit, follow-up #1690.
+- **Step 9 (Copilot review on #1691):**
+  - `KMS_FERNET_KEY` was not denied (pattern matched `_KMS` only); the
+    shared pattern now matches `KMS` at a name start too, so agents lose it
+    as well.
+  - **Child-only credential names (user decision, 2026-10-09):** every child
+    except the agent runner also drops `*_KEY` and `*_TOKEN` names the agent
+    scrub lets through (OAuth token, `CONTEXT7_KEY`, `S3_ACCESS_KEY`, ...).
+    `make_subprocess_env` passes `runner=True` and keeps the approved
+    agent-scrub semantics, because operator MCP credentials can use any env
+    name. The claude insights CLI also keeps `ANTHROPIC_AUTH_TOKEN`.
+  - `trusted_plan._git_subprocess_env` forces `GIT_TERMINAL_PROMPT=0` again.
+  - The opt-in `strip_anthropic_api_key=False` keeps `ANTHROPIC_API_KEY_FILE`.
+  - `providers.factory.get_provider` also calls `make_non_dumpable`, since
+    Codex, Gemini and Ollama runners never reach `create_client`.
+  - Non-Claude agent subprocesses inherit the runner env: follow-up #1692.

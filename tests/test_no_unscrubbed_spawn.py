@@ -38,10 +38,13 @@ def _is_environ(node: ast.AST) -> bool:
         return node.attr == "environ"
     if isinstance(node, ast.Call):
         f = node.func
-        return isinstance(f, ast.Attribute) and f.attr == "copy" and _is_environ(f.value)
+        return (
+            isinstance(f, ast.Attribute) and f.attr == "copy" and _is_environ(f.value)
+        )
     if isinstance(node, ast.Dict):
         return any(
-            k is None and _is_environ(v) for k, v in zip(node.keys, node.values, strict=True)
+            k is None and _is_environ(v)
+            for k, v in zip(node.keys, node.values, strict=True)
         )
     return False
 
@@ -65,7 +68,9 @@ _BACKEND_FILES = [
 
 def _scanned() -> list[tuple[Path, str]]:
     """(path, key) for every server file and every in-process backend file."""
-    server = [(p, p.relative_to(_SERVER).as_posix()) for p in sorted(_SERVER.rglob("*.py"))]
+    server = [
+        (p, p.relative_to(_SERVER).as_posix()) for p in sorted(_SERVER.rglob("*.py"))
+    ]
     return server + [(p, p.relative_to(_BACKEND).as_posix()) for p in _BACKEND_FILES]
 
 

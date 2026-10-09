@@ -334,7 +334,11 @@ async def create_pr_from_task(
         ]
     try:
         result = subprocess.run(
-            push_cmd, cwd=worktree_path, capture_output=True, text=True, timeout=60,
+            push_cmd,
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            timeout=60,
             env=child_env(keep=GITHUB_KEEP),
         )
         if result.returncode != 0:

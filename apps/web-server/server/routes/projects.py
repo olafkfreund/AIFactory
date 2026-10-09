@@ -38,7 +38,6 @@ from ..database.engine import DEFAULT_ORG_ID, get_db
 MemoryBackendType = Literal["graphiti", "file"]
 
 
-
 from ..tenancy import (
     DEFAULT_TENANT,
     multi_tenant_enabled,

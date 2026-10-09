@@ -23,10 +23,9 @@ _BACKEND_DIR = Path(__file__).resolve().parents[3] / "backend"
 if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
-from core.child_env import (  # noqa: E402 — needs sys.path above
-    GITHUB_KEEP,
-    child_env as _core_child_env,
-)
+from core import child_env as _core  # noqa: E402 — needs sys.path above
+
+GITHUB_KEEP = _core.GITHUB_KEEP
 
 __all__ = ["GITHUB_KEEP", "RUNNER_KEEP", "child_env", "make_subprocess_env"]
 
@@ -41,9 +40,16 @@ RUNNER_KEEP: tuple[str, ...] = (
 )
 
 
-def child_env(keep: Iterable[str] = (), extra: Mapping[str, str] | None = None) -> dict[str, str]:
+def child_env(
+    keep: Iterable[str] = (),
+    extra: Mapping[str, str] | None = None,
+    *,
+    runner: bool = False,
+) -> dict[str, str]:
     """Core ``child_env`` plus ``TRACEPARENT`` when a span is active (#1680)."""
-    env: dict[str, str] = _core_child_env(keep=keep, extra={**_traceparent(), **(extra or {})})
+    env: dict[str, str] = _core.child_env(
+        keep=keep, extra={**_traceparent(), **(extra or {})}, runner=runner
+    )
     return env
 
 
@@ -59,8 +65,12 @@ def make_subprocess_env(
     direct-API key is stripped unless ``strip_anthropic_api_key=False``, which
     only an explicitly consented batch invocation may pass.
     """
-    keep = RUNNER_KEEP if strip_anthropic_api_key else (*RUNNER_KEEP, "ANTHROPIC_API_KEY")
-    return child_env(keep=keep, extra=extra)
+    keep = (
+        RUNNER_KEEP
+        if strip_anthropic_api_key
+        else (*RUNNER_KEEP, "ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY_FILE")
+    )
+    return child_env(keep=keep, extra=extra, runner=True)
 
 
 def _traceparent() -> dict[str, str]:

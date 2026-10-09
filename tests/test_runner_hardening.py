@@ -29,7 +29,9 @@ def test_create_client_hardens(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
         client.create_client(tmp_path, tmp_path, "claude-sonnet-4-5")
 
 
-def test_create_simple_client_hardens(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_create_simple_client_hardens(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     from core import process_hardening, simple_client
 
     monkeypatch.setattr(process_hardening, "make_non_dumpable", _boom)
@@ -54,3 +56,13 @@ def test_make_non_dumpable_clears_flag() -> None:
         check=True,
     )
     assert out.stdout.strip() == "0"
+
+
+def test_get_provider_hardens(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Codex, Gemini and Ollama runners never reach create_client."""
+    from core import process_hardening
+    from providers import factory
+
+    monkeypatch.setattr(process_hardening, "make_non_dumpable", _boom)
+    with pytest.raises(_Hardened):
+        factory.get_provider("codex", "coding")

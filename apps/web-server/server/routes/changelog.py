@@ -738,7 +738,11 @@ async def get_commits_preview(
                 cmd.append("--no-merges")
 
         result = subprocess.run(
-            cmd, cwd=project_path, capture_output=True, text=True, timeout=30,
+            cmd,
+            cwd=project_path,
+            capture_output=True,
+            text=True,
+            timeout=30,
             env=child_env(),
         )
 

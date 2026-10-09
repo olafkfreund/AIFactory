@@ -385,7 +385,9 @@ async def clone_or_update(
         if branch:
             cmd.extend(["--branch", branch])
         cmd.extend(["--", fetch_url, str(workspace)])
-        await _run_git(cmd, cwd=workspace.parent, timeout=timeout_seconds, extra_env=cred_env)
+        await _run_git(
+            cmd, cwd=workspace.parent, timeout=timeout_seconds, extra_env=cred_env
+        )
         if credential is not None:
             # Strip the credential from origin so it isn't persisted in the
             # workspace's ``.git/config``. The clone already succeeded, so a
@@ -400,7 +402,9 @@ async def clone_or_update(
                 timeout_seconds=timeout_seconds,
                 after="cloned",
             )
-        logger.info("[workspace] cloned %s → %s", sanitize_log(git_url), sanitize_log(workspace))
+        logger.info(
+            "[workspace] cloned %s → %s", sanitize_log(git_url), sanitize_log(workspace)
+        )
         return workspace
 
 
@@ -461,7 +465,8 @@ async def _run_git(
     # transport helper (arbitrary command execution) even if a malicious URL
     # slips past the route validator.
     env = child_env(
-        keep=GITHUB_KEEP, extra={"GIT_ALLOW_PROTOCOL": "https:ssh:git", **(extra_env or {})}
+        keep=GITHUB_KEEP,
+        extra={"GIT_ALLOW_PROTOCOL": "https:ssh:git", **(extra_env or {})},
     )
     try:
         proc = await asyncio.create_subprocess_exec(

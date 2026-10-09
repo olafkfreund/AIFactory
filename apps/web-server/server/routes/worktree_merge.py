@@ -1915,7 +1915,11 @@ async def merge_worktree(
             merge_cmd.append("--no-commit")
 
         result = subprocess.run(
-            merge_cmd, cwd=project_path, capture_output=True, text=True, check=True,
+            merge_cmd,
+            cwd=project_path,
+            capture_output=True,
+            text=True,
+            check=True,
             env=child_env(),
         )
 

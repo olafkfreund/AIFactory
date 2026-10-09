@@ -816,7 +816,9 @@ async def search_files(
             query,
             search_root,
         ]
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=child_env())
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=30, env=child_env()
+        )
 
         for line in proc.stdout.strip().split("\n"):
             if not line:
