@@ -205,6 +205,7 @@ from agents.tools_pkg import (
 )
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from claude_agent_sdk.types import HookMatcher
+from core import process_hardening  # noqa: E402
 from core.auth import get_agent_env_blanks, get_sdk_env_vars, require_auth_token
 from prompts_pkg.project_context import (
     detect_infra_markers,
@@ -596,6 +597,8 @@ def create_client(
        (see security.py for ALLOWED_COMMANDS)
     4. Tool filtering - Each agent type only sees relevant tools (prevents misuse)
     """
+    if not process_hardening.make_non_dumpable():
+        logger.warning("could not make the process non-dumpable; env stays readable")
     oauth_token = require_auth_token()
     # Ensure SDK can access it via its expected env var
     os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
