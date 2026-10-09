@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1680
 spec: spec/2026-10-09-1680-child-process-env.md
 ---
