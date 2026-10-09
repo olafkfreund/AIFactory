@@ -16,7 +16,7 @@ from typing import Any
 
 from sqlalchemy import select
 
-from ..database.models import TrustedContract
+from server.database.models import TrustedContract
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ LOOKUP_FAILED: Any = object()
 
 @dataclass(frozen=True)
 class TrustedRecord:
-    contract: dict
+    contract: dict[str, Any]
     build_isolation: str | None
 
 
@@ -38,12 +38,12 @@ class TrustedContractStore:
     def __init__(self, session_factory: Any = None) -> None:
         if session_factory is None:
             # Lazy import keeps non-DB code paths clean (same as JobStateStore).
-            from ..database.engine import async_session_factory
+            from server.database.engine import async_session_factory  # noqa: PLC0415
 
             session_factory = async_session_factory
         self._session_factory = session_factory
 
-    async def put(self, spec_key: str, spec_id: str, contract: dict) -> None:
+    async def put(self, spec_key: str, spec_id: str, contract: dict[str, Any]) -> None:
         """Upsert. A changed contract is a new build, so the isolation stamp resets."""
         text = json.dumps(contract)
         async with self._session_factory() as session:

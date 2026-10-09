@@ -12,6 +12,7 @@ import copy
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -45,8 +46,8 @@ def _isolated_host(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AIFACTORY_TRUSTED_PLAN_KEY_PFACTORY__T1", KEY)
 
 
-def _plan(deployment: dict | None = None) -> dict:
-    plan: dict = {
+def _plan(deployment: dict[str, Any] | None = None) -> dict[str, Any]:
+    plan: dict[str, Any] = {
         "feature": "Contract tamper gate",
         "workflow_type": "feature",
         "phases": [
@@ -71,7 +72,7 @@ def _plan(deployment: dict | None = None) -> dict:
     return plan
 
 
-def _sign(plan: dict) -> dict:
+def _sign(plan: dict[str, Any]) -> dict[str, Any]:
     plan = copy.deepcopy(plan)
     plan.pop(APPROVAL_KEY, None)
     plan[APPROVAL_KEY] = sign_plan(
@@ -81,8 +82,8 @@ def _sign(plan: dict) -> dict:
 
 
 def _spec(
-    tmp_path: Path, deployment: dict | None = None, *, tier: str = "low"
-) -> tuple[Path, dict]:
+    tmp_path: Path, deployment: dict[str, Any] | None = None, *, tier: str = "low"
+) -> tuple[Path, dict[str, Any]]:
     """A spec dir written the way ``ingest_trusted_plan`` writes it."""
     signed = _sign(_plan(deployment))
     spec = tmp_path / ".aifactory" / "specs" / "001-x"
@@ -100,7 +101,7 @@ def _contract_file(spec: Path) -> Path:
     return spec / "context" / "task_contract.json"
 
 
-def _rec(contract: dict, isolation: str | None = "kubejob") -> TrustedRecord:
+def _rec(contract: dict[str, Any], isolation: str | None = "kubejob") -> TrustedRecord:
     return TrustedRecord(contract=contract, build_isolation=isolation)
 
 
