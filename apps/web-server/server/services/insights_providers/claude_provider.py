@@ -14,6 +14,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from server.utils.subprocess_env import child_env
+
 from ...crypto.secret_field import unseal_profiles  # noqa: TID252
 from ...websockets.events import broadcast_event
 from .base import ProviderInfo, ProviderModel, ProviderStrategy
@@ -53,6 +55,7 @@ class ClaudeProvider(ProviderStrategy):
                 capture_output=True,
                 text=True,
                 timeout=5,
+                env=child_env(),
             )
             if result.returncode == 0 and result.stdout.strip():
                 self._claude_path = result.stdout.strip()
@@ -187,18 +190,14 @@ class ClaudeProvider(ProviderStrategy):
         # Scrub ANTHROPIC_API_KEY (OAuth-only policy — see core/auth.py).
         # The Claude CLI we spawn here would happily use the direct-API
         # key if it inherited one; we want OAuth via CLAUDE_CODE_OAUTH_TOKEN.
-        from ...utils.subprocess_env import make_subprocess_env
-
-        env = make_subprocess_env()
+        env = child_env(keep=("CLAUDE_CODE_OAUTH_TOKEN",))
         env["PYTHONUNBUFFERED"] = "1"
         env.pop("CLAUDECODE", None)
 
         token, profile_id, profile_name = self._resolve_claude_token()
         if token:
             env["CLAUDE_CODE_OAUTH_TOKEN"] = token
-            logger.info(
-                f"[ClaudeProvider] Using profile: {profile_name} ({profile_id})"
-            )
+            logger.info(f"[ClaudeProvider] Using profile: {profile_name} ({profile_id})")
         else:
             logger.warning("[ClaudeProvider] No OAuth token available")
 
@@ -359,9 +358,7 @@ class ClaudeProvider(ProviderStrategy):
                 logger.warning(f"[ClaudeProvider] stderr: {stderr_text}")
 
             if proc.returncode != 0 and not accumulated_content.strip():
-                error_msg = (
-                    stderr_text or f"Claude CLI exited with code {proc.returncode}"
-                )
+                error_msg = stderr_text or f"Claude CLI exited with code {proc.returncode}"
                 logger.error(f"[ClaudeProvider] CLI failed: {error_msg}")
                 await broadcast_event(
                     "insights:chunk",

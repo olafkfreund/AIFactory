@@ -26,6 +26,7 @@ from server.project_registry import load_projects, save_projects
 from server.services.audit_service import ACTION_TASK_CREATE, audit_task_action
 from server.services.http_verdict import honest_status
 from server.specpath import browse_roots, safe_spec_component, within_roots
+from server.utils.subprocess_env import child_env
 
 from ..database.engine import DEFAULT_ORG_ID, get_db
 
@@ -35,6 +36,7 @@ from ..database.engine import DEFAULT_ORG_ID, get_db
 
 # BUG-1.2-003: Memory backend must be one of these values
 MemoryBackendType = Literal["graphiti", "file"]
+
 
 
 from ..tenancy import (
@@ -1029,6 +1031,7 @@ async def list_project_worktrees(
             capture_output=True,
             text=True,
             timeout=5,
+            env=child_env(),
         )
         base_branch = (
             base_result.stdout.strip() if base_result.returncode == 0 else "main"
@@ -1044,6 +1047,7 @@ async def list_project_worktrees(
             capture_output=True,
             text=True,
             timeout=10,
+            env=child_env(),
         )
         if result.returncode != 0:
             return {"worktrees": []}
@@ -1090,6 +1094,7 @@ async def list_project_worktrees(
                     capture_output=True,
                     text=True,
                     timeout=5,
+                    env=child_env(),
                 )
                 commit_count = (
                     int(commit_result.stdout.strip())
@@ -1104,6 +1109,7 @@ async def list_project_worktrees(
                     capture_output=True,
                     text=True,
                     timeout=10,
+                    env=child_env(),
                 )
 
                 files_changed = 0

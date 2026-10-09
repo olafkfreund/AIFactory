@@ -37,6 +37,8 @@ import subprocess
 from collections.abc import Sequence
 from functools import lru_cache
 
+from server.utils.subprocess_env import child_env
+
 _log = logging.getLogger(__name__)
 
 # System directories the sandbox exposes read-only (``-try`` so a layout that
@@ -72,6 +74,7 @@ def _bwrap_works(bwrap: str) -> bool:
             [bwrap, "--ro-bind", "/", "/", "--tmpfs", "/tmp", "--", "true"],
             capture_output=True,
             timeout=10,
+            env=child_env(),
         )
     except (OSError, subprocess.SubprocessError):
         return False

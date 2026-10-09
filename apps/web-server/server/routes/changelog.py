@@ -22,6 +22,7 @@ from server.services.argv_safety import (
 )
 from server.services.http_verdict import honest_status
 from server.specpath import safe_spec_component
+from server.utils.subprocess_env import child_env
 
 from ..services.insights_service import get_insights_service
 
@@ -515,6 +516,7 @@ async def get_changelog_branches(projectId: str = Path(...)):
             capture_output=True,
             text=True,
             timeout=10,
+            env=child_env(),
         )
         current_branch = (
             current_result.stdout.strip() if current_result.returncode == 0 else ""
@@ -528,6 +530,7 @@ async def get_changelog_branches(projectId: str = Path(...)):
             capture_output=True,
             text=True,
             timeout=10,
+            env=child_env(),
         )
 
         if result.returncode != 0:
@@ -624,6 +627,7 @@ async def get_changelog_tags(projectId: str = Path(...)):
             capture_output=True,
             text=True,
             timeout=10,
+            env=child_env(),
         )
 
         if result.returncode != 0:
@@ -734,7 +738,8 @@ async def get_commits_preview(
                 cmd.append("--no-merges")
 
         result = subprocess.run(
-            cmd, cwd=project_path, capture_output=True, text=True, timeout=30
+            cmd, cwd=project_path, capture_output=True, text=True, timeout=30,
+            env=child_env(),
         )
 
         if result.returncode != 0:

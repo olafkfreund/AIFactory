@@ -25,7 +25,7 @@ from server.error_ref import client_error
 from server.services.gh import run_gh_command  # re-exported: see services/gh.py
 from server.services.git_base_url import safe_git_base_url  # #1360
 from server.services.http_verdict import honest_status
-from server.utils.subprocess_env import child_env
+from server.utils.subprocess_env import GITHUB_KEEP, child_env
 
 logger = logging.getLogger(__name__)
 
@@ -435,6 +435,7 @@ def install_github_cli():
             capture_output=True,
             text=True,
             timeout=120,
+            env=child_env(),
         )
         if result.returncode != 0:
             return {
@@ -631,6 +632,7 @@ async def start_github_auth():
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             stdin=asyncio.subprocess.PIPE,
+            env=child_env(keep=GITHUB_KEEP),
         )
         _gh_auth_proc = proc
 
@@ -860,6 +862,7 @@ async def add_git_remote(request: AddRemoteRequest):
             cwd=request.projectPath,
             check=True,
             capture_output=True,
+            env=child_env(),
         )
         return {"success": True, "data": {"remoteUrl": remote_url}}
     except subprocess.CalledProcessError as e:

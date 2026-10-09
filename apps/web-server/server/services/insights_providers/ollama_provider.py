@@ -12,6 +12,8 @@ import subprocess
 import time
 from pathlib import Path
 
+from server.utils.subprocess_env import child_env
+
 from ...websockets.events import broadcast_event
 from .base import ProviderInfo, ProviderModel, ProviderStrategy
 from .tools import execute_tool, get_tool_definitions
@@ -87,6 +89,7 @@ class OllamaProvider(ProviderStrategy):
                     capture_output=True,
                     text=True,
                     timeout=2,
+                    env=child_env(),
                 )
                 if result.returncode == 0 and result.stdout.strip():
                     lines = result.stdout.strip().splitlines()
@@ -217,9 +220,7 @@ class OllamaProvider(ProviderStrategy):
             last_metrics: dict = {}
             use_tools = True  # Will be set to False if model doesn't support tools
 
-            async with httpx.AsyncClient(
-                timeout=httpx.Timeout(300.0, connect=10.0)
-            ) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0)) as client:
                 for iteration in range(MAX_TOOL_ITERATIONS):
                     payload = {
                         "model": effective_model,

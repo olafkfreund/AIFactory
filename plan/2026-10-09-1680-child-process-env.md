@@ -230,3 +230,9 @@ builds are untouched, so a revert affects only in-pod spawns.
   variable first (`build_backend._git`, `_run_git`), so
   `test_no_environ_copy_outside_helper` now flags any whole-environ copy
   outside `subprocess_env.py` and the PTY session.
+- **Step 5:** antigravity also keeps `GEMINI_API_KEY` and `GOOGLE_API_KEY`
+  (`cli_accounts` detects Gemini API-key auth), alongside the OAuth token.
+  `test_resolve_conflicts_reads_the_commit` forced a failing commit with a
+  pre-commit hook, which hooksPath now disables; it fails the commit via
+  `commit.gpgsign` and `gpg.program=false` instead. Consequence of the plan:
+  a repo's own hooks no longer run on server-made merge and conflict commits.

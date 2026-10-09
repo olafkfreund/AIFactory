@@ -130,9 +130,7 @@ class OpenAICompatProvider(ProviderStrategy):
             accumulated = ""
             stream_start = time.monotonic()
 
-            async with httpx.AsyncClient(
-                timeout=httpx.Timeout(300.0, connect=10.0)
-            ) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0)) as client:
                 async with client.stream(
                     "POST",
                     f"{self.base_url}/v1/chat/completions",

@@ -49,6 +49,8 @@ import shlex
 import shutil
 from pathlib import Path
 
+from server.utils.subprocess_env import child_env
+
 # ---------------------------------------------------------------------------
 # Exception hierarchy
 # ---------------------------------------------------------------------------
@@ -345,6 +347,7 @@ class RmuxWrapper:
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=child_env(),
             )
         except FileNotFoundError as e:
             raise RmuxNotInstalledError(

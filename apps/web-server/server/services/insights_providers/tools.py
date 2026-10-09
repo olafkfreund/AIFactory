@@ -9,6 +9,8 @@ import logging
 import subprocess
 from pathlib import Path
 
+from server.utils.subprocess_env import child_env
+
 logger = logging.getLogger(__name__)
 
 MAX_FILE_LINES = 500
@@ -73,9 +75,7 @@ def _list_directory(project_path: Path, args: dict) -> str:
         return f"Error: Not a directory or does not exist: {dir_path}"
 
     try:
-        entries = sorted(
-            resolved.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())
-        )
+        entries = sorted(resolved.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
     except PermissionError:
         return f"Error: Permission denied: {dir_path}"
 
@@ -96,9 +96,7 @@ def _search_code(project_path: Path, args: dict) -> str:
         return "Error: pattern is required"
 
     glob_filter = args.get("glob", None)
-    max_results = min(
-        int(args.get("max_results", MAX_SEARCH_RESULTS)), MAX_SEARCH_RESULTS
-    )
+    max_results = min(int(args.get("max_results", MAX_SEARCH_RESULTS)), MAX_SEARCH_RESULTS)
 
     cmd = [
         "grep",
@@ -120,6 +118,7 @@ def _search_code(project_path: Path, args: dict) -> str:
             text=True,
             timeout=SEARCH_TIMEOUT,
             cwd=str(project_path.resolve()),
+            env=child_env(),
         )
         output = result.stdout.strip()
         if not output:

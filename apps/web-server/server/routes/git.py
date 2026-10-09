@@ -388,6 +388,7 @@ async def check_claude_code_version():
                 capture_output=True,
                 text=True,
                 timeout=5,
+                env=child_env(),
             )
             if result.returncode == 0:
                 claude_path = result.stdout.strip()
@@ -400,6 +401,7 @@ async def check_claude_code_version():
                 capture_output=True,
                 text=True,
                 timeout=5,
+                env=child_env(),
             )
             if result.returncode == 0:
                 return {
@@ -501,6 +503,7 @@ async def install_claude_code():
                 capture_output=True,
                 text=True,
                 timeout=60,
+                env=child_env(),
             )
             if result.returncode != 0:
                 return {
@@ -779,6 +782,7 @@ def _check_npm_package_installed(package: str) -> bool:
             capture_output=True,
             text=True,
             timeout=8,
+            env=child_env(),
         )
         return result.returncode == 0 and package in result.stdout
     except Exception:

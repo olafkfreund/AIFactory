@@ -97,14 +97,12 @@ class AntigravityProvider(ProviderStrategy):
         cmd.append(antigravity_cmd)
 
         # Scrub ANTHROPIC_API_KEY (OAuth-only policy — see core/auth.py).
-        from ...utils.subprocess_env import make_subprocess_env
+        from ...utils.subprocess_env import child_env
 
-        env = make_subprocess_env()
+        env = child_env(keep=("CLAUDE_CODE_OAUTH_TOKEN", "GEMINI_API_KEY", "GOOGLE_API_KEY"))
         env["PYTHONUNBUFFERED"] = "1"
 
-        logger.info(
-            f"[AntigravityProvider] Starting: {binary} --model {effective_model}"
-        )
+        logger.info(f"[AntigravityProvider] Starting: {binary} --model {effective_model}")
 
         try:
             await broadcast_event(
@@ -145,13 +143,9 @@ class AntigravityProvider(ProviderStrategy):
             stderr_output = await proc.stderr.read()
             if proc.returncode != 0 and not accumulated.strip():
                 stderr_text = (
-                    stderr_output.decode("utf-8", errors="replace").strip()
-                    if stderr_output
-                    else ""
+                    stderr_output.decode("utf-8", errors="replace").strip() if stderr_output else ""
                 )
-                error_msg = (
-                    stderr_text or f"Antigravity CLI exited with code {proc.returncode}"
-                )
+                error_msg = stderr_text or f"Antigravity CLI exited with code {proc.returncode}"
                 await broadcast_event(
                     "insights:chunk",
                     {

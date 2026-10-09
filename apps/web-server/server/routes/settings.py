@@ -67,6 +67,7 @@ DEFAULT_PARALLEL_WORKERS = 3
 MIN_PARALLEL_WORKERS = 1
 MAX_PARALLEL_WORKERS = 8
 
+
 from ..config import get_settings
 
 router = APIRouter()
@@ -2777,6 +2778,7 @@ async def get_auth_status():
                 capture_output=True,
                 text=True,
                 timeout=5,
+                env=child_env(),
             )
             claude_installed = result.returncode == 0
 
