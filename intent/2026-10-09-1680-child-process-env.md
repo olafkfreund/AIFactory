@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1680
 author: olafkfreund
 ---
@@ -67,6 +67,10 @@ D4 keeps auto-merge safe in production, but the secrets are still exposed.
   rewriting each call.
 
 ## Open questions
+
+Answered (user, 2026-10-09): 1, every git the server runs sets
+`core.hooksPath=/dev/null`. 2, deny-list (the `core/auth.py` scrub set), with
+needed secrets passed by name. 3, a pytest that scans the spawn sites.
 
 1. **Scope of the hook fix.** Should every server-run `git` set
    `core.hooksPath=/dev/null`, or only `git` in agent-written worktrees? The
