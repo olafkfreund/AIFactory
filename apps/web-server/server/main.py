@@ -745,8 +745,31 @@ def custom_openapi():
 app.openapi = custom_openapi
 
 
+def _make_non_dumpable() -> None:
+    """Hide this process's environ and memory from same-uid processes.
+
+    The agents this server spawns run as the same uid, and /proc/<pid>/environ
+    of a dumpable process is readable by that uid: it holds DATABASE_URL,
+    JWT_SECRET, API_TOKEN and the trusted-plan keys. A non-dumpable process's
+    /proc files are owned by root, so without CAP_SYS_PTRACE they are unreadable.
+    Children reset to dumpable on execve; their env is scrubbed separately.
+    """
+    import ctypes
+    import sys
+
+    if not sys.platform.startswith("linux"):
+        return
+    pr_set_dumpable = 4
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(pr_set_dumpable, 0, 0, 0, 0) != 0:
+        logger.warning("prctl(PR_SET_DUMPABLE, 0) failed: errno %d", ctypes.get_errno())
+
+
 if __name__ == "__main__":
     import uvicorn
+
+    # Before anything else: in-pod agents must not read our secrets via /proc.
+    _make_non_dumpable()
 
     settings = get_settings()
 
