@@ -606,6 +606,11 @@ Recorded during implementation.
   Alembic head to `c1f5a3d7b924`. The new migration moves it, so the test now
   checks for a single head with `c1f5a3d7b924` in its chain. The original
   intent of the check is unchanged.
+- **Step 5.** The existing `test_signed_plan_still_allocates_and_builds` has
+  no database, so it now patches `execution_routes.TrustedContractStore` with
+  an `AsyncMock` `put`. Its assertions are unchanged. Separately, the step 4
+  `resolve_contract` was split into a `_record_verified` helper to satisfy
+  strict ruff (PLR0911). Its behaviour is unchanged.
 
 ## Rollback
 

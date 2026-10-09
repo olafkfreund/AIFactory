@@ -137,6 +137,11 @@ def test_signed_plan_still_allocates_and_builds(project, monkeypatch):
         patch.object(execution_routes, "resolve_project_id", return_value=project_id),
         patch.object(execution_routes, "get_agent_service", return_value=fake_service),
         patch.object(execution_routes, "emit_task_status", AsyncMock()),
+        patch.object(
+            execution_routes,
+            "TrustedContractStore",
+            return_value=MagicMock(put=AsyncMock()),
+        ),
     ):
         client = TestClient(app)
         resp = client.post(

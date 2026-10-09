@@ -29,6 +29,10 @@ from server.services.audit_service import (
     audit_task_action,
     audit_task_route,
 )
+from server.services.trusted_contract_store import (
+    TrustedContractStore,
+    spec_key_for_dir,
+)
 from server.specpath import safe_spec_component
 
 from ..services import task_control
@@ -1439,6 +1443,21 @@ async def create_from_trusted_plan(
                 "reasons": result.reasons,
             },
         )
+
+    # #1667: keep the signed contract where the coding agent cannot edit it; the
+    # merge gate decides from this row. No record, no build.
+    try:
+        await TrustedContractStore().put(
+            spec_key_for_dir(spec_dir), spec_id, request.plan
+        )
+    except Exception as exc:  # noqa: BLE001 - any failure must stop the build
+        logger.error(
+            "[InstallPlan] trusted contract record not written; build not started"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Trusted contract record could not be stored",
+        ) from exc
 
     # RFC-0001 correlation: ingest stamped {approved_by, trusted_plan} provenance;
     # also record the GitHub issue number from the contract's correlation_key so

@@ -10,13 +10,15 @@ import json
 from pathlib import Path
 from typing import Any
 
+from server.services.trusted_contract_store import LOOKUP_FAILED, TrustedRecord
+
 _ISOLATED_STAMPS = ("kubejob", "sandbox-pidns")
 
 
 def host_isolated() -> bool:
     """True when THIS web server's environment isolates the agent (D4-i)."""
-    from . import sandbox
-    from .build_backend import selected_backend
+    from server.services import sandbox  # noqa: PLC0415
+    from server.services.build_backend import selected_backend  # noqa: PLC0415
 
     if selected_backend() == "kubejob":
         return True
@@ -46,36 +48,37 @@ def has_trusted_trace(spec_dir: Path) -> bool:
     return isinstance(prov, dict) and prov.get("trusted_plan") is True
 
 
+def _record_verified(spec_dir: Path, record: TrustedRecord) -> bool:
+    """The record's signature holds, its build was isolated, and the spec copy matches."""
+    from trusted_plan import (  # type: ignore[import-not-found,unused-ignore] # noqa: PLC0415
+        _canonical,
+        verify_plan_signature,
+    )
+
+    ok, _reason = verify_plan_signature(record.contract)
+    if not ok or record.build_isolation not in _ISOLATED_STAMPS:
+        return False
+    on_disk = json.loads((spec_dir / "context" / "task_contract.json").read_text())
+    return bool(_canonical(on_disk) == _canonical(record.contract))
+
+
 def resolve_contract(spec_dir: Path, trusted: Any) -> tuple[str, dict[str, Any]]:
     """Return ``(state, contract)``; state is ``verified``, ``hold`` or ``legacy``."""
     try:
         from pfactory.tfactory_client import (  # type: ignore[import-not-found,unused-ignore] # noqa: PLC0415
             load_task_contract,
         )
-        from trusted_plan import (  # type: ignore[import-not-found,unused-ignore] # noqa: PLC0415
-            _canonical,
-            verify_plan_signature,
-        )
     except ImportError:
         return "hold", {}
 
-    from .trusted_contract_store import LOOKUP_FAILED, TrustedRecord
-
     spec_dir = Path(spec_dir)
     try:
-        if trusted is LOOKUP_FAILED:
-            return "hold", {}
         if isinstance(trusted, TrustedRecord):
-            ok, _reason = verify_plan_signature(trusted.contract)
-            if not ok or trusted.build_isolation not in _ISOLATED_STAMPS:
-                return "hold", {}
-            on_disk = json.loads(
-                (spec_dir / "context" / "task_contract.json").read_text()
-            )
-            if _canonical(on_disk) != _canonical(trusted.contract):
-                return "hold", {}
-            return "verified", trusted.contract
-        if has_trusted_trace(spec_dir):
+            if _record_verified(spec_dir, trusted):
+                return "verified", trusted.contract
+            return "hold", {}
+        # LOOKUP_FAILED, or no record but a trusted trace (D5 + (c): no stamp).
+        if trusted is LOOKUP_FAILED or has_trusted_trace(spec_dir):
             return "hold", {}
     except Exception:  # noqa: BLE001 - any doubt holds; only legacy keeps old behaviour
         return "hold", {}
