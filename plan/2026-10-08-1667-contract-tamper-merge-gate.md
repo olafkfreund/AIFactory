@@ -611,6 +611,10 @@ Recorded during implementation.
   an `AsyncMock` `put`. Its assertions are unchanged. Separately, the step 4
   `resolve_contract` was split into a `_record_verified` helper to satisfy
   strict ruff (PLR0911). Its behaviour is unchanged.
+- **Step 6.** Both stamp sites call one helper,
+  `trusted_contract_store.stamp_spawn`, instead of two inline `try/except`
+  blocks. The behaviour is the same: a failed stamp stays empty, which holds.
+  The step 5 `noqa: BLE001` was removed as unused (RUF100).
 
 ## Rollback
 

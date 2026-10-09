@@ -1223,6 +1223,17 @@ class AgentService(
 
         cmd = build_sandboxed_command(cmd, project_path)
 
+        # #1667: stamp from the REAL argv. --unshare-pid counts only before "--",
+        # since what follows is agent-adjacent input.
+        from . import sandbox  # noqa: PLC0415
+        from .trusted_contract_store import stamp_spawn  # noqa: PLC0415
+
+        head = cmd[: cmd.index("--")] if "--" in cmd else cmd
+        pidns = (
+            bool(head) and head[0] == sandbox._bwrap_path() and "--unshare-pid" in head
+        )
+        await stamp_spawn(spec_dir, "sandbox-pidns" if pidns else "none")
+
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=slave_fd,

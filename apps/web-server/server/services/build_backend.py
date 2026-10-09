@@ -1278,6 +1278,11 @@ class KubeJobBuildBackend:
         owns_client = batch is None
         if owns_client:
             batch = await self._batch_api()
+        # #1667: stamp before the Job exists so the record never lags the build.
+        from .trusted_contract_store import stamp_spawn  # noqa: PLC0415
+
+        await stamp_spawn(spec_dir_for(project_path, spec_id), "kubejob")
+
         try:
             await batch.create_namespaced_job(namespace, manifest)
         finally:

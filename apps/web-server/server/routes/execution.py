@@ -1450,7 +1450,7 @@ async def create_from_trusted_plan(
         await TrustedContractStore().put(
             spec_key_for_dir(spec_dir), spec_id, request.plan
         )
-    except Exception as exc:  # noqa: BLE001 - any failure must stop the build
+    except Exception as exc:
         logger.error(
             "[InstallPlan] trusted contract record not written; build not started"
         )

@@ -87,3 +87,11 @@ async def lookup(spec_dir: str | Path) -> TrustedRecord | None | Any:
     except Exception:  # noqa: BLE001 - a failed read must hold, never raise
         logger.error("[trusted-contract] record lookup failed; auto-merge withheld")
         return LOOKUP_FAILED
+
+
+async def stamp_spawn(spec_dir: str | Path, kind: str) -> None:
+    """Stamp how a build is isolated. A failed stamp stays empty, which holds."""
+    try:
+        await TrustedContractStore().stamp_isolation(spec_key_for_dir(spec_dir), kind)
+    except Exception:  # noqa: BLE001 - must not block the build
+        logger.error("[trusted-contract] isolation stamp not written")
