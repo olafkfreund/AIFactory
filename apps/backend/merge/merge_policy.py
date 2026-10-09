@@ -38,6 +38,7 @@ __all__ = [
     "AUTO_MERGE",
     "HOLD_ASYNC",
     "HOLD_BLOCKING",
+    "HUMAN_ONLY_GATES",
     "decide_merge",
     "deployment_block_reasons",
     "floor_from_paths",
@@ -52,10 +53,7 @@ HOLD_BLOCKING = "hold-blocking"
 # System gates that can only ever be cleared by a HUMAN. Every required gate
 # blocks while it is unsatisfied; this set only changes the wording of the
 # reason, so the audit trail says which ones no amount of automation can clear.
-_HUMAN_ONLY_GATES: frozenset[str] = frozenset({"human-approval"})
-
-# Back-compat alias for the old name (it was public-ish via the module).
-_BLOCKING_GATES = _HUMAN_ONLY_GATES
+HUMAN_ONLY_GATES: frozenset[str] = frozenset({"human-approval"})
 
 # Deployment risk classes that may never auto-merge autonomously.
 _NON_AUTONOMOUS_RISK: frozenset[str] = frozenset({"high"})
@@ -214,7 +212,7 @@ def deployment_block_reasons(
       * ``production_classification: production`` => never autonomous (VAL-4).
       * ANY required ``system_gates`` entry that is NOT in ``satisfied_gates``
         => held. This used to intersect the required set with
-        ``_BLOCKING_GATES`` (``{"human-approval"}``), so a contract declaring
+        ``HUMAN_ONLY_GATES`` (``{"human-approval"}``), so a contract declaring
         ``system_gates: ["security-scan", "sbom", "dr-signoff"]`` produced ZERO
         reasons while the module docstring promised those pre-deploy scans held
         the merge. The docstring was right and the code was a near no-op; the
@@ -244,7 +242,7 @@ def deployment_block_reasons(
     required_gates = _str_set(deployment.get("system_gates"))
     have = _str_set(satisfied_gates)
     for gate in sorted(required_gates - have):
-        if gate in _HUMAN_ONLY_GATES:
+        if gate in HUMAN_ONLY_GATES:
             reasons.append(
                 f"required system gate '{gate}' is not satisfied "
                 "(only a human can clear it)"
