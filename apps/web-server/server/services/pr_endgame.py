@@ -759,28 +759,32 @@ def human_approval_head(
     means no approval.
     """
     base = f"/repos/{owner}/{repo}/pulls/{pr}"
-    pr_res = runner(
-        ["gh", "api", base, "--jq", "{head: .head.sha, author: .user.login}"], None
-    )
-    if not pr_res.ok:
+    try:
+        # A timeout or transport error is no approval, not a crashed watcher.
+        pr_res = runner(
+            ["gh", "api", base, "--jq", "{head: .head.sha, author: .user.login}"],
+            None,
+        )
+        rv_res = runner(
+            [
+                "gh",
+                "api",
+                "--paginate",
+                f"{base}/reviews",
+                "--jq",
+                ".[] | {state, login: .user.login, type: .user.type, commit_id}",
+            ],
+            None,
+        )
+    except Exception:  # noqa: BLE001 - fail closed
         return None
-    rv_res = runner(
-        [
-            "gh",
-            "api",
-            "--paginate",
-            f"{base}/reviews",
-            "--jq",
-            ".[] | {state, login: .user.login, type: .user.type, commit_id}",
-        ],
-        None,
-    )
-    if not rv_res.ok:
+    if not (pr_res.ok and rv_res.ok):
         return None
     try:
         info = json.loads(pr_res.out)
         head, author = info["head"], info["author"]
-        if not head:
+        # A null author (deleted account) cannot prove "not the author".
+        if not (head and isinstance(author, str) and author):
             return None
         latest: dict[str, dict[str, Any]] = {}
         for line in rv_res.out.splitlines():
@@ -799,8 +803,10 @@ def human_approval_head(
     for login, row in latest.items():
         if (
             not blocked
+            and isinstance(login, str)
+            and login
             and login != author
-            and row.get("type") != "Bot"
+            and row.get("type") == "User"  # a null or ghost user is not a human
             and row["state"] == "APPROVED"
             and row.get("commit_id") == head
         ):

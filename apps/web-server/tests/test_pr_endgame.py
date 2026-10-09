@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -215,6 +216,8 @@ def test_human_approval_head_returns_the_approved_sha() -> None:
         [_rv("APPROVED"), _rv("DISMISSED")],
         # another reviewer's standing change request blocks the approval
         [_rv("APPROVED"), _rv("CHANGES_REQUESTED", login="bob")],
+        # a deleted / unidentified account is not a human approver
+        [{"state": "APPROVED", "login": None, "type": None, "commit_id": "abc"}],
     ],
 )
 def test_human_approval_head_rejects(rows: list[dict[str, str]]) -> None:
@@ -902,3 +905,18 @@ def test_gather_pr_context_base_branch_head_uses_build_branch(tmp_path):
     ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r, trusted=None)
     assert ctx is not None
     assert ctx["branch"] == "aifactory/040-feature-x"  # NOT "main"
+
+
+def test_human_approval_head_null_pr_author_fails_closed() -> None:
+    r = _approval_runner(_rv("APPROVED"))
+    r.routes[".head.sha"] = CmdResult(
+        0, json.dumps({"head": "abc", "author": None}), ""
+    )
+    assert pe.human_approval_head("o", "r", 5, runner=r) is None
+
+
+def test_human_approval_head_runner_error_fails_closed() -> None:
+    def boom(_argv: list[str], _cwd: object) -> CmdResult:
+        raise subprocess.TimeoutExpired("gh", 30)
+
+    assert pe.human_approval_head("o", "r", 5, runner=boom) is None

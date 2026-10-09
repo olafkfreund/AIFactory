@@ -347,6 +347,10 @@ the tests run on an isolated host (#1667's `_isolated_host` fixture).
   Accepted: about a second between the approval check and `gh pr merge`, in
   which a reviewer could withdraw approval. Branch protection with required
   reviews would close that.
+- **PR review fixes (Copilot on #1687).** `human_approval_head` fails closed
+  on a runner exception (such as a `gh` timeout), on a null PR author, and on
+  a reviewer with no login or a type other than `User`. The unused
+  `_BLOCKING_GATES` alias is deleted.
 
 ## Rollback
 
