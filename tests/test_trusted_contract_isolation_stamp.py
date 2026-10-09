@@ -7,6 +7,7 @@ Job dispatch, ``sandbox-pidns`` only when the real argv is bwrap with
 
 from __future__ import annotations
 
+import importlib
 import sys
 from pathlib import Path
 
@@ -18,7 +19,6 @@ for _p in (_REPO / "apps" / "web-server", _REPO / "apps" / "backend"):
     if str(_p) not in sys.path:
         sys.path.append(str(_p))
 
-from server.database import engine as db_engine  # noqa: E402
 from server.database.models import Base  # noqa: E402
 from server.services import agent_service as agent_mod  # noqa: E402
 from server.services import build_backend as bb  # noqa: E402
@@ -46,6 +46,8 @@ async def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         await conn.run_sync(Base.metadata.create_all)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     # TrustedContractStore() resolves its session factory lazily from here.
+    # Resolve at run time: other suites swap sys.modules entries after collection.
+    db_engine = importlib.import_module("server.database.engine")
     monkeypatch.setattr(db_engine, "async_session_factory", factory)
     sandbox._bwrap_works.cache_clear()
     yield TrustedContractStore(session_factory=factory)

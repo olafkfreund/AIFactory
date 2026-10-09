@@ -628,6 +628,9 @@ Recorded during implementation.
   carries `noqa: PLR0913` for its sixth argument. The `build_ingest_payload`
   stub in `tests/audit/test_task_action_audit.py` accepts `**_k`, and no
   assertion changed.
+- **Step 9.** `tests/test_trusted_contract_isolation_stamp.py` resolves
+  `server.database.engine` inside its fixture with `importlib`. Its
+  module-level reference went stale in the full root run.
 
 ## Rollback
 
