@@ -213,6 +213,7 @@ async def run_terminal_completion(
             # Same helper the endgame calls; idempotent, best-effort.
             # #1667: one lookup of the signed record, passed to every merge-path
             # consumer below. A failed read is LOOKUP_FAILED, which holds.
+            from .trusted_contract import handoff_contract  # noqa: PLC0415
             from .trusted_contract_store import lookup  # noqa: PLC0415
 
             trusted = await lookup(spec_dir)
@@ -240,7 +241,9 @@ async def run_terminal_completion(
                     sys.path.insert(0, str(backend_path))
                 from pfactory.tfactory_client import maybe_auto_handoff_tfactory
 
-                handoff = await maybe_auto_handoff_tfactory(spec_dir, spec_id)
+                handoff = await maybe_auto_handoff_tfactory(
+                    spec_dir, spec_id, contract=handoff_contract(spec_dir, trusted)
+                )
                 if handoff.get("sent"):
                     logger.info(
                         "[AgentService] Auto-handed off %s to TFactory for testing",
@@ -288,7 +291,11 @@ async def run_terminal_completion(
                                 maybe_auto_handoff_tfactory,
                             )
 
-                            await maybe_auto_handoff_tfactory(spec_dir, spec_id)
+                            await maybe_auto_handoff_tfactory(
+                                spec_dir,
+                                spec_id,
+                                contract=handoff_contract(spec_dir, trusted),
+                            )
 
                         def _re_test_sync() -> None:
                             spawn(_re_test())

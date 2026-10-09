@@ -187,7 +187,7 @@ def path_floor_enforced(project_path: Path | None = None) -> bool:
     return _flag(PATH_RISK_FLOOR_ENV, project_path)
 
 
-def apply_path_risk_floor(
+def apply_path_risk_floor(  # noqa: PLR0913 - trusted is the required #1667 keyword
     project_path: Path,
     spec_dir: Path,
     spec_id: str,

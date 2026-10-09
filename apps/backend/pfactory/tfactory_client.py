@@ -572,7 +572,9 @@ def _issue_from_requirements(req: dict[str, Any]) -> int | None:
     return None
 
 
-def build_ingest_payload(spec_dir: Path, spec_id: str) -> dict:
+def build_ingest_payload(
+    spec_dir: Path, spec_id: str, *, contract: dict[str, Any] | None = None
+) -> dict:
     """Build the payload for TFactory's self-contained spec intake
     (``POST /api/specs/ingest``): ``{project_id, spec_id, spec_text}``.
 
@@ -618,7 +620,9 @@ def build_ingest_payload(spec_dir: Path, spec_id: str) -> dict:
     # Carry the full signed Task Contract so TFactory tests the DECLARED ACs
     # (tfactory block: lanes/frameworks/ac_to_code_map) rather than inferring
     # from spec_text. Present only for trusted plans; absent → TFactory infers.
-    contract = load_task_contract(spec_dir)
+    # `contract` given (#1667): the web server decided it; `{}` means held, so
+    # TFactory infers instead of trusting the agent-writable spec copy.
+    contract = load_task_contract(spec_dir) if contract is None else dict(contract)
     # Propagate the build's per-phase model choice to TFactory's verify lanes so a
     # non-default (e.g. Ollama) build is VERIFIED on the same provider instead of
     # silently falling back to TFactory's default (sonnet). The choice lives in
@@ -792,7 +796,9 @@ def wants_auto_handoff(spec_dir: Path) -> bool:
     )
 
 
-async def maybe_auto_handoff_tfactory(spec_dir: Path, spec_id: str) -> dict:
+async def maybe_auto_handoff_tfactory(
+    spec_dir: Path, spec_id: str, *, contract: dict[str, Any] | None = None
+) -> dict:
     """On a task's terminal SUCCESS, hand the finished build to TFactory for
     testing — but only when the task opted in (``auto_handover_tfactory`` in
     task_metadata) AND TFactory is configured (``TFACTORY_BASE_URL``). The
@@ -815,7 +821,7 @@ async def maybe_auto_handoff_tfactory(spec_dir: Path, spec_id: str) -> dict:
     if build_commit_count(spec_dir, spec_id) == 0:
         return {"sent": False, "reason": "empty_build"}
     try:
-        payload = build_ingest_payload(spec_dir, spec_id)
+        payload = build_ingest_payload(spec_dir, spec_id, contract=contract)
         result = await send_handoff(payload)
     except Exception as exc:  # noqa: BLE001 — must never break task completion
         return {"sent": False, "reason": "error", "error": str(exc)[:300]}

@@ -62,6 +62,14 @@ def _record_verified(spec_dir: Path, record: TrustedRecord) -> bool:
     return bool(_canonical(on_disk) == _canonical(record.contract))
 
 
+def handoff_contract(spec_dir: Path, trusted: Any) -> dict[str, Any] | None:
+    """The contract to hand TFactory (D3): verified record, ``{}`` if held, else ``None``."""
+    state, contract = resolve_contract(spec_dir, trusted)
+    if state == "verified":
+        return contract
+    return {} if state == "hold" else None
+
+
 def resolve_contract(spec_dir: Path, trusted: Any) -> tuple[str, dict[str, Any]]:
     """Return ``(state, contract)``; state is ``verified``, ``hold`` or ``legacy``."""
     try:

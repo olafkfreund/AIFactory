@@ -622,6 +622,12 @@ Recorded during implementation.
   depend on the machine that regenerates it. `merger.py` passes
   `trusted=None`: the sweep only opens PRs and never merges, so a missing
   record can only make its context stricter. No existing expectation changed.
+- **Step 8.** A `trusted_contract.handoff_contract(spec_dir, trusted)` helper
+  maps verified, hold and legacy to the record's contract, `{}` and `None`, so
+  the three handoff sites don't repeat the mapping. `apply_path_risk_floor`
+  carries `noqa: PLR0913` for its sixth argument. The `build_ingest_payload`
+  stub in `tests/audit/test_task_action_audit.py` accepts `**_k`, and no
+  assertion changed.
 
 ## Rollback
 

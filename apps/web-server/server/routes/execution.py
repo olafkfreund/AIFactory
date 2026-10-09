@@ -29,8 +29,10 @@ from server.services.audit_service import (
     audit_task_action,
     audit_task_route,
 )
+from server.services.trusted_contract import handoff_contract
 from server.services.trusted_contract_store import (
     TrustedContractStore,
+    lookup,
     spec_key_for_dir,
 )
 from server.specpath import safe_spec_component
@@ -928,7 +930,11 @@ async def handoff_to_tfactory(
 
     from pfactory.tfactory_client import build_ingest_payload, send_handoff
 
-    payload = build_ingest_payload(spec_dir, spec_id)
+    payload = build_ingest_payload(
+        spec_dir,
+        spec_id,
+        contract=handoff_contract(spec_dir, await lookup(spec_dir)),
+    )
     result = await send_handoff(payload)
     try:
         (spec_dir / "tfactory_handoff.json").write_text(json.dumps(result, indent=2))
