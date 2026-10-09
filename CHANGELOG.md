@@ -4,6 +4,11 @@
 
 ### Security
 
+- **A `human-approval` system gate now clears only on a GitHub review (#1663).**
+  The review must approve the head commit, come from someone other than the PR
+  author, and not be a bot. A contract or `task_metadata.json` can no longer
+  mark its own gates satisfied. Until AIFactory has its own bot identity, every
+  such task merges by hand.
 - **The merge gate acts only on the contract PFactory signed (#1667).** The
   signed contract is now stored in the web server's database
   (`trusted_contracts`) at `/from-plan`, and the merge gate verifies it and the

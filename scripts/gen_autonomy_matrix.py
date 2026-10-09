@@ -321,6 +321,8 @@ def _live_overlay_rows(wc: ModuleType, root: Path) -> list[list[str]]:
     probes = (
         {"production_classification": _PROD_CLASSES[0]},
         {"risk_class": _RISK_CLASSES[0]},
+        # A contract must not clear its own gate (#1663).
+        {"system_gates": ["human-approval"], "satisfied_gates": ["human-approval"]},
     )
     rows: list[list[str]] = []
     with _differ_returns(wc, [_SAFE_PATH]):
