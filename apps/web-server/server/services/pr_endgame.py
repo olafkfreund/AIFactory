@@ -792,14 +792,14 @@ def human_approval_head(
     except (ValueError, TypeError, KeyError, AttributeError):
         return None
     # Any other reviewer's standing change request blocks, as on GitHub.
-    if any(
+    blocked = any(
         login != author and row["state"] == "CHANGES_REQUESTED"
         for login, row in latest.items()
-    ):
-        return None
+    )
     for login, row in latest.items():
         if (
-            login != author
+            not blocked
+            and login != author
             and row.get("type") != "Bot"
             and row["state"] == "APPROVED"
             and row.get("commit_id") == head
