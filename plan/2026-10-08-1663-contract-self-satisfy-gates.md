@@ -329,6 +329,11 @@ the tests run on an isolated host (#1667's `_isolated_host` fixture).
   dropped: all three uses are renamed to `HUMAN_ONLY_GATES`. Deleting
   `satisfied_system_gates` also removes #1667's D2 `trusted=` branch.
   #1667's test 4 still passes, because no metadata is read at all now.
+- **Step 3.** `merge_pr` carries `noqa: PLR0913` for its sixth argument,
+  `match_head`. `_DECISIVE_STATES` is a module constant.
+  `test_pr_endgame.py` run alone has been order-dependent since before this
+  change (2 failures alone on dev; `apps/backend` is not on `sys.path`). It
+  passes in the full directory run that CI does.
 
 ## Rollback
 

@@ -744,15 +744,81 @@ def read_review_verdict(
     )
 
 
-def merge_pr(
+_DECISIVE_STATES = {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}
+
+
+def human_approval_head(
+    owner: str, repo: str, pr: int, *, runner: Runner = _default_runner
+) -> str | None:
+    """The PR head SHA a human has approved, else None (#1663).
+
+    A review counts only if its author is not the PR author and not a Bot, it is
+    that reviewer's latest APPROVED/CHANGES_REQUESTED/DISMISSED review (COMMENTED
+    is ignored), and its ``commit_id`` equals the current head exactly. Fails
+    closed: any error means no approval.
+    """
+    base = f"/repos/{owner}/{repo}/pulls/{pr}"
+    pr_res = runner(
+        ["gh", "api", base, "--jq", "{head: .head.sha, author: .user.login}"], None
+    )
+    if not pr_res.ok:
+        return None
+    rv_res = runner(
+        [
+            "gh",
+            "api",
+            "--paginate",
+            f"{base}/reviews",
+            "--jq",
+            ".[] | {state, login: .user.login, type: .user.type, commit_id}",
+        ],
+        None,
+    )
+    if not rv_res.ok:
+        return None
+    try:
+        info = json.loads(pr_res.out)
+        head, author = info["head"], info["author"]
+        if not head:
+            return None
+        latest: dict[str, dict[str, Any]] = {}
+        for line in rv_res.out.splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if row["state"] in _DECISIVE_STATES:
+                latest[row["login"]] = row  # oldest first, so the last one wins
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return None
+    for login, row in latest.items():
+        if (
+            login != author
+            and row.get("type") != "Bot"
+            and row["state"] == "APPROVED"
+            and row.get("commit_id") == head
+        ):
+            logger.info(
+                "[pr-endgame] pr=%d approved by %s at %s",
+                pr,
+                sanitize_log(login),
+                sanitize_log(head),
+            )
+            return str(head)
+    return None
+
+
+def merge_pr(  # noqa: PLR0913 - match_head binds the merge to the approved commit
     owner: str,
     repo: str,
     pr: int,
     *,
     method: str = "squash",
     runner: Runner = _default_runner,
+    match_head: str | None = None,
 ) -> bool:
     """Merge the PR. Returns True on success. Never force-merges past a conflict.
+
+    ``match_head`` pins the merge to the commit a human approved (#1663).
 
     On a non-clean merge (branch behind base — the common sequential case where
     an earlier auto-merge advanced main), update the PR branch from base once and
@@ -763,7 +829,8 @@ def merge_pr(
         method, "--squash"
     )
     full = f"{owner}/{repo}"
-    res = runner(["gh", "pr", "merge", str(pr), flag, "--repo", full], None)
+    extra = ["--match-head-commit", match_head] if match_head else []
+    res = runner(["gh", "pr", "merge", str(pr), flag, "--repo", full, *extra], None)
     if res.ok:
         return True
 
@@ -771,12 +838,18 @@ def merge_pr(
     if any(
         s in blob for s in ("not mergeable", "cannot be cleanly", "conflict", "behind")
     ):
+        if match_head:
+            # A branch update creates a head nobody approved.
+            logger.info("[pr-endgame] pr=%d not mergeable at the approved head", pr)
+            return False
         logger.info(
             "[pr-endgame] pr=%d not cleanly mergeable — updating branch from base", pr
         )
         upd = runner(["gh", "pr", "update-branch", str(pr), "--repo", full], None)
         if upd.ok:
-            res2 = runner(["gh", "pr", "merge", str(pr), flag, "--repo", full], None)
+            res2 = runner(
+                ["gh", "pr", "merge", str(pr), flag, "--repo", full, *extra], None
+            )
             if res2.ok:
                 return True
             logger.warning(
