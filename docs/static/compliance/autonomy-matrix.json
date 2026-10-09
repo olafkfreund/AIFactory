@@ -156,7 +156,8 @@
         "apps/backend/memory/__init__.py",
         "apps/backend/providers/__init__.py",
         "apps/backend/runners/__init__.py",
-        "apps/backend/runners/github/__init__.py"
+        "apps/backend/runners/github/__init__.py",
+        "apps/web-server/server/database/__init__.py"
       ]
     },
     {
@@ -180,7 +181,8 @@
         "apps/backend/providers/__init__.py",
         "apps/backend/spec/__init__.py",
         "apps/backend/spec/phases/__init__.py",
-        "apps/backend/spec/pipeline/__init__.py"
+        "apps/backend/spec/pipeline/__init__.py",
+        "apps/web-server/server/database/__init__.py"
       ]
     }
   ],
@@ -689,17 +691,17 @@
             ],
             [
               "`server.services.pr_review_service`",
-              "model-assisted (dynamic import: core.auth:315 (+2 more))",
+              "model-assisted (dynamic import: core.auth:313 (+2 more))",
               "`anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
-              "yes (13): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
+              "yes (14): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
               "265",
               "`runners/github/runner.py`"
             ],
             [
               "`server.services.pr_endgame`",
-              "model-assisted (dynamic import: core.auth:315 (+3 more))",
+              "model-assisted (dynamic import: core.auth:313 (+3 more))",
               "`anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
-              "yes (19): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
+              "yes (20): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
               "360",
               "-"
             ]
