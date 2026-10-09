@@ -81,6 +81,7 @@ class KubejobMixin:
         # declared here so mypy can resolve the self.* references in a mixin.
         _kubejob_log_streamers: dict[str, Any]
         _active_kubejob_task_ids: set[str]
+        _kubejob_dispatched_this_tick: set[str]
         _task_current_phases: dict[str, Any]
         _task_log_writers: dict[str, Any]
         _handle_output_line: Callable[..., Any]
@@ -363,6 +364,12 @@ class KubejobMixin:
             # now rather than leaking it until a reaper that never fires.
             self._release_task_credential(task_id)
             raise
+        # #1662: the build is live from here, not from the next reconcile
+        # tick (≤15s later). Without this, is_running() said False for that
+        # window and recovery reset a live Job despite the #1619 guard.
+        # After the except block on purpose: a failed dispatch never marks.
+        self._active_kubejob_task_ids.add(task_id)
+        self._kubejob_dispatched_this_tick.add(task_id)
         # RFC-0017 #680: feed the cockpit log stream + rmux Live Console from the
         # Job pod's logs, exactly as the in-pod subprocess path does — the
         # prerequisite to making kubejob the default. Best-effort: any failure
@@ -621,9 +628,10 @@ class KubejobMixin:
         Reads the set the reconcile loop republishes each tick, so it costs
         nothing and cannot disagree with what ``is_running`` tells the cockpit.
 
-        The set is empty until the first tick after dispatch (≤15s), and the
-        streamer may hit its first EOF inside that window — so an id that is
-        not yet known counts as active. Being briefly optimistic here costs one
+        Dispatch adds the id to the set (#1662), but after a web-server restart
+        the set is empty until the first tick, and the streamer may hit its
+        first EOF inside that window — so for _DISPATCH_GRACE_SECONDS an id
+        that is not yet known counts as active. Being briefly optimistic here costs one
         extra reattach; being pessimistic would reproduce the very bug this
         fixes. The bounded empty-reattach counter stops a genuinely dead
         stream either way.
@@ -674,6 +682,10 @@ class KubejobMixin:
         out: dict[str, str] = {}
         if not self._kubejob_backend_enabled():
             return out
+        # #1662: reset BEFORE the first await. Single-threaded asyncio
+        # means every id added from here on was dispatched after this
+        # tick's store read began — exactly the rows it may have missed.
+        self._kubejob_dispatched_this_tick = set()
         try:
             rows = await self._store().get_active_kubejobs()
         except Exception:  # noqa: BLE001 - reconcile must never crash the loop
@@ -716,7 +728,9 @@ class KubejobMixin:
         # when the poll above succeeded: an early return leaves the previous
         # tick's answer standing rather than reporting every build dead
         # because the store hiccuped.
-        self._active_kubejob_task_ids = live
+        # #1662: keep builds dispatched while this tick was reading;
+        # bounded to one tick because the next tick resets the set.
+        self._active_kubejob_task_ids = live | self._kubejob_dispatched_this_tick
         if out:
             # Builds finished → fill freed slots from the FIFO queue.
             await self._drain_queue()
