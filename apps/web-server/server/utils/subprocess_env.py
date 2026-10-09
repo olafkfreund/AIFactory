@@ -16,7 +16,15 @@ from __future__ import annotations
 
 import contextlib
 import os
-from collections.abc import Mapping
+import sys
+from collections.abc import Iterable, Mapping
+from pathlib import Path
+
+_BACKEND_DIR = Path(__file__).resolve().parents[3] / "backend"
+if str(_BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_DIR))
+
+from core.auth import is_denied_env_key  # noqa: E402 — needs sys.path above
 
 # Env vars we explicitly strip from subprocess environments to prevent
 # silent direct-API billing. Keep this list narrow — anything not in here
@@ -27,45 +35,55 @@ _STRIP_VARS: tuple[str, ...] = (
 )
 
 
+GITHUB_KEEP: tuple[str, ...] = ("GITHUB_TOKEN", "GH_TOKEN")
+RUNNER_KEEP: tuple[str, ...] = (
+    *GITHUB_KEEP,
+    "OPENAI_API_KEY",
+    "OPENAI_COMPATIBLE_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "OPENROUTER_API_KEY",
+    "VOYAGE_API_KEY",
+)
+
+
+def child_env(keep: Iterable[str] = (), extra: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Return a scrubbed copy of ``os.environ`` for a child process (#1680).
+
+    Drops every host secret ``is_denied_env_key`` matches plus ``_STRIP_VARS``,
+    restores the ``keep`` names that are set, applies ``extra``, and disables
+    git hooks via git env config (an existing ``GIT_CONFIG_*`` entry survives).
+    Build it per call: ``os.environ`` changes at runtime.
+    """
+    env = {k: v for k, v in os.environ.items() if not is_denied_env_key(k) and k not in _STRIP_VARS}
+    env.update({k: os.environ[k] for k in keep if k in os.environ})
+    _inject_traceparent(env)
+    if extra:
+        env.update(extra)
+    try:
+        n = max(int(env.get("GIT_CONFIG_COUNT", "0")), 0)
+    except ValueError:
+        n = 0
+    env[f"GIT_CONFIG_KEY_{n}"] = "core.hooksPath"
+    env[f"GIT_CONFIG_VALUE_{n}"] = "/dev/null"
+    env["GIT_CONFIG_COUNT"] = str(n + 1)
+    return env
+
+
 def make_subprocess_env(
     extra: Mapping[str, str] | None = None,
     *,
     strip_anthropic_api_key: bool = True,
 ) -> dict[str, str]:
-    """Return a copy of ``os.environ`` safe to pass to ``subprocess.*``.
+    """Return a scrubbed env for LLM runner subprocesses.
 
-    By default removes the Anthropic direct-API credentials so subprocesses
-    AIFactory spawns can never silently bill the user's API account. The
-    SDK auth path (``CLAUDE_CODE_OAUTH_TOKEN``) is preserved.
-
-    Args:
-        extra: Optional mapping of additional vars to set on top of the
-            scrubbed env.
-        strip_anthropic_api_key: Caller can pass ``False`` only when the
-            spawned process explicitly NEEDS the direct API key — e.g.
-            an opt-in batch invocation that the user has consented to
-            via Settings. Default ``True`` matches AIFactory's policy.
-
-    Returns:
-        A plain dict suitable for ``env=`` on ``subprocess.*`` calls.
+    Keeps ``RUNNER_KEEP`` (GitHub and provider keys) and the SDK auth path
+    (``CLAUDE_CODE_OAUTH_TOKEN``, via the non-denied default). The Anthropic
+    direct-API key is stripped unless ``strip_anthropic_api_key=False``, which
+    only an explicitly consented batch invocation may pass.
     """
-    env = os.environ.copy()
-    if strip_anthropic_api_key:
-        for var in _STRIP_VARS:
-            env.pop(var, None)
-
-    # Inject W3C TRACEPARENT when called inside an OTel span (Epic
-    # #35 #42 PR-1). The agent subprocess's own OTel SDK reads
-    # ``TRACEPARENT`` on init to seed its root context as a child
-    # of the web-server's span — so a single trace covers the HTTP
-    # request through to the LLM call. Best-effort: if OTel isn't
-    # installed or there's no active span, the env var is just
-    # omitted (subprocess starts a fresh root trace).
-    _inject_traceparent(env)
-
-    if extra:
-        env.update(extra)
-    return env
+    keep = RUNNER_KEEP if strip_anthropic_api_key else (*RUNNER_KEEP, "ANTHROPIC_API_KEY")
+    return child_env(keep=keep, extra=extra)
 
 
 def _inject_traceparent(env: dict[str, str]) -> None:
