@@ -310,7 +310,15 @@ def _decide(
     ``opened``, or raises ``_SkipTask`` for every "no PR, here's why" case --
     ``_process_spec`` converts that into the same-shaped ``skipped`` dict.
     """
-    ctx = pe.gather_pr_context(project_path, spec_dir, spec_id, runner=runner)
+    ctx = pe.gather_pr_context(
+        project_path,
+        spec_dir,
+        spec_id,
+        # The sweep only opens PRs, never merges. No record means a traced
+        # (trusted) task floors to blocking and a legacy task reads as before.
+        trusted=None,
+        runner=runner,
+    )
     if ctx is None:
         raise _SkipTask("no_worktree_or_resolvable_repo")
     if not pe._is_github(ctx["provider"]):

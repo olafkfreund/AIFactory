@@ -228,7 +228,9 @@ def test_handoff_audits_only_a_sent_handoff(
         execution, "load_projects", lambda: {"p": {"path": str(tmp_path)}}
     )
     (tmp_path / ".aifactory" / "specs" / "001").mkdir(parents=True)
-    monkeypatch.setattr(tc, "build_ingest_payload", lambda *_a: {"spec_id": "001"})
+    monkeypatch.setattr(
+        tc, "build_ingest_payload", lambda *_a, **_k: {"spec_id": "001"}
+    )
 
     async def _send(_payload):
         return {"sent": sent, "reason": None if sent else "not_configured"}

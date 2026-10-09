@@ -686,7 +686,7 @@
               "model-assisted (dynamic import: core.auth:304 (+3 more))",
               "`anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
               "yes (19): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
-              "352",
+              "356",
               "-"
             ]
           ]
