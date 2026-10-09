@@ -100,6 +100,10 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler for startup/shutdown."""
+    # The serving process (a reload worker included) launches the agents, so it
+    # must be non-dumpable too, not only the __main__ supervisor (#1679).
+    _make_non_dumpable()
+
     settings = get_settings()
 
     # Startup
@@ -754,14 +758,17 @@ def _make_non_dumpable() -> None:
     of a dumpable process is readable by that uid: it holds DATABASE_URL,
     JWT_SECRET, API_TOKEN and the trusted-plan keys. A non-dumpable process's
     /proc files are owned by root, so without CAP_SYS_PTRACE they are unreadable.
-    Children reset to dumpable on execve; their env is scrubbed separately.
+    Children reset to dumpable on execve and still inherit the full env (#1680).
+    Fails closed: a server that cannot hide its secrets must not start.
     """
     if not sys.platform.startswith("linux"):
         return
     pr_set_dumpable = 4
     libc = ctypes.CDLL(None, use_errno=True)
     if libc.prctl(pr_set_dumpable, 0, 0, 0, 0) != 0:
-        logger.warning("prctl(PR_SET_DUMPABLE, 0) failed: errno %d", ctypes.get_errno())
+        raise SystemExit(
+            f"prctl(PR_SET_DUMPABLE, 0) failed: errno {ctypes.get_errno()}"
+        )
 
 
 if __name__ == "__main__":

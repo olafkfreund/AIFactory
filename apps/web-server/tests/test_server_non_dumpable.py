@@ -1,12 +1,15 @@
 """The web server must make itself non-dumpable so same-uid agents cannot read
 its secrets from /proc/<pid>/environ."""
 
+import asyncio
 import os
 import subprocess
 import sys
 from pathlib import Path
+from unittest import mock
 
 import pytest
+from server import main
 
 pytestmark = pytest.mark.skipif(
     not sys.platform.startswith("linux"), reason="Linux /proc only"
@@ -44,3 +47,27 @@ def test_server_environ_is_unreadable_after_startup_hardening() -> None:
     finally:
         child.stdin.close()
         child.wait(timeout=30)
+
+
+class HardenedError(Exception):
+    pass
+
+
+class FailingLibc:
+    def prctl(self, *_args: int) -> int:
+        return -1
+
+
+def test_lifespan_hardens_the_serving_process_first() -> None:
+    """The process serving the app (e.g. a reload worker) is hardened too."""
+    with (
+        mock.patch.object(main, "_make_non_dumpable", side_effect=HardenedError),
+        pytest.raises(HardenedError),
+    ):
+        asyncio.run(main.lifespan(main.app).__aenter__())
+
+
+def test_hardening_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(main.ctypes, "CDLL", lambda *_a, **_k: FailingLibc())
+    with pytest.raises(SystemExit):
+        main._make_non_dumpable()
