@@ -1,5 +1,23 @@
 ## [Unreleased]
 
+## 3.8.3 - 2026-10-09
+
+### Security
+
+- **Agents in the web-server pod can no longer read the server's secrets
+  through `/proc`.** The server ran dumpable, so any process with its uid,
+  including the in-pod agents with read tools, could read
+  `/proc/1/environ`: `DATABASE_URL`, `JWT_SECRET`, `API_TOKEN` and the
+  trusted-plan keys. The server now sets itself non-dumpable at startup and in
+  the app lifespan, and refuses to start if that fails (#1679). Child
+  processes still inherit the full environment; that is #1680.
+
+### Fixed
+
+- **A kubejob build is marked active from the moment it is dispatched.** A
+  build dispatched between reconcile ticks could be reported as not running,
+  and a racing tick could drop it (#1662).
+
 ## 3.8.2 - 2026-10-08
 
 ### Security
