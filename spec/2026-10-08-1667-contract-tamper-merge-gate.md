@@ -272,6 +272,13 @@ Approved (user, 2026-10-08):
   human merge clears a `system_gates` hold.
 - **D3.** A held task hands off to TFactory with `{}`.
 
+Narrowed (user, 2026-10-09, after PR review): "isolated" now means
+`AIFACTORY_BUILD_BACKEND=kubejob` **with** the durable store (`DATABASE_URL`).
+Without the store, kubejob falls back to in-pod builds. A PID-namespaced
+sandbox no longer counts until #1680 lands: `run.py` inside the sandbox carries
+the server's environment, so the agent could read `DATABASE_URL` and rewrite its
+own record and stamp.
+
 Approved (user, 2026-10-09): D4-i and D5. The live cluster runs
 `AIFACTORY_BUILD_BACKEND=kubejob` (checked 2026-10-08), so D4-i does not
 hold auto-merge in production.
