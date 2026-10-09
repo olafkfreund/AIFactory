@@ -807,6 +807,22 @@ def human_approval_head(
     return None
 
 
+def _clears_with_human_approval(
+    spec_dir: Path, tier: str | None, trusted: object
+) -> bool:
+    """Would the tier auto-merge if only the human-only gates were satisfied?"""
+    try:
+        from merge.merge_policy import HUMAN_ONLY_GATES  # noqa: PLC0415
+    except ImportError:
+        return False  # fail closed: auto-merge stays off
+    return (
+        merge_disposition(
+            spec_dir, tier, trusted=trusted, satisfied_gates=HUMAN_ONLY_GATES
+        )
+        == AUTO_MERGE_DISPOSITION
+    )
+
+
 def merge_pr(  # noqa: PLR0913 - match_head binds the merge to the approved commit
     owner: str,
     repo: str,
@@ -984,8 +1000,13 @@ async def watch_and_finish(
     runner: Runner = _default_runner,
     poll_interval: int = _POLL_INTERVAL_SECONDS,
     max_minutes: int = _MAX_POLL_MINUTES,
+    human_approval_required: bool = False,
 ) -> dict:
     """Poll the PR's reviews and merge only on a CLEAN Copilot approval.
+
+    ``human_approval_required`` additionally waits for a human GitHub approval
+    of the head commit (``human_approval_head``) and merges bound to that SHA
+    (#1663); until then it keeps polling, and the timeout is the human-stop.
 
     Merge requires ALL of: ``auto_merge`` on, no CHANGES_REQUESTED, and — when
     ``require_copilot`` (default) — that GitHub Copilot's code review actually ran
@@ -1066,7 +1087,16 @@ async def watch_and_finish(
                     "reason": "auto_merge_disabled",
                     "copilot_approved": rs.copilot_approved,
                 }
-            merged = await asyncio.to_thread(merge_pr, owner, repo, pr, runner=runner)
+            match_head = None
+            if human_approval_required:
+                match_head = await asyncio.to_thread(
+                    human_approval_head, owner, repo, pr, runner=runner
+                )
+                if match_head is None:
+                    continue  # no human approval of the head commit yet
+            merged = await asyncio.to_thread(
+                merge_pr, owner, repo, pr, runner=runner, match_head=match_head
+            )
             # #543: an approved PR that won't merge is usually behind a true
             # line-level conflict. When a conflict_fixer is wired, rebase onto
             # base + resolve the conflicts, push, and RE-REVIEW (loop continues →
@@ -1363,9 +1393,19 @@ async def run_pr_endgame(
     # `gather_pr_context` (which already parses task_metadata.json for the base
     # branch) and passed in, so this feature adds no second filesystem path
     # built from a request-supplied spec id.
+    human_approval_required = False
     if auto_merge:
         disposition = merge_disposition(spec_dir, review_tier, trusted=trusted)
-        if disposition != AUTO_MERGE_DISPOSITION:
+        if disposition != AUTO_MERGE_DISPOSITION and _clears_with_human_approval(
+            spec_dir, review_tier, trusted
+        ):
+            logger.info(
+                "[pr-endgame] %s: auto-merge waits for a human GitHub approval "
+                "of the head commit",
+                sanitize_log(spec_id),
+            )
+            human_approval_required = True
+        elif disposition != AUTO_MERGE_DISPOSITION:
             # A CONSTANT, never the raw value: reviewTier comes off disk, and
             # interpolating file content into a log record lets a crafted value
             # forge log entries (py/log-injection). `disposition` is one of
@@ -1444,6 +1484,7 @@ async def run_pr_endgame(
         base_branch=base,
         on_approved_merged=re_test,
         runner=runner,
+        human_approval_required=human_approval_required,
     )
     if background:
         # A strong reference, held until the watcher finishes. The event loop

@@ -334,6 +334,9 @@ the tests run on an isolated host (#1667's `_isolated_host` fixture).
   `test_pr_endgame.py` run alone has been order-dependent since before this
   change (2 failures alone on dev; `apps/backend` is not on `sys.path`). It
   passes in the full directory run that CI does.
+- **Step 4.** The hypothetical lives in a helper,
+  `_clears_with_human_approval`. If `HUMAN_ONLY_GATES` cannot be imported it
+  returns `False`, and auto-merge turns off.
 
 ## Rollback
 
