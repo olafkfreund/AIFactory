@@ -158,6 +158,11 @@ _AGENT_ENV_DENY_PATTERN = re.compile(
 )
 
 
+def is_denied_env_key(name: str) -> bool:
+    """True when ``name`` is a host secret that must not reach a child process."""
+    return name in _AGENT_ENV_DENY_EXACT or bool(_AGENT_ENV_DENY_PATTERN.search(name))
+
+
 def get_agent_env_blanks() -> dict[str, str]:
     """Return ``{var: ""}`` for host secrets that must not reach the agent.
 
@@ -174,7 +179,7 @@ def get_agent_env_blanks() -> dict[str, str]:
         # ANTHROPIC_API_KEY — don't blank it. Default (off) still scrubs it.
         if key == "ANTHROPIC_API_KEY" and allow_api_key:
             continue
-        if key in _AGENT_ENV_DENY_EXACT or _AGENT_ENV_DENY_PATTERN.search(key):
+        if is_denied_env_key(key):
             blanks[key] = ""
     return blanks
 

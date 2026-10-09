@@ -65,7 +65,7 @@ spec: spec/2026-10-09-1680-child-process-env.md
   - Plain `pytest` in `apps/backend` misses `sys.path`.
 - **Ratchets after `git add`:** both must report 0 regressed, and that
   includes test files.
-  - `$V/bin/python scripts/cq_ratchet.py --tool ruff --base origin/dev --ruff $V/bin/ruff --config standards/ruff.toml --paths 'apps/backend/*.py' 'apps/web-server/*.py' 'scripts/*.py'`
+  - `$V/bin/python scripts/cq_ratchet.py --tool ruff --base origin/dev --ruff $V/bin/ruff --config standards/ruff.toml --staged --paths 'apps/backend/*.py' 'apps/web-server/*.py' 'scripts/*.py'`
   - The same with `--tool mypy --mypy $V/bin/mypy --config standards/mypy.ini`.
   - New files must be clean under strict ruff and mypy: no bare `dict`, no
     function-level imports without `# noqa: PLC0415`, at most 5 arguments
@@ -215,4 +215,10 @@ builds are untouched, so a revert affects only in-pod spawns.
 
 ## Deviations
 
-None yet.
+- **Step 2:** `server/main.py` `_make_non_dumpable` puts `apps/backend` on
+  `sys.path` and imports `core.process_hardening` inside the function
+  (`# noqa: PLC0415`), the pattern `routes/execution.py` and others already
+  use; the server's startup path does not guarantee `core` is importable. The
+  SystemExit message drops the errno. `test_hardening_fails_closed` now
+  patches `core.process_hardening.ctypes.CDLL`. The ratchet commands need
+  `--staged` to see staged files.
