@@ -586,6 +586,23 @@ Runtime check on the dev cluster (kubejob):
 4. Confirm `SELECT build_isolation FROM trusted_contracts WHERE spec_id = '<id>'`
    returns `kubejob`.
 
+## Deviations
+
+Recorded during implementation.
+
+- **Step 1.** Test 20's `contract={}` case clears `phaseModels` in
+  `task_metadata.json` first, because `phase_models` otherwise adds an
+  `execution` block. This matches "no key, or empty".
+- **Step 1.** Tests 16 and 17 fail at step 1 on the missing
+  `trusted_contract_store` import as well as on the missing `trusted=` keyword.
+- **Step 1, which constrains step 3.** The isolation-stamp tests patch
+  `server.database.engine.async_session_factory`. `TrustedContractStore()` must
+  resolve its session factory lazily from that attribute, as `JobStateStore`
+  does.
+- **Step 1, which constrains step 5.** The test-8 cases patch
+  `execution_routes.TrustedContractStore`. `routes/execution.py` must import
+  that name at module level.
+
 ## Rollback
 
 - **Code:** `git revert` the commits from steps 3–8, newest first. The handoff,

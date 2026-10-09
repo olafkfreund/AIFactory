@@ -157,5 +157,91 @@ def test_signed_plan_still_allocates_and_builds(project, monkeypatch):
     fake_service.start_task_execution.assert_awaited_once()
 
 
+def _post_signed_plan(project_id, project_path, monkeypatch, fake_service, store):
+    monkeypatch.setenv("AIFACTORY_TRUSTED_PLAN_KEY_CFACTORY", KEY)
+    plan = {
+        "feature": "Contract record at ingest",
+        "workflow_type": "feature",
+        "phases": [
+            {
+                "id": "p1",
+                "name": "Endpoint",
+                "parallel_safe": True,
+                "subtasks": [
+                    {
+                        "id": "st1",
+                        "description": "status endpoint",
+                        "status": "pending",
+                        "files_to_create": ["app/routers/status.py"],
+                    }
+                ],
+            }
+        ],
+    }
+    plan[APPROVAL_KEY] = sign_plan(
+        plan,
+        key=KEY,
+        approved_by="cfactory",
+        approval_timestamp="2026-06-06T10:00:00Z",
+    )
+    app = FastAPI()
+    app.include_router(execution_routes.router, prefix="/api/tasks")
+    with (
+        patch.object(
+            execution_routes,
+            "load_projects",
+            return_value={project_id: {"path": str(project_path)}},
+        ),
+        patch.object(execution_routes, "resolve_project_id", return_value=project_id),
+        patch.object(execution_routes, "get_agent_service", return_value=fake_service),
+        patch.object(execution_routes, "emit_task_status", AsyncMock()),
+        patch.object(execution_routes, "TrustedContractStore", return_value=store),
+    ):
+        resp = TestClient(app).post(
+            "/api/tasks/from-plan",
+            params={
+                "project_id": project_id,
+                "title": "Contract record at ingest",
+                "description": "signed contract",
+            },
+            json={"plan": plan},
+        )
+    return plan, resp
+
+
+def test_8_signed_plan_is_stored_verbatim_before_the_build(project, monkeypatch):
+    project_id, project_path = project
+    store = MagicMock()
+    store.put = AsyncMock(return_value=None)
+    fake_service = MagicMock()
+    fake_service.start_task_execution = AsyncMock(return_value=None)
+
+    plan, resp = _post_signed_plan(
+        project_id, project_path, monkeypatch, fake_service, store
+    )
+
+    assert resp.status_code == 200, resp.text
+    store.put.assert_awaited_once()
+    stored = store.put.await_args.args[2]
+    assert stored == plan
+
+
+def test_8_store_failure_returns_500_and_starts_no_build(project, monkeypatch):
+    project_id, project_path = project
+    store = MagicMock()
+    store.put = AsyncMock(side_effect=RuntimeError("db down"))
+    fake_service = MagicMock()
+    fake_service.start_task_execution = AsyncMock(return_value=None)
+    fake_service._start_build_unit = AsyncMock(return_value=None)
+
+    _plan, resp = _post_signed_plan(
+        project_id, project_path, monkeypatch, fake_service, store
+    )
+
+    assert resp.status_code == 500, resp.text
+    fake_service.start_task_execution.assert_not_awaited()
+    fake_service._start_build_unit.assert_not_awaited()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
