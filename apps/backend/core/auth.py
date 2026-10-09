@@ -124,6 +124,8 @@ _AGENT_ENV_DENY_EXACT: set[str] = {
     "APP_JWT_SECRET",
     "DATABASE_URL",
     "APP_DATABASE_URL",
+    # The intake poller's API token; falls back to APP_API_TOKEN, so treat it the same.
+    "AIFACTORY_TOKEN",
     # Provider API keys (the agent authenticates via OAuth, not these).
     "ANTHROPIC_API_KEY",
     "OPENAI_API_KEY",
@@ -149,8 +151,10 @@ _AGENT_ENV_DENY_EXACT: set[str] = {
 }
 
 # Generic secret-bearing names (any host var matching is neutralized).
+# TRUSTED_PLAN_KEY: the HMAC keys that sign trusted plans; an agent holding one
+# could re-sign a task contract it edited (#1667).
 _AGENT_ENV_DENY_PATTERN = re.compile(
-    r"(SECRET|PASSWORD|PRIVATE_KEY|CREDENTIAL|_KMS|PASSPHRASE)", re.I
+    r"(SECRET|PASSWORD|PRIVATE_KEY|CREDENTIAL|_KMS|PASSPHRASE|TRUSTED_PLAN_KEY)", re.I
 )
 
 

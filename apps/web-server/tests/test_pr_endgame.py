@@ -13,12 +13,22 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 _WS = Path(__file__).resolve().parents[1]
 if str(_WS) not in sys.path:
     sys.path.insert(0, str(_WS))
 
 from server.services import pr_endgame as pe  # noqa: E402
 from server.services.pr_endgame import CmdResult  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _isolated_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests model a legacy task on an isolated host (#1667, D4-i)."""
+    monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "kubejob")
+    # kubejob counts as isolated only with the durable store (#1667).
+    monkeypatch.setattr("server.services.job_state_store.store_enabled", lambda: True)
 
 
 class FakeRunner:
@@ -320,6 +330,7 @@ def test_run_pr_endgame_full_chain():
             reviewer="copilot",
             runner=r,
             background=False,
+            trusted=None,
         )
     )
     assert res["ok"] and res["pr"] == 11 and res["merged"] is True
@@ -349,6 +360,7 @@ def test_run_pr_endgame_aifactory_reviewer_uses_engine_verdict():
             on_pr_opened=lambda prn: opened.update(pr=prn),
             runner=r,
             background=False,
+            trusted=None,
         )
     )
     assert res["ok"] and res["merged"] is True
@@ -366,6 +378,7 @@ def test_run_pr_endgame_no_repo():
             base="main",
             repo="",
             background=False,
+            trusted=None,
         )
     )
     assert res["ok"] is False and res["reason"] == "no_repo"
@@ -375,7 +388,7 @@ def test_run_pr_endgame_no_repo():
 
 
 def test_gather_pr_context_no_worktree(tmp_path):
-    assert pe.gather_pr_context(tmp_path, tmp_path, "spec-1") is None
+    assert pe.gather_pr_context(tmp_path, tmp_path, "spec-1", trusted=None) is None
 
 
 def test_gather_pr_context_resolves_repo(tmp_path):
@@ -388,7 +401,7 @@ def test_gather_pr_context_resolves_repo(tmp_path):
         json.dumps({"github_repo": "olafkfreund/demo"})
     )
     r = FakeRunner({"rev-parse": CmdResult(0, "auto-claude/spec-1", "")})
-    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r)
+    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r, trusted=None)
     assert ctx is not None
     assert ctx["branch"] == "auto-claude/spec-1"
     assert ctx["repo"] == "olafkfreund/demo"
@@ -416,7 +429,7 @@ def test_gather_pr_context_worktree_on_dev_base_resolves_build_branch(tmp_path):
     # The control-plane worktree stayed on the base branch, as it does on the
     # kubejob path.
     r = FakeRunner({"rev-parse": CmdResult(0, "dev", "")})
-    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r)
+    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r, trusted=None)
     assert ctx is not None
     assert ctx["base"] == "dev"
     assert ctx["branch"] == f"aifactory/{spec_id}", (
@@ -439,7 +452,7 @@ def test_gather_pr_context_custom_base_still_resolves(tmp_path):
         json.dumps({"base_branch": "integration"})
     )
     r = FakeRunner({"rev-parse": CmdResult(0, "integration", "")})
-    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r)
+    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r, trusted=None)
     assert ctx is not None and ctx["branch"] == f"aifactory/{spec_id}"
 
 
@@ -454,7 +467,7 @@ def test_gather_pr_context_real_build_branch_is_not_overridden(tmp_path):
     )
     (spec_dir / "task_metadata.json").write_text(json.dumps({"base_branch": "dev"}))
     r = FakeRunner({"rev-parse": CmdResult(0, "feature/hand-made", "")})
-    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r)
+    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r, trusted=None)
     assert ctx is not None and ctx["branch"] == "feature/hand-made"
 
 
@@ -472,7 +485,7 @@ def test_gather_pr_context_base_from_task_metadata(tmp_path):
     )
     (spec_dir / "task_metadata.json").write_text(json.dumps({"base_branch": "dev"}))
     r = FakeRunner({"rev-parse": CmdResult(0, "aifactory/spec-1", "")})
-    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r)
+    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r, trusted=None)
     assert ctx is not None
     assert ctx["repo"] == "olafkfreund/AIFactory"
     assert ctx["base"] == "dev"
@@ -485,7 +498,7 @@ def test_gather_pr_context_base_defaults_to_main(tmp_path):
     spec_dir.mkdir(parents=True)
     (spec_dir / "requirements.json").write_text(json.dumps({"github_repo": "o/r"}))
     r = FakeRunner({"rev-parse": CmdResult(0, "b", "")})
-    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r)
+    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r, trusted=None)
     assert ctx["base"] == "main"
 
 
@@ -785,6 +798,6 @@ def test_gather_pr_context_base_branch_head_uses_build_branch(tmp_path):
         json.dumps({"github_repo": "olafkfreund/demo"})
     )
     r = FakeRunner({"rev-parse": CmdResult(0, "main", "")})
-    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r)
+    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r, trusted=None)
     assert ctx is not None
     assert ctx["branch"] == "aifactory/040-feature-x"  # NOT "main"

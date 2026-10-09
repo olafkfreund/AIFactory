@@ -1,5 +1,27 @@
 ## [Unreleased]
 
+### Security
+
+- **The merge gate acts only on the contract PFactory signed (#1667).** The
+  signed contract is now stored in the web server's database
+  (`trusted_contracts`) at `/from-plan`, and the merge gate verifies it and the
+  build's isolation instead of reading `context/task_contract.json`, which the
+  coding agent can edit. A trusted task is auto-merged only if its build ran as a
+  Job (`kubejob`, with `DATABASE_URL` set), its signature still
+  verifies (a retired or removed key holds it), and the spec copy of the
+  contract is unchanged. Trusted tasks no longer honour
+  `satisfiedSystemGates` in `task_metadata.json`; a human merge clears a
+  `system_gates` hold. A held task is handed to TFactory without a contract, so
+  TFactory infers.
+
+  **Upgrade notes.** Unless the host runs `AIFACTORY_BUILD_BACKEND=kubejob` with
+  `DATABASE_URL` set, auto-merge is now held for **all** tasks. A PID-namespaced
+  sandbox does not count yet: `run.py` inside it still carries the server's
+  environment (#1680).
+  Trusted tasks in flight at rollout have no stored record and hold once: merge
+  them by hand or re-run `/from-plan`. The release runs an Alembic migration
+  that adds `trusted_contracts`.
+
 ### Changed
 
 - **Opus 5.5 is the flagship.** The `opus` shorthand now resolves to

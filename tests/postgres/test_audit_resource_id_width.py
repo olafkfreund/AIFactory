@@ -156,5 +156,9 @@ def test_migration_file_chains_onto_the_previous_head() -> None:
         "script_location",
         str(Path(WEB_SERVER_ROOT) / "server" / "database" / "alembic"),
     )
-    heads = ScriptDirectory.from_config(cfg).get_heads()
-    assert heads == ["c1f5a3d7b924"], f"expected a single head, got {heads}"
+    script = ScriptDirectory.from_config(cfg)
+    heads = script.get_heads()
+    assert len(heads) == 1, f"expected a single head, got {heads}"
+    # Later migrations may sit on top; this one must stay in the deployed chain.
+    chain = {rev.revision for rev in script.iterate_revisions(heads[0], "base")}
+    assert "c1f5a3d7b924" in chain

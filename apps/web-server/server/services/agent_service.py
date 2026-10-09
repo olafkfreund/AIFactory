@@ -105,6 +105,10 @@ class AgentService(
         # the rows it just polled, so ``is_running`` can answer for both
         # backends without a Kubernetes call or a DB round-trip per request.
         self._active_kubejob_task_ids: set[str] = set()
+        # #1662: ids dispatched since the current reconcile tick began
+        # its store read; that tick unions them in so it cannot drop a
+        # build whose row it read too early. Reset every tick.
+        self._kubejob_dispatched_this_tick: set[str] = set()
         self._log_callbacks: dict[str, list[Callable]] = {}
         self._progress_callbacks: dict[str, list[Callable]] = {}
         self._task_log_writers: dict[str, tuple[TaskLogWriter, TaskLogWriter]] = {}
@@ -1218,6 +1222,17 @@ class AgentService(
         from .sandbox import build_sandboxed_command
 
         cmd = build_sandboxed_command(cmd, project_path)
+
+        # #1667: stamp from the REAL argv. --unshare-pid counts only before "--",
+        # since what follows is agent-adjacent input.
+        from . import sandbox  # noqa: PLC0415
+        from .trusted_contract_store import stamp_spawn  # noqa: PLC0415
+
+        head = cmd[: cmd.index("--")] if "--" in cmd else cmd
+        pidns = (
+            bool(head) and head[0] == sandbox._bwrap_path() and "--unshare-pid" in head
+        )
+        await stamp_spawn(spec_dir, "sandbox-pidns" if pidns else "none")
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
