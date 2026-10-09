@@ -602,6 +602,10 @@ Recorded during implementation.
 - **Step 1, which constrains step 5.** The test-8 cases patch
   `execution_routes.TrustedContractStore`. `routes/execution.py` must import
   that name at module level.
+- **Step 2.** `tests/postgres/test_audit_resource_id_width.py` pinned the
+  Alembic head to `c1f5a3d7b924`. The new migration moves it, so the test now
+  checks for a single head with `c1f5a3d7b924` in its chain. The original
+  intent of the check is unchanged.
 
 ## Rollback
 
