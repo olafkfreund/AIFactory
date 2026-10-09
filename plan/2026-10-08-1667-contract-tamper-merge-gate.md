@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1667
 spec: spec/2026-10-08-1667-contract-tamper-merge-gate.md
 ---
