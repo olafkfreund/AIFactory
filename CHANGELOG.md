@@ -6,7 +6,8 @@
 
 - **A `human-approval` system gate now clears only on a GitHub review (#1663).**
   The review must approve the head commit, come from someone other than the PR
-  author, and not be a bot. A contract or `task_metadata.json` can no longer
+  author, and not be a bot, with no other reviewer's change request standing.
+  The merge is bound to that commit. A contract or `task_metadata.json` can no longer
   mark its own gates satisfied. Until AIFactory has its own bot identity, every
   such task merges by hand.
 - **The merge gate acts only on the contract PFactory signed (#1667).** The
@@ -16,7 +17,9 @@
   coding agent can edit. A trusted task is auto-merged only if its build ran as a
   Job (`kubejob`, with `DATABASE_URL` set), its signature still
   verifies (a retired or removed key holds it), and the spec copy of the
-  contract is unchanged. Trusted tasks no longer honour
+  contract is unchanged. On a host that does not isolate builds, no record
+  counts as verified for the merge, the path floor or the TFactory handoff
+  (#1686). Trusted tasks no longer honour
   `satisfiedSystemGates` in `task_metadata.json`; a human merge clears a
   `system_gates` hold. A held task is handed to TFactory without a contract, so
   TFactory infers.
