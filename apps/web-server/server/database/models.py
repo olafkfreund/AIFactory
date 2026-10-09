@@ -1217,3 +1217,35 @@ class JobState(Base):
             f"<JobState job_id={self.job_id!r} "
             f"state={self.lifecycle_state!r} attempt={self.attempt}>"
         )
+
+
+class TrustedContract(Base):
+    """The PFactory-signed task contract, stored at ingest (#1667).
+
+    The coding agent can edit ``context/task_contract.json`` in the spec dir, so
+    the merge gate decides from this row instead. ``contract`` is the verbatim
+    signed plan (JSON text). ``build_isolation`` is stamped by the web server at
+    spawn (``kubejob`` | ``sandbox-pidns`` | ``none``); NULL means never stamped.
+    """
+
+    __tablename__ = "trusted_contracts"
+
+    # sha256 hex of the resolved spec directory path.
+    spec_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    spec_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    contract: Mapped[str] = mapped_column(Text, nullable=False)
+    build_isolation: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        return f"<TrustedContract spec_id={self.spec_id!r}>"

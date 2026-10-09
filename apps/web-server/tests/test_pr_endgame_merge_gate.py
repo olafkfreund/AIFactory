@@ -32,6 +32,14 @@ from merge import merge_policy  # noqa: E402
 from server.services import pr_endgame as pe  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _isolated_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests model a legacy task on an isolated host (#1667, D4-i)."""
+    monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "kubejob")
+    # kubejob counts as isolated only with the durable store (#1667).
+    monkeypatch.setattr("server.services.job_state_store.store_enabled", lambda: True)
+
+
 def _spec(tmp_path: Path, **meta: object) -> Path:
     spec = tmp_path / ".aifactory" / "specs" / "001-x"
     spec.mkdir(parents=True)
@@ -44,12 +52,20 @@ async def _endgame_auto_merge(
     spec: Path,
     tier: str | None,
     monkeypatch: pytest.MonkeyPatch,
-) -> bool:
-    """Run the endgame far enough to capture the auto_merge it settled on."""
+    *,
+    both: bool = False,
+) -> bool | tuple[bool, bool]:
+    """Run the endgame far enough to capture the auto_merge it settled on.
+
+    ``both`` also returns the ``human_approval_required`` handed to the watcher.
+    """
     captured: dict[str, bool] = {}
 
     async def _fake_watch(**kwargs: object) -> dict[str, object]:
         captured["auto_merge"] = bool(kwargs["auto_merge"])
+        captured["human_approval_required"] = bool(
+            kwargs.get("human_approval_required")
+        )
         return {"merged": False, "reason": "stub"}
 
     monkeypatch.setattr(pe, "watch_and_finish", _fake_watch)
@@ -68,7 +84,10 @@ async def _endgame_auto_merge(
         review_tier=tier,
         reviewer="copilot",
         background=False,
+        trusted=None,
     )
+    if both:
+        return captured["auto_merge"], captured["human_approval_required"]
     return captured["auto_merge"]
 
 
@@ -147,8 +166,14 @@ def test_the_gate_fails_closed_when_the_policy_module_is_missing(
     """It returned True ("no opinion") on ImportError, so the one failure that
     removes the gate also removed the gate's ability to say no."""
     monkeypatch.setitem(sys.modules, "merge.merge_policy", None)
-    assert pe.merge_disposition(tmp_path, "auto") == pe.HOLD_BLOCKING_DISPOSITION
-    assert pe.merge_disposition(tmp_path, None) == pe.HOLD_BLOCKING_DISPOSITION
+    assert (
+        pe.merge_disposition(tmp_path, "auto", trusted=None)
+        == pe.HOLD_BLOCKING_DISPOSITION
+    )
+    assert (
+        pe.merge_disposition(tmp_path, None, trusted=None)
+        == pe.HOLD_BLOCKING_DISPOSITION
+    )
 
 
 def test_the_disposition_literals_track_the_policy_module() -> None:
@@ -167,7 +192,9 @@ def test_the_path_risk_floor_fails_closed_when_the_policy_is_missing(
     monkeypatch.setitem(sys.modules, "merge.merge_policy", None)
     spec = _spec(tmp_path, reviewTier="auto")
 
-    tier, floor = pe.apply_path_risk_floor(tmp_path, spec, "001-x", "main", "auto")
+    tier, floor = pe.apply_path_risk_floor(
+        tmp_path, spec, "001-x", "main", "auto", trusted=None
+    )
 
     assert (tier, floor) == ("blocking", "blocking")
     assert (
@@ -184,7 +211,9 @@ def test_the_advisory_rollout_is_still_honoured_on_the_closed_path(
     monkeypatch.setitem(sys.modules, "merge.merge_policy", None)
     spec = _spec(tmp_path, reviewTier="auto")
 
-    tier, floor = pe.apply_path_risk_floor(tmp_path, spec, "001-x", "main", "auto")
+    tier, floor = pe.apply_path_risk_floor(
+        tmp_path, spec, "001-x", "main", "auto", trusted=None
+    )
 
     assert (tier, floor) == ("auto", "blocking")
 
@@ -194,12 +223,11 @@ def test_the_advisory_rollout_is_still_honoured_on_the_closed_path(
 # --------------------------------------------------------------------------- #
 
 
-def test_recorded_approvals_reach_the_deployment_overlay(
+def test_recorded_approvals_do_not_lift_the_deployment_floor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """deployment_block_reasons was called without satisfied_gates, so once
-    `human-approval` was required it read unsatisfied FOREVER and the tier
-    stayed floored even after a human approved."""
+    """Task metadata is agent-writable, so it is not gate evidence (#1663): the
+    floor sees no evidence and a declared gate keeps the tier floored."""
     monkeypatch.setenv(pe.PATH_RISK_FLOOR_ENV, "true")
     spec = _spec(tmp_path, reviewTier="auto", satisfiedSystemGates=["human-approval"])
     (spec / "implementation_plan.json").write_text(
@@ -212,9 +240,11 @@ def test_recorded_approvals_reach_the_deployment_overlay(
     )
     monkeypatch.setattr(pe, "task_repo_dir", lambda *_a, **_k: None)
 
-    tier, floor = pe.apply_path_risk_floor(tmp_path, spec, "001-x", "main", "auto")
+    tier, _floor = pe.apply_path_risk_floor(
+        tmp_path, spec, "001-x", "main", "auto", trusted=None
+    )
 
-    assert (tier, floor) == ("auto", None)
+    assert tier == "blocking"
 
 
 def test_an_outstanding_gate_still_floors_the_tier(
@@ -233,22 +263,11 @@ def test_an_outstanding_gate_still_floors_the_tier(
     )
     monkeypatch.setattr(pe, "task_repo_dir", lambda *_a, **_k: None)
 
-    tier, _floor = pe.apply_path_risk_floor(tmp_path, spec, "001-x", "main", "auto")
+    tier, _floor = pe.apply_path_risk_floor(
+        tmp_path, spec, "001-x", "main", "auto", trusted=None
+    )
 
     assert tier == "blocking"
-
-
-def test_satisfied_gates_reads_both_the_contract_and_the_metadata(
-    tmp_path: Path,
-) -> None:
-    spec = _spec(tmp_path, satisfiedSystemGates=["human-approval"])
-    gates = pe.satisfied_system_gates(spec, {"satisfied_gates": ["sbom"]})
-    assert sorted(gates) == ["human-approval", "sbom"]
-
-
-def test_satisfied_gates_of_an_unreadable_spec_is_empty(tmp_path: Path) -> None:
-    """Unknown approvals must leave the gate OUTSTANDING, never cleared."""
-    assert pe.satisfied_system_gates(tmp_path / "nope") == []
 
 
 # --------------------------------------------------------------------------- #
@@ -289,14 +308,18 @@ def test_a_production_deployment_holds_on_the_live_path(
     spec = _contracted(
         tmp_path, monkeypatch, _deployment(production_classification="production")
     )
-    assert pe.merge_disposition(spec, "low") == pe.HOLD_BLOCKING_DISPOSITION
+    assert (
+        pe.merge_disposition(spec, "low", trusted=None) == pe.HOLD_BLOCKING_DISPOSITION
+    )
 
 
 def test_a_high_risk_deployment_holds_on_the_live_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     spec = _contracted(tmp_path, monkeypatch, _deployment(risk_class="high"))
-    assert pe.merge_disposition(spec, "low") == pe.HOLD_BLOCKING_DISPOSITION
+    assert (
+        pe.merge_disposition(spec, "low", trusted=None) == pe.HOLD_BLOCKING_DISPOSITION
+    )
 
 
 def test_a_satisfied_system_gate_clears_only_its_own_hold(
@@ -304,11 +327,89 @@ def test_a_satisfied_system_gate_clears_only_its_own_hold(
 ) -> None:
     dep = _deployment(system_gates=["human-approval"])
     held = _contracted(tmp_path / "a", monkeypatch, dep)
-    assert pe.merge_disposition(held, "low") == pe.HOLD_BLOCKING_DISPOSITION
-    cleared = _contracted(
-        tmp_path / "b", monkeypatch, dep, satisfiedSystemGates=["human-approval"]
+    assert (
+        pe.merge_disposition(held, "low", trusted=None) == pe.HOLD_BLOCKING_DISPOSITION
     )
-    assert pe.merge_disposition(cleared, "low") == pe.AUTO_MERGE_DISPOSITION
+    cleared = _contracted(tmp_path / "b", monkeypatch, dep)
+    assert (
+        pe.merge_disposition(
+            cleared, "low", trusted=None, satisfied_gates=["human-approval"]
+        )
+        == pe.AUTO_MERGE_DISPOSITION
+    )
+
+
+def test_a_contract_cannot_satisfy_its_own_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _contracted(
+        tmp_path,
+        monkeypatch,
+        _deployment(
+            system_gates=["human-approval"], satisfied_gates=["human-approval"]
+        ),
+    )
+    assert (
+        pe.merge_disposition(spec, "low", trusted=None) == pe.HOLD_BLOCKING_DISPOSITION
+    )
+
+
+def test_task_metadata_is_not_gate_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _contracted(
+        tmp_path,
+        monkeypatch,
+        _deployment(system_gates=["human-approval"]),
+        satisfiedSystemGates=["human-approval"],
+    )
+    assert (
+        pe.merge_disposition(spec, "low", trusted=None) == pe.HOLD_BLOCKING_DISPOSITION
+    )
+
+
+def test_merge_disposition_takes_explicit_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _contracted(
+        tmp_path, monkeypatch, _deployment(system_gates=["human-approval"])
+    )
+    assert (
+        pe.merge_disposition(
+            spec, "low", trusted=None, satisfied_gates=["human-approval"]
+        )
+        == pe.AUTO_MERGE_DISPOSITION
+    )
+
+
+async def test_a_human_only_hold_keeps_the_watcher_armed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gated = _contracted(
+        tmp_path / "a", monkeypatch, _deployment(system_gates=["human-approval"])
+    )
+    assert await _endgame_auto_merge(gated, "auto", monkeypatch, both=True) == (
+        True,
+        True,
+    )
+    prod = _contracted(
+        tmp_path / "b",
+        monkeypatch,
+        _deployment(production_classification="production"),
+    )
+    assert await _endgame_auto_merge(prod, "auto", monkeypatch, both=True) == (
+        False,
+        False,
+    )
+    high = _contracted(
+        tmp_path / "c",
+        monkeypatch,
+        _deployment(system_gates=["human-approval"], risk_class="high"),
+    )
+    assert await _endgame_auto_merge(high, "auto", monkeypatch, both=True) == (
+        False,
+        False,
+    )
 
 
 @pytest.mark.parametrize("text", ["{not json", "[]"])
@@ -316,19 +417,23 @@ def test_an_unreadable_contract_holds_on_the_live_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text: str
 ) -> None:
     spec = _contracted(tmp_path, monkeypatch, text)
-    assert pe.merge_disposition(spec, "low") == pe.HOLD_BLOCKING_DISPOSITION
+    assert (
+        pe.merge_disposition(spec, "low", trusted=None) == pe.HOLD_BLOCKING_DISPOSITION
+    )
 
 
 def test_a_satisfied_gate_never_clears_production(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     spec = _contracted(
-        tmp_path,
-        monkeypatch,
-        _deployment(production_classification="production"),
-        satisfiedSystemGates=["human-approval"],
+        tmp_path, monkeypatch, _deployment(production_classification="production")
     )
-    assert pe.merge_disposition(spec, "low") == pe.HOLD_BLOCKING_DISPOSITION
+    assert (
+        pe.merge_disposition(
+            spec, "low", trusted=None, satisfied_gates=["human-approval"]
+        )
+        == pe.HOLD_BLOCKING_DISPOSITION
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -367,6 +472,7 @@ async def test_the_background_watcher_is_strongly_referenced(
         auto_merge=False,
         reviewer="copilot",
         background=True,
+        trusted=None,
     )
 
     assert res["watching"] is True
@@ -392,6 +498,10 @@ def test_a_contract_that_raises_on_read_holds_instead(
     target = spec.joinpath(*where)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("[" * 100_000)
-    assert pe.merge_disposition(spec, "low") == pe.HOLD_BLOCKING_DISPOSITION
+    assert (
+        pe.merge_disposition(spec, "low", trusted=None) == pe.HOLD_BLOCKING_DISPOSITION
+    )
     target.write_bytes(b"\xff\xfe not utf-8")
-    assert pe.merge_disposition(spec, "low") == pe.HOLD_BLOCKING_DISPOSITION
+    assert (
+        pe.merge_disposition(spec, "low", trusted=None) == pe.HOLD_BLOCKING_DISPOSITION
+    )

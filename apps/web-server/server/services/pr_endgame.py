@@ -23,7 +23,7 @@ import json
 import logging
 import os
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -187,12 +187,14 @@ def path_floor_enforced(project_path: Path | None = None) -> bool:
     return _flag(PATH_RISK_FLOOR_ENV, project_path)
 
 
-def apply_path_risk_floor(
+def apply_path_risk_floor(  # noqa: PLR0913 - trusted is the required #1667 keyword
     project_path: Path,
     spec_dir: Path,
     spec_id: str,
     base: str,
     tier: str | None,
+    *,
+    trusted: object,
 ) -> tuple[str | None, str | None]:
     """Raise *tier* to the floor this task's REAL diff + deployment block demand.
 
@@ -221,8 +223,9 @@ def apply_path_risk_floor(
             floor_from_paths,
             raise_review_tier,
         )
-        from pfactory.tfactory_client import (  # type: ignore[import-not-found,unused-ignore] # noqa: PLC0415
-            load_task_contract,
+
+        from server.services.trusted_contract import (  # noqa: PLC0415
+            resolve_contract,
         )
     except ImportError:
         # Fail CLOSED. This block imports the ONLY thing that scores the diff
@@ -250,13 +253,10 @@ def apply_path_risk_floor(
     except Exception:  # noqa: BLE001 - never break the endgame over a diff
         logger.debug("[pr-endgame] path risk floor: diff unreadable", exc_info=True)
     try:
-        deployment = (load_task_contract(spec_dir) or {}).get("deployment")
-        # satisfied_gates is not optional decoration: without it EVERY declared
-        # system gate reads as outstanding forever, so once `human-approval` is
-        # required the tier stays floored even after a human actually approves.
-        if deployment_block_reasons(
-            deployment, satisfied_gates=satisfied_system_gates(spec_dir, deployment)
-        ):
+        state, contract = resolve_contract(spec_dir, trusted)
+        deployment = contract.get("deployment")
+        # No gate evidence here: the PR does not exist yet (#1663).
+        if state == "hold" or deployment_block_reasons(deployment):
             floor = "blocking"
     except Exception:  # noqa: BLE001 - same: an unreadable contract adds nothing
         logger.debug("[pr-endgame] path risk floor: contract unreadable", exc_info=True)
@@ -308,37 +308,6 @@ def _path_risk_floor_closed(
         return tier, "blocking"
     _record_path_risk_floor(spec_dir, "blocking", enforced=True)
     return "blocking", "blocking"
-
-
-# Where an operator (or an upstream approval step) records the RFC-0013 system
-# gates that have actually been cleared for this task.
-SATISFIED_GATES_KEYS = ("satisfiedSystemGates", "satisfied_system_gates")
-
-
-def satisfied_system_gates(spec_dir: Path, deployment: object = None) -> list[str]:
-    """The RFC-0013 system gates recorded as already cleared for this task.
-
-    Read from ``task_metadata.json`` (``satisfiedSystemGates``) and from the
-    contract's own ``deployment.satisfied_gates``. Best-effort: an unreadable
-    file contributes nothing, which is the SAFE direction here -- an unknown
-    approval leaves the gate outstanding and the change held.
-    """
-    gates: list[str] = []
-    if isinstance(deployment, dict):
-        declared = deployment.get("satisfied_gates")
-        if isinstance(declared, list):
-            gates.extend(str(g) for g in declared)
-    try:
-        meta = json.loads((Path(spec_dir) / "task_metadata.json").read_text())
-    except (OSError, ValueError):
-        return gates
-    if not isinstance(meta, dict):
-        return gates
-    for key in SATISFIED_GATES_KEYS:
-        recorded = meta.get(key)
-        if isinstance(recorded, list):
-            gates.extend(str(g) for g in recorded)
-    return gates
 
 
 def _record_path_risk_floor(spec_dir: Path, floor: str, *, enforced: bool) -> None:
@@ -456,7 +425,13 @@ def _contract_unreadable(spec_dir: Path) -> bool:
         return True
 
 
-def merge_disposition(spec_dir: Path, tier: str | None) -> str:
+def merge_disposition(
+    spec_dir: Path,
+    tier: str | None,
+    *,
+    trusted: object,
+    satisfied_gates: Iterable[str] = (),
+) -> str:
     """The RFC-0011/RFC-0013 merge disposition for this task (#637).
 
     THE fix for the hole this module carried: ``merge.merge_policy.decide_merge``
@@ -478,12 +453,16 @@ def merge_disposition(spec_dir: Path, tier: str | None) -> str:
 
     The RFC-0013 deployment overlay is enforced here, independent of the
     path-floor flag (#1658): a production or high-risk deployment holds, and
-    satisfied system gates clear only ``system_gates`` holds.
+    satisfied system gates clear only ``system_gates`` holds. Gate evidence
+    comes only from the caller (a GitHub review, #1663), never from the contract
+    or task_metadata.
     """
     try:
         from merge.merge_policy import decide_merge  # noqa: PLC0415
-        from pfactory.tfactory_client import (  # type: ignore[import-not-found,unused-ignore] # noqa: PLC0415
-            load_task_contract,
+
+        from server.services.trusted_contract import (  # noqa: PLC0415
+            host_isolated,
+            resolve_contract,
         )
     except ImportError:
         logger.warning(
@@ -493,11 +472,24 @@ def merge_disposition(spec_dir: Path, tier: str | None) -> str:
             sanitize_log(_describe_tier(tier)),
         )
         return HOLD_BLOCKING_DISPOSITION
+    # D4-i (#1667): on a host that does not isolate the agent, the agent can read
+    # the web server's keys, so no task is auto-merged.
+    if not host_isolated():
+        logger.warning(
+            "[pr-endgame] host does not isolate the build; auto-merge withheld"
+        )
+        return HOLD_BLOCKING_DISPOSITION
     effective = tier if tier is not None and str(tier).strip() else "low"
     try:
-        unreadable = _contract_unreadable(spec_dir)
-        deployment = (load_task_contract(spec_dir) or {}).get("deployment")
-        gates = satisfied_system_gates(spec_dir, deployment)
+        state, contract = resolve_contract(spec_dir, trusted)
+        if state == "hold":
+            logger.warning(
+                "[pr-endgame] task contract not verifiable or build not isolated; "
+                "auto-merge withheld"
+            )
+            return HOLD_BLOCKING_DISPOSITION
+        unreadable = state == "legacy" and _contract_unreadable(spec_dir)
+        deployment = contract.get("deployment")
     except Exception:  # noqa: BLE001 - e.g. RecursionError, UnicodeDecodeError
         # Hold, never raise: an exception here would abort the endgame before
         # the PR is opened, and "we could not read it" is not "not production".
@@ -510,7 +502,7 @@ def merge_disposition(spec_dir: Path, tier: str | None) -> str:
             str(effective),
             **merge_gate_signals(spec_dir),
             deployment=deployment,
-            satisfied_gates=gates,
+            satisfied_gates=list(satisfied_gates),
         )
     )
 
@@ -752,15 +744,110 @@ def read_review_verdict(
     )
 
 
-def merge_pr(
+_DECISIVE_STATES = {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}
+
+
+def human_approval_head(
+    owner: str, repo: str, pr: int, *, runner: Runner = _default_runner
+) -> str | None:
+    """The PR head SHA a human has approved, else None (#1663).
+
+    A review counts only if its author is not the PR author and not a Bot, it is
+    that reviewer's latest APPROVED/CHANGES_REQUESTED/DISMISSED review (COMMENTED
+    is ignored), and its ``commit_id`` equals the current head exactly. Any
+    other reviewer's latest CHANGES_REQUESTED blocks. Fails closed: any error
+    means no approval.
+    """
+    base = f"/repos/{owner}/{repo}/pulls/{pr}"
+    try:
+        # A timeout or transport error is no approval, not a crashed watcher.
+        pr_res = runner(
+            ["gh", "api", base, "--jq", "{head: .head.sha, author: .user.login}"],
+            None,
+        )
+        rv_res = runner(
+            [
+                "gh",
+                "api",
+                "--paginate",
+                f"{base}/reviews",
+                "--jq",
+                ".[] | {state, login: .user.login, type: .user.type, commit_id}",
+            ],
+            None,
+        )
+    except Exception:  # noqa: BLE001 - fail closed
+        return None
+    if not (pr_res.ok and rv_res.ok):
+        return None
+    try:
+        info = json.loads(pr_res.out)
+        head, author = info["head"], info["author"]
+        # A null author (deleted account) cannot prove "not the author".
+        if not (head and isinstance(author, str) and author):
+            return None
+        latest: dict[str, dict[str, Any]] = {}
+        for line in rv_res.out.splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if row["state"] in _DECISIVE_STATES:
+                latest[row["login"]] = row  # oldest first, so the last one wins
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return None
+    # Any other reviewer's standing change request blocks, as on GitHub.
+    blocked = any(
+        login != author and row["state"] == "CHANGES_REQUESTED"
+        for login, row in latest.items()
+    )
+    for login, row in latest.items():
+        if (
+            not blocked
+            and isinstance(login, str)
+            and login
+            and login != author
+            and row.get("type") == "User"  # a null or ghost user is not a human
+            and row["state"] == "APPROVED"
+            and row.get("commit_id") == head
+        ):
+            logger.info(
+                "[pr-endgame] pr=%d approved by %s at %s",
+                pr,
+                sanitize_log(login),
+                sanitize_log(head),
+            )
+            return str(head)
+    return None
+
+
+def _clears_with_human_approval(
+    spec_dir: Path, tier: str | None, trusted: object
+) -> bool:
+    """Would the tier auto-merge if only the human-only gates were satisfied?"""
+    try:
+        from merge.merge_policy import HUMAN_ONLY_GATES  # noqa: PLC0415
+    except ImportError:
+        return False  # fail closed: auto-merge stays off
+    return (
+        merge_disposition(
+            spec_dir, tier, trusted=trusted, satisfied_gates=HUMAN_ONLY_GATES
+        )
+        == AUTO_MERGE_DISPOSITION
+    )
+
+
+def merge_pr(  # noqa: PLR0913 - match_head binds the merge to the approved commit
     owner: str,
     repo: str,
     pr: int,
     *,
     method: str = "squash",
     runner: Runner = _default_runner,
+    match_head: str | None = None,
 ) -> bool:
     """Merge the PR. Returns True on success. Never force-merges past a conflict.
+
+    ``match_head`` pins the merge to the commit a human approved (#1663).
 
     On a non-clean merge (branch behind base — the common sequential case where
     an earlier auto-merge advanced main), update the PR branch from base once and
@@ -771,7 +858,8 @@ def merge_pr(
         method, "--squash"
     )
     full = f"{owner}/{repo}"
-    res = runner(["gh", "pr", "merge", str(pr), flag, "--repo", full], None)
+    extra = ["--match-head-commit", match_head] if match_head else []
+    res = runner(["gh", "pr", "merge", str(pr), flag, "--repo", full, *extra], None)
     if res.ok:
         return True
 
@@ -779,12 +867,18 @@ def merge_pr(
     if any(
         s in blob for s in ("not mergeable", "cannot be cleanly", "conflict", "behind")
     ):
+        if match_head:
+            # A branch update creates a head nobody approved.
+            logger.info("[pr-endgame] pr=%d not mergeable at the approved head", pr)
+            return False
         logger.info(
             "[pr-endgame] pr=%d not cleanly mergeable — updating branch from base", pr
         )
         upd = runner(["gh", "pr", "update-branch", str(pr), "--repo", full], None)
         if upd.ok:
-            res2 = runner(["gh", "pr", "merge", str(pr), flag, "--repo", full], None)
+            res2 = runner(
+                ["gh", "pr", "merge", str(pr), flag, "--repo", full, *extra], None
+            )
             if res2.ok:
                 return True
             logger.warning(
@@ -919,8 +1013,13 @@ async def watch_and_finish(
     runner: Runner = _default_runner,
     poll_interval: int = _POLL_INTERVAL_SECONDS,
     max_minutes: int = _MAX_POLL_MINUTES,
+    human_approval_required: bool = False,
 ) -> dict:
     """Poll the PR's reviews and merge only on a CLEAN Copilot approval.
+
+    ``human_approval_required`` additionally waits for a human GitHub approval
+    of the head commit (``human_approval_head``) and merges bound to that SHA
+    (#1663); until then it keeps polling, and the timeout is the human-stop.
 
     Merge requires ALL of: ``auto_merge`` on, no CHANGES_REQUESTED, and — when
     ``require_copilot`` (default) — that GitHub Copilot's code review actually ran
@@ -1001,7 +1100,16 @@ async def watch_and_finish(
                     "reason": "auto_merge_disabled",
                     "copilot_approved": rs.copilot_approved,
                 }
-            merged = await asyncio.to_thread(merge_pr, owner, repo, pr, runner=runner)
+            match_head = None
+            if human_approval_required:
+                match_head = await asyncio.to_thread(
+                    human_approval_head, owner, repo, pr, runner=runner
+                )
+                if match_head is None:
+                    continue  # no human approval of the head commit yet
+            merged = await asyncio.to_thread(
+                merge_pr, owner, repo, pr, runner=runner, match_head=match_head
+            )
             # #543: an approved PR that won't merge is usually behind a true
             # line-level conflict. When a conflict_fixer is wired, rebase onto
             # base + resolve the conflicts, push, and RE-REVIEW (loop continues →
@@ -1115,6 +1223,7 @@ def gather_pr_context(
     spec_dir: Path,
     spec_id: str,
     *,
+    trusted: object,
     runner: Runner = _default_runner,
 ) -> dict | None:
     """Resolve {worktree, branch, base, repo, provider} for a task, or None.
@@ -1216,7 +1325,7 @@ def gather_pr_context(
     # allowed to gate anything. Advisory by default: `review_tier` is unchanged
     # and `review_tier_floor` carries the finding to the log + PR body.
     review_tier, review_tier_floor = apply_path_risk_floor(
-        project_path, spec_dir, spec_id, base, review_tier
+        project_path, spec_dir, spec_id, base, review_tier, trusted=trusted
     )
     return {
         "worktree": worktree,
@@ -1233,6 +1342,7 @@ async def run_pr_endgame(
     *,
     spec_dir: Path,
     spec_id: str,
+    trusted: object,
     worktree: Path,
     branch: str,
     base: str,
@@ -1296,9 +1406,19 @@ async def run_pr_endgame(
     # `gather_pr_context` (which already parses task_metadata.json for the base
     # branch) and passed in, so this feature adds no second filesystem path
     # built from a request-supplied spec id.
+    human_approval_required = False
     if auto_merge:
-        disposition = merge_disposition(spec_dir, review_tier)
-        if disposition != AUTO_MERGE_DISPOSITION:
+        disposition = merge_disposition(spec_dir, review_tier, trusted=trusted)
+        if disposition != AUTO_MERGE_DISPOSITION and _clears_with_human_approval(
+            spec_dir, review_tier, trusted
+        ):
+            logger.info(
+                "[pr-endgame] %s: auto-merge waits for a human GitHub approval "
+                "of the head commit",
+                sanitize_log(spec_id),
+            )
+            human_approval_required = True
+        elif disposition != AUTO_MERGE_DISPOSITION:
             # A CONSTANT, never the raw value: reviewTier comes off disk, and
             # interpolating file content into a log record lets a crafted value
             # forge log entries (py/log-injection). `disposition` is one of
@@ -1377,6 +1497,7 @@ async def run_pr_endgame(
         base_branch=base,
         on_approved_merged=re_test,
         runner=runner,
+        human_approval_required=human_approval_required,
     )
     if background:
         # A strong reference, held until the watcher finishes. The event loop

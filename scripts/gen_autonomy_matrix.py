@@ -252,6 +252,16 @@ _GREEN_META = {
 }
 
 
+# The matrix documents legacy tasks (no signed record) on an isolated host, so
+# the numbers do not depend on the machine that regenerates them (#1667, D4-i).
+# kubejob counts as isolated only with the durable store (#1667); the URL is
+# read, never connected to.
+_ISOLATED_HOST = {
+    "AIFACTORY_BUILD_BACKEND": "kubejob",
+    "DATABASE_URL": "postgresql+asyncpg://isolated-host/matrix",
+}
+
+
 @contextlib.contextmanager
 def _env(**values: str | None) -> Iterator[None]:
     """Set (or, for None, remove) env vars; restore the originals on exit."""
@@ -291,7 +301,9 @@ def _path_floor_rows(wc: ModuleType, root: Path, probe: str) -> list[list[str]]:
             spec = root / f"spec-{len(rows)}"
             spec.mkdir()
             with _env(**{pe.PATH_RISK_FLOOR_ENV: val}):
-                eff, floor = pe.apply_path_risk_floor(root, spec, "probe", "dev", "low")
+                eff, floor = pe.apply_path_risk_floor(
+                    root, spec, "probe", "dev", "low", trusted=None
+                )
             rows.append([label, f"`{eff!r}`", f"`{floor!r}`"])
     return rows
 
@@ -309,6 +321,8 @@ def _live_overlay_rows(wc: ModuleType, root: Path) -> list[list[str]]:
     probes = (
         {"production_classification": _PROD_CLASSES[0]},
         {"risk_class": _RISK_CLASSES[0]},
+        # A contract must not clear its own gate (#1663).
+        {"system_gates": ["human-approval"], "satisfied_gates": ["human-approval"]},
     )
     rows: list[list[str]] = []
     with _differ_returns(wc, [_SAFE_PATH]):
@@ -321,11 +335,11 @@ def _live_overlay_rows(wc: ModuleType, root: Path) -> list[list[str]]:
                     json.dumps(contract)
                 )
                 (spec / "task_metadata.json").write_text(json.dumps(_GREEN_META))
-                with _env(**{pe.PATH_RISK_FLOOR_ENV: val}):
+                with _env(**{pe.PATH_RISK_FLOOR_ENV: val}, **_ISOLATED_HOST):
                     eff, floor = pe.apply_path_risk_floor(
-                        spec, spec, "probe", "dev", "low"
+                        spec, spec, "probe", "dev", "low", trusted=None
                     )
-                    disposition = pe.merge_disposition(spec, eff)
+                    disposition = pe.merge_disposition(spec, eff, trusted=None)
                 rows.append(
                     [
                         ", ".join(f"{k}={v}" for k, v in dep.items()),
@@ -371,7 +385,11 @@ def _section_wiring(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
         green = root / "green"
         green.mkdir()
         (green / "task_metadata.json").write_text(json.dumps(_GREEN_META))
-        disp = {t: pe.merge_disposition(green, t) for t in (None, "", "low")}
+        with _env(**_ISOLATED_HOST):
+            disp = {
+                t: pe.merge_disposition(green, t, trusted=None)
+                for t in (None, "", "low")
+            }
         same = disp[None] == disp[""] == disp["low"]
         lines += ["### B1. Blank tier vs `low` (all-green signals)", ""]
         lines += _table(

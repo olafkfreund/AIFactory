@@ -250,15 +250,16 @@ def test_live_overlay_rows_match_the_live_code(tmp_path: Path) -> None:
     from cli import workspace_commands as wc  # noqa: PLC0415
 
     rows = gam._live_overlay_rows(wc, tmp_path)
-    assert len(rows) == 4  # two deployment probes x enforce unset / "1"
+    assert len(rows) == 6  # three deployment probes x enforce unset / "1"
+    assert all(r[4] == "`hold-blocking`" for r in rows)  # none auto-merges
     unset = [r for r in rows if r[1] == "unset"]
     assert unset
     # Recompute each row from its own probe directory (it holds the contract).
     for i, r in enumerate(rows):
         tier = r[2].strip("`").strip("'")
         val = None if r[1] == "unset" else "1"
-        with gam._env(**{gam.pe.PATH_RISK_FLOOR_ENV: val}):
-            live = gam.pe.merge_disposition(tmp_path / f"live-{i}", tier)
+        with gam._env(**{gam.pe.PATH_RISK_FLOOR_ENV: val}, **gam._ISOLATED_HOST):
+            live = gam.pe.merge_disposition(tmp_path / f"live-{i}", tier, trusted=None)
         assert r[4] == f"`{live}`"
 
 

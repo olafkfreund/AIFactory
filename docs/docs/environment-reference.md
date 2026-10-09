@@ -230,7 +230,7 @@ How `run.py` executes and what lets a build schedule on any node. Read in
 
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
-| `AIFACTORY_BUILD_BACKEND` | `subprocess` | no | `subprocess` (in-pod asyncio) or `kubejob` (each build as its own k8s Job). Unknown values fall back to `subprocess`. |
+| `AIFACTORY_BUILD_BACKEND` | `subprocess` | no | `subprocess` (in-pod asyncio) or `kubejob` (each build as its own k8s Job). Unknown values fall back to `subprocess`. Auto-merge is held for every task unless this is `kubejob` and `DATABASE_URL` is set. |
 | `AIFACTORY_IMAGE` | (built-in) | no | Running image; fallback build-Job image when `AIFACTORY_BUILD_IMAGE` unset. |
 | `AIFACTORY_BUILD_IMAGE` | (unset) | no | Override the image for the `kubejob` build Job only. Point at a `:sha-<short>-nix` tag for in-image Nix. |
 | `AIFACTORY_PACK_WORKSPACE` | off | no | Pack `/work` to object storage and unpack in the Job (removes the workspace node-pin). |
@@ -372,7 +372,7 @@ Read in `apps/web-server/server/services/sandbox.py`,
 |----------|---------|----------|---------|
 | `AIFACTORY_BASH_SANDBOX` | on | no | Gate the bubblewrap syscall sandbox; set off where bwrap can't mount `/proc`. |
 | `AIFACTORY_AGENT_SANDBOX` | `off` | no | OS-level agent sandbox mode (`services/sandbox.py`). |
-| `AIFACTORY_AGENT_SANDBOX_PIDNS` | off | no | Opt into a private PID namespace for the sandbox. |
+| `AIFACTORY_AGENT_SANDBOX_PIDNS` | off | no | Opt into a private PID namespace for the sandbox. It does not make a host count as isolated for auto-merge while `run.py` in the sandbox carries the server's environment (#1680). |
 | `AIFACTORY_SANDBOX_BACKEND` | `docker` | no | Gate-runner sandbox backend (`docker` / `nixjob`). |
 | `AIFACTORY_SANDBOX_GATES` | off | no | Run agent gates inside the sandbox. |
 | `AIFACTORY_SANDBOX_IMAGE` | `""` | no | Image for sandboxed gate runs. |

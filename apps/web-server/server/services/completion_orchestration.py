@@ -34,6 +34,8 @@ from server.services.review_redrive_service import (
 )
 
 from .task_control import write_control
+from .trusted_contract import handoff_contract
+from .trusted_contract_store import lookup
 
 
 def _build_wrote_nothing(
@@ -211,6 +213,9 @@ async def run_terminal_completion(
             # unless AIFACTORY_PATH_RISK_FLOOR_ENFORCE is on (it then rewrites
             # reviewTier, which both TFactory and the PR endgame already read).
             # Same helper the endgame calls; idempotent, best-effort.
+            # #1667: one lookup of the signed record, passed to every merge-path
+            # consumer below. A failed read is LOOKUP_FAILED, which holds.
+            trusted = await lookup(spec_dir)
             try:
                 from .pr_endgame import apply_path_risk_floor  # noqa: PLC0415
 
@@ -222,6 +227,7 @@ async def run_terminal_completion(
                     spec_id,
                     str(_meta.get("base_branch") or _meta.get("baseBranch") or "main"),
                     _meta.get("reviewTier"),
+                    trusted=trusted,
                 )
             except Exception:  # noqa: BLE001 — never blocks completion
                 logger.debug("path risk floor skipped (best-effort)", exc_info=True)
@@ -234,7 +240,9 @@ async def run_terminal_completion(
                     sys.path.insert(0, str(backend_path))
                 from pfactory.tfactory_client import maybe_auto_handoff_tfactory
 
-                handoff = await maybe_auto_handoff_tfactory(spec_dir, spec_id)
+                handoff = await maybe_auto_handoff_tfactory(
+                    spec_dir, spec_id, contract=handoff_contract(spec_dir, trusted)
+                )
                 if handoff.get("sent"):
                     logger.info(
                         "[AgentService] Auto-handed off %s to TFactory for testing",
@@ -272,7 +280,9 @@ async def run_terminal_completion(
                 )
 
                 if is_auto_pr_enabled(project_path):
-                    ctx = gather_pr_context(project_path, spec_dir, spec_id)
+                    ctx = gather_pr_context(
+                        project_path, spec_dir, spec_id, trusted=trusted
+                    )
                     if ctx:
 
                         async def _re_test() -> None:
@@ -280,7 +290,11 @@ async def run_terminal_completion(
                                 maybe_auto_handoff_tfactory,
                             )
 
-                            await maybe_auto_handoff_tfactory(spec_dir, spec_id)
+                            await maybe_auto_handoff_tfactory(
+                                spec_dir,
+                                spec_id,
+                                contract=handoff_contract(spec_dir, trusted),
+                            )
 
                         def _re_test_sync() -> None:
                             spawn(_re_test())
@@ -500,6 +514,7 @@ async def run_terminal_completion(
                         endgame = await run_pr_endgame(
                             spec_dir=spec_dir,
                             spec_id=spec_id,
+                            trusted=trusted,
                             worktree=ctx["worktree"],
                             branch=ctx["branch"],
                             base=ctx["base"],
