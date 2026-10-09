@@ -23,7 +23,7 @@ import json
 import logging
 import os
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -255,15 +255,8 @@ def apply_path_risk_floor(  # noqa: PLR0913 - trusted is the required #1667 keyw
     try:
         state, contract = resolve_contract(spec_dir, trusted)
         deployment = contract.get("deployment")
-        # satisfied_gates is not optional decoration: without it EVERY declared
-        # system gate reads as outstanding forever, so once `human-approval` is
-        # required the tier stays floored even after a human actually approves.
-        if state == "hold" or deployment_block_reasons(
-            deployment,
-            satisfied_gates=satisfied_system_gates(
-                spec_dir, deployment, trusted=state == "verified"
-            ),
-        ):
+        # No gate evidence here: the PR does not exist yet (#1663).
+        if state == "hold" or deployment_block_reasons(deployment):
             floor = "blocking"
     except Exception:  # noqa: BLE001 - same: an unreadable contract adds nothing
         logger.debug("[pr-endgame] path risk floor: contract unreadable", exc_info=True)
@@ -315,43 +308,6 @@ def _path_risk_floor_closed(
         return tier, "blocking"
     _record_path_risk_floor(spec_dir, "blocking", enforced=True)
     return "blocking", "blocking"
-
-
-# Where an operator (or an upstream approval step) records the RFC-0013 system
-# gates that have actually been cleared for this task.
-SATISFIED_GATES_KEYS = ("satisfiedSystemGates", "satisfied_system_gates")
-
-
-def satisfied_system_gates(
-    spec_dir: Path, deployment: object = None, *, trusted: bool = False
-) -> list[str]:
-    """The RFC-0013 system gates recorded as already cleared for this task.
-
-    Read from ``task_metadata.json`` (``satisfiedSystemGates``) and from the
-    contract's own ``deployment.satisfied_gates``. Best-effort: an unreadable
-    file contributes nothing, which is the SAFE direction here -- an unknown
-    approval leaves the gate outstanding and the change held.
-    """
-    gates: list[str] = []
-    if isinstance(deployment, dict):
-        declared = deployment.get("satisfied_gates")
-        if isinstance(declared, list):
-            gates.extend(str(g) for g in declared)
-    if trusted:
-        # D2 (#1667): task_metadata.json is agent-writable, so a trusted task
-        # clears system gates only through the signed contract.
-        return gates
-    try:
-        meta = json.loads((Path(spec_dir) / "task_metadata.json").read_text())
-    except (OSError, ValueError):
-        return gates
-    if not isinstance(meta, dict):
-        return gates
-    for key in SATISFIED_GATES_KEYS:
-        recorded = meta.get(key)
-        if isinstance(recorded, list):
-            gates.extend(str(g) for g in recorded)
-    return gates
 
 
 def _record_path_risk_floor(spec_dir: Path, floor: str, *, enforced: bool) -> None:
@@ -469,7 +425,13 @@ def _contract_unreadable(spec_dir: Path) -> bool:
         return True
 
 
-def merge_disposition(spec_dir: Path, tier: str | None, *, trusted: object) -> str:
+def merge_disposition(
+    spec_dir: Path,
+    tier: str | None,
+    *,
+    trusted: object,
+    satisfied_gates: Iterable[str] = (),
+) -> str:
     """The RFC-0011/RFC-0013 merge disposition for this task (#637).
 
     THE fix for the hole this module carried: ``merge.merge_policy.decide_merge``
@@ -491,7 +453,9 @@ def merge_disposition(spec_dir: Path, tier: str | None, *, trusted: object) -> s
 
     The RFC-0013 deployment overlay is enforced here, independent of the
     path-floor flag (#1658): a production or high-risk deployment holds, and
-    satisfied system gates clear only ``system_gates`` holds.
+    satisfied system gates clear only ``system_gates`` holds. Gate evidence
+    comes only from the caller (a GitHub review, #1663), never from the contract
+    or task_metadata.
     """
     try:
         from merge.merge_policy import decide_merge  # noqa: PLC0415
@@ -526,9 +490,6 @@ def merge_disposition(spec_dir: Path, tier: str | None, *, trusted: object) -> s
             return HOLD_BLOCKING_DISPOSITION
         unreadable = state == "legacy" and _contract_unreadable(spec_dir)
         deployment = contract.get("deployment")
-        gates = satisfied_system_gates(
-            spec_dir, deployment, trusted=state == "verified"
-        )
     except Exception:  # noqa: BLE001 - e.g. RecursionError, UnicodeDecodeError
         # Hold, never raise: an exception here would abort the endgame before
         # the PR is opened, and "we could not read it" is not "not production".
@@ -541,7 +502,7 @@ def merge_disposition(spec_dir: Path, tier: str | None, *, trusted: object) -> s
             str(effective),
             **merge_gate_signals(spec_dir),
             deployment=deployment,
-            satisfied_gates=gates,
+            satisfied_gates=list(satisfied_gates),
         )
     )
 

@@ -12,6 +12,7 @@ import asyncio
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -142,7 +143,7 @@ def test_create_pr_survives_fetch_failure():
 COPILOT = "copilot-pull-request-reviewer[bot]"
 
 
-def _reviews(*pairs):
+def _reviews(*pairs: tuple[str, str]) -> CmdResult:
     """pairs of (state, login) → the JSON gh returns for .../reviews."""
     return CmdResult(
         0, json.dumps([{"state": s, "login": login} for s, login in pairs]), ""
@@ -170,11 +171,19 @@ def test_read_review_verdict_copilot_aware():
 # ── human_approval_head (#1663) ──────────────────────────────────────────────
 
 
-def _rv(state, login="alice", type_="User", commit_id="abc"):
+def _rv(
+    state: str, login: str = "alice", type_: str = "User", commit_id: str = "abc"
+) -> dict[str, str]:
     return {"state": state, "login": login, "type": type_, "commit_id": commit_id}
 
 
-def _approval_runner(*rows, pr_rc=0, rv_rc=0, raw=None, merge=None):
+def _approval_runner(
+    *rows: dict[str, str],
+    pr_rc: int = 0,
+    rv_rc: int = 0,
+    raw: str | None = None,
+    merge: CmdResult | None = None,
+) -> FakeRunner:
     """PR route + newline-delimited reviews route (what --paginate --jq emits).
 
     "--paginate" and ".head.sha" come before "reviews": first match wins.
@@ -191,7 +200,7 @@ def _approval_runner(*rows, pr_rc=0, rv_rc=0, raw=None, merge=None):
     return FakeRunner(routes)
 
 
-def test_human_approval_head_returns_the_approved_sha():
+def test_human_approval_head_returns_the_approved_sha() -> None:
     r = _approval_runner(_rv("APPROVED"))
     assert pe.human_approval_head("o", "r", 5, runner=r) == "abc"
 
@@ -206,22 +215,22 @@ def test_human_approval_head_returns_the_approved_sha():
         [_rv("APPROVED"), _rv("DISMISSED")],
     ],
 )
-def test_human_approval_head_rejects(rows):
+def test_human_approval_head_rejects(rows: list[dict[str, str]]) -> None:
     assert pe.human_approval_head("o", "r", 5, runner=_approval_runner(*rows)) is None
 
 
-def test_human_approval_head_ignores_a_later_comment():
+def test_human_approval_head_ignores_a_later_comment() -> None:
     r = _approval_runner(_rv("APPROVED"), _rv("COMMENTED"))
     assert pe.human_approval_head("o", "r", 5, runner=r) == "abc"
 
 
 @pytest.mark.parametrize("kw", [{"pr_rc": 1}, {"rv_rc": 1}, {"raw": "not json"}])
-def test_human_approval_head_fails_closed(kw):
+def test_human_approval_head_fails_closed(kw: dict[str, Any]) -> None:
     r = _approval_runner(_rv("APPROVED"), **kw)
     assert pe.human_approval_head("o", "r", 5, runner=r) is None
 
 
-def _gated_watch(r):
+def _gated_watch(r: FakeRunner) -> dict[str, Any]:
     return asyncio.run(
         pe.watch_and_finish(
             owner="o",
@@ -236,20 +245,20 @@ def _gated_watch(r):
     )
 
 
-def test_watcher_without_human_approval_never_merges():
+def test_watcher_without_human_approval_never_merges() -> None:
     r = _approval_runner()
     res = _gated_watch(r)
     assert res["merged"] is False
     assert not r.saw("pr merge")
 
 
-def test_watcher_merges_bound_to_the_approved_commit():
+def test_watcher_merges_bound_to_the_approved_commit() -> None:
     r = _approval_runner(_rv("APPROVED"), merge=CmdResult(0, "merged", ""))
     _gated_watch(r)
     assert r.saw("--match-head-commit abc")
 
 
-def test_bound_merge_never_updates_the_branch():
+def test_bound_merge_never_updates_the_branch() -> None:
     r = _approval_runner(
         _rv("APPROVED"), merge=CmdResult(1, "", "not mergeable: behind")
     )

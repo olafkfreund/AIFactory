@@ -223,12 +223,11 @@ def test_the_advisory_rollout_is_still_honoured_on_the_closed_path(
 # --------------------------------------------------------------------------- #
 
 
-def test_recorded_approvals_reach_the_deployment_overlay(
+def test_recorded_approvals_do_not_lift_the_deployment_floor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """deployment_block_reasons was called without satisfied_gates, so once
-    `human-approval` was required it read unsatisfied FOREVER and the tier
-    stayed floored even after a human approved."""
+    """Task metadata is agent-writable, so it is not gate evidence (#1663): the
+    floor sees no evidence and a declared gate keeps the tier floored."""
     monkeypatch.setenv(pe.PATH_RISK_FLOOR_ENV, "true")
     spec = _spec(tmp_path, reviewTier="auto", satisfiedSystemGates=["human-approval"])
     (spec / "implementation_plan.json").write_text(
@@ -241,11 +240,11 @@ def test_recorded_approvals_reach_the_deployment_overlay(
     )
     monkeypatch.setattr(pe, "task_repo_dir", lambda *_a, **_k: None)
 
-    tier, floor = pe.apply_path_risk_floor(
+    tier, _floor = pe.apply_path_risk_floor(
         tmp_path, spec, "001-x", "main", "auto", trusted=None
     )
 
-    assert (tier, floor) == ("auto", None)
+    assert tier == "blocking"
 
 
 def test_an_outstanding_gate_still_floors_the_tier(

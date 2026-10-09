@@ -324,6 +324,11 @@ the tests run on an isolated host (#1667's `_isolated_host` fixture).
   plan does not list, expects `satisfiedSystemGates` metadata to lift the path
   floor. Under decision 7 that no longer happens, so step 2 rewrites it to
   assert that the floor stays `blocking` despite the metadata.
+- **Step 2.** The `test_recorded_approvals_*` test is renamed
+  `..._do_not_lift_the_deployment_floor`. The `_HUMAN_ONLY_GATES` alias is
+  dropped: all three uses are renamed to `HUMAN_ONLY_GATES`. Deleting
+  `satisfied_system_gates` also removes #1667's D2 `trusted=` branch.
+  #1667's test 4 still passes, because no metadata is read at all now.
 
 ## Rollback
 
