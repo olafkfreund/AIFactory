@@ -238,3 +238,4 @@ Then:
 - A. Accepted: with the path floor enforcing, a declared system gate floors the tier to `blocking`, so those tasks merge by hand. The floor is not loosened.
 - B. Accepted: AIFactory's gh identity is `olafkfreund` (a User, verified in the pod), so no approval can count and human-approval tasks merge by hand until AIFactory has its own bot identity (follow-up issue).
 - C. Accepted: an approval after the 20-minute watch window gets no auto-merge; extending the window is out of scope.
+- D. Approved 2026-10-09, after review: any non-author reviewer's standing `CHANGES_REQUESTED` (their latest decisive review) blocks the gate, even when another reviewer approved the head commit, as on GitHub.
