@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 
 from server.database.models import TrustedContract
 
@@ -71,12 +71,22 @@ class TrustedContractStore:
             return TrustedRecord(json.loads(row.contract), row.build_isolation)
 
     async def stamp_isolation(self, spec_key: str, kind: str) -> None:
-        """Set the stamp; no-op on a missing row; ``none`` is never overwritten."""
+        """Set the stamp; no-op on a missing row; ``none`` is never overwritten.
+
+        One conditional UPDATE, so two concurrent spawns cannot race ``none`` away.
+        """
         async with self._session_factory() as session:
-            row = await session.get(TrustedContract, spec_key)
-            if row is None or row.build_isolation == "none":
-                return
-            row.build_isolation = kind
+            await session.execute(
+                update(TrustedContract)
+                .where(TrustedContract.spec_key == spec_key)
+                .where(
+                    or_(
+                        TrustedContract.build_isolation.is_(None),
+                        TrustedContract.build_isolation != "none",
+                    )
+                )
+                .values(build_isolation=kind)
+            )
             await session.commit()
 
 
@@ -90,8 +100,16 @@ async def lookup(spec_dir: str | Path) -> TrustedRecord | None | Any:
 
 
 async def stamp_spawn(spec_dir: str | Path, kind: str) -> None:
-    """Stamp how a build is isolated. A failed stamp stays empty, which holds."""
+    """Stamp how a build is isolated.
+
+    A failed isolated stamp is logged and the build goes on: the stamp stays
+    empty (holds) or keeps an earlier isolated value. A failed ``none`` stamp
+    raises, because an earlier isolated stamp would otherwise survive a build
+    that was not isolated.
+    """
     try:
         await TrustedContractStore().stamp_isolation(spec_key_for_dir(spec_dir), kind)
-    except Exception:  # noqa: BLE001 - must not block the build
+    except Exception:
         logger.error("[trusted-contract] isolation stamp not written")
+        if kind == "none":
+            raise

@@ -631,6 +631,15 @@ Recorded during implementation.
 - **Step 9.** `tests/test_trusted_contract_isolation_stamp.py` resolves
   `server.database.engine` inside its fixture with `importlib`. Its
   module-level reference went stale in the full root run.
+- **Review fixes (after step 9).**
+  - `stamp_isolation` is one conditional `UPDATE`, so a concurrent `kubejob`
+    stamp can no longer overwrite `none`.
+  - A failed `none` stamp now raises and stops the spawn. An earlier isolated
+    stamp would otherwise survive a build that was not isolated.
+  - `completion_orchestration` imports the record helpers at module level. An
+    `ImportError` would otherwise skip the endgame silently after the
+    terminal marker.
+  - Tests 13b (`put` reset) and 13c (failed `none` stamp) are added.
 
 ## Rollback
 

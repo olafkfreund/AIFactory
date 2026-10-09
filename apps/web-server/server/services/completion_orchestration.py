@@ -34,6 +34,8 @@ from server.services.review_redrive_service import (
 )
 
 from .task_control import write_control
+from .trusted_contract import handoff_contract
+from .trusted_contract_store import lookup
 
 
 def _build_wrote_nothing(
@@ -213,9 +215,6 @@ async def run_terminal_completion(
             # Same helper the endgame calls; idempotent, best-effort.
             # #1667: one lookup of the signed record, passed to every merge-path
             # consumer below. A failed read is LOOKUP_FAILED, which holds.
-            from .trusted_contract import handoff_contract  # noqa: PLC0415
-            from .trusted_contract_store import lookup  # noqa: PLC0415
-
             trusted = await lookup(spec_dir)
             try:
                 from .pr_endgame import apply_path_risk_floor  # noqa: PLC0415

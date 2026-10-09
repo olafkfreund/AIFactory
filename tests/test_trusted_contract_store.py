@@ -63,5 +63,52 @@ async def test_13_stamp_is_sticky_and_missing_row_is_noop(tmp_path: Path) -> Non
         await engine.dispose()
 
 
+async def test_13b_put_resets_the_stamp_only_when_the_contract_changes(
+    tmp_path: Path,
+) -> None:
+    from server.database.models import Base
+    from server.services.trusted_contract_store import TrustedContractStore
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 's.db'}")
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        store = TrustedContractStore(
+            session_factory=async_sessionmaker(engine, expire_on_commit=False)
+        )
+        await store.put("k", "001-x", {"feature": "f"})
+        await store.stamp_isolation("k", "none")
+
+        await store.put("k", "001-x", {"feature": "f"})  # same contract: kept
+        rec = await store.get("k")
+        assert rec is not None and rec.build_isolation == "none"
+
+        await store.put("k", "001-x", {"feature": "g"})  # new contract: new build
+        rec = await store.get("k")
+        assert rec is not None and rec.build_isolation is None
+    finally:
+        await engine.dispose()
+
+
+class _FailingStore:
+    def __init__(self, *_a: object, **_k: object) -> None:
+        pass
+
+    async def stamp_isolation(self, *_a: object) -> None:
+        raise RuntimeError("db down")
+
+
+async def test_13c_failed_none_stamp_blocks_the_spawn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An earlier isolated stamp must not survive a non-isolated build."""
+    from server.services import trusted_contract_store as tcs
+
+    monkeypatch.setattr(tcs, "TrustedContractStore", _FailingStore)
+    with pytest.raises(RuntimeError):
+        await tcs.stamp_spawn("/x/.aifactory/specs/001", "none")
+    await tcs.stamp_spawn("/x/.aifactory/specs/001", "kubejob")  # logged, no raise
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
