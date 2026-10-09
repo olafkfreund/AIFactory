@@ -8,7 +8,9 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux /proc only")
+pytestmark = pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="Linux /proc only"
+)
 
 WEB_SERVER = Path(__file__).resolve().parents[1]
 
@@ -21,9 +23,9 @@ sys.stdin.read()
 """
 
 
-def test_server_environ_is_unreadable_after_startup_hardening():
+def test_server_environ_is_unreadable_after_startup_hardening() -> None:
     env = {**os.environ, "NON_DUMPABLE_CANARY": "s3cret"}
-    child = subprocess.Popen(
+    child = subprocess.Popen(  # noqa: S603 — fixed argv, our own interpreter
         [sys.executable, "-c", CHILD],
         cwd=WEB_SERVER,
         env=env,
@@ -31,6 +33,7 @@ def test_server_environ_is_unreadable_after_startup_hardening():
         stdout=subprocess.PIPE,
         text=True,
     )
+    assert child.stdin is not None and child.stdout is not None
     try:
         # Importing server.main logs to stdout first; skip to our line.
         line = next(ln for ln in child.stdout if ln.startswith("DUMPABLE"))

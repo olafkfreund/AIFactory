@@ -7,7 +7,9 @@ Main entry point for the web server that provides:
 - Static file serving for the React SPA
 """
 
+import ctypes
 import logging
+import sys
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
@@ -754,9 +756,6 @@ def _make_non_dumpable() -> None:
     /proc files are owned by root, so without CAP_SYS_PTRACE they are unreadable.
     Children reset to dumpable on execve; their env is scrubbed separately.
     """
-    import ctypes
-    import sys
-
     if not sys.platform.startswith("linux"):
         return
     pr_set_dumpable = 4
