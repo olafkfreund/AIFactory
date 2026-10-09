@@ -25,7 +25,10 @@ for _p in (str(_WS), str(_BACKEND)):
 from cli import workspace_commands  # noqa: E402
 from pfactory import tfactory_client as tc  # noqa: E402
 from server.services import pr_endgame as pe  # noqa: E402
-from server.services.trusted_contract import host_isolated  # noqa: E402
+from server.services.trusted_contract import (  # noqa: E402
+    handoff_contract,
+    host_isolated,
+)
 from server.services.trusted_contract_store import (  # noqa: E402
     LOOKUP_FAILED,
     TrustedRecord,
@@ -307,3 +310,21 @@ def test_pid_namespaced_sandbox_host_is_not_isolated(
     monkeypatch.setenv("AIFACTORY_AGENT_SANDBOX", "strict")
     monkeypatch.setenv("AIFACTORY_AGENT_SANDBOX_PIDNS", "1")
     assert host_isolated() is False
+
+
+def test_a_record_never_verifies_on_a_non_isolated_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Handoff and path floor get no record contract there, not only the merge."""
+    spec, signed = _spec(tmp_path, tier="auto")
+    (tmp_path / ".aifactory" / "worktrees" / "tasks" / "001-x").mkdir(parents=True)
+    monkeypatch.setenv(pe.PATH_RISK_FLOOR_ENV, "true")
+    monkeypatch.setattr(
+        workspace_commands, "_get_changed_files_from_git", lambda *_a, **_k: []
+    )
+    monkeypatch.setattr("server.services.job_state_store.store_enabled", lambda: False)
+    assert handoff_contract(spec, _rec(signed)) == {}
+    tier, floor = pe.apply_path_risk_floor(
+        tmp_path, spec, "001-x", "dev", "auto", trusted=_rec(signed)
+    )
+    assert (tier, floor) == ("blocking", "blocking")
