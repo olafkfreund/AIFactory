@@ -337,6 +337,9 @@ the tests run on an isolated host (#1667's `_isolated_host` fixture).
 - **Step 4.** The hypothetical lives in a helper,
   `_clears_with_human_approval`. If `HUMAN_ONLY_GATES` cannot be imported it
   returns `False`, and auto-merge turns off.
+- **Step 5.** `test_live_overlay_rows_match_the_live_code` hard-coded 4
+  live-overlay rows. It now expects 6 and asserts that every one reads
+  `hold-blocking`.
 
 ## Rollback
 
