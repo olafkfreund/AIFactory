@@ -30,6 +30,7 @@ from pydantic import BaseModel, Field, SecretStr
 from server.error_ref import client_error
 from server.paths import atomic_write_secret_json
 from server.services.http_verdict import honest_status
+from server.utils.subprocess_env import child_env
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -864,6 +865,7 @@ def _run_login_shell(args: list[str], timeout: int = 60) -> subprocess.Completed
         capture_output=True,
         text=True,
         timeout=timeout,
+        env=child_env(),
     )
 
 

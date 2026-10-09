@@ -106,6 +106,7 @@ from factory_common.logsafe import sanitize_log
 
 from server.services.task_branch import record_branch
 from server.specpath import safe_spec_component, spec_dir_for
+from server.utils.subprocess_env import GITHUB_KEEP, child_env
 
 from .task_phase import (
     _append_parallel_flags,
@@ -949,7 +950,7 @@ def _git(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[
     # GIT_TERMINAL_PROMPT=0: never block a dispatch on an interactive credential
     # prompt — an unreachable/unauthorised remote (e.g. the #960 refresh fetch)
     # must fail fast instead of hanging the server.
-    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    env = child_env(keep=GITHUB_KEEP, extra={"GIT_TERMINAL_PROMPT": "0"})
     return subprocess.run(
         ["git", *args],
         check=check,

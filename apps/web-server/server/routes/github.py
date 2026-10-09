@@ -25,6 +25,7 @@ from server.error_ref import client_error
 from server.services.gh import run_gh_command  # re-exported: see services/gh.py
 from server.services.git_base_url import safe_git_base_url  # #1360
 from server.services.http_verdict import honest_status
+from server.utils.subprocess_env import child_env
 
 logger = logging.getLogger(__name__)
 
@@ -387,6 +388,7 @@ def install_github_cli():
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=child_env(),
         )
 
     # Step 1: Check if gh is already installed

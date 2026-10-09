@@ -42,6 +42,7 @@ from factory_common.logsafe import sanitize_log
 
 from server.error_ref import InputRejectedError
 from server.specpath import safe_spec_component
+from server.utils.subprocess_env import GITHUB_KEEP, child_env
 
 logger = logging.getLogger(__name__)
 
@@ -384,9 +385,7 @@ async def clone_or_update(
         if branch:
             cmd.extend(["--branch", branch])
         cmd.extend(["--", fetch_url, str(workspace)])
-        await _run_git(
-            cmd, cwd=workspace.parent, timeout=timeout_seconds, extra_env=cred_env
-        )
+        await _run_git(cmd, cwd=workspace.parent, timeout=timeout_seconds, extra_env=cred_env)
         if credential is not None:
             # Strip the credential from origin so it isn't persisted in the
             # workspace's ``.git/config``. The clone already succeeded, so a
@@ -401,9 +400,7 @@ async def clone_or_update(
                 timeout_seconds=timeout_seconds,
                 after="cloned",
             )
-        logger.info(
-            "[workspace] cloned %s → %s", sanitize_log(git_url), sanitize_log(workspace)
-        )
+        logger.info("[workspace] cloned %s → %s", sanitize_log(git_url), sanitize_log(workspace))
         return workspace
 
 
@@ -463,9 +460,9 @@ async def _run_git(
     # Restrict git transports to https/ssh/git (#323 C5): blocks the `ext::`
     # transport helper (arbitrary command execution) even if a malicious URL
     # slips past the route validator.
-    env = {**os.environ, "GIT_ALLOW_PROTOCOL": "https:ssh:git"}
-    if extra_env:
-        env.update(extra_env)
+    env = child_env(
+        keep=GITHUB_KEEP, extra={"GIT_ALLOW_PROTOCOL": "https:ssh:git", **(extra_env or {})}
+    )
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,

@@ -27,6 +27,8 @@ from pathlib import Path
 
 from factory_common.logsafe import sanitize_log
 
+from server.utils.subprocess_env import GITHUB_KEEP, child_env
+
 logger = logging.getLogger(__name__)
 
 # GitHub's hard limit on a Copilot cloud-agent session is 59 minutes.
@@ -73,6 +75,7 @@ class CopilotDispatchService:
             capture_output=True,
             text=True,
             timeout=30,
+            env=child_env(keep=GITHUB_KEEP),
         )
         if result.returncode != 0:
             raise RuntimeError(
@@ -120,6 +123,7 @@ class CopilotDispatchService:
             capture_output=True,
             text=True,
             timeout=30,
+            env=child_env(keep=GITHUB_KEEP),
         )
         if result.returncode != 0:
             logger.warning(
@@ -150,6 +154,7 @@ class CopilotDispatchService:
             capture_output=True,
             text=True,
             timeout=30,
+            env=child_env(keep=GITHUB_KEEP),
         )
         raw = result.stdout.strip()
         return raw if raw and raw != "null" else None

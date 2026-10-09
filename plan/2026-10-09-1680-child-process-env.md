@@ -222,3 +222,11 @@ builds are untouched, so a revert affects only in-pod spawns.
   SystemExit message drops the errno. `test_hardening_fails_closed` now
   patches `core.process_hardening.ctypes.CDLL`. The ratchet commands need
   `--staged` to see staged files.
+- **Step 4:** network git needs the GitHub token for gh's credential helper,
+  so `task_branch._git` (fetch), `routes/git.run_git_command` (fetch, pull)
+  and `project_workspace_service._run_git` (clone and fetch when no stored
+  credential) use `child_env(keep=GITHUB_KEEP)` rather than the spec's
+  `child_env()`. The scan missed envs built from `os.environ` into a
+  variable first (`build_backend._git`, `_run_git`), so
+  `test_no_environ_copy_outside_helper` now flags any whole-environ copy
+  outside `subprocess_env.py` and the PTY session.

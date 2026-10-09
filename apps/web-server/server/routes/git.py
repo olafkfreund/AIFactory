@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from server.error_ref import client_error
 from server.services.http_verdict import honest_status
 from server.specpath import browse_roots, within_roots
+from server.utils.subprocess_env import GITHUB_KEEP, child_env
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,7 @@ def run_git_command(args: list[str], cwd: str) -> dict:
             text=True,
             cwd=cwd,
             timeout=30,
+            env=child_env(keep=GITHUB_KEEP),
         )
         if result.returncode != 0:
             return {"success": False, "error": result.stderr.strip()}
@@ -453,6 +455,7 @@ async def install_claude_code():
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=child_env(),
         )
 
     # Step 1: Check if claude is already installed
@@ -1441,6 +1444,7 @@ def run_gh_command(args: list[str], cwd: str) -> dict:
             text=True,
             cwd=cwd,
             timeout=30,
+            env=child_env(keep=GITHUB_KEEP),
         )
         if result.returncode != 0:
             return {"success": False, "error": result.stderr.strip()}

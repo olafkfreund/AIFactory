@@ -75,3 +75,27 @@ def _offenders() -> list[str]:
 def test_no_unscrubbed_spawn() -> None:
     bad = _offenders()
     assert not bad, "unscrubbed spawn sites:\n" + "\n".join(bad)
+
+
+# Where the scrubbed env is built; everywhere else a whole-environ copy is
+# almost always an env about to be handed to a child via a variable, which the
+# keyword check above cannot see.
+_COPY_ALLOW = _ALLOW | {"utils/subprocess_env.py"}
+
+
+def test_no_environ_copy_outside_helper() -> None:
+    bad: list[str] = []
+    for path in sorted(_SERVER.rglob("*.py")):
+        rel = path.relative_to(_SERVER).as_posix()
+        if rel in _COPY_ALLOW:
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            whole = (isinstance(node, ast.Call | ast.Dict) and _is_environ(node)) or (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "dict"
+                and any(_is_environ(a) for a in node.args)
+            )
+            if whole:
+                bad.append(f"{path.relative_to(_ROOT)}:{node.lineno}")
+    assert not bad, "whole-environ copies (use child_env):\n" + "\n".join(bad)

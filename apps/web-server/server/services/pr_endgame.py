@@ -32,6 +32,7 @@ from factory_common.logsafe import sanitize_log
 
 from server.services.build_backend import task_repo_dir
 from server.services.task_branch import resolve_task_branch
+from server.utils.subprocess_env import GITHUB_KEEP, child_env
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,14 @@ Runner = Callable[[list[str], "str | None"], CmdResult]
 
 
 def _default_runner(argv: list[str], cwd: str | None = None) -> CmdResult:
-    p = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=120)
+    p = subprocess.run(
+        argv,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=child_env(keep=GITHUB_KEEP),
+    )
     return CmdResult(p.returncode, p.stdout.strip(), p.stderr.strip())
 
 
