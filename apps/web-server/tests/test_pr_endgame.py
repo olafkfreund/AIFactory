@@ -213,6 +213,8 @@ def test_human_approval_head_returns_the_approved_sha() -> None:
         [_rv("APPROVED", commit_id="old")],  # stale
         [_rv("APPROVED"), _rv("CHANGES_REQUESTED")],
         [_rv("APPROVED"), _rv("DISMISSED")],
+        # another reviewer's standing change request blocks the approval
+        [_rv("APPROVED"), _rv("CHANGES_REQUESTED", login="bob")],
     ],
 )
 def test_human_approval_head_rejects(rows: list[dict[str, str]]) -> None:

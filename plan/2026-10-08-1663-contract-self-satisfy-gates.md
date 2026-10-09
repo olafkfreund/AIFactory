@@ -340,6 +340,13 @@ the tests run on an isolated host (#1667's `_isolated_host` fixture).
 - **Step 5.** `test_live_overlay_rows_match_the_live_code` hard-coded 4
   live-overlay rows. It now expects 6 and asserts that every one reads
   `hold-blocking`.
+- **Review fix (user-approved 2026-10-09), which extends decision 2.**
+  `human_approval_head` returns `None` while any non-author reviewer's
+  latest decisive review is `CHANGES_REQUESTED`, as on GitHub. A test
+  covers it, and the armed-watcher test gains a `risk_class: high` case.
+  Accepted: about a second between the approval check and `gh pr merge`, in
+  which a reviewer could withdraw approval. Branch protection with required
+  reviews would close that.
 
 ## Rollback
 

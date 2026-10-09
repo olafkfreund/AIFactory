@@ -401,6 +401,15 @@ async def test_a_human_only_hold_keeps_the_watcher_armed(
         False,
         False,
     )
+    high = _contracted(
+        tmp_path / "c",
+        monkeypatch,
+        _deployment(system_gates=["human-approval"], risk_class="high"),
+    )
+    assert await _endgame_auto_merge(high, "auto", monkeypatch, both=True) == (
+        False,
+        False,
+    )
 
 
 @pytest.mark.parametrize("text", ["{not json", "[]"])

@@ -754,8 +754,9 @@ def human_approval_head(
 
     A review counts only if its author is not the PR author and not a Bot, it is
     that reviewer's latest APPROVED/CHANGES_REQUESTED/DISMISSED review (COMMENTED
-    is ignored), and its ``commit_id`` equals the current head exactly. Fails
-    closed: any error means no approval.
+    is ignored), and its ``commit_id`` equals the current head exactly. Any
+    other reviewer's latest CHANGES_REQUESTED blocks. Fails closed: any error
+    means no approval.
     """
     base = f"/repos/{owner}/{repo}/pulls/{pr}"
     pr_res = runner(
@@ -789,6 +790,12 @@ def human_approval_head(
             if row["state"] in _DECISIVE_STATES:
                 latest[row["login"]] = row  # oldest first, so the last one wins
     except (ValueError, TypeError, KeyError, AttributeError):
+        return None
+    # Any other reviewer's standing change request blocks, as on GitHub.
+    if any(
+        login != author and row["state"] == "CHANGES_REQUESTED"
+        for login, row in latest.items()
+    ):
         return None
     for login, row in latest.items():
         if (
