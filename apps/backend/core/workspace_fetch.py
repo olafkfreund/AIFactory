@@ -19,6 +19,7 @@ import os
 import subprocess
 from pathlib import Path
 
+from core.child_env import child_env
 from core.git_credentials import authed_push_url
 
 _log = logging.getLogger(__name__)
@@ -49,6 +50,7 @@ def _mark_git_safe_directory(dest: Path) -> None:
                 ["git", "config", "--global", "--add", "safe.directory", path],  # noqa: S607
                 check=True,
                 capture_output=True,
+                env=child_env(),
             )
         except (OSError, subprocess.CalledProcessError) as exc:
             _log.warning("[workspace_fetch] could not mark %s git-safe: %s", path, exc)
@@ -115,6 +117,7 @@ def maybe_push_workspace_branch(
         return subprocess.run(  # noqa: S603
             ["git", *args],  # noqa: S607
             cwd=str(wt),
+            env=child_env(),
             capture_output=True,
             text=True,
             timeout=120,

@@ -9,6 +9,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+from core.child_env import (
+    child_env,
+)  # backend is already on sys.path (cli is its package)
+
 # Ensure parent directory is in path for imports (before other imports)
 _PARENT_DIR = Path(__file__).parent.parent
 if str(_PARENT_DIR) not in sys.path:
@@ -65,6 +69,7 @@ def _detect_default_branch(project_dir: Path) -> str:
         result = subprocess.run(
             ["git", "rev-parse", "--verify", env_branch],
             cwd=project_dir,
+            env=child_env(),
             capture_output=True,
             text=True,
         )
@@ -76,6 +81,7 @@ def _detect_default_branch(project_dir: Path) -> str:
         result = subprocess.run(
             ["git", "rev-parse", "--verify", branch],
             cwd=project_dir,
+            env=child_env(),
             capture_output=True,
             text=True,
         )
@@ -99,6 +105,7 @@ def _discover_pushed_ref(project_dir: Path, spec_name: str) -> str | None:
             # S607: literal "git", no shell, fixed arguments.
             ["git", "for-each-ref", "--format=%(refname:short)", "refs/remotes/origin"],  # noqa: S607
             cwd=project_dir,
+            env=child_env(),
             capture_output=True,
             text=True,
             check=True,
@@ -151,6 +158,7 @@ def _get_changed_files_from_git(
         result = subprocess.run(
             ["git", "diff", "--name-only", f"{base_branch}...{head}"],
             cwd=git_cwd,
+            env=child_env(),
             capture_output=True,
             text=True,
             check=True,
@@ -169,6 +177,7 @@ def _get_changed_files_from_git(
             result = subprocess.run(
                 ["git", "diff", "--name-only", base_branch, head],
                 cwd=git_cwd,
+                env=child_env(),
                 capture_output=True,
                 text=True,
                 check=True,

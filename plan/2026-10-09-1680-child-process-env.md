@@ -236,3 +236,19 @@ builds are untouched, so a revert affects only in-pod spawns.
   pre-commit hook, which hooksPath now disables; it fails the commit via
   `commit.gpgsign` and `gpg.program=false` instead. Consequence of the plan:
   a repo's own hooks no longer run on server-made merge and conflict commits.
+- **Step 8 (review fix):** the server runs backend code in-process that
+  spawned git with the full environment (`authed_push_url` built its env from
+  `os.environ`, reached via the TFactory auto-handoff push; `workspace_fetch`,
+  `tfactory_client`, `cli.workspace_commands`, `gate_runner`, `trusted_plan`
+  and the macOS keychain call likewise). The scrub core moved to
+  `apps/backend/core/child_env.py`, which the server's `subprocess_env`
+  wraps; every spawn reachable from the server is scrubbed, and the scan
+  covers the backend files the server runs in-process (`cli/workspace_commands`
+  and `gate_runner` are left out: they keep runner-only sites that run a
+  project's own gates). `authed_push_url` no longer passes `GITHUB_TOKEN`;
+  the askpass pair carries it.
+- **Hooks in builds (user decision, 2026-10-09):** `make_subprocess_env`
+  carries `core.hooksPath=/dev/null` to `run.py` and the agent, so a
+  project's own hooks no longer run in builds either. Intended.
+- **Git LFS (user decision):** with hooks off, LFS objects are not uploaded
+  on push. Known limit, follow-up #1690.

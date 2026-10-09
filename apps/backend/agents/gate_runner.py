@@ -31,6 +31,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from core.child_env import child_env
 from core.nix_env import nix_in_image
 
 logger = logging.getLogger(__name__)
@@ -763,6 +764,7 @@ def _current_head_sha(gate_dir: Path) -> str | None:
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],  # noqa: S607
             cwd=gate_dir,
+            env=child_env(),
             capture_output=True,
             text=True,
             timeout=10,
@@ -797,6 +799,7 @@ def _task_branch_shas(project_dir: Path, spec_name: str) -> set[str]:
             result = subprocess.run(  # noqa: S603
                 ["git", "rev-parse", "--verify", "--quiet", ref],  # noqa: S607
                 cwd=project_dir,
+                env=child_env(),
                 capture_output=True,
                 text=True,
                 timeout=10,

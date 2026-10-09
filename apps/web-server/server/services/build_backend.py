@@ -255,7 +255,7 @@ _FIXED_BUILD_ENV: dict[str, str] = {
 # Provider/runtime env to propagate WHEN PRESENT in the control-plane env. Mirrors
 # core/auth.py::_AGENT_ENV_KEEP (the SDK passthrough the agent legitimately needs)
 # plus GITHUB_TOKEN/GH_TOKEN for run.py's PR endgame. ANTHROPIC_API_KEY is NOT
-# here — OAuth-only policy (subprocess_env._STRIP_VARS).
+# here — OAuth-only policy (core.child_env._STRIP_VARS).
 _PASSTHROUGH_BUILD_ENV: tuple[str, ...] = (
     # The build Job runs the trailing gates itself, and
     # `gate_runner._select_runner` reads these to decide whether a gate goes to a

@@ -107,3 +107,42 @@ def test_real_git_hook_disabled_by_child_env(secret_env: None, tmp_path: Path) -
     assert subprocess.run(cmd, env=base, capture_output=True).returncode != 0
     scrubbed = {**child_env(), "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"}
     assert subprocess.run(cmd, env=scrubbed, capture_output=True).returncode == 0
+
+
+# --- backend in-process helpers (#1680 review fix) ---------------------------
+
+
+@pytest.mark.parametrize("url", ["https://github.com/o/r.git", "https://example.com/o/r.git"])
+@pytest.mark.parametrize("token", ["tok", ""])
+def test_authed_push_url_env_is_scrubbed(
+    monkeypatch: pytest.MonkeyPatch, url: str, token: str
+) -> None:
+    from core.git_credentials import authed_push_url
+
+    monkeypatch.setenv("DATABASE_URL", "postgres://secret")
+    monkeypatch.setenv("GITHUB_TOKEN", token)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GIT_CONFIG_COUNT", raising=False)
+    with authed_push_url(url) as (_, env):
+        assert "DATABASE_URL" not in env
+        assert env["GIT_CONFIG_KEY_0"] == "core.hooksPath"
+        assert env["GIT_CONFIG_VALUE_0"] == "/dev/null"
+        # the token only travels via the askpass pair, never as GITHUB_TOKEN
+        assert "GITHUB_TOKEN" not in env
+        assert ("GIT_PASS" in env) == bool(token and url.startswith("https://github.com/"))
+
+
+def test_core_child_env_extra_count_appends_hooks_entry(monkeypatch: pytest.MonkeyPatch) -> None:
+    from core.child_env import child_env as core_child_env
+
+    env = core_child_env(
+        extra={
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "credential.helper",
+            "GIT_CONFIG_VALUE_0": "x",
+        }
+    )
+    assert env["GIT_CONFIG_COUNT"] == "2"
+    assert env["GIT_CONFIG_KEY_0"] == "credential.helper"
+    assert env["GIT_CONFIG_KEY_1"] == "core.hooksPath"
+    assert env["GIT_CONFIG_VALUE_1"] == "/dev/null"

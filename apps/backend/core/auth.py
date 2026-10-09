@@ -209,6 +209,8 @@ def get_token_from_keychain() -> str | None:
 
 def _get_token_from_macos_keychain() -> str | None:
     """Get token from macOS Keychain."""
+    from core.child_env import child_env  # noqa: PLC0415 - child_env imports this module
+
     try:
         result = subprocess.run(
             [
@@ -221,6 +223,7 @@ def _get_token_from_macos_keychain() -> str | None:
             capture_output=True,
             text=True,
             timeout=5,
+            env=child_env(),
         )
 
         if result.returncode != 0:

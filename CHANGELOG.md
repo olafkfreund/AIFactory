@@ -10,7 +10,8 @@
   agent-written worktree no longer run, including on server-made merge and
   conflict commits. Agent runners make themselves non-dumpable before starting
   an agent. A test fails on any spawn site that passes the full environment.
-  Follow-ups: #1688 (token per call), #1689 (other `.git/config` command paths).
+  Git LFS objects are not uploaded on these pushes yet (#1690). Follow-ups:
+  #1688 (token per call), #1689 (other `.git/config` command paths).
 - **A `human-approval` system gate now clears only on a GitHub review (#1663).**
   The review must approve the head commit, come from someone other than the PR
   author, and not be a bot. A contract or `task_metadata.json` can no longer
