@@ -47,6 +47,13 @@ from merge import merge_policy  # noqa: E402
 from server.services import pr_endgame as pe  # noqa: E402
 from server.services.pr_endgame import CmdResult, ReviewState  # noqa: E402
 
+
+@pytest.fixture(autouse=True)
+def _isolated_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests model a legacy task on an isolated host (#1667, D4-i)."""
+    monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "kubejob")
+
+
 _DECIDE = "decide_merge"
 _MERGE = "gh pr merge"
 
@@ -124,6 +131,7 @@ async def _drive(
         reviewer="copilot",
         runner=_Runner(log),
         background=False,
+        trusted=None,
     )
     return log
 

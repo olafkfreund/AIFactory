@@ -615,6 +615,13 @@ Recorded during implementation.
   `trusted_contract_store.stamp_spawn`, instead of two inline `try/except`
   blocks. The behaviour is the same: a failed stamp stays empty, which holds.
   The step 5 `noqa: BLE001` was removed as unused (RUF100).
+- **Step 7.** `scripts/gen_autonomy_matrix.py` and
+  `tests/test_gen_autonomy_matrix.py`, which the plan did not list, now call
+  the changed functions with `trusted=None` under
+  `AIFACTORY_BUILD_BACKEND=kubejob`. The generated matrix therefore does not
+  depend on the machine that regenerates it. `merger.py` passes
+  `trusted=None`: the sweep only opens PRs and never merges, so a missing
+  record can only make its context stricter. No existing expectation changed.
 
 ## Rollback
 

@@ -44,6 +44,13 @@ from repo_ref import (  # noqa: E402
 from server.services import pr_endgame as pe  # noqa: E402
 from test_pr_endgame import CmdResult, FakeRunner  # noqa: E402
 
+
+@pytest.fixture(autouse=True)
+def _isolated_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests model a legacy task on an isolated host (#1667, D4-i)."""
+    monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "kubejob")
+
+
 _GL_REF = "gitlab:platform/pipelines"
 _GH_REF = "acme/widgets"
 
@@ -114,7 +121,9 @@ def _context(
 def test_gather_pr_context_reports_the_declared_provider(tmp_path):
     """And a BARE repo path: `gh` and _split_repo both want owner/name."""
     spec_dir, runner = _context(tmp_path, "spec-gl", {"github_repo": _GL_REF})
-    ctx = pe.gather_pr_context(tmp_path, spec_dir, "spec-gl", runner=runner)
+    ctx = pe.gather_pr_context(
+        tmp_path, spec_dir, "spec-gl", runner=runner, trusted=None
+    )
     assert ctx is not None
     assert ctx["provider"] == "gitlab"
     assert ctx["repo"] == "platform/pipelines"
@@ -126,7 +135,9 @@ def test_gather_pr_context_reports_the_declared_provider(tmp_path):
 
 def test_gather_pr_context_is_unchanged_for_a_github_tenant(tmp_path):
     spec_dir, runner = _context(tmp_path, "spec-gh", {"github_repo": _GH_REF})
-    ctx = pe.gather_pr_context(tmp_path, spec_dir, "spec-gh", runner=runner)
+    ctx = pe.gather_pr_context(
+        tmp_path, spec_dir, "spec-gh", runner=runner, trusted=None
+    )
     assert ctx is not None
     assert ctx["provider"] == "github"
     assert ctx["repo"] == _GH_REF
@@ -170,6 +181,7 @@ def test_a_gitlab_tenant_cannot_reach_the_github_auto_pr_path(provider):
             review_fn=lambda: pe.ReviewState("approved"),
             runner=runner,
             background=False,
+            trusted=None,
         )
     )
     assert res["ok"] is False
@@ -203,6 +215,7 @@ def test_a_github_tenant_still_gets_its_auto_pr():
             review_fn=lambda: pe.ReviewState("approved"),
             runner=runner,
             background=False,
+            trusted=None,
         )
     )
     assert res["ok"] is True

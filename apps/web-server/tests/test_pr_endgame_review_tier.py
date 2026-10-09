@@ -30,6 +30,13 @@ for _p in (str(_WS), str(_BACKEND)):
 from merge.merge_policy import tier_permits_auto_merge  # noqa: E402
 from server.services import pr_endgame as pe  # noqa: E402
 
+
+@pytest.fixture(autouse=True)
+def _isolated_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests model a legacy task on an isolated host (#1667, D4-i)."""
+    monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "kubejob")
+
+
 # ---------------------------------------------------------------------------
 # The tier ceiling itself
 # ---------------------------------------------------------------------------
@@ -107,7 +114,7 @@ def test_the_tier_comes_from_the_context_read_not_a_second_one(
             return pe.CmdResult(0, f"aifactory/{spec_id}", "")
         return pe.CmdResult(1, "", "no")
 
-    ctx = pe.gather_pr_context(tmp_path, spec, spec_id, runner=_runner)
+    ctx = pe.gather_pr_context(tmp_path, spec, spec_id, runner=_runner, trusted=None)
 
     assert ctx is not None
     assert ctx["base"] == "dev"
@@ -184,6 +191,7 @@ async def _endgame(
         auto_merge=auto_merge,
         reviewer="copilot",
         background=False,
+        trusted=None,
     )
     return captured["auto_merge"]
 

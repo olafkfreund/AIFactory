@@ -257,8 +257,8 @@ def test_live_overlay_rows_match_the_live_code(tmp_path: Path) -> None:
     for i, r in enumerate(rows):
         tier = r[2].strip("`").strip("'")
         val = None if r[1] == "unset" else "1"
-        with gam._env(**{gam.pe.PATH_RISK_FLOOR_ENV: val}):
-            live = gam.pe.merge_disposition(tmp_path / f"live-{i}", tier)
+        with gam._env(**{gam.pe.PATH_RISK_FLOOR_ENV: val}, **gam._ISOLATED_HOST):
+            live = gam.pe.merge_disposition(tmp_path / f"live-{i}", tier, trusted=None)
         assert r[4] == f"`{live}`"
 
 
