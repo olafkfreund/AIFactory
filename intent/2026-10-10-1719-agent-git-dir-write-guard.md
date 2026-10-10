@@ -11,9 +11,14 @@ author: olafkfreund
 Build agents can write files inside `.git/`, and nothing stops them.
 
 - The PreToolUse hooks in `apps/backend/core/client.py` guard only `Bash`,
-  `WebFetch` and `WebSearch`. No hook matches `Write`, `Edit`, `MultiEdit` or
-  `NotebookEdit`. Agents run with `bypassPermissions`, so the
-  `Write(./**)` / `Edit(./**)` allow list restricts nothing.
+  `WebFetch` and `WebSearch`. The only hooks that see `Write` and `Edit` are
+  the catch-all #474/#476 guardrail and mutation hooks, which check no paths.
+  Agents run with `bypassPermissions`, so the `Write(./**)` / `Edit(./**)`
+  allow list restricts nothing.
+- Agents on the Ollama and OpenAI-compatible providers do not go through
+  SDK hooks. Their `Write` and `Edit` run in `tools/executor.py`
+  `ToolExecutor`, which only checks that the path is inside `working_dir`.
+  A `.git` directory, or a worktree's `.git` file, is inside it.
 - The Bash hook allows `echo ... >> .git/config`, `printf > .git/config`,
   `tee`, `cp` and `sed -i` onto `.git/config`. It also allows
   `git config core.fsmonitor ...`. Only `git -c <key>=...` is blocked (#321 C4).
@@ -42,16 +47,23 @@ route, not just bypassable. #1689's plan lists this guard as out of scope.
   commondir reached by absolute path.
 - Normal agent work still succeeds: `git add`/`git commit` through Bash, and
   edits to `.gitignore`, `.github/` and other paths that only contain "git".
-- The guard runs for every write-capable agent, locally and in k8s Job pods.
+- The guard runs for every write-capable agent in scope (see open question
+  5), locally and in k8s Job pods.
 
 ## Affected users and systems
 
 - Every build agent with write tools: spec_writer, planner, coder,
   qa_reviewer, qa_fixer and others (`agents/tools_pkg/models.py`
-  `BASE_WRITE_TOOLS`). The insights runner and follow-up reviewer have no
-  write tools and are not affected.
-- Hook registration in `core/client.py`, and any other place that builds
-  `ClaudeAgentOptions` with write tools (`core/simple_client.py` and others).
+  `BASE_WRITE_TOOLS` is `Write`, `Edit`, `Bash`; no agent is granted
+  `MultiEdit` or `NotebookEdit` today). The insights runner (Read, Glob,
+  Grep) and follow-up reviewer (no tools) are not affected.
+- Hook registration in `core/client.py`. `core/simple_client.py` builds
+  `ClaudeAgentOptions` from the same agent tool config but registers no
+  security hooks at all.
+- `tools/executor.py` `ToolExecutor`, used by the Ollama and
+  OpenAI-compatible agentic providers.
+- The external-CLI agentic providers (Codex, Gemini, Copilot, OpenCode,
+  Antigravity) run their own file tools, out of reach of both of the above.
 - `apps/backend/security/` (hooks, git validators, parser).
 - Server-side git in `core/worktree.py` and the original repo's commondir
   shared by all task worktrees.
@@ -89,5 +101,8 @@ route, not just bypassable. #1689's plan lists this guard as out of scope.
    `modules/*/config`)?
 4. Sequencing: wait for #1689 (and maybe #1720) and rebase on them, or
    proceed in parallel and accept conflicts in `security/hooks.py`?
-5. On a hit: refuse only, or refuse and write an audit record (as #1689's
+5. Providers: Claude SDK agents only, also `ToolExecutor` (Ollama,
+   OpenAI-compatible), or also the external-CLI providers, which can only
+   be covered by the server-side check in question 1?
+6. On a hit: refuse only, or refuse and write an audit record (as #1689's
    title suggests)?
