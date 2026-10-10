@@ -262,3 +262,6 @@ migration.
   monkeypatch, err, fake)`; assertions unchanged. T2 also asserts
   `exc_info is not None`. T1's documentation-only ref-kind assert is left
   out (the helper does not expose the store; the plan says it cannot fail).
+- Step 3: M7 as applied (delete moved into the outer `finally`, rollback
+  delete removed) is caught by T0 and T2, not T1 and T3; the plan's two-delete
+  variant was not applied.

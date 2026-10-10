@@ -99,6 +99,8 @@
 
 ### Fixed
 
+- Kubernetes builds: if recording a dispatched Job fails, the Job is deleted instead of running
+  untracked (#1677).
 - **Approve works on a task whose PR already exists, and after its worktree
   was cleaned up.** `create-pr` now returns an open or merged PR for the task
   branch (`existing: true`) instead of failing with "already exists", which
