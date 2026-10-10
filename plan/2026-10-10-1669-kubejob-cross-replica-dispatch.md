@@ -322,3 +322,10 @@ restore with `git checkout -- <file>`):
    Behaviour falls back to each replica seeing only its own builds.
 3. Code and tests live in one commit, so the revert restores the sync
    `_refuse_recovery_while_running` and the sync test calls together.
+
+## Deviations
+
+- Step 1: `tests/test_is_running_anywhere.py` imports the module
+  (`from server.services import job_state_store`) instead of one name per
+  line; ruff's isort merges same-module names, which would break the
+  one-name-per-line trap. No behaviour change.
