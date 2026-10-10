@@ -2,6 +2,16 @@
 
 ### Security
 
+- **Non-Claude agent CLIs no longer inherit the runner's credentials (#1692).**
+  Codex, Antigravity/Gemini, Copilot and OpenCode (text-only and agentic)
+  start with the scrubbed child environment plus only their own key: Codex
+  `OPENAI_API_KEY`/`CODEX_API_KEY`, Gemini its Gemini/Google keys and
+  `GOOGLE_APPLICATION_CREDENTIALS`, Copilot `COPILOT_GITHUB_TOKEN` (a Copilot
+  login through `GH_TOKEN`/`GITHUB_TOKEN` must switch to it or the on-disk
+  login), and OpenCode only the key for its configured model's provider, never
+  `ANTHROPIC_API_KEY`. Git hooks are off in these children. On-disk logins
+  under `HOME` and `SSH_AUTH_SOCK` are still reachable (#1732); the
+  OpenAI-compatible/Ollama tool loop is tracked in #1713.
 - **A verified trusted task's review tier now comes from its signed contract (#1672).**
   `task_metadata.json` and the path floor can only raise the tier, never lower
   it, so an agent that rewrites `reviewTier` to `low` no longer turns a hold into
