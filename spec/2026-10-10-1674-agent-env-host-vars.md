@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1674
 intent: intent/2026-10-10-1674-agent-env-host-vars.md
 ---
