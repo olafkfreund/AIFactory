@@ -132,8 +132,11 @@ not the web-server suite.
 
 1. `tests/test_is_running_anywhere.py` (new), `tests/test_recover_refuses_live_build.py:35-41`,
    `tests/audit/test_task_action_audit.py:88-99`: red tests and fakes →
-   verify by `python -m pytest tests/test_is_running_anywhere.py -q` failing
-   only with `AttributeError: ... is_running_anywhere`, and
+   verify by `python -m pytest tests/test_is_running_anywhere.py -q`: every
+   predicate test fails with `AttributeError: ... is_running_anywhere`; the
+   route tests fail on their assertions (status says False, Stop 404s, Recover
+   does not raise 409), except `test_route_stop_404_without_row` and
+   `test_route_recover_force_proceeds`, which already pass; and
    `python -m pytest tests/test_recover_refuses_live_build.py tests/audit/test_task_action_audit.py -q`
    still passing.
    - `_Agent` fake: add
@@ -247,7 +250,7 @@ Predicate tests in `tests/test_is_running_anywhere.py`, each calling
 | `test_missing_row_is_not_running` | False |
 | `test_terminal_row_is_not_running[done,failed,stuck,review]` | False |
 | `test_store_error_reads_as_running` (b gets `_CountingStore`) | True; exactly one WARNING containing `#1669`, `record.exc_info is None` |
-| `test_no_store_short_circuits` (`_store_enabled=False`, counting store) | False; `calls == []` |
+| `test_no_store_short_circuits` (`_store_enabled=False`, counting store, env still `kubejob`, `caplog` at WARNING) | False; `calls == []`; no WARNING record (`_kubejob_backend_enabled` warns when called without a store, so this is the only assertion that sees the `_store_enabled` half of the gate) |
 | `test_subprocess_backend_short_circuits` (env `subprocess`, k8s-job row, b's store swapped to counting store) | False; `calls == []` |
 | `test_local_is_running_short_circuits` (`b._active_kubejob_task_ids.add(TASK)`, counting store) | True; `calls == []` |
 
