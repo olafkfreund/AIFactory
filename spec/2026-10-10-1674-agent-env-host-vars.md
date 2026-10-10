@@ -41,7 +41,7 @@ the context7 MCP entry (`core/client.py:855-859`) and
 | Process | Effect |
 |---|---|
 | Agent in the pod, through `create_client` / `create_simple_client` | All six are blanked. |
-| Agent inside a kubejob build | All six are blanked by the same `get_agent_env_blanks`, which run.py calls. The pod and the Job behave the same. |
+| Agent inside a kubejob build | All six are blanked by the same `get_agent_env_blanks`, which run.py reaches through `create_client` / `create_simple_client`. The pod and the Job behave the same. |
 | Web-server process | No change. It never filters its own env, so `routes/search.py:38/:64`, `provider_health.py:20` and `access_review_evidence_cron.py:107` keep working. |
 | In-pod runner (`make_subprocess_env`, `runner=True`) | Keeps `OPENAI_COMPATIBLE_API_KEY`, because `RUNNER_KEEP` is restored after the deny filter (`child_env.py:49`). Loses `S3_ACCESS_KEY` and the four unused keys. |
 | Other server-started children (`runner=False`) | No change. `_CREDENTIAL_NAME` (`child_env.py:24`) already drops all six names because they end in `_KEY`. |
@@ -51,11 +51,11 @@ the context7 MCP entry (`core/client.py:855-859`) and
 ### 3. Tests
 
 - **`tests/test_agent_env_scrub.py`:** add the six names to `SECRETS`
-  (line 24 onward) with the value `"x"`. That brings them under
+  (line 25 onward) with the value `"x"`. That brings them under
   `test_all_secrets_are_blanked` (`:73`) and `test_simple_client_env_is_scrubbed`
   (`:101`). No new test function is needed.
 - **`tests/test_child_process_env.py`:**
-  - In `test_credential_names_dropped_for_tools_kept_for_runner` (`:183-208`),
+  - In `test_credential_names_dropped_for_tools_kept_for_runner` (`:184-208`),
     the assertion on line 207, `runner["CONTEXT7_KEY"] == "c"`, will fail once
     this change lands. Replace it with:
     - `runner["OLLAMA_API_KEY"] == "c"`, which still shows that a
@@ -77,6 +77,8 @@ File one new issue that links #363 and #1674. Its evidence:
 - denial is case-sensitive, while pydantic `env_prefix="APP_"` (`config.py:248`)
   is case-insensitive by default, so a lowercase `app_cfactory_read_key` would
   still be read and would not be blanked;
+- `tools/executor.py:313` runs Bash for the OpenAI-compatible and Ollama
+  agentic providers with the unscrubbed runner env, which #1692 does not cover;
 - the allowlist question.
 
 ### Proposed answers to the intent's open questions
@@ -161,6 +163,13 @@ None of them has been approved yet.
   both go to the follow-up issue.
 - **Codex and Antigravity agents (#1692) are not covered.** The PR must not
   claim they are.
+- **The in-house tool loop is not covered either, and #1692 does not name it.**
+  `openai_compatible_agentic.py` and `ollama_agentic.py` run the model's Bash
+  calls through `tools/executor.py:313` (`create_subprocess_shell` with no
+  `env`), so those phases see the runner's full environment, including
+  `OPENAI_COMPATIBLE_API_KEY` and every `RUNNER_KEEP` name. This change neither
+  fixes nor worsens that. The PR must not claim OpenAI-compatible or Ollama
+  phases are scrubbed, and the follow-up issue (section 4) must record it.
 
 ## Verification
 
