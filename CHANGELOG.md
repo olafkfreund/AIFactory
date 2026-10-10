@@ -8,8 +8,8 @@
   `OPENAI_API_KEY`/`CODEX_API_KEY`, Gemini its Gemini/Google keys and
   `GOOGLE_APPLICATION_CREDENTIALS`, Copilot `COPILOT_GITHUB_TOKEN` (a Copilot
   login through `GH_TOKEN`/`GITHUB_TOKEN` must switch to it or the on-disk
-  login), and OpenCode only the key for its configured model's provider, never
-  `ANTHROPIC_API_KEY`. Git hooks are off in these children. On-disk logins
+  login), and OpenCode only the key for its configured model's provider when
+  that provider is a known LLM provider, never `ANTHROPIC_API_KEY`. Git hooks are off in these children. On-disk logins
   under `HOME` and `SSH_AUTH_SOCK` are still reachable (#1732); the
   OpenAI-compatible/Ollama tool loop is tracked in #1713.
 - **A verified trusted task's review tier now comes from its signed contract (#1672).**
