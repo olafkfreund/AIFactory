@@ -605,3 +605,11 @@ The feature is off by default: no App vars means `start()` returns at once.
   `configured()` stays false (required by `test_mint_error_at_start_raises`).
 - Step 3: the refresh-task stop event in `main.py` is `gh_stop`, so it does
   not shadow the outbox block's `stop`.
+- Step 5: mutation `while not stop.is_set()` → `while True` survives on its
+  own, because step 2's extra `if stop.is_set(): break` already ends the
+  loop; with both removed the test fails. 29 of 30 mutations killed.
+- Step 5: docs build not run (`docs/node_modules` missing locally); CI builds
+  the docs.
+- Step 5 follow-ups filed: #1700 (per-tenant App, RFC-0020), #1701 (Copilot
+  review with the App token), #1702 (manifest-flow registration), #1703 (stored
+  clone PATs, Risk 5). Per-call tokens are #1688.
