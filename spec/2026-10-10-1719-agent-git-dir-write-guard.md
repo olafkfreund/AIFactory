@@ -11,11 +11,13 @@ intent: intent/2026-10-10-1719-agent-git-dir-write-guard.md
 Refuse an agent's file-tool write (Write, Edit, MultiEdit, NotebookEdit) when
 the target path has a path component equal to `.git`. One pure helper does the
 check. Two places call it: a new Claude SDK PreToolUse hook and the
-`ToolExecutor` write handlers. Bash, the external-CLI providers and a
-server-side config scan are out of scope (see the answers below).
+`ToolExecutor` write handlers. The one `simple_client` agent type that has
+write tools loses them. Bash, the external-CLI providers and a server-side
+config scan are out of scope (see the answers below).
 
-Branch from `dev` after PR #1722 (#1689) merges. That PR rewrites
-`security/hooks.py` and `core/worktree.py`.
+This branch sits on `dev` at ef25678b. Rebase it on `dev` after PR #1722
+(#1689, open, not merged) merges and before implementation starts. That PR
+rewrites `security/hooks.py` and `core/worktree.py`.
 
 ### Proposed answers to the intent's open questions
 
@@ -40,11 +42,20 @@ These are proposed defaults for the approver to accept or change.
    a surface list would miss `modules/*/config`, `info/attributes` and
    `packed-refs`. No agent needs a direct write under `.git`: `git add` and
    `git commit` go through Bash.
-4. **Sequencing.** Rebase on #1689 (already merging). Do not wait for #1720,
+4. **Sequencing.** Rebase on #1689 (PR #1722, still open). Do not wait for #1720,
    which matters only for the Bash follow-up.
 5. **Providers.** The Claude SDK hooks and `ToolExecutor` (Ollama,
-   OpenAI-compatible). `simple_client` needs nothing: no simple agent type
-   has a write tool (`agents/tools_pkg/models.py:232-245`). The external-CLI
+   OpenAI-compatible), plus `simple_client`. `simple_client` registers no
+   hooks (`core/simple_client.py:108-118`), and one of its callers,
+   `spec/compaction.py:61`, uses `spec_compaction`, whose tools are
+   `BASE_READ_TOOLS + BASE_WRITE_TOOLS` (`agents/tools_pkg/models.py:169-170`):
+   Write, Edit and Bash, under `bypassPermissions`, on a prompt built from
+   untrusted phase output. It only summarises text that is all in the
+   prompt, so set its `tools` to `[]` rather than wire hooks into
+   `simple_client`. That removes Bash as well, which no hook here would
+   cover. The other simple agent types (`commit_message`, `merge_resolver`,
+   `insights`, `batch_analysis`, `batch_validation`) have no write tool. The
+   external-CLI
    providers (Codex, Gemini, Copilot, OpenCode, Antigravity) run their own
    file tools that no hook reaches. Follow-up issue for them; the server-side
    pins already defuse what they could write.
@@ -65,7 +76,7 @@ These are proposed defaults for the approver to accept or change.
    cost a subprocess, a scrubbed-env obligation and `git_dirs` threading
    through `create_client`, the hook and the executor, and its only gain is
    the case under Risks. No new parser, which meets the intent's constraint.
-8. **Files.** Four backend files, one test file and the CHANGELOG (below).
+8. **Files.** Five backend files, one test file and the CHANGELOG (below).
 
 ### Changes
 
@@ -114,9 +125,11 @@ These are proposed defaults for the approver to accept or change.
    is_error=True)`. Pass the raw `file_path` with `working_dir` as `cwd`, so
    the helper sees both the lexical and the resolved form. `_handlers`
    (`:93`) registers no other write tool.
-5. **`tests/test_command_sandbox.py`**: a `TestGitDirWriteGuard` class (see
+5. **`apps/backend/agents/tools_pkg/models.py`**: `spec_compaction`
+   `"tools"` (`:170`) becomes `[]` (Q5).
+6. **`tests/test_command_sandbox.py`**: a `TestGitDirWriteGuard` class (see
    Verification).
-6. **`CHANGELOG.md`**: an entry under `[Unreleased]`.
+7. **`CHANGELOG.md`**: an entry under `[Unreleased]`.
 
 No new modules, no new spawn, no new env or allow-list forwarding, so k8s Job
 pods work unchanged.
@@ -132,6 +145,9 @@ pods work unchanged.
   wrong `cwd`, but SDK file tools send absolute paths, and the factory adds
   an export and a closure. The `cwd` source matches `bash_security_hook`.
 - **A third `gitdir:` parser:** forbidden by the intent.
+- **Registering the hooks in `simple_client`:** more code than dropping
+  tools a summariser never needs, and it would still leave Bash to the
+  Bash hook's gaps (Q5).
 - **Allow-listing surfaces (`config`, `hooks/`, ...):** misses cases (Q3).
 - **Bash write targets now:** bypassable until #1720 (Q2).
 - **A server-side config scan:** a denylist; the pins hold regardless (Q1).
@@ -155,9 +171,14 @@ pods work unchanged.
 - **Missing `cwd`:** the hook falls back to `os.getcwd()`, as
   `bash_security_hook` does. SDK file tools send absolute paths.
 - **A legitimate `.git` write breaks:** no agent tool config needs one.
+- **`spec_compaction` without tools:** its prompt carries the whole phase
+  output and it returns text only, so the summary is unchanged. If it ever
+  called a tool, the fallback in `spec/compaction.py` returns truncated raw
+  output, so the pipeline does not block.
 - **Rebase on #1689:** the new hook is appended to `hooks.py`, so a conflict
-  resolves as keep-both. The autonomy matrix does not cite the touched
-  files, so no regeneration is expected; confirm with
+  resolves as keep-both. The autonomy matrix reads no touched file
+  directly, but section C walks import closures through `core.client`, so
+  confirm with
   `python scripts/gen_autonomy_matrix.py --check`.
 
 ## Verification
@@ -177,13 +198,18 @@ pods work unchanged.
     `tests/test_ollama_agentic.py:151`).
   - **Matcher:** `re.fullmatch` of the matcher string accepts all four tool
     names.
-  - **simple_client assumption:** no simple agent type's tools include
-    Write, Edit, MultiEdit, NotebookEdit or Bash.
+  - **simple_client:** for each agent type passed to `create_simple_client`
+    in `apps/backend` (`commit_message`, `merge_resolver`, `insights`,
+    `batch_analysis`, `batch_validation`, `spec_compaction`), the
+    `AGENT_CONFIGS` tools include none of Write, Edit, MultiEdit,
+    NotebookEdit or Bash. The test lists the types; a new caller is a
+    review item.
 - Mutation checks, made by editing and re-editing back: a substring match
   instead of a component match fails the `.gitignore`/`.github` cases;
   dropping `resolve()` fails the symlink case; dropping the normpath form
   fails the out-of-tree symlink case; dropping `casefold` fails `.GIT`;
-  removing the executor call fails the executor case.
+  removing the executor call fails the executor case; restoring
+  `spec_compaction`'s write tools fails the simple_client case.
 - `pytest tests/test_command_sandbox.py tests/test_runner_hardening.py
   tests/test_ollama_agentic.py tests/test_no_unscrubbed_spawn.py` passes.
 - `ruff format --check` and `ruff check` on
