@@ -55,7 +55,7 @@ gate. They are not yet approved.
    `GH_CONFIG_DIR`, and the per-call reset (section 1) stops it from running in
    the server's children anyway.
 4. **#1692: do not wait for it.** The two run in parallel. #1692 changes the
-   runner path (`subprocess_env.py:55-71`), and this change does not touch
+   runner path (`subprocess_env.py:56-73`), and this change does not touch
    `make_subprocess_env` or `RUNNER_KEEP`. The files do not overlap, so
    waiting would only leave this exposure open longer.
 5. **#1671: neither wait for it nor include it.** The token is resolved on
@@ -68,10 +68,11 @@ gate. They are not yet approved.
 Two more decisions the intent did not ask about, also proposed:
 
 - **`gh auth login --web` (`routes/github.py:622-636`)** runs with
-  `child_env()` and no `keep`. When `github_token()` is set, it first returns
-  early with "already authenticated via GITHUB_TOKEN". Today a token in the env
-  makes gh refuse to log in, so the result is the same, but the token stays out
-  of the login child's env. The login is a long-running background process,
+  `child_env(keep=GITHUB_KEEP)` today (`:635`). It changes to `child_env()`
+  with no `keep`, plus a new guard: when `github_token()` is set, the route
+  returns early with "already authenticated via GITHUB_TOKEN" and starts no
+  child. Today a token in the env makes gh refuse to log in, so the result is
+  the same, but the token stays out of the login child's env. The login is a long-running background process,
   so it gets no temp dir.
 - **No token set (local dev).** `github_env` passes `base_env` through
   unchanged, with no `GH_CONFIG_DIR` and no helper entries. A developer's own
@@ -84,43 +85,30 @@ Two more decisions the intent did not ask about, also proposed:
 It sits next to `github_token()` and `authed_push_url`, and follows the same
 `try/finally` cleanup pattern (`:97-99`).
 
-```python
-GH_DIR_PREFIX = "aif-gh-"
-_GH_HELPER_KEY = "credential.https://github.com.helper"
+Contract (the plan writes the code):
 
-@contextlib.contextmanager
-def github_env(base_env: dict[str, str]) -> Iterator[dict[str, str]]:
-    """base_env plus a per-call GH_CONFIG_DIR; the token is never in the env (#1688)."""
-    token = github_token()                         # per call; #1671 hook point
-    if not token:
-        yield base_env                             # dev's own gh login untouched
-        return
-    d = tempfile.mkdtemp(prefix=GH_DIR_PREFIX)     # 0700, unpredictable name
-    try:
-        fd = os.open(Path(d, "hosts.yml"), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "w") as f:              # JSON is valid YAML: no quoting issues
-            json.dump({"github.com": {"oauth_token": token, "user": USERNAME,
-                                      "git_protocol": "https"}}, f)
-        env = {k: v for k, v in base_env.items()
-               if k not in ("GITHUB_TOKEN", "GH_TOKEN", "GIT_PASS")}
-        n = int(env.get("GIT_CONFIG_COUNT", "0"))  # after child_env's hooksPath entry
-        # The empty value resets the helper list first, so a global `store` or
-        # setup-git helper can neither run nor save the token.
-        for i, v in enumerate(("", "!gh auth git-credential")):
-            env[f"GIT_CONFIG_KEY_{n + i}"] = _GH_HELPER_KEY
-            env[f"GIT_CONFIG_VALUE_{n + i}"] = v
-        env |= {"GIT_CONFIG_COUNT": str(n + 2), "GH_CONFIG_DIR": d}
-        if any(token in v for v in env.values()):  # fail closed; not `assert` (-O strips it)
-            raise RuntimeError("GitHub token in child env")
-        yield env
-    finally:
-        shutil.rmtree(d, ignore_errors=True)       # also on TimeoutExpired / exceptions
-
-def sweep_github_dirs() -> None:
-    """Remove dirs a SIGKILLed server left behind. Call once at startup."""
-    for p in Path(tempfile.gettempdir()).glob(f"{GH_DIR_PREFIX}*"):
-        shutil.rmtree(p, ignore_errors=True)       # refuses symlinks; error ignored
-```
+- `github_env(base_env) -> Iterator[dict[str, str]]`, a context manager.
+  It resolves the token with `github_token()` on entry, once per call (the
+  #1671 hook point).
+- **No token:** yields `base_env` unchanged. Nothing is created.
+- **Token set:**
+  - `mkdtemp(prefix="aif-gh-")` gives a 0700 dir with an unpredictable name.
+  - `hosts.yml` is created in it with `O_EXCL`, mode 0600. It holds
+    `github.com` with `oauth_token`, `user: x-access-token` (`USERNAME`) and
+    `git_protocol: https`, written as JSON, which is valid YAML and needs no
+    quoting.
+  - The yielded env is `base_env` without `GITHUB_TOKEN`, `GH_TOKEN` or
+    `GIT_PASS`, plus `GH_CONFIG_DIR=<dir>`.
+  - Two `credential.https://github.com.helper` entries are appended after the
+    existing `GIT_CONFIG_COUNT`: first an empty value, then
+    `!gh auth git-credential`. The count is parsed the same way `child_env`
+    does (`core/child_env.py:51-54`), so a malformed value does not raise.
+  - It fails closed: if any value in the env contains the token, it raises
+    `RuntimeError`. This is a real check, not `assert`, which `-O` strips.
+  - The dir is removed in `finally`.
+- `sweep_github_dirs()` removes every `aif-gh-*` entry in
+  `tempfile.gettempdir()`. It ignores errors and does not follow symlinks
+  (`shutil.rmtree` refuses one).
 
 How the token reaches each tool:
 
@@ -141,9 +129,9 @@ How the token reaches each tool:
   the token to `~/.git-credentials` after a successful push. This was checked
   locally with git 2.55.0.
 - **Fails closed.** If `mkdtemp` or the write fails, the `OSError` reaches the
-  caller. Every site already turns that into an error result (for example
-  `gh.py:48`, `git.py:69`). The code never falls back to putting the token in
-  the env.
+  caller, the same path a `FileNotFoundError` for a missing `gh` takes today.
+  Sites that catch it turn it into an error result (for example `gh.py:48`,
+  `git.py:68`). The code never falls back to putting the token in the env.
 - **Cleanup after a timeout.** `subprocess.run` kills and reaps the child on
   `TimeoutExpired` before the exception leaves the `with`, so `rmtree` runs
   after the child is dead.
@@ -192,7 +180,7 @@ host, so gh's helper cannot serve it. The askpass stays, but the password
 moves from the env to a file:
 
 - The script line becomes `*) cat "$GIT_PASS_FILE" ;;`.
-- One `mkdtemp(prefix=GH_DIR_PREFIX)` dir holds the script (0700) and a `pass`
+- One `mkdtemp(prefix="aif-gh-")` dir holds the script (0700) and a `pass`
   file (0600, `O_EXCL`). Because it shares the prefix, the startup sweep also
   covers it.
 - It yields `GIT_PASS_FILE` and never `GIT_PASS`. `GIT_USER` stays, since a
@@ -262,11 +250,22 @@ moves from the env to a file:
    - The docstring and assertion in
      `tests/test_create_pr_fetches_branch.py:119` need an update.
    - The stub at `apps/web-server/tests/test_merger.py:313` becomes unused.
+   - `apps/web-server/tests/test_workspace_argv_never_logged.py:260` asserts
+     the token reaches `GIT_PASS`. Its vacuity guard moves to the contents of
+     `GIT_PASS_FILE`.
 4. **Developer gh config.** When a token is set, the server's children no
    longer see the developer's gh config (aliases, extensions). These children
    already authenticate through `GITHUB_TOKEN` today and use none of that.
 5. **The askpass change** applies to every host, including GitLab `oauth2`
    credentials. Only the transport changes, not the behavior.
+8. **A workspace credential for github.com.** `_run_git` gets both the askpass
+   and the gh helper. git asks credential helpers before `GIT_ASKPASS`, so for
+   a `https://github.com/` workspace the server token wins over a stored
+   per-project credential. That is what the image does today, through the
+   `Dockerfile:438` global helper. On a local install without that helper, it
+   is a change. Proposed default: accept it, because the server token is the
+   one the rest of the flow pushes with. The approver may instead skip the gh
+   helper in `_run_git` when an askpass credential is set.
 6. **The sweep** assumes one server process per `/tmp`. That holds in the pod
    (the emptyDir at `deployment.yaml:680-683`, `replicaCount: 1`). On a dev box
    with several servers it is the case covered under Alternatives rejected.
@@ -275,7 +274,8 @@ moves from the env to a file:
 
 ## Verification
 
-Automated (`apps/backend/tests/test_github_env.py` plus a web-server guard):
+Automated (`tests/test_github_env.py`, next to `tests/test_git_credentials.py`,
+plus a web-server guard):
 
 1. `github_env` with a fake token:
    - No `GITHUB_TOKEN`, `GH_TOKEN` or `GIT_PASS` in the env, and no value
@@ -284,7 +284,8 @@ Automated (`apps/backend/tests/test_github_env.py` plus a web-server guard):
    - The dir is gone after a normal exit, after an exception and after
      `TimeoutExpired`.
    - The two helper entries come after `core.hooksPath`, and an existing
-     `GIT_CONFIG_*` entry survives.
+     `GIT_CONFIG_*` entry survives. A malformed `GIT_CONFIG_COUNT` does not
+     raise.
    - A token passed in through `extra` raises.
    - With no token, `base_env` comes back unchanged.
 2. **Helper reset.** Use a fake `HOME` whose `.gitconfig` sets
