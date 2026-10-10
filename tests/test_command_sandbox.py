@@ -82,6 +82,12 @@ GIT_RCE_PAYLOADS = [
     "git config include.path x",
     "git status | git config core.fsmonitor x",
     "echo x | git config core.fsmonitor x",
+    "git --attr-source HEAD config core.fsmonitor x",
+    "true && (git config core.fsmonitor x)",
+    "echo $(git config core.fsmonitor x)",
+    "K=core.fsmonitor; git config $K x",
+    'git config "$K" x',
+    "git config protocol.ext.allow always",
 ]
 
 # Ordinary agent commands — must NOT be blocked (false-positive guard). Every

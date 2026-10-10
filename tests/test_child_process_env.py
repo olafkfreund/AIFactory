@@ -70,22 +70,26 @@ def test_hooks_path_appended_after_existing_entry(
     monkeypatch.setenv("GIT_CONFIG_KEY_0", "credential.https://github.com.helper")
     monkeypatch.setenv("GIT_CONFIG_VALUE_0", "!gh auth git-credential")
     env = child_env()
-    assert env["GIT_CONFIG_COUNT"] == "3"
+    assert env["GIT_CONFIG_COUNT"] == "4"
     assert env["GIT_CONFIG_KEY_0"] == "credential.https://github.com.helper"
     assert env["GIT_CONFIG_VALUE_0"] == "!gh auth git-credential"
     assert env["GIT_CONFIG_KEY_1"] == "core.hooksPath"
     assert env["GIT_CONFIG_VALUE_1"] == "/dev/null"
     assert env["GIT_CONFIG_KEY_2"] == "core.fsmonitor"
     assert env["GIT_CONFIG_VALUE_2"] == "false"
+    assert env["GIT_CONFIG_KEY_3"] == "protocol.ext.allow"
+    assert env["GIT_CONFIG_VALUE_3"] == "never"
 
 
 def test_hooks_path_is_entry_zero_without_count(secret_env: None) -> None:
     env = child_env()
-    assert env["GIT_CONFIG_COUNT"] == "2"
+    assert env["GIT_CONFIG_COUNT"] == "3"
     assert env["GIT_CONFIG_KEY_0"] == "core.hooksPath"
     assert env["GIT_CONFIG_VALUE_0"] == "/dev/null"
     assert env["GIT_CONFIG_KEY_1"] == "core.fsmonitor"
     assert env["GIT_CONFIG_VALUE_1"] == "false"
+    assert env["GIT_CONFIG_KEY_2"] == "protocol.ext.allow"
+    assert env["GIT_CONFIG_VALUE_2"] == "never"
 
 
 def test_real_git_fsmonitor_disabled_by_child_env(
@@ -213,10 +217,11 @@ def test_core_child_env_extra_count_appends_hooks_entry(
             "GIT_CONFIG_VALUE_0": "x",
         }
     )
-    assert env["GIT_CONFIG_COUNT"] == "3"
+    assert env["GIT_CONFIG_COUNT"] == "4"
     assert env["GIT_CONFIG_KEY_0"] == "credential.helper"
     assert env["GIT_CONFIG_KEY_1"] == "core.hooksPath"
     assert env["GIT_CONFIG_KEY_2"] == "core.fsmonitor"
+    assert env["GIT_CONFIG_KEY_3"] == "protocol.ext.allow"
     assert env["GIT_CONFIG_VALUE_1"] == "/dev/null"
 
 

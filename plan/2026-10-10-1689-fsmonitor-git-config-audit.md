@@ -554,3 +554,17 @@ reverted:
 - Step 6: the manual PWNED repro and k3d smoke test were not run.
 - Follow-ups filed: #1717 (ssh/pager/editor pins), #1718 (no-ext-diff /
   no-textconv), #1719 (`.git/` write guard), #1720 (`bash -c` unwrapping).
+- Review fixes (Opus review, 4 blocking bypasses), each with a failing-first
+  test: `--attr-source` added to `_ARG_OPTIONS`; a git token glued to `(`,
+  `$(`, `{`, a backtick or `!` is recognised; a `$`/backtick key after
+  `config` is refused (accepted false positive: `git config user.name
+  "$NAME"`); the `protocol.` prefix is dangerous (accepted false positive:
+  `-c protocol.version=2`).
+- Plan amendment: `child_env` also pins `protocol.ext.allow=never` after the
+  fsmonitor pin. Layout is now hooksPath at n, fsmonitor at n+1,
+  protocol.ext.allow at n+2, `GIT_CONFIG_COUNT=n+3`. Verified on real git:
+  with `protocol.ext.allow=always` in repo config and an `ext::` remote,
+  `git fetch` under `child_env()` fails with "transport 'ext' not allowed".
+- Minor review findings recorded, not fixed here: xargs and `command`/`exec
+  git` wrappers (added to #1720); `submodule.*.update` and
+  `sendemail.sendmailcmd` (no server path runs them).

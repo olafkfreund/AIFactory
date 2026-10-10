@@ -54,11 +54,20 @@ def _is_dangerous_git_config(key: str) -> bool:
         or k.endswith(".driver")
         or k.endswith((".uploadpack", ".receivepack"))
         or k.startswith("includeif.")
+        or k.startswith("protocol.")  # protocol.ext.allow enables ext:: transport RCE
     )
 
 
 # Global options that consume the next token when written without `=`.
-_ARG_OPTIONS = {"-C", "-c", "--config-env", "--git-dir", "--work-tree", "--namespace"}
+_ARG_OPTIONS = {
+    "-C",
+    "-c",
+    "--config-env",
+    "--git-dir",
+    "--work-tree",
+    "--namespace",
+    "--attr-source",
+}
 _CONFIG_EDIT_MODES = {
     "-e",
     "--edit",
@@ -74,7 +83,8 @@ def _git_config_refusal(tokens: list[str]) -> str | None:
     rewrites config wholesale, else None. Parsed from every ``git`` token, so
     pipes (not split into segments) and env-assignment prefixes are covered."""
     for i, t in enumerate(tokens):
-        if t.rsplit("/", 1)[-1] != "git":
+        # `(git …)`, `$(git …)`, backtick and `{ git …` glue an opener to the token
+        if t.lstrip("({$`!").rsplit("/", 1)[-1] != "git":
             continue
         j = i + 1
         while j < len(tokens) and tokens[j].startswith("-"):
@@ -86,6 +96,11 @@ def _git_config_refusal(tokens: list[str]) -> str | None:
                 return (
                     f"git blocked: `git config {tok}` can rewrite config to "
                     "execute an arbitrary command. Not permitted."
+                )
+            if "$" in tok or "`" in tok:
+                return (
+                    "git blocked: `git config` with a non-literal argument "
+                    "could set a command-executing key. Not permitted."
                 )
             key = tok.split("=", 1)[0]
             if not tok.startswith("-") and _is_dangerous_git_config(key):
