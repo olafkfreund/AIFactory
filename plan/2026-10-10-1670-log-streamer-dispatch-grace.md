@@ -23,7 +23,7 @@ set, `self._active_kubejob_task_ids`, which dispatch marks
 
 - **D1 (per-row poll error drops the id).** The per-row
   `try/except Exception/continue` around `backend.reconcile_by_poll` at
-  `agent_kubejob.py:698-702` (691-695 after this change) leaves the id out of
+  `agent_kubejob.py:698-702` (687-691 after this change) leaves the id out of
   `live`, so `is_running()` already says "not running" after a transient poll
   error. Without the grace window the streamer now agrees and stops at its
   next EOF. Accepted. The proper fix (keep last tick's membership when a poll
@@ -83,10 +83,14 @@ set (guarded by the docstring and 2c). `job_active` cannot raise, and
 `build_log_stream.py:318` suppresses exceptions anyway. Single replica
 (`charts/aifactory/values.yaml:32`), web-server pod only.
 
-Line shift: deleting line 17 and lines 32-37 moves every later line of
-`agent_kubejob.py` up by 7. Old → new: 371/372/377 → 364/365/370; 520-527 →
-513-520; 625 (`def _kubejob_still_active`) → 618; 688 → 681; 698-702 →
-691-695; 733 → 726. The PR quotes the new numbers.
+Line shift (checked by applying steps 1-2 to a scratch worktree): deleting
+line 17, lines 32-37 and one of the two blank lines (31/38) left behind moves
+every later line of `agent_kubejob.py` up by 8 (the spec's "7" did not count
+that blank line). The rewritten `_kubejob_still_active` is 19 lines instead of
+22, so lines after old 646 move up by 11. Old → new: 371/372/377 →
+363/364/369; 520-527 → 512-519 (comment 513-518, caller 519); 625
+(`def _kubejob_still_active`) → 617; 688 → 677; 698-702 → 687-691; 733 → 722.
+The PR quotes the new numbers.
 
 Environment for every command (run from the worktree root
 `/mnt/code/Source-home/GitHub/AIFactory-1670`):
@@ -100,11 +104,15 @@ export PATH=/mnt/code/Source-home/GitHub/AIFactory/apps/backend/.venv/bin:$PATH
 1. `tests/test_is_running_kubejob.py`:181-248: write the tests first (red),
    editing bottom up so earlier line numbers stay valid →
    verify by `python -m pytest tests/test_is_running_kubejob.py -q`
-   (expected red: 2b fails and 2a fails at `gone()`; 2c and 2d already pass).
-   - **2d, insert after line 248** in
-     `test_dispatched_build_is_running_before_any_tick` (237-253), right after
-     `assert service.is_running(TASK) is True`:
+   (expected red: `2 failed, 8 passed` — 2b fails, and the 2a/2c test fails at
+   `gone()`, so 2c is not reached; under the grace window 2c would fail too.
+   Only 2d passes before step 2).
+   - **2d, insert after line 246** (`await _dispatch(service)`, before the
+     blank line 247 and `assert service.is_running(TASK) is True` at 248) in
+     `test_dispatched_build_is_running_before_any_tick` (237-253):
      `assert await service._kubejob_still_active(TASK)() is True`.
+     It goes BEFORE the `is_running` assert so mutation M4 fails on 2d
+     itself; placed after line 248, M4 fails at 248 and 2d is never reached.
      `_dispatchable` no-ops `_start_kubejob_log_stream` (line 223) and no tick
      runs, so this passes only through the dispatch mark
      (`agent_kubejob.py:371`).
@@ -179,10 +187,10 @@ export PATH=/mnt/code/Source-home/GitHub/AIFactory/apps/backend/.venv/bin:$PATH
      then two adjacent blank lines before `if TYPE_CHECKING:`; drop one.
    - **17:** delete `import time`. Its only uses were 639 and 644; lines
      846/853/976/979 use `datetime`, not `time`.
-   - **Verify only, do not edit** (new numbers): dispatch mark 364/365 and
-     only streamer start 370; call-site comment and only caller 513-520;
-     `_kubejob_dispatched_this_tick` reset 681; per-row except/continue
-     691-695; set rebind 726.
+   - **Verify only, do not edit** (new numbers): dispatch mark 363/364 and
+     only streamer start 369; call-site comment 513-518 and only caller 519;
+     `_kubejob_dispatched_this_tick` reset 677; per-row try/except/continue
+     687-691; set rebind 722.
 
    Traps: missing the `import time` deletion fails Ruff F401; do not capture
    the set in the closure (D8); no new helper and no call to
@@ -196,16 +204,24 @@ export PATH=/mnt/code/Source-home/GitHub/AIFactory/apps/backend/.venv/bin:$PATH
 3. Commit, follow-up issue and PR: one code commit covering steps 1 and 2 →
    verify by `git diff --stat origin/dev` (only the two files plus
    intent/spec/plan) and `gh issue view <follow-up>`.
-   - Stage both files, run `python scripts/cq_ratchet.py --staged`, then
+   - Stage both files, run both ratchets exactly as `.github/workflows/cq-ratchet.yml`
+     does (bare `--staged` exits 2: `--config` and `--ruff`/`--mypy` are
+     required; `tests/` is outside `--paths`, so only `agent_kubejob.py` is
+     checked):
+     ```bash
+     python scripts/cq_ratchet.py --staged --ruff "$(command -v ruff)" --config standards/ruff.toml --paths 'apps/backend/*.py' 'apps/web-server/*.py' 'scripts/*.py'
+     python scripts/cq_ratchet.py --tool mypy --staged --mypy "$(command -v mypy)" --config standards/mypy.ini --paths 'apps/backend/*.py' 'apps/web-server/*.py' 'scripts/*.py'
+     ```
+     Expect `0 regressed` from each. Then
      commit `fix(kubejob): drop the dispatch grace window from the streamer liveness check (#1670)`
      with the session's attribution trailers.
    - If implementation deviated from this plan, update this file in the same
      commit.
    - Before merge, file the D1 follow-up issue: "kubejob reconcile: keep last
      tick's membership when a per-row poll raises" pointing at
-     `agent_kubejob.py:691-695`.
+     `agent_kubejob.py:687-691`.
    - PR into `dev` linking intent, spec, plan and the follow-up issue; quote
-     the new line numbers (513-520, 618, 726); say which steps the coder did.
+     the new line numbers (512-519, 617, 722); say which steps the coder did.
 
    Traps: the commit scope must not contain `#`; branch base is `origin/dev`;
    do not touch `build_log_stream.py`, `agent_service.py`,
@@ -214,18 +230,21 @@ export PATH=/mnt/code/Source-home/GitHub/AIFactory/apps/backend/.venv/bin:$PATH
 ## Tests
 
 Baseline at `e5e0f820`: `tests/test_is_running_kubejob.py` 10 passed; the
-`-k` subset 143 passed.
+`-k` subset 143 passed. With steps 1-2 applied in a scratch worktree: 10
+passed, 143 passed, both `build_log_stream` files 16 passed,
+`apps/web-server/tests` 746 passed, Ruff (default) and both ratchets clean,
+autonomy matrix `--check` ok.
 
 ```bash
 grep -rn '_DISPATCH_GRACE_SECONDS' apps/ tests/                                            # no output
 grep -n '^import time\|time\.monotonic' apps/web-server/server/services/agent_kubejob.py  # no output
 ruff format --check apps/backend apps/web-server scripts tests                             # no changes needed
 ruff check apps/backend apps/web-server scripts tests                                      # All checks passed
-python scripts/cq_ratchet.py --staged                                                      # after git add; pass
+# after git add: the two cq_ratchet.py commands in step 3                                 # 0 regressed
 python -m pytest tests/test_is_running_kubejob.py -q                                       # 10 passed, no grace monkeypatch
 python -m pytest tests/test_build_log_stream_reattach.py tests/test_build_log_stream.py -q # all pass, files unchanged
 python -m pytest tests -q -k "kubejob or log_stream or is_running"                         # 143 passed
-python -m pytest apps/web-server/tests -q -o asyncio_mode=auto                             # same count as origin/dev
+python -m pytest apps/web-server/tests -q -o asyncio_mode=auto                             # 746 passed
 python scripts/gen_autonomy_matrix.py --check                                              # pass
 git diff --stat origin/dev                                                                 # 2 code files + intent/spec/plan
 ```
@@ -242,8 +261,8 @@ One-off mutation checks after step 2; revert each by undoing the edit:
 | M1 | Capture the set: `ids = self._active_kubejob_task_ids` before `_active`, closure returns `task_id in ids` | 2c (`assert await active() is False`) |
 | M2 | Closure returns `task_id in self._active_kubejob_task_ids or True` (grace that never expires) | 2b, and 2a's `gone()` assert |
 | M3 | Closure returns `False` | 2a's `assert await active() is True`, and 2d |
-| M4 | Comment out `self._active_kubejob_task_ids.add(task_id)` (line 364) | 2d (and the existing `is_running` assert at 248) |
-| M5 | Line 726 mutates in place (`.clear()` then `.update(...)`) | nothing; expected. It shows M1 matters only because of the rebind. Record, not a gate. |
+| M4 | Replace `self._active_kubejob_task_ids.add(task_id)` (line 363) with `pass` | 2d (it runs before the `is_running` assert, see step 1) |
+| M5 | Line 722 mutates in place (`.clear()` then `.update(...)`) | nothing; expected. It shows M1 matters only because of the rebind. Record, not a gate. |
 
 ## Rollback
 
