@@ -13,9 +13,10 @@ nothing on dev references #1624 and no PR is open for it.
 
 ## Problem
 
-About 155 calls in `apps/web-server` and `apps/backend` (not counting tests)
-use naive `datetime.now()`. The exact count depends on the grep: ruff DTZ005
-finds 154. About 6 more use `utcnow()` or `fromtimestamp()` with no timezone.
+156 lines in `apps/web-server` and `apps/backend` (not counting tests)
+contain naive `datetime.now()` (the issue's grep). Ruff DTZ005 finds 154
+calls. 6 more use `fromtimestamp()` with no timezone (DTZ006: `files.py` and
+`spec/pipeline/models.py`); none use `utcnow()`.
 Around 162 other sites already write tz-aware UTC. So the tree mixes two
 conventions, and a timestamp string alone does not say which one it uses.
 
