@@ -294,3 +294,4 @@ No data, schema or config migration.
 - Step 3: mutation M5 fails four tests, not the two listed: also
   `test_build_job_env_propagates_present_provider_env` and
   `test_manifest_carries_oauth_env_in_container_not_argv`.
+- Follow-up filed: #1713 (allowlist question and remaining gaps).
