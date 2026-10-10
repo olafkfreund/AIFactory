@@ -77,8 +77,7 @@
   seen as running (#1669).** Task status, the running badge, Stop and
   Recover read the shared job-state store. A store read failure reads as
   running, so Recover refuses rather than double-starting the build.
-  Start and plan approval are still pod-local; #1704 tracks
-  them.
+  Start and plan approval are still pod-local; #1704 tracks them.
 
 ## 3.6.84 - 2026-09-23
 
