@@ -70,6 +70,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from pathlib import Path
 from typing import Any
 
+from core.child_env import child_env
 from providers import BaseLLMProvider
 from providers.types import AssistantMessage, TextBlock
 
@@ -179,6 +180,21 @@ def _strip_opencode_prefix(model: str) -> str:
     if model.lower().startswith("opencode:"):
         return model[len("opencode:") :]
     return model
+
+
+def _opencode_keep(model: str) -> tuple[str, ...]:
+    # ponytail: env name derived by convention (<PROVIDER>_API_KEY); a provider
+    # with an unusual name (amazon-bedrock's AWS_*, google-vertex ADC, azure)
+    # falls back to `opencode auth login`. Follow-up issue if one shows up.
+    provider, sep, _ = model.partition("/")
+    if not sep or not provider:
+        return ()
+    name = f"{provider.upper().replace('-', '_')}_API_KEY"
+    if name.startswith("ANTHROPIC"):  # keep would restore it (child_env.py:52)
+        return ()
+    if provider == "google":
+        return (name, "GOOGLE_GENERATIVE_AI_API_KEY", "GEMINI_API_KEY")
+    return (name,)
 
 
 class OpenCodeAgenticProvider(BaseLLMProvider):
@@ -323,7 +339,7 @@ class OpenCodeAgenticProvider(BaseLLMProvider):
         untouched and let OpenCode behave as before (the build may still fail
         for models absent from the embedded fallback — see the #291 docs note).
         """
-        env = os.environ.copy()
+        env: dict[str, str] = child_env(keep=_opencode_keep(self._model))
         env.setdefault(_DISABLE_AUTOUPDATE_ENV_VAR, "1")
 
         target_root = _xdg_cache_home(env)
