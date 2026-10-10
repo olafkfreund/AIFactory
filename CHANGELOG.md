@@ -9,6 +9,15 @@
   holds, and a mismatch logs a warning. Not yet covered: forged gate signals
   (VAL, parity, verdict, host CI), the handback receipt, and legacy and
   from-issue tasks (follow-ups: #1695, #1696, #1697, #1698).
+- **Deploy scaffolding and migration mode act only on a contract the server
+  verified (#1673).** The agent can write `context/task_contract.json`, so the
+  build process no longer trusts it. The web server passes its verdict to
+  `run.py` in `AIFACTORY_TRUSTED_CONTRACT` (a digest of the verified contract,
+  or `hold`; unset means legacy). It is set by the server per spawn and
+  stripped from inherited environments. A held contract withholds the deploy
+  scaffold and stops a migration build with a non-zero exit; any other held
+  contract builds normally without it. Migration builds stop on in-pod and
+  sandbox hosts until #1680 lands; held deploy scaffolds are withheld.
 - **Processes the web server starts no longer inherit its secrets (#1680).**
   Every `git`, `gh`, runner and CLI child gets the server's environment minus
   the agent scrub set (`DATABASE_URL`, `JWT_SECRET`, API tokens, trusted-plan

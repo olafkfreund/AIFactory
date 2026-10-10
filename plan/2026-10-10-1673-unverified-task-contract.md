@@ -544,3 +544,7 @@ check exit 0; the D2 diff prints nothing.
   typed local (`held`) so mypy --strict does not regress `build_commands.py`.
 - Step 4: `ruff format` wraps `_STRIP_VARS` over several lines (the one-line
   form exceeds 88 columns); the autonomy matrix check still passes.
+- Step 5: `prompts_pkg/test_deployment_prompt.py` must run from
+  `apps/backend` (10 passed); from the repo root it fails collection.
+- Follow-ups filed: #1708 (sibling readers, D1), #1709 (task-status hold, D10),
+  #1710 (kubejob integration, D11), #1711 (explicit legacy value).
