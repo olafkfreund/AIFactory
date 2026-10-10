@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1690
 spec: spec/2026-10-10-1690-lfs-push-hooks-off.md
 ---
