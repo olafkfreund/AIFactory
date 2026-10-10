@@ -284,3 +284,10 @@ No data, schema or config migration.
    fix is to add the missing name to `RUNNER_KEEP` rather than revert the
    agent scrub. An operator MCP that lost a key declares it in its catalog
    `env` (wins at `client.py:914`).
+
+## Deviations
+
+- Step 2: the autonomy matrix does cite `core.auth` (the `pr_review_service`
+  row, `:313` → `:321`), so the regenerated matrix files are in step 2's
+  commit. M1 is covered by step 1's red run (same assertions fail without the
+  `auth.py` hunk).
