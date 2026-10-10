@@ -6,62 +6,60 @@ intent: intent/2026-10-10-1627-coder-repo-lint-gate.md
 
 # Spec: record CI linters that no gate ran as `skipped`
 
+Line numbers are at `c59a0ea6` (origin/dev, 2026-10-10).
+
 ## Design
 
 Only the reporting fix ships now. When the trailing gates have run, each
 linter that the target repo's CI runs and no executed gate covered gets a
 `GateResult(name=<tool>, passed=False, skipped=True)`. For the reported
 case, the record reads `kotlin-unit: passed, ktlint: skipped`. That text
-reaches stdout (`agents/coder.py:1387`, `:1394`), the `.trailing_gates_done`
-evidence (`:1396`, `gate_runner.py` `write_trailing_gate_marker`) and, from
+reaches stdout (`agents/coder.py:1398`, `:1405`), the `.trailing_gates_done`
+evidence (`:1406`, `gate_runner.py:816` `write_trailing_gate_marker`) and, from
 there, the PR body. Nothing is executed and no verdict changes.
+
+**Outcome coverage.** This meets intent outcomes 2 and 3 (ktlint is named as
+not run). It does **not** meet outcome 1: a build whose repo lint would fail
+still reports complete. Deferring outcome 1 to a follow-up is the proposed
+answer to Q1 below and needs the approver's yes; if the approver wants
+outcome 1 now, this spec is rewritten around a lint lane.
 
 All paths are under `apps/backend/`. Two production files are touched, with
 about 25 lines.
 
 ### 1. `analysis/ci_discovery.py`: one constant and one helper after `discover_ci` (:429-440)
 
-```python
-# Only these constants ever reach gate evidence; CI text never does (#1627).
-CI_LINTERS: tuple[str, ...] = (
-    "detekt", "eslint", "flake8", "golangci-lint", "ktlint", "ruff", "spotless", "swiftlint",
-)
-_MAX_WORKFLOW_BYTES = 256 * 1024
-_YAML_ANCHOR = re.compile(r"(?:^|[\s:\[{,-])&[\w-]+", re.MULTILINE)
-
-
-def ci_linters(project_dir: Path) -> list[str]:
-    """Allowlisted linters the repo's CI mentions. Never raises; [] when unsure."""
-    try:
-        wf_dir = project_dir / ".github" / "workflows"
-        for f in [*wf_dir.glob("*.yml"), *wf_dir.glob("*.yaml")]:
-            # ponytail: refuse hostile files rather than parse them on the host;
-            # a legit anchored or >256 KiB workflow just goes undetected (today's behaviour).
-            if f.is_symlink() or not f.is_file() or f.stat().st_size > _MAX_WORKFLOW_BYTES:
-                return []
-            if _YAML_ANCHOR.search(f.read_text(encoding="utf-8", errors="replace")):
-                return []
-        config = discover_ci(project_dir)
-        steps = "\n".join(s for wf in (config.workflows if config else []) for s in wf.steps).lower()
-        return [n for n in CI_LINTERS if re.search(rf"(?<![a-z0-9]){re.escape(n)}", steps)]
-    except Exception:  # noqa: BLE001 - detection is advisory, never costs the gate record
-        return []
-```
+- `CI_LINTERS: tuple[str, ...]`, sorted:
+  `detekt, eslint, flake8, golangci-lint, ktlint, ruff, spotless, swiftlint`.
+  Only these constants ever reach gate evidence; CI text never does.
+- `ci_linters(project_dir: Path) -> list[str]`: the allowlisted names that
+  appear in any discovered workflow's name (`CIWorkflow.name`, which holds
+  `<workflow name>/<job key>`) or steps. Never raises; returns `[]` when unsure.
+- Pre-guard over `.github/workflows/*.yml` and `*.yaml`, before
+  `discover_ci` is called: if any file is a symlink, is not a regular file,
+  is over 256 KiB, or contains a YAML anchor (`&name`), return `[]`.
+- Match is case-insensitive and left-bounded (no letter or digit before the
+  name), against the lowercased name and steps.
+- The whole body sits in `try/except Exception` returning `[]`
+  (`# noqa: BLE001`, advisory detection).
 
 - It reuses `CIWorkflow.steps`, which already holds each step's name,
   `run:` line and `uses:` (:200-225). No new parsing. CircleCI and Jenkins
   also fill `workflows`, so they are covered too; only the GitHub path has
   the pre-guard.
+- **Why the workflow/job name too.** `CIWorkflow.name` is
+  `<workflow name>/<job key>` (:170, :184, :217). A job keyed `ktlint` whose
+  steps only call `./gradlew check` is still detected.
 - **Why the pre-guard.** `discover_ci` has no caller today. This change makes
   it run on the host against agent-writable files, outside the sandbox.
-  `_parse_github_actions` (:153-165) follows symlinks (`ci.yml -> /dev/zero`)
-  and has no size cap. `yaml.safe_load` (:347) accepts aliases, and
-  `str(step).lower()` (:220) expands a small alias bomb exponentially. The
+  `_parse_github_actions` (:149-165) follows symlinks (`ci.yml -> /dev/zero`)
+  and has no size cap. `yaml.safe_load` (:348) accepts aliases, and
+  `str(step).lower()` (:212, CircleCI :273) expands a small alias bomb exponentially. The
   guard refuses all three before `discover_ci` sees them.
 - **Why the `try`.** The whole trailing-gate body sits in one `try` whose
-  `except` only logs at debug level (`coder.py:1239`, `:1397-1398`). If
-  detection raised, `write_trailing_gate_marker` (:1396) would be skipped, and
-  QA (`tools_pkg/tools/qa.py:340-352`) and the CLI would see no gate evidence.
+  `except` only logs at debug level (`coder.py:1239`, `:1407-1408`). If
+  detection raised, `write_trailing_gate_marker` (:1406) would be skipped, and
+  QA (`tools_pkg/tools/qa.py:341-361`) and the CLI would see no gate evidence.
 - **Left-bounded match.** `ktlint`, `spotlessCheck`, `ruff check` and
   `uses: ScaCap/action-ktlint` match; `gruff` does not.
 - Output order follows the sorted constant and has no duplicates, so the
@@ -71,21 +69,18 @@ def ci_linters(project_dir: Path) -> list[str]:
 
 - Add `GateResult` to the existing local `from .gate_runner import (...)`
   (:1240-1248).
-- Add a single-name local import:
-  `from analysis.ci_discovery import ci_linters  # noqa: PLC0415`
-  (the same pattern as `qa.py:261`).
-
-```python
-results = await run_gates(gate_dir, gates)
-# #1627: a lint the repo's CI runs but no executed gate covered is recorded, not silent.
-ran = {r.name for r in results if not r.skipped}
-results += [
-    GateResult(name=tool, passed=False, skipped=True)
-    for tool in ci_linters(gate_dir)
-    if {"eslint": "lint"}.get(tool, tool) not in ran  # npm `lint` gate (gate_runner.py:135) covers eslint
-]
-summary = summarize_gates(results)
-```
+- Add a single-name local import of `ci_linters` from
+  `analysis.ci_discovery` with `# noqa: PLC0415` (the same pattern as
+  `qa.py:261`).
+- Right after `results = await run_gates(gate_dir, gates)` (:1351) and before
+  `summarize_gates` (:1352): let `ran` be the names of results that are not
+  skipped. Append `GateResult(name=tool, passed=True, skipped=True)` for each
+  `tool` in `ci_linters(gate_dir)` whose covering gate name is not in `ran`.
+  The covering name is the tool itself, except `eslint`, which the npm `lint`
+  gate (`gate_runner.py:135-136`) covers. `passed=True, skipped=True` matches
+  how `run_gates` records a missing tool (`gate_runner.py:673`).
+- `gate_dir` is the task worktree root or `project_dir` (`gate_runner.py:742-753`),
+  so `.github/` is where `ci_linters` looks.
 
 **Unchanged behaviour:**
 
@@ -95,9 +90,9 @@ summary = summarize_gates(results)
   `ktlint: skipped`. That is informational only, because the fix loop acts on
   the `## <gate>` sections, which list failures only.
 - `evidence_shows_an_executed_gate` stays True whenever a real gate ran
-  (`gate_runner.py:933`). All outcomes stay in `_KNOWN_GATE_OUTCOMES`
+  (`gate_runner.py:939`). All outcomes stay in `_KNOWN_GATE_OUTCOMES`
   (:900), so QA approval (`qa.py:341-369`) and the CLI warning
-  (`cli/build_commands.py:610-624`) behave as before.
+  (`cli/build_commands.py:607-626`) behave as before.
 - If every real gate was skipped, the CLI's "every gate was skipped" message
   now also names the linter, which is accurate.
 
@@ -113,16 +108,17 @@ These are proposed defaults for the approver.
    "read CI lint during planning" and "run lint as a trailing gate".
    *Why:* `discover_ci` already extracts every step and only lacks a caller.
    The summary already reaches stdout, the marker and the PR body
-   (web-server `merger.py:205-213`), which meets outcome bullets 2 and 3. It
+   (`apps/web-server/server/services/merger.py:205-213`), which meets
+   outcome bullets 2 and 3 but not 1 (see Outcome coverage). It
    uses the existing word `skipped`, not a new one like `not run`, because
    `gate_outcomes` splits on `,` and `:` (`gate_runner.py:903-906`) and any
-   other word fails closed (:900, :931-932). That would make QA (`qa.py:272`)
-   refuse every Kotlin build.
+   other word fails closed (:900, :937-938). That would make QA
+   (`qa.py:352-361`) refuse every Kotlin build.
 2. **Fail or warn.** Warn only. A lint that was not run is `skipped`. It is
    not written to the failure sections of `GATE_FAILURES.md` and it does not
    raise. Whether a lint that ran and failed should block is a question for
    the follow-up.
-   *Why:* the trailing-gate path never raises (`coder.py:1397`), and the
+   *Why:* the trailing-gate path never raises (`coder.py:1407`), and the
    autonomy matrix and PR endgame depend on that.
 3. **Source of lint commands.** Detection only, with a fixed allowlist
    matched against the discovered CI steps. Only allowlist constants are
@@ -140,15 +136,15 @@ These are proposed defaults for the approver.
    version in the gate output. Do not open egress.
 5. **Sequencing.** Go ahead now and rebase later. #1673 edits
    `build_commands.py` and `deploy_scaffold` (called at `coder.py:1086-1092`),
-   and #1620 edits `gate_runner.py:355-396`. Neither touches this block or
+   and #1620 edits `gate_runner.py:355-396` (the sandbox runner). Neither touches this block or
    `ci_discovery.py`.
 6. **Swift lanes (TFactory#1340).** Keep them out of scope. That problem is
    about test lanes, it is already tracked, and it lives in hub-governed
    `swift.yaml`.
 7. **Banners** (`coder.py:1077`, `core/progress.py:179`,
-   `tools_pkg/tools/progress.py:141`). Leave them unchanged. They have
-   consumers (`cli/build_commands.py:134`, web-server `task_service.py:825`),
-   and the "Trailing gates passed/failed: <summary>" line plus the PR
+   `tools_pkg/tools/progress.py:141`). Leave them unchanged. The intent asks
+   to grep consumers before rewording; nothing here rewords them, so that
+   grep belongs to the follow-up. The "Trailing gates passed/failed: <summary>" line plus the PR
    evidence already carry `ktlint: skipped`.
 
 ## Alternatives rejected
@@ -175,7 +171,11 @@ These are proposed defaults for the approver.
 
 ## Risks
 
-- **False positive.** A step that mentions an allowlisted name without
+- **Outcome 1 stays open.** Until the follow-up lands, a build can still
+  say "complete" with ktlint red; the operator only gets `ktlint: skipped`
+  in stdout and the PR body. If the approver rejects the Q1 default, this
+  spec does not stand.
+- **False positive.** A step or job key that mentions an allowlisted name without
   running it (for example `echo "skip ruff"`), or a `kotlin-unit` that runs
   ktlint through Gradle, records `ruff: skipped` or `ktlint: skipped`. That
   is one extra informational token, warn-only, and it changes no verdict.
@@ -190,7 +190,7 @@ These are proposed defaults for the approver.
   call (:439), and there is no module cache in the long-lived web-server
   process.
 - **Ratchet.** Both files are in the per-file ruff and `mypy --strict`
-  ratchet (`*/apps/backend/*.py`, `scripts/cq_ratchet.py:171`). The new code
+  ratchet (`--paths 'apps/backend/*.py'`, `.github/workflows/cq-ratchet.yml:113`, `:132`). The new code
   is fully typed and adds no violations.
 - **Hosts.** This runs on whichever host or build Job runs the trailing
   gates. It adds no PVC, volume, network or subprocess.
@@ -203,6 +203,7 @@ cases use `pytest.mark.skipif(not HAS_YAML)`.
 1. `tests/test_ci_discovery.py`, for `ci_linters`:
    - a ktlint job, `./gradlew spotlessCheck` and `uses: ScaCap/action-ktlint`
      give `["ktlint", "spotless"]`
+   - a job keyed `ktlint` whose only step is `./gradlew check` gives `["ktlint"]`
    - a `gruff` step gives `[]`
    - a symlinked workflow gives `[]`
    - a workflow over 256 KiB gives `[]`
@@ -236,11 +237,6 @@ cases use `pytest.mark.skipif(not HAS_YAML)`.
    - `tests/test_security.py`'s GitCommitValidator fails while files are
      staged. That is environmental, not a regression.
 6. Housekeeping:
-   - add a CHANGELOG entry under `[Unreleased]`, keeping both sides on
-     conflict
-   - the commit scope has no `#`
+   - add a CHANGELOG entry under `[Unreleased]`
    - open the follow-up issue for the lint lane and planning-time CI lint
      (Q1, Q3, Q4)
-
-The plan will have three file-editing steps (helper, coder.py block,
-tests), which meets the `coder` handoff threshold.
