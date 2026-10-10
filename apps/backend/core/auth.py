@@ -148,6 +148,14 @@ _AGENT_ENV_DENY_EXACT: set[str] = {
     "LINEAR_API_KEY",
     "GITHUB_TOKEN",
     "GH_TOKEN",
+    # Host keys that matched neither list (#1674). Their readers keep them: web
+    # server (own env), runner via RUNNER_KEEP, kubejob run.py via Job spec.
+    "APP_CFACTORY_READ_KEY",
+    "CONTEXT7_KEY",
+    "RAPIDAPI_KEY",
+    "LANGCHAIN_API_KEY",
+    "OPENAI_COMPATIBLE_API_KEY",
+    "S3_ACCESS_KEY",
 }
 
 # Generic secret-bearing names (any host var matching is neutralized).
