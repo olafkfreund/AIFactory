@@ -328,3 +328,9 @@ These repo traps do not apply to this change:
 After a revert, bump PRs again need `apps/web-server/openapi.yaml:5` edited by
 hand to pass TechDocs `refresh-and-validate`. A bad bump commit is local until
 pushed: `git reset --hard HEAD~1` on the bump branch.
+
+## Deviations
+
+- Step 2: mutant M1 (`$1` string replacer) fails tests (a), (b) and (d), not
+  only (d): `$1` expands to the info head, so the output is wrong for any
+  version.
