@@ -200,14 +200,20 @@ export PATH=/mnt/code/Source-home/GitHub/AIFactory/apps/backend/.venv/bin:$PATH
    Traps:
    - The repo runs `ruff format --check` and `ruff check` on this file.
    - Keep `import logging` unaliased, on its own line, in the stdlib block.
+   - The new `_plan` and `_spec` signatures exceed 88 columns on one line; run
+     `ruff format` on the file before `ruff format --check`.
    - Never put `# noqa` on a wrapped import.
    - Number the new tests from 21 on, following the spec's numbering.
 
 2. **`apps/web-server/server/services/pr_endgame.py:469, :500, :457-460`: the guard in `merge_disposition` (production).**
    → verify by running the step-1 pytest command (now **fully green**), then
    `ruff format --check apps/backend apps/web-server scripts tests && ruff check apps/web-server/server/services/pr_endgame.py`,
-   then `python scripts/cq_ratchet.py --staged` after `git add`. Finally, run
-   the mutation check: delete the `effective = raise_review_tier(signed, effective)`
+   then, after `git add`, both CI ratchets (`--config` is required; the bare
+   `--staged` form exits with a usage error):
+   `python scripts/cq_ratchet.py --staged --ruff "$(command -v ruff)" --config standards/ruff.toml --paths 'apps/backend/*.py' 'apps/web-server/*.py' 'scripts/*.py'`
+   and
+   `python scripts/cq_ratchet.py --tool mypy --staged --mypy "$(command -v mypy)" --config standards/mypy.ini --paths 'apps/backend/*.py' 'apps/web-server/*.py' 'scripts/*.py'`
+   (both must report `0 regressed`). Finally, run the mutation check: delete the `effective = raise_review_tier(signed, effective)`
    line, run the step-1 command, and confirm that tests 21, 22 and 23 fail.
    Then restore the line.
    - **:469.** Change the import to
@@ -262,7 +268,7 @@ export PATH=/mnt/code/Source-home/GitHub/AIFactory/apps/backend/.venv/bin:$PATH
    - Do not change the `host_isolated` lines (:485-489, from #1691) or the
      `effective = ...` default at :490.
    - Do not touch `_TIER_LOG_LABEL`/`_describe_tier` (:163-177),
-     `_clears_with_human_approval` (:831-844), `merge_pr` (:1418-1442),
+     `_clears_with_human_approval` (:831-844), the merge block in `merge_pr` (:1418-1442),
      `merge_policy.py` or `trusted_contract.py`.
    - No subprocess is added, so `test_no_unscrubbed_spawn` does not apply.
 
@@ -282,9 +288,11 @@ export PATH=/mnt/code/Source-home/GitHub/AIFactory/apps/backend/.venv/bin:$PATH
      cite the plan steps in the body.
    - If `gen_autonomy_matrix.py --check` reports stale output, run it without
      `--check` and commit the regenerated output. No change is expected: the
-     import closure for `server.services.pr_endgame` is pinned at 176
-     (`gen_autonomy_matrix.py:478`), and `raise_review_tier` comes from a
-     module that is already in the closure.
+     import closure for `server.services.pr_endgame` has a minimum of 176
+     (`_MIN_CLOSURE`, `gen_autonomy_matrix.py:478`), `raise_review_tier` comes
+     from a module already in the closure, and the matrix cites no
+     `pr_endgame.py` line numbers (`--check` stayed `ok` with this plan's
+     change applied).
    - Before the PR:
      - Run the risk-1 `jq` sample and confirm the PFactory signer sets
        `execution.review_tier`.
@@ -310,7 +318,10 @@ python -m pytest tests -q -m "not slow"     # test_merge_policy, test_gen_autono
 python scripts/gen_autonomy_matrix.py --check
 ruff format --check apps/backend apps/web-server scripts tests
 ruff check apps/backend apps/web-server scripts tests
-python scripts/cq_ratchet.py --staged
+python scripts/cq_ratchet.py --staged --ruff "$(command -v ruff)" --config standards/ruff.toml \
+  --paths 'apps/backend/*.py' 'apps/web-server/*.py' 'scripts/*.py'
+python scripts/cq_ratchet.py --tool mypy --staged --mypy "$(command -v mypy)" --config standards/mypy.ini \
+  --paths 'apps/backend/*.py' 'apps/web-server/*.py' 'scripts/*.py'
 ```
 
 **Expected results:**
@@ -325,7 +336,11 @@ python scripts/cq_ratchet.py --staged
 - ruff and the ratchet are clean.
 
 **Mutation checks.** Apply each mutation to `pr_endgame.py` one at a time, run
-the trusted-contract file, then revert.
+the trusted-contract file, then revert. Back the fixed file up with `cp` first
+and restore from that copy. **Never use `git stash`** for this: the stash is
+shared by every worktree of the repo, and parallel agents run in sibling
+worktrees, so a `stash pop` can take another agent's WIP (this happened while
+this plan was being checked).
 
 | # | mutation | must fail |
 |---|---|---|
@@ -336,8 +351,8 @@ the trusted-contract file, then revert.
 | M5 | invert the below-signed comparison, or warn always | 21, or 24/27 |
 | M6 | run the block for every state, not only `verified` | 17a |
 | M7 | move the block outside the `try` | 26[1] (errors) |
-| M8 | revert the `_plan` fixture to no `execution` | 16 |
-| M9 | import only `decide_merge` | 21-29 (NameError) |
+| M8 | revert the `_plan` fixture to no `execution` | 16 (also 21, 23, 27) |
+| M9 | import only `decide_merge` | 16, 21, 23, 27[None], 27[""] (the `NameError` is caught by the existing `except Exception` and holds, so HOLD-expecting tests still pass; `ruff check` F821 also flags it) |
 
 ## Rollback
 
