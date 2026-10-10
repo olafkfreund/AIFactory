@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1670
 intent: intent/2026-10-10-1670-log-streamer-dispatch-grace.md
 ---
