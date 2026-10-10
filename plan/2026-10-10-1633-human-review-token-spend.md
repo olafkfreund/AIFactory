@@ -746,3 +746,8 @@ nothing needs migrating.
   `preflight_pause_plan` cases are separate functions sharing a helper.
   `test_agent_service_kubejob_backend.py` gains a `sys.path` insert for
   `apps/backend`.
+- Steps 3-4: `_BadUsage` is `_BadUsageError` (N818 would regress the ruff
+  ratchet). `_kubejob_review_reason` returns `(spec_dir, reason) | None`
+  instead of `str | None`. Not covered by any mutation row: reordering the
+  usage report after `_drain_queue` survives all tests.
+- Step 5: follow-ups are drafted in the PR body, not filed (per this step).
