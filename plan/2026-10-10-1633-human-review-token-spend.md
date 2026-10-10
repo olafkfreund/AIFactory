@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1633
 spec: spec/2026-10-10-1633-human-review-token-spend.md
 ---
