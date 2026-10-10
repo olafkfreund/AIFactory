@@ -91,14 +91,9 @@ disables hooks and fsmonitor. Keep this hunk inside lines 51-57, away from
 the strip-list edits in #1674 and #1688.
 
 **2. `apps/backend/core/worktree.py:90-100` (Q4).**
-
-```python
-def _git_env() -> dict[str, str]:
-    env = child_env(keep=GITHUB_KEEP, extra={"GIT_TERMINAL_PROMPT": "0"})
-    for k in _AMBIENT_GIT_VARS:
-        env.pop(k, None)
-    return env
-```
+`_git_env()` returns `child_env()` with `GITHUB_KEEP` kept and
+`GIT_TERMINAL_PROMPT=0` added, with every `_AMBIENT_GIT_VARS` key removed.
+It no longer copies `os.environ` itself.
 
 - **One fix point.** All 9 spawns in the file already pass `env=_git_env()`
   (lines 164-637).
@@ -219,7 +214,10 @@ Add `_BACKEND / "core" / "worktree.py"` to `_BACKEND_FILES`. The rebuilt
    validated are now checked, for `rm` and `chmod` too. That is intended,
    but watch for agent retry loops after merge.
 7. **Config values can be refused.** A value that matches the deny-list,
-   such as `user.name "Ops Command"`, is refused. This fails closed.
+   such as `user.name "Ops Command"`, is refused. So are reads and removals
+   of a dangerous key (`git config --get core.pager`,
+   `git config --unset core.fsmonitor`), since the check does not look at the
+   mode. This fails closed.
 8. **Index layout changes.** Tests that assert exact `GIT_CONFIG_KEY_n`
    indices change. #1674, #1688 and #1692 must rebase onto
    `COUNT = n + 2`.
