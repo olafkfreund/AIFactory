@@ -201,6 +201,21 @@ def test_hosts_yml_github_token_refuses_to_start(
     assert not _isolate.calls
 
 
+def test_hosts_yml_malformed_never_quotes_the_token(
+    rsa_pem: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    _isolate: _Post,
+) -> None:
+    _app_env(monkeypatch, rsa_pem[0])
+    _hosts(tmp_path, "github.com:\n  oauth_token: gho_SECRET: y\n")
+    with pytest.raises(RuntimeError) as exc:
+        github_app.start()
+    assert exc.value.__cause__ is None and exc.value.__suppress_context__
+    assert "gho_SECRET" not in str(exc.value)
+    assert not _isolate.calls
+
+
 def test_hosts_yml_other_host_starts(
     rsa_pem: tuple[str, str],
     monkeypatch: pytest.MonkeyPatch,

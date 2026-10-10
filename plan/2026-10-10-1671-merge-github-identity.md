@@ -613,3 +613,7 @@ The feature is off by default: no App vars means `start()` returns at once.
 - Step 5 follow-ups filed: #1700 (per-tenant App, RFC-0020), #1701 (Copilot
   review with the App token), #1702 (manifest-flow registration), #1703 (stored
   clone PATs, Risk 5). Per-call tokens are #1688.
+- Review fix: a malformed `hosts.yml` raised `yaml.YAMLError`, whose message
+  quotes the bad line (possibly a token) into the startup traceback. It now
+  raises `RuntimeError(...) from None`; test
+  `test_hosts_yml_malformed_never_quotes_the_token` (fails without the fix).

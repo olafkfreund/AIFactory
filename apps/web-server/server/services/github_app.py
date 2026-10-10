@@ -45,6 +45,9 @@ def _hosts_yml_has_token() -> bool:
         data = yaml.safe_load((cfg / "hosts.yml").read_text()) or {}
     except FileNotFoundError:
         return False
+    except yaml.YAMLError:
+        # The YAML error quotes the bad line, which may hold a token.
+        raise RuntimeError("gh hosts.yml is unreadable; fix or remove it") from None
     host = data.get("github.com") if isinstance(data, dict) else None
     if not isinstance(host, dict):
         return False
