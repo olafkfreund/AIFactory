@@ -1290,16 +1290,32 @@ class KubeJobBuildBackend:
             batch = await self._batch_api()
         try:
             await batch.create_namespaced_job(namespace, manifest)
+            try:
+                await self._store.set_worker_ref(
+                    task_id,
+                    {"kind": "k8s-job", "namespace": namespace, "job_name": job_name},
+                )
+            except BaseException:
+                # #1677: a raise from dispatch must mean nothing is running.
+                try:
+                    await batch.delete_namespaced_job(
+                        job_name, namespace, propagation_policy="Background"
+                    )
+                except Exception:  # noqa: BLE001 - logged; the original error wins
+                    _log.exception(
+                        "[build_backend] could not roll back k8s Job %s/%s for task %s "
+                        "after the worker_ref write failed",
+                        sanitize_log(namespace),
+                        sanitize_log(job_name),
+                        sanitize_log(task_id),
+                    )
+                raise
         finally:
             if owns_client:
                 api = getattr(batch, "api_client", None)
                 if api is not None:
                     await api.close()
 
-        await self._store.set_worker_ref(
-            task_id,
-            {"kind": "k8s-job", "namespace": namespace, "job_name": job_name},
-        )
         _log.info(
             "[build_backend] dispatched run.py Job %s/%s for task %s",
             sanitize_log(namespace),

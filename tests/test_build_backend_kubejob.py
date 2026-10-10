@@ -14,7 +14,9 @@ properties the RFC calls out:
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -523,6 +525,96 @@ async def test_dispatch_records_worker_ref(
         "namespace": "factory",
         "job_name": job_name,
     }
+    assert fake.deleted == []
+
+
+async def _dispatch_with_failing_ref(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    err: BaseException,
+    fake: _FakeBatch,
+) -> None:
+    """Dispatch with a set_worker_ref that raises ``err`` (#1677)."""
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    monkeypatch.setattr(bb, "populate_build_worktree", lambda *_a, **_k: None)
+    store = await _make_store(tmp_path / "d.db")
+    await store.admit("p:s1", _spawn_args("s1"), cap=2, correlation_key="9")
+
+    async def _boom(*_a: Any, **_k: Any) -> None:
+        raise err
+
+    monkeypatch.setattr(store, "set_worker_ref", _boom)
+    await bb.KubeJobBuildBackend(store).dispatch(
+        task_id="p:s1",
+        project_path=Path(_DATA_ROOT) / "workspaces" / "p",
+        spec_id="s1",
+        correlation_key="9",
+        batch=fake,
+    )
+
+
+async def test_dispatch_deletes_job_when_worker_ref_write_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _KwBatch(_FakeBatch):
+        kw: dict[str, Any] = {}
+
+        async def delete_namespaced_job(
+            self, name: str, namespace: str, **_kw: Any
+        ) -> None:
+            self.kw = _kw
+            await super().delete_namespaced_job(name, namespace, **_kw)
+
+    err = RuntimeError("db down")
+    fake = _KwBatch()
+    with pytest.raises(RuntimeError) as exc:
+        await _dispatch_with_failing_ref(tmp_path, monkeypatch, err, fake)
+    assert exc.value is err
+    name = fake.created[0][1]["metadata"]["name"]
+    assert fake.deleted == [("factory", name)]
+    assert fake.kw == {"propagation_policy": "Background"}
+
+
+async def test_dispatch_reraises_original_error_when_rollback_delete_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _FailDelete(_FakeBatch):
+        async def delete_namespaced_job(
+            self, name: str, namespace: str, **_kw: Any
+        ) -> None:
+            raise _ApiError(500)
+
+    err = RuntimeError("db down")
+    fake = _FailDelete()
+    with caplog.at_level(logging.ERROR, logger=bb.__name__):
+        with pytest.raises(RuntimeError) as exc:
+            await _dispatch_with_failing_ref(tmp_path, monkeypatch, err, fake)
+    assert exc.value is err
+    name = fake.created[0][1]["metadata"]["name"]
+    recs = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.ERROR and name in r.getMessage()
+    ]
+    assert recs
+    assert recs[0].exc_info is not None
+    assert isinstance(recs[0].exc_info[1], _ApiError)
+
+
+async def test_dispatch_deletes_job_when_cancelled_during_worker_ref_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _FakeBatch()
+    with pytest.raises(asyncio.CancelledError):
+        await _dispatch_with_failing_ref(
+            tmp_path, monkeypatch, asyncio.CancelledError(), fake
+        )
+    name = fake.created[0][1]["metadata"]["name"]
+    assert fake.deleted == [("factory", name)]
 
 
 async def test_dispatch_injects_oauth_token_into_job_env(

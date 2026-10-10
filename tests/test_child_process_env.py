@@ -40,6 +40,7 @@ def secret_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for k in SECRETS:
         monkeypatch.setenv(k, "s3cret")
     monkeypatch.setenv("OPENAI_API_KEY", "oa")
+    monkeypatch.setenv("OPENAI_COMPATIBLE_API_KEY", "oc")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "an")
     monkeypatch.setenv("PATH", os.environ.get("PATH", "/usr/bin"))
     monkeypatch.setenv("HOME", os.environ.get("HOME", "/root"))
@@ -151,6 +152,7 @@ def test_real_git_fsmonitor_disabled_by_child_env(
 def test_make_subprocess_env_keep_and_drop(secret_env: None) -> None:
     env = make_subprocess_env()
     assert env["OPENAI_API_KEY"] == "oa"
+    assert env["OPENAI_COMPATIBLE_API_KEY"] == "oc"
     assert env["GITHUB_TOKEN"] == "s3cret"
     assert "DATABASE_URL" not in env
     assert "ANTHROPIC_API_KEY" not in env
@@ -271,7 +273,10 @@ def test_credential_names_dropped_for_tools_kept_for_runner(
     )
     runner = make_subprocess_env()
     assert runner["CLAUDE_CODE_OAUTH_TOKEN"] == "c"
-    assert runner["CONTEXT7_KEY"] == "c"
+    # undenied credential-shaped name survives in the runner (#1680)
+    assert runner["OLLAMA_API_KEY"] == "c"
+    assert "CONTEXT7_KEY" not in runner  # #1674
+    assert "S3_ACCESS_KEY" not in runner  # #1674
     assert "DATABASE_URL" not in runner
 
 

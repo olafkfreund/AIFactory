@@ -160,6 +160,7 @@ needs them (cloud/KMS SDKs); they never reach agents.
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` | AWS credentials (boto3 / workspace store / deploy); scrubbed from agents. |
 | `GOOGLE_APPLICATION_CREDENTIALS` | GCP service-account path; scrubbed from agents. |
 | `AZURE_CLIENT_SECRET` | Azure app secret; scrubbed from agents. |
+| `APP_CFACTORY_READ_KEY`, `CONTEXT7_KEY`, `RAPIDAPI_KEY`, `LANGCHAIN_API_KEY`, `OPENAI_COMPATIBLE_API_KEY`, `S3_ACCESS_KEY` | Host keys scrubbed from agents (#1674). `OPENAI_COMPATIBLE_API_KEY` is restored for the runner via `RUNNER_KEEP`; `S3_ACCESS_KEY` is denied to agents and the in-pod runner (kubejob Jobs still receive both for `run.py`). |
 
 Any host var whose name matches `SECRET|PASSWORD|PRIVATE_KEY|CREDENTIAL|_KMS|PASSPHRASE`
 is also blanked generically.

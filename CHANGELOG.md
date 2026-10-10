@@ -43,6 +43,15 @@
   name, and `KMS_*` keys are now scrubbed from agents too. Git LFS objects are
   not uploaded on these pushes yet (#1690). Follow-ups: #1688 (token per call),
   #1689 (other `.git/config` command paths), #1692 (non-Claude agent env).
+- **Agent sessions no longer inherit six more host keys (#1674).**
+  `APP_CFACTORY_READ_KEY`, `CONTEXT7_KEY`, `RAPIDAPI_KEY`, `LANGCHAIN_API_KEY`,
+  `OPENAI_COMPATIBLE_API_KEY` and `S3_ACCESS_KEY` matched neither deny list and
+  reached agent Bash tools and MCP servers. The Context7 MCP now runs without a
+  key. The runner keeps `OPENAI_COMPATIBLE_API_KEY` (via `RUNNER_KEEP`) but no
+  longer gets `S3_ACCESS_KEY`. kubejob still forwards both
+  `OPENAI_COMPATIBLE_API_KEY` and `S3_ACCESS_KEY` to the Job, where `run.py`
+  blanks them for the agent. An operator MCP server that needs `RAPIDAPI_KEY`,
+  `LANGCHAIN_API_KEY` or `CONTEXT7_KEY` must declare it in its catalog `env`.
 - **A `human-approval` system gate now clears only on a GitHub review (#1663).**
   The review must approve the head commit, come from someone other than the PR
   author, and not be a bot. A contract or `task_metadata.json` can no longer
@@ -121,6 +130,8 @@
 
 ### Fixed
 
+- Kubernetes builds: if recording a dispatched Job fails, the Job is deleted instead of running
+  untracked (#1677).
 - **Approve works on a task whose PR already exists, and after its worktree
   was cleaned up.** `create-pr` now returns an open or merged PR for the task
   branch (`existing: true`) instead of failing with "already exists", which

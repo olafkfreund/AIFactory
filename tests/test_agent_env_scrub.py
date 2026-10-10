@@ -46,6 +46,13 @@ SECRETS = {
     "AIFACTORY_TRUSTED_PLAN_KEY_PFACTORY": "x",
     "AIFACTORY_TRUSTED_PLAN_KEY_PFACTORY__2026Q3": "x",
     "AIFACTORY_TOKEN": "x",
+    # Host keys that matched neither list (#1674)
+    "APP_CFACTORY_READ_KEY": "x",
+    "CONTEXT7_KEY": "x",
+    "RAPIDAPI_KEY": "x",
+    "LANGCHAIN_API_KEY": "x",
+    "OPENAI_COMPATIBLE_API_KEY": "x",
+    "S3_ACCESS_KEY": "x",
 }
 
 KEEP = {

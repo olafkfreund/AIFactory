@@ -692,7 +692,7 @@
             ],
             [
               "`server.services.pr_review_service`",
-              "model-assisted (dynamic import: core.auth:313 (+2 more))",
+              "model-assisted (dynamic import: core.auth:321 (+2 more))",
               "`anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
               "yes (14): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
               "268",
@@ -700,7 +700,7 @@
             ],
             [
               "`server.services.pr_endgame`",
-              "model-assisted (dynamic import: core.auth:313 (+3 more))",
+              "model-assisted (dynamic import: core.auth:321 (+3 more))",
               "`anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
               "yes (20): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
               "364",
