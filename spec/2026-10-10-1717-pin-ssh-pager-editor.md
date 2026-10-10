@@ -71,7 +71,7 @@ These are proposed defaults for the approver to confirm or change.
   `GIT_PAGER` or `GIT_EDITOR` in the server environment.
 
 No other code changes. Every server git path inherits the pins:
-`workspace_fetch.py:123` (`_git`), `git_credentials.py:72-77` (non-GitHub
+`workspace_fetch.py:120` (`_git`), `git_credentials.py:72-77` (non-GitHub
 branch yields `child_env()`), `worktree._git_env` (rebuilt on `child_env` by
 #1689), `server/utils/subprocess_env.py:50`, and #1688's `github_env`, which
 reads `GIT_CONFIG_COUNT` and appends after it. The `runners/github` git spawns
@@ -88,12 +88,12 @@ default ruff applies, the file's `# ruff: noqa` covers S603/S607):
   `ssh`, `cat`, `true`, appended after the existing `credential.helper` entry
   at index 0. Left alone, these counts fail the PR's own tests.
 - New `test_real_git_ssh_pager_editor_pinned(monkeypatch, tmp_path)`, built
-  like `test_real_git_hook_disabled_by_child_env` (`:100`):
+  like `test_real_git_hook_disabled_by_child_env` (`:166`):
   - `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`; delenv
     `GIT_SSH_COMMAND`, `GIT_SSH`, `GIT_PAGER`, `PAGER`, `GIT_EDITOR`,
     `VISUAL`, `EDITOR`, `GIT_CONFIG_COUNT`.
   - Set `WORKSPACE_URI` to a dummy value (`maybe_push_workspace_branch`
-    returns early without it, `workspace_fetch.py:108`).
+    returns early without it, `workspace_fetch.py:109`).
   - A repo with one commit at `tmp_path/.aifactory/worktrees/tasks/<spec>`,
     origin `ssh://git@127.0.0.1:1/r.git` (refused port, no DNS).
   - Plant all three keys as scripts that write a marker file.
@@ -101,9 +101,10 @@ default ruff applies, the file's `# ruff: noqa` covers S603/S607):
     marker. Without this the test could pass because the plant does nothing.
   - Remove the marker, call `maybe_push_workspace_branch(project_dir, spec)`,
     assert no marker.
-  - Under `child_env()`, `git var GIT_PAGER` prints `cat` and
-    `git var GIT_EDITOR` prints `true`. No tty needed: git resolves them as it
-    would at run time.
+  - In the planted repo, without pins `git var GIT_PAGER` and
+    `git var GIT_EDITOR` print the planted scripts (positive control); under
+    `child_env()` they print `cat` and `true`. No tty needed: git resolves
+    them as it would at run time.
   - Q2 in place: with `GIT_PAGER=less` and `GIT_EDITOR=vi` in `os.environ`,
     the same calls print `less` and `vi`, and a set `GIT_SSH_COMMAND` comes
     through `child_env()` unchanged.
@@ -142,7 +143,7 @@ conflict with the #1689 and #1688 entries; keep both sides.
 ## Risks
 
 1. **Project `.aifactory/.env` can reintroduce an override.**
-   `pr_review_service._load_env_file` (`:75-90`, used at `:265`) and
+   `pr_review_service._load_env_file` (`:75-90`, used at `:274`) and
    `agent_service.py:1066-1080` copy any key not already present from
    `<project>/.aifactory/.env` into a child env. `GIT_SSH_COMMAND` and
    `GIT_CONFIG_PARAMETERS` (parsed after `GIT_CONFIG_COUNT`) both beat the
@@ -164,7 +165,8 @@ conflict with the #1689 and #1688 entries; keep both sides.
    (unaffected). A future server call passing an agent-derived `-c` would
    bypass the pins; `validate_git` only covers the agent side.
 5. **Rebase order.** Landing before #1722 would leave `_git_env` callers
-   (`worktree.py:164,378,426,486,496,529,550,578,604`) unpinned and the count
+   (`worktree.py:164,426,486,496,529,550,578,604,637`; `_run_git` at `:604`
+   carries every `fetch`/`push` such as `:378`) unpinned and the count
    asserts wrong. Do not open the PR until #1722 and #1726 are on dev; run the
    full test file after the rebase.
 
