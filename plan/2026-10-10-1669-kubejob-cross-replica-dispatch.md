@@ -329,3 +329,10 @@ restore with `git checkout -- <file>`):
   (`from server.services import job_state_store`) instead of one name per
   line; ruff's isort merges same-module names, which would break the
   one-name-per-line trap. No behaviour change.
+- Step 4: `[Unreleased]` had no `### Fixed`; a new one is added at its end.
+- Step 4: `agent_kubejob.py` declares `is_running: Callable[[str], bool]` in
+  the mixin's `TYPE_CHECKING` block; without it mypy --strict regressed (3→4)
+  because `is_running_anywhere` calls `self.is_running`. Net: 1 improved.
+- Step 4: steps landed as four commits, not one; the PR is squash-merged.
+- Follow-ups filed: #1704 (Start and plan approval), #1705 (subprocess builds and
+  orphaned rows).

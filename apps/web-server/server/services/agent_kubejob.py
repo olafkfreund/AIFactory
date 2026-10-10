@@ -88,6 +88,7 @@ class KubejobMixin:
         _handle_output_line: Callable[..., Any]
         backend_path: Path
         _store_enabled: bool
+        is_running: Callable[[str], bool]
         _task_profiles: dict[str, Any]
         _drain_queue: Callable[..., Any]
         _emit_log: Callable[..., Any]
