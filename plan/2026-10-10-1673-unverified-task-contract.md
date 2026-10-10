@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1673
 spec: spec/2026-10-10-1673-unverified-task-contract.md
 ---
