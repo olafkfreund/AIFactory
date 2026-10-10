@@ -115,8 +115,15 @@ Tests pin both (Risk 8).
 
 ```python
 if human_approval_required and not github_app.configured():
-    logger.warning("[pr-endgame] human-approval gate but no GitHub App configured; the PR author is the maintainer, so this PR must be merged by hand")
+    logger.warning(
+        "[pr-endgame] human-approval gate but no GitHub App configured; "
+        "the PR author is the maintainer, so this PR must be merged by hand"
+    )
 ```
+
+Keep the two implicitly concatenated literals, as the spec has them: one
+literal is ~150 columns and the ratchet (`standards/ruff.toml`,
+`line-length = 100`, `E` selected) counts a net-new `E501` in `pr_endgame.py`.
 
 **Helm.** `values.yaml` gets
 `githubApp: {enabled: false, appId: "", installationId: "", secretName: "", privateKeyKey: private-key}`.
@@ -137,9 +144,13 @@ autonomy matrix.
 - (b) `tokenEnv`: reuse `core.mcp_credentials._load_operator_config`
   (lru-cached, :87-90), imported **lazily inside `start()`** on one line:
   `from core.mcp_credentials import _load_operator_config  # noqa: PLC0415`
-  (as `routes/mcp.py:55` does; `apps/backend` is on `sys.path` only after
-  `server.utils.subprocess_env` is imported). Use
-  `_load_operator_config().get("github", {}).get("tokenEnv")`.
+  (lazy like `routes/mcp.py:55`; the noqa form as at `main.py:238`, since
+  `PL` is in the ratchet's select set). `apps/backend` is on `sys.path` only
+  after `server.utils.subprocess_env` is imported, which every server boot
+  does before `lifespan`. Use
+  `(_load_operator_config().get("github") or {}).get("tokenEnv")`, the idiom
+  of `core/mcp_credentials.py:188` (a `"github": null` config must not raise
+  `AttributeError`).
 - (c) The chart has no build-Job template. The helm "not in any Job" check
   covers only rendered chart Jobs/CronJobs (`cronjob-audit-anchor.yaml`); the
   real build-Job control is the Python allowlist, pinned by a unit test.
@@ -164,6 +175,15 @@ autonomy matrix.
   out to `gh auth status`. This keeps `tests/test_no_unscrubbed_spawn.py`
   out of scope.
 - Never log the token or the key.
+- The refresh loop's `except Exception:` carries `# noqa: BLE001` with a
+  reason, as `outbox.py:331` does (`BLE` is in the ratchet's select set).
+- `github_app.py` is a new file under the CI **mypy --strict ratchet**
+  (`.github/workflows/cq-ratchet.yml:127-131`): it must report 0 errors.
+  Annotate every def; wrap `jwt.encode(...)` and `resp.json()["token"]` so no
+  `Any` is returned (`warn_return_any`). Add **no** `type: ignore` on the
+  `jose`/`yaml` imports: the ratchet passes `--ignore-missing-imports`
+  (`scripts/cq_ratchet.py:311`), so an ignore there is unused and itself an
+  error under strict.
 
 **Accepted risks (carried from the spec, recorded in the matrix claim where
 noted):**
@@ -223,7 +243,12 @@ Repo traps that apply to every step:
 - Two ruff configs: CI runs the default config, `scripts/cq_ratchet.py` uses
   `standards/ruff.toml`; they disagree on import sorting. One name per
   import line; every `noqa` goes on a single-line import, never on an
-  aliased multi-name import.
+  aliased multi-name import. An unused `noqa` is itself a finding (`RUF100`).
+- The ratchet needs its flags. After `git add`, run both:
+  `python scripts/cq_ratchet.py --staged --ruff "$(command -v ruff)" --config standards/ruff.toml --paths 'apps/backend/*.py' 'apps/web-server/*.py' 'scripts/*.py'`
+  and
+  `python scripts/cq_ratchet.py --tool mypy --staged --mypy "$(command -v mypy)" --config standards/mypy.ini --paths 'apps/backend/*.py' 'apps/web-server/*.py' 'scripts/*.py'`.
+  "`cq_ratchet.py --staged`" below means these two.
 - Commit scopes must not contain `#`: `test(github-app): ... (#1671)`,
   `feat(github-app): ...`, `docs(github-app): ...`.
 - Any change to `pr_endgame.py`, `main.py` imports or
@@ -237,17 +262,26 @@ Repo traps that apply to every step:
 
    a. `apps/web-server/tests/test_github_app.py` (new, 21 cases).
    - Line 1: `# ruff: noqa: S105, S106`.
-   - Imports, one per line: `asyncio`, `logging`, `os`, `time`, `httpx`,
-     `pytest`, `from cryptography.hazmat.primitives.asymmetric import rsa`,
+   - Imports, one per line: `asyncio`, `logging`, `os`, `sys`, `time`,
+     `from pathlib import Path`, `httpx`, `pytest`,
+     `from cryptography.hazmat.primitives.asymmetric import rsa`,
      `from cryptography.hazmat.primitives import serialization`,
-     `from jose import jwt`, `from server.services import github_app`, then
-     `from core import mcp_credentials as mc` **after** `github_app` (so
-     `apps/backend` is on `sys.path`; any `# noqa: E402` on that single line).
+     `from jose import jwt`. Then put `apps/backend` on `sys.path` explicitly,
+     copying `apps/web-server/tests/test_insights_outbound_scrub.py:28-35`,
+     and after it, each with `# noqa: E402`:
+     `from core import mcp_credentials as mc` and
+     `from server.services import github_app`.
+     Do **not** rely on `github_app` importing first: it imports `core` only
+     lazily, so nothing else puts `apps/backend` on `sys.path` when this file
+     runs alone, and the ratchet's isort would sort `core` above `server`
+     anyway.
    - Fixture `_isolate` (autouse):
-     - `monkeypatch.delenv(name, raising=False)` for the three
-       `AIFACTORY_GITHUB_APP_*`, `GITHUB_TOKEN`, `GH_TOKEN`,
-       `GITHUB_PERSONAL_ACCESS_TOKEN` (restores originals; tokens written by
-       `start()` do not leak).
+     - For the three `AIFACTORY_GITHUB_APP_*`, `GITHUB_TOKEN`, `GH_TOKEN`,
+       `GITHUB_PERSONAL_ACCESS_TOKEN`: `monkeypatch.setenv(name, "x")` then
+       `monkeypatch.delenv(name)`. Trap: `delenv(name, raising=False)` on an
+       absent name records no undo (pytest `MonkeyPatch.delitem`), so the
+       `ghs_*` values `start()` writes straight into `os.environ` would leak
+       into every later test; `setenv` first records the original.
      - `HOME` → tmp dir; `GH_CONFIG_DIR` → `tmp/gh` (otherwise the developer's
        real `hosts.yml` fails every test).
      - `mc.OPERATOR_CONFIG_PATH` → a tmp file path; `mc.reset_cache()` before
@@ -289,8 +323,10 @@ Repo traps that apply to every step:
        `str(iss) == "123"`, `exp - iat <= 600`, `iat <= time.time()`;
        `"ghs_1"` not in `caplog.text`.
      - `test_mint_error_at_start_raises[connect|http500|empty_token]`:
-       POST raises `httpx.ConnectError` / returns 500 / returns 201 with
-       `""`: raises; neither token name in `os.environ`.
+       POST raises `httpx.ConnectError` / returns `_resp("ghs_500", 500)`
+       (a **non-empty** token, or dropping `raise_for_status()` is masked by
+       the empty-token check) / returns 201 with `""`: raises; neither token
+       name in `os.environ`.
      - `test_refresh_replaces_on_success_keeps_on_failure` (sync test):
        `start()` with `ghs_1`; then POST yields `ConnectError`, 201 `""`,
        201 `"ghs_2"`. `monkeypatch.setattr(asyncio, "wait_for", fake)` where
@@ -316,8 +352,9 @@ Repo traps that apply to every step:
    `assert not any("PRIVATE_KEY" in v for v in bb._PASSTHROUGH_BUILD_ENV)`
    (reuses the file's `bb` import). Passes today.
 
-   d. `apps/web-server/tests/test_pr_endgame_merge_gate.py`, from :99, +3
-   async cases. Helper `_watch_once(**kw)` calls the **real**
+   d. `apps/web-server/tests/test_pr_endgame_merge_gate.py`, appended after
+   the last line (:507), +3 async cases; add `import logging` to the stdlib
+   imports (:18-21; the file has none). Helper `_watch_once(**kw)` calls the **real**
    `pe.watch_and_finish(owner="o", repo="r", pr=7, auto_merge=True, review_fn=lambda: pe.ReviewState("changes_requested"), poll_interval=0, max_minutes=1, **kw)`
    (with `fix_fn=None` it returns on the first poll; do not use
    `_endgame_auto_merge`, which stubs it). Capture with
@@ -356,7 +393,8 @@ Repo traps that apply to every step:
    (new cases fail: module missing / no warning) and
    `python -m pytest tests/test_child_process_env.py tests/test_build_backend_kubejob.py -q`
    (pass) and `python -m pytest tests/helm/test_github_app_toggle.py -m helm -q`
-   (fail, except the default-render case). Then `ruff format --check` and
+   (6 fail; `test_default_render_has_no_github_app_env` and
+   `test_enabled_with_mcp_on_but_github_off_renders` pass until step 4). Then `ruff format --check` and
    `ruff check` on the new/changed test files.
    Traps: the test file (a) fails at import until step 2; commit anyway as
    a test-only commit. Helm tests need `helm` and network for the conftest's
@@ -370,8 +408,8 @@ Repo traps that apply to every step:
    `python -m pytest apps/web-server/tests/test_github_app.py -q -o asyncio_mode=auto`
    (21 passed), `ruff format --check` and `ruff check` on the file, then
    `git add` and `python scripts/cq_ratchet.py --staged`.
-   Traps: no new dependency (`pyyaml` is not declared but is already
-   imported by backend code, e.g. `apps/backend/core/language_descriptors.py`;
+   Traps: no new dependency (`pyyaml` is not declared directly but arrives
+   with `uvicorn[standard]`, `apps/web-server/requirements.txt:9`;
    `python-jose`, `httpx` are declared). No subprocess. Never log token or
    key. Error messages name, never print, the offending value. Do not
    catch the first-mint error in `start()`. Commit:
@@ -381,7 +419,9 @@ Repo traps that apply to every step:
    - `apps/web-server/server/main.py:104`: right after `_make_non_dumpable()`
      in `lifespan` (:100-104), call `github_app.start()`, before any loop
      starts (`env_bootstrap` ran at import :22, so a `.env` PAT is visible).
-     Import `from .services import github_app` next to the local imports.
+     Import `from .services import github_app` on its own line right before
+     `from .services.skills_service import init_skills_service` (:76), where
+     isort puts it.
    - `main.py:176-194`: after the outbox block, add
      `app.state.github_app_refresh_stop = None`,
      `app.state.github_app_refresh_task = None`; if `github_app.configured()`,
@@ -391,8 +431,9 @@ Repo traps that apply to every step:
    - `main.py:288-317`: matching shutdown block: `stop.set()`,
      `await _asyncio.wait_for(task, timeout=5.0)`, cancel on
      `(TimeoutError, _asyncio.CancelledError)`.
-   - `apps/web-server/server/services/pr_endgame.py:31-35`: add
-     `from server.services import github_app` (single-name import line).
+   - `apps/web-server/server/services/pr_endgame.py:33`: add
+     `from server.services import github_app` (single-name import line)
+     right before `from server.services.build_backend import task_repo_dir`.
    - `pr_endgame.py:1006-1038`: after the `watch_and_finish` docstring closes
      (:1038), before the `review_fn` comment (:1039), insert the Q8 warning
      verbatim (see above).
@@ -514,9 +555,10 @@ skip only when `helm` is missing).
 **Done check after merge (Q12), on AIFactory's own repo:** the PR's
 `.user.login` is `<slug>[bot]` and the bot is the last pusher; `gh pr checks`
 green; the maintainer approves the head commit; the log shows
-`approved by <maintainer> at <sha>` then the merge; `grep -c` of
-`/proc/1/environ` finds 0 PAT/token values on the server pod at boot and 0
-copies of the private key on agent and Job pods.
+`approved by <maintainer> at <sha>` then the merge; on the server pod
+`kubectl exec <pod> -- sh -c 'tr "\0" "\n" </proc/1/environ | grep -c -E "^(GH_|GITHUB_)TOKEN=|^GITHUB_PERSONAL_ACCESS_TOKEN="'`
+prints 0, and the same command with `-E "^AIFACTORY_GITHUB_APP_PRIVATE_KEY="`
+prints 0 on an agent pod and a build Job pod.
 
 **PR:** links intent, spec and this plan; says which steps the coder did.
 
