@@ -214,7 +214,7 @@ they need `git worktree`, branch switching and the PR.
      |---|---|---|
      | M1 | replacer becomes the string `` `$1  version: ${version}` `` | (d) |
      | M2 | regex becomes `/^((?:.*\n)*?)  version: .*$/m` | (c) |
-     | M3 | regex becomes `/^(info:\n(?:  .*\n)*?  .*?)version: .*$/m` | (b) |
+     | M3 | regex becomes `/^(info:\n(?:  .*\n)*?)  .*?version: .*$/m` (matches `version:` mid-line, e.g. inside the description) | (b) |
      | M4 | delete `if (!re.test(text)) return null;` | (c) |
 
    Traps:
@@ -263,6 +263,9 @@ they need `git worktree`, branch switching and the PR.
      `git -C /mnt/code/Source-home/GitHub/AIFactory-1631 worktree remove --force "$W"; unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0`.
 
    Traps:
+   - Commit Steps 1-2 (and Step 4 if kept) on the branch first: the worktree is
+     created from `HEAD`, so uncommitted edits are not in it and E1 would show
+     3 files.
    - Validation: E1 exits 0 only if `validate-release.js:20-24` accepts
      `v9.99.0`, which needs the tag to be absent. Check that first. If
      validation fails, E3 and E4 abort before reaching 4b and prove nothing.
@@ -306,7 +309,7 @@ they need `git worktree`, branch switching and the PR.
 | `npm run test:scripts` | tests 16, pass 16, fail 0 |
 | `node --check scripts/bump-version.js` | exit 0 |
 | `node -e "require('./scripts/bump-version.js')"` | exit 0, no output |
-| Mutants M1-M4 | each fails only its listed test |
+| Mutants M1-M4 (`node --test --test-reporter=tap scripts/bump-version.test.mjs \| grep '^not ok'`) | each fails only its listed test |
 | E1-E4 (Step 3) | as listed above |
 
 No repo-wide gate runs automatically:
