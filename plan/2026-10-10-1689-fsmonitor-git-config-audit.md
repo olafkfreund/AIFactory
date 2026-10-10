@@ -31,10 +31,16 @@ test cases that belong to them.
   dangerous key is **refused** with a fail-closed message, following the
   pattern of the #321 C4 `-c` branch. Do not strip the key and do not just
   log it. Details:
-  - Find the git subcommand. Skip leading `NAME=val` assignment tokens, then
-    `git`, then global options. Bare `-C`, `-c`, `--config-env`,
-    `--git-dir`, `--work-tree` and `--namespace` also consume the next
-    token. Their `=` forms consume nothing.
+  - Find the git subcommand **after every `git` token** in the segment
+    (`tok.rsplit("/", 1)[-1] == "git"`), not only after `tokens[0]`. Pipes
+    are not split into segments, so `git status | git config core.fsmonitor x`
+    and `echo x | git config core.fsmonitor x` reach `validate_git` as one
+    string; both return `(True, '')` on `d80f7b79` (checked). Starting at
+    each `git` token also covers `GIT_EDITOR=x git config -e` without an
+    assignment-skipping rule. From there, skip global options. Bare `-C`,
+    `-c`, `--config-env`, `--git-dir`, `--work-tree` and `--namespace` also
+    consume the next token. Their `=` forms consume nothing. This is how
+    the spec's "find the git subcommand" is implemented, not new scope.
   - If the subcommand is `config`, run `_is_dangerous_git_config` on
     `tok.split("=",1)[0]` for **every** non-option token after it, not only
     the first. Values are checked as well, so a value that matches the
@@ -120,7 +126,9 @@ python scripts/cq_ratchet.py --staged --tool mypy --mypy "$(command -v mypy)" --
 python scripts/gen_autonomy_matrix.py --check   # baseline: ok: tiers=10 overlay=12 val=8 paths=28 gates=3 controls=13
 ```
 
-If `gen_autonomy_matrix.py --check` fails, for example because the new
+None of the touched files is cited in `autonomy-matrix.md` at `d80f7b79`
+(it cites only `agents/evaluator.py`, `merge/`, `review_tier.py`), so line
+shifts are not expected to break it. If `gen_autonomy_matrix.py --check` fails, for example because the new
 `worktree.py → core.child_env` import changes an import closure, run
 `python scripts/gen_autonomy_matrix.py` and commit the regenerated
 `docs/docs/compliance/autonomy-matrix.md` with the code.
@@ -132,8 +140,12 @@ Every commit ends with the two attribution lines.
 ## Steps
 
 1. **Red tests, tests only.** Commit as `test(security): ... (#1689)`.
-   → verify by `python -m pytest $T -q`: the new and changed cases fail,
-   every existing case stays green.
+   → verify by `python -m pytest $T -q`: every new refusal case, both
+   layout tests, the real-git test, the `_git_env` test, both hook tests and
+   the unparseable test fail. The 6 new legit cases and the spawn-scan
+   entry are already green (see traps). Every existing case stays green.
+   Run `ruff format` on the touched test files before G: the snippets below
+   are not formatted.
 
    - `tests/test_child_process_env.py:66-84`: edit both layout tests in
      place and keep their names.
@@ -151,7 +163,12 @@ Every commit ends with the two attribution lines.
      the two-key pin stops it.
 
      ```python
-     def test_real_git_fsmonitor_disabled_by_child_env(secret_env: None, tmp_path: Path) -> None:
+     def test_real_git_fsmonitor_disabled_by_child_env(
+         secret_env: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+     ) -> None:
+         # pre-commit runs pytest under a git hook: ambient GIT_INDEX_FILE etc. would aim git at this repo (#819)
+         for k in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY"):
+             monkeypatch.delenv(k, raising=False)
          iso = {"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"}
          base = {**os.environ, **iso}
          repo, wt = tmp_path / "repo", tmp_path / "wt"
@@ -195,8 +212,10 @@ Every commit ends with the two attribution lines.
        `git status && git config core.fsmonitor x`;
        `git status && git -c core.fsmonitor=x status`;
        `git config gpg.program x`; `git -c credential.helper=x fetch`;
-       `git config include.path x`.
-     - Extend `LEGIT_COMMANDS` (79-83) with: `git config user.name "A B"`;
+       `git config include.path x`; `git status | git config core.fsmonitor x`;
+       `echo x | git config core.fsmonitor x` (the last two pin the
+       every-`git`-token parse; 15 new payloads).
+     - Extend `LEGIT_COMMANDS` (72-84) with: `git config user.name "A B"`;
        `git config user.email a@b.c`; `git config --get user.name`;
        `git config --local core.bare false`;
        `git config --global --add safe.directory /w`; `git commit -m config`.
@@ -213,15 +232,18 @@ Every commit ends with the two attribution lines.
            assert out.get("decision") == "block", payload
 
        def test_unparseable_git_config_fails_closed(self, tmp_path, monkeypatch):
+           from security import git_validators  # noqa: PLC0415
            monkeypatch.chdir(tmp_path)
            monkeypatch.setattr(git_validators, "_unstage_spec_artifacts", lambda: [])
            allowed, reason = git_validators.validate_git('git commit -m "x config core.fsmonitor y')
            assert allowed is False and "config" in reason
        ```
 
-     - Add `import asyncio` and the plain module import
-       `from security import git_validators`. Do not alias it or merge it
-       into a multi-name import.
+     - Add `import asyncio` at the top (stdlib block). Keep the
+       `git_validators` import function-local as shown: a top-level
+       `from security import git_validators` next to the existing
+       `from security import validate_command` is merged by ruff isort
+       (I001) into a multi-name import.
 
    Traps:
    - The whole of `test_command_sandbox.py` skips when bashlex is missing
@@ -236,7 +258,9 @@ Every commit ends with the two attribution lines.
      the cwd. The stub and `chdir` keep that away from the repo.
    - Run the scrubbed `status` before the control run. Otherwise `M` already
      exists.
-   - The file header already has `# ruff: noqa: S603, S607, PLW1510`.
+   - `tests/test_child_process_env.py` already has
+     `# ruff: noqa: ARG001, S105, S603, S607, PLW1510` and imports `os`,
+     `subprocess`, `Path` and `pytest`.
    - Every new legit case must pass the allowlist in `temp_dir` today. If
      one fails, it must be because of the new assertion, not because the
      allowlist blocks it.
@@ -311,7 +335,8 @@ Every commit ends with the two attribution lines.
 4. `apps/backend/security/git_validators.py:31-48`, `:57-66` and `:68-89`:
    Q2 and E2 validator. → verify by
    `python -m pytest tests/test_command_sandbox.py -q`. Everything passes
-   except the `git status && git config ...` cases and the
+   (the two pipe payloads included) except the `git status && git config ...`
+   and `git status && git -c ...` payloads and the
    `test_chained_git_segment_blocked_by_hook` cases, which go green in
    step 5. Then G.
    - E2, 31-48: add to the `or` chain
@@ -331,10 +356,10 @@ Every commit ends with the two attribution lines.
      called after the token loop (which ends at 87) and before
      `return validate_git_commit(command_string)` (89). If it returns a
      reason, return `(False, reason)`.
-     - Skip leading assignment tokens
-       (`re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", t)`), because
-       `validate_git` can receive a segment like `GIT_EDITOR=x git config -e`.
-       Then skip `git`.
+     - Run the parse below once from each index `i` where
+       `tokens[i].rsplit("/", 1)[-1] == "git"`, starting at `i + 1`. Return
+       the first refusal. This covers pipes (`git status | git config ...`,
+       `echo x | git config ...`) and `GIT_EDITOR=x git config -e`.
      - Skip tokens starting with `-`. The bare forms of `-C`, `-c`,
        `--config-env`, `--git-dir`, `--work-tree` and `--namespace` also
        consume the next token. Their `=` forms do not.
@@ -353,11 +378,12 @@ Every commit ends with the two attribution lines.
    - Values are checked too, so `git config user.name foocommand` is refused
      (`endswith("command")`). That is an accepted false positive.
    - `commit.gpgsign` and `safe.directory` must stay allowed.
-     `test_benign_git_config_allowed` (about line 111) guards this.
+     `test_benign_git_config_allowed` (108-112) guards this.
      `.program` must not match `commit.gpgsign`, and it does not.
    - The subcommand parse is what keeps `git commit -m config` allowed. Do
      not use `"config" in tokens`.
-   - Add `import re` only if it is not already imported.
+   - Do not parse only from `tokens[0]`: the two pipe payloads go red.
+   - No new import is needed (`rsplit`, not `os.path`/`re`).
 
 5. `apps/backend/security/parser.py:121-129`, `apps/backend/security/hooks.py:24`,
    `:187-199` and `:245-257`: E1, validate every segment. → verify by
@@ -372,9 +398,12 @@ Every commit ends with the two attribution lines.
      ```
 
      Keep `get_command_for_validation` unchanged.
-   - `hooks.py:24`: add `get_segments_for_validation` to the existing
-     `from .parser import ...`, with names in alphabetical order. `ruff format`
-     may wrap the line, which is fine.
+   - `hooks.py:24`: in the existing `from .parser import ...`, **replace**
+     `get_command_for_validation` with `get_segments_for_validation`. Both
+     call sites (188, 246) go away, so keeping the old name fails
+     `ruff check` with F401. `ruff format` may wrap the line, which is fine.
+     `security/__init__.py:46,97`, `security/main.py:36,52` and
+     `tests/test_security.py:15,333,339` still use the old helper; leave them.
    - `hooks.py:187-199` (`bash_security_hook`):
 
      ```python
@@ -393,20 +422,21 @@ Every commit ends with the two attribution lines.
    - `hooks.py:245-257` (`validate_command`): the same loop with
      `set_worktree_root(str(project_dir))`, returning `(False, reason)` on
      the first refusal.
-   - If `get_command_for_validation` has no remaining callers, leave it in
-     place anyway. Removing it is out of scope.
+   - Keep `get_command_for_validation` in `parser.py`: it is re-exported and
+     tested.
 
    Traps:
    - E1 applies to every validator (git, rm, chmod, ...). A command that
      used to pass, like `ls && rm -rf ../x`, is now refused. That is a
      stated risk.
    - Pipes are not split into segments, so `git status | git -c core.pager=x log`
-     was already blocked. E1 covers `&&` and `;`.
+     was already blocked by the all-token `-c` loop. E1 covers `&&`, `||`
+     and `;`; the pipe case for `git config` is covered in step 4.
    - `bash -c '...'` wrappers still bypass every validator. That is a
      follow-up against `parser.py`. Do not re-split `bash -c` here.
 
 6. `CHANGELOG.md:1-3`, follow-ups and PR. Session model, not the coder. →
-   verify by `python -m pytest $T -q` (expect **165 passed, 2 skipped**),
+   verify by `python -m pytest $T -q` (expect **166 passed, 2 skipped**),
    then G, then confirm that
    `git diff main -- apps/web-server/server/services/build_backend.py` is
    empty.
@@ -453,8 +483,9 @@ Run from the worktree with the venv on PATH.
 
 1. `python -m pytest $T -q`
    - Baseline at `d80f7b79`: 140 passed, 2 skipped.
-   - Expected: **165 passed, 2 skipped**. Per file: child_process_env 17,
-     no_unscrubbed_spawn 2, command_sandbox 64, worktree 25,
+   - Expected: **166 passed, 2 skipped**. Per file: child_process_env 17,
+     no_unscrubbed_spawn 2, command_sandbox 66 (42 + 15 payloads + 6 legit
+     + 2 hook + 1 unparseable), worktree 25,
      worktree_concurrent_lock 9, trusted_plan 32, sandbox_escape_corpus 15
      (+2 skipped).
 2. `python -m pytest tests -q`: no new failures against main.
@@ -480,6 +511,7 @@ reverted:
 | Q4 ambient | drop the `_AMBIENT_GIT_VARS` filter | `_git_env` test (`GIT_DIR`) |
 | Q2 `-C` | `-C` does not consume its argument | `git -C d config core.pager x` |
 | Q2 naive | `"config" in tokens` | legit `git commit -m config` |
+| Q2 pipe | parse only from `tokens[0]` / first `git` | `echo x \| git config ...`, `git status \| git config ...` |
 | Q2 edit | drop `-e`/`--rename-section` | `git config -e`, `--rename-section foo core` |
 | Q2 unparseable | drop the new branch | `test_unparseable_git_config_fails_closed` |
 | E1 hook | single segment again | `test_chained_git_segment_blocked_by_hook` |
