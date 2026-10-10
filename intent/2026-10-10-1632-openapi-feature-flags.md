@@ -14,7 +14,8 @@ The issue is still open, and dev (1c2df772) does not fix it.
 whatever environment it runs in. It does not set or clear any feature flags.
 Two loaders bring local flags in: `server/env_bootstrap.py` (loads
 `apps/web-server/.env` with `setdefault`) and the pydantic `Settings` in
-`server/config.py` (`env_file=".env"`, prefix `APP_`).
+`server/config.py` (`env_file=".env"`, prefix `APP_`, resolved against the
+current working directory). Flags exported in the shell also leak in.
 
 Four routers are only mounted when their flag is on, and each changes the
 spec:
@@ -25,6 +26,9 @@ spec:
 | `AIFACTORY_MCP_REMOTE_ENABLED` | 2 (`/api/mcp-remote/...`) |
 | `SAML_ENABLED` | 5 (`/api/auth/saml/...`) |
 | `SCIM_ENABLED` | 4 (`/scim/v2/...`) |
+
+The always-mounted `/api/tasks/{task_id}/agent-console/sse` is why the
+committed spec already shows some agent-console content.
 
 `apps/web-server/.env.example` sets `APP_RMUX_ENABLED=true`. A developer who
 copied it and runs the generator as its docstring says gets 297 paths. CI
@@ -57,9 +61,8 @@ with.
   `rmux/integration.py` and `mcp_remote/__init__.py` stays as it is. The
   SAML/SCIM gating is deliberate (test contamination), and mounting these
   routers by default would add attack surface to every deployment.
-- The pin must override both loaders, so the values are set explicitly, not
-  with `setdefault`.
-- All four flag families are pinned, not just rmux.
+- The output must not depend on either loader or on exported shell flags.
+- All four flag families are covered, not just rmux.
 - `continue-on-error` stays off (#906).
 - Any flag turned on must import cleanly in CI's fresh venv (SAML needs
   `python3-saml` and xmlsec), with no DB or network access at import.
