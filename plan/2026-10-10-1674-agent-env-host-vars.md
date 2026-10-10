@@ -291,3 +291,6 @@ No data, schema or config migration.
   row, `:313` → `:321`), so the regenerated matrix files are in step 2's
   commit. M1 is covered by step 1's red run (same assertions fail without the
   `auth.py` hunk).
+- Step 3: mutation M5 fails four tests, not the two listed: also
+  `test_build_job_env_propagates_present_provider_env` and
+  `test_manifest_carries_oauth_env_in_container_not_argv`.
