@@ -2,6 +2,13 @@
 
 ### Security
 
+- **A verified trusted task's review tier now comes from its signed contract (#1672).**
+  `task_metadata.json` and the path floor can only raise the tier, never lower
+  it, so an agent that rewrites `reviewTier` to `low` no longer turns a hold into
+  an auto-merge. A verified contract without a signed `execution.review_tier`
+  holds, and a mismatch logs a warning. Not yet covered: forged gate signals
+  (VAL, parity, verdict, host CI), the handback receipt, and legacy and
+  from-issue tasks (follow-ups: #1695, #1696, #1697, #1698).
 - **Processes the web server starts no longer inherit its secrets (#1680).**
   Every `git`, `gh`, runner and CLI child gets the server's environment minus
   the agent scrub set (`DATABASE_URL`, `JWT_SECRET`, API tokens, trusted-plan

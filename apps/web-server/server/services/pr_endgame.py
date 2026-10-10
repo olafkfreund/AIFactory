@@ -458,6 +458,9 @@ def merge_disposition(
     tier the task effectively had before RFC-0011 -- rather than as an unknown
     spelling, so a task that never carried a tier still behaves as it did. An
     UNRECOGNISED tier is passed straight through and ``decide_merge`` holds it.
+    For a verified trusted task the signed ``execution.review_tier`` is the
+    floor; metadata and the path floor can only raise it, and a verified
+    contract without one holds.
 
     The RFC-0013 deployment overlay is enforced here, independent of the
     path-floor flag (#1658): a production or high-risk deployment holds, and
@@ -466,7 +469,7 @@ def merge_disposition(
     or task_metadata.
     """
     try:
-        from merge.merge_policy import decide_merge  # noqa: PLC0415
+        from merge.merge_policy import decide_merge, raise_review_tier  # noqa: PLC0415
 
         from server.services.trusted_contract import (  # noqa: PLC0415
             host_isolated,
@@ -498,6 +501,30 @@ def merge_disposition(
             return HOLD_BLOCKING_DISPOSITION
         unreadable = state == "legacy" and _contract_unreadable(spec_dir)
         deployment = contract.get("deployment")
+        if state == "verified":
+            execution = contract.get("execution")
+            signed = (
+                execution.get("review_tier") if isinstance(execution, dict) else None
+            )
+            if _describe_tier(signed) in ("none", "unrecognised"):
+                logger.warning(
+                    "[pr-endgame] verified contract has no signed review_tier; "
+                    "auto-merge withheld"
+                )
+                return HOLD_BLOCKING_DISPOSITION
+            if (
+                tier is not None
+                and str(tier).strip()
+                and raise_review_tier(tier, signed) != tier
+            ):
+                logger.warning(
+                    "[pr-endgame] reviewTier %s below signed %s; "
+                    "deciding on the stricter tier",
+                    sanitize_log(_describe_tier(tier)),
+                    sanitize_log(_describe_tier(signed)),
+                )
+            if _describe_tier(effective) != "unrecognised":
+                effective = raise_review_tier(signed, effective)
     except Exception:  # noqa: BLE001 - e.g. RecursionError, UnicodeDecodeError
         # Hold, never raise: an exception here would abort the endgame before
         # the PR is opened, and "we could not read it" is not "not production".
