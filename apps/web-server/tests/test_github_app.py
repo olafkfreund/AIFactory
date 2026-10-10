@@ -1,4 +1,4 @@
-# ruff: noqa: S105, S106
+# ruff: noqa: S105
 """AIFactory mints a GitHub App installation token at boot (#1671)."""
 
 from __future__ import annotations
@@ -274,7 +274,7 @@ def test_mint_error_at_start_raises(
 ) -> None:
     _app_env(monkeypatch, rsa_pem[0])
     _isolate.queue.append(outcome)
-    with pytest.raises(Exception):  # noqa: B017, PT011
+    with pytest.raises(Exception):  # noqa: B017
         github_app.start()
     assert "GH_TOKEN" not in os.environ
     assert "GITHUB_TOKEN" not in os.environ
@@ -290,7 +290,7 @@ def test_refresh_replaces_on_success_keeps_on_failure(
     stop = asyncio.Event()
     log: list[tuple[float, str]] = []
 
-    async def fake_wait_for(coro: Any, timeout: float) -> None:
+    async def fake_wait_for(coro: Any, timeout: float) -> None:  # noqa: ASYNC109 - wait_for signature
         coro.close()
         log.append((timeout, os.environ["GH_TOKEN"]))
         if len(log) == 4:
