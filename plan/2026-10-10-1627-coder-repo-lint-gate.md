@@ -8,7 +8,7 @@ spec: spec/2026-10-10-1627-coder-repo-lint-gate.md
 
 Branch `fix/1627-coder-repo-lint-gate`, base `origin/dev`. Line numbers checked
 at worktree HEAD 3f82c69c. That HEAD has no diff against the spec baseline
-c59a0ea6 in `ci_discovery.py`, `coder.py`, `gate_runner.py`, `qa.py` or either
+c59a0ea6 in `ci_discovery.py`, `coder.py`, `gate_runner.py`, `agents/tools_pkg/tools/qa.py` or either
 test file, so every line reference in the spec still holds.
 
 ## Approved decisions (self-contained)
@@ -50,15 +50,15 @@ test file, so every line reference in the spec still holds.
     deterministic.
   - It never raises and returns `[]` when unsure. The whole body sits in
     `try/except Exception` returning `[]`, marked `# noqa: BLE001`.
-- **Pre-guard:** before calling `discover_ci`, check every file in
-  `.github/workflows/` matching `*.yml` or `*.yaml`. Return `[]` if any file:
+- **Pre-guard:** before calling `discover_ci`, check every file it may read:
+  `.github/workflows/*.yml`, `*.yaml`, `.circleci/config.yml` and
+  `Jenkinsfile` (each skipped when absent). Return `[]` if any file:
   - is a symlink;
   - is not a regular file;
   - is larger than 256 KiB; or
   - contains a YAML anchor (`&name`).
 
-  The guard covers GitHub only. CircleCI and Jenkins workflows still come
-  through `discover_ci` without it.
+  This extends the spec's GitHub-only guard; see **Deviation 2** below.
 - **Matching:** case-insensitive and left-bounded (no letter or digit
   immediately before the name), against the lowercased `CIWorkflow.name` and
   steps.
@@ -91,14 +91,16 @@ test file, so every line reference in the spec still holds.
 - **Files left alone:** `gate_runner.py`, `cli/build_commands.py`,
   `deploy_scaffold`, `core/languages/*.yaml`, `core/language_descriptors.py`,
   the completion banners, and the `apps/backend/ci_discovery.py` shim. The
-  change touches two production files, about 25 lines.
+  change touches two production files, about 60 lines (48 in
+  ci_discovery.py, most of it the formatted constant and guard), plus the
+  two regenerated autonomy-matrix files.
 - **Quality bar:**
   - New code is fully typed. Both files are in the per-file ruff and
     `mypy --strict` ratchet and must add no violations.
   - No logging, so CodeQL `py/log-injection` cannot trigger.
   - No subprocess, network, PVC or volume.
 
-### Deviation from spec Verification 2.4 (recorded here for approval)
+### Deviation 1, from spec Verification 2.4 (recorded here for approval)
 
 The spec says to monkeypatch `analysis.ci_discovery.ci_linters` to raise and
 then expect the marker to be written. As designed, that cannot pass.
@@ -117,9 +119,29 @@ This plan therefore monkeypatches `analysis.ci_discovery.discover_ci`, which
 The alternative is to wrap the coder call in its own `try`. That changes the
 Sites table and would need the spec approved again, so it is not taken.
 
+### Deviation 2, pre-guard also covers CircleCI and Jenkins (needs approval)
+
+The spec says both "only the GitHub path has the pre-guard" and, under "Why
+the pre-guard", that the guard refuses the CircleCI alias expansion
+(`str(step).lower()` at ci_discovery.py:273). Both cannot hold.
+`CIDiscovery.discover` (:126-138) parses `.circleci/config.yml` and then
+`Jenkinsfile` whenever `.github/workflows` does not exist, with no symlink
+check, no size cap and alias expansion. This was checked in a scratch
+worktree: with the GitHub-only guard, a 9-level alias bomb in
+`.circleci/config.yml` (and no `.github/`) makes `ci_linters` hang on the
+host (`timeout 20` killed it). That would stall the trailing-gate step of
+every build whose agent wrote such a file.
+
+The plan therefore guards the two extra paths with the same four checks
+(about 8 lines, the same function, no new file) and adds T12 and T13. If
+the approver rejects this, drop the two extra paths from the tuple, drop
+T12 and T13, and record the CircleCI/Jenkins host-DoS as a known risk in the
+follow-up issue instead.
+
 ## Steps
 
-The plan has 3 steps that edit files and touches 5 files, so the `coder` agent
+The plan has 3 steps that edit files and touches 7 files (counting the two
+regenerated autonomy-matrix files), so the `coder` agent
 implements it once this plan is approved. Run every Python command with
 `PY=/mnt/code/Source-home/GitHub/AIFactory/apps/backend/.venv/bin`, because the
 worktree has no venv and the system Python lacks PyYAML.
@@ -127,21 +149,25 @@ worktree has no venv and the system Python lacks PyYAML.
 1. **tests/test_ci_discovery.py: end of file (after the `requires_yaml` marker
    at :34), and tests/test_coder_trailing_gates.py: end of file (reuse
    `_setup`, ending around :37, and the fake `run_gates` pattern at :40-62):**
-   add the red tests listed in **Tests** (T1-T11 and C1-C4).
+   add the red tests listed in **Tests** (T1-T13 and C1-C4).
    → Verify by
    `$PY/pytest -q -p no:cacheprovider tests/test_ci_discovery.py tests/test_coder_trailing_gates.py`.
    The new tests fail (an `AttributeError` on `acd.ci_linters`, or an
-   assertion). The 33 existing tests still pass: 28 passed and 3 skipped in
-   test_ci_discovery, 5 passed in test_coder_trailing_gates.
+   assertion). The 36 existing tests still pass or skip: 28 passed and 3
+   skipped in test_ci_discovery, 5 passed in test_coder_trailing_gates.
 
    Traps:
    - **Imports:** import the module with
      `import analysis.ci_discovery as acd` (in the coder tests,
-     `import analysis.ci_discovery as ci_discovery`). Do not add exports to
-     the `apps/backend/ci_discovery.py` shim, because that edits a sixth file.
+     `import analysis.ci_discovery as ci_discovery`). Put these, and
+     `import time`, in each file's top import block (in test_ci_discovery,
+     after the `sys.path.insert` next to `from ci_discovery import (...)`),
+     not mid-file with `# noqa: E402`; run `ruff check --fix` to sort. Do not
+     add exports to the `apps/backend/ci_discovery.py` shim, because that
+     edits another file.
    - **PyYAML:** without it, `_parse_yaml` returns `None`, so every case that
      expects `[]` passes even with its guard removed. Put `@requires_yaml` on
-     T1-T10 and C1-C4. T9 and T11 may run without it. In the coder file,
+     T1-T8, T10, T12, T13 and C1-C4. T9 and T11 may run without it. In the coder file,
      define a local `skipif(not HAS_YAML)` using `HAS_YAML` imported from
      `analysis.ci_discovery`.
    - **Async:** the coder tests are async and use `@pytest.mark.asyncio`, as
@@ -154,17 +180,43 @@ worktree has no venv and the system Python lacks PyYAML.
      `test_no_unscrubbed_spawn` does not trip.
 
 2. **apps/backend/analysis/ci_discovery.py:441-442 (after `discover_ci` ends at
-   :440, before `get_ci_test_commands` at :443):** add `CI_LINTERS`,
-   `_MAX_WORKFLOW_BYTES = 256 * 1024`,
-   `_YAML_ANCHOR = re.compile(r"&[A-Za-z0-9_-]+")` and `ci_linters`:
+   :440, before `get_ci_test_commands` at :443):** add the block below. It is
+   already `ruff format`-clean and passed both strict ratchets in a scratch
+   worktree; paste it as is.
 
    ```python
+   CI_LINTERS: tuple[str, ...] = (
+       "detekt",
+       "eslint",
+       "flake8",
+       "golangci-lint",
+       "ktlint",
+       "ruff",
+       "spotless",
+       "swiftlint",
+   )
+   _MAX_WORKFLOW_BYTES = 256 * 1024
+   _YAML_ANCHOR = re.compile(r"&[A-Za-z0-9_-]+")
+
+
    def ci_linters(project_dir: Path) -> list[str]:
        """Allowlisted linters CI runs. Detection only; never raises, [] when unsure (#1627)."""
        try:
+           # Every file `discover_ci` may read: GitHub, CircleCI, Jenkins.
            wf_dir = project_dir / ".github" / "workflows"
-           for f in (*wf_dir.glob("*.yml"), *wf_dir.glob("*.yaml")):
-               if f.is_symlink() or not f.is_file() or f.stat().st_size > _MAX_WORKFLOW_BYTES:
+           for f in (
+               *wf_dir.glob("*.yml"),
+               *wf_dir.glob("*.yaml"),
+               project_dir / ".circleci" / "config.yml",
+               project_dir / "Jenkinsfile",
+           ):
+               if not f.exists() and not f.is_symlink():
+                   continue
+               if (
+                   f.is_symlink()
+                   or not f.is_file()
+                   or f.stat().st_size > _MAX_WORKFLOW_BYTES
+               ):
                    return []
                if _YAML_ANCHOR.search(f.read_text(encoding="utf-8", errors="replace")):
                    return []
@@ -189,7 +241,7 @@ worktree has no venv and the system Python lacks PyYAML.
    (`summary = summarize_gates(results)`):**
 
    ```python
-   from analysis.ci_discovery import ci_linters  # noqa: PLC0415 - deferred, mirrors gate imports
+   from analysis.ci_discovery import ci_linters  # noqa: PLC0415
 
    # A CI linter no gate ran is recorded `skipped`, never silently absent (#1627).
    ran = {r.name for r in results if not r.skipped}
@@ -200,9 +252,19 @@ worktree has no venv and the system Python lacks PyYAML.
    ]
    ```
 
+   Then regenerate the autonomy matrix: `$PY/python scripts/gen_autonomy_matrix.py`.
+   The new `agents.coder -> analysis.ci_discovery` import adds one module to
+   the "local modules" count of the `pr_review_service` and `pr_endgame`
+   rows (268 -> 269, 364 -> 365 at this HEAD), so `--check` fails until
+   `docs/docs/compliance/autonomy-matrix.md` and
+   `docs/static/compliance/autonomy-matrix.json` are regenerated and
+   committed with the code. The spec's "cites neither file" is wrong on this
+   point; the counts are transitive.
+
    → Verify by
    `$PY/pytest -q -p no:cacheprovider tests/test_ci_discovery.py tests/test_coder_trailing_gates.py`
-   (all green), then the mutation procedure in **Tests**.
+   (50 passed, 3 skipped), `$PY/python scripts/gen_autonomy_matrix.py --check`
+   (exit 0), then the mutation procedure in **Tests**.
 
    Traps:
    - **Confirmed at HEAD:** `CIWorkflow.name: str` (:63),
@@ -219,6 +281,14 @@ worktree has no venv and the system Python lacks PyYAML.
    - **Imports:** `re` and `Path` are already imported (:26-44), so no new
      import is needed. For `GateResult`, run `ruff check --fix` and let isort
      place it; do not hand-order it.
+   - **Formatting:** keep the coder import's comment to bare
+     `# noqa: PLC0415`. A longer reason pushes the line past 88 columns;
+     isort (I001) then wraps it and moves the `noqa` onto the inner name
+     line. The one-line `if f.is_symlink() or ...` form from earlier drafts
+     fails `ruff format --check`; use the wrapped form above.
+   - **Jenkinsfile anchors:** the anchor regex also runs on the Jenkinsfile,
+     so a Groovy `&&word` (no space) skips detection. That is a false
+     negative, the safe direction.
    - **No logging** in `ci_linters` or in the new coder lines, including the
      CI text and the exception, so CodeQL stays clean.
    - **Leave unchanged:** the `if not gates:` branch (:1340-1345), the marker
@@ -245,7 +315,9 @@ worktree has no venv and the system Python lacks PyYAML.
    → Verify by `git diff --stat origin/dev...` listing only
    `apps/backend/analysis/ci_discovery.py`, `apps/backend/agents/coder.py`,
    `tests/test_ci_discovery.py`, `tests/test_coder_trailing_gates.py`,
-   `CHANGELOG.md` and the `intent/`, `spec/` and `plan/` files.
+   `docs/docs/compliance/autonomy-matrix.md`,
+   `docs/static/compliance/autonomy-matrix.json`, `CHANGELOG.md` and the
+   `intent/`, `spec/` and `plan/` files.
 
    Traps:
    - **CHANGELOG conflicts:** keep both entries.
@@ -258,7 +330,7 @@ worktree has no venv and the system Python lacks PyYAML.
 
 ## Tests
 
-### tests/test_ci_discovery.py: append `class TestCiLinters` (11 tests)
+### tests/test_ci_discovery.py: append `class TestCiLinters` (13 tests)
 
 Add a helper `_wf(root, text, name="ci.yml")` that writes
 `root/.github/workflows/<name>`. Use neutral names (`name: CI`, job `build`)
@@ -266,17 +338,19 @@ unless a test is about the names.
 
 | # | Test | Input | Assert | Mutation (edit, expect FAIL, edit back) |
 |---|---|---|---|---|
-| T1 | test_detects_step_and_uses | ktlint job + `run: ./gradlew spotlessCheck` + `uses: ScaCap/action-ktlint@v3` | `== ["ktlint", "spotless"]` | Return matches in discovery order without deduplicating, so ktlint appears twice. |
+| T1 | test_detects_step_and_uses | two jobs: `build` with `run: ./gradlew spotlessCheck ktlint`, then `lint` with only `uses: ScaCap/action-ktlint@v3` | `== ["ktlint", "spotless"]` | Return `[t for h in haystacks for t in CI_LINTERS if ...]` (per-job order, no dedupe), giving `["ktlint", "spotless", "ktlint"]`. With a single job this mutation passes, so the second job is required. |
 | T2 | test_detects_job_key | job keyed `ktlint`, only step `run: ./gradlew check` | `== ["ktlint"]` | Match the steps only, not `w.name`. |
 | T3 | test_left_bounded | `run: gruff --check` | `== []` | Drop the `(?<![a-z0-9])` lookbehind. |
 | T4 | test_symlinked_workflow_refused | `tmp/real.yml` holds a ktlint step; `.github/workflows/ci.yml` is a symlink to it | `== []` | Delete the `is_symlink()` clause. |
 | T5 | test_oversize_workflow_refused | valid ktlint workflow + `"# " + "x" * (256 * 1024)` | `== []` | Raise the cap to 1 MiB. |
 | T6 | test_anchor_refused | `- run: &cmd ktlint` / `- run: *cmd` | `== []` | Delete the anchor check. The result becomes `["ktlint"]`. |
-| T7 | test_alias_bomb_fast | 9-level billion-laughs list | `== []`; `time.monotonic()` elapsed `< 1.0` | None: without the guard it hangs or runs out of memory. T6 covers the same guard. |
+| T7 | test_alias_bomb_fast | 9-level billion-laughs list `a0..a9`, referenced as `- uses: x/y@v1` / `with:` / `x: *a9` | `== []`; `time.monotonic()` elapsed `< 1.0` | Delete the anchor check and run under `timeout 20`: expect exit 124/143 (hang). Do **not** reference it as `run: *a9`: a list `run` raises in `_extract_test_commands` before `str(step)` and the test passes without the guard. |
 | T8 | test_malformed_yaml | `jobs: [unclosed` | `== []` | None (contract). |
 | T9 | test_no_github_dir | empty tmp dir | `== []` | None (contract). |
 | T10 | test_never_raises | valid ktlint workflow; `monkeypatch.setattr(acd, "discover_ci", boom)` | `== []`, no exception | Delete the body `try/except`. |
 | T11 | test_names_marker_safe | none | `len == 8`; sorted; no `,` or `:` in any name | Add `"ktlint,a:b"` to `CI_LINTERS`. |
+| T12 | test_circleci_alias_bomb_refused (Deviation 2) | no `.github`; `.circleci/config.yml` with the same `a0..a9` bomb and `- run: {command: ktlint, x: *a9}` | `== []`; elapsed `< 1.0` | Remove the `.circleci/config.yml` entry from the tuple; run under `timeout 20`, expect a hang. |
+| T13 | test_circleci_detected (Deviation 2) | `.circleci/config.yml`: `jobs: build: steps: - run: ktlint` | `== ["ktlint"]` | Delete the `if not f.exists() and not f.is_symlink(): continue` lines; the absent Jenkinsfile then fails `is_file()` and returns `[]`. |
 
 Not tested: the regular-file guard (a FIFO). Without the guard the read blocks
 forever, so its mutation check would hang. Add the test once a fixture exists
@@ -284,7 +358,8 @@ that does not hang.
 
 ### tests/test_coder_trailing_gates.py: append 4 tests
 
-Reuse `_setup`, the `ImplementationPlan.load` patch and the fake `run_gates`.
+Reuse `_setup`, the `ImplementationPlan.load` patch and the fake `run_gates`;
+the fake returns `[gate_runner.GateResult(name=n, passed=True) for n in names]`.
 Read the evidence with
 `(spec_dir / ".trailing_gates_done").read_text().splitlines()[1]`. Line 0 is
 the sha, or `-` outside git.
@@ -292,7 +367,7 @@ the sha, or `-` outside git.
 | # | Test | Setup | Assert | Mutation |
 |---|---|---|---|---|
 | C1 | test_ci_linter_without_gate_recorded_skipped | Go worktree, `run: golangci-lint run`; fake returns go-test passed | `ev.endswith("go-test: passed, golangci-lint: skipped")`; no `spec_dir / "GATE_FAILURES.md"`; `gate_runner.evidence_shows_an_executed_gate(ev)`; `set(gate_runner.gate_outcomes(ev)) <= {"passed", "failed", "skipped"}` | **Spec mutation:** delete the `results += [...]` statement. C1 and C2 fail. |
-| C2 | test_ci_text_never_reaches_evidence | Go worktree, `run: ktlint --reporter=plain,a:b` | `ev == "go-test: passed, ktlint: skipped"`; `"a:b"` and `"plain"` not in `ev`; `gate_outcomes(ev) == ["passed", "skipped"]` | Make `ci_linters` return the matched step text instead of the constant. |
+| C2 | test_ci_text_never_reaches_evidence | Go worktree, `run: ktlint --reporter=plain,a:b` | `ev == "go-test: passed, ktlint: skipped"`; `"a:b"` and `"plain"` not in `ev`; `gate_outcomes(ev) == ["passed", "skipped"]` | In the return comprehension, yield `h` instead of `t` (`[h for t in CI_LINTERS for h in haystacks if ...]`). |
 | C3 | test_eslint_covered_by_npm_lint | `go_in_worktree=False`; worktree `package.json` with `{"scripts": {"lint": "eslint ."}}`; CI `run: npx eslint .`; fake returns `lint` passed | `ev == "lint: passed"`; `"eslint"` not in `ev` | Replace `("lint" if tool == "eslint" else tool)` with `tool`. |
 | C4 | test_marker_written_when_detection_raises (deviation) | Go worktree + ktlint CI; `monkeypatch.setattr(ci_discovery, "discover_ci", boom)` | marker exists; `ev == "go-test: passed"` | Delete the `try/except` in `ci_linters`. The coder's outer `except` then skips the marker write. |
 
@@ -308,23 +383,31 @@ For each row that has a mutation:
 2. Run
    `$PY/pytest -q -p no:cacheprovider <file>::<Class>::<test>` (or
    `<file>::<test>`). Expect **1 failed**, or 2 failed (C1, C2) for the spec
-   mutation.
+   mutation, or 2 failed (C4 and T10) when both are run for the
+   `ci_linters` `try` mutation. For T7 and T12 prefix `timeout 20` and
+   expect it to be killed (exit 124 or 143); never run those without it.
 3. Edit the code back.
 4. Rerun the same command and expect it to pass.
 
 Afterwards, `git diff --stat` must list only the two source files, the two
-test files and `CHANGELOG.md`. Re-read the restored lines by eye.
+test files, the two matrix files and `CHANGELOG.md`. Re-read the restored
+lines by eye, and rerun `ruff format --check` on the two source files.
+
+All mutations above were run in a scratch worktree on this plan's code:
+each failed as stated (T7 and T12 hung until `timeout 20`).
 
 ### Commands and expected results
 
 1. `$PY/pytest -q -p no:cacheprovider tests/test_ci_discovery.py -k TestCiLinters`
-   gives **11 passed**.
+   gives **13 passed**.
 2. `$PY/pytest -q -p no:cacheprovider tests/test_coder_trailing_gates.py` gives
    **9 passed**.
 3. `$PY/pytest -q -p no:cacheprovider tests/test_coder_trailing_gates.py tests/test_ci_discovery.py tests/test_qa_approval_needs_gate_evidence.py tests/test_gate_evidence_tree_binding.py tests/test_gates_on_already_complete.py`
-   gives **68 passed, 3 skipped**. The baseline is 53 passed, 3 skipped, plus
-   15 new tests.
-4. `$PY/pytest tests/ -m "not slow" -q` (what CI runs) shows no new failures.
+   gives **70 passed, 3 skipped**. The baseline is 53 passed, 3 skipped, plus
+   17 new tests.
+4. `$PY/pytest tests/ -m "not slow" -q` (what CI runs) shows no new failures
+   (scratch run: 5661 passed, 60 skipped, with `tests/test_security.py`
+   deselected).
    The GitCommitValidator test fails while files are staged; that is
    environmental.
 5. `ruff format --check apps/backend apps/web-server scripts tests && ruff check apps/backend apps/web-server scripts tests`
@@ -334,14 +417,16 @@ test files and `CHANGELOG.md`. Re-read the restored lines by eye.
    then the same command with
    `--tool mypy --mypy "$(command -v mypy)" --config standards/mypy.ini`.
    Neither reports a new violation.
-7. `python scripts/gen_autonomy_matrix.py --check` passes. Rerun it after any
-   rebase, and regenerate rather than hand-merge.
+7. `python scripts/gen_autonomy_matrix.py --check` passes after the step 2
+   regeneration. Rerun it after any rebase, and regenerate rather than
+   hand-merge (a matrix conflict is resolved by regenerating).
 
 ## Rollback
 
 Revert the single squash commit with `git revert <sha>`, or use
 `git revert -m 1 <merge>` for a merge commit. On a CHANGELOG conflict, drop
-only the #1627 line.
+only the #1627 line. On an autonomy-matrix conflict, take either side and
+run `python scripts/gen_autonomy_matrix.py`, then `--check`.
 
 No state needs migrating or cleaning up. Markers already written with
 `<tool>: skipped` still use a known outcome in `_KNOWN_GATE_OUTCOMES`, so QA
