@@ -774,3 +774,4 @@ recorded.
   the `pr.py` route); the `lfs_push_argv` docstring no longer claims repo
   config cannot redirect the endpoint. Real-git tests for both rewrite forms
   prove the upload is never attempted.
+- Rebase onto #1688 (PR #1726): `push_with_lfs` runs through `_default_runner`, which #1688 wraps in `github_env`; the `pr.py` route's get-url, customtransfer/url check, LFS upload and push all run inside one `with github_env(child_env()) as env:`; the `gh auth setup-git` call #1688 removed stays removed; unused imports dropped from `completion_orchestration.py`.

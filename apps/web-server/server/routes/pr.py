@@ -336,7 +336,7 @@ async def create_pr_from_task(
                 else None
             )
             if lfs_argv:
-                # A repo transfer program or url.* rewrite would redirect the upload; refuse (rc 1 = none).
+                # Refuse a repo transfer program or url.* rewrite (rc 1 = none set).
                 chk_cmd = ["git", "config", "--name-only", "--get-regexp"]
                 chk = subprocess.run(  # noqa: S603, ASYNC221, PLW1510
                     [*chk_cmd, r"^(lfs\.customtransfer\.|url\.)"],

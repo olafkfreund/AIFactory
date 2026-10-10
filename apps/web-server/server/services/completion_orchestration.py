@@ -32,7 +32,6 @@ from server.services.review_redrive_service import (
     sync_spec_file_from_worktree,
     worktree_spec_dir,
 )
-from server.utils.subprocess_env import child_env, github_env
 
 from .task_control import write_control
 from .trusted_contract import handoff_contract
@@ -312,8 +311,6 @@ async def run_terminal_completion(
                         _fix_fn = None
                         _conflict_fixer = None
                         if _reviewer == "aifactory":
-                            import subprocess as _sp
-
                             from . import pr_endgame  # noqa: PLC0415
                             from .pr_data_service import get_pr_data_service
                             from .pr_endgame import ReviewState
