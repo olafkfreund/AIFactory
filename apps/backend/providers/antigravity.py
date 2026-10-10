@@ -55,11 +55,18 @@ from collections.abc import AsyncGenerator, AsyncIterator
 from pathlib import Path
 from typing import Any
 
+from core.child_env import child_env
 from providers import BaseLLMProvider
 from providers._antigravity_cli import get_antigravity_binary
 from providers.types import AssistantMessage, TextBlock
 
 logger = logging.getLogger(__name__)
+
+_GEMINI_KEEP: tuple[str, ...] = (
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+)
 
 # ---------------------------------------------------------------------------
 # Gemini CLI sunset notice (Issue #22)
@@ -275,6 +282,7 @@ class AntigravityCLIProvider(BaseLLMProvider):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
+                env=child_env(keep=_GEMINI_KEEP),
             )
 
             prompt_bytes = self._pending_prompt.encode("utf-8")
