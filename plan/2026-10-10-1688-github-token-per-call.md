@@ -545,3 +545,12 @@ Manual checks (spec Verification, all six), on this checkout and in a pod:
 - `_Spawn` in `test_workspace_argv_never_logged.py` is at 81-87.
 - The spec numbers its risks 1-5, 8, 6, 7. This plan cites them by the
   spec's numbers.
+
+## Deviations
+
+- Step 1: with the `from core import git_credentials as gc` header, the new
+  tests fail with AttributeError at test time rather than ImportError at
+  collection. `test_pr_endgame.py`'s token constant carries `# noqa: S105`.
+- #1671 (PR #1706, GitHub App token in `GH_TOKEN`/`GITHUB_TOKEN`) was not on
+  dev at step 1. When it lands, rebase and check that per-call handing covers
+  the App token too.
