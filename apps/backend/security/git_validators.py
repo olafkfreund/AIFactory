@@ -29,8 +29,11 @@ _CONFIG_FLAGS = {"-c", "--config-env"}
 
 
 def _is_dangerous_git_config(key: str) -> bool:
-    """True for ``git -c`` config keys that can execute a command — the
-    pager/editor/ssh/fsmonitor/hooks/alias/upload-pack families (#321 C4)."""
+    """True for git config keys that can execute a command — the
+    pager/editor/ssh/fsmonitor/hooks/alias/upload-pack families (#321 C4), plus
+    gpg/credential programs, askpass/gitproxy, external diff and diff drivers,
+    upload/receive-pack, and include paths (#1689). ``filter.*`` and ``lfs.*``
+    are deliberately not listed (LFS, #1690)."""
     k = key.strip().lower()
     return (
         k.startswith("alias.")
@@ -45,7 +48,52 @@ def _is_dangerous_git_config(key: str) -> bool:
         or k.endswith("hookspath")
         or k.startswith("uploadpack.")
         or k.startswith("receive.")
+        or k.endswith(".program")  # gpg.program, gpg.<fmt>.program
+        or k.startswith("credential.")
+        or k in {"core.askpass", "core.gitproxy", "diff.external", "include.path"}
+        or k.endswith(".driver")
+        or k.endswith((".uploadpack", ".receivepack"))
+        or k.startswith("includeif.")
     )
+
+
+# Global options that consume the next token when written without `=`.
+_ARG_OPTIONS = {"-C", "-c", "--config-env", "--git-dir", "--work-tree", "--namespace"}
+_CONFIG_EDIT_MODES = {
+    "-e",
+    "--edit",
+    "edit",
+    "--rename-section",
+    "rename-section",
+    "--copy-section",
+}
+
+
+def _git_config_refusal(tokens: list[str]) -> str | None:
+    """Reason to refuse a ``git config`` that sets a command-executing key or
+    rewrites config wholesale, else None. Parsed from every ``git`` token, so
+    pipes (not split into segments) and env-assignment prefixes are covered."""
+    for i, t in enumerate(tokens):
+        if t.rsplit("/", 1)[-1] != "git":
+            continue
+        j = i + 1
+        while j < len(tokens) and tokens[j].startswith("-"):
+            j += 2 if tokens[j] in _ARG_OPTIONS else 1
+        if j >= len(tokens) or tokens[j] != "config":
+            continue
+        for tok in tokens[j + 1 :]:
+            if tok in _CONFIG_EDIT_MODES:
+                return (
+                    f"git blocked: `git config {tok}` can rewrite config to "
+                    "execute an arbitrary command. Not permitted."
+                )
+            key = tok.split("=", 1)[0]
+            if not tok.startswith("-") and _is_dangerous_git_config(key):
+                return (
+                    f"git blocked: `git config` on `{key}` can execute an "
+                    "arbitrary command (config injection). Not permitted."
+                )
+    return None
 
 
 def validate_git(command_string: str) -> ValidationResult:
@@ -58,7 +106,14 @@ def validate_git(command_string: str) -> ValidationResult:
         # Can't tokenize — only block if a dangerous construct is visibly
         # present; otherwise defer to the commit validator's own handling.
         lowered = command_string.lower()
-        if " -c " in f" {lowered} " or any(f in lowered for f in _DANGEROUS_GIT_FLAGS):
+        if (
+            " -c " in f" {lowered} "
+            or any(f in lowered for f in _DANGEROUS_GIT_FLAGS)
+            or (
+                " config " in f" {lowered} "
+                and any(_is_dangerous_git_config(w) for w in lowered.split())
+            )
+        ):
             return False, (
                 "git blocked: command uses a config/exec option that can run "
                 "arbitrary code and could not be parsed for validation."
@@ -86,6 +141,9 @@ def validate_git(command_string: str) -> ValidationResult:
                 "(transport/exec hijack). Not permitted."
             )
 
+    refusal = _git_config_refusal(tokens)
+    if refusal:
+        return False, refusal
     return validate_git_commit(command_string)
 
 

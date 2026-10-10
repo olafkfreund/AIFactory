@@ -544,3 +544,6 @@ reverted:
   `KEY_2 == "core.fsmonitor"` (not listed in step 1).
 - Step 3: `_git_env()` annotates `env: dict[str, str] = child_env(...)`;
   without it mypy --strict regressed (`no-any-return`, 3 → 4).
+- Step 4: the unparseable-`config` refusal shares `validate_git`'s existing
+  unparseable branch and its "config/exec option" message, so the function
+  keeps one return there (a separate return regressed PLR0911, 11 → 12).
