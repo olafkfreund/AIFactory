@@ -247,10 +247,10 @@ async def test_dispatched_build_is_running_before_any_tick(
 
     assert service.is_running(TASK) is True
     with pytest.raises(HTTPException) as exc:
-        execution._refuse_recovery_while_running(TASK, service, force=False)
+        await execution._refuse_recovery_while_running(TASK, service, force=False)
     assert exc.value.status_code == 409
     # force still overrides the guard
-    execution._refuse_recovery_while_running(TASK, service, force=True)
+    await execution._refuse_recovery_while_running(TASK, service, force=True)
 
 
 @pytest.mark.asyncio
