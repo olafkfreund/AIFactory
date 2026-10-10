@@ -265,3 +265,4 @@ migration.
 - Step 3: M7 as applied (delete moved into the outer `finally`, rollback
   delete removed) is caught by T0 and T2, not T1 and T3; the plan's two-delete
   variant was not applied.
+- Follow-up filed: #1714 (Job sweep and credential hold).
