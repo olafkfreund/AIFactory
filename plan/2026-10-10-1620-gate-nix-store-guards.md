@@ -9,7 +9,9 @@ spec: spec/2026-10-10-1620-gate-nix-store-guards.md
 Worktree `/mnt/code/Source-home/GitHub/AIFactory-1620`, branch
 `fix/1620-gate-nix-store-guards`, spec approved at `378ff4b6`. All paths are
 repo-relative. Every cited line was checked at `378ff4b6` and matches the
-spec's `7fc66064` references; no later commit touched these regions.
+spec's `7fc66064` references. `origin/dev` is one commit ahead (`1deb7faa`,
+#1674): it touches none of the cited code, but adds 9 lines to `CHANGELOG.md`
+above `### Fixed`, so step 3 anchors by text, not line number.
 
 ## Approved decisions (self-contained summary)
 
@@ -78,8 +80,8 @@ edit pass or placeholders that could ship.
      (`job_dispatch.py:554-562`), the self-check at `job_dispatch.py:912` and
      `tests/test_build_backend_kubejob.py:128,178,1412-1500`. Update the
      `AIFACTORY_NIX_STORE_PVC` row in `docs/docs/environment-reference.md`.
-     Blocked by #1674 and #1692. Forwarding only one variable brings back the
-     #253 node pin.
+     Blocked by #1692 (#1673, #1674 and #1677 have merged). Forwarding only
+     one variable brings back the #253 node pin.
    - (b) Ops: diagnose why the Swift gate hits its deadline. Run the probe with
      kubectl (raise `ttlSecondsAfterFinished` or `kubectl get jobs -w`) and
      capture the logs. SPM fetching over git is a hypothesis.
@@ -140,10 +142,12 @@ edit pass or placeholders that could ship.
      forwarded (`_PASSTHROUGH_BUILD_ENV`, `build_backend.py:259`), so the guard
      is inert there today; (3) the two must be forwarded together (#A), because
      forwarding only the PVC brings back the #253 node pin.
-   - `gate_runner.py:502-503` become:
+   - `gate_runner.py:502-503` become (exactly `ruff format` 0.14.10 output):
      ```python
-     nix_store_pvc = None if nix_in_image() else (
-         os.environ.get("AIFACTORY_NIX_STORE_PVC", "") or None
+     nix_store_pvc = (
+         None
+         if nix_in_image()
+         else (os.environ.get("AIFACTORY_NIX_STORE_PVC", "") or None)
      )
      ```
    - `gate_runner.py:504-507` (log block): no change.
@@ -160,8 +164,10 @@ edit pass or placeholders that could ship.
    Traps:
    - `:502-503` and `:538` change in the same edit; removing the name while
      `:538` still uses it raises `NameError`.
-   - The guarded read exceeds 88 chars on one line; keep the parenthesised
-     wrap and run `ruff format`.
+   - The guarded read exceeds 88 chars on one line. A hand wrap such as
+     `None if nix_in_image() else (\n    os.environ.get(...) or None\n)` fails
+     `ruff format --check` (checked in a scratch worktree); use the snippet
+     above and run `ruff format apps/backend/agents/gate_runner.py`.
    - No log call added or changed (CodeQL clear-text-logging and
      log-injection). `:505` still logs `nix_store_pvc`, a non-sensitive name.
    - No subprocess spawns added (`test_no_unscrubbed_spawn` unaffected).
@@ -171,8 +177,9 @@ edit pass or placeholders that could ship.
    - The coder cannot run `git stash`, `checkout` or `restore`: mutations are
      applied and reverted by editing.
 
-3. **(coder) `CHANGELOG.md:101-108`: one bullet** under `[Unreleased]` →
-   `### Fixed`, after the #1669 entry and before `## 3.6.84` (`:109`) → verify
+3. **(coder) `CHANGELOG.md`: one bullet** under `[Unreleased]` →
+   `### Fixed`, after the #1669 entry and before `## 3.6.84` (`:101-109` on
+   this branch, `:110-118` on `origin/dev`; find it by text) → verify
    by `git diff CHANGELOG.md` showing one added bullet in that section.
    Text: "The packed gate path now honours `AIFACTORY_PACKED_NIX_IN_IMAGE` like
    the build path. Runtime behaviour does not change, because the build Job
@@ -209,7 +216,7 @@ Run from the worktree with `PY=/mnt/code/Source-home/GitHub/AIFactory/.venv/bin/
    |---|---|---|
    | M1 | packed call: `nix_store_pvc=os.environ.get("AIFACTORY_NIX_STORE_PVC") or None` | only the renamed packed test (1 failed, 20 passed) |
    | M2 | packed call: `nix_store_pvc=None` | only `test_packed_path_keeps_the_warm_store_when_flag_off` |
-   | M3 | guard inverted: `(os.environ.get(...) or None) if nix_in_image() else None` | 5 failed: `:94`, `:109`, both packed tests, co-mount test |
+   | M3 | guard inverted: `if nix_in_image()` → `if not nix_in_image()` in the guarded read | 5 failed: `:94`, `:109`, both packed tests, co-mount test |
    | M4 | all reverted | none: `21 passed` |
 
    The `nix_env.py` docstring, comments and CHANGELOG are prose; check 4
@@ -218,12 +225,19 @@ Run from the worktree with `PY=/mnt/code/Source-home/GitHub/AIFactory/.venv/bin/
    → no output (exit 1).
 5. `ruff format --check apps/backend apps/web-server scripts tests` and
    `ruff check apps/backend apps/web-server scripts tests` → exit 0.
-6. After `git add`, strict ratchet with no new findings:
+6. With `PATH=/mnt/code/Source-home/GitHub/AIFactory/apps/backend/.venv/bin:$PATH`
+   (it provides `python`, `ruff` 0.14.10 as pinned in CI, and `mypy`), after
+   `git add`, strict ratchet with no new findings (`0 regressed`):
    - `python scripts/cq_ratchet.py --staged --ruff "$(command -v ruff)" --config standards/ruff.toml --paths 'apps/backend/*.py' 'apps/web-server/*.py' 'scripts/*.py'`
    - `python scripts/cq_ratchet.py --staged --tool mypy --mypy "$(command -v mypy)" --config standards/mypy.ini --paths 'apps/backend/*.py' 'apps/web-server/*.py' 'scripts/*.py'`
 7. `python scripts/gen_autonomy_matrix.py --check` → passes (the matrix cites
    neither `gate_runner.py` nor `nix_env.py`). If a rebase shifts cited lines,
    regenerate with `python scripts/gen_autonomy_matrix.py`; never hand-merge.
+
+Dry run at `cf525550` in a scratch worktree with the steps 1-2 snippets applied:
+red-first 1 failed/20 passed; then 21 passed; `-k` 5 passed; M1-M4 exactly as
+tabled; grep empty; ruff format/check clean (after the formatted snippet); both
+ratchets 2 files, 0 regressed; matrix `--check` ok.
 
 Skipped: autonomy-matrix regen (not cited); web-server tests (backend-only
 change).
