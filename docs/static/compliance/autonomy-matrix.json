@@ -695,7 +695,7 @@
               "model-assisted (dynamic import: core.auth:313 (+2 more))",
               "`anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
               "yes (14): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
-              "265",
+              "268",
               "`runners/github/runner.py`"
             ],
             [
@@ -703,7 +703,7 @@
               "model-assisted (dynamic import: core.auth:313 (+3 more))",
               "`anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
               "yes (20): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
-              "362",
+              "364",
               "-"
             ]
           ]

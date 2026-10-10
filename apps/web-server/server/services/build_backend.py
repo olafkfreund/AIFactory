@@ -1257,7 +1257,16 @@ class KubeJobBuildBackend:
 
         # #671 OAuth-env defect: mirror the in-pod build env into the Job (the
         # pooled token + the SDK passthrough). Goes into container env, NOT argv.
+        # #1667: stamp before the Job exists so the record never lags the build.
+        # #1673: and before the verdict below, which reads the stamp.
+        from .trusted_contract_store import stamp_spawn  # noqa: PLC0415
+
+        await stamp_spawn(spec_dir_for(project_path, spec_id), "kubejob")
+
         extra_env = build_job_env(oauth_token)
+        from .trusted_contract import spawn_env  # noqa: PLC0415
+
+        extra_env.update(await spawn_env(spec_dir_for(project_path, spec_id)))
 
         manifest = build_run_py_job_manifest(
             task_id=task_id,
@@ -1279,11 +1288,6 @@ class KubeJobBuildBackend:
         owns_client = batch is None
         if owns_client:
             batch = await self._batch_api()
-        # #1667: stamp before the Job exists so the record never lags the build.
-        from .trusted_contract_store import stamp_spawn  # noqa: PLC0415
-
-        await stamp_spawn(spec_dir_for(project_path, spec_id), "kubejob")
-
         try:
             await batch.create_namespaced_job(namespace, manifest)
             try:
