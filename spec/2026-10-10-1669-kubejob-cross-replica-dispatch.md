@@ -29,7 +29,10 @@ installs behave exactly as today"; the narrowing is marked **[narrowed]**.
    (`charts/aifactory/values.yaml:32`) or enables the HPA (`:191-194`) with
    rmux off is exposed today.
 3. **Q3 Cost.** One primary-key read per status poll, and only when the
-   in-memory answer is False and the durable store is on. No store, no read.
+   in-memory answer is False and the kubejob backend is on
+   (`_kubejob_backend_enabled`, `services/agent_kubejob.py:104-124`, which
+   already requires the store). The default subprocess backend never reads the
+   store here, so it behaves exactly as today even with `DATABASE_URL` set.
 4. **Q4 Store read failure.** Fail closed: an exception reads as running.
    Recover returns 409, Stop proceeds to `stop_task`, status shows running.
    A missing row or a terminal row (`services/build_backend.py:355`) reads as
@@ -45,16 +48,24 @@ installs behave exactly as today"; the narrowing is marked **[narrowed]**.
 6. **Q6 Subprocess builds on another replica.** Out of scope, with a
    follow-up issue. **[narrowed]** The predicate counts a `running` row only
    when its `worker_ref.kind` is `k8s-job` or `pending` (a granted slot not
-   yet claimed, #1606). The approved answer said "regardless of backend", but a
-   `subprocess` row is never marked terminal if its pod dies mid-build:
-   `reconcile_on_startup` (`services/agent_service.py:1527-1558`) only counts
-   and drains, and `mark_running` stamps `{"kind": "subprocess"}`
-   (`services/job_state_store.py:299`). Every chart install sets
+   yet claimed, #1606), and reads the store only when the kubejob backend is
+   on (Q3). The approved answer said "regardless of backend", but an in-pod
+   build's row is never marked terminal if its pod dies mid-build:
+   `reconcile_on_startup` (`services/agent_service.py:1525-1558`) only counts
+   and drains. On the subprocess backend that row keeps the `pending` kind
+   `admit` stamped (`services/job_state_store.py:262,275`) for its whole life:
+   `mark_running`, which would stamp `subprocess` (`:299`), has no caller, and
+   only the kubejob backend calls `set_worker_ref`
+   (`services/build_backend.py:1294,1419`). Every chart install sets
    `DATABASE_URL`, so `_store_enabled` is on by default, and with the backend
    default of subprocess a single-replica pod restart would leave the card
    "running" forever, Recover refusing with 409 and no UI path to `force`.
-   That breaks the intent's outcome. Kubejob is what the intent is about, so
-   the filter costs one condition and nothing it promised.
+   The kind filter alone does not prevent that, because the row is `pending`;
+   the backend gate does. The kind filter still drops `subprocess` rows on a
+   kubejob install. Kubejob is what the intent is about, so the two conditions
+   cost nothing it promised. On the kubejob backend an orphaned `pending` row
+   is already reaped (`get_active_kubejobs` includes it,
+   `services/job_state_store.py:483`).
 7. **Q7 Sequencing.** Separate PRs: #1669, then #1670 (the log streamer
    reuses this predicate in place of the grace logic at
    `services/agent_kubejob.py:625-646`), then #1677.
@@ -84,8 +95,8 @@ async def is_running_anywhere(self, task_id: str) -> bool:
     approval stay pod-local. A store error reads as running (#1551)."""
     if self.is_running(task_id):
         return True
-    if not getattr(self, "_store_enabled", False):
-        return False  # single-pod: is_running() is the full answer
+    if not getattr(self, "_store_enabled", False) or not self._kubejob_backend_enabled():
+        return False  # no store or subprocess backend: is_running() is the full answer
     try:
         state = await self._store().get_state(task_id)
     except Exception:  # noqa: BLE001 - doubt must never read as "not running"
@@ -103,6 +114,8 @@ async def is_running_anywhere(self, task_id: str) -> bool:
 
 - No `exc_info` on the warning: status polls during a DB outage would flood the
   log with tracebacks.
+- `_store_enabled` is checked first so a kubejob-without-store misconfig does
+  not log `_kubejob_backend_enabled`'s warning on every status poll.
 - `_kubejob_liveness` is left alone; it serves the reaper with a different
   meaning for a missing row.
 
@@ -139,10 +152,10 @@ Without these, the routes raise `AttributeError`.
    reaper (`services/agent_kubejob.py:871`), and would make Start and plan
    approval delete live Jobs on every replica (Q1, Q5, Q9).
 2. **Reuse `_kubejob_liveness`.** It maps a missing row to "unknown"
-   (`:949-954`), which would show every never-built task as running, and its
+   (`:950-955`), which would show every never-built task as running, and its
    "no store means absent" relies on the caller's prior check.
 3. **`JobStateStore.is_running` (`services/job_state_store.py:518-528`).**
-   Smallest, but it counts a dead pod's `subprocess` row as running (Risk 1)
+   Smallest, but it counts a dead pod's in-pod build row as running (Risk 1)
    and lets exceptions escape. `get_state` plus the kind check is the same one
    PK read.
 4. **Count every non-terminal row, including `queued` (Q4's literal
@@ -156,17 +169,21 @@ Without these, the routes raise `AttributeError`.
    no statement timeout (`database/engine.py:61-66`), but every other store
    read in the service has the same exposure; a timeout belongs on the engine,
    not on one predicate. Noted in Risks.
-7. **Stop-specific 409 when `stop_task` fails off-pod.** With the kind filter
-   the only remaining case is a store outage, where a 500 is accurate.
+7. **Stop-specific 409 when `stop_task` fails off-pod.** Two cases remain: a
+   store outage, and a `pending` row on a replica that did not dispatch it
+   (`_stop_kubejob_build` stops only `k8s-job` rows,
+   `services/agent_kubejob.py:1004-1005`). Both are short-lived and a 500 is
+   honest; see Risk 8.
 8. **Cache the store answer per task.** It brings back the window this issue
    closes.
 
 ## Risks
 
 1. **Narrowing Q4/Q6 needs confirmation.** If the reviewer wants another
-   pod's subprocess row or a queued row to count, drop the kind filter or
-   widen the state check, and accept that a single-replica pod restart leaves
-   a subprocess task stuck "running" with no UI recovery. The follow-up issue
+   pod's in-pod build or a queued row to count, drop the backend gate and kind
+   filter or widen the state check, and accept that a single-replica pod
+   restart leaves a subprocess task (its row stuck `running`/`pending`)
+   "running" with no UI recovery. The follow-up issue
    for cross-replica subprocess builds should also cover marking orphaned
    subprocess rows terminal on startup.
 2. **Store outage turns cards "running".** Recover returns 409 and Stop
@@ -187,6 +204,13 @@ Without these, the routes raise `AttributeError`.
    `k8s-job` row now reads as running before the first reconcile tick fills
    the in-memory set. That is the correct answer and closes the same window on
    one replica.
+8. **Stop on a `pending` row from another replica returns 500.** The row is
+   counted live (the slot is granted), but `_stop_kubejob_build` returns False
+   for any kind other than `k8s-job` (`services/agent_kubejob.py:1002-1005`), so
+   `stop_task` returns False and the route answers 500 "Failed to stop task"
+   until `set_worker_ref` stamps `k8s-job`. Today that replica answers 404, so
+   neither stops the build; the retry succeeds once the Job is recorded. The
+   window is #1677's, which is sequenced after this.
 
 ## Verification
 
@@ -205,6 +229,17 @@ task; service B checks:
 | each of `done`, `failed`, `stuck`, `review` | False | |
 | `get_state` raises | True | Recover 409 |
 | `_store_enabled = False`, store raises if called | False, store never called | |
+
+Both services run with `AIFACTORY_BUILD_BACKEND=kubejob` (monkeypatched env);
+two more rows cover the gate:
+
+| Setup | B: `is_running_anywhere` |
+|---|---|
+| backend `subprocess`, store on, row `running` `k8s-job`, store raises if called | False, store never called |
+| backend `kubejob`, B's sync `is_running` True | True, store never called |
+
+Stop on B with a `running` `k8s-job` row: the route returns 200 and
+`delete_job` (faked) is called once; with no row it returns 404.
 
 Existing tests stay green: #1619, #1662, #1551, #1001 and the durable store.
 
