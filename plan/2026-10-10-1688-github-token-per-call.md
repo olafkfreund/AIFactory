@@ -569,3 +569,4 @@ Manual checks (spec Verification, all six), on this checkout and in a pod:
   `github_app.start()`. `github_token()` reads `os.environ` per call, so
   each call hands over the App token the refresh loop last wrote.
 - Step 5: follow-ups filed: #1723 (remaining children), #1724 (`/proc` window).
+- Rebase onto #1689: `child_env` now pins fsmonitor and protocol.ext.allow after hooksPath, so the helper entries sit at n+3/n+4; `test_helper_entries_follow_hooks_path_and_existing_entry` updated.
