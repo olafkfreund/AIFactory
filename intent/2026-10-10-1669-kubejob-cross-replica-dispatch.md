@@ -37,15 +37,27 @@ During that window, on the replica that did not dispatch:
 - **Status** (`routes/execution.py:260`, `:275`) reports `is_running:false`, so
   the cockpit shows the card as "Stuck" and offers Recover.
 - **Plan approval** skips its stale-process cleanup (`routes/plan_approval.py:170`).
-  This only matters for in-pod processes, so the effect is minor.
+  That cleanup calls `stop_task`, which deletes a kubejob build too
+  (`services/agent_service.py:1385-1389`). So on the dispatching replica,
+  approving a plan stops a live Job; on any other replica it does not.
+- **Start** passes the guard at `routes/execution.py:690`. The dispatching
+  replica answers 409 "Task is already running" (`:703-706`), or, with an
+  approved plan, stops the live Job first (`:691-701`, same `stop_task`).
+  Another replica runs on: it may write `human_review` over the live build's
+  status (`:738-771`) or take the delegation branch (`:788-812`) before it
+  reaches `admit`.
 
 The same request gets a different answer depending on which pod the load
-balancer picks. `POST /start` does not double-dispatch: `admit` rejects it
-(mapped to 409 at `routes/execution.py:914`).
+balancer picks. `POST /start` does not double-dispatch: `admit` raises
+`ValueError` (`services/job_state_store.py:226-230`). That error is not mapped
+to 409, despite the comment at `services/agent_service.py:891`: the route's
+`except Exception` turns it into a 500 "Failed to start task"
+(`routes/execution.py:843-847`).
 
 The reaper and the log streamer are already safe. `reap_abandoned_tasks` falls
 back to the store through `_kubejob_liveness` (`services/agent_kubejob.py:871-874`),
-and `_kubejob_still_active` has a grace period (`:629-644`).
+and `_kubejob_still_active` has a 45-second grace period (`:625-646`,
+`_DISPATCH_GRACE_SECONDS` at `:37`).
 
 Reachability: the default install runs one replica. The pin to one replica
 applies only when rmux is on (`charts/aifactory/templates/deployment.yaml:12`),
@@ -82,12 +94,15 @@ sets `replicaCount > 1` (`values.yaml:32`) or enables the HPA
   to. A failed read keeps the previous tick's answer.
 - Keep the #1662 reset-before-first-await rule and the union with
   `_kubejob_dispatched_this_tick` (`services/agent_kubejob.py:688`).
-- `is_running` is synchronous and called from sync code, including the reaper.
-  It must stay cheap: the cockpit polls status once per card.
+- `is_running` is synchronous, and every caller, including the async reaper,
+  calls it without `await`. It must stay cheap: the cockpit polls status once per card.
 - `force=True` still skips the guard. Recovery never deletes or resets a live
   k8s Job.
 - `recover_task` is at the ruff branch limit; extra guard logic goes outside it.
-- Store rows are keyed by `job_id == task_id`. Pending rows count as running (#1606).
+- Store rows are keyed by `job_id == task_id`. A `running` row whose worker
+  kind is still `pending` (slot granted, not yet claimed, #1606) is a live
+  claim. `JobStateStore.is_running` checks only `running`; `queued` is the
+  other active state (`services/job_state_store.py:46`).
 - Do not touch unrelated `is_running` methods (`routes/github.py`,
   `changelog_service.py`, `changelog.py`).
 - Use the existing `JobStateStore` session and credentials only. No new
@@ -115,5 +130,9 @@ sets `replicaCount > 1` (`values.yaml:32`) or enables the HPA
 7. #1670 and #1677: one combined change or separate PRs, and in what order?
 8. Verification: is a unit test with two `AgentService` instances sharing one
    store enough? There is no multi-replica environment today.
-9. Should the chart comment say #1669 is a precondition for `replicaCount > 1`
+9. Plan approval and an approved `/start` stop a live kubejob build on the
+   replica that sees it. Once every replica sees it, every replica will. Is
+   stopping the Job there intended, or should those paths leave a kubejob
+   build alone?
+10. Should the chart comment say #1669 is a precondition for `replicaCount > 1`
    with kubejob?
