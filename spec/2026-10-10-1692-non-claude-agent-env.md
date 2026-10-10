@@ -69,9 +69,10 @@ def _opencode_keep(model: str) -> tuple[str, ...]:
 ```
 
 The Anthropic guard is required. Without it, `anthropic/claude-sonnet-4-5`
-(the example model used at `opencode_agentic.py:283`) would put
+(the example model in the error at `opencode_agentic.py:285`) would put
 `ANTHROPIC_API_KEY` back. If the model is empty or has no slash, no key is
-kept, and `_build_command` (`:286-294`) still raises its existing clear error.
+kept, and `_build_command` (`:254`) still raises its existing clear error
+(`:279-287`).
 
 `OPENCODE_DISABLE_AUTOUPDATE` stays a `setdefault` and does not move into
 `extra=`, because `extra` would override a value the operator set.
@@ -146,7 +147,7 @@ These are proposed defaults for the user to confirm.
 - **Trust flag on text-only Antigravity.** See the Q1 note.
 - **Folding in the `tools/executor.py` scrub.** See Q5.
 - **Adding the six files to `_BACKEND_FILES` in
-  `tests/test_no_unscrubbed_spawn.py:58`.** The per-site tests already guard
+  `tests/test_no_unscrubbed_spawn.py:59`.** The per-site tests already guard
   these sites. Add it if a seventh CLI provider appears.
 
 ## Risks
@@ -171,8 +172,10 @@ injected (`build_backend.py`).
    the key. `OPENAI_BASE_URL` still passes. Release note: use `codex login`
    or `OPENAI_API_KEY`.
 5. **The OpenCode model prefix chooses which `*_API_KEY` survives.** The model
-   is operator config validated by `_MODEL_NAME_RE` (`opencode_agentic.py:218`),
-   and the derived name always ends in `_API_KEY`. It can therefore never be
+   is operator config: an explicit model is checked by `_MODEL_NAME_RE`
+   (`opencode_agentic.py:94`, applied at `:217`), while the
+   `OPENCODE_DEFAULT_MODEL` fallback (`:228`) is not. Either way the derived
+   name always ends in `_API_KEY`. It can therefore never be
    `GH_TOKEN`, `GITHUB_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` or
    `COPILOT_GITHUB_TOKEN`, and the Anthropic guard covers `ANTHROPIC_*`. A
    nonsense prefix such as `linear/` would keep `LINEAR_API_KEY`. That is
