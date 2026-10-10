@@ -28,6 +28,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Literal
 
+from core.child_env import GITHUB_KEEP, child_env
+
 fcntl: ModuleType | None
 try:  # pragma: no cover - platform dependent
     import fcntl as _fcntl
@@ -88,15 +90,22 @@ _AMBIENT_GIT_VARS = frozenset(
 
 
 def _git_env() -> dict[str, str]:
-    """The current environment, minus the git vars that would pin git elsewhere.
+    """Scrubbed git environment: host secrets dropped, repo-pinning vars removed.
+
+    Built through ``child_env``: the GitHub keep-list survives, and the
+    ``core.hooksPath`` and ``core.fsmonitor`` pins are applied. Ambient ``GIT_*``
+    vars (``_AMBIENT_GIT_VARS``) are dropped.
 
     ``GIT_TERMINAL_PROMPT=0`` is forced on: this manager runs headless (control
     plane pod, build Job), so a remote that wants credentials must FAIL rather
     than block forever on a prompt nobody can answer (#1106 added a network
     fetch to the worktree path; a hang there would wedge the build).
     """
-    env = {k: v for k, v in os.environ.items() if k not in _AMBIENT_GIT_VARS}
-    env["GIT_TERMINAL_PROMPT"] = "0"
+    env: dict[str, str] = child_env(
+        keep=GITHUB_KEEP, extra={"GIT_TERMINAL_PROMPT": "0"}
+    )
+    for k in _AMBIENT_GIT_VARS:
+        env.pop(k, None)
     return env
 
 

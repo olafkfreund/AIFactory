@@ -21,7 +21,11 @@ logger = logging.getLogger(__name__)
 from .ast_parser import UnparseableCommand, extract_commands_ast, is_available
 from .egress import check_egress
 from .exec_context import reset_worktree_root, set_worktree_root
-from .parser import extract_commands, get_command_for_validation, split_command_segments
+from .parser import (
+    extract_commands,
+    get_segments_for_validation,
+    split_command_segments,
+)
 from .profile import get_security_profile
 from .url_guard import assert_url_not_ssrf
 from .validator import VALIDATORS
@@ -185,18 +189,15 @@ async def bash_security_hook(
         # Additional validation for sensitive commands. Expose the worktree
         # root (cwd) so path validators (rm/chmod) can reject escapes (#364).
         if cmd in VALIDATORS:
-            cmd_segment = get_command_for_validation(cmd, segments)
-            if not cmd_segment:
-                cmd_segment = command
-
             validator = VALIDATORS[cmd]
-            token = set_worktree_root(cwd)
-            try:
-                allowed, reason = validator(cmd_segment)
-            finally:
-                reset_worktree_root(token)
-            if not allowed:
-                return {"decision": "block", "reason": reason}
+            for cmd_segment in get_segments_for_validation(cmd, segments) or [command]:
+                token = set_worktree_root(cwd)
+                try:
+                    allowed, reason = validator(cmd_segment)
+                finally:
+                    reset_worktree_root(token)
+                if not allowed:
+                    return {"decision": "block", "reason": reason}
 
     # Egress policy (#363 AC3): defense-in-depth over the allowlist. When opted
     # in (AIFACTORY_EGRESS_POLICY=deny|allowlist) an allowlisted network tool
@@ -243,17 +244,14 @@ def validate_command(
             return False, reason
 
         if cmd in VALIDATORS:
-            cmd_segment = get_command_for_validation(cmd, segments)
-            if not cmd_segment:
-                cmd_segment = command
-
             validator = VALIDATORS[cmd]
-            token = set_worktree_root(str(project_dir))
-            try:
-                allowed, reason = validator(cmd_segment)
-            finally:
-                reset_worktree_root(token)
-            if not allowed:
-                return False, reason
+            for cmd_segment in get_segments_for_validation(cmd, segments) or [command]:
+                token = set_worktree_root(str(project_dir))
+                try:
+                    allowed, reason = validator(cmd_segment)
+                finally:
+                    reset_worktree_root(token)
+                if not allowed:
+                    return False, reason
 
     return True, ""
