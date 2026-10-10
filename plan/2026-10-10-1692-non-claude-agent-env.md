@@ -11,9 +11,10 @@ Worktree `/mnt/code/Source-home/GitHub/AIFactory-1692`, branch
 targets `dev` and is typed `fix(security)`. All paths are repo-relative;
 provider paths are under `apps/backend/`.
 
-Every line cited by the spec (written at `13a5de36`) was re-read at
-`cdc65ab0` and still matches. Only `core/contract_trust.py` and
-`core/migration_mapper.py` changed in between. Two small shifts in
+Every provider line cited by the spec (written at `13a5de36`) was re-read at
+`cdc65ab0` and still matches. `core/child_env.py` did shift: #1673
+(`c59a0ea6`) added `AIFACTORY_TRUSTED_CONTRACT` to `_STRIP_VARS`, so every
+spec citation in that file is +4 here (D1 uses the HEAD numbers). Two small shifts in
 `providers/opencode_agentic.py` change nothing: `_strip_opencode_prefix` is
 :171-182 and the class starts at :184 (spec says :186), and
 `_build_subprocess_env` is defined at :298 (spec says :301). Lines :326, :327,
@@ -32,11 +33,11 @@ CONTEXT7_API_KEY, other vendors' keys) reaches the agent.
   `agent_cli_env()` or second deny list. Do not edit `core/child_env.py` or
   `core/auth.py`. Build the env inside the spawn method so it reflects
   `os.environ` at spawn time.
-  - `child_env` behaviour at HEAD (reference only): the deny list,
-    `_STRIP_VARS` (:16) and the `*_KEY`/`*_TOKEN` regex (:24, :46) drop names;
-    `keep` restores names and overrides every drop (:48); `extra` applies
-    (:49-50); the hooks-off pin `core.hooksPath=/dev/null` is appended at index
-    `GIT_CONFIG_COUNT` (:51-57).
+  - `child_env` behaviour at HEAD (reference only; `def` at :31-62): the deny
+    list, `_STRIP_VARS` (:16-20) and the `*_KEY`/`*_TOKEN` regex (:28, :50)
+    drop names; `keep` restores names and overrides every drop (:52); `extra`
+    applies (:53-54); the hooks-off pin `core.hooksPath=/dev/null` is appended
+    at index `GIT_CONFIG_COUNT` (:55-61).
 - **D2 Scope:** all six spawn sites in one PR: `codex.py`, `codex_agentic.py`,
   `antigravity.py`, `antigravity_agentic.py`, `copilot_agentic.py`,
   `opencode_agentic.py`.
@@ -58,8 +59,9 @@ CONTEXT7_API_KEY, other vendors' keys) reaches the agent.
   Auth comes from the on-disk `~/.copilot` login (HOME and XDG survive) or an
   operator-set `COPILOT_GITHUB_TOKEN`. No GitHub identity name enters any keep
   list (no conflict with #1688 or #1671).
-- **D7 OpenCode:** `env = child_env(keep=_opencode_keep(self._model))` with a
-  new module-level function, verbatim from the spec:
+- **D7 OpenCode:** `env: dict[str, str] = child_env(keep=_opencode_keep(self._model))`
+  with a new module-level function, verbatim from the spec except the line
+  reference in the guard comment (spec's `:48` is `:52` at HEAD, see D1):
 
   ```python
   def _opencode_keep(model: str) -> tuple[str, ...]:
@@ -70,7 +72,7 @@ CONTEXT7_API_KEY, other vendors' keys) reaches the agent.
       if not sep or not provider:
           return ()
       name = f"{provider.upper().replace('-', '_')}_API_KEY"
-      if name.startswith("ANTHROPIC"):  # keep would restore it (child_env.py:48)
+      if name.startswith("ANTHROPIC"):  # keep would restore it (child_env.py:52)
           return ()
       if provider == "google":
           return (name, "GOOGLE_GENERATIVE_AI_API_KEY", "GEMINI_API_KEY")
@@ -78,7 +80,11 @@ CONTEXT7_API_KEY, other vendors' keys) reaches the agent.
   ```
 
   The Anthropic guard is required: `keep` overrides `_STRIP_VARS`, so without
-  it `anthropic/*` would put ANTHROPIC_API_KEY back.
+  it `anthropic/*` would put ANTHROPIC_API_KEY back. The `dict[str, str]`
+  annotation is the only addition to the spec's line: the mypy ratchet checks
+  the file with imports unfollowed, so an unannotated `env` is `Any` and the
+  three `return env` in `_build_subprocess_env` raise `opencode_agentic.py`
+  from 1 to 4 strict violations (verified: ratchet fails without it).
 - **D8** `OPENCODE_DISABLE_AUTOUPDATE` stays `env.setdefault(...)` (not
   `extra=`), so an operator value wins. The XDG pre-warm in
   `_build_subprocess_env` is unchanged.
@@ -98,7 +104,7 @@ CONTEXT7_API_KEY, other vendors' keys) reaches the agent.
   edits on #1671 and #1673). Assert on key membership only; never put env
   values in messages or logs (CodeQL).
 - **D15** These stay green: `test_gemini_trust_workspace.py`,
-  `test_opencode_provider.py` (:316-430 use only HOME/XDG_*; :440-469 needs the
+  `test_opencode_provider.py` (use only HOME/XDG_*; :316 and :433 need the
   `setdefault`), `test_copilot_provider.py`, `test_codex_stderr_drain.py`,
   `test_outbound_scrub_all_providers.py`, `test_qa_providers.py`,
   `test_no_unscrubbed_spawn.py`. Baseline at HEAD: 195 passed.
@@ -130,19 +136,26 @@ SendMessage. Review with a fresh opus agent given only this plan and
 
 1. `tests/test_agent_cli_env.py` (new file): write the failing tests →
    verify by `cd tests && python -m pytest -q test_agent_cli_env.py` being
-   **RED** (all spawn rows fail; `_opencode_keep` rows fail with
-   AttributeError), then
+   **RED** (15 failed: the 7 spawn rows with "env= not passed", the 8
+   `_opencode_keep` rows with AttributeError), then
+   `ruff format --check tests/test_agent_cli_env.py && ruff check tests/test_agent_cli_env.py && ruff check --config standards/ruff.toml tests/test_agent_cli_env.py`
+   clean, and
    `MYPYPATH=apps/backend mypy --strict --config-file standards/mypy.ini --follow-imports=silent tests/test_agent_cli_env.py`
-   and `ruff format --check tests/test_agent_cli_env.py && ruff check tests/test_agent_cli_env.py`
-   both clean.
-   - Fake spawn: `class _Spawned(Exception)`. Every spawn site catches only
-     `TimeoutError`, so it propagates. `async def _fake(*_a: object, **kw: object) -> NoReturn`
-     records `kw.get("env")` and raises `_Spawned`. Patch with
+   showing exactly one error, `Module has no attribute "_opencode_keep"
+   [attr-defined]`, which step 3 clears (Tests item 5).
+   - Fake spawn: `class _SpawnedError(Exception)` (strict ruff N818 rejects
+     `_Spawned`). Every spawn site catches only `TimeoutError`, so it
+     propagates. `async def _fake(*_a: object, **kw: object) -> NoReturn`
+     does `env = kw.get("env")`, `assert isinstance(env, dict), "env= not passed"`
+     (narrows for mypy; the RED failure for sites with no `env=`), appends
+     it to a `list[dict[str, str]]` and raises `_SpawnedError`. Patch with
      `monkeypatch.setattr(site.mod.asyncio, "create_subprocess_exec", _fake)`.
-   - Patch `shutil.which` to return `"/fake/bin"`, and
-     `get_antigravity_binary` on `providers.antigravity` and
-     `providers.antigravity_agentic` (both import it by name; guard with
-     `hasattr(site.mod, ...)`).
+   - Patch `monkeypatch.setattr(shutil, "which", lambda *_a, **_k: "/fake/bin")`
+     on the `shutil` module itself; that also covers
+     `providers._antigravity_cli.get_antigravity_binary`, which then returns
+     the relative `"antigravity"`. Do NOT patch `get_antigravity_binary` to
+     an absolute path: the sites then check `Path(...).exists()` and raise
+     RuntimeError instead of spawning.
    - Delete `XDG_CACHE_HOME`, `GIT_CONFIG_COUNT`, `OPENCODE_DEFAULT_MODEL`.
      Construct the provider **first**, then `setenv` every secret
      (`_FOREIGN` + own keys + `COPILOT_GITHUB_TOKEN`) plus `OPENAI_BASE_URL`
@@ -150,7 +163,10 @@ SendMessage. Review with a fresh opus agent given only this plan and
      folds the "set after construction appears at spawn" edge into every row.
    - Drive: `CodexAgenticProvider` with `await p.__aenter__()`; the others
      with `await p.query("x")` then `await p.receive_response().__anext__()`,
-     inside `pytest.raises(_Spawned)`.
+     inside `pytest.raises(_SpawnedError)`. Type `make` as
+     `Callable[[], object]` and `drive` as `Callable[[object], Awaitable[None]]`;
+     the two drive helpers call the methods on `object` with
+     `# type: ignore[attr-defined]`.
    - Rows (`_Site` frozen dataclass: mod, make, drive, own, flags, no_flags):
      `codex` (own = OPENAI/CODEX keys), `codex_agentic` (same),
      `antigravity` (own = `_GEMINI`, `no_flags=("GEMINI_CLI_TRUST_WORKSPACE",)`),
@@ -175,7 +191,10 @@ SendMessage. Review with a fresh opus agent given only this plan and
    py/clear-text-logging-sensitive-data). `tests/pytest.ini` already sets
    `asyncio_mode = auto` and ignores DeprecationWarning (Antigravity sunset
    warning). `tests/conftest.py:92` puts `apps/backend` on `sys.path`. Use
-   module imports (`from providers import codex`), no `Any` returns. Do NOT
+   module imports (`from providers import codex, ...`), no `Any` returns.
+   Default ruff sorts `providers` as third-party in `tests/`: no blank line
+   between `import pytest` and `from providers import (...)` (I001; run
+   `ruff check --fix` then `ruff format`). Do NOT
    edit `tests/test_child_process_env.py` or `tests/test_no_unscrubbed_spawn.py`.
    The coder cannot use `git stash`/`checkout`/`restore`, so prove RED before
    any provider edit.
@@ -183,7 +202,7 @@ SendMessage. Review with a fresh opus agent given only this plan and
 2. Four single-line providers → verify by
    `cd tests && python -m pytest -q test_agent_cli_env.py -k "not opencode"`
    GREEN, `python -m pytest -q test_gemini_trust_workspace.py test_copilot_provider.py test_codex_stderr_drain.py`
-   GREEN, and `ruff check apps/backend/providers` clean.
+   GREEN, and `ruff format --check apps/backend/providers && ruff check apps/backend/providers` clean.
    - `providers/codex.py:53-54`: add `from core.child_env import child_env`
      next to `from providers import BaseLLMProvider`.
      `:186-192`: add `env=child_env(keep=("OPENAI_API_KEY", "CODEX_API_KEY"))`
@@ -192,17 +211,30 @@ SendMessage. Review with a fresh opus agent given only this plan and
      `__aenter__` (:225): add the same `env=` to the
      `self._proc = await asyncio.create_subprocess_exec(...)` call.
    - `providers/antigravity.py:58-62`: add the import; after
-     `logger = logging.getLogger(__name__)` (:62) define `_GEMINI_KEEP`.
+     `logger = logging.getLogger(__name__)` (:62) define `_GEMINI_KEEP`
+     (over 88 columns on one line: one name per line with a trailing comma).
      `:272-278`: add `env=child_env(keep=_GEMINI_KEEP)`, **no `extra`**.
    - `providers/antigravity_agentic.py:41`: delete `import os`. `:48-51`: add
      the import; `:50` becomes
      `from providers.antigravity import _GEMINI_KEEP, _emit_sunset_warning  # Issue #22`.
-     `:197` becomes
-     `env = child_env(keep=_GEMINI_KEEP, extra={"GEMINI_CLI_TRUST_WORKSPACE": "true"})`.
+     `:197` becomes (as `ruff format` wraps it):
+
+     ```python
+                 env = child_env(
+                     keep=_GEMINI_KEEP, extra={"GEMINI_CLI_TRUST_WORKSPACE": "true"}
+                 )
+     ```
+
      Keep `env=env,` at :204 and the comment at :187-196.
    - `providers/copilot_agentic.py:40`: delete `import os`. `:47-48`: add the
-     import. `:195` becomes
-     `env = child_env(keep=("COPILOT_GITHUB_TOKEN",), extra={"COPILOT_ALLOW_ALL": "true"})`.
+     import. `:195` becomes (as `ruff format` wraps it):
+
+     ```python
+                 env = child_env(
+                     keep=("COPILOT_GITHUB_TOKEN",), extra={"COPILOT_ALLOW_ALL": "true"}
+                 )
+     ```
+
      Keep the :194 comment and `env=env` at :202.
    Traps: F401 if `import os` stays (verified: :197 and :195 are the only
    uses). `test_gemini_trust_workspace.py:22-29` greps source for
@@ -211,17 +243,19 @@ SendMessage. Review with a fresh opus agent given only this plan and
 
 3. `providers/opencode_agentic.py` → verify by
    `cd tests && python -m pytest -q test_agent_cli_env.py test_opencode_provider.py`
-   GREEN.
+   GREEN and Tests item 5 (mypy on the test file) Success.
    - `:73-74`: add `from core.child_env import child_env`. Keep `import os`
      (:66, used at :228).
    - Between `_strip_opencode_prefix` (ends :182) and
      `class OpenCodeAgenticProvider` (:184): add `_opencode_keep` exactly as in
      D7, including the `ponytail:` comment.
    - `:326`: `env = os.environ.copy()` becomes
-     `env = child_env(keep=_opencode_keep(self._model))`. `:327`
+     `env: dict[str, str] = child_env(keep=_opencode_keep(self._model))`. `:327`
      `env.setdefault(_DISABLE_AUTOUPDATE_ENV_VAR, "1")` stays; XDG pre-warm
      unchanged. The spawn at :413-420 already passes `env=env` (built at :406).
    Traps: the Anthropic guard is required (keep overrides `_STRIP_VARS`).
+   Without the `dict[str, str]` annotation the mypy ratchet (Tests item 6)
+   regresses `opencode_agentic.py` 1 -> 4 (`no-any-return` x3).
    `self._model` already has `opencode:` stripped by the constructor. Two blank
    lines around the new top-level function (ruff format).
 
@@ -238,9 +272,10 @@ SendMessage. Review with a fresh opus agent given only this plan and
    first. On a rebase, regenerate the matrix rather than hand-merging.
 
 5. `CHANGELOG.md` under `## [Unreleased]`, commit, PR → verify by
-   `git diff dev --stat` showing only the 6 providers,
-   `tests/test_agent_cli_env.py`, `CHANGELOG.md` and (if drifted) the 2 matrix
-   files.
+   `git fetch origin && git diff --stat origin/dev...HEAD` showing only the
+   intent/spec/plan files, the 6 providers, `tests/test_agent_cli_env.py`,
+   `CHANGELOG.md` and (if drifted) the 2 matrix files. Not `git diff dev`:
+   the local `dev` branch is 33 commits behind `origin/dev`.
    - CHANGELOG: a Security entry for #1692 with the D18 notes. On conflict
      with another in-flight PR, keep both entries.
    - Commit: `fix(security): scrub env-borne credentials from non-Claude agent CLIs (#1692)`
@@ -272,10 +307,11 @@ Run with the backend venv on PATH, from the worktree root unless noted.
    → no per-file count rises.
 7. `grep -n -A8 create_subprocess_exec apps/backend/providers/{codex,codex_agentic,antigravity,antigravity_agentic,copilot_agentic,opencode_agentic}.py | grep -c "env="` → 6.
 8. `python scripts/gen_autonomy_matrix.py --check` → clean (or regenerated per step 4).
-9. `git diff dev | grep -nE "^\+.*(logger\.|print\()"` → no new lines.
+9. `git diff origin/dev...HEAD -- apps tests | grep -nE "^\+.*(logger\.|print\()"` → no new lines.
 
-Mutation checks (edit, run item 1, edit back; `git diff <file>` must then
-show only the planned change):
+Mutation checks (edit, run item 1 plus `test_opencode_provider.py` for M10,
+edit back; `git diff <file>` must then show only the planned change). All 14
+were run against the planned code and fail exactly as listed:
 
 | # | Mutation | Expected failures |
 |---|---|---|
@@ -288,11 +324,11 @@ show only the planned change):
 | M7 | copilot: filter out `GIT_CONFIG_*` | `[copilot_agentic]` (hooksPath) |
 | M8 | copilot: build env in `__init__` | `[copilot_agentic]` |
 | M9 | opencode: `env = os.environ.copy()` | both opencode rows |
-| M10 | opencode: delete the `setdefault` | both opencode rows + 1 in `test_opencode_provider.py` |
+| M10 | opencode: delete the `setdefault` | both opencode rows + 2 in `test_opencode_provider.py` (:316, :433) |
 | M11 | `_opencode_keep`: delete the ANTHROPIC guard | `[opencode_anthropic]`, keep `anthropic/x`, keep `anthropic-vertex/x` |
 | M12 | drop `.replace('-', '_')` | keep `x-y/m` |
 | M13 | google returns `(name,)` | keep `google/x` |
-| M14 | no-slash returns `(f"{model.upper()}_API_KEY",)` | keep `gpt-4o` |
+| M14 | no-slash returns `(f"{model.upper()}_API_KEY",)` | keep `""`, `gpt-4o`, `/m` |
 
 ## Rollback
 
