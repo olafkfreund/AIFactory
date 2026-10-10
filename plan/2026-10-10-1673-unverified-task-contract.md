@@ -540,3 +540,5 @@ check exit 0; the D2 diff prints nothing.
   truth-table row); the strict ratchet flagged it.
 - Step 2: the autonomy matrix is regenerated: the new `core.contract_trust`
   import changes the `server.services.pr_endgame` closure row.
+- Step 3: `_resolve_build_contract` returns `dict[str, Any] | None` and uses a
+  typed local (`held`) so mypy --strict does not regress `build_commands.py`.
