@@ -93,7 +93,14 @@ def stoppable(monkeypatch):
     async def _emit(*_a, **_k):
         return None
 
-    svc = SimpleNamespace(is_running=lambda _t: True, stop_task=_stop)
+    async def _running_anywhere(_t):
+        return True
+
+    svc = SimpleNamespace(
+        is_running=lambda _t: True,
+        is_running_anywhere=_running_anywhere,
+        stop_task=_stop,
+    )
     monkeypatch.setattr(execution, "get_agent_service", lambda: svc)
     monkeypatch.setattr(execution, "emit_task_status", _emit)
 

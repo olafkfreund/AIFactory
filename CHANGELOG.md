@@ -78,6 +78,14 @@
   volume dominates. Per-task `phaseModels` still overrides either, so a task
   that needs Opus to code can say so (RFC-0014 precedence, #1397).
 
+### Fixed
+
+- **A Kubernetes-Job build started by another web-server replica is now
+  seen as running (#1669).** Task status, the running badge, Stop and
+  Recover read the shared job-state store. A store read failure reads as
+  running, so Recover refuses rather than double-starting the build.
+  Start and plan approval are still pod-local; #1704 tracks them.
+
 ## 3.6.84 - 2026-09-23
 
 ### Fixed
