@@ -565,3 +565,7 @@ Manual checks (spec Verification, all six), on this checkout and in a pod:
 - Step 4: the six manual checks (live `/proc` environ, pod, `kill -9` and
   restart) need a running server and a real token; they are post-deploy
   checks.
+- Rebase onto dev with #1671: `lifespan` runs `sweep_github_dirs()` then
+  `github_app.start()`. `github_token()` reads `os.environ` per call, so
+  each call hands over the App token the refresh loop last wrote.
+- Step 5: follow-ups filed: #1723 (remaining children), #1724 (`/proc` window).
