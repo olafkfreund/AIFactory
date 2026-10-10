@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import sys
 from pathlib import Path
 from typing import Any
@@ -53,7 +54,9 @@ def _isolated_host(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AIFACTORY_TRUSTED_PLAN_KEY_PFACTORY__T1", KEY)
 
 
-def _plan(deployment: dict[str, Any] | None = None) -> dict[str, Any]:
+def _plan(
+    deployment: dict[str, Any] | None = None, review_tier: object = "auto"
+) -> dict[str, Any]:
     plan: dict[str, Any] = {
         "feature": "Contract tamper gate",
         "workflow_type": "feature",
@@ -76,6 +79,8 @@ def _plan(deployment: dict[str, Any] | None = None) -> dict[str, Any]:
     }
     if deployment is not None:
         plan["deployment"] = deployment
+    if review_tier is not None:
+        plan["execution"] = {"review_tier": review_tier}
     return plan
 
 
@@ -89,10 +94,14 @@ def _sign(plan: dict[str, Any]) -> dict[str, Any]:
 
 
 def _spec(
-    tmp_path: Path, deployment: dict[str, Any] | None = None, *, tier: str = "low"
+    tmp_path: Path,
+    deployment: dict[str, Any] | None = None,
+    *,
+    tier: str = "low",
+    review_tier: object = "auto",
 ) -> tuple[Path, dict[str, Any]]:
     """A spec dir written the way ``ingest_trusted_plan`` writes it."""
-    signed = _sign(_plan(deployment))
+    signed = _sign(_plan(deployment, review_tier=review_tier))
     spec = tmp_path / ".aifactory" / "specs" / "001-x"
     spec.mkdir(parents=True)
     result = ingest_trusted_plan(spec, signed)
@@ -328,3 +337,83 @@ def test_a_record_never_verifies_on_a_non_isolated_host(
         tmp_path, spec, "001-x", "dev", "auto", trusted=_rec(signed)
     )
     assert (tier, floor) == ("blocking", "blocking")
+
+
+def _warn(caplog: pytest.LogCaptureFixture, level: int = logging.WARNING) -> None:
+    caplog.set_level(level, logger=pe.logger.name)
+
+
+def test_21_forged_low_below_signed_blocking_holds(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    _warn(caplog)
+    spec, signed = _spec(tmp_path, review_tier="blocking")
+
+    assert pe.merge_disposition(spec, "low", trusted=_rec(signed)) == HOLD
+    assert "below signed" in caplog.text
+
+
+def test_22_human_approval_cannot_clear_signed_blocking(tmp_path: Path) -> None:
+    spec, signed = _spec(tmp_path, review_tier="blocking")
+
+    assert pe._clears_with_human_approval(spec, "auto", _rec(signed)) is False
+
+
+def test_23_forged_low_below_signed_async_holds_async(tmp_path: Path) -> None:
+    spec, signed = _spec(tmp_path, review_tier="async")
+
+    assert pe.merge_disposition(spec, "low", trusted=_rec(signed)) == "hold-async"
+
+
+def test_24_tier_above_signed_is_kept_without_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    _warn(caplog)
+    spec, signed = _spec(tmp_path, review_tier="auto")
+
+    assert pe.merge_disposition(spec, "blocking", trusted=_rec(signed)) == HOLD
+    assert "below signed" not in caplog.text
+
+
+def test_25_verified_contract_without_signed_tier_holds(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    _warn(caplog)
+    spec, signed = _spec(tmp_path, review_tier=None)
+
+    assert pe.merge_disposition(spec, "low", trusted=_rec(signed)) == HOLD
+    assert "no signed review_tier" in caplog.text
+
+
+@pytest.mark.parametrize("signed_tier", ["bogus", 1])
+def test_26_unusable_signed_tier_holds(tmp_path: Path, signed_tier: object) -> None:
+    spec, signed = _spec(tmp_path, review_tier=signed_tier)
+
+    assert pe.merge_disposition(spec, "low", trusted=_rec(signed)) == HOLD
+
+
+@pytest.mark.parametrize("tier", [None, ""])
+def test_27_blank_tier_takes_signed_auto(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, tier: str | None
+) -> None:
+    _warn(caplog)
+    spec, signed = _spec(tmp_path, review_tier="auto")
+
+    assert pe.merge_disposition(spec, tier, trusted=_rec(signed)) == "auto-merge"
+    assert "below signed" not in caplog.text
+
+
+def test_28_unrecognised_tier_not_raised_to_signed(tmp_path: Path) -> None:
+    spec, signed = _spec(tmp_path, review_tier="auto")
+
+    assert pe.merge_disposition(spec, "bogus", trusted=_rec(signed)) == HOLD
+
+
+def test_29_forged_tier_never_reaches_the_log(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    _warn(caplog, logging.DEBUG)
+    spec, signed = _spec(tmp_path, review_tier="auto")
+
+    assert pe.merge_disposition(spec, "auto\nFORGED", trusted=_rec(signed)) == HOLD
+    assert "FORGED" not in caplog.text
