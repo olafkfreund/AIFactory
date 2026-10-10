@@ -27,7 +27,9 @@ Why:
   (`CIDiscovery`, :96) parses `.github/workflows/*.yml` and keeps only test
   commands (`_extract_test_commands`, :356). It drops the lint steps. No
   production code calls `discover_ci` or `get_ci_test_commands`. The
-  planner prompts pass on `test_command` only (`prompts/planner.md:174`).
+  planner sees a linter only as a name: `conventions.linter` in the
+  project index (`prompts/planner.md:182`) and `required_commands`, which
+  only allowlists a binary (:286). No lint command reaches the gates.
 - **The trailing gates include no lint except npm's.** `detect_gates`
   (`agents/gate_runner.py:101`) has one lint gate, `npm run lint` (:135).
   Languages handled by descriptors get only their `unit` lane (:246).
@@ -80,12 +82,13 @@ an npm `lint` script.
 - Kubernetes: a lint gate uses the same runner as the existing gates and
   adds no PVC or volume. Completion status must come from on-disk state,
   because another replica reads it.
-- Today the trailing-gate path never raises (`coder.py:1403`), and the
+- Today the trailing-gate path never raises (`coder.py:1407`), and the
   autonomy matrix and PR endgame depend on that. Changing it changes their
   contract. The generated autonomy matrix may then need regenerating.
 - Consumers may parse the completion strings. Before rewording them, grep
   the web server and the CFactory and TFactory handoffs.
-- Overlap: #1673 (open PR) changes the completion path at `coder.py:1092`.
+- Overlap: #1673 (open PR #1712) changes `cli/build_commands.py` and
+  `deploy_scaffold`, which the completion path calls at `coder.py:1092`.
   #1620 changes the nix store and kube runner in `gate_runner.py`.
 
 ## Open questions
