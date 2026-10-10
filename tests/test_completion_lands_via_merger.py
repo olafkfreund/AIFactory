@@ -9,8 +9,11 @@ but never called fixes nothing.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -128,3 +131,56 @@ async def test_a_raising_merger_never_changes_the_outcome(tmp_path: Path) -> Non
     status = await _finish(spec_dir, tmp_path, completed=True, merger=merger)
 
     assert status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_fix_push_lfs_failure_returns_false(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1690: the PR-fix push uploads LFS objects first; a failed upload fails the fix."""
+    from server.services import pr_endgame
+
+    spec_dir = _make_spec(tmp_path, "011-lfs-fix", commits=["a1"])
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    end = AsyncMock()
+    ctx = {"worktree": str(wt), "branch": "b", "base": "main", "repo": "o/r"}
+    with (
+        patch.object(pr_endgame, "is_auto_pr_enabled", return_value=True),
+        patch.object(pr_endgame, "gather_pr_context", return_value=ctx),
+        patch.object(pr_endgame, "resolve_pr_reviewer", return_value="aifactory"),
+        patch.object(pr_endgame, "run_pr_endgame", end),
+    ):
+        await _finish(
+            spec_dir,
+            tmp_path,
+            completed=True,
+            merger=lambda *_a, **_k: {},
+        )
+    fix_fn = end.call_args.kwargs["fix_fn"]
+
+    real_which = shutil.which
+    monkeypatch.setattr(
+        "core.child_env.shutil.which",
+        lambda c, *a, **k: "/x/git-lfs" if c == "git-lfs" else real_which(c, *a, **k),
+    )
+    calls: list[list[str]] = []
+
+    def rec(argv: list[str], *_a: Any, **_k: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        if argv[:3] == ["git", "remote", "get-url"]:
+            return subprocess.CompletedProcess(argv, 0, "https://github.com/o/r\n", "")
+        if "--get-regexp" in argv:
+            return subprocess.CompletedProcess(argv, 1, "", "")
+        if "lfs" in argv and argv[argv.index("lfs") + 1] == "push":
+            return subprocess.CompletedProcess(argv, 2, "", "boom")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", rec)
+    with patch("qa.correction.apply_correction", new=AsyncMock()):
+        # fix_fn uses asyncio.run internally, so it needs a thread without a loop.
+        result = await asyncio.to_thread(fix_fn, [])
+
+    assert result is False
+    assert any("lfs" in c and c[c.index("lfs") + 1] == "push" for c in calls)
+    assert not any(c[:2] == ["git", "push"] for c in calls)

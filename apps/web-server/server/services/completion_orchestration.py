@@ -32,7 +32,6 @@ from server.services.review_redrive_service import (
     sync_spec_file_from_worktree,
     worktree_spec_dir,
 )
-from server.utils.subprocess_env import child_env, github_env
 
 from .task_control import write_control
 from .trusted_contract import handoff_contract
@@ -312,8 +311,7 @@ async def run_terminal_completion(
                         _fix_fn = None
                         _conflict_fixer = None
                         if _reviewer == "aifactory":
-                            import subprocess as _sp
-
+                            from . import pr_endgame  # noqa: PLC0415
                             from .pr_data_service import get_pr_data_service
                             from .pr_endgame import ReviewState
                             from .pr_review_service import get_pr_review_service
@@ -395,19 +393,15 @@ async def run_terminal_completion(
                                             correlation_key=f"pr-{prn}",
                                         )
                                     )
-                                    with github_env(child_env()) as env:
-                                        push = _sp.run(
-                                            ["git", "push", "origin", "HEAD"],
-                                            cwd=str(_wt),
-                                            capture_output=True,
-                                            text=True,
-                                            timeout=120,
-                                            env=env,
-                                        )
-                                    if push.returncode != 0:
+                                    push = pr_endgame.push_with_lfs(
+                                        ["git", "push", "origin", "HEAD"],
+                                        "HEAD",
+                                        str(_wt),
+                                    )
+                                    if not push.ok:
                                         logger.warning(
                                             "[pr-endgame] fix push failed: %s",
-                                            (push.stderr or "")[:200],
+                                            push.err[:200],
                                         )
                                         return False
                                     # Re-review the FIXED code and wait for the

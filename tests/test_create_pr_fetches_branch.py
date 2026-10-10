@@ -22,8 +22,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +34,9 @@ import pytest
 _WS = Path(__file__).resolve().parent.parent / "apps" / "web-server"
 if str(_WS) not in sys.path:
     sys.path.insert(0, str(_WS))
+_BACKEND = _WS.parent / "backend"
+if str(_BACKEND) not in sys.path:
+    sys.path.insert(0, str(_BACKEND))
 
 SPEC_ID = "039-roman-numeral-conversion-utili"
 PROJECT_ID = "502baac8-4816-42bb-bf2d-c54a38087302"
@@ -208,3 +213,163 @@ async def test_fetch_guard_is_a_no_op_when_the_branch_is_already_checked_out(
     assert status == 200, body.get("error")
     assert body["success"] is True, body.get("error")
     assert body["data"]["branch"] == TASK_BRANCH
+
+
+# -- explicit LFS upload before the ref push (#1690) --------------------------
+
+
+def _lfs_present(monkeypatch: pytest.MonkeyPatch) -> None:
+    real_which = shutil.which
+
+    def _which(cmd: str, *a: Any, **kw: Any) -> str | None:
+        return "/x/git-lfs" if cmd == "git-lfs" else real_which(cmd, *a, **kw)
+
+    monkeypatch.setattr("core.child_env.shutil.which", _which)
+
+
+def _record_git(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    check_rc: int | None = 1,
+    upload: Callable[[], subprocess.CompletedProcess[str]],
+) -> list[list[str]]:
+    """Fake get-url / config check / lfs push; pass everything else through."""
+    real = subprocess.run
+    calls: list[list[str]] = []
+
+    def rec(argv: Any, *a: Any, **kw: Any) -> Any:
+        if isinstance(argv, list):
+            calls.append(argv)
+            if argv[:3] == ["git", "remote", "get-url"]:
+                return subprocess.CompletedProcess(
+                    argv, 0, "https://github.com/acme/proj\n", ""
+                )
+            if "--get-regexp" in argv and check_rc is not None:
+                return subprocess.CompletedProcess(argv, check_rc, "", "")
+            if "lfs" in argv and argv[argv.index("lfs") + 1] == "push":
+                return upload()
+        return real(argv, *a, **kw)
+
+    monkeypatch.setattr(subprocess, "run", rec)
+    return calls
+
+
+def _is_push(c: list[str]) -> bool:
+    return c[:2] == ["git", "push"]
+
+
+def _is_upload(c: list[str]) -> bool:
+    return "lfs" in c and c[c.index("lfs") + 1] == "push"
+
+
+@pytest.mark.asyncio
+async def test_lfs_upload_failure_fails_create_pr(
+    packed_path_repos: dict[str, Path],
+    fake_gh: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_route(monkeypatch, packed_path_repos["projects_file"])
+    _lfs_present(monkeypatch)
+    calls = _record_git(
+        monkeypatch,
+        upload=lambda: subprocess.CompletedProcess([], 2, "", "boom"),
+    )
+
+    _status, body = await _call_create_pr()
+
+    assert body["success"] is False
+    assert "Failed to push LFS objects" in body["error"]
+    assert not any(_is_push(c) for c in calls)
+
+
+@pytest.mark.asyncio
+async def test_lfs_customtransfer_refuses_create_pr(
+    packed_path_repos: dict[str, Path],
+    fake_gh: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_route(monkeypatch, packed_path_repos["projects_file"])
+    _lfs_present(monkeypatch)
+    calls = _record_git(
+        monkeypatch,
+        check_rc=0,
+        upload=lambda: subprocess.CompletedProcess([], 0, "", ""),
+    )
+
+    _status, body = await _call_create_pr()
+
+    assert "LFS step refused" in body["error"]
+    assert not any(_is_upload(c) for c in calls)
+    assert not any(_is_push(c) for c in calls)
+
+
+@pytest.mark.asyncio
+async def test_lfs_runs_before_push(
+    packed_path_repos: dict[str, Path],
+    fake_gh: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_route(monkeypatch, packed_path_repos["projects_file"])
+    _lfs_present(monkeypatch)
+    calls = _record_git(
+        monkeypatch,
+        upload=lambda: subprocess.CompletedProcess([], 0, "", ""),
+    )
+
+    status, body = await _call_create_pr()
+
+    assert status == 200, body.get("error")
+    up = next(i for i, c in enumerate(calls) if _is_upload(c))
+    push = next(i for i, c in enumerate(calls) if _is_push(c))
+    assert up < push
+
+
+@pytest.mark.asyncio
+async def test_lfs_timeout_maps_to_push_timed_out(
+    packed_path_repos: dict[str, Path],
+    fake_gh: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_route(monkeypatch, packed_path_repos["projects_file"])
+    _lfs_present(monkeypatch)
+
+    def _timeout() -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired("git", 60)
+
+    calls = _record_git(monkeypatch, upload=_timeout)
+
+    _status, body = await _call_create_pr()
+
+    assert body["error"] == "Push timed out"
+    assert not any(_is_push(c) for c in calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", ["insteadOf", "pushInsteadOf"])
+async def test_lfs_url_rewrite_refuses_create_pr(
+    key: str,
+    packed_path_repos: dict[str, Path],
+    fake_gh: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # git-lfs applies url.*.insteadOf to the pinned lfs.url; the REAL config check
+    # (not faked here) must refuse before any upload.
+    _git(
+        packed_path_repos["worktree"],
+        "config",
+        f"url.ssh://evil.invalid/.{key}",
+        "https://github.com/acme/proj.git/",
+    )
+    _patch_route(monkeypatch, packed_path_repos["projects_file"])
+    _lfs_present(monkeypatch)
+    calls = _record_git(
+        monkeypatch,
+        check_rc=None,
+        upload=lambda: subprocess.CompletedProcess([], 0, "", ""),
+    )
+
+    _status, body = await _call_create_pr()
+
+    assert "LFS step refused" in body["error"]
+    assert not any(_is_upload(c) for c in calls)
+    assert not any(_is_push(c) for c in calls)

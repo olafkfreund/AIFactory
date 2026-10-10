@@ -50,8 +50,10 @@
   conflict commits. Agent runners make themselves non-dumpable before starting
   an agent. A test fails on any spawn site that passes the full environment.
   Children other than the agent runner also drop every `*_KEY` and `*_TOKEN`
-  name, and `KMS_*` keys are now scrubbed from agents too. Git LFS objects are
-  not uploaded on these pushes yet (#1690). Follow-ups: #1688 (token per call),
+  name, and `KMS_*` keys are now scrubbed from agents too. LFS objects are now
+  uploaded explicitly on the 4 server PR pushes where git-lfs is installed; a
+  failed upload fails the push. The build-Job push, the TFactory push and
+  git-lfs in the image are pending (#1721). Follow-ups: #1688 (token per call),
   #1689 (other `.git/config` command paths), #1692 (non-Claude agent env).
 - **Agent sessions no longer inherit six more host keys (#1674).**
   `APP_CFACTORY_READ_KEY`, `CONTEXT7_KEY`, `RAPIDAPI_KEY`, `LANGCHAIN_API_KEY`,
