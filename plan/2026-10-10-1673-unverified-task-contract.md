@@ -525,3 +525,11 @@ check exit 0; the D2 diff prints nothing.
 4. Partial rollback (only the migration stop misbehaves): revert the
    `build_commands.py` hunk and its tests; `contract_trust`, `deploy_scaffold`
    and the server side stay. Update this plan in the same commit.
+
+## Deviations
+
+- Step 1: added `test_build_held_migration_never_calls_agent_or_prepare`
+  (asserts the agent and `prepare` are never called on a held migration);
+  a stricter twin of `test_build_held_migration_exits_before_agent`.
+- Step 1: `test_extra_trusted_contract_survives_strip` is green on arrival
+  (`child_env` applies `extra` after the strip); kept as a regression guard.
