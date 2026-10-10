@@ -34,43 +34,29 @@ So no second record lookup is needed.
 
 ### Change 1: `apps/web-server/server/services/pr_endgame.py`, `merge_disposition` (:428-506)
 
-a) Add `raise_review_tier` to the existing lazy import (:455). If the import
-fails, the existing `ImportError` branch already holds.
+a) The existing lazy import of `decide_merge` (:461) also imports
+`raise_review_tier`. If that import fails, the existing `ImportError` branch
+already holds.
 
-```python
-from merge.merge_policy import decide_merge, raise_review_tier  # noqa: PLC0415
-```
+b) Inside the existing `try` (:483-493), right after `deployment` is read, a
+block that runs only when `state == "verified"`:
 
-b) Inside the existing `try` (:483-493), right after
-`deployment = contract.get("deployment")`:
-
-```python
-        if state == "verified":
-            # #1672: task_metadata.reviewTier is agent-writable. The signed
-            # execution.review_tier is the base; metadata / path floor may only raise it.
-            execution = contract.get("execution")
-            signed = execution.get("review_tier") if isinstance(execution, dict) else None
-            # ponytail: _TIER_LOG_LABEL keys == merge_policy._TIER_ALIASES keys, so
-            # "none"/"unrecognised" means decide_merge could not rank it either.
-            if _describe_tier(signed) in ("none", "unrecognised"):
-                logger.warning(
-                    "[pr-endgame] verified contract has no signed review_tier; "
-                    "auto-merge withheld"
-                )
-                return HOLD_BLOCKING_DISPOSITION
-            incoming = tier is not None and str(tier).strip()
-            if incoming and raise_review_tier(tier, signed) != tier:
-                logger.warning(
-                    "[pr-endgame] reviewTier %s below signed %s; deciding on signed",
-                    sanitize_log(_describe_tier(str(tier))),
-                    sanitize_log(_describe_tier(signed)),
-                )
-            # An unrecognised metadata tier is passed through so decide_merge
-            # holds it, as today. raise_review_tier would rank it -1 and return
-            # the signed tier, which could turn today's hold into an auto-merge.
-            if _describe_tier(str(effective)) != "unrecognised":
-                effective = raise_review_tier(signed, effective)
-```
+- Read the signed tier from `contract["execution"]["review_tier"]`, treating a
+  missing or non-dict `execution` as no tier.
+- If `_describe_tier(signed)` is `none` or `unrecognised`, log a constant
+  warning ("verified contract has no signed review_tier") and return
+  `HOLD_BLOCKING_DISPOSITION`. `_TIER_LOG_LABEL` has the same six keys as
+  `merge_policy._TIER_ALIASES`, so this is exactly the set `decide_merge`
+  cannot rank. A non-string signed tier makes `_describe_tier` raise, and the
+  existing `except` turns that into `unreadable` and HOLD.
+- If the incoming tier is non-blank and ranks below the signed tier, log one
+  warning ("reviewTier X below signed Y"), with both values passed through
+  `_describe_tier` and `sanitize_log`.
+- Unless the effective tier is unrecognised, set it to
+  `raise_review_tier(signed, effective)`. An unrecognised incoming tier is
+  passed through unchanged so `decide_merge` holds it, as today.
+  `raise_review_tier` would rank it -1 and return the signed tier, which could
+  turn today's hold into an auto-merge.
 
 Legacy and from-issue tasks (`state == "legacy"`) never enter the block, so
 their behaviour is unchanged.
@@ -107,7 +93,7 @@ Only constants from `_describe_tier` reach the log (py/log-injection).
 
 - `_plan` (:56-79) gains `review_tier: str | None = "auto"`. When the tier is
   set, it writes `plan["execution"] = {"review_tier": review_tier}`. `_spec`
-  (:91-104) passes it through. Test 16 (:214-217) then auto-merges on a signed
+  (:91-104) passes it through. Test 16 (:215-218) then auto-merges on a signed
   `auto`, as Q5 requires.
 - New tests, all on a verified record unless noted:
   - signed `blocking`, tier `low`: HOLD, and caplog shows the "below signed"
@@ -122,9 +108,24 @@ Only constants from `_describe_tier` reach the log (py/log-injection).
   - signed `auto`, tier `"bogus"`: HOLD (unchanged).
   - signed `auto`, tier `"auto\nFORGED"`: the text `FORGED` never appears in
     `caplog.text`.
-- Legacy tests 17a and 17b (:220-232) stay unchanged and must still pass.
+- Legacy tests 17a and 17b (:221-233) stay unchanged and must still pass.
 
 That is two files and about 20 lines of production code.
+
+### Intent outcomes this change does not meet
+
+The intent's first outcome also covers forged gate signals and a deleted
+handback receipt. Under Q1 this change leaves both to follow-ups:
+
+- **Gate signals.** Forging them cannot loosen the decision today, because
+  every unmeasured default already passes (`pr_endgame.py:377-387`).
+- **Handback receipt.** Deleting `handback_received.json`
+  (`pr_endgame.py:389-390`, `:406-407`) still removes a HOLD on a host where
+  the QA Fixer shares the control-plane spec dir. On kubejob it does not.
+  This stays open until the follow-up moves the receipt to the job-state DB.
+
+Approving this spec accepts that gap. The PR must say so and link the
+follow-up.
 
 ### Decisions on the intent's open questions
 
@@ -213,7 +214,7 @@ Each item is the default I chose. Please confirm or change it.
    `merge_disposition`, so a downgrade is logged twice. Accepted rather than
    adding dedupe state.
 5. **Rebase with #1691.** Only the `host_isolated()` lines next to this block
-   (:474-479) may conflict. The logic is independent (Q10).
+   (:475-481) may conflict. The logic is independent (Q10).
 6. **Autonomy matrix (#1962).** The merge-policy surface does not change,
    but CI's `--check` gate must still pass.
 7. **Hosts.** Only hosts with `AIFACTORY_AUTO_MERGE` on and `host_isolated()`
@@ -243,7 +244,7 @@ Done means:
 - the existing #1667, #1658 and #1663 tests, `test_merge_gate` and the
   autonomy-matrix `--check` gate pass;
 - the log-injection test passes and CodeQL `py/log-injection` stays clean;
-- mutation check: reverting the `effective = raise_review_tier(signed, effective)`
-  line makes the forged-tier test fail;
+- mutation check: removing the `raise_review_tier(signed, effective)` step
+  makes the forged-tier test fail;
 - the follow-up issues for Q1-Q3, Q6, Q8 (legacy) and Q11 (PR flag) are filed
   and linked in the PR.
