@@ -254,10 +254,10 @@ async def test_login_route_spawns_nothing_when_token_set() -> None:
 
     spawn = AsyncMock(side_effect=AssertionError("must not spawn"))
     with (
-        patch.object(github_routes.shutil, "which", return_value="/usr/bin/gh"),
-        patch.object(github_routes.asyncio, "create_subprocess_exec", spawn),
+        patch("server.routes.github.shutil.which", return_value="/usr/bin/gh"),
+        patch("server.routes.github.asyncio.create_subprocess_exec", spawn),
     ):
-        r = await github_routes.start_github_auth()
+        r = await github_routes.start_github_auth()  # type: ignore[no-untyped-call]
     assert r["data"]["success"] is True
     assert "GITHUB_TOKEN" in r["data"]["message"]
     spawn.assert_not_awaited()
@@ -274,6 +274,6 @@ def test_run_gh_command_fails_closed_when_tmp_unwritable() -> None:
 
     with (
         patch.object(tempfile, "mkdtemp", boom),
-        patch.object(gh.subprocess, "run", no_run),
+        patch("server.services.gh.subprocess.run", no_run),
     ):
         assert gh.run_gh_command(["pr", "list"])["success"] is False

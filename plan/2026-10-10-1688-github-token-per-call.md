@@ -554,3 +554,8 @@ Manual checks (spec Verification, all six), on this checkout and in a pod:
 - #1671 (PR #1706, GitHub App token in `GH_TOKEN`/`GITHUB_TOKEN`) was not on
   dev at step 1. When it lands, rebase and check that per-call handing covers
   the App token too.
+- Step 2: the `subprocess_env.py` re-export import is a parenthesised
+  multi-line import (too long for one line under `standards/ruff.toml`), with
+  `# noqa: E402` on its first line. The sweep call anchors on `lifespan`'s
+  `_make_non_dumpable()` (the plan's `main.py:104` matched two places).
+  Tests N and O patch by string path.

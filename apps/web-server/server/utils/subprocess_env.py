@@ -24,10 +24,23 @@ if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
 from core import child_env as _core  # noqa: E402 — needs sys.path above
+from core.git_credentials import (  # noqa: E402
+    github_env,
+    github_token,
+    sweep_github_dirs,
+)
 
 GITHUB_KEEP = _core.GITHUB_KEEP
 
-__all__ = ["GITHUB_KEEP", "RUNNER_KEEP", "child_env", "make_subprocess_env"]
+__all__ = [
+    "GITHUB_KEEP",
+    "RUNNER_KEEP",
+    "child_env",
+    "github_env",
+    "github_token",
+    "make_subprocess_env",
+    "sweep_github_dirs",
+]
 
 RUNNER_KEEP: tuple[str, ...] = (
     *GITHUB_KEEP,
