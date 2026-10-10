@@ -26,13 +26,15 @@ repo config, and the agent can still write that config:
   only `-c` and `--config-env`. `git config core.fsmonitor '<cmd>'`,
   `core.sshCommand` and `filter.x.smudge` all pass, even though
   `_is_dangerous_git_config` (`:31-48`) already lists those keys. Agent
-  Write/Edit (`core/client.py:741-763`) has no `.git/` guard, and shell
+  Write/Edit is allowed on the project tree (`core/client.py:741-763`) and
+  has no PreToolUse hook (`:1030-1038` match only Bash and web tools), and shell
   redirects into `.git/config` are not checked.
 - **Shared config.** A linked worktree's config is the main repo's
   `.git/config`. One task's write therefore reaches every task and every
   server git operation on that project.
-- **Unpinned path.** `core/worktree.py:_git_env()` (`:90-100`) copies the
-  full `os.environ` with no scrub and no pins. On the kubejob path the server
+- **Unpinned path.** `core/worktree.py:_git_env()` (`:90-100`) copies
+  `os.environ`, dropping only the git location vars (`GIT_DIR` and kin). It
+  has no secret scrub and no pins. On the kubejob path the server
   runs it in-process (`services/build_backend.py:1086-1089`). It is not in
   `tests/test_no_unscrubbed_spawn.py`.
 
