@@ -178,26 +178,33 @@ async def test_streamer_liveness_check_follows_the_same_set(
 
     # A build that has left the rows is no longer followed...
     gone = service._kubejob_still_active(OTHER)
-    import server.services.agent_kubejob as kj
-
-    monkeypatch.setattr(kj, "_DISPATCH_GRACE_SECONDS", 0.0)
     assert await gone() is False
     assert service.is_running(OTHER) is False
 
+    # Next tick: the row is gone. The SAME closure must now say False (D8).
+    class _EmptyStore:
+        async def get_active_kubejobs(self) -> list[dict[str, Any]]:
+            return []
+
+    monkeypatch.setattr(service, "_store", lambda: _EmptyStore())
+    await service.reconcile_kubejob_builds()
+    assert await active() is False
+    assert service.is_running(TASK) is False
+
 
 @pytest.mark.asyncio
-async def test_just_dispatched_build_counts_as_active(
+async def test_unmarked_id_reads_inactive_to_streamer(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The set is empty until the first tick; a fresh dispatch is not "dead".
+    """#1670: no time-based grace; both readers answer from the same set.
 
-    The streamer's first EOF arrives inside that window — it is exactly the
-    container-still-initialising case — so treating an unknown id as dead would
-    reproduce #1619 rather than fix it.
+    An id dispatch never marked is inactive for the streamer and for
+    ``is_running``; ``_MAX_EMPTY_REATTACHES`` is the backstop for a dead stream.
     """
     service = _service(monkeypatch, [], _StillRunningBackend())
-    active = service._kubejob_still_active("proj-uuid:999-never-polled")
-    assert await active() is True, "within the dispatch grace window"
+    unmarked = "proj-uuid:999-never-polled"
+    assert await service._kubejob_still_active(unmarked)() is False
+    assert service.is_running(unmarked) is False
 
 
 class _DispatchingBackend(_StillRunningBackend):
@@ -245,6 +252,7 @@ async def test_dispatched_build_is_running_before_any_tick(
     service = _dispatchable(monkeypatch, _DispatchingBackend(), rows=[])
     await _dispatch(service)
 
+    assert await service._kubejob_still_active(TASK)() is True
     assert service.is_running(TASK) is True
     with pytest.raises(HTTPException) as exc:
         await execution._refuse_recovery_while_running(TASK, service, force=False)
