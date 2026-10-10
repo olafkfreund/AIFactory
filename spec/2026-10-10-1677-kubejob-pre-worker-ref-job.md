@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1677
 intent: intent/2026-10-10-1677-kubejob-pre-worker-ref-job.md
 ---
