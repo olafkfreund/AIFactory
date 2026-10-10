@@ -33,11 +33,12 @@ cases mean LFS does not work for AIFactory-built branches in k8s.
 
 ## Proposed outcome
 
-- When a project uses LFS, every network push AIFactory makes uploads the
+- When a project uses LFS, the pushes in scope (open question 4) upload the
   LFS objects before the ref, so the pushed branch checks out cleanly.
-- If the upload fails, the push is reported as failed, not as success.
-- Repos without LFS behave exactly as today: no new subprocess, no new log
-  lines, no new failure modes.
+- A failed upload is never logged as a clean success; whether it fails the
+  push or only warns is open question 2.
+- Repos without LFS get the same push result as today and no new failure
+  modes (whether they pay an extra spawn is open question 5).
 - Hooks stay off.
 - `CHANGELOG.md:14` and the #1680 plan note no longer call this a known
   limit.
@@ -45,15 +46,20 @@ cases mean LFS does not work for AIFactory-built branches in k8s.
 ## Affected users and systems
 
 - Users whose projects track files with git-lfs.
-- The 7 network push sites, all on the `child_env()` env:
-  - `routes/pr.py:325-343`
-  - `services/completion_orchestration.py:404-411`
-  - `services/pr_endgame.py:581` and `:1148-1152`, through the injectable
-    `runner`
-  - `core/workspace_fetch.py:135-144`, in the build Job
-  - `pfactory/tfactory_client.py:395-406`, the TFactory build-branch push
-  - the runner env (`utils/subprocess_env.py:52-73`), which only matters
-    through the workspace_fetch push
+- The 6 network push sites, all on a `child_env()` env:
+  - web server, authenticated by the gh credential helper that
+    `gh auth setup-git` installs just before the push:
+    - `apps/web-server/server/routes/pr.py:325-343`
+    - `apps/web-server/server/services/completion_orchestration.py:404-411`
+    - `apps/web-server/server/services/pr_endgame.py:581` and `:1148-1152`,
+      through the injectable `runner`
+  - backend, authenticated by `authed_push_url` (askpass):
+    - `apps/backend/core/workspace_fetch.py:135-144`, in the build Job
+    - `apps/backend/pfactory/tfactory_client.py:395-406`, the TFactory
+      build-branch push
+- The runner env (`apps/web-server/server/utils/subprocess_env.py:56-73`,
+  `make_subprocess_env`), which carries hooks-off into `run.py` and the agent
+  in builds. It is not a push site itself.
 - `apps/backend/core/git_credentials.py` (askpass) and `child_env.py`.
 - The production image (`Dockerfile`), used by web-server replicas and
   build Job pods.
@@ -66,11 +72,12 @@ cases mean LFS does not work for AIFactory-built branches in k8s.
 - The repo is written by the agent, so it is untrusted. That covers
   `.gitattributes`, `.lfsconfig`, `lfs.url`/`lfs.pushurl`/`remote.*.lfsurl`,
   and `lfs.customtransfer.*` / `lfs.standalonetransferagent`. The askpass
-  script answers any host, so the token must never go to an LFS endpoint
-  other than the github.com remote `authed_push_url` checked, and no
-  agent-named program may run.
+  script answers any host, and the gh credential helper serves github.com,
+  so the token must never go to an LFS endpoint other than the github.com
+  remote the push already authenticates, and no agent-named program may run.
 - Every new spawn uses the scrubbed env of the push it belongs to. The
-  token goes through askpass, never argv (#1366). New spawns pass
+  token goes through the push's existing credential path (askpass or the gh
+  credential helper), never argv (#1366). New spawns pass
   `tests/test_no_unscrubbed_spawn.py`. No new `*_KEY`/`*_TOKEN` names reach
   children.
 - The git-lfs presence check never raises. A missing binary means skip.
@@ -96,7 +103,7 @@ cases mean LFS does not work for AIFactory-built branches in k8s.
 3. **LFS endpoint.** Allow only the github.com remote's own LFS endpoint and
    ignore `.lfsconfig`/`lfs.url`? Or honour a custom LFS server, which needs
    its own credential rule?
-4. **Scope.** All 7 push sites, including the TFactory build-branch push,
+4. **Scope.** All 6 push sites, including the TFactory build-branch push,
    or only the server-side PR pushes for now?
 5. **Trigger.** Run the upload when `.gitattributes` contains `filter=lfs`
    (the issue's proposal, which the agent controls)? Or always when git-lfs
