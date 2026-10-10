@@ -334,3 +334,4 @@ pushed: `git reset --hard HEAD~1` on the bump branch.
 - Step 2: mutant M1 (`$1` string replacer) fails tests (a), (b) and (d), not
   only (d): `$1` expands to the info head, so the output is wrong for any
   version.
+- Step 5: follow-up #1727 filed (package-lock.json, release.yml check, CI for test:scripts). E1-E4 run by the session model: all pass.
