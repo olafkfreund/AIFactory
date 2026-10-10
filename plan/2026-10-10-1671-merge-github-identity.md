@@ -595,3 +595,11 @@ The feature is off by default: no App vars means `start()` returns at once.
   `with_app_silent`, `no_human_gate_silent`); same three cases.
 - Step 1: `test_enabled_with_mcp_on_but_github_off_renders` only asserts the
   render succeeds; the App env assertion would fail until step 4.
+- Step 2: the ceiling comment wraps over three lines (single line hit E501).
+- Step 2: no `# noqa: BLE001` on `refresh_loop`'s `except Exception:` — ruff
+  does not flag a blind except that calls `logger.exception`, so the noqa
+  was unused (RUF100).
+- Step 2: `refresh_loop` breaks when `stop` is set after the wait, so a stop
+  does not trigger one more mint.
+- Step 2: a failed first mint resets `_key` to `None` before re-raising, so
+  `configured()` stays false (required by `test_mint_error_at_start_raises`).
