@@ -10,23 +10,30 @@ author: olafkfreund
 
 The cockpit token panel shows "not instrumented yet" for builds that did
 call a model. On dev (1c2df772) this is only partly fixed. The subprocess
-backend already reports spend at human_review (#740, #718), and it reports
-live spend while a build runs (#719, #1249). The kubejob backend still has
-these gaps:
+backend reports spend at human_review (#740, #718) and live spend while a
+build runs (#719). The kubejob backend reports live spend over the log
+stream (#1249), but its end-of-run reporting still has these gaps:
 
-- **Failed, reaped, timed-out and stopped builds send nothing.** The
-  `_on_kubejob_build_failed`, `reap_kubejob_builds`, `reap_abandoned_tasks`
-  and `_stop_kubejob_build` functions in `agent_kubejob.py` record "failed"
-  but never emit usage. Those tokens were really spent.
-- **Inside the Job, usage is never written for these builds.**
+- **Failed builds often send no usage.** The reaper's `_fail` and
+  `reap_abandoned_tasks` both reach `_update_plan_status(..., "failed")`,
+  which emits a `failed` completion event. But that event carries usage only
+  if a `token_usage.json` reached the control plane (see next point), and
+  `_update_plan_status` returns before the emit when the plan has no phases,
+  which is the case for a build that died before writing one.
+- **A stopped build sends nothing.** `_stop_kubejob_build` in
+  `agent_kubejob.py` marks the row failed and sends a task-status update,
+  but never emits a completion or usage event.
+- **Inside the Job, usage is never pushed for these builds.**
   `handle_build_command` exits with `sys.exit` on failure and on the review
-  pause (`build_commands.py`). That skips the `maybe_push_usage` block in
-  `cli/main.py`. On the packed path no `token_usage.json` reaches the control
-  plane, so a new emit would have nothing to send.
-- **A review pause is reported as completed.** A Job that parks for review
-  exits 0, and `_emit_kubejob_terminal_completion` always sends
+  pause (`build_commands.py`), and a crashed or killed Job never returns.
+  Both skip the `maybe_push_usage` block in `cli/main.py`. On the packed path
+  no `token_usage.json` reaches the control plane, so any emit has nothing
+  to send.
+- **A review pause is reported as completed or failed.** A Job that parks
+  for review exits 0, and `_emit_kubejob_terminal_completion` always sends
   `completed`, or `failed` if the evidence gate downgrades it. No kubejob
-  path sends `human_review`, and the event carries no usage.
+  path sends a `human_review` completion event, and on the packed path the
+  event carries no usage.
 - **Job-owned tasks skip the spec-creation snapshot.** The #1628 early
   return in `agent_service.py` (around line 374) runs before the review
   snapshot.
@@ -58,8 +65,8 @@ yet".
 
 ## Constraints
 
-- No TFactory handoff on failure. Failed and reaped paths send usage as a
-  snapshot (`emit_usage_snapshot`), never through `emit_terminal_completion`.
+- No TFactory handoff or PR endgame on a failed, reaped, stopped or
+  review-paused build.
 - Same event envelope and transport. No new endpoint, header or secret. The
   event stays backward-compatible with the deployed CFactory.
 - Emits are best-effort and never raise into the reconcile, reap or stop
@@ -84,8 +91,8 @@ yet".
 1. Scope: fix only the AIFactory kubejob gaps, or also open matching issues
    in TFactory (usage only on a terminal outcome) and CFactory ("no model
    called" vs "nothing reported yet")?
-2. Should reaped and abandoned builds report spend, or only builds that
-   actually failed?
+2. Should stopped, reaped and abandoned builds report spend too, or only
+   builds whose Job ran to a failure?
 3. Resumed builds: should a build that resumes after human_review re-send
    its final status and usage (relaxing or splitting the fire-once marker),
    or is that a separate issue?
