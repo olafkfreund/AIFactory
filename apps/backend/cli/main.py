@@ -503,23 +503,33 @@ def main() -> None:
         return
 
     # Normal build flow
-    handle_build_command(
-        project_dir=project_dir,
-        spec_dir=spec_dir,
-        model=model,  # type: ignore[arg-type]  # None-able by design (see model assignment above)
-        max_iterations=args.max_iterations,
-        verbose=args.verbose,
-        force_isolated=args.isolated,
-        force_direct=args.direct,
-        auto_continue=args.auto_continue,
-        skip_qa=args.skip_qa,
-        force_bypass_approval=args.force,
-        base_branch=args.base_branch,
-        stop_after_planning=args.stop_after_planning,
-        remote_control_session=args.remote_control,
-        parallel=args.parallel,
-        workers=args.workers,
-    )
+    from core import workspace_fetch  # noqa: PLC0415
+
+    try:
+        handle_build_command(
+            project_dir=project_dir,
+            spec_dir=spec_dir,
+            model=model,  # type: ignore[arg-type]  # None-able by design (see model assignment above)
+            max_iterations=args.max_iterations,
+            verbose=args.verbose,
+            force_isolated=args.isolated,
+            force_direct=args.direct,
+            auto_continue=args.auto_continue,
+            skip_qa=args.skip_qa,
+            force_bypass_approval=args.force,
+            base_branch=args.base_branch,
+            stop_after_planning=args.stop_after_planning,
+            remote_control_session=args.remote_control,
+            parallel=args.parallel,
+            workers=args.workers,
+        )
+    finally:
+        # #1633: spend is real whether the build succeeded, failed or exited via
+        # sys.exit, so the usage (and, for a build, the plan) is pushed on every
+        # exit. The helpers never raise, so the exit code is preserved.
+        workspace_fetch.maybe_push_usage(spec_dir, spec_dir.name)
+        if not args.stop_after_planning:
+            workspace_fetch.maybe_push_plan(spec_dir, spec_dir.name)
 
     # RFC-0017 #190 (producer push-back): on the packed multi-node path ``/work``
     # is an ephemeral emptyDir that dies with the Job, so persist the built branch
@@ -533,29 +543,17 @@ def main() -> None:
             gate_marker_spec_dir,
             maybe_push_gate_marker,
             maybe_push_memory,
-            maybe_push_plan,
             maybe_push_task_logs,
-            maybe_push_usage,
             maybe_push_workspace_branch,
         )
 
         maybe_push_workspace_branch(project_dir, spec_dir.name)
-        # #852: the same gap, for the file that decides whether the build is
-        # considered successful at all. The plan here records each subtask
-        # completed; the control plane counts them from the data-PVC copy the
-        # packed path never touches, sees 0, and escalates every green build to
-        # human_review (#287 guard on stale input).
-        maybe_push_plan(spec_dir, spec_dir.name)
         # #1038: the SAME gap, for the spec's memory/ tree. Session insights are
         # written into the Job's ephemeral /work and, without this, die with the
         # pod — which is why the fleet's memory never accumulated and why three
         # earlier fixes (#1031/#1036/#1037) all failed: each assumed /work was
         # durable. It is an emptyDir on the packed path (core/job_dispatch.py).
         maybe_push_memory(spec_dir, spec_dir.name)
-        # Same packed-path propagation gap: token_usage.json is written here in the
-        # Job's ephemeral /work but the control-plane completion emitter reads the
-        # data-PVC spec dir. Push it so CFactory gets the token usage (#190).
-        maybe_push_usage(spec_dir, spec_dir.name)
         # #1550: and the trailing-gate evidence marker, so the merger's PR body
         # and the QA guard on the control plane see the gates that ran here.
         maybe_push_gate_marker(

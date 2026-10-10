@@ -8,6 +8,7 @@ CLI commands for building specs and handling the main build flow.
 import asyncio
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -172,6 +173,31 @@ def build_is_silent_noop(spec_dir: Path, work_dir: Path | None = None) -> bool:
     except (OSError, json.JSONDecodeError):
         plan = {}
     return plan.get("status") != "human_review"
+
+
+def _record_preflight_pause(spec_dir: Path) -> None:
+    """Mark the plan ``human_review/plan_review`` so the control plane sees the pause (#1633).
+
+    Packed Jobs only: the plan is pushed on exit and the control plane reads the
+    status from it. Without a plan a ``{"phases": []}`` skeleton is written.
+    """
+    from core import workspace_fetch  # noqa: PLC0415
+
+    if not os.environ.get(workspace_fetch.WORKSPACE_URI_ENV):
+        return
+    plan_file = spec_dir / "implementation_plan.json"
+    try:
+        plan = json.loads(plan_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        plan = None
+    if not isinstance(plan, dict):
+        plan = {"phases": []}
+    plan["status"] = "human_review"
+    plan["reviewReason"] = "plan_review"
+    try:
+        plan_file.write_text(json.dumps(plan, indent=2), encoding="utf-8")
+    except OSError as exc:
+        logger.warning("could not record pre-flight pause: %s", type(exc).__name__)
 
 
 def _resolve_build_contract(spec_dir: Path) -> dict[str, Any] | None:
@@ -373,6 +399,7 @@ def handle_build_command(
             if auto_continue:
                 # Save review state indicating spec is waiting for approval
                 review_state.save(spec_dir)
+                _record_preflight_pause(spec_dir)
                 # Exit with success code - web UI will handle the human_review transition
                 sys.exit(0)
             else:
