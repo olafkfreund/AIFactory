@@ -11,10 +11,16 @@ Worktree `/mnt/code/Source-home/GitHub/AIFactory-1632`, branch
 `origin/dev` `c59a0ea6`). `apps/web-server/static/` is absent. There is no
 existing test for `scripts/generate-openapi-spec.py`.
 
-Six steps. Steps 1-4 edit four files, so under the model split they go to the
-`coder` agent: start it with this path and step 1, then send steps 2, 3 and 4
-to the same agent with `SendMessage`. Opus does step 0 and step 5, and the
-review runs on a fresh `opus` agent given only this file and `git diff`.
+Five steps. Files edited: the generator, `techdocs.yml` and `CHANGELOG.md`
+(`openapi.yaml` only if its bytes differ). Three files, so under the model
+split steps 1-3 go to the `coder` agent: start it with this path and step 1,
+then send steps 2 and 3 to the same agent with `SendMessage`. Opus does step 0
+and step 4, and the review runs on a fresh `opus` agent given only this file
+and `git diff`.
+
+No test file is added (spec Q4). The plan's earlier draft added
+`apps/web-server/tests/test_generate_openapi_spec.py`; that went beyond the
+approved spec and was removed.
 
 Tool paths used below (run everything from the worktree root):
 
@@ -58,9 +64,9 @@ Tool paths used below (run everything from the worktree root):
 9. **D9 No spec markers or `x-` tags for gated routes.** Nothing gated is emitted.
 10. **D10 No automated two-env spec-equality guard in this change.** The
     `ponytail:` comment names the fixed flag list as the known ceiling, and a
-    follow-up issue tracks the guard. The pin regression test in step 1 is
-    not that guard: it runs one environment with every flag on and checks
-    that no gated path leaks.
+    follow-up issue tracks the guard. Per spec Q4 ("No new test in this
+    change"), no test file is added at all: the fix is verified by the manual
+    matrix in step 2 and the mutation checks under Tests.
 11. **D11 #1631 and #1632 ship separately.** Whichever of them (or #1671)
     merges second regenerates `openapi.yaml`. Never hand-merge the yaml.
 12. **D12 Lowercase variants such as `app_rmux_enabled` are a known limit.**
@@ -110,174 +116,98 @@ and `techdocs.yml:152-160/193`.
 - `APP_RMUX_ENABLED` leaks through the `get_settings()` fallback even when
   `AIFACTORY_RMUX_ENABLED` is unset.
 - Under `LC_ALL=C PYTHONUTF8=0 PYTHONCOERCECLOCALE=0`, only the yaml write fails.
-- Routers mount when `server.main` is imported, so any test must use a fresh
-  interpreter.
+- Every generator run is a fresh interpreter, so each run sees its own env.
+- Under an ASCII locale the script's own final `print` (em dash in
+  `Wrote ... —`) raises after the yaml is written. Every ASCII-locale run
+  sets `PYTHONIOENCODING=utf-8`; the print is not in the spec, so it stays.
 
 ## Steps
 
+`F` below means the hostile flag set, all five exported as true:
+`F="SAML_ENABLED=true SCIM_ENABLED=true AIFACTORY_MCP_REMOTE_ENABLED=true AIFACTORY_RMUX_ENABLED=true APP_RMUX_ENABLED=true"`.
+The local `$V` venv has python3-saml, so SAML on imports cleanly (probe: 308).
+
 0. **Pre-fix count (Opus, manual, nothing committed; no file edited).**
-   - Run `APP_RMUX_ENABLED=true AIFACTORY_MCP_REMOTE_ENABLED=true APP_DISABLE_AUTH=true $V/python scripts/generate-openapi-spec.py`.
-   - Record the "N paths" figure for the PR. Expect more than 295.
+   - Run `env $F APP_DISABLE_AUTH=true $V/python scripts/generate-openapi-spec.py`.
+   - Record the "N paths" figure for the PR. Expect `308 paths` (verified in a scratch worktree).
    - Verify by `git diff --stat apps/web-server/openapi.yaml`, which shows the leak.
 
    Traps:
    - The run overwrites the committed `openapi.yaml`. Restore it right away with `git checkout -- apps/web-server/openapi.yaml`. Opus does this step because the coder cannot run `git checkout` or `git restore`.
-   - Leave SAML and SCIM unset, because the SAML import may raise if xmlsec is missing.
-   - Do not create `apps/web-server/.env`.
+   - Do not create `apps/web-server/.env` here.
 
-1. **`apps/web-server/tests/test_generate_openapi_spec.py` (new file): write the pin regression test first (red).**
-
-   ```python
-   """#1632: generate-openapi-spec.py pins feature flags off and writes UTF-8."""
-
-   from __future__ import annotations
-
-   import subprocess
-   import sys
-   from pathlib import Path
-
-   import pytest
-
-   from server.utils import subprocess_env
-
-   _SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "generate-openapi-spec.py"
-   _FLAGS = (
-       "SAML_ENABLED",
-       "SCIM_ENABLED",
-       "AIFACTORY_MCP_REMOTE_ENABLED",
-       "AIFACTORY_RMUX_ENABLED",
-       "APP_RMUX_ENABLED",
-   )
-   # Fresh interpreter: routers mount at server.main import, so a cached module would hide the flags.
-   _RUNNER = (
-       "import importlib.util, pathlib, sys\n"
-       "spec = importlib.util.spec_from_file_location('gen', sys.argv[1])\n"
-       "assert spec and spec.loader\n"
-       "m = importlib.util.module_from_spec(spec)\n"
-       "spec.loader.exec_module(m)\n"
-       "m.REPO = pathlib.Path(sys.argv[2])\n"
-       "m.OUT = m.REPO / 'openapi.yaml'\n"
-       "sys.exit(m.main())\n"
-   )
-
-
-   @pytest.fixture(scope="module")
-   def run(tmp_path_factory: pytest.TempPathFactory) -> tuple[subprocess.CompletedProcess[str], Path]:
-       out_dir = tmp_path_factory.mktemp("openapi")
-       (out_dir / ".env").write_text("".join(f"{name}=true\n" for name in _FLAGS))  # cwd .env (pydantic env_file)
-       env = subprocess_env.child_env(
-           extra={
-               **dict.fromkeys(_FLAGS, "true"),  # exported flags
-               "APP_DISABLE_AUTH": "true",
-               "LC_ALL": "C",  # ascii locale encoding ...
-               "PYTHONUTF8": "0",
-               "PYTHONCOERCECLOCALE": "0",  # ... not coerced to C.UTF-8
-               "PYTHONIOENCODING": "utf-8",  # the em-dash print() must not mask the file-encoding check
-               "PYTHONDONTWRITEBYTECODE": "1",
-           }
-       )
-       proc = subprocess.run(  # noqa: S603 — fixed argv, our own interpreter
-           [sys.executable, "-c", _RUNNER, str(_SCRIPT), str(out_dir)],
-           cwd=out_dir,
-           env=env,
-           capture_output=True,
-           text=True,
-           timeout=180,
-           check=False,
-       )
-       return proc, out_dir / "openapi.yaml"
-
-
-   def test_generator_writes_utf8_under_ascii_locale(run: tuple[subprocess.CompletedProcess[str], Path]) -> None:
-       proc, out = run
-       assert proc.returncode == 0, proc.stderr[-2000:]
-       assert "—" in out.read_text(encoding="utf-8")  # main.py:441 em dash: the check is not vacuous
-
-
-   def test_generator_pins_feature_flags_off(run: tuple[subprocess.CompletedProcess[str], Path]) -> None:
-       proc, out = run
-       assert proc.returncode == 0, proc.stderr[-2000:]
-       paths = [
-           ln[2:-1]
-           for ln in out.read_text(encoding="utf-8").splitlines()
-           if ln.startswith("  /") and ln.endswith(":")
-       ]
-       assert "/api/tasks/{task_id}/agent-console/sse" in paths  # parser anchor
-       leaked = [
-           p
-           for p in paths
-           if p.startswith(("/api/auth/saml", "/scim/v2", "/api/mcp-remote"))
-           or p.endswith(("/agent-console/attach", "/agent-console/detach"))
-       ]
-       assert leaked == []
-   ```
-
-   Verify by `cd apps/web-server && $V/python -m pytest tests/test_generate_openapi_spec.py -o asyncio_mode=auto -q -p no:cacheprovider`. Expect `2 failed`:
-   - one `UnicodeEncodeError` naming `'—'`;
-   - one listing the leaked saml, scim, mcp-remote and rmux paths.
-
-   Traps:
-   - The ratchet scope covers `apps/web-server/*.py`, including tests, so the file must be clean under strict ruff and `mypy --strict`.
-   - Do not `import yaml`: no `types-PyYAML` stubs are installed, which is why the test parses path keys from text.
-   - `subprocess.run` needs `# noqa: S603`, following `tests/test_server_non_dumpable.py:31`.
-   - Build the env with `subprocess_env.child_env` (`server/utils/subprocess_env.py:43`), imported as a module.
-   - Do not commit until step 2 is green. Commit steps 1 and 2 together.
-   - No count assertion (`== 295`): it breaks whenever a route is added.
-
-2. **`scripts/generate-openapi-spec.py`: make the pin and encoding changes (D2-D5).**
-   - **Lines 8-9:** after the Usage command line, add a docstring line: `Output is pinned to all feature flags off (independent of .env, exported flags and cwd); apps/web-server/static/ must not exist.`
+1. **`scripts/generate-openapi-spec.py`: make the pin and encoding changes (D2-D5).**
+   - **Lines 8-9:** after the Usage command line, add a blank line and the docstring text
+     `Output is pinned to all feature flags off (independent of .env, exported flags and cwd);`
+     `apps/web-server/static/ must not exist.` (two lines, under 100 columns).
    - **Line 14:** add `import os` above `import sys`.
-   - **Between 25 (`import yaml`) and 26 (`from server.main import app`):** insert an ASCII comment block.
-     - It cites #1632 and the reasons the pin wins: `env_bootstrap.py:27` uses setdefault, and pydantic `config.py:246-250` ranks process env above env_file.
-     - It lists the gates at `main.py:541/545`, `mcp_remote/__init__.py:50` and `rmux/integration.py:45-56`.
-     - Add the line `# ponytail: fixed flag list; a new env gate is missed until added here (follow-up: two-env spec-equality guard).`
-     - Then add:
-       ```python
-       os.environ.update(
-           dict.fromkeys(
-               ("SAML_ENABLED", "SCIM_ENABLED", "AIFACTORY_MCP_REMOTE_ENABLED", "AIFACTORY_RMUX_ENABLED", "APP_RMUX_ENABLED"),
-               "false",
-           )
-       )
-       ```
-       Let `ruff format` decide the wrapping.
+   - **Between 25 (`import yaml`) and 26 (`from server.main import app`):** insert, after a blank line, exactly this (already `ruff format`-clean; verified):
+     ```python
+         # Pin every env-gated router OFF so the spec is the default deployment's API,
+         # independent of .env, the shell, or the cwd (#1632). Direct assignment beats
+         # server/env_bootstrap.py:27's setdefault, and pydantic ranks process env above
+         # env_file (server/config.py:246-250). Gates: main.py:541/545 (SAML/SCIM),
+         # mcp_remote/__init__.py:50, rmux/integration.py:45-56.
+         # ponytail: fixed flag list; a new env gate is missed until added here
+         # (follow-up: two-env spec-equality guard).
+         os.environ.update(
+             dict.fromkeys(
+                 (
+                     "SAML_ENABLED",
+                     "SCIM_ENABLED",
+                     "AIFACTORY_MCP_REMOTE_ENABLED",
+                     "AIFACTORY_RMUX_ENABLED",
+                     "APP_RMUX_ENABLED",
+                 ),
+                 "false",
+             )
+         )
+     ```
    - **Line 29:** `with open(OUT, "w") as f:` becomes `with OUT.open("w", encoding="utf-8") as f:`.
 
    Verify:
-   - Re-run the step 1 pytest command. Expect `2 passed` in about 5 seconds.
-   - Run `env -u SAML_ENABLED $V/python -c "import importlib.util as u,os;s=u.spec_from_file_location('g','scripts/generate-openapi-spec.py');s.loader.exec_module(u.module_from_spec(s));assert 'SAML_ENABLED' not in os.environ"`. It exits 0, which shows import has no side effect (D3).
+   - `env $F APP_DISABLE_AUTH=true $V/python scripts/generate-openapi-spec.py` prints `295 paths`, and `git diff --exit-code apps/web-server/openapi.yaml` exits 0.
+   - `env -u SAML_ENABLED $V/python -c "import importlib.util as u,os;s=u.spec_from_file_location('g','scripts/generate-openapi-spec.py');s.loader.exec_module(u.module_from_spec(s));assert 'SAML_ENABLED' not in os.environ"` exits 0, which shows import has no side effect (D3).
+   - `$B/ruff format --check scripts/generate-openapi-spec.py` and `$B/ruff check scripts/generate-openapi-spec.py` exit 0.
+   - After `git add scripts/generate-openapi-spec.py`, both ratchets (Tests 2) exit 0: ruff reports `1 improved` (PTH123), mypy `1 unchanged`. Verified in a scratch worktree.
 
    Traps:
    - Assign directly. Do not use `setdefault` or `pop` (D2).
    - Keep the pin out of module top level (D3).
    - Leave the existing `# noqa: E402` alone, because touching it risks RUF100 churn.
-   - The ratchet compares staged counts. PTH123 drops by one, and no new finding (such as E501) may appear.
-   - Commit (with step 1): `fix(openapi): pin feature flags off in spec generator` with `#1632` in the body. The commit scope must not contain `#`.
-   - `git add` only the two paths, never `-A`.
+   - Do not one-line the tuple: it is 120+ columns and fails default `ruff format --check`.
+   - Keep the comment ASCII apart from what is already there; no logging is added (CodeQL).
+   - Commit: `fix(openapi): pin feature flags off in spec generator` with `#1632` in the body. The commit scope must not contain `#`. `git add` only this path, never `-A`.
 
-3. **`apps/web-server/openapi.yaml` (whole file): regenerate it and run the manual green matrix (D7, D15).** Each run must print `295 paths`, and `sha256sum apps/web-server/openapi.yaml` must give the same hash every time:
+2. **`apps/web-server/openapi.yaml` (whole file): regenerate it and run the manual green matrix (D7, D15).** Each run must print `295 paths`, and `sha256sum apps/web-server/openapi.yaml` must give the same hash every time:
    - (a) no `.env`, no flags: `APP_DISABLE_AUTH=true $V/python scripts/generate-openapi-spec.py`;
-   - (b) `cp apps/web-server/.env.example apps/web-server/.env`, set the five flags to true in it, and run with all five exported as true;
+   - (b) `cp apps/web-server/.env.example apps/web-server/.env`, append the five flags as `=true` to it, and run with `env $F` exported, from the worktree root and from `apps/web-server` (`../../scripts/generate-openapi-spec.py`);
    - (c) from another cwd: `cd /tmp && APP_DISABLE_AUTH=true $V/python <worktree>/scripts/generate-openapi-spec.py`;
-   - (d) under `LC_ALL=C PYTHONUTF8=0 PYTHONCOERCECLOCALE=0`.
+   - (d) `LC_ALL=C PYTHONUTF8=0 PYTHONCOERCECLOCALE=0 PYTHONIOENCODING=utf-8 APP_DISABLE_AUTH=true $V/python scripts/generate-openapi-spec.py`.
 
-   Verify by `git diff --exit-code apps/web-server/openapi.yaml`, which exits 0. Commit the file only if it differs.
+   Verify by `git diff --exit-code apps/web-server/openapi.yaml`, which exits 0. Commit the file only if it differs. Scratch-worktree result: all runs 295 paths, sha256 `f2572ca3…7145`, no diff.
 
    Traps:
-   - Delete `apps/web-server/.env` afterwards. `git status` must be clean apart from intended paths.
+   - (d) without `PYTHONIOENCODING=utf-8` exits 1 with `UnicodeEncodeError` from the final `print`, after the file is written. That is not a regression; keep the variable.
+   - Delete `apps/web-server/.env` afterwards (`rm`, the coder can do it). `git status` must be clean apart from intended paths.
    - Never create `apps/web-server/static/` (D13: 294 paths).
    - If bytes differ because #1631, #1671 or another merged spec change is in the base, run the CI-style regeneration (`/tmp/ws` venv, as in `techdocs.yml:162-165`) and commit that output. Never hand-edit the yaml (D11).
    - A local venv with a different pydantic can change bytes. If (a) differs from HEAD, compare against the `/tmp/ws` venv before concluding anything.
    - Do not test lowercase flag names (D12).
 
-4. **`.github/workflows/techdocs.yml`: add comments and hint text (D6).**
-   - **Lines 152-159**, the step-2 comment block above `- name: Regenerate OpenAPI spec` at 160: append `# The generator pins SAML_ENABLED, SCIM_ENABLED, AIFACTORY_MCP_REMOTE_ENABLED, AIFACTORY_RMUX_ENABLED and APP_RMUX_ENABLED to false, so the spec is the default deployment (#1632).` Wrap it over lines to match the block.
-   - **After line 193** (the generator `echo`), add `echo "  (output ignores .env and exported feature flags; apps/web-server/static/ must be absent)"`.
+3. **`.github/workflows/techdocs.yml`: add comments and hint text (D6).**
+   - **After line 159** (last line of the step-2 comment block, above `- name: Regenerate OpenAPI spec` at 160), append, in the block's `#    ` style:
+     ```yaml
+           #    The generator pins SAML_ENABLED, SCIM_ENABLED, AIFACTORY_MCP_REMOTE_ENABLED,
+           #    AIFACTORY_RMUX_ENABLED and APP_RMUX_ENABLED to false, so the spec is
+           #    the default deployment (#1632).
+     ```
+   - **After line 193** (the generator `echo`), add `          echo "  (output ignores .env and exported feature flags; apps/web-server/static/ must be absent)"`.
 
    Verify:
    - `$V/python -c "import yaml; yaml.safe_load(open('.github/workflows/techdocs.yml'))"` exits 0.
-   - `actionlint .github/workflows/techdocs.yml` gives no output, if actionlint is installed.
-   - `git diff .github/workflows/techdocs.yml` shows only `#` and `echo` lines.
+   - `actionlint .github/workflows/techdocs.yml` gives no output (installed at `/run/current-system/sw/bin/actionlint`).
+   - `git diff --stat .github/workflows/techdocs.yml` shows `4 insertions(+)` and nothing removed.
 
    Traps:
    - No `continue-on-error` (#906).
@@ -285,46 +215,46 @@ and `techdocs.yml:152-160/193`.
    - The `run:` logic stays unchanged.
    - Commit as `ci(techdocs): document the pinned OpenAPI flag set` with `#1632` in the body.
 
-5. **`CHANGELOG.md`, follow-ups and PR (Opus).**
-   - **CHANGELOG.md:** under `## [Unreleased]` (line 1), in a `### Fixed` section (create it if missing), add: `OpenAPI generator pins opt-in feature flags off, so apps/web-server/openapi.yaml no longer depends on .env or exported flags; output is written as UTF-8 (#1632).`
+4. **`CHANGELOG.md`, follow-ups and PR (Opus).**
+   - **CHANGELOG.md:** under `## [Unreleased]` (line 1), in a `### Fixed` section (create it after the existing `### Security` section if missing), add: `OpenAPI generator pins opt-in feature flags off, so apps/web-server/openapi.yaml no longer depends on .env or exported flags; output is written as UTF-8 (#1632).`
    - **Follow-up issues:** draft D14 (a), (b) and (c).
    - **PR to `dev`:**
      - link the intent, spec and plan;
-     - include the step 0 count and the step 3 sha256 matrix;
-     - say that the coder did steps 1-4.
+     - include the step 0 count and the step 2 sha256 matrix;
+     - say that the coder did steps 1-3.
 
-   Verify by `$B/python scripts/gen_autonomy_matrix.py --check`, which exits 0, and by the CI checks: ruff, the strict ratchets, CodeQL and techdocs refresh-and-validate.
+   Verify by `$B/python scripts/gen_autonomy_matrix.py --check`, which exits 0 (no cited file is touched; verified), and by the CI checks: ruff, the strict ratchets, CodeQL and techdocs refresh-and-validate.
 
    Traps:
    - CHANGELOG conflicts with #1631, #1633 and #1688-#1690 are expected. Keep both entries.
-   - If the autonomy matrix check fails after a rebase, regenerate the matrix and do not hand-merge it.
+   - If the autonomy matrix check fails after a rebase, regenerate it with `python scripts/gen_autonomy_matrix.py`, then `--check`; do not hand-merge it.
    - CodeQL: the change adds no logging. The existing print shows only title, version and path count.
    - None of the D8 files may appear in the diff.
 
 ## Tests
 
-From the worktree root:
+From the worktree root. No web-server code or test changes, so the web-server pytest suite is not a gate for this change.
 
-1. **New test:** `cd apps/web-server && $V/python -m pytest tests/test_generate_openapi_spec.py -o asyncio_mode=auto -q -p no:cacheprovider`. Expect `2 failed` before step 2 and `2 passed` after it.
-2. **Web-server suite:** `cd apps/web-server && $V/python -m pytest tests -o asyncio_mode=auto -q -p no:cacheprovider`. Expect 0 failed and base count + 2. Leave `tests/test_security.py` GitCommitValidator out of the gate, because it fails whenever files are staged (environmental). Unstage before running the suite.
-3. **Ruff:** `$B/ruff format --check apps/backend apps/web-server scripts tests` and `$B/ruff check apps/backend apps/web-server scripts tests`. Both exit 0.
-4. **Ratchets, after `git add` of the PR paths:**
-   - `$B/python scripts/cq_ratchet.py --staged --ruff $B/ruff --config standards/ruff.toml --paths 'apps/backend/*.py' 'apps/web-server/*.py' 'scripts/*.py'`
-   - `$B/python scripts/cq_ratchet.py --staged --tool mypy --mypy $B/mypy --config standards/mypy.ini --paths 'apps/backend/*.py' 'apps/web-server/*.py' 'scripts/*.py'`
+1. **Ruff (default, as CI):** `$B/ruff format --check apps/backend apps/web-server scripts tests` and `$B/ruff check apps/backend apps/web-server scripts tests`. Both exit 0.
+2. **Ratchets, after `git add` of the PR paths:**
+   - `$B/python scripts/cq_ratchet.py --staged --ruff "$B/ruff" --config standards/ruff.toml --paths 'apps/backend/*.py' 'apps/web-server/*.py' 'scripts/*.py'`
+   - `$B/python scripts/cq_ratchet.py --staged --tool mypy --mypy "$B/mypy" --config standards/mypy.ini --paths 'apps/backend/*.py' 'apps/web-server/*.py' 'scripts/*.py'`
 
-   Both exit 0. The generator's ruff count drops by one (PTH123), and the new test has 0 findings.
-5. **Workflow:** run the step 4 checks.
-6. **Regeneration:** the step 3 matrix (a)-(d) gives 295 paths and one sha256, and `git diff --exit-code apps/web-server/openapi.yaml` exits 0.
-7. **Autonomy matrix:** `$B/python scripts/gen_autonomy_matrix.py --check` exits 0.
-8. **Mutation checks**, against the step 1 pytest command. Edit `scripts/generate-openapi-spec.py`, run, then undo by editing. Afterwards `git diff` must show only the intended change.
-   - M1: drop `"APP_RMUX_ENABLED"` from the tuple. Expect `1 failed, 1 passed`, with the attach and detach paths leaked through the `get_settings()` fallback.
-   - M2: move the `os.environ.update` after `from server.main import app`. Expect `1 failed, 1 passed`, with all four groups leaked.
-   - M3: revert to `open(OUT, "w")`. Expect `2 failed`, with `UnicodeEncodeError` naming `'—'`.
-   - M4: change `"false"` to `"true"`. Expect `1 failed, 1 passed`, which shows the leak check is not vacuous.
+   Both exit 0. The generator's ruff count drops by one (PTH123).
+3. **Workflow:** run the step 3 checks.
+4. **Regeneration:** the step 2 matrix (a)-(d) gives 295 paths and one sha256, and `git diff --exit-code apps/web-server/openapi.yaml` exits 0.
+5. **Autonomy matrix:** `$B/python scripts/gen_autonomy_matrix.py --check` exits 0.
+6. **Mutation checks.** Edit `scripts/generate-openapi-spec.py`, run `env $F APP_DISABLE_AUTH=true PYTHONIOENCODING=utf-8 $V/python scripts/generate-openapi-spec.py`, then undo by re-editing and re-run step 2 (a) to restore `openapi.yaml` (295 paths, `git diff --exit-code` exits 0). All four were run in a scratch worktree with these results:
+   - M1: drop `"APP_RMUX_ENABLED",` from the tuple. Expect `297 paths` (attach/detach leak through the `get_settings()` fallback).
+   - M2: move the `os.environ.update(...)` block after `from server.main import app`. Expect `308 paths`.
+   - M3: revert to `open(OUT, "w")` and add `LC_ALL=C PYTHONUTF8=0 PYTHONCOERCECLOCALE=0` to the run. Expect `UnicodeEncodeError` naming `'—'` from `yaml.safe_dump`, exit 1.
+   - M4: change `"false",` to `"true",`. Expect `308 paths`.
+
+   Afterwards `git diff scripts/generate-openapi-spec.py` must show only the intended change.
 
 ## Rollback
 
 - **Before merge:** drop the branch commits.
-- **After merge:** `git revert <merge-sha>`. This restores the old generator and workflow text, removes the test and CHANGELOG entry, and restores `openapi.yaml` if it was committed.
+- **After merge:** `git revert <merge-sha>`. This restores the old generator and workflow text, removes the CHANGELOG entry, and restores `openapi.yaml` if it was committed.
 - **If techdocs goes red after a revert:** a local `.env` or exported flags can leak gated routes into the spec again. Regenerate in the CI `/tmp/ws` venv with no `.env` and no flags exported, then commit.
 - No runtime code, config, Helm or data changes, so nothing deployed needs undoing.
