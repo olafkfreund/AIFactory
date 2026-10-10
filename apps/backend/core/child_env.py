@@ -39,7 +39,8 @@ def child_env(
     Drops every host secret ``is_denied_env_key`` matches plus ``_STRIP_VARS``,
     and, unless ``runner``, every ``*_KEY``/``*_TOKEN`` name;
     restores the ``keep`` names that are set, applies ``extra``, and disables
-    git hooks via git env config (an existing ``GIT_CONFIG_*`` entry survives).
+    git hooks and fsmonitor via git env config. The pins are appended last (an
+    existing ``GIT_CONFIG_*`` entry keeps its lower index).
     Build it per call: ``os.environ`` changes at runtime.
     """
     env = {
@@ -58,5 +59,7 @@ def child_env(
         n = 0
     env[f"GIT_CONFIG_KEY_{n}"] = "core.hooksPath"
     env[f"GIT_CONFIG_VALUE_{n}"] = "/dev/null"
-    env["GIT_CONFIG_COUNT"] = str(n + 1)
+    env[f"GIT_CONFIG_KEY_{n + 1}"] = "core.fsmonitor"
+    env[f"GIT_CONFIG_VALUE_{n + 1}"] = "false"
+    env["GIT_CONFIG_COUNT"] = str(n + 2)
     return env

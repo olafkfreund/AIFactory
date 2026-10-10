@@ -213,9 +213,10 @@ def test_core_child_env_extra_count_appends_hooks_entry(
             "GIT_CONFIG_VALUE_0": "x",
         }
     )
-    assert env["GIT_CONFIG_COUNT"] == "2"
+    assert env["GIT_CONFIG_COUNT"] == "3"
     assert env["GIT_CONFIG_KEY_0"] == "credential.helper"
     assert env["GIT_CONFIG_KEY_1"] == "core.hooksPath"
+    assert env["GIT_CONFIG_KEY_2"] == "core.fsmonitor"
     assert env["GIT_CONFIG_VALUE_1"] == "/dev/null"
 
 

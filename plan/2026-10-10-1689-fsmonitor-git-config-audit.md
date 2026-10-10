@@ -536,3 +536,9 @@ reverted:
   `_git_env` breaks fetch auth in the kubejob, revert only the `worktree.py`
   change, its `_git_env` test and the `_BACKEND_FILES` entry. The Q1 pin
   stays for every other `child_env` caller.
+
+## Deviations
+
+- Step 2: `test_core_child_env_extra_count_appends_hooks_entry` also asserts
+  the pin layout; it now expects `GIT_CONFIG_COUNT == "3"` and
+  `KEY_2 == "core.fsmonitor"` (not listed in step 1).
