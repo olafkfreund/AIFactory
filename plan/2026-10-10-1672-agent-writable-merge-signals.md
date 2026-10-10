@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1672
 spec: spec/2026-10-10-1672-agent-writable-merge-signals.md
 ---
