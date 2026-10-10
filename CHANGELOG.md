@@ -24,8 +24,17 @@
 - **A `human-approval` system gate now clears only on a GitHub review (#1663).**
   The review must approve the head commit, come from someone other than the PR
   author, and not be a bot. A contract or `task_metadata.json` can no longer
-  mark its own gates satisfied. Until AIFactory has its own bot identity, every
-  such task merges by hand.
+  mark its own gates satisfied. Such tasks merge automatically when AIFactory
+  runs as a GitHub App (#1671) and by hand otherwise.
+- **AIFactory can open and merge its PRs as a GitHub App (#1671).** Set
+  `AIFACTORY_GITHUB_APP_ID`, `_INSTALLATION_ID` and `_PRIVATE_KEY` (Helm
+  `githubApp.*`). The server mints an installation token at boot, refreshes it
+  every 30 minutes and pops the key from its environment. The PR author is then
+  a bot, so a maintainer's approval of the head commit can clear the
+  `human-approval` gate. With the App on, the server refuses to start if a PAT is
+  in its environment or `gh` `hosts.yml`, and the chart refuses the MCP GitHub
+  PAT. Unconfigured installs are unchanged, and log a warning when a task waits
+  on a human approval. See `docs/docs/concepts/github-app.md`.
 - **The merge gate acts only on the contract PFactory signed (#1667).** The
   signed contract is now stored in the web server's database
   (`trusted_contracts`) at `/from-plan`, and the merge gate verifies it and the

@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -505,3 +507,36 @@ def test_a_contract_that_raises_on_read_holds_instead(
     assert (
         pe.merge_disposition(spec, "low", trusted=None) == pe.HOLD_BLOCKING_DISPOSITION
     )
+
+
+async def _watch_once(**kw: object) -> dict[str, Any]:
+    result: dict[str, Any] = await pe.watch_and_finish(
+        owner="o",
+        repo="r",
+        pr=7,
+        auto_merge=True,
+        review_fn=lambda: pe.ReviewState("changes_requested"),
+        poll_interval=0,
+        max_minutes=1,
+        **kw,
+    )
+    return result
+
+
+@pytest.mark.parametrize(
+    ("configured", "required", "warns"),
+    [(False, True, True), (True, True, False), (False, False, False)],
+    ids=["human_gate_without_app_warns", "with_app_silent", "no_human_gate_silent"],
+)
+async def test_human_gate_warning(
+    configured: bool,
+    required: bool,
+    warns: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(pe.github_app, "configured", lambda: configured)
+    with caplog.at_level(logging.WARNING, logger=pe.logger.name):
+        await _watch_once(human_approval_required=required)
+    hits = [r for r in caplog.records if "no GitHub App configured" in r.getMessage()]
+    assert len(hits) == (1 if warns else 0)
