@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1692
 spec: spec/2026-10-10-1692-non-claude-agent-env.md
 ---
