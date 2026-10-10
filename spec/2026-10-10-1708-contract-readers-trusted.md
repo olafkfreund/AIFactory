@@ -8,10 +8,17 @@ intent: intent/2026-10-10-1708-contract-readers-trusted.md
 
 ## Design
 
-This PR fixes the prompt readers and the TFactory default. The env-var
-blank moves to a follow-up issue (Q5 below). Production code changes in
-two files: `apps/backend/prompts_pkg/prompts.py` and
-`apps/backend/pfactory/tfactory_client.py`.
+This PR fixes the prompt readers, the TFactory default and the env-var
+blank. Production code changes in three files:
+`apps/backend/prompts_pkg/prompts.py`,
+`apps/backend/pfactory/tfactory_client.py` and `apps/backend/core/auth.py`.
+
+**Prerequisite.** #1716 (#1674) is already on dev (1deb7faa), so the
+`auth.py` constraint is met and Q5's own fold-in condition applies. This
+branch is 1 commit behind `origin/dev` and does not yet contain #1716;
+rebase it onto `origin/dev` before any code change. Line numbers for
+`auth.py` and `tests/test_agent_env_scrub.py` below are as on dev; all
+other line numbers are unchanged by #1716.
 
 ### Change 1: one trusted reader in `prompts_pkg/prompts.py`
 
@@ -45,6 +52,8 @@ def _load_contract(spec_dir: Path) -> dict[str, Any] | None:
     # ponytail: implementation_plan.json is never hashed, so it is read only
     # on a true legacy build: no server verdict and no trusted trace.
     if contract_trust.ENV in os.environ or contract_trust.has_trusted_trace(spec_dir):
+        logger.warning("[trusted-contract] contract prompt blocks withheld: %s",
+                       "implementation_plan.json is not verified")
         return None
     try:
         data = json.loads((spec_dir / "implementation_plan.json").read_text())
@@ -68,7 +77,9 @@ Without the guard, two holes stay open:
   text gets into the prompt.
 
 The guard matches the intent's definition of legacy: no env var and no
-trusted trace. The existing fallback tests set no env var and write no
+trusted trace. It logs a constant string, so the intent's "nothing is
+logged when a block is stripped" is fixed on this path too. Hole (a) is a
+`legacy` verdict, not `hold`, so the `hold` branch alone would not log it. The existing fallback tests set no env var and write no
 `approval`, so they stay green.
 
 **Coverage.** All four prompts that build these blocks go through the
@@ -87,6 +98,7 @@ three getters, so all four are covered by this one reader:
 | legacy, `task_contract.json` present | Same dict as today. |
 | legacy, no `task_contract.json`, no env, no trace | Same `implementation_plan.json` fallback as today. |
 | hold, including an empty env value or an exception | All three blocks are `""`, and one warning is logged per block. |
+| legacy/None with env set (`hold`) or a trusted trace (holes a, b) | All three blocks are `""`, and one constant warning is logged per block. |
 
 **Other edits in the same file:**
 
@@ -111,7 +123,23 @@ three getters, so all four are covered by this one reader:
 - **A caller that leaves out `contract`:** the call raises `TypeError`, and
   mypy flags it for typed code. It can no longer read the files silently.
 
-### Change 3: tests
+### Change 3: blank the verdict in the agent's own environment
+
+- Add `"AIFACTORY_TRUSTED_CONTRACT"` to `_AGENT_ENV_DENY_EXACT` in
+  `core/auth.py` (dev :118-159), after #1674's entries, with a one-line
+  comment naming #1708.
+- `get_agent_env_blanks()` (dev :175-193) then returns it as `""`
+  whenever it is set, for both SDK clients (`core/client.py:614`,
+  `core/simple_client.py:89`). A nested `run.py` in the agent's shell sees
+  an empty value, which reads as hold.
+- `is_denied_env_key` is also used by `core/child_env.py:48`. That file
+  already strips the name through `_STRIP_VARS` (:19) and applies `extra`
+  after filtering (:52-53), so the verdict `spawn_env` passes still
+  reaches `run.py`. `child_env.py` is not edited.
+- The `run.py` process itself keeps the real value: the blank applies only
+  to the SDK subprocess env, where the prompt readers do not run.
+
+### Change 4: tests
 
 **Prompt tests.** These go in `prompts_pkg/test_house_standards_prompt.py`
 and `prompts_pkg/test_deployment_prompt.py`. Both files are under the strict
@@ -153,11 +181,15 @@ ratchet, so every test is typed with `-> None`.
     `test_completion_lands_via_merger.py`, `audit/test_task_action_audit.py`
     and `test_handoff_tfactory_route.py`.
 
+**Env blank test.** Add `"AIFACTORY_TRUSTED_CONTRACT": "x"` to `SECRETS`
+in `tests/test_agent_env_scrub.py` (dev :25), so the existing loops assert
+it is blanked.
+
 **Changelog.** Add one entry under `[Unreleased]` in `CHANGELOG.md`.
 
 **Files left alone:**
 
-- `core/auth.py` and `core/client.py`
+- `core/client.py` and `core/simple_client.py`
 - `core/child_env.py`, which #1689 and #1690 edit
 - `trusted_plan.py`
 - `web-server/server/services/trusted_contract.py`
@@ -218,16 +250,12 @@ These are proposed defaults for the approver to accept or change.
     has to be regenerated, as it was for #1674.
 
 **Q5. Scope and order.**
-- **Proposed:** split the work.
-  - The prompt and TFactory readers ship now as the #1708 PR to dev.
-  - The env blank (Q4) moves to a follow-up issue that waits on #1716
-    (#1674).
-  - If #1716 merges before this PR is coded, fold the blank into this PR
-    instead. It is one line plus one test entry.
-- **Why:** `auth.py` is locked until #1674 merges, because #1674 edits
-  `_AGENT_ENV_DENY_EXACT` at :151-158. The owner said the blank is
-  hygiene and is not exploitable. The prompt reader is the live hole, so
-  it should not wait. The other runners stay with #1692.
+- **Proposed:** one PR to dev, rebased onto `origin/dev`, carrying all
+  three changes.
+- **Why:** the only reason to split was that `auth.py` was locked until
+  #1674 merged. #1716 merged on dev as 1deb7faa (its entries are at dev
+  `auth.py:151-158`), so that reason is gone and the blank is one line
+  plus one test entry. The other runners stay with #1692.
 
 ## Alternatives rejected
 
@@ -243,8 +271,8 @@ These are proposed defaults for the approver to accept or change.
 - **Cache the verdict (`lru_cache`).** Each call costs one file read and
   one hash, three times per prompt. There is no cache until profiling
   shows a need.
-- **Fold the env blank into this PR now.** `auth.py` belongs to #1674
-  (see Q5).
+- **Split the env blank into a follow-up issue.** #1674 has merged, so
+  a split adds a second PR and matrix regen for one line (see Q5).
 
 ## Risks
 
@@ -278,7 +306,7 @@ These are proposed defaults for the approver to accept or change.
 ## Verification
 
 - **Unit tests:**
-  - `pytest apps/backend/prompts_pkg apps/backend/pfactory tests/test_constitution_prompt.py tests/test_solo_mode.py tests/test_tfactory_auto_handoff.py tests/test_tfactory_handoff_gitinfo.py tests/test_subtask_queue_agreement.py tests/test_child_process_env.py tests/test_no_unscrubbed_spawn.py`,
+  - `pytest apps/backend/prompts_pkg apps/backend/pfactory tests/test_constitution_prompt.py tests/test_solo_mode.py tests/test_tfactory_auto_handoff.py tests/test_tfactory_handoff_gitinfo.py tests/test_subtask_queue_agreement.py tests/test_agent_env_scrub.py tests/test_child_process_env.py tests/test_no_unscrubbed_spawn.py`,
     plus the #1673 tests (grep for `contract_trust` under the test directories).
   - `cd apps/web-server && pytest -o asyncio_mode=auto tests/test_tenancy.py tests/test_trusted_contract_merge.py tests/test_handoff_tfactory_route.py`
 - **Mutation checks.** Apply each by editing, run the tests, then restore
@@ -289,6 +317,7 @@ These are proposed defaults for the approver to accept or change.
   | Remove the `state == "hold"` branch | the hold tests |
   | Remove the `ENV in os.environ or has_trusted_trace` guard | the hole (a) and (b) tests |
   | Restore the `= None` default | the TypeError test |
+  | Remove the new `_AGENT_ENV_DENY_EXACT` entry | `tests/test_agent_env_scrub.py` |
 
 - **Lint:** `ruff format --check` and `ruff check` on
   `apps/backend apps/web-server scripts tests`.
@@ -296,25 +325,25 @@ These are proposed defaults for the approver to accept or change.
   `python scripts/cq_ratchet.py --staged --ruff "$(command -v ruff)" --config standards/ruff.toml --paths 'apps/backend/*.py' 'apps/web-server/*.py' 'scripts/*.py'`,
   plus the `--tool mypy --mypy "$(command -v mypy)" --config standards/mypy.ini`
   variant.
-- **Autonomy matrix:** `python scripts/gen_autonomy_matrix.py --check`.
-  The matrix cites neither changed file, so regenerate it only if
-  `--check` reports drift.
+- **Autonomy matrix:** the matrix cites `core.auth:321`, and the new
+  entry shifts it, so regenerate with `python scripts/gen_autonomy_matrix.py`
+  and commit `docs/static/compliance/autonomy-matrix.json` and
+  `docs/docs/compliance/autonomy-matrix.md` with the `auth.py` change, as
+  #1716 did. Then
+  `python scripts/gen_autonomy_matrix.py --check` must pass.
 - **Known environmental failure:** `tests/test_security.py`
   GitCommitValidator fails while files are staged. This is not caused by
   the change.
 - **Commits and PR:** the commit scope may not contain `#` (for example,
   `fix(prompts): …`). The PR targets dev.
 
-**Plan size.** The plan has about five steps that edit files, across
-about 10 files, so it goes to the `coder` agent:
+**Plan size.** The plan has about six steps that edit files, across
+about 12 files, so it goes to the `coder` agent:
 
+0. Rebase onto `origin/dev` (no file edits).
 1. The `_load_contract` reader.
 2. The prompt tests.
 3. Make TFactory `contract` required, and add the TypeError test.
 4. Add `contract=None` at the 25 call sites.
-5. The CHANGELOG entry and the matrix `--check`.
-
-**Follow-up issue** (waits on #1716 / #1674): add
-`AIFACTORY_TRUSTED_CONTRACT` to `_AGENT_ENV_DENY_EXACT` in `core/auth.py`,
-add it to `SECRETS` in `tests/test_agent_env_scrub.py`, then regenerate
-the autonomy matrix.
+5. The `auth.py` blank, its `SECRETS` entry, and the matrix regen.
+6. The CHANGELOG entry and the matrix `--check`.
