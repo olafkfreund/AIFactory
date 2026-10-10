@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1689
 intent: intent/2026-10-10-1689-fsmonitor-git-config-audit.md
 ---
