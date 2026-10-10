@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1627
 intent: intent/2026-10-10-1627-coder-repo-lint-gate.md
 ---
