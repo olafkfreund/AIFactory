@@ -233,6 +233,29 @@ class TestAmbientGitEnv:
         assert env["GIT_AUTHOR_NAME"] == "Test User"
         assert "PATH" in env
 
+    def test_git_env_scrubs_secrets_and_pins_hooks_and_fsmonitor(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GIT_DIR", "/x")
+        monkeypatch.setenv("DATABASE_URL", "s")
+        monkeypatch.setenv("GH_TOKEN", "t")
+        monkeypatch.setenv("GIT_TERMINAL_PROMPT", "1")
+        for k in ("GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"):
+            monkeypatch.delenv(k, raising=False)
+
+        env = _git_env()
+
+        assert "GIT_DIR" not in env
+        assert "DATABASE_URL" not in env
+        assert env["GH_TOKEN"] == "t"
+        assert env["GIT_TERMINAL_PROMPT"] == "0"
+        pins = {
+            env[f"GIT_CONFIG_KEY_{i}"]: env[f"GIT_CONFIG_VALUE_{i}"]
+            for i in range(int(env["GIT_CONFIG_COUNT"]))
+        }
+        assert pins["core.hooksPath"] == "/dev/null"
+        assert pins["core.fsmonitor"] == "false"
+
 
 class TestCrossProcessLock:
     """Prove the lock holds across real OS processes, not just threads."""
