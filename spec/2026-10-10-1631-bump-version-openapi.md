@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1631
 intent: intent/2026-10-10-1631-bump-version-openapi.md
 ---
