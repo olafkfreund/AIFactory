@@ -145,6 +145,9 @@ are missing, even though the server already has the objects.
   under the repo root `tests/`.
 - **`completion_orchestration`:** the `.pr_endgame` lazy imports are at :221,
   :274 and :318.
+- **`pr_endgame.py` import of `subprocess_env`:** line 35, not 34.
+- **`child_env.py` stdlib imports:** lines 9-11 (`os`, `re`,
+  `collections.abc`); line 13 is `from core.auth import ...`.
 
 ## Common setup
 
@@ -215,6 +218,24 @@ Commit as `test(git): red tests for explicit LFS upload (#1690)`.
   - config check: `"--get-regexp" in argv`;
   - upload: `"lfs" in argv and argv[argv.index("lfs")+1] == "push"`;
   - push: `argv[:2] == ["git","push"]`.
+- **Every helper test except H1 forces the present case too.** H2's warning
+  assertion and H3/H4's argv need `which` patched to present, or they fail
+  on a host without git-lfs (CI). Only H1 patches it to None.
+- **Existing `FakeRunner`/`SeqRunner` route by substring.** The new routes
+  there use `"get-url"`, `"--get-regexp"` and `"lfs push"`, which are
+  unambiguous. Never add a bare `"push"` route: it matches `get-url --push`.
+- **`pr.py` imports `subprocess` inside the function (`pr.py:71`).**
+  `pr_routes.subprocess` does not exist. P1-P4 patch the stdlib attribute:
+  save `real = subprocess.run`, then
+  `monkeypatch.setattr(subprocess, "run", rec)`, where `rec` passes
+  everything it does not fake through to `real`. The completion test does
+  the same (the fix push goes through `pr_endgame._default_runner`, which
+  uses the module-level `subprocess`); there `rec` fakes every call it is
+  given, so nothing real runs against the tmp worktree.
+- **I1-I4 proxy env.** Also `monkeypatch.delenv` `NO_PROXY`, `no_proxy`,
+  `https_proxy` and `http_proxy` (raising=False), so a host proxy setting
+  cannot exempt github.com from the dead proxy and mask a network call in
+  I2.
 - **Root test imports.** Copy the `sys.path` inserts from
   `tests/test_completion_lands_via_merger.py:21-23`. Use module imports, one
   per line, each with `# noqa: E402`:
@@ -226,7 +247,7 @@ Commit as `test(git): red tests for explicit LFS upload (#1690)`.
 
 ### Step 2: helper and re-export
 
-**`apps/backend/core/child_env.py:9-13`** (stdlib imports)
+**`apps/backend/core/child_env.py:9-11`** (stdlib imports)
 
 - Add `import logging` and `import shutil` in alphabetical order.
 - Add `logger = logging.getLogger(__name__)` after the imports. Today the
@@ -259,8 +280,10 @@ python -m pytest tests/test_lfs_push.py -q -k "helper or pins or offline"
 python -m pytest tests/test_child_process_env.py -q
 ```
 
-The `-k` expression selects H1-H4, I1 and I2, which pass. Wrapper and site
-tests stay red. Then run L.
+The `-k` expression selects H1-H4, I1, I2 and also I4
+(`test_pins_alone_...` contains "pins"), which all pass: I4 needs only the
+helper and `_default_runner`. W1-W5 and I3 are not selected and stay red, as
+do the site tests. Then run L.
 
 **Traps:**
 
@@ -279,14 +302,16 @@ tests stay red. Then run L.
 
 ### Step 3: wrapper and the three pr_endgame/completion sites
 
-**`apps/web-server/server/services/pr_endgame.py:34`**
+**`apps/web-server/server/services/pr_endgame.py:35`**
 
 - Change it to
   `from server.utils.subprocess_env import GITHUB_KEEP, child_env, lfs_push_argv`.
 
 **`apps/web-server/server/services/pr_endgame.py`** (after `_default_runner`, lines 67-76)
 
-- Add `push_with_lfs(push_argv: list[str], ref: str, cwd: str, runner: Runner) -> CmdResult`:
+- Add `push_with_lfs(push_argv: list[str], ref: str, cwd: str, runner: Runner = _default_runner) -> CmdResult`
+  (the default is what `completion_orchestration` uses, so it never touches
+  the private name):
   1. Run `url = runner(["git","remote","get-url","--push","--all","origin"], cwd)`.
   2. Set `argv = lfs_push_argv(url.out.strip(), ref) if url.ok else None`.
      This is D10: on a failed get-url, the output is never parsed.
@@ -310,15 +335,25 @@ tests stay red. Then run L.
   `await asyncio.to_thread(push_with_lfs, ["git","push","--force-with-lease","origin","HEAD"], "HEAD", worktree, runner)`.
 - Lines 1153-1170 are unchanged, and they lead to `merge_conflict_unresolved`.
 
-**`apps/web-server/server/services/completion_orchestration.py:318`**
+**`apps/web-server/server/services/completion_orchestration.py:316`**
+(the line after `import subprocess as _sp`, which is blank)
 
-- Add a separate lazy import line:
-  `from .pr_endgame import _default_runner, push_with_lfs  # noqa: PLC0415`.
+- Add a module import line, before `from .pr_data_service import ...`:
+  `from . import pr_endgame  # noqa: PLC0415`.
+- Do not add names to the `from .pr_endgame import ReviewState` line at :318,
+  and do not add a second `from .pr_endgame import` line. Both were tried on
+  this checkout: a second line gives I001 under both the default config and
+  `standards/ruff.toml` (+1 I001, so the ratchet fails), and the merged
+  multi-name line gives I001 plus a `ruff format` diff under the default
+  config. `from . import pr_endgame` passes both configs and the ratchet.
 
 **`completion_orchestration.py:404-416`**
 
 - Replace the bare `_sp.run([... "push","origin","HEAD"] ...)` with
-  `push = push_with_lfs(["git","push","origin","HEAD"], "HEAD", str(_wt), _default_runner)`.
+  `push = pr_endgame.push_with_lfs(["git","push","origin","HEAD"], "HEAD", str(_wt))`
+  (the default runner is `_default_runner`: same 120s timeout and
+  `child_env(keep=GITHUB_KEEP)` as the bare call it replaces). Then run
+  `ruff format` on the file: the call wraps.
 - Change the check to `if not push.ok:`, and log `push.err[:200]`.
 - Keep `return False`.
 - Lines 398-403 (`gh auth setup-git`) are unchanged.
@@ -330,7 +365,8 @@ python -m pytest tests/test_lfs_push.py tests/test_pr_endgame_conflict_loop.py t
 cd apps/web-server && python -m pytest tests/test_pr_endgame.py -q -o asyncio_mode=auto
 ```
 
-Only the 4 P-tests in `test_create_pr_fetches_branch.py` stay red. Then run L.
+All pass. (The 4 P-tests in `test_create_pr_fetches_branch.py`, not run
+here, stay red until step 4.) Then run L.
 
 **Traps:**
 
@@ -340,6 +376,14 @@ Only the 4 P-tests in `test_create_pr_fetches_branch.py` stay red. Then run L.
 - **`.err` is already stripped by the runner.**
 - **The config check's rc 1 means "no match".** Write the condition as
   `rc != 1`, not `rc == 0`. Test W2b catches the mistake.
+- **mypy at :1148.** `watch_and_finish` takes `worktree: str | None`; it is
+  narrowed to `str` by `and worktree` in the enclosing `if`, which
+  `push_with_lfs(cwd: str)` relies on. Do not move the call out of that
+  block.
+- **Ratchet.** `push_with_lfs` spawns nothing itself, so it adds no
+  S603/PLW1510. Replacing the bare `_sp.run` push removes one PLW1510 and one
+  S607 from `completion_orchestration.py`; `_sp` is still used by
+  `gh auth setup-git`, so keep that import.
 - **Rebase overlap.** #1672 edits `pr_endgame.py`, so expect a rebase.
 
 ### Step 4: pr.py inline sequence
@@ -382,6 +426,13 @@ That gives 6 + 2 passed. Then run L.
   `apps/web-server/server/**/*.py`.
 - **The new spawns go inside the `try`.** P4 maps a timeout to
   "Push timed out".
+- **Ratchet (strict config).** The existing push at `pr.py:336` already
+  carries ASYNC221, S603 and PLW1510 under `standards/ruff.toml`. Each new
+  `subprocess.run` adds one of each, plus S607 when argv is a literal
+  `["git", ...]` list, and the per-rule ratchet fails. Copy the fetch call's
+  suppressions at `pr.py:305-306`: `# noqa: S603, ASYNC221, PLW1510` on the
+  `subprocess.run(` line and `# noqa: S607` on a literal argv line. The
+  `lfs_push_argv` spawn takes a variable, so it needs no S607.
 
 ### Step 5: docs, follow-up issue, plan update, PR
 
@@ -414,7 +465,11 @@ user OK).
 
 - links to the intent, spec and plan;
 - which steps the coder did;
-- the overlaps: #1671 (`child_env`) and #1672 (`pr_endgame`).
+- the overlaps: #1671 (`child_env.py` end and `subprocess_env.__all__`,
+  `RUNNER_KEEP`), #1672 (`pr_endgame.py`), and #1671/#1673
+  (`tests/test_child_process_env.py`, not edited here, but its count of 16
+  in the expected totals moves after their rebase). #1669/#1670
+  (`agent_kubejob.py`) do not touch any file here.
 
 → **Verify by:** the full Tests section, plus L.
 
