@@ -1886,3 +1886,8 @@ def test_ephemeral_storage_is_not_hand_written_as_a_request(
     resources = m["spec"]["template"]["spec"]["containers"][0]["resources"]
 
     assert set(resources) == {"limits"}
+
+
+def test_passthrough_never_carries_a_private_key() -> None:
+    """Build Jobs use an allowlist; the GitHub App key must never join it (#1671)."""
+    assert not any("PRIVATE_KEY" in v for v in bb._PASSTHROUGH_BUILD_ENV)

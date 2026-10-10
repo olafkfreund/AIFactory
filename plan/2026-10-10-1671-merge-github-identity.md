@@ -587,3 +587,11 @@ The feature is off by default: no App vars means `start()` returns at once.
    matrix, CHANGELOG, docs and the #1663 spec note revert with it. Then run
    `python scripts/gen_autonomy_matrix.py --check` and both pytest suites.
    No data migration: the token lives only in process env.
+
+## Deviations
+
+- Step 1: the three merge-gate warning tests are one parametrized
+  `test_human_gate_warning` (ids `human_gate_without_app_warns`,
+  `with_app_silent`, `no_human_gate_silent`); same three cases.
+- Step 1: `test_enabled_with_mcp_on_but_github_off_renders` only asserts the
+  render succeeds; the App env assertion would fail until step 4.

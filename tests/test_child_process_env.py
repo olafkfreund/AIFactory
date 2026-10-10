@@ -206,3 +206,15 @@ def test_credential_names_dropped_for_tools_kept_for_runner(
     assert runner["CLAUDE_CODE_OAUTH_TOKEN"] == "c"
     assert runner["CONTEXT7_KEY"] == "c"
     assert "DATABASE_URL" not in runner
+
+
+def test_github_app_private_key_never_reaches_a_child(
+    secret_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The App key is popped at boot; the deny pattern is the second layer (#1671)."""
+    name = "AIFACTORY_GITHUB_APP_PRIVATE_KEY"
+    monkeypatch.setenv(name, "-----BEGIN RSA PRIVATE KEY-----x")
+    assert name not in child_env()
+    assert name not in child_env(keep=GITHUB_KEEP)
+    assert name not in make_subprocess_env()
+    assert name not in make_subprocess_env(strip_anthropic_api_key=False)
