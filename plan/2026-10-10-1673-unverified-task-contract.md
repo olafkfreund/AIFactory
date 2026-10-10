@@ -542,3 +542,5 @@ check exit 0; the D2 diff prints nothing.
   import changes the `server.services.pr_endgame` closure row.
 - Step 3: `_resolve_build_contract` returns `dict[str, Any] | None` and uses a
   typed local (`held`) so mypy --strict does not regress `build_commands.py`.
+- Step 4: `ruff format` wraps `_STRIP_VARS` over several lines (the one-line
+  form exceeds 88 columns); the autonomy matrix check still passes.

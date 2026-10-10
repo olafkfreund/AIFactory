@@ -1234,6 +1234,10 @@ class AgentService(
         )
         await stamp_spawn(spec_dir, "sandbox-pidns" if pidns else "none")
 
+        from .trusted_contract import spawn_env  # noqa: PLC0415
+
+        env.update(await spawn_env(spec_dir))
+
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=slave_fd,
