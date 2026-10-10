@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1690
 intent: intent/2026-10-10-1690-lfs-push-hooks-off.md
 ---
