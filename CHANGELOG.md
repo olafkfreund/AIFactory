@@ -14,10 +14,12 @@
   build process no longer trusts it. The web server passes its verdict to
   `run.py` in `AIFACTORY_TRUSTED_CONTRACT` (a digest of the verified contract,
   or `hold`; unset means legacy). It is set by the server per spawn and
-  stripped from inherited environments. A held contract withholds the deploy
+  stripped from the environments the web server passes on (the agent's own
+  environment still carries it; #1708). A held contract withholds the deploy
   scaffold and stops a migration build with a non-zero exit; any other held
   contract builds normally without it. Migration builds stop on in-pod and
-  sandbox hosts until #1680 lands; held deploy scaffolds are withheld.
+  sandbox hosts until `host_isolated()` is revisited after #1680; held
+  deploy scaffolds are withheld.
 - **Processes the web server starts no longer inherit its secrets (#1680).**
   Every `git`, `gh`, runner and CLI child gets the server's environment minus
   the agent scrub set (`DATABASE_URL`, `JWT_SECRET`, API tokens, trusted-plan

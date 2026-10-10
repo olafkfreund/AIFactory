@@ -548,3 +548,7 @@ check exit 0; the D2 diff prints nothing.
   `apps/backend` (10 passed); from the repo root it fails collection.
 - Follow-ups filed: #1708 (sibling readers, D1), #1709 (task-status hold, D10),
   #1710 (kubejob integration, D11), #1711 (explicit legacy value).
+- Review note: the CHANGELOG now says the verdict is stripped from the
+  environments the web server passes on (the agent's own env still carries
+  it; added to #1708), and that migrations stop until `host_isolated()` is
+  revisited after #1680 (which has landed).
