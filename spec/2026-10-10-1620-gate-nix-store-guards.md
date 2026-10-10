@@ -13,11 +13,12 @@ the two gate paths, and the `nix_env.py` promise. Items 4 and 5 go to follow-up
 issues (see Q2, Q3 and Q5 below). The change does not add to the env surface,
 change mounts or touch the build path. Lines are as of `7fc66064`.
 
-### Proposed answers to the intent's open questions (defaults)
+### Proposed answers to the intent's open questions (defaults, not yet approved)
 
 1. **Guard (items 2-3).** Delete the gate-side exception. The packed call
-   passes the guarded value, so both gate paths apply `nix_in_image()`, as
-   `build_backend.py:664` does. Neither variable is added to
+   passes the guarded value, so both gate paths apply `nix_in_image()`.
+   The build path applies it on its packed path only (`build_backend.py:663-664`);
+   the gate's co-mount path already applies it, and this keeps that. Neither variable is added to
    `_PASSTHROUGH_BUILD_ENV` here. Forwarding both together goes into a follow-up
    issue after #1674 and #1692. Why: the exception's only rationale is the
    "bakes no language closures" claim (`gate_runner.py:499-501`), which the
@@ -26,7 +27,7 @@ change mounts or touch the build path. Lines are as of `7fc66064`.
 2. **Build store mount (item 4).** No code change here. File a follow-up to
    remove the unseeded `/nix/store` mount (`job_dispatch.py:554-562`), the
    self-check at `:912` and the tests at
-   `tests/test_build_backend_kubejob.py:128,178,1436-1490`. Reviving the PVC is
+   `tests/test_build_backend_kubejob.py:128,178,1412-1500`. Reviving the PVC is
    not proposed. The mount is opt-in (`build_backend.py:659`), so default
    installs never use it, and `#1677` touches the same test file.
 3. **Scope.** #1620 covers items 1-3 and closes when they merge. Item 4 goes to
@@ -60,15 +61,15 @@ change mounts or touch the build path. Lines are as of `7fc66064`.
      set, it logs "no warm Nix store PVC" while the packed Job mounts one. After
      the change the log matches both paths. The log lines themselves do not
      change.
-   - **:39-43 (timeout comment):** the budget is 600s and configurable. The
+   - **:40-45 (timeout comment):** the budget is 600s and configurable. The
      `-nix` image bakes swift, kotlin, gradle and openjdk-21. Why Swift hits the
      deadline is unknown (SPM fetching over git is a hypothesis); link the ops
      follow-up.
    - **:491-501:** keep the #197 and #253 rationale (:483-490). Replace the
      #1541 RWX, packed-path exception and "bakes no language closures"
      paragraphs with one short paragraph:
-     - both gate paths drop the PVC when `nix_in_image()` is true, matching
-       `build_backend`;
+     - both gate paths drop the PVC when `nix_in_image()` is true (the build
+       path drops it on its packed path only, `build_backend.py:663-664`);
      - inside the build Job neither variable is forwarded
        (`_PASSTHROUGH_BUILD_ENV`, `build_backend.py:259`), so the guard is
        inert there today;
@@ -80,7 +81,7 @@ change mounts or touch the build path. Lines are as of `7fc66064`.
    on the gate path the flag is off and no store PVC is set until the follow-up
    forwards both together. `:38-41` is already true and stays.
 3. **`tests/test_gate_runner_nix.py`**
-   - **:340-376:** rename to
+   - **:341-377:** rename to
      `test_packed_path_drops_the_warm_store_when_nix_in_image`. Rewrite the
      docstring to the measured facts. Assert `seen["nix_store_pvc"] is None`.
      Keep `assert "repo_pvc" not in seen`.
@@ -93,7 +94,7 @@ change mounts or touch the build path. Lines are as of `7fc66064`.
      Change it to "the budget must be raisable without a release" and keep the
      reload rationale.
    - Leave `:94`, `:109` and `test_co_mount_path_still_drops_the_warm_store`
-     (`:379`) as they are.
+     (`:380`) as they are.
 4. **`CHANGELOG.md`:** add one line under `[Unreleased]` / `### Fixed`. It says
    the packed gate path now honours `AIFACTORY_PACKED_NIX_IN_IMAGE` like the
    build path. It also says runtime does not change, because the build Job
@@ -106,7 +107,7 @@ Their numbers go into the rewritten comments.
 - **(a) Forward and mount:** forward both variables together through
   `_PASSTHROUGH_BUILD_ENV`, and remove the unseeded build `/nix/store` mount
   (`job_dispatch.py:554-562`, `:912`,
-  `tests/test_build_backend_kubejob.py:128,178,1436-1490`). Update the
+  `tests/test_build_backend_kubejob.py:128,178,1412-1500`). Update the
   `AIFACTORY_NIX_STORE_PVC` row in `docs/docs/environment-reference.md` there.
   This waits on #1674, #1673, #1692 and #1677.
 - **(b) Ops:** run a live Swift gate probe (Q5).
@@ -132,6 +133,9 @@ Their numbers go into the rewritten comments.
 
 ## Risks
 
+- **Default installs:** unchanged. With the flag off and no PVC set (the
+  defaults, `docs/docs/environment-reference.md:240,247`), both the guarded and
+  raw values are `None` on every path.
 - **Runtime:** none in the live cluster. Inside the build Job `nix_in_image()`
   is always False, so the guarded and raw values are the same. The behaviour
   changes only for a gate run outside the build Job with the flag on and a PVC
@@ -154,7 +158,7 @@ Their numbers go into the rewritten comments.
   2. Hard-code `nix_store_pvc=None` on the packed call: the new flag-off packed
      test fails.
   3. Restore both and confirm green.
-- `grep -n "bakes no\|cold-fetches\|configured_store_pvc" apps/backend tests/test_gate_runner_nix.py`
+- `grep -rn "bakes no\|cold-fetches\|configured_store_pvc" apps/backend tests/test_gate_runner_nix.py`
   returns nothing.
 - Default ruff: `ruff format --check` and `ruff check` on `apps/backend` and
   `tests`.
