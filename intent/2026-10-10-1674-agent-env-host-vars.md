@@ -12,8 +12,8 @@ The agent CLI inherits the whole host environment. The only filter is
 `get_agent_env_blanks()` (`apps/backend/core/auth.py:167`). It blanks a name
 only when `is_denied_env_key()` (`auth.py:162`) matches it, either in
 `_AGENT_ENV_DENY_EXACT` (`auth.py:118`) or in `_AGENT_ENV_DENY_PATTERN`
-(`auth.py:156`, `SECRET|PASSWORD|PRIVATE_KEY|CREDENTIAL|_KMS|PASSPHRASE|TRUSTED_PLAN_KEY`).
-The blanks are merged at `core/client.py:611` and `core/simple_client.py:83`.
+(`auth.py:156`, `SECRET|PASSWORD|PRIVATE_KEY|CREDENTIAL|(?:^|_)KMS|PASSPHRASE|TRUSTED_PLAN_KEY`).
+The blanks are merged at `core/client.py:614` and `core/simple_client.py:89`.
 
 The #1668 hotfix closed the plan key and `AIFACTORY_TOKEN`. Six names that the
 issue found in the production pod still match neither list, and a regex check
@@ -22,7 +22,7 @@ on this checkout confirms it:
 | Name in the pod | Read by | Reaches the agent |
 |---|---|---|
 | `APP_CFACTORY_READ_KEY` (pydantic `CFACTORY_READ_KEY`, `env_prefix="APP_"`) | web server only (`routes/search.py:38`, `:64`) | in-pod |
-| `CONTEXT7_KEY` | nothing; the context7 MCP reads `CONTEXT7_API_KEY` and gets no env (`client.py:852-856`) | in-pod |
+| `CONTEXT7_KEY` | nothing; the context7 MCP reads `CONTEXT7_API_KEY` and is given no explicit `env` (`client.py:855-859`) | in-pod |
 | `RAPIDAPI_KEY` | nothing | in-pod |
 | `LANGCHAIN_API_KEY` | nothing | in-pod |
 | `OPENAI_COMPATIBLE_API_KEY` | backend process (`phase_config.py:995`, `:1049`), `provider_health.py:20` | in-pod and kubejob |
@@ -34,7 +34,8 @@ model access through the OpenAI-compatible provider, and the S3 access key ID.
 The S3 secret half is already blanked, so the access key ID has the lowest
 impact of the six.
 
-#1668 said kubejob build Jobs were not exposed. That is wrong for two names:
+#1668 noted that kubejob build Jobs get an explicit env list without its two
+variables. That holds for those two, but not for two of the six here:
 `build_backend._PASSTHROUGH_BUILD_ENV` forwards `OPENAI_COMPATIBLE_API_KEY`
 (`build_backend.py:295`) and `S3_ACCESS_KEY` (`:318`) into the Job, and run.py
 there uses the same scrub. The gate Job is not affected, because
@@ -59,8 +60,6 @@ has had no S3 secret since #1691.
   `OPENAI_COMPATIBLE_API_KEY`, so OpenAI-compatible phases still work.
 - `tests/test_agent_env_scrub.py` covers all six names, and a test proves that
   the runner env still carries `OPENAI_COMPATIBLE_API_KEY`.
-- The #1668 claim that build Jobs are "not exposed" is corrected where it is
-  documented.
 
 ## Affected users and systems
 
