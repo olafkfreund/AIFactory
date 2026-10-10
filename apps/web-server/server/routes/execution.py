@@ -257,7 +257,7 @@ async def get_task_status(
 ):
     """Get execution status for a specific task."""
     agent_service = get_agent_service()
-    is_running = agent_service.is_running(task_id)
+    is_running = await agent_service.is_running_anywhere(task_id)
 
     return TaskExecutionStatus(
         task_id=task_id,
@@ -272,7 +272,7 @@ async def is_task_running(
 ):
     """Check if a specific task is currently running."""
     agent_service = get_agent_service()
-    is_running = agent_service.is_running(task_id)
+    is_running = await agent_service.is_running_anywhere(task_id)
 
     return {
         "task_id": task_id,
@@ -963,7 +963,7 @@ async def stop_task(
     """Stop a running task."""
     agent_service = get_agent_service()
 
-    if not agent_service.is_running(task_id):
+    if not await agent_service.is_running_anywhere(task_id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Task is not running",
@@ -988,7 +988,7 @@ async def stop_task(
     }
 
 
-def _refuse_recovery_while_running(
+async def _refuse_recovery_while_running(
     task_id: str, agent_service: Any, *, force: bool
 ) -> None:
     """409 when a build for ``task_id`` is still running and ``force`` is unset.
@@ -996,14 +996,14 @@ def _refuse_recovery_while_running(
     #1619: recovery resets the task record and never deletes the k8s Job, so
     recovering a live build leaves the Job writing against a reset task and,
     with autoRestart, can put a second Job on it. Reads the same
-    ``is_running`` the cockpit's card reads, so the refusal and the badge
+    ``is_running_anywhere`` the cockpit's card reads, so the refusal and the badge
     cannot disagree.
 
     A separate function rather than an inline branch: ``recover_task`` is
     already at the strict-ruff branch ceiling, and a guard that gets
     inlined-and-forgotten is how the badge and the refusal drift apart.
     """
-    if force or not agent_service.is_running(task_id):
+    if force or not await agent_service.is_running_anywhere(task_id):
         return
     raise HTTPException(
         status_code=status.HTTP_409_CONFLICT,
@@ -1071,7 +1071,7 @@ async def recover_task(
     # same task. The cockpit offered exactly this over healthy builds while
     # is_running() could not see them. Expressed against the same predicate the
     # card reads, so the refusal and the badge can never disagree.
-    _refuse_recovery_while_running(task_id, agent_service, force=request.force)
+    await _refuse_recovery_while_running(task_id, agent_service, force=request.force)
     if task_id in agent_service.running_tasks:
         try:
             proc = agent_service.running_tasks[task_id]
