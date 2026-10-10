@@ -20,7 +20,8 @@ unwraps `bash/sh -c`, `env`, `xargs` and `find -exec` (`:143-152`) for the
 allowlist. The fix makes that same walk also produce the validator input, so
 there is one unwrapping implementation and every caller goes through it.
 
-Three source files change. `git_validators.py` and `parser.py` do not change.
+Two source files change, plus tests and `CHANGELOG.md`. `git_validators.py`
+and `parser.py` do not change.
 
 ### 1. `apps/backend/security/ast_parser.py`
 
@@ -29,9 +30,9 @@ Three source files change. `git_validators.py` and `parser.py` do not change.
 
   ```python
   def _emit(words: list[Any], idx: int, depth: int,
-            acc: list[tuple[str, str, bool]], *, via_xargs: bool = False) -> None:
+            acc: list[tuple[str, str, bool]], *, dynamic_args: bool = False) -> None:
       tokens = [w.word for w in words]
-      acc.append((_basename(tokens[idx]), shlex.join(tokens[idx:]), via_xargs))
+      acc.append((_basename(tokens[idx]), shlex.join(tokens[idx:]), dynamic_args))
       # dispatch on the name: shells -> _unwrap_dash_c, env, xargs, find,
       # and new: command / exec / timeout -> _unwrap_prefix
   ```
@@ -42,10 +43,15 @@ Three source files change. `git_validators.py` and `parser.py` do not change.
   (`env timeout git`, `xargs env git`, `command exec git`, `find -exec env git`)
   are unwrapped with no extra code, and `_MAX_DEPTH` (`:55`, `:106-107`)
   bounds them.
-- `via_xargs` is passed as `True` by the xargs unwrapper and is passed down
-  unchanged by every unwrapper below it, including the `-c` payload. That
-  covers `xargs sh -c 'git "$@"' _`, where git gets its arguments from stdin
-  through the inner shell.
+- `dynamic_args` is passed as `True` by the xargs unwrapper and by the
+  `find -exec/-execdir/-ok/-okdir` unwrapper, and is passed down unchanged by
+  every unwrapper below them, including the `-c` payload. That covers
+  `xargs sh -c 'git "$@"' _`, where git gets its arguments from stdin through
+  the inner shell. find must set it too: its target's real arguments are the
+  matched paths, not the literal `{}`. Without it this design weakens
+  `find / -exec rm -rf {} +`, refused today only because the rm validator
+  reads the raw outer string and sees `/`; given the segment
+  `rm -rf {} +`, `validate_rm_command` returns `(True, '')` (checked here).
 - `_unwrap_dash_c` (`:155-167`) accepts any short-flag group that contains
   `c` (`-c`, `-lc`, `-ec`, `-xc`), not only the exact token `-c`. Today
   `bash -lc 'git -c core.fsmonitor=x status'` and `sh -ec 'nosuchbin'` emit
@@ -55,7 +61,7 @@ Three source files change. `git_validators.py` and `parser.py` do not change.
   (both the space and `=` forms). That flag runs its value as a command line
   and nothing parses it today (`env -S 'git -c core.fsmonitor=x status'` is
   allowed).
-- New `_unwrap_prefix(words, idx, depth, acc, *, via_xargs)` for `command`,
+- New `_unwrap_prefix(words, idx, depth, acc, *, dynamic_args)` for `command`,
   `exec` and `timeout`:
   - `command`: if `-v` or `-V` is among the leading options, return (lookup
     only, runs nothing). Skip `-p`.
@@ -66,7 +72,7 @@ Three source files change. `git_validators.py` and `parser.py` do not change.
     DURATION.
   - Then `_emit` the target.
 - New public `extract_command_segments_ast(cmd) -> list[tuple[str, str, bool]]`
-  (name, segment, via_xargs). `extract_commands_ast` keeps its signature and
+  (name, segment, dynamic_args). `extract_commands_ast` keeps its signature and
   returns `[n for n, _, _ in extract_command_segments_ast(cmd)]`, so
   `plan_commands.py:177`, `check_egress` and
   `tests/test_command_sandbox.py:129-151` keep working.
@@ -91,11 +97,11 @@ Three source files change. `git_validators.py` and `parser.py` do not change.
   `bash_security_hook` and `validate_command`. For each tuple whose name is
   in `VALIDATORS` (`validator_registry.py:33-54`): set the worktree root, run
   the validator on the segment, return its reason if it refuses. If it passes
-  and `via_xargs` is set, refuse with: "`xargs {name}` takes arguments from
-  stdin, which the {name} validator cannot check. Pass explicit arguments
-  instead (or use `find -delete`)."
-- This replaces the two duplicated validator loops (dev `:186-199` and
-  `:244-256`; #1689 `:189-200` and `:246-255`), so they cannot drift apart
+  and `dynamic_args` is set, refuse with: "`{name}` run by xargs or
+  find -exec takes arguments the {name} validator cannot check. Pass explicit
+  arguments instead (or use `find -delete`)."
+- This replaces the two duplicated validator loops (dev `:187-199` and
+  `:245-256`; #1689 `:189-200` and `:246-255`), so they cannot drift apart
   again.
 - No logging is added. Reasons are returned only.
 
@@ -103,7 +109,7 @@ Three source files change. `git_validators.py` and `parser.py` do not change.
 
 - `tests/test_command_sandbox.py`: parametrized rows asserting the reason
   substring, not just `False` (listed under Verification). One unit test of
-  the `extract_command_segments_ast` tuples, including `via_xargs` through
+  the `extract_command_segments_ast` tuples, including `dynamic_args` through
   `xargs sh -c`. One fallback test that monkeypatches
   `security.hooks.is_available` to `False`.
 - `CHANGELOG.md`: one entry under `[Unreleased]`.
@@ -124,7 +130,8 @@ Proposed defaults; the approver may change any of them.
    (`grep`, `wc`, `sed`) pass. Refusing every xargs would break
    `find … | xargs grep`, which the intent says must pass. Known cost:
    `find … | xargs rm` is refused. That is stricter, never weaker, and closes
-   the same escape for the #364 rm path check.
+   the same escape for the #364 rm path check. `find -exec <validated cmd>`
+   gets the same rule, for the same reason (see Design, `dynamic_args`).
 3. **Prefixes.** Unwrap `command`, `exec` and `timeout`. `timeout` is
    base-allowlisted (`project/command_registry/base.py:67`) and is a live
    bypass: `timeout 5 git -c core.fsmonitor=x status` returns `(True, '')`.
@@ -157,7 +164,7 @@ Proposed defaults; the approver may change any of them.
 - **Unwrap inside each validator.** Fifteen places to get it wrong.
 - **Refuse every `xargs`.** Breaks `find | xargs grep`.
 - **Put the `VALIDATORS` lookup in `ast_parser`.** Makes the parser depend on
-  policy. The parser only records `via_xargs`; `hooks.py` decides.
+  policy. The parser only records `dynamic_args`; `hooks.py` decides.
 - **Parse the `env -S` value recursively.** Refusing it is fail-closed and
   smaller; no agent run is known to need it.
 - **Skip the values of `env -u` / `-C`.** Today `env -u FOO git status`
@@ -189,7 +196,10 @@ Proposed defaults; the approver may change any of them.
   so re-quoting is correct. `git commit -m '$(x)'` still passes.
 - **Grouped-flag heuristic.** `bash script.sh -c x` is treated as a payload.
   Stricter, acceptable.
-- **`find … | xargs rm` and `xargs git …` are refused** (Q2).
+- **`find … | xargs rm`, `xargs git …` and `find … -exec <validated cmd>`
+  are refused** (Q2). `find . -name '*.pyc' -exec rm {} ;` and
+  `find . -exec git add {} +` pass today and will be refused; `find -delete`
+  is the replacement for the first.
 - **The fallback refuses `xargs grep`** (Q4). Only reachable without bashlex.
 - **Rebase onto #1689.** Conflicts are certain at the two validator loops
   and in `CHANGELOG.md`. Take #1689's version, then replace both loops with
@@ -210,7 +220,7 @@ Proposed defaults; the approver may change any of them.
   | `bash -c 'git --upload-pack=/tmp/evil ls-remote x'` | `--upload-pack` |
   | `sh -c 'git --upload-pack=/tmp/evil ls-remote x'` | `--upload-pack` |
   | `bash -c 'git --config-env=core.fsmonitor=FOO status'` | `core.fsmonitor` |
-  | `echo core.fsmonitor x \| xargs git config` | `xargs git` |
+  | `echo core.fsmonitor x \| xargs git config` | `git` run by xargs |
   | `bash -c 'git -c core.fsmonitor=x status'` | `core.fsmonitor` (not `-c bash`) |
   | `bash -c "bash -c 'git -c core.fsmonitor=x status'"` | `core.fsmonitor` |
   | `bash -lc 'git -c core.fsmonitor=x status'` | `core.fsmonitor` |
@@ -219,10 +229,13 @@ Proposed defaults; the approver may change any of them.
   | `env timeout 5 git -c core.fsmonitor=x status` | `core.fsmonitor` |
   | `command exec git -c core.fsmonitor=x status` | `core.fsmonitor` |
   | `xargs git -c core.fsmonitor=x status` | `core.fsmonitor` |
-  | `echo a \| xargs sh -c 'git "$@"' _` | `xargs git` |
+  | `echo a \| xargs sh -c 'git "$@"' _` | `git` run by xargs |
   | `env -S 'git -c core.fsmonitor=x status'` | refused (unparseable) |
   | `command rm -rf /` | the rm reason |
-  | `find . \| xargs rm` | `xargs rm` |
+  | `find . \| xargs rm` | `rm` run by xargs |
+  | `find / -exec rm -rf {} +` | `rm` run by xargs or find -exec |
+  | `find . -name '*.pyc' -exec rm {} ;` | `rm` run by xargs or find -exec |
+  | `find /etc -exec chmod 777 {} +` | `chmod` run by xargs or find -exec |
 
 - **Must stay refused:** `env git -c core.fsmonitor=x status`,
   `find . -exec git -c core.fsmonitor=x status {} ;`, `bash -c "$V"`.
@@ -230,14 +243,15 @@ Proposed defaults; the approver may change any of them.
   `bash -c 'ls && git status'`, `bash -lc 'git status'`, `exec git status`,
   `timeout 60 git status`, `env FOO=1 git status`,
   `bash -c 'npm test'` with a profile that allows npm,
+  `find . -name '*.pyc' -delete`, `find . -name '*.py' -exec grep -l foo {} +`,
   `git commit -m '...$(x)'`.
 - **Fallback:** with `security.hooks.is_available` patched to `False`, each
   wrapper above is refused; `git status && ls` and `command -v git` pass.
 - **Unit:** exact tuples from `extract_command_segments_ast`, including
-  `via_xargs` propagation through `xargs sh -c`.
+  `dynamic_args` propagation through `xargs sh -c` and set by `find -exec`.
 - **Mutation checks** (by editing, since the coder cannot stash, checkout or
   restore): disable in turn the `_unwrap_prefix` dispatch, the `-c` group
-  match, the `env -S` refusal, the `via_xargs` refusal and the
+  match, the `env -S` refusal, the `dynamic_args` refusal and the
   `command -v` skip; confirm the matching test fails; re-edit to restore.
 - **Suites:** `pytest tests/test_command_sandbox.py tests/test_sandbox_escape_corpus.py tests/test_security.py`
   plus the plan-command tests. Prototype of the minimal core: 205 passed,
@@ -248,14 +262,14 @@ Proposed defaults; the approver may change any of them.
   `python scripts/cq_ratchet.py --staged --ruff "$(command -v ruff)" --config standards/ruff.toml --paths 'apps/backend/*.py' 'apps/web-server/*.py' 'scripts/*.py'`
   and the same with `--tool mypy --mypy "$(command -v mypy)" --config standards/mypy.ini`.
   New functions fully annotated (`list[Any]` for bashlex nodes, keyword-only
-  `via_xargs`), module import for `shlex`, no aliased multi-name imports.
+  `dynamic_args`), module import for `shlex`, no aliased multi-name imports.
 - **Autonomy matrix:** neither file is cited today; run
   `python scripts/gen_autonomy_matrix.py --check` after the rebase anyway.
 - **CI:** `security-lint.yml`, `security-cleanup-gates.yml` and CodeQL stay
   green. No subprocess spawns are added (`test_no_unscrubbed_spawn`
   unaffected). Commit scope without `#`: `fix(security): … (#1720)`.
 - **Follow-up issue** (opened with the PR): `watch` runs its argument
-  through sh; `find -exec <validated cmd>` segment end at the terminator;
+  through sh;
   `env -u/-C` value skipping and `env -S` parsing; shells reading stdin;
   non-literal arguments to validated commands; env-based git config
   injection (with #1717); audit of the rm, chmod and database validators
