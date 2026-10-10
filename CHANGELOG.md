@@ -114,6 +114,7 @@
   Recover read the shared job-state store. A store read failure reads as
   running, so Recover refuses rather than double-starting the build.
   Start and plan approval are still pod-local; #1704 tracks them.
+- bump-version.js now updates apps/web-server/openapi.yaml info.version in the same commit, and fails before writing if the spec or its info.version is missing (#1631).
 
 ## 3.6.84 - 2026-09-23
 
