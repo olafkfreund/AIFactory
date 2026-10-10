@@ -32,6 +32,7 @@ import contextlib
 import logging
 import os
 import re
+import shutil
 import stat
 import tempfile
 from collections.abc import Iterator
@@ -42,7 +43,7 @@ from factory_common.logsafe import sanitize_log
 
 from server.error_ref import InputRejectedError
 from server.specpath import safe_spec_component
-from server.utils.subprocess_env import GITHUB_KEEP, child_env
+from server.utils.subprocess_env import child_env, github_env
 
 logger = logging.getLogger(__name__)
 
@@ -137,12 +138,13 @@ def _inject_credential(git_url: str, username: str) -> str:
 # Tiny POSIX askpass helper. git invokes it as ``<script> "<prompt>"`` and
 # reads the answer from stdout. We branch on the prompt: git asks for the
 # username first ("Username for '...'"), then the password. Both values come
-# from the environment (``GIT_USER`` / ``GIT_PASS``) — never argv — so the
-# token never appears in any process command line.
+# from the environment (``GIT_USER``) and a 0600 file (``GIT_PASS_FILE``) —
+# never argv, and never an env var, so the token is in no command line and no
+# environ.
 _GIT_ASKPASS_SCRIPT = """#!/bin/sh
 case "$1" in
   Username*) printf '%s' "$GIT_USER" ;;
-  *)         printf '%s' "$GIT_PASS" ;;
+  *)         cat "$GIT_PASS_FILE" ;;
 esac
 """
 
@@ -151,29 +153,28 @@ esac
 def _git_askpass_env(username: str, token: str) -> Iterator[dict[str, str]]:
     """Yield env vars that feed a git credential via ``GIT_ASKPASS``.
 
-    Writes the askpass helper to a ``0700`` temp file and points
-    ``GIT_ASKPASS`` at it. The token travels in ``GIT_PASS`` (read by the
-    script), so it never lands in argv or in git's persisted config.
-    ``/proc/<pid>/environ`` is owner-only; ``/proc/<pid>/cmdline`` is
-    world-readable -- that asymmetry is the whole point of the move. The
-    script is removed when the context exits.
+    Writes the askpass helper (``0700``) and the password (``0600``) into a
+    fresh ``0700`` ``aif-gh-*`` dir and points ``GIT_ASKPASS`` at the script.
+    The token travels in the ``GIT_PASS_FILE`` file, not an env var, so it is in
+    no argv and no environ, and not in git's persisted config. The dir is
+    removed when the context exits (and by the startup sweep after a kill).
     """
-    handle = tempfile.NamedTemporaryFile(  # noqa: SIM115 - closed explicitly below
-        mode="w", prefix="git-askpass-", suffix=".sh", delete=False
-    )
+    d = Path(tempfile.mkdtemp(prefix="aif-gh-"))
     try:
-        handle.write(_GIT_ASKPASS_SCRIPT)
-        handle.close()
-        Path(handle.name).chmod(stat.S_IRWXU)  # 0700 — owner-only rwx
+        script = d / "askpass.sh"
+        script.write_text(_GIT_ASKPASS_SCRIPT)
+        script.chmod(stat.S_IRWXU)  # 0700 — owner-only rwx
+        fd = os.open(d / "pass", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(token)
         yield {
-            "GIT_ASKPASS": handle.name,
+            "GIT_ASKPASS": str(script),
             "GIT_TERMINAL_PROMPT": "0",
             "GIT_USER": username,
-            "GIT_PASS": token,
+            "GIT_PASS_FILE": str(d / "pass"),
         }
     finally:
-        with contextlib.suppress(OSError):
-            Path(handle.name).unlink()
+        shutil.rmtree(d, ignore_errors=True)
 
 
 async def _restore_sanitized_origin_best_effort(
@@ -183,7 +184,7 @@ async def _restore_sanitized_origin_best_effort(
     path where another exception is already in flight. Logs but never raises
     -- the caller needs to see the ORIGINAL failure, not a cleanup error.
 
-    Since #1362 the token is never in this URL (it rides in ``GIT_PASS``), so
+    Since #1362 the token is never in this URL (it rides in ``GIT_PASS_FILE``), so
     what is left behind on a failure is a username, not a secret.
     """
     try:
@@ -464,29 +465,30 @@ async def _run_git(
     # Restrict git transports to https/ssh/git (#323 C5): blocks the `ext::`
     # transport helper (arbitrary command execution) even if a malicious URL
     # slips past the route validator.
-    env = child_env(
-        keep=GITHUB_KEEP,
-        extra={"GIT_ALLOW_PROTOCOL": "https:ssh:git", **(extra_env or {})},
-    )
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            cwd=str(cwd),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env,
-        )
-    except FileNotFoundError as e:
-        raise GitOperationError(f"git executable not found on PATH: {e}") from e
+    with github_env(
+        child_env(extra={"GIT_ALLOW_PROTOCOL": "https:ssh:git", **(extra_env or {})})
+    ) as env:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                cwd=str(cwd),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
+            )
+        except FileNotFoundError as e:
+            raise GitOperationError(f"git executable not found on PATH: {e}") from e
 
-    try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except TimeoutError as e:
-        # ponytail: the process may have already exited between the timeout
-        # firing and kill() running -- nothing to do either way
-        with contextlib.suppress(ProcessLookupError):
-            proc.kill()
-        raise GitOperationError(f"git {subcommand} timed out after {timeout}s") from e
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except TimeoutError as e:
+            # ponytail: the process may have already exited between the timeout
+            # firing and kill() running -- nothing to do either way
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            raise GitOperationError(
+                f"git {subcommand} timed out after {timeout}s"
+            ) from e
 
     if proc.returncode != 0:
         # stderr is kept: `client_error` hands the caller a reference id, not

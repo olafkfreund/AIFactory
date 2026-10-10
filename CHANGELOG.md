@@ -13,6 +13,16 @@
   use the scrubbed, pinned env, so project hooks no longer run there. Not
   covered: direct writes to `.git/config`, `bash -c` wrappers, and
   textconv/filter drivers.
+- **The GitHub token no longer sits in web-server child environments (#1688).**
+  Every `gh` and `git` the web server starts gets the token per call through
+  a fresh 0700 `GH_CONFIG_DIR` holding a 0600 `hosts.yml`, removed when the
+  call ends (stale dirs are swept at startup); git authenticates through
+  `gh auth git-credential`. `gh auth setup-git` is removed from the server,
+  and the workspace clone's askpass reads its credential from a 0600 file
+  instead of `GIT_PASS`. The file is still readable by the same uid while a
+  call runs. Not yet covered: the agent runner, `core/worktree.py`, the
+  build push and `gh auth login`'s stored token (#1723); the `/proc` window
+  (#1724).
 - **A verified trusted task's review tier now comes from its signed contract (#1672).**
   `task_metadata.json` and the path floor can only raise the tier, never lower
   it, so an agent that rewrites `reviewTier` to `low` no longer turns a hold into

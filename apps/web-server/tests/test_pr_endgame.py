@@ -12,6 +12,7 @@ import asyncio
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -89,8 +90,35 @@ def test_create_pr_parses_number():
     )
     assert pr == 7
     assert r.saw("pr create")
-    # Must configure git auth before pushing, or the deployed push 401s.
-    assert r.saw("auth setup-git")
+    # #1688: auth is per call (github_env); no global helper.
+    assert not r.saw("auth setup-git")
+
+
+def test_default_runner_hands_gh_a_config_dir_not_the_token(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    token = "ghp_1688FakeTokenSentinelDoNotLeak"  # noqa: S105  # gitleaks:allow
+    monkeypatch.setenv("GITHUB_TOKEN", token)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    seen: list[tuple[dict[str, str], str]] = []
+
+    def read_hosts(env: dict[str, str]) -> str:
+        return Path(env["GH_CONFIG_DIR"], "hosts.yml").read_text()
+
+    def fake_run(argv: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
+        env = dict(kw["env"])
+        seen.append((env, read_hosts(env)))  # at call time: the dir is gone after
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(pe.subprocess, "run", fake_run)
+    pe._default_runner(["gh", "pr", "list"], None)
+    assert seen
+    env, hosts = seen[0]
+    assert token in hosts
+    assert all(token not in v for v in env.values())
+    assert "GITHUB_TOKEN" not in env
+    assert list(tmp_path.glob("aif-gh-*")) == []
 
 
 def test_create_pr_fetches_branch_from_origin_before_push():

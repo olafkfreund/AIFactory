@@ -116,7 +116,7 @@ def packed_path_repos(tmp_path: Path) -> dict[str, Path]:
 def fake_gh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A `gh` on PATH that succeeds and prints a PR URL for `gh pr create`.
 
-    The route shells out to gh for `auth setup-git` and for `pr create`; the
+    The route shells out to gh for `pr create` (auth is per call, #1688); the
     real CLI would need credentials and a real remote. Everything the test
     actually asserts on -- the fetch and the push -- stays real git.
     """
