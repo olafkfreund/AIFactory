@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -121,6 +122,32 @@ def test_default_runner_hands_gh_a_config_dir_not_the_token(
     assert list(tmp_path.glob("aif-gh-*")) == []
 
 
+def test_create_pr_upload_failure_still_opens_pr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #1690: a failed LFS upload skips the ref push, but create_pr still warns
+    # and goes on to `gh pr create`.
+    real_which = shutil.which
+    monkeypatch.setattr(
+        "core.child_env.shutil.which",
+        lambda c, *a, **k: "/x/git-lfs" if c == "git-lfs" else real_which(c, *a, **k),
+    )
+    r = FakeRunner(
+        {
+            "get-url": CmdResult(0, "https://github.com/o/r", ""),
+            "--get-regexp": CmdResult(1, "", ""),
+            "lfs push": CmdResult(2, "", "boom"),
+            "pr create": CmdResult(0, "https://github.com/o/r/pull/11", ""),
+        }
+    )
+    pr = pe.create_pr(
+        worktree=Path("/wt"), branch="b", base="main", title="t", body="b", runner=r
+    )
+    assert pr == 11
+    assert r.saw("lfs push")
+    assert not any(c[:2] == ["git", "push"] for c in r.calls)
+
+
 def test_create_pr_fetches_branch_from_origin_before_push():
     # #959: on the kubejob/packed path the build branch was pushed to origin from
     # the Job; the control-plane worktree has no local ref, so create_pr must fetch
@@ -148,7 +175,7 @@ def test_create_pr_fetches_branch_from_origin_before_push():
         for i, c in enumerate(r.calls)
         if "fetch" in " ".join(c) and "origin" in " ".join(c)
     )
-    push_i = next(i for i, c in enumerate(r.calls) if "push" in " ".join(c))
+    push_i = next(i for i, c in enumerate(r.calls) if "git push" in " ".join(c))
     assert fetch_i < push_i
 
 

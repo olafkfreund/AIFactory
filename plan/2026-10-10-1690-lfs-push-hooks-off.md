@@ -748,3 +748,13 @@ recorded.
    step, and only the extra get-url spawn remains.
 5. **Re-open #1690** with the reason, and update this plan's status in the
    revert PR.
+
+## Deviations
+
+- Step 1: `tests/test_lfs_push.py` reaches `lfs_push_argv` / `push_with_lfs`
+  through `getattr` helpers so it is mypy-strict clean before and after
+  steps 2-3; the red state is AttributeError/ImportError at the
+  `core.child_env.shutil.which` patch, not a collection error.
+- Step 1: `tests/test_create_pr_fetches_branch.py` gains a `sys.path` insert
+  for `apps/backend` (its `core.child_env` patch needs it). A test path uses
+  `/wt` instead of `/tmp` (S108).
