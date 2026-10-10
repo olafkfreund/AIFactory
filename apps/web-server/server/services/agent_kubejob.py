@@ -35,6 +35,7 @@ from .task_phase import TaskPhase
 # never called dead, short enough that a build which never registered stops
 # being followed promptly.
 _DISPATCH_GRACE_SECONDS = 45.0
+_LIVE_KINDS = ("k8s-job", "pending")  # subprocess rows: pod-local, see #1669
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -899,6 +900,34 @@ class KubejobMixin:
                         "[AgentService] reap of abandoned task %s failed", task.id
                     )
         return reaped
+
+    async def is_running_anywhere(self, task_id: str) -> bool:
+        """True when ``task_id`` builds here or, per the shared store, on any replica (#1669).
+
+        The sync ``is_running`` sees only this pod's memory. A store read
+        failure reads as running (fail closed: Recover refuses, never
+        double-starts).
+        """
+        if self.is_running(task_id):
+            return True
+        if (
+            not getattr(self, "_store_enabled", False)
+            or not self._kubejob_backend_enabled()
+        ):
+            return False
+        try:
+            state = await self._store().get_state(task_id)
+        except Exception:  # noqa: BLE001
+            _log.warning(
+                "[AgentService] job-state read failed for %s; reading as running (#1669)",
+                sanitize_log(task_id),
+            )
+            return True
+        return (
+            state is not None
+            and state.get("lifecycle_state") == "running"
+            and (state.get("worker_ref") or {}).get("kind") in _LIVE_KINDS
+        )
 
     async def _kubejob_liveness(self, task_id: str) -> str:
         """Tri-state liveness for ``task_id``, per the backend actually in play.
