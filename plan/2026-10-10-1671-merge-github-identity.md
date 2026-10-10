@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1671
 spec: spec/2026-10-10-1671-merge-github-identity.md
 ---
