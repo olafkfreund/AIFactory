@@ -109,6 +109,9 @@
 
 ### Fixed
 
+- **OpenAPI generator pins opt-in feature flags off (#1632).** `apps/web-server/openapi.yaml`
+  no longer depends on `.env` or exported flags; output is written as UTF-8.
+
 - **A Kubernetes-Job build started by another web-server replica is now
   seen as running (#1669).** Task status, the running badge, Stop and
   Recover read the shared job-state store. A store read failure reads as

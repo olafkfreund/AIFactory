@@ -258,3 +258,7 @@ From the worktree root. No web-server code or test changes, so the web-server py
 - **After merge:** `git revert <merge-sha>`. This restores the old generator and workflow text, removes the CHANGELOG entry, and restores `openapi.yaml` if it was committed.
 - **If techdocs goes red after a revert:** a local `.env` or exported flags can leak gated routes into the spec again. Regenerate in the CI `/tmp/ws` venv with no `.env` and no flags exported, then commit.
 - No runtime code, config, Helm or data changes, so nothing deployed needs undoing.
+
+## Deviations
+
+- Step 4: the CHANGELOG entry is under the existing `### Fixed`, shortened from the plan's text. Follow-ups filed: #1729 (two-env guard), #1730 (opt-in surfaces), #1731 (static/ dependence).
