@@ -16,6 +16,26 @@ from typing import Any
 ENV = "AIFACTORY_TRUSTED_CONTRACT"
 
 
+# Logs show only these constants: CodeQL's name heuristic treats anything read
+# next to the verdict env var as a secret (py/clear-text-logging-sensitive-data).
+_REASON_LABELS = {
+    r: r
+    for r in (
+        "no contract",
+        "digest mismatch",
+        "held by server",
+        "server verified",
+        "trusted trace without a server verdict",
+        "no server verdict",
+    )
+}
+
+
+def reason_label(why: str) -> str:
+    """A constant label for a ``trusted_contract`` reason; ``error`` otherwise."""
+    return _REASON_LABELS.get(why, "error")
+
+
 def contract_digest(obj: Any) -> str:
     """Hex sha256 of the canonical contract; server and pod share this."""
     from trusted_plan import _canonical  # noqa: PLC0415

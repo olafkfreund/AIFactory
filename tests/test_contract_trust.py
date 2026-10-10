@@ -145,3 +145,9 @@ def test_has_trusted_trace_sources(tmp_path: Path) -> None:
     )
     d.mkdir()
     assert [ct.has_trusted_trace(p) for p in (a, b, c, d)] == [True, True, True, False]
+
+
+def test_reason_label_logs_only_constants() -> None:
+    assert ct.reason_label("digest mismatch") == "digest mismatch"
+    assert ct.reason_label("error: ValueError") == "error"
+    assert ct.reason_label("sha256:deadbeef") == "error"

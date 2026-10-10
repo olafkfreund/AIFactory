@@ -176,7 +176,7 @@ def build_is_silent_noop(spec_dir: Path, work_dir: Path | None = None) -> bool:
 
 def _resolve_build_contract(spec_dir: Path) -> dict[str, Any] | None:
     """The contract the server verified, or None. A held migration stops the build (#1673)."""
-    from core.contract_trust import trusted_contract  # noqa: PLC0415
+    from core.contract_trust import reason_label, trusted_contract  # noqa: PLC0415
     from core.migration_mapper import is_migration  # noqa: PLC0415
 
     state, contract, why = trusted_contract(spec_dir)
@@ -184,11 +184,11 @@ def _resolve_build_contract(spec_dir: Path) -> dict[str, Any] | None:
     if state != "hold":
         return held
     if is_migration(contract):
-        msg = f"[trusted-contract] migration contract held ({why}); build stopped"
+        msg = f"[trusted-contract] migration contract held ({reason_label(why)}); build stopped"
         logger.warning(msg)
         print_status(msg, "error")
         sys.exit(1)
-    msg = f"[trusted-contract] contract held ({why}); normal build"
+    msg = f"[trusted-contract] contract held ({reason_label(why)}); normal build"
     logger.warning(msg)
     print_status(msg, "warning")
     return None

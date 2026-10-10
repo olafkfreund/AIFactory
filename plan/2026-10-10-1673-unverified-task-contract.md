@@ -552,3 +552,7 @@ check exit 0; the D2 diff prints nothing.
   environments the web server passes on (the agent's own env still carries
   it; added to #1708), and that migrations stop until `host_isolated()` is
   revisited after #1680 (which has landed).
+- CI fix: CodeQL flagged the hold-reason logs as clear-text sensitive data
+  (name heuristic). Logs now pass reasons through `reason_label()`, which
+  returns only constant labels (`error` for anything else); test
+  `test_reason_label_logs_only_constants`.
