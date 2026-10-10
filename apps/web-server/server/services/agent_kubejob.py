@@ -14,7 +14,6 @@ import asyncio
 import contextlib
 import logging
 import os
-import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -29,12 +28,6 @@ from .build_log_stream import PlanSync
 from .task_log_writer import TaskLogWriter
 from .task_phase import TaskPhase
 
-# #1619: how long after dispatch an unknown task id still counts as active,
-# covering the window before the first reconcile tick (interval 15s) publishes
-# it. One tick plus headroom — long enough that a just-dispatched build is
-# never called dead, short enough that a build which never registered stops
-# being followed promptly.
-_DISPATCH_GRACE_SECONDS = 45.0
 _LIVE_KINDS = ("k8s-job", "pending")  # subprocess rows: pod-local, see #1669
 
 if TYPE_CHECKING:
@@ -625,25 +618,22 @@ class KubejobMixin:
             return None
 
     def _kubejob_still_active(self, task_id: str) -> Callable[[], Any]:
-        """A liveness check for ``KubeJobLogStreamer`` (#1619).
+        """A liveness check for ``KubeJobLogStreamer`` (#1619, #1670).
 
-        Reads the set the reconcile loop republishes each tick, so it costs
-        nothing and cannot disagree with what ``is_running`` tells the cockpit.
+        Answers exactly what ``is_running`` answers for a kubejob id:
+        membership in ``self._active_kubejob_task_ids``, the set dispatch
+        marks and each reconcile tick replaces.
 
-        Dispatch adds the id to the set (#1662), but after a web-server restart
-        the set is empty until the first tick, and the streamer may hit its
-        first EOF inside that window — so for _DISPATCH_GRACE_SECONDS an id
-        that is not yet known counts as active. Being briefly optimistic here costs one
-        extra reattach; being pessimistic would reproduce the very bug this
-        fixes. The bounded empty-reattach counter stops a genuinely dead
-        stream either way.
+        Read the attribute on every call; never capture the set. The tick
+        rebinds it to a new object (``live | _kubejob_dispatched_this_tick``),
+        so a captured set would keep saying True for the rest of the build.
+
+        An id dispatch never marked is not active. There is no time-based
+        grace; ``_MAX_EMPTY_REATTACHES`` stops a dead stream either way.
         """
-        started = time.monotonic()
 
         async def _active() -> bool:
-            if task_id in self._active_kubejob_task_ids:
-                return True
-            return (time.monotonic() - started) < _DISPATCH_GRACE_SECONDS
+            return task_id in self._active_kubejob_task_ids
 
         return _active
 
