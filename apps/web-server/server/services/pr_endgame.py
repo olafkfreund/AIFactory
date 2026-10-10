@@ -30,6 +30,7 @@ from typing import Any
 
 from factory_common.logsafe import sanitize_log
 
+from server.services import github_app
 from server.services.build_backend import task_repo_dir
 from server.services.task_branch import resolve_task_branch
 from server.utils.subprocess_env import GITHUB_KEEP, child_env
@@ -1063,6 +1064,11 @@ async def watch_and_finish(
     a human-stop, and if Copilot never reviews we time out to a human-stop too —
     never a blind merge. Never raises; leaves the PR open on any non-clean path.
     """
+    if human_approval_required and not github_app.configured():
+        logger.warning(
+            "[pr-endgame] human-approval gate but no GitHub App configured; "
+            "the PR author is the maintainer, so this PR must be merged by hand"
+        )
     # review_fn (AIFactory's own engine verdict) takes precedence over reading
     # GitHub review state — AIFactory can't submit a GitHub approval on a PR it
     # opened (self-approval), so its verdict is read from the engine directly.

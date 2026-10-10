@@ -603,3 +603,5 @@ The feature is off by default: no App vars means `start()` returns at once.
   does not trigger one more mint.
 - Step 2: a failed first mint resets `_key` to `None` before re-raising, so
   `configured()` stays false (required by `test_mint_error_at_start_raises`).
+- Step 3: the refresh-task stop event in `main.py` is `gh_stop`, so it does
+  not shadow the outbox block's `stop`.
