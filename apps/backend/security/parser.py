@@ -127,3 +127,8 @@ def get_command_for_validation(cmd: str, segments: list[str]) -> str:
         if cmd in segment_commands:
             return segment
     return ""
+
+
+def get_segments_for_validation(cmd: str, segments: list[str]) -> list[str]:
+    """Every segment whose commands include ``cmd`` (#1689 E1)."""
+    return [s for s in segments if cmd in extract_commands(s)]
