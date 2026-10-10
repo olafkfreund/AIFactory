@@ -63,8 +63,10 @@ depends on the token being in the environment.
   must work together with #1689.
 - The server stays non-dumpable. Its own environment keeps the token, which
   arrives from a Secret and is read by the MCP probes.
-- The token is resolved on every call, because settings and project routes
-  change `os.environ` at runtime.
+- The token is resolved on every call, not cached at startup: `os.environ`
+  can gain it after startup (`services/conflict_service.py` loads the backend
+  `.env` lazily), and the settings, project and GitHub routes rewrite it in
+  `.env` files.
 - The token is only offered to `https://github.com/` remotes.
 - The root filesystem is read-only, so any helper file goes in `/tmp`. Cleanup
   must also run when the child crashes or times out.
