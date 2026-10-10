@@ -24,13 +24,13 @@ the maintainer's own User account. All of these run under it:
 - the manual route `create_pr_from_task` (`routes/pr.py:57`, `:464`), via
   `services/gh.py`.
 - the kubejob build Job, which is handed the same `GITHUB_TOKEN`/`GH_TOKEN`
-  (`build_backend.py:223-225`, `:288-289`).
+  (`services/build_backend.py:223-225`, `:287-288`).
 
 So the only human who could approve is also the PR author. GitHub does not
 let anyone approve their own PR, and the gate excludes the author anyway.
 Every task gated on `human-approval` now waits in `watch_and_finish`
 (`pr_endgame.py:1104-1109`) until it times out, and someone has to merge it
-by hand. CHANGELOG.md:8-9 already says so: "Until AIFactory has its own bot
+by hand. CHANGELOG.md:9-10 already says so: "Until AIFactory has its own bot
 identity, every such task merges by hand."
 
 `GITHUB_BOT_TOKEN` exists, but only the separate backend GitHub runner reads
@@ -55,7 +55,7 @@ it (`apps/backend/runners/github/runner.py:93`). Nothing under
 - The maintainer, and anyone running AIFactory with `human-approval` gates
   and `AIFACTORY_AUTO_MERGE` on.
 - `pr_endgame.py` (`create_pr`, `merge_pr`, `request_copilot_review`,
-  `watch_and_finish`), `merger.py:368`, `routes/pr.py`, `services/gh.py`,
+  `watch_and_finish`), `services/merger.py:368`, `routes/pr.py`, `services/gh.py`,
   `build_backend.py`, and the build Job's push.
 - Agent env scrubbing (`core/auth.py`), Helm chart values and secrets.
 - `merge/merge_policy.py` (`HUMAN_ONLY_GATES`). It reads the result and
@@ -97,10 +97,10 @@ it (`apps/backend/runners/github/runner.py:93`). Nothing under
 - **CI still runs.** Required checks must trigger on PRs opened by the new
   identity.
 - **Correct with several replicas and many build Jobs.** Do not assume
-  `replicaCount: 1`.
+  `replicaCount: 1`, even though the chart pins it there for v1.0 (`charts/aifactory/values.yaml:32`).
 - **Sequence with open work.** PR #1691 (`child_env` keep-list strips
   unknown `*_TOKEN`s) and #1688 (`GH_TOKEN` moves off env) rewrite the same
-  spawn sites. RFC-0020's GitHub App install model should not be forked.
+  spawn sites. Factory RFC-0020's GitHub App install model (`docs/rfc/0020-*`) should not be forked.
 - **Docs and compliance rows change in the same PR**, and a required check
   enforces the autonomy matrix.
 
@@ -118,7 +118,7 @@ it (`apps/backend/runners/github/runner.py:93`). Nothing under
 4. Should a PR opened by hand from the UI stay authored by the human on
    purpose?
 5. One global identity, or per project/tenant through stored credentials
-   (`github_app` kind is reserved, not built), aligned with RFC-0020?
+   (`github_app` kind is reserved, not built), aligned with Factory RFC-0020?
 6. Reuse `GITHUB_BOT_TOKEN` and share one identity with the backend GitHub
    runner, or use a new name?
 7. Land after PR #1691 and #1688, or ship an env-based interim that #1688
