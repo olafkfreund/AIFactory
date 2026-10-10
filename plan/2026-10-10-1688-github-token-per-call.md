@@ -559,3 +559,9 @@ Manual checks (spec Verification, all six), on this checkout and in a pod:
   `# noqa: E402` on its first line. The sweep call anchors on `lifespan`'s
   `_make_non_dumpable()` (the plan's `main.py:104` matched two places).
   Tests N and O patch by string path.
+- Step 4: `tests/test_github_env.py` has an autouse `os.umask(0)` fixture;
+  without it mutation A (`0o644`) stayed green because the host umask (0077)
+  produced 0600 anyway. Mutation C was applied as an `else:` variant.
+- Step 4: the six manual checks (live `/proc` environ, pod, `kill -9` and
+  restart) need a running server and a real token; they are post-deploy
+  checks.

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import stat
 import subprocess
 import sys
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -34,6 +36,14 @@ def _env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.delenv(k, raising=False)
     # Without this the sweep tests delete a running dev server's real dirs.
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+
+
+@pytest.fixture(autouse=True)
+def _open_umask() -> Iterator[None]:
+    # A strict umask would hide a too-wide mode passed to os.open.
+    old = os.umask(0)
+    yield
+    os.umask(old)
 
 
 def _mode(p: Path) -> int:
