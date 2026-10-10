@@ -35,7 +35,7 @@ Where the spec's ranges differ from the checkout, this plan uses the checkout
      `credential.https://github.com.helper` with value `""`, which resets
      helpers from config files. Then the same key with value
      `!gh auth git-credential`. The count becomes `n + 2`. Parse `n` the
-     same way as `core/child_env.py:51-55`: a non-int becomes 0, a negative
+     same way as `core/child_env.py:51-54`: a non-int becomes 0, a negative
      becomes 0, and parsing never raises.
    - **Fail closed:** if any yielded env value contains the token, it raises
      `RuntimeError` (not `assert`), and the dir is still removed.
@@ -119,8 +119,10 @@ Where the spec's ranges differ from the checkout, this plan uses the checkout
     - Server files import them from there with one plain line, never
       `from core.git_credentials import ...`. Ruff isort would sort that line
       above the `sys.path` insert, and the import would fail at load.
-    - `main.py` lazy-imports `sweep_github_dirs`, as it already does for
-      `core.process_hardening` at :766.
+    - `main.py` lazy-imports `sweep_github_dirs` inside `lifespan` with
+      `from .utils.subprocess_env import sweep_github_dirs  # noqa: PLC0415`
+      (main.py uses relative imports). It does not import from `core`, so the
+      re-export has a user and the rule above has no exception.
 15. **Handoff.** There are 4 code steps across 13+ files, so the `coder`
     agent (Sonnet) implements per the model split. A fresh Opus agent reviews
     the result against this plan and `git diff`.
@@ -163,8 +165,10 @@ Traps:
   #1673 edit the latter.
 - The spawn fakes must read `GIT_PASS_FILE` and `hosts.yml` **at spawn
   time**. The dir is gone once the call returns.
-- Read files through a sync helper (like `read_cmdline`), not `pathlib`
-  inside `async def`. Default ruff selects ASYNC240.
+- Read files through a sync helper (like `read_cmdline`), not `pathlib` or
+  `open` inside `async def`. The repo `ruff.toml` does not select `ASYNC`,
+  but `standards/ruff.toml` does, and the ratchet's `'apps/web-server/*.py'`
+  glob (fnmatch, so `*` crosses `/`) covers `apps/web-server/tests`.
 - The autouse fixture must patch `tempfile.tempdir` to `tmp_path`.
   Otherwise the sweep tests delete a running dev server's real
   `/tmp/aif-gh-*` dirs.
@@ -186,8 +190,9 @@ Changes:
 - `git_credentials.py`:
   - Add `import json` and `import shutil`. `contextlib`, `os`, `stat`,
     `tempfile` and `Iterator` are already imported.
-  - Add `github_env(base_env)` per decision 2: `mkdtemp(prefix="aif-gh-")`,
-    then `os.chmod(d, 0o700)`.
+  - Add `github_env(base_env)` per decision 2: `tempfile.mkdtemp(prefix="aif-gh-")`.
+    `mkdtemp` already creates the dir 0700, so add no `chmod`. Call it as
+    `tempfile.mkdtemp` (module attribute), so test O can patch it.
   - Write `hosts.yml` with
     `os.open(path, O_WRONLY|O_CREAT|O_EXCL, 0o600)` and `json.dumps`.
   - Copy, strip, set `GH_CONFIG_DIR`, append the two helper entries, check
@@ -198,12 +203,16 @@ Changes:
 - `subprocess_env.py`:
   - Add
     `from core.git_credentials import github_env, github_token, sweep_github_dirs  # noqa: E402`
-    next to the existing `from core import child_env as _core` line.
+    on the line **after** the existing `from core import child_env as _core`
+    line. Both ruff configs sort it there. Do not use
+    `from core import git_credentials as _gc`: next to the aliased `_core`
+    import, `standards/ruff.toml` (`combine-as-imports = true`) and the repo
+    `ruff.toml` (default `false`) disagree, and one of them reports I001.
   - Add the three names to `__all__`.
   - `GITHUB_KEEP`, `RUNNER_KEEP` and `child_env` stay unchanged.
 - `main.py`: right after `_make_non_dumpable()` at :104, lazy-import
-  `sweep_github_dirs` (same pattern as :764-766, with
-  `# noqa: PLC0415`) and call it.
+  `sweep_github_dirs` from `.utils.subprocess_env` (decision 14; the
+  `# noqa: PLC0415` pattern of :766) and call it.
 
 Verify:
 
@@ -219,6 +228,11 @@ Traps:
   never `os.environ` or `dict(os.environ)`.
 - Fail closed with `raise RuntimeError`, never `assert`. Do not catch
   `OSError`.
+- `standards/ruff.toml` selects `PTH`, and the ratchet lints this file with
+  it. Build paths with `Path` (`Path(d) / "hosts.yml"`,
+  `Path(tempfile.gettempdir()).glob("aif-gh-*")`, `p.is_symlink()`,
+  `p.is_dir()`), not `os.path.join`, `os.chmod` or `os.listdir`. `os.open`
+  with `O_EXCL` has no PTH rule and stays.
 - When there is no token, return `base_env` itself (test G checks
   `env is base`).
 - mypy strict (`standards/mypy.ini`) needs the typed
@@ -229,11 +243,14 @@ Traps:
 
 ### 3. Mechanical call sites and setup-git removal
 
-10 files, 16 of the 18 sites: 15 wrapped plus the login. The 18th,
-`project_workspace_service`, is step 4.
+10 files, 17 of the 18 `keep=GITHUB_KEEP` sites: 14 wrapped (the table
+below), the login, and the two setup-git calls that are deleted
+(`routes/pr.py:291`, `completion_orchestration.py:402`). The 18th,
+`project_workspace_service.py:468`, is step 4.
 
-Imports. Replace `GITHUB_KEEP` with `github_env` in the existing
-`from server.utils.subprocess_env import ...` line:
+Imports. In the existing `from server.utils.subprocess_env import ...`
+line, drop `GITHUB_KEEP` and add `github_env`, written as
+`import child_env, github_env` (that order, see Traps):
 
 - `routes/pr.py:38`
 - `routes/git.py:23`
@@ -245,7 +262,8 @@ Imports. Replace `GITHUB_KEEP` with `github_env` in the existing
 - `services/pr_endgame.py:35`
 - `services/completion_orchestration.py:35`
 
-In `routes/github.py:28`, replace `GITHUB_KEEP` with `github_token`.
+In `routes/github.py:28`, the line becomes
+`from server.utils.subprocess_env import child_env, github_token`.
 
 Wrap each site in `with github_env(child_env()) as env:` and pass
 `env=env` (paths under `apps/web-server/server/`):
@@ -293,6 +311,10 @@ Traps:
   `core.git_credentials` (decision 14).
 - Use plain names with no aliases. Keep any `noqa` on a single-line import,
   because the default and `standards/ruff.toml` configs disagree on sorting.
+- Name order inside the import: a plain swap of `GITHUB_KEEP` for
+  `github_env` gives `github_env, child_env`, which both configs report as
+  I001 (isort's alphabetical order once the constant is gone). Write
+  `child_env, github_env`.
 - `completion_orchestration` uses the `_sp` module alias. Keep it. The push
   is deeply indented, so run `ruff format` before the ratchet.
 - `routes/git.py:1433` duplicates `services/gh.run_gh_command`. Wrap both
@@ -307,7 +329,9 @@ Traps:
 
 All lines are in `apps/web-server/server/services/project_workspace_service.py`:
 
-- :45: replace `GITHUB_KEEP` with `github_env`. Add `import shutil`.
+- :45: the line becomes
+  `from server.utils.subprocess_env import child_env, github_env`. Add
+  `import shutil` between `import re` and `import stat`.
 - 137-147: update the comment (it says values come from
   `GIT_USER`/`GIT_PASS`). Script line 145 becomes
   `*) cat "$GIT_PASS_FILE" ;;`.
@@ -361,7 +385,7 @@ Traps:
 
 ## Tests
 
-### New `tests/test_github_env.py` (14 functions, 16 items)
+### New `tests/test_github_env.py` (15 functions, 17 items)
 
 Header:
 
@@ -370,6 +394,9 @@ Header:
 - Import with `from core import git_credentials as gc` and
   `from core import child_env as ce`.
 - Define `TOKEN = "ghp_1688FakeTokenSentinelDoNotLeak"  # gitleaks:allow`.
+- Root `tests/` runs without `asyncio_mode=auto`, so N needs
+  `@pytest.mark.asyncio`, as `tests/test_agent_event_hygiene.py` does.
+  Without it N is not awaited and passes vacuously.
 
 Autouse fixture:
 
@@ -385,13 +412,13 @@ Autouse fixture:
 | E | `test_malformed_config_count_does_not_raise` | `GIT_CONFIG_COUNT: "x"` does not raise. KEY_0/KEY_1 are the helpers and COUNT is `"2"`. | Drop the `except ValueError` |
 | F | `test_token_in_extra_fails_closed` | `ce.child_env(extra={"AIF_PROBE": f"pre{TOKEN}"})` raises `RuntimeError`, and no `aif-gh-*` is left. | Delete the check |
 | G | `test_no_token_passes_base_env_through` | `delenv GITHUB_TOKEN`. Then `env is base`, there is no `GH_CONFIG_DIR`, and no `aif-gh-*`. | Always create the dir |
-| H | `test_helper_reset_keeps_store_from_saving_token` (skip unless `git` **and** `gh`) | Fake `HOME` with `.gitconfig` `[credential]\n\thelper = store`, plus `XDG_CONFIG_HOME`, `GIT_CONFIG_NOSYSTEM=1`, `GIT_TERMINAL_PROMPT=0`. `git credential fill` (`protocol=https\nhost=github.com\n\n`), then `git credential approve` with its output. rc 0, TOKEN in the fill output, `.git-credentials` does not exist. | Drop the `""` reset entry |
+| H | `test_helper_reset_keeps_store_from_saving_token` (skip unless `git` **and** `gh`) | Fake `HOME` with `.gitconfig` `[credential]\n\thelper = store`, plus `XDG_CONFIG_HOME`, `GIT_CONFIG_NOSYSTEM=1`, `GIT_TERMINAL_PROMPT=0`, and `GIT_CONFIG_GLOBAL` set to that `.gitconfig`. `child_env` passes a developer's `GIT_CONFIG_GLOBAL` through, and git then ignores `HOME/.gitconfig`: the `store` helper would never be configured and the mutation would stay green. `git credential fill` (`protocol=https\nhost=github.com\n\n`), then `git credential approve` with its output. rc 0, TOKEN in the fill output, `.git-credentials` does not exist. | Drop the `""` reset entry |
 | I | `test_real_gh_reads_token_without_rewriting_hosts` (skip unless gh) | `gh auth token` prints TOKEN. Afterwards `os.listdir(dir) == ["hosts.yml"]` and the bytes are unchanged. | Key `token` instead of `oauth_token` |
 | J | `test_sweep_removes_only_aif_gh_entries` | `aif-gh-old/hosts.yml` is removed and `keep-me/` stays. | `glob("*")` |
 | K | `test_sweep_does_not_follow_symlink` | `aif-gh-link` → `victim/` containing `f`. The sweep does not raise and `victim/f` still exists. | `rmtree(p.resolve())` |
 | L | `test_askpass_reads_password_from_file` | `with pws._git_askpass_env("oauth2", SECRET) as e`: `"GIT_PASS" not in e`. The pass file reads SECRET. Modes: pass 0600, script 0700, dir 0700. The dir prefix is `aif-gh-`. Running the script with `"Password for 'https://h'"` (env `{**ce.child_env(), **e}`) prints SECRET, and with `"Username for ..."` prints `oauth2`. The dir is gone after exit. | Script back to `$GIT_PASS`; yielding `GIT_PASS`; no `rmtree` |
 | M | `test_web_server_has_no_env_token_path` | Every `*.py` under `apps/web-server/server` has no `keep=GITHUB_KEEP`, `"setup-git"` or `GIT_PASS"`. Hits are reported as `path:line`. (`GIT_PASS_FILE"` does not match.) | Re-add `env=child_env(keep=GITHUB_KEEP)` in `gh.py`. Red today: 23 hits. |
-| N | `async test_login_route_spawns_nothing_when_token_set` | Patch `github_routes.shutil.which` to `"/usr/bin/gh"` and `asyncio.create_subprocess_exec` to `AsyncMock(side_effect=AssertionError)`. Expect `success is True`, `"GITHUB_TOKEN"` in the message, and the mock not awaited. | Delete the guard. Without the `which` patch, the "gh not installed" return masks this on CI. |
+| N | `async test_login_route_spawns_nothing_when_token_set` | Patch `github_routes.shutil.which` to `"/usr/bin/gh"` and `asyncio.create_subprocess_exec` to `AsyncMock(side_effect=AssertionError)`. Expect `r["data"]["success"] is True` (the outer `success` is `True` on every return, so it proves nothing), `"GITHUB_TOKEN"` in `r["data"]["message"]`, and the mock not awaited. | Delete the guard. Without the `which` patch, the "gh not installed" return masks this on CI. |
 | O | `test_run_gh_command_fails_closed_when_tmp_unwritable` | `tempfile.mkdtemp` raises `PermissionError`, and `server.services.gh.subprocess.run` fails if called. `run_gh_command(["pr","list"])["success"] is False`. | `with` outside the `try`; an env-token fallback. Must be `PermissionError`: `FileNotFoundError` hits the "gh not installed" branch first. |
 
 ### Edits to existing tests
@@ -417,7 +444,7 @@ Autouse fixture:
   `fake_gh` no longer shells out to `auth setup-git`. There is no assertion
   to change.
 - **`apps/web-server/tests/test_workspace_argv_never_logged.py`:**
-  - Add `pass_file: str | None` to `_Spawn` (81-86). The spy fills it at
+  - Add `pass_file: str | None` to `_Spawn` (81-87). The spy fills it at
     spawn time through a sync helper.
   - Replace the guard at 258-262 with
     `any(s.pass_file == _SECRET for s in seen)` and add
@@ -444,15 +471,15 @@ Autouse fixture:
 export PATH=/mnt/code/Source-home/GitHub/AIFactory/apps/backend/.venv/bin:$PATH
 cd /mnt/code/Source-home/GitHub/AIFactory-1688
 python -m pytest tests/test_github_env.py -q
-#   16 passed (14 passed + 2 skipped without gh/git)
+#   17 passed here (gh and git are on PATH); 15 passed + 2 skipped without them
 python -m pytest tests/test_git_credentials.py tests/test_create_pr_fetches_branch.py \
   tests/test_no_unscrubbed_spawn.py tests/test_child_process_env.py \
   tests/test_git_argv_credential_backend.py tests/test_git_push_credential_helper.py \
   tests/test_workspace_fetch.py tests/test_github_env.py -q
-#   66 passed (baseline without the new file: 50)
+#   67 passed here (baseline without the new file: 50, measured)
 python -m pytest apps/web-server/tests/test_pr_endgame.py apps/web-server/tests/test_merger.py \
   apps/web-server/tests/test_workspace_argv_never_logged.py -q -o asyncio_mode=auto
-#   137 passed (baseline: 136)
+#   137 passed (baseline: 136, measured)
 python -m pytest tests -q -m "not slow"
 python -m pytest apps/web-server/tests -q -o asyncio_mode=auto
 python -m pytest apps/backend -q -o asyncio_mode=auto
@@ -471,8 +498,20 @@ grep -rn 'keep=GITHUB_KEEP\|"setup-git"\|GIT_PASS"' apps/web-server/server
 Mutation runs: apply each mutation from the table, run only that test with
 `-k`, see it go red, then `git checkout -- <file>`.
 
-Manual check (deployed pod): during a push,
-`tr '\0' '\n' </proc/<child>/environ | grep -c "$GITHUB_TOKEN"` prints 0.
+Manual checks (spec Verification, all six), on this checkout and in a pod:
+
+1. Start the server with `GITHUB_TOKEN` set and run a slow `gh pr view` or a
+   `git fetch` of a large repo.
+2. While it runs,
+   `tr '\0' '\n' </proc/<child>/environ | grep -c "$GITHUB_TOKEN"` prints 0.
+3. A PR create, the endgame push and fix push, and a workspace clone of a
+   private repo all succeed.
+4. With no token set, a developer's own gh login still works for `gh` and
+   `git push`.
+5. In the image, `gh --version` matches the format tested in I, and check 2
+   passes.
+6. `kill -9` the server during a call, restart it, and `ls /tmp/aif-gh-*`
+   finds nothing.
 
 ## Rollback
 
@@ -503,5 +542,6 @@ Manual check (deployed pod): during a push,
 - The plan adds two test files the spec did not list:
   `tests/test_git_credentials.py`, whose `GIT_PASS` assert breaks, and the
   `_Spawn` field in `test_workspace_argv_never_logged.py`.
+- `_Spawn` in `test_workspace_argv_never_logged.py` is at 81-87.
 - The spec numbers its risks 1-5, 8, 6, 7. This plan cites them by the
   spec's numbers.
