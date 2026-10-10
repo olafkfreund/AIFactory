@@ -19,8 +19,8 @@ in its spec dir. Three groups of code still trust those files:
 1. **Prompt readers (live).** `prompts_pkg/prompts.py` reads both files
    directly from disk at :376 (`get_house_standards_context`), :521
    (`get_constitution_context`) and :603 (`_load_contract`, used by
-   `get_deployment_context`). The results go into the solo, coding and QA
-   prompts. With a `hold` verdict, an edited contract's house standards,
+   `get_deployment_context`). The results go into the solo and coding
+   prompts (`get_solo_prompt`, `get_coding_prompt`). With a `hold` verdict, an edited contract's house standards,
    HARD constitution rules and deployment scans/gates still reach the prompt
    as if they were signed. A probe at c59a0ea6 confirmed this. The
    `implementation_plan.json` fallback is never checked by `trusted_contract()`.
@@ -49,7 +49,7 @@ in its spec dir. Three groups of code still trust those files:
 
 ## Affected users and systems
 
-- Coder and QA agents on trusted-plan (RFC-0002) builds. Owners who rely on
+- Coder agents on trusted-plan (RFC-0002) builds. Owners who rely on
   contract governance: RFC-0012 house standards, RFC-0015 constitution and
   RFC-0013 deployment.
 - `apps/backend/prompts_pkg/prompts.py`, `apps/backend/pfactory/tfactory_client.py`,
