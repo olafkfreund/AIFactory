@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1688
 spec: spec/2026-10-10-1688-github-token-per-call.md
 ---
