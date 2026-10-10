@@ -60,8 +60,9 @@ these happens:
   deleting the handback receipt cannot turn a hold into an auto-merge.
 - `merge_disposition` and `_clears_with_human_approval` use the same
   effective tier.
-- Changes only tighten. Missing, unreadable or absent inputs hold, as they do
-  today.
+- Changes only tighten. A missing or unreadable input is decided no more
+  loosely than today. Today an absent `reviewTier` is decided as `low`, and an
+  unmeasured gate signal takes its passing default.
 - Tests show that a tampered `task_metadata.json` does not change the merge
   disposition of a verified task.
 
