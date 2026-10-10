@@ -342,3 +342,14 @@ were run against the planned code and fail exactly as listed:
 ## Deviations
 
 - Step 5: the tools/executor.py follow-up is folded into #1713 (already tracked); follow-up #1732 filed for HOME on-disk credentials and SSH_AUTH_SOCK. Mutation M8 was applied at module level rather than in `__init__` (both build the env before the secrets are set).
+- Review fix (Opus review, minor, fixed): `_opencode_keep` mapped any
+  `<provider>/x` to `<PROVIDER>_API_KEY`, and `keep` overrides the deny list,
+  so an agent-rewritten model string (`linear/x`, `context7/x`, `voyage/x`)
+  could bring back unrelated secrets. D7 now keeps a key only when the
+  lower-cased provider is in `_OPENCODE_KEY_PROVIDERS` (openai, openrouter,
+  groq, mistral, deepseek, together, xai, google, fireworks, cerebras,
+  perplexity); anthropic is not in it, so the explicit guard and the `-`→`_`
+  replace are gone. Known limit: hyphenated providers such as
+  `amazon-bedrock` get no key and fall back to `opencode auth login`. The
+  `_opencode_keep` test has 20 rows (5 new, `x-y/m` now `()`); mutations M11
+  and M12 no longer apply.
