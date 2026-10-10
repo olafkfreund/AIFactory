@@ -182,16 +182,32 @@ def _strip_opencode_prefix(model: str) -> str:
     return model
 
 
+# Fixed allow-list: `keep` overrides the deny list, so a model string rewritten
+# to e.g. `linear/x` must not restore LINEAR_API_KEY. anthropic stays out.
+_OPENCODE_KEY_PROVIDERS = frozenset(
+    {
+        "openai",
+        "openrouter",
+        "groq",
+        "mistral",
+        "deepseek",
+        "together",
+        "xai",
+        "google",
+        "fireworks",
+        "cerebras",
+        "perplexity",
+    }
+)
+
+
 def _opencode_keep(model: str) -> tuple[str, ...]:
-    # ponytail: env name derived by convention (<PROVIDER>_API_KEY); a provider
-    # with an unusual name (amazon-bedrock's AWS_*, google-vertex ADC, azure)
-    # falls back to `opencode auth login`. Follow-up issue if one shows up.
-    provider, sep, _ = model.partition("/")
-    if not sep or not provider:
+    # ponytail: only <PROVIDER>_API_KEY for the ids above; any other provider
+    # (bedrock AWS_*, google-vertex ADC, azure) falls back to `opencode auth login`.
+    provider = model.partition("/")[0].lower()
+    if "/" not in model or provider not in _OPENCODE_KEY_PROVIDERS:
         return ()
-    name = f"{provider.upper().replace('-', '_')}_API_KEY"
-    if name.startswith("ANTHROPIC"):  # keep would restore it (child_env.py:52)
-        return ()
+    name = f"{provider.upper()}_API_KEY"
     if provider == "google":
         return (name, "GOOGLE_GENERATIVE_AI_API_KEY", "GEMINI_API_KEY")
     return (name,)
