@@ -22,7 +22,7 @@ working directory it runs from. Runtime code is not touched.
       # API, independent of .env, the shell, or the cwd (#1632). Direct assignment
       # (not setdefault) beats server/env_bootstrap.py:27's setdefault, and pydantic
       # ranks process env above env_file (server/config.py:246-250).
-      # Gates: main.py:523/527 (SAML/SCIM), mcp_remote/__init__.py:50, rmux/integration.py:45-54.
+      # Gates: main.py:523/527 (SAML/SCIM), mcp_remote/__init__.py:50, rmux/integration.py:45-56.
       # ponytail: fixed list; a fifth env-gated router must be added here (follow-up: two-env guard).
       os.environ.update(dict.fromkeys(
           ("SAML_ENABLED", "SCIM_ENABLED", "AIFACTORY_MCP_REMOTE_ENABLED",
@@ -39,8 +39,10 @@ working directory it runs from. Runtime code is not touched.
   not change it, and that `apps/web-server/static/` must not exist (see Risks).
 
 The pin sits inside `main()`, not at module top, so importing the script has no
-side effects. It runs before `server.main` is first imported, so the
-`get_settings()` cache is still empty.
+side effects. It runs before `server.main` is first imported, so it precedes
+both `env_bootstrap` (imported first, `main.py:22`) and the module-level
+`settings = Settings()` singleton (`config.py:394`) that `get_settings()`
+returns.
 
 Why this is enough:
 
@@ -80,7 +82,8 @@ Proposed defaults for the user to confirm.
    It needs no extra CI dependencies. The values are assigned directly, not
    with `setdefault`, so they beat both loaders and exported shell flags.
    Predicates checked: `main.py:523`, `527`, `mcp_remote/__init__.py:50` and
-   `rmux/integration.py:45-54`.
+   `rmux/integration.py:45-56`; mount sites `main.py:615` (mcp-remote) and
+   `main.py:668` (rmux).
 2. **Publish SAML, SCIM and remote-MCP, and depend on xmlsec?** This does not
    apply under all off. SAML is only imported when its flag is on
    (`main.py:523-526`), so CI's fresh venv (`techdocs.yml:162-165`) stays free
@@ -166,8 +169,9 @@ Proposed defaults for the user to confirm.
 
 ## Verification
 
-Manual, from the worktree, with the CI-style venv (`/tmp/ws`) and
-`apps/web-server/static/` absent:
+Manual, from the worktree, with `apps/web-server/static/` absent and the
+CI-style venv built as in `techdocs.yml:162-164` (`python3 -m venv /tmp/ws`,
+then `pip install -r` the web-server and backend requirements):
 
 1. Pre-fix baseline: with `cp apps/web-server/.env.example apps/web-server/.env`,
    run `APP_DISABLE_AUTH=true /tmp/ws/bin/python scripts/generate-openapi-spec.py`
@@ -189,12 +193,17 @@ CI gates the change must pass:
 - **Strict ruff and mypy --strict ratchets** (`cq-ratchet.yml:107-113`, scope
   `scripts/*.py`): `main() -> int` is already annotated and the new code adds
   no untyped defs, no `Any` and no new imports that mypy cannot resolve.
-  `OUT.open(..., encoding="utf-8")` removes a PTH123 finding rather than adding
-  one. The per-file counts cannot rise.
+  `OUT.open(..., encoding="utf-8")` removes a PTH123 finding (`PTH` is
+  selected in `standards/ruff.toml:26`) rather than adding one. The per-file
+  counts cannot rise. Run locally as CI does:
+  `apps/backend/.venv/bin/python scripts/cq_ratchet.py --base origin/main
+  --ruff apps/backend/.venv/bin/ruff --config standards/ruff.toml --paths
+  'scripts/*.py'`, and the matching mypy step.
 - **CodeQL:** only constant `"false"` values are written, and no env value is
   printed or logged.
 - **Autonomy matrix `--check`** (`scripts/gen_autonomy_matrix.py`): no policy
-  module is touched. Run it anyway.
+  module is touched. Run `python scripts/gen_autonomy_matrix.py --check`
+  anyway.
 - **techdocs `refresh-and-validate`:** green, with no diff after regeneration.
 
 Follow-up issues to file: (a) an automated two-environment spec-equality guard;
