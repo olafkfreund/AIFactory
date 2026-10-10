@@ -338,3 +338,7 @@ were run against the planned code and fail exactly as listed:
   or deploy state. The revert restores the `os.environ` pass-through at each
   site and, if regenerated, the matrix docs; confirm with
   `python scripts/gen_autonomy_matrix.py --check`.
+
+## Deviations
+
+- Step 5: the tools/executor.py follow-up is folded into #1713 (already tracked); follow-up #1732 filed for HOME on-disk credentials and SSH_AUTH_SOCK. Mutation M8 was applied at module level rather than in `__init__` (both build the env before the secrets are set).
