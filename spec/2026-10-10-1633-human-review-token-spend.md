@@ -19,18 +19,19 @@ These are proposed defaults for you to confirm or change.
 
 | # | Question | Proposed answer | Why |
 | - | -------- | --------------- | --- |
-| 0 | Is #1633 already fixed on dev? | No. Write the spec. | Dev is one commit past the intent's base (#1672, merge tier), and that commit does not touch usage. All the gaps are still in the code. A failed build with no plan gets a minimal plan with `phases: []` (`agent_service.py:470-481`), then returns `invalid_plan` (`:518-526`) before `run_terminal_completion` (`:594`). Stop (`agent_kubejob.py:1019-1031`) only marks the task terminal and sends a status update. In the Job, `build_commands.py:264/353/520` call `sys.exit` before `maybe_push_usage` (`cli/main.py:552`). |
+| 0 | Is #1633 already fixed on dev? | No. Write the spec. | Dev is one commit past the intent's base (#1672, merge tier), and that commit does not touch usage. All the gaps are still in the code. A failed build with no plan gets a minimal plan with `phases: []` (`agent_service.py:470-481`), then returns `invalid_plan` (`:518-526`) before `run_terminal_completion` (`:602`). Stop (`agent_kubejob.py:1019-1031`) only marks the task terminal and sends a status update. In the Job, `build_commands.py:264/353/520` call `sys.exit` before `maybe_push_usage` (`cli/main.py:552`). |
 | 1 | Scope | Fix the AIFactory kubejob gaps only. Open two follow-up issues: TFactory (usage is reported only at a terminal outcome) and CFactory ("no model called" vs "nothing reported yet"). Neither blocks this PR. | The intent rules out depending on CFactory or TFactory. The event envelope does not change. |
 | 2 | Stopped, reaped and abandoned builds | Yes, all of them, through one shared helper (C2). Send usage only when a pushed `token_usage.json` can be read and holds new spend. Otherwise send nothing, and never a zero. | The object store can be read from any replica (`workspace_fetch.py:207-235`). The snapshot is cumulative. `usage_from_aggregate` already returns `None` when tokens are zero (`completion.py:402-407`). |
 | 3 | Resend after a resumed review | No. Move it to a follow-up issue. The `.terminal_completion_emitted` marker is unchanged, and the kubejob review pause (C3) does not write it. | The marker is the dedupe guard (`completion_orchestration.py:141-170`). Splitting it changes behaviour and could cause duplicate events. |
 | 4 | Gather MyFriends logs first? | No. Go ahead on the code findings. Logs are optional confirmation. | A unit test can show each gap. |
-| 5 | #1669, #1670, #1677 | Write the spec and plan now. Start coding after #1670 merges, then rebase on dev. Do not wait for #1669 or #1677. | #1670 is the only change that edits the same kubejob functions (`agent_kubejob.py`, 37 lines). |
+| 5 | #1669, #1670, #1677 | Write the spec and plan now. Start coding after #1670 merges, then rebase on dev. Do not wait for #1677. | #1670 (PR #1694, still open) is the only change that edits the same kubejob functions (`agent_kubejob.py`, 37 lines). #1669 has already merged to dev (`2cf18708`): it adds `is_running_anywhere` after `reap_abandoned_tasks` and edits none of the functions below. Line numbers here are against `d56073c0`; after the rebase, `agent_kubejob.py` lines past `:90` move by +2 and past `:903` by +30 (the stop path becomes `:1049-1061`). |
 
 ### C1. In the Job, push usage on every exit (`apps/backend/cli/main.py:505-558`)
 
-- Wrap `handle_build_command(...)` (`:505`) in `try/finally`.
+- Wrap `handle_build_command(...)` (`:506`) in `try/finally`.
 - The `finally` calls `maybe_push_usage(spec_dir, spec_dir.name)` every time.
-  It also calls `maybe_push_plan(...)` when `not args.stop_after_planning`.
+  It also calls `maybe_push_plan(...)` when `not args.stop_after_planning`,
+  because C4 reads the paused plan from the object store.
 - Remove those two calls from the existing success block so nothing is pushed
   twice.
 - The branch, memory, gate-marker and task_logs pushes stay where they are.
@@ -46,7 +47,7 @@ These are proposed defaults for you to confirm or change.
 ### C2. One shared kubejob usage helper (`apps/web-server/server/services/agent_kubejob.py`)
 
 Add `AgentService._report_kubejob_usage(job_id: str, status: str) -> None` next
-to `_record_kubejob_terminal` (`:172`). It:
+to `_record_kubejob_terminal` (`:173`). It:
 
 - splits `job_id`, then calls `resolve_project_path` and `spec_dir_for`;
 - runs `maybe_fetch_usage` in `asyncio.to_thread`, because `get_bytes` is a
@@ -66,12 +67,14 @@ so an ungated second `failed` event would be counted twice.
 
 The helper is called after the existing bookkeeping in three places:
 
-- `_on_kubejob_build_failed` (`:161-170`), after `_record_kubejob_terminal(job_id,
+- `_on_kubejob_build_failed` (`:138-171`), after `_record_kubejob_terminal(job_id,
   "failed")`, with status `"failed"`. This covers reconcile, `_fail`, the
   timeout and the vanished-Job reaper (`build_backend.py:1591-1609`).
 - `_stop_kubejob_build` (`:1019-1031`), after `mark_terminal` and before
-  `_drain_queue`, with status `"failed"`.
-- `reap_abandoned_tasks` (`:885-888`), after `_update_plan_status(..., "failed")`
+  `_drain_queue`, with status `"failed"`. Note that this path already sends
+  task status `human_review/errors` (`:1030`), so the cockpit and the board
+  show different labels for a stopped build. See Decision 4.
+- `reap_abandoned_tasks` (`:886-888`), after `_update_plan_status(..., "failed")`
   succeeds, with status `"failed"`.
 
 ### C3. Refresh the usage fetch, never with a lower total [B] (`apps/backend/core/workspace_fetch.py:207-235`)
@@ -93,6 +96,11 @@ The change:
   write happened.
 - On the co-mount path no object exists. The local file is kept, and the only
   cost is one 404 GET.
+- On an install with no object store (the default subprocess install, no
+  `S3_ENDPOINT`), `ArtifactStore()` raises `RuntimeError`
+  (`core/artifact_store.py:181-186`). The existing `except` catches it, the
+  local file is kept and the call returns `False`, as it does today. This
+  function's only caller today is `completion.py:984`.
 
 This also fixes the existing stale-local bug on the done path.
 
@@ -125,8 +133,18 @@ In `_on_kubejob_build_done`, before `_emit_kubejob_terminal_completion`:
     "resumed build never reports" bug that Q3 deferred.
 - Credential release, `_report_orphaned_worktrees` and `_drain_queue` still run.
 - Every other plan status keeps today's path, including QA's
-  `human_review/completed`. `terminal_status="completed"` at `:264` is left
+  `human_review/completed`. `terminal_status="completed"` at `:265` is left
   alone.
+- **Gap: the pre-flight approval pause.** When `should_pass_force` is false
+  (`build_backend.py:718-719`), a review-gated build stops in the Job at the
+  pre-flight check: it saves `review_state.json` and calls `sys.exit(0)`
+  (`cli/build_commands.py:348-353`). It never writes `human_review` to the plan,
+  so the check above misses it, and the build is reported `completed`, or
+  `failed` by the evidence gate. Proposed default: on that branch, and only on
+  the packed path (`WORKSPACE_URI` set), write `status="human_review"`,
+  `reviewReason="plan_review"` to the plan before the exit. Write a
+  `{"phases": []}` skeleton when no plan exists, as `agents/coder.py:1160-1171`
+  does. C1 then pushes it. The subprocess path is unchanged. See Decision 5.
 - The reason comes from an allowlist. A forged plan can at most skip a handoff,
   which fails safe. It can never trigger one.
 
@@ -142,6 +160,9 @@ still stops the server from finalising a Job-owned task. This is a pure move.
 Every path calls `usage_from_aggregate`, including the live `agent_emit.py:455`,
 so the guard goes there and in `_worker_records`.
 
+- Missing or `None` fields still count as 0, as `or 0` does today, so a valid
+  file without the optional cache fields is accepted unchanged. Integer fields
+  stay `int`.
 - Add a private `_num(v: object, cap: float) -> float`. It rejects `bool`,
   values that are not `int`/`float`, NaN, ±inf, negatives and anything over
   the cap, by raising a private `_BadUsage`. `usage_from_aggregate` catches
@@ -166,7 +187,7 @@ so the guard goes there and in `_worker_records`.
 Move `_emit_worker_metrics(workers)` out of `usage_from_aggregate` and into
 `emit_terminal_completion`, which runs under the fire-once marker.
 
-- Today it runs on every snapshot. Its OTel counters (`metrics_otel.py:150`) add
+- Today it runs on every snapshot. Its OTel counters (`apps/web-server/server/observability/metrics_otel.py:150`) add
   the cumulative totals again each time: every 10s on the live path, and once
   per new path this spec adds.
 - The fix moves one call. Live per-worker metrics stop updating while a build
@@ -211,11 +232,13 @@ Move `_emit_worker_metrics(workers)` out of `usage_from_aggregate` and into
 
 - **"Keep the higher total" assumes a rerun starts from the earlier total.**
   That holds if `copy_spec_to_worktree` carries `token_usage.json` forward, so
-  that `record_turn` adds to it (`token_attribution.py:328`). If a rerun starts
+  that `record_turn` adds to it (`_read_aggregate`,
+  `apps/backend/agents/token_attribution.py:328`). If a rerun starts
   from zero, a genuine lower total is never sent. That fails toward sending
   nothing, and a test pins this behaviour.
 - **The stop path races the Job.** The immediate fetch can run before the Job
-  pushes. The fallback is the live snapshots. Add a test that stop leaves
+  pushes. The fallbacks are the live snapshots and, later, the reap path, whose
+  fetch picks up a late push. Add a test that stop leaves
   control status alone, so that the reaper does not later relabel the task.
 - **Stale plan object.** If a resumed Job exits 0 but its plan push fails, an
   old `plan_review` plan could route the build to a pause. This needs a store
@@ -231,6 +254,11 @@ Move `_emit_worker_metrics(workers)` out of `usage_from_aggregate` and into
 
 All of these affect the AIFactory web server and the packed kubejob Job only.
 The subprocess backend is affected only by C3, C5, C6 and C7.
+
+Default installs stay unbroken. C1's push helpers are no-ops without
+`WORKSPACE_URI` (`workspace_fetch.py:187-188`). C2 and C4 run only on the
+kubejob backend. C3 behaves as today without an object store. C6 accepts every
+file that is valid today, and the block it builds is byte-identical.
 
 ## Verification
 
@@ -260,7 +288,9 @@ Unit tests, in existing files where possible:
     `human_review`, one `human_review` snapshot, no marker,
     `run_terminal_completion` not called;
   - `human_review/completed` or `qa_issues` → today's path, and the handoff
-    runs.
+    runs;
+  - a fetched `{"phases": [], "status": "human_review", "reviewReason":
+    "plan_review"}` skeleton plan (the pre-flight pause) → paused, no handoff.
 - `test_exit_does_not_bury_a_kubejob.py`: a Job-owned task at
   `lifecycle="review"` sends the snapshot, and `mark_terminal` is not called.
 - `test_terminal_completion_characterization.py`: OTel worker metrics are
@@ -270,10 +300,19 @@ Unit tests, in existing files where possible:
   - `maybe_push_usage` is called and the exit code is preserved;
   - `maybe_push_plan` is called only when not `stop_after_planning`;
   - `maybe_push_workspace_branch` is not called.
+- New `tests/test_cli_build_push_on_exit.py` holds the CLI test above, plus: the
+  pre-flight pause with `WORKSPACE_URI` set writes the `human_review/plan_review`
+  plan before `sys.exit(0)`, and without it writes nothing.
+- `test_workspace_fetch.py`: with `S3_ENDPOINT` unset and a local file present,
+  `maybe_fetch_usage` returns `False` and leaves the file unchanged.
 
 CI gates:
 
-- Default `ruff`.
+- `ruff check apps/backend apps/web-server scripts tests` (`ci.yml:84`).
+- `pytest tests/ -m "not slow"`, `pytest apps/backend` and
+  `pytest apps/web-server/tests` (`ci.yml:190,206,218`), and the
+  `test-collection.yml` collection check for the new test file.
+- `security-lint/security_lint.py .` (`security-lint.yml:122`).
 - `scripts/cq_ratchet.py`: strict ruff plus `mypy --strict` on every changed
   file, tests included, with typed helpers and no new `Any`. Run it locally
   first, because `main.py`, `agent_service.py` and `agent_kubejob.py` are large
@@ -293,3 +332,11 @@ CI gates:
    include it, because it is one moved call.
 3. **SIGTERM handler.** Leave it out. Recommended: leave it out, as the default
    accepted.
+4. **Snapshot status for a stopped build.** Send `failed`, or `human_review` to
+   match the `human_review/errors` task status the stop path already sends.
+   Recommended: `failed`, because CFactory has no `errors` reason and the build
+   did not finish.
+5. **Pre-flight approval pause (C4 gap).** Write the plan status in the Job on
+   the packed path, or leave that pause reported as `completed` and open a
+   follow-up issue. Recommended: write it, because without it the intent's
+   review-state outcome is not met for review-gated builds.
