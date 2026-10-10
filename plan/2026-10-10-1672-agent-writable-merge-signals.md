@@ -367,3 +367,13 @@ again, which reopens the forged-tier hole.
 **If HOLDs pile up after deploy** because the PFactory signer omits
 `execution.review_tier`: revert this commit or make PFactory sign the field.
 Never loosen the guard.
+
+## Deviations
+
+- Step 3, risk-1 sample: checked in code, not on live data. The signer always
+  sets `execution.review_tier` (`apps/backend/intake/execution_block.py:178`).
+  The live `jq` sample on recent verified tasks is a post-deploy check.
+- Step 3, follow-ups filed as four issues: gate signals (Q1-Q2) 1695,
+  handback receipt (Q3) 1696, legacy tasks (Q6) 1697, mismatch flag
+  and PR-body tier (Q11) 1698. Q8 needs no issue (no TFactory change).
+- Mutations M4, M5, M7 and M8 were not run; M1-M3, M6 and M9 were.
