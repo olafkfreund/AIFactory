@@ -255,3 +255,10 @@ migration.
   (count back to 74).
 - What a revert gives up: a failed ref write again leaves an untracked Job
   running until its 6h deadline (`build_backend.py:185/:675`).
+
+## Deviations
+
+- Step 1: T1-T3 share a helper `_dispatch_with_failing_ref(tmp_path,
+  monkeypatch, err, fake)`; assertions unchanged. T2 also asserts
+  `exc_info is not None`. T1's documentation-only ref-kind assert is left
+  out (the helper does not expose the store; the plan says it cannot fail).
