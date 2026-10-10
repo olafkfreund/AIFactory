@@ -35,7 +35,7 @@ from server.services.build_backend import task_repo_dir
 from server.services.http_verdict import honest_status
 from server.services.task_branch import resolve_task_branch_fetching
 from server.specpath import safe_spec_component
-from server.utils.subprocess_env import child_env, github_env
+from server.utils.subprocess_env import child_env, github_env, lfs_push_argv
 
 from .project_authz import require_task_access
 
@@ -321,6 +321,52 @@ async def create_pr_from_task(
         ]
     try:
         with github_env(child_env()) as env:
+            # #1690: hooks are off, so upload LFS objects explicitly before the push.
+            url = subprocess.run(  # noqa: ASYNC221, PLW1510
+                ["git", "remote", "get-url", "--push", "--all", "origin"],  # noqa: S607
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env=env,
+            )
+            lfs_argv = (
+                lfs_push_argv(url.stdout.strip(), worktree_branch)
+                if url.returncode == 0
+                else None
+            )
+            if lfs_argv:
+                # A repo-defined transfer program would run on upload; refuse (rc 1 = none).
+                chk_cmd = ["git", "config", "--name-only", "--get-regexp"]
+                chk = subprocess.run(  # noqa: S603, ASYNC221, PLW1510
+                    [*chk_cmd, r"^lfs\.customtransfer\."],
+                    cwd=worktree_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    env=env,
+                )
+                if chk.returncode != 1:
+                    return {
+                        "success": False,
+                        "error": (
+                            "Failed to push branch: LFS step refused "
+                            "(lfs.customtransfer.* defined)"
+                        ),
+                    }
+                up = subprocess.run(  # noqa: S603, ASYNC221, PLW1510
+                    lfs_argv,
+                    cwd=worktree_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    env=env,
+                )
+                if up.returncode != 0:
+                    return {
+                        "success": False,
+                        "error": f"Failed to push LFS objects: {up.stderr.strip()}",
+                    }
             result = subprocess.run(
                 push_cmd,
                 cwd=worktree_path,

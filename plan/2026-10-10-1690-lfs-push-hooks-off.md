@@ -758,3 +758,11 @@ recorded.
 - Step 1: `tests/test_create_pr_fetches_branch.py` gains a `sys.path` insert
   for `apps/backend` (its `core.child_env` patch needs it). A test path uses
   `/wt` instead of `/tmp` (S108).
+
+- Step 4: `pr.py` suppressions differ from the trap's "copy the fetch call's
+  noqa": a literal-list argv takes `# noqa: ASYNC221, PLW1510` (with `S607`
+  on the argv line); a variable argv takes `S603, ASYNC221, PLW1510`. The
+  customtransfer check builds `chk_cmd` first. The long error string is
+  split over two lines.
+- Step 5: follow-up #1721 filed; #1689 commented with the LFS/http/url keys.
+  The manual GIT_TRACE check on a scratch github.com repo was not run.
