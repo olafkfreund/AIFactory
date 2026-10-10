@@ -542,3 +542,5 @@ reverted:
 - Step 2: `test_core_child_env_extra_count_appends_hooks_entry` also asserts
   the pin layout; it now expects `GIT_CONFIG_COUNT == "3"` and
   `KEY_2 == "core.fsmonitor"` (not listed in step 1).
+- Step 3: `_git_env()` annotates `env: dict[str, str] = child_env(...)`;
+  without it mypy --strict regressed (`no-any-return`, 3 → 4).
