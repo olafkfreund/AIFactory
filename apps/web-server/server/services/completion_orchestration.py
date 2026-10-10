@@ -314,6 +314,7 @@ async def run_terminal_completion(
                         if _reviewer == "aifactory":
                             import subprocess as _sp
 
+                            from . import pr_endgame  # noqa: PLC0415
                             from .pr_data_service import get_pr_data_service
                             from .pr_endgame import ReviewState
                             from .pr_review_service import get_pr_review_service
@@ -395,19 +396,15 @@ async def run_terminal_completion(
                                             correlation_key=f"pr-{prn}",
                                         )
                                     )
-                                    with github_env(child_env()) as env:
-                                        push = _sp.run(
-                                            ["git", "push", "origin", "HEAD"],
-                                            cwd=str(_wt),
-                                            capture_output=True,
-                                            text=True,
-                                            timeout=120,
-                                            env=env,
-                                        )
-                                    if push.returncode != 0:
+                                    push = pr_endgame.push_with_lfs(
+                                        ["git", "push", "origin", "HEAD"],
+                                        "HEAD",
+                                        str(_wt),
+                                    )
+                                    if not push.ok:
                                         logger.warning(
                                             "[pr-endgame] fix push failed: %s",
-                                            (push.stderr or "")[:200],
+                                            push.err[:200],
                                         )
                                         return False
                                     # Re-review the FIXED code and wait for the
