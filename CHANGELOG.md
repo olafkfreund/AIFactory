@@ -9,6 +9,17 @@
   holds, and a mismatch logs a warning. Not yet covered: forged gate signals
   (VAL, parity, verdict, host CI), the handback receipt, and legacy and
   from-issue tasks (follow-ups: #1695, #1696, #1697, #1698).
+- **Deploy scaffolding and migration mode act only on a contract the server
+  verified (#1673).** The agent can write `context/task_contract.json`, so the
+  build process no longer trusts it. The web server passes its verdict to
+  `run.py` in `AIFACTORY_TRUSTED_CONTRACT` (a digest of the verified contract,
+  or `hold`; unset means legacy). It is set by the server per spawn and
+  stripped from the environments the web server passes on (the agent's own
+  environment still carries it; #1708). A held contract withholds the deploy
+  scaffold and stops a migration build with a non-zero exit; any other held
+  contract builds normally without it. Migration builds stop on in-pod and
+  sandbox hosts until `host_isolated()` is revisited after #1680; held
+  deploy scaffolds are withheld.
 - **Processes the web server starts no longer inherit its secrets (#1680).**
   Every `git`, `gh`, runner and CLI child gets the server's environment minus
   the agent scrub set (`DATABASE_URL`, `JWT_SECRET`, API tokens, trusted-plan
@@ -24,8 +35,17 @@
 - **A `human-approval` system gate now clears only on a GitHub review (#1663).**
   The review must approve the head commit, come from someone other than the PR
   author, and not be a bot. A contract or `task_metadata.json` can no longer
-  mark its own gates satisfied. Until AIFactory has its own bot identity, every
-  such task merges by hand.
+  mark its own gates satisfied. Such tasks merge automatically when AIFactory
+  runs as a GitHub App (#1671) and by hand otherwise.
+- **AIFactory can open and merge its PRs as a GitHub App (#1671).** Set
+  `AIFACTORY_GITHUB_APP_ID`, `_INSTALLATION_ID` and `_PRIVATE_KEY` (Helm
+  `githubApp.*`). The server mints an installation token at boot, refreshes it
+  every 30 minutes and pops the key from its environment. The PR author is then
+  a bot, so a maintainer's approval of the head commit can clear the
+  `human-approval` gate. With the App on, the server refuses to start if a PAT is
+  in its environment or `gh` `hosts.yml`, and the chart refuses the MCP GitHub
+  PAT. Unconfigured installs are unchanged, and log a warning when a task waits
+  on a human approval. See `docs/docs/concepts/github-app.md`.
 - **The merge gate acts only on the contract PFactory signed (#1667).** The
   signed contract is now stored in the web server's database
   (`trusted_contracts`) at `/from-plan`, and the merge gate verifies it and the

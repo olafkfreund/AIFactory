@@ -417,3 +417,80 @@ def test_29_forged_tier_never_reaches_the_log(
 
     assert pe.merge_disposition(spec, "auto\nFORGED", trusted=_rec(signed)) == HOLD
     assert "FORGED" not in caplog.text
+
+
+# ── #1673: the server verdict handed to the build process ───────────────
+
+from core import contract_trust  # noqa: E402
+from core.contract_trust import ENV, contract_digest, trusted_contract  # noqa: E402
+from server.services import trusted_contract as tc_mod  # noqa: E402
+from server.services.trusted_contract import spawn_env  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _no_trusted_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(ENV, raising=False)
+
+
+def _lookup(monkeypatch: pytest.MonkeyPatch, result: Any) -> None:
+    async def fake(_spec: Path) -> Any:
+        return result
+
+    monkeypatch.setattr("server.services.trusted_contract.lookup", fake)
+
+
+async def test_spawn_env_verified_is_digest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec, signed = _spec(tmp_path, PROD)
+    _lookup(monkeypatch, _rec(signed))
+    assert await spawn_env(spec) == {ENV: contract_digest(signed)}
+
+
+@pytest.mark.parametrize(
+    "case", ["lookup-failed", "none-stamp", "edited-disk", "trace", "subprocess"]
+)
+async def test_spawn_env_holds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    spec, signed = _spec(tmp_path, PROD)
+    result: Any = _rec(signed)
+    if case == "lookup-failed":
+        result = LOOKUP_FAILED
+    elif case == "none-stamp":
+        result = _rec(signed, "none")
+    elif case == "edited-disk":
+        _contract_file(spec).write_text(json.dumps({**signed, "feature": "edited"}))
+    elif case == "trace":
+        result = None
+    elif case == "subprocess":
+        monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "subprocess")
+    _lookup(monkeypatch, result)
+    assert await spawn_env(spec) == {ENV: "hold"}
+
+
+async def test_spawn_env_legacy_is_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = tmp_path / ".aifactory" / "specs" / "001-x"
+    spec.mkdir(parents=True)
+    _lookup(monkeypatch, None)
+    assert await spawn_env(spec) == {}
+
+
+async def test_cross_side_digest_matches_pod_verdict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec, signed = _spec(tmp_path, PROD)
+    _lookup(monkeypatch, _rec(signed))
+    _contract_file(spec).write_text(
+        json.dumps(dict(reversed(list(signed.items()))), indent=2)
+    )
+    env = await spawn_env(spec)
+    monkeypatch.setenv(ENV, env[ENV])
+    state, contract, _why = trusted_contract(spec)
+    assert (state, contract) == ("verified", signed)
+
+
+def test_has_trusted_trace_is_the_core_predicate() -> None:
+    assert tc_mod.has_trusted_trace is contract_trust.has_trusted_trace

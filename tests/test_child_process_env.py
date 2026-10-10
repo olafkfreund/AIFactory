@@ -206,3 +206,28 @@ def test_credential_names_dropped_for_tools_kept_for_runner(
     assert runner["CLAUDE_CODE_OAUTH_TOKEN"] == "c"
     assert runner["CONTEXT7_KEY"] == "c"
     assert "DATABASE_URL" not in runner
+
+
+def test_github_app_private_key_never_reaches_a_child(
+    secret_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The App key is popped at boot; the deny pattern is the second layer (#1671)."""
+    name = "AIFACTORY_GITHUB_APP_PRIVATE_KEY"
+    monkeypatch.setenv(name, "-----BEGIN RSA PRIVATE KEY-----x")
+    assert name not in child_env()
+    assert name not in child_env(keep=GITHUB_KEEP)
+    assert name not in make_subprocess_env()
+    assert name not in make_subprocess_env(strip_anthropic_api_key=False)
+
+
+def test_make_subprocess_env_drops_trusted_contract(
+    secret_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AIFACTORY_TRUSTED_CONTRACT", "x")
+    assert "AIFACTORY_TRUSTED_CONTRACT" not in make_subprocess_env()
+    assert "AIFACTORY_TRUSTED_CONTRACT" not in child_env()
+
+
+def test_extra_trusted_contract_survives_strip(secret_env: None) -> None:
+    env = make_subprocess_env(extra={"AIFACTORY_TRUSTED_CONTRACT": "d"})
+    assert env["AIFACTORY_TRUSTED_CONTRACT"] == "d"

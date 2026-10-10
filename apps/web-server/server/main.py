@@ -73,6 +73,7 @@ from .routes import (
 from .routes import (
     settings as settings_routes,
 )
+from .services import github_app
 from .services.skills_service import init_skills_service
 from .websockets import (
     events as events_ws,
@@ -102,6 +103,8 @@ async def lifespan(app: FastAPI):
     # The serving process (a reload worker included) launches the agents, so it
     # must be non-dumpable too, not only the __main__ supervisor (#1679).
     _make_non_dumpable()
+    # Before any loop starts; env_bootstrap already loaded a .env PAT (#1671).
+    github_app.start()
 
     settings = get_settings()
 
@@ -189,6 +192,15 @@ async def lifespan(app: FastAPI):
     else:
         logger.info(
             "Completion outbox relay disabled (AIFACTORY_COMPLETION_OUTBOX unset)"
+        )
+
+    app.state.github_app_refresh_stop = None
+    app.state.github_app_refresh_task = None
+    if github_app.configured():
+        gh_stop = _asyncio.Event()
+        app.state.github_app_refresh_stop = gh_stop
+        app.state.github_app_refresh_task = _asyncio.create_task(
+            github_app.refresh_loop(stop=gh_stop)
         )
 
     # Start the RFC-0011 label-driven intake poller when enabled (#636). Off by
@@ -291,6 +303,12 @@ async def lifespan(app: FastAPI):
             await _asyncio.wait_for(app.state.outbox_relay_task, timeout=5.0)
         except (TimeoutError, _asyncio.CancelledError):
             app.state.outbox_relay_task.cancel()
+    if app.state.github_app_refresh_task is not None:
+        app.state.github_app_refresh_stop.set()
+        try:
+            await _asyncio.wait_for(app.state.github_app_refresh_task, timeout=5.0)
+        except (TimeoutError, _asyncio.CancelledError):
+            app.state.github_app_refresh_task.cancel()
     if app.state.stale_reaper_task is not None:
         app.state.stale_reaper_stop.set()
         try:

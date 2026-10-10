@@ -143,3 +143,121 @@ def test_prepare_writes_brief_at_worktree_root(tmp_path: Path):
     brief = worktree / "MIGRATION_BRIEF.md"
     assert brief.is_file() and summary["brief"] == str(brief)
     assert "do **not** edit the legacy source" in brief.read_text().lower()
+
+
+# ── #1673: migration acts only on a contract the server verified ────────
+
+import contextlib  # noqa: E402
+import json  # noqa: E402
+import logging  # noqa: E402
+from unittest.mock import AsyncMock, MagicMock, patch  # noqa: E402
+
+import pytest  # noqa: E402
+from cli import build_commands  # noqa: E402
+from core.contract_trust import ENV, contract_digest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _gate_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(ENV, raising=False)
+    monkeypatch.setenv("AIFACTORY_AUTH_PREFLIGHT", "off")
+
+
+def _run_build(tmp_path: Path, contract: dict):
+    """Drive handle_build_command; return (agent_mock, prepare_mock)."""
+    spec_dir = tmp_path / "spec"
+    (spec_dir / "context").mkdir(parents=True)
+    (spec_dir / "context" / "task_contract.json").write_text(json.dumps(contract))
+    review_state = MagicMock()
+    review_state.is_approval_valid.return_value = True
+    review_state_cls = MagicMock()
+    review_state_cls.load.return_value = review_state
+    agent = AsyncMock()
+    prepare = MagicMock(return_value={})
+    patches = [
+        patch("agent.run_autonomous_agent", new=agent),
+        patch("agent.sync_plan_to_source", MagicMock(return_value=False)),
+        patch("cli.utils.validate_environment", MagicMock(return_value=True)),
+        patch("cli.utils.print_banner", MagicMock()),
+        patch("core.migration_mapper.prepare_migration_workspace", prepare),
+        patch.object(
+            build_commands,
+            "choose_workspace",
+            MagicMock(return_value=build_commands.WorkspaceMode.ISOLATED),
+        ),
+        patch.object(
+            build_commands, "get_existing_build_worktree", MagicMock(return_value=None)
+        ),
+        patch.object(
+            build_commands,
+            "setup_workspace",
+            MagicMock(return_value=(tmp_path / "wt", None, spec_dir)),
+        ),
+        patch.object(build_commands, "ReviewState", review_state_cls),
+    ]
+    with contextlib.ExitStack() as stack:
+        for p in patches:
+            stack.enter_context(p)
+        build_commands.handle_build_command(
+            project_dir=tmp_path,
+            spec_dir=spec_dir,
+            model="claude-sonnet-4-5",
+            max_iterations=1,
+            verbose=False,
+            force_isolated=True,
+            force_direct=False,
+            auto_continue=True,
+            skip_qa=True,
+            force_bypass_approval=False,
+            stop_after_planning=True,
+        )
+    return agent, prepare
+
+
+def test_build_held_migration_exits_before_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv(ENV, "hold")
+    with caplog.at_level(logging.WARNING, logger="cli.build_commands"):
+        with pytest.raises(SystemExit) as exc:
+            _run_build(tmp_path, _contract())
+    assert exc.value.code == 1
+    assert "[trusted-contract]" in caplog.text
+
+
+def test_build_held_migration_never_calls_agent_or_prepare(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(ENV, "hold")
+    agent = AsyncMock()
+    prepare = MagicMock()
+    with patch("agent.run_autonomous_agent", new=agent):
+        with patch("core.migration_mapper.prepare_migration_workspace", prepare):
+            with pytest.raises(SystemExit):
+                _run_build(tmp_path, _contract())
+    assert not agent.called
+    assert not prepare.called
+
+
+def test_build_held_non_migration_runs_without_contract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv(ENV, "hold")
+    with caplog.at_level(logging.WARNING, logger="cli.build_commands"):
+        agent, prepare = _run_build(tmp_path, {"feature": "f"})
+    assert not prepare.called
+    assert agent.call_count == 1
+    assert "[trusted-contract] contract held" in caplog.text
+
+
+def test_build_verified_migration_prepares_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(ENV, contract_digest(_contract()))
+    _agent, prepare = _run_build(tmp_path, _contract())
+    prepare.assert_called_once_with(tmp_path / "wt", tmp_path, _contract())
+
+
+def test_build_legacy_migration_unchanged(tmp_path: Path) -> None:
+    _agent, prepare = _run_build(tmp_path, _contract())
+    assert prepare.call_count == 1
