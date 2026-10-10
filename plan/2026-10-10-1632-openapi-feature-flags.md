@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1632
 spec: spec/2026-10-10-1632-openapi-feature-flags.md
 ---
