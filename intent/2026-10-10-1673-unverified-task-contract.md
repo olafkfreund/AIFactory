@@ -14,7 +14,9 @@ read the contract through a verified path. Two backend readers still do not.
 The coding agent can write anything under the spec directory
 (`apps/backend/core/client.py:755-757`), and `context/task_contract.json` lives
 there. No hook protects that file. The PFactory signature is checked once, at
-ingest (`apps/backend/trusted_plan.py:423`), and never again in the backend.
+ingest (`apps/web-server/server/routes/execution.py:1382` calling
+`verify_trusted_plan`, `apps/backend/trusted_plan.py:423`), and never again in
+the backend.
 
 Two backend readers parse the contract as plain JSON and act on it:
 
@@ -66,23 +68,24 @@ Both fail open and quietly: errors become `[]` / `None` or a `debug` log.
   a server-written verdict file) is worthless; see #1672 for the same mistake
   with `reviewTier`.
 - The signing key (`AIFACTORY_TRUSTED_PLAN_KEY_*`) must never reach the agent
-  or the build pod. PR #1691 (#1680) removes it from the `run.py` environment.
+  or the build pod. Open PR #1691 (#1680) removes it from the `run.py` environment.
 - A valid signature alone does not stop a replayed or swapped contract. #1667's
   bar is signature, isolation stamp and a match with the stored record
-  (`_record_verified()`, `trusted_contract.py:48-56`). Matching that bar, or
+  (`_record_verified()`, `trusted_contract.py:49-60`). Matching that bar, or
   saying plainly that the fix is weaker, is required.
 - #1667's isolation rule holds: only kubejob with a database counts as isolated
-  (`host_isolated()`, `trusted_contract.py:17-27`) until #1680 lands.
+  (`host_isolated()`, `trusted_contract.py:18-28`) until #1680 lands.
 - The verified reader cannot just be imported: it is async, database-backed and
   in the web server, and kubejob pods have no database. Multi-replica (#1669,
   #1677) and pod restarts must not break whatever channel carries trust.
-- Both readers stay best-effort and must never raise into a build
-  (`build_commands.py:427`). Legacy builds keep working.
+- Neither reader may crash a build with an unhandled error
+  (`build_commands.py:428`). Whether a held contract stops a build is a
+  deliberate choice (open question 5), not an exception. Legacy builds keep working.
 - The contract schema and `_canonical()` form must not change in a way that
   breaks #1667's record comparison.
 - Existing tests stay green or change deliberately: `tests/test_deploy_scaffold.py`,
   `tests/test_constitution_prompt.py`,
-  `apps/backend/prompts_pkg/test_deployment_prompt.py`, the RFC-0010 migration tests.
+  `apps/backend/prompts_pkg/test_deployment_prompt.py`, `tests/test_migration_mapper.py`.
 - PR #1691 edits `trusted_plan.py`, `pfactory/tfactory_client.py`,
   `core/auth.py` and `core/client.py`. Expect conflicts if this lands first.
 
