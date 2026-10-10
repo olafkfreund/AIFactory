@@ -30,15 +30,19 @@ nothing. So git uses whatever the agent planted.
   through unchanged, and `git push` runs the planted `core.sshCommand`.
   We reproduced this against the real function with git 2.55.0: the planted
   script ran twice during the push. Other fetch, pull and push calls to origin
-  are exposed the same way: `routes/pr.py`, `routes/git.py`,
-  `core/worktree.py:378`, `pfactory/tfactory_client.py` and
-  `runners/github/*`.
+  are exposed the same way: `apps/web-server/server/routes/pr.py`
+  (`:202`, `:306`, `:325`), `apps/web-server/server/routes/git.py`
+  (`:1013`, `:1064`), `apps/backend/core/worktree.py:378`,
+  `apps/backend/pfactory/tfactory_client.py` (`:401`, `:462`) and
+  `apps/backend/runners/github/` (`context_gatherer.py`,
+  `services/parallel_orchestrator_reviewer.py`).
 - **core.pager: not reachable today.** Git resolves the planted pager, but
   every server git call captures stdout and none passes `-p`. Git starts no
   pager without a tty. A future call that has a tty or uses `-p` would run it.
 - **core.editor: not reachable today.** Every server commit passes `-m` or
   `--no-edit`. `merge` and `pull` open an editor only when there is a tty.
-  `rebase --continue` (`pr_endgame.py:994-995`) already passes
+  `rebase --continue`
+  (`apps/web-server/server/services/pr_endgame.py:994-995`) already passes
   `-c core.editor=true`. A future commit path without `-m` would run it.
 
 The agent runs with `permission_mode: "bypassPermissions"`
@@ -60,19 +64,23 @@ The agent runs with `permission_mode: "bypassPermissions"`
   The planted command runs as the server process, with the server's
   filesystem and network access.
 - Every task in a project whose `.git/config` an agent has changed.
-- Code: `core/child_env.py` (and the web-server wrapper
-  `server/utils/subprocess_env.py`), `core/worktree.py::_git_env`,
-  `core/workspace_fetch.py`, `core/git_credentials.py`,
-  `tests/test_child_process_env.py`.
+- Projects with an ssh origin. SSH remotes are a supported project URL
+  (`apps/web-server/server/routes/projects.py:147-150` accepts `ssh://` and
+  `git@host:path`).
+- Code: `apps/backend/core/child_env.py` (and the web-server wrapper
+  `apps/web-server/server/utils/subprocess_env.py`),
+  `apps/backend/core/worktree.py::_git_env`,
+  `apps/backend/core/workspace_fetch.py`,
+  `apps/backend/core/git_credentials.py`, `tests/test_child_process_env.py`.
 
 ## Constraints
 
 - Every server git path has to get the fix, not only the one the issue names.
   `_git_env` only gets the pins after #1689 step 3 rebuilds it on `child_env`.
-- This branch does not include #1689 (commit a85edffd). The new pins go after
-  `hooksPath` and `fsmonitor` and keep the append-only `GIT_CONFIG_COUNT`
-  pattern, because #1688's `github_env` adds its entries on top. Tests must
-  not hard-code index positions.
+- This branch includes neither #1689 (commit a85edffd, the `fsmonitor` pin)
+  nor #1688 (`github_env` on `fix/1688-github-token-per-call`, which also adds
+  `GIT_CONFIG_*` entries). The fix must not drop or reorder entries that
+  `child_env`, #1689 or #1688 put into `GIT_CONFIG_*`.
 - Precedence:
   - A command-line `-c` beats an environment pin, so the `pr_endgame`
     `rebase --continue` call keeps working.
@@ -87,7 +95,8 @@ The agent runs with `permission_mode: "bypassPermissions"`
 
 1. **core.sshCommand:** pin it in `child_env` (breaks operators who set it
    globally), or make the push and fetch paths refuse non-https origin URLs so
-   the key is never reached?
+   the key is never reached? The second option drops ssh remotes, which
+   projects accept today.
 2. **Operator override:** keep `GIT_SSH_COMMAND` from the server environment as
    the supported way to override the pin, or strip it in `child_env` too?
 3. **core.pager and core.editor:** pin them anyway as defence in depth
