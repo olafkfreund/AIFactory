@@ -65,26 +65,17 @@ hides the very mismatch #1619 was about. Two tests lock in the old rule
 - Must not add shared state or assume more than one replica (#1669;
   `replicaCount: 1` is pinned at `charts/aifactory/values.yaml:32`).
 - Must not touch the dispatch-raised-after-Job-created case (#1677).
-- No orphaned code: unused `import time` and the constant go if unused (Ruff
-  F401).
-- Tests reuse the existing `_DispatchingBackend` helper. No new fixtures.
+- No orphaned code: nothing left unused or unreferenced (Ruff F401).
 - No public API change. The `job_active` callable keeps its shape.
 - No trust boundary is involved: the change is in-process state only.
 
 ## Open questions
 
-1. Remove the grace period entirely, or keep a small time-based margin?
-2. Known behaviour change: when `reconcile_by_poll` raises for a build
+1. Known behaviour change: when `reconcile_by_poll` raises for a build
    (`agent_kubejob.py:698-700`), the id drops out of the set. Today the grace
    window hides that for a new build's first 45 seconds. Without it, one
    transient poll error ends live-log following at the next end-of-stream,
    as `is_running()` already reports. Accept it, or open a separate issue?
-3. Keep `_kubejob_still_active` as a named method, or read the set inline at
-   line 527?
-4. Record in the docstring that any future "reattach streamers on startup"
-   work must fill the set first, or leave it out?
-5. May `test_just_dispatched_build_counts_as_active` be rewritten to the
-   inverted expectation (unknown id inactive, dispatched id active)?
-6. Does this internal clean-up get a CHANGELOG entry? If so, expect a rebase
-   conflict with open PR #1691.
-7. Land #1670 on its own now, or batch it with #1669 and #1677?
+2. Does this internal clean-up get a CHANGELOG entry? If so, expect a rebase
+   conflict with open PR #1691, which also edits `CHANGELOG.md`.
+3. Land #1670 on its own now, or batch it with #1669 and #1677?
