@@ -632,3 +632,55 @@ async def test_kubejob_other_statuses_keep_handoff(
     )
     assert k.events == []
     assert k.drained == [1]
+
+
+# ── review fixes: independent recording, board event, and ordering ──
+
+_PAUSED = {**PHASED, "status": "human_review", "reviewReason": "plan_review"}
+
+
+async def test_kubejob_pause_control_failure_still_reports_usage_and_emits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    k = _kj(tmp_path, monkeypatch, plan=PHASED, remote_plan=_PAUSED)
+    _rtc(monkeypatch)
+    emitted: list[tuple[Any, ...]] = []
+
+    async def emit(*a: Any, **_k: Any) -> None:
+        emitted.append(a)
+
+    monkeypatch.setattr(k.svc, "_safe_emit_task_status", emit)
+
+    def boom(*_a: Any, **_k: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(task_control, "write_control", boom)
+    await k.svc._on_kubejob_build_done(TASK)
+    assert _statuses(k) == ["human_review"]  # spend still reported
+    assert emitted == [(TASK, "human_review", "plan_review")]
+    assert k.drained == [1]
+
+
+@pytest.mark.parametrize("path", ["failed", "stop", "pause"])
+async def test_kubejob_usage_report_runs_after_queue_drain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, path: str
+) -> None:
+    k = _kj(tmp_path, monkeypatch, plan=PHASED, remote_plan=_PAUSED)
+    _rtc(monkeypatch)
+    order: list[str] = []
+
+    async def drain() -> None:
+        order.append("drain")
+
+    async def report(*_a: Any, **_k: Any) -> None:
+        order.append("report")
+
+    monkeypatch.setattr(k.svc, "_drain_queue", drain)
+    monkeypatch.setattr(k.svc, "_report_kubejob_usage", report)
+    if path == "failed":
+        await k.svc._on_kubejob_build_failed(TASK, "boom")
+    elif path == "stop":
+        await k.svc._stop_kubejob_build(TASK)
+    else:
+        await k.svc._on_kubejob_build_done(TASK)
+    assert order == ["drain", "report"]

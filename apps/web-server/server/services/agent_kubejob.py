@@ -202,8 +202,10 @@ class KubejobMixin:
                 "[AgentService] kubejob failure record failed for %s (ignored)",
                 job_id,
             )
-        await self._report_kubejob_usage(job_id, "failed")
         await self._drain_queue()
+        # Last: the usage fetch is an object-store GET that can stall for minutes,
+        # and must not delay the queue drain (#1633).
+        await self._report_kubejob_usage(job_id, "failed")
 
     async def _record_kubejob_terminal(self, job_id: str, status: str) -> None:
         """Write a terminal status where the task API reads it (#1430).
@@ -288,14 +290,16 @@ class KubejobMixin:
                     review_reason=pause[1],
                     updated_by="kubejob_review_pause",
                 )
-                await self._report_kubejob_usage(job_id, "human_review")
             except Exception:  # noqa: BLE001
                 _log.exception(
                     "[AgentService] kubejob review-pause record failed for %s (ignored)",
                     sanitize_log(job_id),
                 )
+            # The board must leave running/planning now, not at the next poll.
+            await self._safe_emit_task_status(job_id, "human_review", pause[1])
             _report_orphaned_worktrees(job_id)
             await self._drain_queue()
+            await self._report_kubejob_usage(job_id, "human_review")
             return
         # The status the COMPLETION decided, not the one we asked for: its
         # evidence gate downgrades "completed" to "failed" when the build wrote
@@ -975,7 +979,6 @@ class KubejobMixin:
                     await self._update_plan_status(
                         project_path, spec_dir.name, "failed", task.id
                     )
-                    await self._report_kubejob_usage(task.id, "failed")
                     reaped.append(task.id)
                     _log.info(
                         "[AgentService] reaped abandoned in_progress task %s "
@@ -987,6 +990,10 @@ class KubejobMixin:
                     _log.exception(
                         "[AgentService] reap of abandoned task %s failed", task.id
                     )
+        # After every task is marked failed: the usage fetch is an object-store GET
+        # that can stall, and must not hold up the reap (#1633). Concurrent, so a
+        # blackholed store costs one timeout window, not one per task.
+        await asyncio.gather(*(self._report_kubejob_usage(t, "failed") for t in reaped))
         return reaped
 
     async def is_running_anywhere(self, task_id: str) -> bool:
@@ -1145,7 +1152,7 @@ class KubejobMixin:
         # #671 OAuth-env: return the pooled credential checked out at dispatch.
         self._release_task_credential(task_id)
         await self._safe_emit_task_status(task_id, "human_review", "errors")
-        await self._report_kubejob_usage(task_id, "failed")
         await self._drain_queue()
+        await self._report_kubejob_usage(task_id, "failed")
         _log.info("[AgentService] Stopped k8s-Job build %s", sanitize_log(task_id))
         return True

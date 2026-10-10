@@ -751,3 +751,11 @@ nothing needs migrating.
   instead of `str | None`. Not covered by any mutation row: reordering the
   usage report after `_drain_queue` survives all tests.
 - Step 5: follow-ups are drafted in the PR body, not filed (per this step).
+- Review fixes (Opus review, 3 minor): the pause path gives `write_control`
+  its own try, so a failed control write no longer drops the `human_review`
+  usage report, and emits `_safe_emit_task_status(job_id, "human_review",
+  reason)` for the board. Failed, stop and pause report usage after
+  `_drain_queue` (failed still after `_record_kubejob_terminal`), so a slow
+  store cannot delay Stop or the drain. The reap path has no drain: it reports
+  all reaped tasks once at the end with `asyncio.gather` (one timeout window,
+  not one per task). 4 new tests, failing first.
