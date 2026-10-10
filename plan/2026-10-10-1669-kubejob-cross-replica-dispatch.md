@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1669
 spec: spec/2026-10-10-1669-kubejob-cross-replica-dispatch.md
 ---
