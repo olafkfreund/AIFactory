@@ -276,3 +276,10 @@ One-off mutation checks after step 2; revert each by undoing the edit:
 - Trigger: streamers that stop at their first EOF while a newly dispatched pod
   is still initialising, which would mean an id reached the streamer before
   dispatch marked it (M4 and 2d say it cannot).
+
+## Deviations
+
+- Step 3: steps 1 and 2 landed as two commits (red tests `4d32ef03`, fix
+  `b8d27587`) instead of one; the PR is squash-merged, so dev never sees the
+  red commit alone. Commit subject wording differs from the plan's.
+- D1 follow-up filed: https://github.com/olafkfreund/AIFactory/issues/1693
