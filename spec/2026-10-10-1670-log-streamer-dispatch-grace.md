@@ -53,24 +53,14 @@ These are the defaults. Each one can be changed at review.
 - **Lines 32-37: delete the `# #1619: ...` comment and
   `_DISPATCH_GRACE_SECONDS = 45.0`.** The only other reference is
   `tests/test_is_running_kubejob.py:183`, which is removed in 2a.
-- **Lines 625-646: make `_kubejob_still_active` a plain membership check:**
-
-  ```python
-  def _kubejob_still_active(self, task_id: str) -> Callable[[], Any]:
-      """A liveness check for ``KubeJobLogStreamer`` (#1619, #1670).
-
-      Same answer as ``is_running`` for a kubejob id: membership in the set
-      dispatch marks (#1662) and the reconcile tick replaces. Read the
-      attribute on every call, never capture it: the tick rebinds it. An id
-      dispatch never marked is not active. _MAX_EMPTY_REATTACHES in
-      build_log_stream stops a dead stream either way.
-      """
-
-      async def _active() -> bool:
-          return task_id in self._active_kubejob_task_ids
-
-      return _active
-  ```
+- **Lines 625-646: make `_kubejob_still_active` a plain membership check.**
+  Drop the `started` timestamp. The inner `async def _active()` returns
+  `task_id in self._active_kubejob_task_ids` and nothing else. The docstring
+  cites #1619 and #1670 and says three things: the answer is the same as
+  `is_running` for a kubejob id (membership in the set dispatch marks and the
+  tick replaces); the attribute must be read on every call, never captured;
+  and an id dispatch never marked is not active, with `_MAX_EMPTY_REATTACHES`
+  stopping a dead stream either way. The restart/grace paragraph goes.
 
   The name, the signature and the async zero-argument closure stay the same,
   so the closure still matches `JobActive = Callable[[], Awaitable[bool]]` at
@@ -101,11 +91,13 @@ These are the defaults. Each one can be changed at review.
   time-based grace, and both readers answer from the same set.
 - **c. Stale-capture guard, added to test (a):** build
   `active = service._kubejob_still_active(TASK)` while TASK is live. Then
-  remove TASK from the `rows` list that `_FakeStore` reads, run
-  `reconcile_kubejob_builds()` again, and assert that `await active()` is
-  False and `is_running(TASK)` is False. In production the streamer's closure
-  is built at dispatch and outlives many ticks, and this is the only
-  assertion that covers that case.
+  make the store return no rows, the way
+  `test_finished_kubejob_stops_reading_as_running` does at lines 110-115
+  (monkeypatch `_store` to an empty store), and run
+  `reconcile_kubejob_builds()` again. Assert that `await active()` is False
+  and `is_running(TASK)` is False. In production the streamer's closure is
+  built at dispatch and outlives many ticks, and this is the only assertion
+  that covers that case.
 - **d. Dispatch path, in `test_dispatched_build_is_running_before_any_tick`
   (around line 238):** add
   `assert await service._kubejob_still_active(TASK)() is True`. This shows
@@ -168,14 +160,18 @@ All of these are in the web-server pod (single replica,
 
 ```bash
 cd /mnt/code/Source-home/GitHub/AIFactory-1670
-grep -rn '_DISPATCH_GRACE_SECONDS\|time\.monotonic' apps/ tests/        # expect: no output
-grep -n '^import time' apps/web-server/server/services/agent_kubejob.py   # expect: no output
+grep -rn '_DISPATCH_GRACE_SECONDS' apps/ tests/                          # expect: no output
+grep -n '^import time\|time\.monotonic' apps/web-server/server/services/agent_kubejob.py   # expect: no output
 ruff check apps/web-server/server/services/agent_kubejob.py tests/test_is_running_kubejob.py
 ruff format --check apps/web-server/server/services/agent_kubejob.py tests/test_is_running_kubejob.py
 pytest tests/test_is_running_kubejob.py -q
 pytest tests -q -k "kubejob or log_stream or is_running"
 git diff --stat main   # expect: the two files above plus intent/spec/plan only
 ```
+
+`time.monotonic` is used elsewhere in `apps/` (for example
+`server/oidc/userinfo_cache.py`, `services/completion.py`), so that grep is
+scoped to `agent_kubejob.py` only.
 
 Done means:
 
