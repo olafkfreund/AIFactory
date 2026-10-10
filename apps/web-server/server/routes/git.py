@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from server.error_ref import client_error
 from server.services.http_verdict import honest_status
 from server.specpath import browse_roots, within_roots
-from server.utils.subprocess_env import GITHUB_KEEP, child_env
+from server.utils.subprocess_env import child_env, github_env
 
 logger = logging.getLogger(__name__)
 
@@ -53,15 +53,16 @@ def _confined(path: str) -> str:
 def run_git_command(args: list[str], cwd: str) -> dict:
     """Run a git command and return result."""
     try:
-        result = subprocess.run(
-            ["git"] + args,
-            check=False,
-            capture_output=True,
-            text=True,
-            cwd=cwd,
-            timeout=30,
-            env=child_env(keep=GITHUB_KEEP),
-        )
+        with github_env(child_env()) as env:
+            result = subprocess.run(
+                ["git"] + args,
+                check=False,
+                capture_output=True,
+                text=True,
+                cwd=cwd,
+                timeout=30,
+                env=env,
+            )
         if result.returncode != 0:
             return {"success": False, "error": result.stderr.strip()}
         return {"success": True, "output": result.stdout.strip()}
@@ -1441,15 +1442,16 @@ def run_gh_command(args: list[str], cwd: str) -> dict:
         Dict with success status, output or error message
     """
     try:
-        result = subprocess.run(
-            ["gh"] + args,
-            check=False,
-            capture_output=True,
-            text=True,
-            cwd=cwd,
-            timeout=30,
-            env=child_env(keep=GITHUB_KEEP),
-        )
+        with github_env(child_env()) as env:
+            result = subprocess.run(
+                ["gh"] + args,
+                check=False,
+                capture_output=True,
+                text=True,
+                cwd=cwd,
+                timeout=30,
+                env=env,
+            )
         if result.returncode != 0:
             return {"success": False, "error": result.stderr.strip()}
         return {"success": True, "output": result.stdout.strip()}

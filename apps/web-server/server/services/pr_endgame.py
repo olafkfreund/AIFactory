@@ -33,7 +33,7 @@ from factory_common.logsafe import sanitize_log
 from server.services import github_app
 from server.services.build_backend import task_repo_dir
 from server.services.task_branch import resolve_task_branch
-from server.utils.subprocess_env import GITHUB_KEEP, child_env
+from server.utils.subprocess_env import child_env, github_env
 
 logger = logging.getLogger(__name__)
 
@@ -66,14 +66,15 @@ Runner = Callable[[list[str], "str | None"], CmdResult]
 
 
 def _default_runner(argv: list[str], cwd: str | None = None) -> CmdResult:
-    p = subprocess.run(
-        argv,
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        timeout=120,
-        env=child_env(keep=GITHUB_KEEP),
-    )
+    with github_env(child_env()) as env:
+        p = subprocess.run(
+            argv,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=env,
+        )
     return CmdResult(p.returncode, p.stdout.strip(), p.stderr.strip())
 
 
@@ -579,12 +580,6 @@ def create_pr(
     Idempotent-ish: if a PR for the branch already exists, gh reports it and we
     parse the number out.
     """
-    # Ensure git can authenticate the push: configure gh as the credential
-    # helper (idempotent, best-effort). Without this the deployed pod's raw
-    # `git push` fails with "could not read Username" even though gh itself is
-    # authenticated via GITHUB_TOKEN — the PR would never open.
-    runner(["gh", "auth", "setup-git"], None)
-
     # #959: on the kubejob/packed path the build ran in a k8s Job on an ephemeral
     # /work emptyDir and pushed its branch to origin from there
     # (core.workspace_fetch.maybe_push_workspace_branch, #751). THIS control-plane

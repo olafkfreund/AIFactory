@@ -35,7 +35,7 @@ from server.services.build_backend import task_repo_dir
 from server.services.http_verdict import honest_status
 from server.services.task_branch import resolve_task_branch_fetching
 from server.specpath import safe_spec_component
-from server.utils.subprocess_env import GITHUB_KEEP, child_env
+from server.utils.subprocess_env import child_env, github_env
 
 from .project_authz import require_task_access
 
@@ -198,14 +198,15 @@ async def create_pr_from_task(
 
     # Fetch latest base branch from remote
     try:
-        subprocess.run(
-            ["git", "fetch", "origin", base_branch],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env=child_env(keep=GITHUB_KEEP),
-        )
+        with github_env(child_env()) as env:
+            subprocess.run(
+                ["git", "fetch", "origin", base_branch],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                env=env,
+            )
     except Exception:
         pass  # Non-fatal — rebase will use whatever is available
 
@@ -276,21 +277,6 @@ async def create_pr_from_task(
             env=child_env(),
         )
 
-    # Authenticate git via the gh credential helper before pushing (#540).
-    # The deployed pod has a gh token but no git credential config, so a raw
-    # `git push` over HTTPS fails with "could not read Username for
-    # https://github.com". `gh auth setup-git` wires gh as the credential
-    # helper — same fix as pr_endgame.create_pr / agent_service. Best-effort:
-    # a failure here surfaces as the existing push error below, not a new mode.
-    subprocess.run(
-        ["gh", "auth", "setup-git"],
-        cwd=worktree_path,
-        capture_output=True,
-        text=True,
-        timeout=15,
-        env=child_env(keep=GITHUB_KEEP),
-    )
-
     # #1459: same failure as #959/PR #962, on the other door. Under the
     # kubejob/packed build backend the build ran in a k8s Job on an ephemeral
     # /work and pushed its branch to origin from there; THIS control-plane
@@ -302,14 +288,15 @@ async def create_pr_from_task(
     # fetch is a harmless no-op — we log and fall through to the existing
     # behaviour.
     try:
-        fetch_result = subprocess.run(  # noqa: S603, ASYNC221, PLW1510
-            ["git", "fetch", "origin", f"{worktree_branch}:{worktree_branch}"],  # noqa: S607
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            timeout=60,
-            env=child_env(keep=GITHUB_KEEP),
-        )
+        with github_env(child_env()) as env:
+            fetch_result = subprocess.run(  # noqa: S603, ASYNC221, PLW1510
+                ["git", "fetch", "origin", f"{worktree_branch}:{worktree_branch}"],  # noqa: S607
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env=env,
+            )
         if fetch_result.returncode != 0:
             logger.info(
                 "fetch of %s from origin skipped (%s) - branch may be local "
@@ -333,14 +320,15 @@ async def create_pr_from_task(
             worktree_branch,
         ]
     try:
-        result = subprocess.run(
-            push_cmd,
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            timeout=60,
-            env=child_env(keep=GITHUB_KEEP),
-        )
+        with github_env(child_env()) as env:
+            result = subprocess.run(
+                push_cmd,
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env=env,
+            )
         if result.returncode != 0:
             return {
                 "success": False,
