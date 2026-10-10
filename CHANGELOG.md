@@ -2,6 +2,17 @@
 
 ### Security
 
+- **An agent-written git config can no longer run commands in the server (#1689).**
+  Every `child_env()` process now pins `core.fsmonitor=false` next to the
+  `core.hooksPath` pin (`GIT_CONFIG_COUNT` is now `n+2`). The bash guard refuses
+  `git config` on command-running keys and the `-e`/section edit modes, and the
+  key list now also covers `.program`, `credential.*`, `core.askpass`,
+  `core.gitproxy`, `diff.external`, `*.driver`, `*.uploadpack`/`*.receivepack`,
+  `include.path` and `includeif.*`. The guard validates every `&&`/`||`/`;`
+  segment, not only the first, for all validators. `WorktreeManager` git calls
+  use the scrubbed, pinned env, so project hooks no longer run there. Not
+  covered: direct writes to `.git/config`, `bash -c` wrappers, and
+  textconv/filter drivers.
 - **A verified trusted task's review tier now comes from its signed contract (#1672).**
   `task_metadata.json` and the path floor can only raise the tier, never lower
   it, so an agent that rewrites `reviewTier` to `low` no longer turns a hold into

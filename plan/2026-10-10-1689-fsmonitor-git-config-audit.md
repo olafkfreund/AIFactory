@@ -547,3 +547,10 @@ reverted:
 - Step 4: the unparseable-`config` refusal shares `validate_git`'s existing
   unparseable branch and its "config/exec option" message, so the function
   keeps one return there (a separate return regressed PLR0911, 11 → 12).
+- Step 6: 13 of 14 mutations fail tests. "Q2 naive" (`"config" in tokens`)
+  survives: the guard case `git commit -m config` scans only `-m config`
+  after the word, which holds no dangerous key. The naive parse would only
+  over-refuse, never under-refuse, so no security test is missing.
+- Step 6: the manual PWNED repro and k3d smoke test were not run.
+- Follow-ups filed: #1717 (ssh/pager/editor pins), #1718 (no-ext-diff /
+  no-textconv), #1719 (`.git/` write guard), #1720 (`bash -c` unwrapping).
