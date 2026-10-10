@@ -130,6 +130,16 @@
 
 ### Fixed
 
+- **A build that stops, fails, is reaped or pauses for review now reports what it
+  spent (#1633).** The cockpit showed $0.00 for builds that stopped at
+  `human_review` or failed on Kubernetes, because usage was pushed only on
+  success. Every `run.py` exit now pushes usage; the server keeps the higher
+  token count when it fetches it; failed, stopped and reaped kubejob builds
+  send a `failed` usage snapshot; a kubejob build that pauses for review
+  reports `human_review` usage instead of a completion. Usage values are
+  validated (no NaN, negatives, bools or values over the caps; numbers stored
+  as strings are rejected), and per-worker OTel metrics are emitted once, at
+  terminal completion.
 - **A Kubernetes-Job build started by another web-server replica is now
   seen as running (#1669).** Task status, the running badge, Stop and
   Recover read the shared job-state store. A store read failure reads as
