@@ -51,57 +51,38 @@ cleanup: it reads the ref from the row (`:1316-1322`), which was never
 written, so it returns False and deletes nothing. Its call shape is copied
 instead.
 
-Replace `:1287-1298` with:
+The design, in prose (the code belongs to the plan):
 
-```python
-        try:
-            await batch.create_namespaced_job(namespace, manifest)
-            try:
-                await self._store.set_worker_ref(
-                    task_id,
-                    {"kind": "k8s-job", "namespace": namespace, "job_name": job_name},
-                )
-            except BaseException:
-                # #1677: callers read a raise as "nothing running". Delete the Job
-                # this call created, by its manifest name. Not delete_job(): the
-                # row has no ref. BaseException so a cancel mid-write also cleans up.
-                try:
-                    await batch.delete_namespaced_job(
-                        job_name, namespace, propagation_policy="Background"
-                    )
-                except Exception:
-                    # ponytail: orphan bounded by activeDeadlineSeconds (6h,
-                    # :185/:675); a label sweep is the follow-up.
-                    _log.exception(
-                        "[build_backend] rollback delete of Job %s/%s for task %s failed",
-                        sanitize_log(namespace), sanitize_log(job_name), sanitize_log(task_id),
-                    )
-                raise  # the original set_worker_ref error, not the delete error
-        finally:
-            if owns_client:
-                ...  # unchanged close
-```
-
+- Move the `set_worker_ref` call inside the existing `try`, right after
+  `create_namespaced_job`, so the client this call opened is still open for
+  cleanup. The `finally` that closes an owned client then runs after the ref
+  write, so the client is still closed exactly once on every path.
+- Wrap only the `set_worker_ref` call in its own handler. On any raise
+  (`BaseException`, see below), call `batch.delete_namespaced_job(job_name,
+  namespace, propagation_policy="Background")`, the same call shape as
+  `delete_job` (`:1329-1331`), then re-raise the original error with a bare
+  `raise`.
+- If that delete itself raises an `Exception`, log it at ERROR with the
+  traceback, passing namespace, job name and task id through `sanitize_log`,
+  and still re-raise the original `set_worker_ref` error, not the delete error.
 - `job_name` and `namespace` come from the manifest built earlier in
-  `dispatch`, so the delete acts only on the Job this dispatch created.
-- The bare `raise` re-raises the `set_worker_ref` error (or the cancel),
-  because the inner handler has finished. Callers keep recording "spawn failed
-  during admission" / "spawn failed on dequeue".
-- The cleanup uses the already-open client; the `finally` now runs after it,
-  so an owned client is still closed exactly once on every path.
-- `except BaseException` (taken from the robust design): a `CancelledError`
-  arriving while `set_worker_ref` awaits is the same bug by another route. A
-  cancel is delivered once, so the delete's `await` still runs, and the bare
-  `raise` hands the cancel back to the caller.
-- The `_log.info` success line and `return job_name` are unchanged. On the
-  success path the same calls run in the same order; only the client close
-  moves after the ref write.
+  `dispatch` (`:1276-1277`), so the delete acts only on the Job this dispatch
+  created, never on a rebuilt name or a label match.
+- Callers keep recording "spawn failed during admission" / "spawn failed on
+  dequeue", because they still see the original exception.
+- `BaseException`, not `Exception`: a `CancelledError` arriving while
+  `set_worker_ref` awaits is the same bug by another route. A cancel is
+  delivered once, so the delete's `await` still runs, and the bare `raise`
+  hands the cancel back to the caller.
+- The success path runs the same calls in the same order; only the client
+  close moves after the ref write. The `_log.info` line and `return job_name`
+  are unchanged.
 
 ### Tests: `tests/test_build_backend_kubejob.py`
 
 Follow `test_dispatch_records_worker_ref` (`:495`), using `_make_store`,
 `admit`, the `populate_build_worktree` stub and `_FakeBatch` (whose
-`delete_namespaced_job`, `:84-88`, records `(namespace, name)` and accepts
+`delete_namespaced_job`, `:86-90`, records `(namespace, name)` and accepts
 `**_kw`). Monkeypatch `store.set_worker_ref` with an async function that raises.
 No fake changes are needed.
 
@@ -151,6 +132,19 @@ No fake changes are needed.
   ends up failed and recovery resets the worktree as after any failed build.
 - **A second cancel during cleanup** interrupts the delete and leaves the
   orphan case above. Rare; accepted.
+- **Cancel path in the callers:** all three callers catch `Exception`, so a
+  `CancelledError` skips their handlers: the credential is not released and
+  the row is not marked failed by them. With the Job deleted this leaves the
+  row `running` with its admit-time ref, as a cancel at that point does today,
+  but no Job is left behind. Not changed here (callers stay untouched); the
+  plan must state which existing path frees that row.
+- **Intent outcome not met in the double-failure case:** the intent asks that
+  after a raise either no Job is running or the row names it. When both the
+  ref write and the rollback delete fail, neither holds: the Job runs
+  unnamed until `activeDeadlineSeconds` and its credential is back in the
+  pool. The Q2 default accepts this gap and defers it to the follow-up; the
+  approver must accept that explicitly at this gate or ask for the sweep in
+  this PR.
 - **Ref write committed but raised anyway** (connection dropped after commit):
   the row holds a `k8s-job` ref, the Job is deleted, the caller marks the row
   failed; if that also fails, the #1606 reaper sees a 404 and takes its "gone"
@@ -166,7 +160,8 @@ No fake changes are needed.
 - The kubejob reap, `is_running` and mixin suites named in the intent pass
   unchanged.
 - `ruff check apps/web-server/server/services/build_backend.py tests/test_build_backend_kubejob.py`
-- `git diff --stat origin/dev` (code commits) touches exactly those 2 files:
+- `git diff --stat origin/dev -- . ':!intent' ':!spec' ':!plan'` lists
+  exactly those 2 files:
   nothing in the callers, `job_state_store`, `routes/execution.py`, the RBAC
   chart or `trusted_contract_store`. The #1691 lines `:109` and `:953` are
   untouched.
