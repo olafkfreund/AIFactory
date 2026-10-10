@@ -32,6 +32,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "apps" / "web-server"))
 
+from server.services import completion  # noqa: E402
 from server.services.agent_service import AgentService  # noqa: E402
 
 _EMIT_TARGET = "server.services.completion.emit_terminal_completion"
@@ -135,3 +136,51 @@ async def test_human_review_emits_usage_but_no_side_effects(tmp_path: Path) -> N
     assert not (spec_dir / _SIDE_EFFECTS_MARKER).exists()
     assert mock_emit.call_count == 1
     assert mock_emit.call_args.kwargs.get("status") == "human_review"
+
+
+# ── #1633 C7: worker metrics once per terminal event, never per snapshot ──
+
+_AGG = {
+    "totalInputTokens": 30,
+    "outputTokens": 10,
+    "workers": {
+        "w1": {"input_tokens": 10, "output_tokens": 5},
+        "w2": {"input_tokens": 20, "output_tokens": 5},
+    },
+}
+
+
+def _record_metrics(monkeypatch: pytest.MonkeyPatch) -> list[list[dict]]:
+    calls: list[list[dict]] = []
+    monkeypatch.setattr(completion, "_emit_worker_metrics", calls.append)
+    monkeypatch.setattr(completion, "notify_completion", lambda e, **k: True)
+    return calls
+
+
+def test_worker_metrics_emitted_once_per_terminal_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = _record_metrics(monkeypatch)
+    (tmp_path / "token_usage.json").write_text(json.dumps(_AGG))
+
+    completion.emit_terminal_completion(
+        tmp_path, task_id="p:s", project_id="p", spec_id="s", status="failed"
+    )
+
+    assert len(calls) == 1
+    assert len(calls[0]) == 2
+
+
+def test_worker_metrics_never_from_snapshot_or_live_mapping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = _record_metrics(monkeypatch)
+    (tmp_path / "token_usage.json").write_text(json.dumps(_AGG))
+
+    ev = completion.emit_usage_snapshot(
+        tmp_path, task_id="p:s", project_id="p", spec_id="s", status="failed"
+    )
+    assert ev is not None
+    completion.usage_from_aggregate(_AGG)
+
+    assert calls == []

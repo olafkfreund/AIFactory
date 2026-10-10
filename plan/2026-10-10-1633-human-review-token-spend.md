@@ -736,3 +736,13 @@ nothing needs migrating.
   and C3 (`workspace_fetch.py`) are self-contained. C2 and C4 depend on C3:
   without the strictly-higher rule, a failed build with phases sends 2
   events.
+
+## Deviations
+
+- Step 1: of the 58 new cases, 36 fail before the code change and 22 already
+  pass (they pin invariants, or only go red under a mutation once the code
+  exists). `worker_metrics_emitted_once_per_terminal_event` passes before and
+  after C7, so `never_from_snapshot_or_live_mapping` is the C7 guard. The four
+  `preflight_pause_plan` cases are separate functions sharing a helper.
+  `test_agent_service_kubejob_backend.py` gains a `sys.path` insert for
+  `apps/backend`.
