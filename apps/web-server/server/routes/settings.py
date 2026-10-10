@@ -40,6 +40,7 @@ from server.crypto.secret_field import (
 from server.error_ref import client_error
 from server.paths import atomic_write_secret_json, write_secret_file
 from server.services.http_verdict import honest_status
+from server.utils.subprocess_env import child_env
 
 # --------------------------------------------------------------------------
 # Type Definitions for Validation
@@ -65,6 +66,7 @@ MemoryEmbeddingProviderType = Literal[
 DEFAULT_PARALLEL_WORKERS = 3
 MIN_PARALLEL_WORKERS = 1
 MAX_PARALLEL_WORKERS = 8
+
 
 from ..config import get_settings
 
@@ -794,6 +796,7 @@ async def detect_local_llm_providers():
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
+                env=child_env(),
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
             return proc.returncode == 0, (stdout or b"").decode().strip()
@@ -2775,6 +2778,7 @@ async def get_auth_status():
                 capture_output=True,
                 text=True,
                 timeout=5,
+                env=child_env(),
             )
             claude_installed = result.returncode == 0
 

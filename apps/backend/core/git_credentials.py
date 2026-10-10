@@ -30,6 +30,8 @@ import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 
+from core.child_env import child_env
+
 #: Only https github.com remotes are credentialed; ssh remotes carry their own
 #: auth, and any other host must not be offered this token.
 GITHUB_HTTPS_PREFIX = "https://github.com/"
@@ -62,15 +64,16 @@ def authed_push_url(url: str) -> Iterator[tuple[str, dict[str, str]]]:
     ``GIT_TERMINAL_PROMPT=0`` keeps git from blocking on a prompt if the helper
     is ever unusable.
 
-    Otherwise the URL is yielded unchanged with a plain copy of ``os.environ`` —
+    Otherwise the URL is yielded unchanged with a scrubbed ``child_env()`` —
     no credential is offered to a host this module did not build the URL for.
 
-    The env is always a complete environment, ready to hand to
+    The env is always a scrubbed complete environment (no server secrets, hooks
+    off), ready to hand to
     ``subprocess.run(env=...)``.
     """
     token = github_token()
     if not token or not url.startswith(GITHUB_HTTPS_PREFIX):
-        yield url, dict(os.environ)
+        yield url, child_env()
         return
 
     authed = f"https://{USERNAME}@{url[len('https://') :]}"
@@ -84,7 +87,7 @@ def authed_push_url(url: str) -> Iterator[tuple[str, dict[str, str]]]:
         yield (
             authed,
             {
-                **os.environ,
+                **child_env(),
                 "GIT_ASKPASS": handle.name,
                 "GIT_TERMINAL_PROMPT": "0",
                 "GIT_USER": USERNAME,

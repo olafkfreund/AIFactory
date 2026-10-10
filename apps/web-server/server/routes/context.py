@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, SecretStr
 from server.error_ref import client_error
 from server.services.http_verdict import honest_status
 from server.services.pr_endgame import is_graphiti_enabled
+from server.utils.subprocess_env import child_env
 
 logger = logging.getLogger(__name__)
 
@@ -193,6 +194,7 @@ async def refresh_project_index(projectId: str = Path(...)):
             capture_output=True,
             text=True,
             timeout=30,
+            env=child_env(),
         )
 
         files = result.stdout.strip().split("\n") if result.returncode == 0 else []
@@ -531,6 +533,7 @@ async def get_project_env(projectId: str = Path(...)):
             capture_output=True,
             text=True,
             timeout=5,
+            env=child_env(),
         )
         if result.returncode == 0:
             config["claudeAuthStatus"] = "authenticated"
@@ -801,6 +804,7 @@ async def invoke_claude_setup(projectId: str = Path(...)):
                 capture_output=True,
                 text=True,
                 timeout=5,
+                env=child_env(),
             )
             cli_installed = version_result.returncode == 0
         except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -830,6 +834,7 @@ async def invoke_claude_setup(projectId: str = Path(...)):
                 capture_output=True,
                 text=True,
                 timeout=5,
+                env=child_env(),
             )
 
             # If we got here and returncode is 0, Claude CLI is working

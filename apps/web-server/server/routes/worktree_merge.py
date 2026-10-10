@@ -52,6 +52,7 @@ from server.services.task_branch import (
     resolve_work_ref,
 )
 from server.specpath import safe_spec_component
+from server.utils.subprocess_env import child_env
 
 from ..paths import get_data_dir
 from .project_authz import require_task_access
@@ -139,6 +140,7 @@ async def get_worktree_merge_preview(
             capture_output=True,
             text=True,
             check=True,
+            env=child_env(),
         )
         base_branch = result.stdout.strip()
     except subprocess.CalledProcessError:
@@ -166,6 +168,7 @@ async def get_worktree_merge_preview(
                 capture_output=True,
                 text=True,
                 check=True,
+                env=child_env(),
             )
             worktree_branch = result.stdout.strip()
         except subprocess.CalledProcessError:
@@ -180,6 +183,7 @@ async def get_worktree_merge_preview(
             capture_output=True,
             text=True,
             check=True,
+            env=child_env(),
         )
         changed_files = []
         for line in result.stdout.strip().split("\n"):
@@ -214,6 +218,7 @@ async def get_worktree_merge_preview(
             cwd=project_path,
             capture_output=True,
             text=True,
+            env=child_env(),
         )
         # Git 2.38+: Return code 1 means conflicts exist
         # stdout format: "<tree_oid>\nCONFLICT (type): description"
@@ -258,6 +263,7 @@ async def get_worktree_merge_preview(
                 cwd=project_path,
                 capture_output=True,
                 text=True,
+                env=child_env(),
             )
             ignored = set(result.stdout.strip().splitlines())
             conflicting_files = [f for f in conflicting_files if f not in ignored]
@@ -282,6 +288,7 @@ async def get_worktree_merge_preview(
             capture_output=True,
             text=True,
             check=True,
+            env=child_env(),
         )
         commits_ahead = int(result.stdout.strip())
     except (subprocess.CalledProcessError, ValueError):
@@ -294,6 +301,7 @@ async def get_worktree_merge_preview(
             capture_output=True,
             text=True,
             check=True,
+            env=child_env(),
         )
         commits_behind = int(result.stdout.strip())
     except (subprocess.CalledProcessError, ValueError):
@@ -310,6 +318,7 @@ async def get_worktree_merge_preview(
             capture_output=True,
             text=True,
             check=True,
+            env=child_env(),
         )
         # splitlines(), NOT strip().split("\n"): stripping the whole output
         # eats the leading space of the FIRST porcelain line (" M app.py"),
@@ -329,6 +338,7 @@ async def get_worktree_merge_preview(
                 cwd=project_path,
                 capture_output=True,
                 text=True,
+                env=child_env(),
             )
             if task_files_result.returncode == 0:
                 task_files = set(task_files_result.stdout.strip().split("\n"))
@@ -345,6 +355,7 @@ async def get_worktree_merge_preview(
                             cwd=project_path,
                             capture_output=True,
                             text=True,
+                            env=child_env(),
                         )
                         ignored = set(ignored_result.stdout.strip().splitlines())
                         uncommitted_conflicting_files = [
@@ -592,6 +603,7 @@ async def resolve_worktree_conflicts(
             capture_output=True,
             text=True,
             check=True,
+            env=child_env(),
         )
         base_branch = result.stdout.strip()
     except subprocess.CalledProcessError:
@@ -631,6 +643,7 @@ async def resolve_worktree_conflicts(
             cwd=project_path,
             capture_output=True,
             text=True,
+            env=child_env(),
         )
 
         if merge_result.returncode == 0:
@@ -645,6 +658,7 @@ async def resolve_worktree_conflicts(
                 cwd=project_path,
                 capture_output=True,
                 text=True,
+                env=child_env(),
             )
             if commit.returncode != 0 and not _nothing_to_commit(commit):
                 detail = (commit.stderr or commit.stdout or "").strip()
@@ -702,6 +716,7 @@ async def resolve_worktree_conflicts(
             cwd=project_path,
             capture_output=True,
             text=True,
+            env=child_env(),
         )
         if result.returncode == 0 and result.stdout.strip():
             conflicted_files = [f for f in result.stdout.strip().split("\n") if f]
@@ -724,6 +739,7 @@ async def resolve_worktree_conflicts(
                 cwd=project_path,
                 capture_output=True,
                 text=True,
+                env=child_env(),
             )
             if result.returncode == 0:
                 for line in result.stdout.strip().split("\n"):
@@ -748,6 +764,7 @@ async def resolve_worktree_conflicts(
             cwd=project_path,
             capture_output=True,
             text=True,
+            env=child_env(),
         )
         # A non-zero exit is NOT automatically a failure here, and treating it as
         # one would swap this bug for its mirror image. `git commit` exits 1 when
@@ -814,6 +831,7 @@ async def resolve_worktree_conflicts(
                     cwd=project_path,
                     capture_output=True,
                     text=True,
+                    env=child_env(),
                 )
                 resolved_files.append(file_path)
                 continue
@@ -846,6 +864,7 @@ async def resolve_worktree_conflicts(
                     cwd=project_path,
                     capture_output=True,
                     text=True,
+                    env=child_env(),
                 )
                 if result.returncode == 0:
                     resolved_files.append(file_path)
@@ -895,6 +914,7 @@ async def resolve_worktree_conflicts(
             cwd=project_path,
             capture_output=True,
             text=True,
+            env=child_env(),
         )
         if result.returncode != 0:
             logger.warning(f"Merge commit failed: {result.stderr}")
@@ -997,6 +1017,7 @@ async def resolve_uncommitted_conflicts(
             capture_output=True,
             text=True,
             check=True,
+            env=child_env(),
         )
         base_branch = result.stdout.strip()
     except subprocess.CalledProcessError:
@@ -1021,6 +1042,7 @@ async def resolve_uncommitted_conflicts(
                 capture_output=True,
                 text=True,
                 check=True,
+                env=child_env(),
             )
             spec_branch = result.stdout.strip()
         except subprocess.CalledProcessError:
@@ -1035,6 +1057,7 @@ async def resolve_uncommitted_conflicts(
             capture_output=True,
             text=True,
             check=True,
+            env=child_env(),
         )
         # splitlines(), NOT strip().split("\n") -- see the identical note in
         # merge-preview: a whole-output strip mangles the first line's columns.
@@ -1054,6 +1077,7 @@ async def resolve_uncommitted_conflicts(
             cwd=project_path,
             capture_output=True,
             text=True,
+            env=child_env(),
         )
         task_files = set(result.stdout.strip().split("\n"))
     except subprocess.CalledProcessError:
@@ -1078,6 +1102,7 @@ async def resolve_uncommitted_conflicts(
             cwd=project_path,
             capture_output=True,
             text=True,
+            env=child_env(),
         )
         if result.returncode == 0 and "No local changes to save" not in result.stdout:
             stash_created = True
@@ -1089,6 +1114,7 @@ async def resolve_uncommitted_conflicts(
                 cwd=project_path,
                 capture_output=True,
                 text=True,
+                env=child_env(),
             )
             if (
                 result.returncode == 0
@@ -1123,6 +1149,7 @@ async def resolve_uncommitted_conflicts(
                         cwd=project_path,
                         capture_output=True,
                         text=True,
+                        env=child_env(),
                     )
                     if result.returncode == 0:
                         base_content = result.stdout
@@ -1148,6 +1175,7 @@ async def resolve_uncommitted_conflicts(
                             cwd=project_path,
                             capture_output=True,
                             text=True,
+                            env=child_env(),
                         )
                         if result.returncode == 0:
                             local_content = result.stdout
@@ -1171,6 +1199,7 @@ async def resolve_uncommitted_conflicts(
                         cwd=project_path,
                         capture_output=True,
                         text=True,
+                        env=child_env(),
                     )
                     if result.returncode == 0:
                         task_content = result.stdout
@@ -1229,6 +1258,7 @@ async def resolve_uncommitted_conflicts(
                     cwd=project_path,
                     capture_output=True,
                     text=True,
+                    env=child_env(),
                 )
                 logger.info("Dropped stash after merge")
             except Exception:
@@ -1353,6 +1383,7 @@ async def resolve_git_merge_conflicts(
             cwd=work_path,
             capture_output=True,
             text=True,
+            env=child_env(),
         )
         if result.returncode == 0 and result.stdout.strip():
             conflicted_files = [f for f in result.stdout.strip().split("\n") if f]
@@ -1373,6 +1404,7 @@ async def resolve_git_merge_conflicts(
                 cwd=work_path,
                 capture_output=True,
                 text=True,
+                env=child_env(),
             )
             if result.returncode == 0:
                 for line in result.stdout.strip().split("\n"):
@@ -1437,6 +1469,7 @@ async def resolve_git_merge_conflicts(
                     cwd=work_path,
                     capture_output=True,
                     text=True,
+                    env=child_env(),
                 )
                 resolved_files.append(file_path)
                 continue
@@ -1472,6 +1505,7 @@ async def resolve_git_merge_conflicts(
                     cwd=work_path,
                     capture_output=True,
                     text=True,
+                    env=child_env(),
                 )
                 if result.returncode == 0:
                     resolved_files.append(file_path)
@@ -1525,6 +1559,7 @@ async def resolve_git_merge_conflicts(
                 cwd=work_path,
                 capture_output=True,
                 text=True,
+                env=child_env(),
             )
             if result.returncode == 0 and result.stdout.strip():
                 merge_branch = result.stdout.strip()
@@ -1536,6 +1571,7 @@ async def resolve_git_merge_conflicts(
             cwd=work_path,
             capture_output=True,
             text=True,
+            env=child_env(),
         )
         if result.returncode == 0:
             commit_result = "Merge committed successfully"
@@ -1657,6 +1693,7 @@ async def abort_worktree_merge(
                     capture_output=True,
                     text=True,
                     timeout=30,
+                    env=child_env(),
                 )
                 if result.returncode == 0:
                     aborted_locations.append("worktree")
@@ -1692,6 +1729,7 @@ async def abort_worktree_merge(
                     capture_output=True,
                     text=True,
                     timeout=30,
+                    env=child_env(),
                 )
                 if result.returncode == 0:
                     aborted_locations.append("main project")
@@ -1806,6 +1844,7 @@ async def merge_worktree(
             capture_output=True,
             text=True,
             check=True,
+            env=child_env(),
         )
         base_branch = result.stdout.strip()
     except subprocess.CalledProcessError:
@@ -1876,7 +1915,12 @@ async def merge_worktree(
             merge_cmd.append("--no-commit")
 
         result = subprocess.run(
-            merge_cmd, cwd=project_path, capture_output=True, text=True, check=True
+            merge_cmd,
+            cwd=project_path,
+            capture_output=True,
+            text=True,
+            check=True,
+            env=child_env(),
         )
 
         # Clean up worktree after successful merge
@@ -1889,6 +1933,7 @@ async def merge_worktree(
                 cwd=project_path,
                 capture_output=True,
                 text=True,
+                env=child_env(),
             )
             worktree_deleted = cleanup_result.returncode == 0
 
@@ -1898,6 +1943,7 @@ async def merge_worktree(
                 cwd=project_path,
                 capture_output=True,
                 text=True,
+                env=child_env(),
             )
             branch_deleted = branch_result.returncode == 0
         except Exception as e:
@@ -2022,6 +2068,7 @@ async def get_worktree_status(
             capture_output=True,
             text=True,
             check=True,
+            env=child_env(),
         )
         base_branch = result.stdout.strip()
     except subprocess.CalledProcessError:
@@ -2046,6 +2093,7 @@ async def get_worktree_status(
                 capture_output=True,
                 text=True,
                 check=True,
+                env=child_env(),
             )
             worktree_branch = result.stdout.strip()
         except subprocess.CalledProcessError:
@@ -2060,6 +2108,7 @@ async def get_worktree_status(
             capture_output=True,
             text=True,
             check=True,
+            env=child_env(),
         )
         commit_count = int(result.stdout.strip())
     except (subprocess.CalledProcessError, ValueError):
@@ -2077,6 +2126,7 @@ async def get_worktree_status(
             capture_output=True,
             text=True,
             check=True,
+            env=child_env(),
         )
         # Parse the last line for summary (e.g., "5 files changed, 100 insertions(+), 20 deletions(-)")
         lines = result.stdout.strip().split("\n")
@@ -2191,6 +2241,7 @@ async def get_worktree_diff(
             capture_output=True,
             text=True,
             check=True,
+            env=child_env(),
         )
         base_branch = result.stdout.strip()
     except subprocess.CalledProcessError:
@@ -2216,6 +2267,7 @@ async def get_worktree_diff(
                 capture_output=True,
                 text=True,
                 check=True,
+                env=child_env(),
             )
             worktree_branch = result.stdout.strip()
         except subprocess.CalledProcessError:
@@ -2231,6 +2283,7 @@ async def get_worktree_diff(
             capture_output=True,
             text=True,
             check=True,
+            env=child_env(),
         )
         for line in result.stdout.strip().split("\n"):
             if line:
@@ -2272,6 +2325,7 @@ async def get_worktree_diff(
             capture_output=True,
             text=True,
             check=True,
+            env=child_env(),
         )
         status_map = {}
         for line in result.stdout.strip().split("\n"):
@@ -2364,6 +2418,7 @@ async def get_worktree_diff(
                 capture_output=True,
                 text=True,
                 check=True,
+                env=child_env(),
             )
             f["diff"] = result.stdout
         except subprocess.CalledProcessError:
@@ -2467,6 +2522,7 @@ async def discard_worktree(
             cwd=project_path,
             capture_output=True,
             text=True,
+            env=child_env(),
         )
 
         if result.returncode != 0:
@@ -2480,6 +2536,7 @@ async def discard_worktree(
             cwd=project_path,
             capture_output=True,
             text=True,
+            env=child_env(),
         )
 
         # Delete the local branch, only if we identified one.
@@ -2491,6 +2548,7 @@ async def discard_worktree(
                 capture_output=True,
                 text=True,
                 check=False,
+                env=child_env(),
             )
             # Report what git DID, not what we asked it to do. `git branch -D`
             # fails when the branch is checked out in another worktree, and the

@@ -2,6 +2,18 @@
 
 ### Security
 
+- **Processes the web server starts no longer inherit its secrets (#1680).**
+  Every `git`, `gh`, runner and CLI child gets the server's environment minus
+  the agent scrub set (`DATABASE_URL`, `JWT_SECRET`, API tokens, trusted-plan
+  keys, cloud credentials); a child that needs one credential gets it by name.
+  Every git the server runs sets `core.hooksPath=/dev/null`, so hooks in an
+  agent-written worktree no longer run, including on server-made merge and
+  conflict commits. Agent runners make themselves non-dumpable before starting
+  an agent. A test fails on any spawn site that passes the full environment.
+  Children other than the agent runner also drop every `*_KEY` and `*_TOKEN`
+  name, and `KMS_*` keys are now scrubbed from agents too. Git LFS objects are
+  not uploaded on these pushes yet (#1690). Follow-ups: #1688 (token per call),
+  #1689 (other `.git/config` command paths), #1692 (non-Claude agent env).
 - **A `human-approval` system gate now clears only on a GitHub review (#1663).**
   The review must approve the head commit, come from someone other than the PR
   author, and not be a bot. A contract or `task_metadata.json` can no longer

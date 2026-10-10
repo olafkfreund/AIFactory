@@ -7,7 +7,6 @@ Main entry point for the web server that provides:
 - Static file serving for the React SPA
 """
 
-import ctypes
 import logging
 import sys
 from contextlib import asynccontextmanager, suppress
@@ -761,14 +760,13 @@ def _make_non_dumpable() -> None:
     Children reset to dumpable on execve and still inherit the full env (#1680).
     Fails closed: a server that cannot hide its secrets must not start.
     """
-    if not sys.platform.startswith("linux"):
-        return
-    pr_set_dumpable = 4
-    libc = ctypes.CDLL(None, use_errno=True)
-    if libc.prctl(pr_set_dumpable, 0, 0, 0, 0) != 0:
-        raise SystemExit(
-            f"prctl(PR_SET_DUMPABLE, 0) failed: errno {ctypes.get_errno()}"
-        )
+    backend = str(Path(__file__).resolve().parents[2] / "backend")
+    if backend not in sys.path:
+        sys.path.insert(0, backend)
+    from core.process_hardening import make_non_dumpable  # noqa: PLC0415
+
+    if not make_non_dumpable():
+        raise SystemExit("prctl(PR_SET_DUMPABLE, 0) failed")
 
 
 if __name__ == "__main__":

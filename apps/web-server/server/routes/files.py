@@ -30,6 +30,7 @@ from server.services.argv_safety import (
 )
 from server.services.http_verdict import honest_status
 from server.specpath import browse_roots, registered_project_roots, within_roots
+from server.utils.subprocess_env import child_env
 
 from ..config import get_settings
 from .project_authz import require_project_access
@@ -815,7 +816,9 @@ async def search_files(
             query,
             search_root,
         ]
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=30, env=child_env()
+        )
 
         for line in proc.stdout.strip().split("\n"):
             if not line:
@@ -924,6 +927,7 @@ async def get_git_diff(
             capture_output=True,
             text=True,
             timeout=30,
+            env=child_env(),
         )
 
         if proc.returncode != 0:

@@ -32,6 +32,7 @@ from server.services.review_redrive_service import (
     sync_spec_file_from_worktree,
     worktree_spec_dir,
 )
+from server.utils.subprocess_env import GITHUB_KEEP, child_env
 
 from .task_control import write_control
 from .trusted_contract import handoff_contract
@@ -398,6 +399,7 @@ async def run_terminal_completion(
                                         ["gh", "auth", "setup-git"],
                                         capture_output=True,
                                         timeout=30,
+                                        env=child_env(keep=GITHUB_KEEP),
                                     )
                                     push = _sp.run(
                                         ["git", "push", "origin", "HEAD"],
@@ -405,6 +407,7 @@ async def run_terminal_completion(
                                         capture_output=True,
                                         text=True,
                                         timeout=120,
+                                        env=child_env(keep=GITHUB_KEEP),
                                     )
                                     if push.returncode != 0:
                                         logger.warning(

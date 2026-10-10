@@ -29,6 +29,7 @@ import subprocess
 from pathlib import Path
 
 from server.specpath import spec_dir_for
+from server.utils.subprocess_env import GITHUB_KEEP, child_env
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ def _git(args: list[str], cwd: Path) -> list[str]:
             capture_output=True,
             text=True,
             check=True,
+            env=child_env(keep=GITHUB_KEEP),
         )
     except (subprocess.CalledProcessError, OSError) as exc:
         # args[0] is a literal subcommand; cwd is caller-derived and left out.

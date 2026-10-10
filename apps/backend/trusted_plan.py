@@ -576,10 +576,19 @@ def _git_subprocess_env() -> dict[str, str] | None:
     package is importable, which the pure-verification callers do not require.
     """
     try:
+        from core.child_env import child_env  # noqa: PLC0415 - see docstring
         from core.worktree import _git_env  # noqa: PLC0415 - see docstring
     except ImportError:  # pragma: no cover - defensive; core may be unavailable
         return None
-    env: dict[str, str] = _git_env()
+    # Ambient-git-var scrub (worktree) AND server-secret scrub (#1680): keep what
+    # both leave, plus the hooksPath config child_env appended.
+    ambient_clean = _git_env()
+    env = {
+        k: v
+        for k, v in child_env().items()
+        if k in ambient_clean or k.startswith("GIT_CONFIG_")
+    }
+    env["GIT_TERMINAL_PROMPT"] = "0"  # forced headless, as _git_env does
     return env
 
 

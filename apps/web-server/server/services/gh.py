@@ -14,6 +14,7 @@ import subprocess
 from typing import Any
 
 from server.error_ref import client_error
+from server.utils.subprocess_env import GITHUB_KEEP, child_env
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ def run_gh_command(args: list[str], cwd: str | None = None) -> dict[str, Any]:
             text=True,
             cwd=cwd,
             timeout=30,
+            env=child_env(keep=GITHUB_KEEP),
         )
         if result.returncode != 0:
             return {"success": False, "error": result.stderr.strip()}

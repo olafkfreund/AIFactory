@@ -42,6 +42,7 @@ from factory_common.logsafe import sanitize_log
 
 from server.error_ref import InputRejectedError
 from server.specpath import safe_spec_component
+from server.utils.subprocess_env import GITHUB_KEEP, child_env
 
 logger = logging.getLogger(__name__)
 
@@ -463,9 +464,10 @@ async def _run_git(
     # Restrict git transports to https/ssh/git (#323 C5): blocks the `ext::`
     # transport helper (arbitrary command execution) even if a malicious URL
     # slips past the route validator.
-    env = {**os.environ, "GIT_ALLOW_PROTOCOL": "https:ssh:git"}
-    if extra_env:
-        env.update(extra_env)
+    env = child_env(
+        keep=GITHUB_KEEP,
+        extra={"GIT_ALLOW_PROTOCOL": "https:ssh:git", **(extra_env or {})},
+    )
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,

@@ -29,6 +29,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from core.child_env import child_env
 from core.git_credentials import authed_push_url
 
 _log = logging.getLogger(__name__)
@@ -295,7 +296,7 @@ def _git_stdout(cwd: Path, args: list[str], env: dict[str, str] | None = None) -
     return subprocess.run(
         ["git", *args],
         cwd=str(cwd),
-        env=env,
+        env=env if env is not None else child_env(),
         capture_output=True,
         text=True,
         timeout=60,

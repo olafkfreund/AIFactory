@@ -13,6 +13,7 @@ from pathlib import Path
 
 from server.error_ref import InputRejectedError
 from server.specpath import contained_path, registered_project_roots
+from server.utils.subprocess_env import child_env
 
 from .argv_safety import assert_not_option, assert_safe_git_ref
 
@@ -394,5 +395,10 @@ class TerminalWorktreeService:
             subprocess.CalledProcessError: If check=True and command fails
         """
         return subprocess.run(
-            cmd, cwd=self.project_path, capture_output=True, check=check, text=True
+            cmd,
+            cwd=self.project_path,
+            capture_output=True,
+            check=check,
+            text=True,
+            env=child_env(),
         )

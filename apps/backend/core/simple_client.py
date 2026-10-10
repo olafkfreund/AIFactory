@@ -21,14 +21,18 @@ Example usage:
     client = create_simple_client(agent_type="insights", cwd=project_dir)
 """
 
+import logging
 from pathlib import Path
 
 from agents.tools_pkg import get_agent_config, get_default_thinking_level
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+from core import process_hardening
 from core.auth import get_agent_env_blanks, get_sdk_env_vars, require_auth_token
 from core.model_config import DEFAULT_UTILITY_MODEL
 from core.outbound_scrub import wrap_client_outbound_scrub
 from phase_config import get_thinking_budget
+
+logger = logging.getLogger(__name__)
 
 
 def create_simple_client(
@@ -71,6 +75,8 @@ def create_simple_client(
     Raises:
         ValueError: If agent_type is not found in AGENT_CONFIGS
     """
+    if not process_hardening.make_non_dumpable():
+        logger.warning("could not make the process non-dumpable; env stays readable")
     # Get authentication
     oauth_token = require_auth_token()
     import os

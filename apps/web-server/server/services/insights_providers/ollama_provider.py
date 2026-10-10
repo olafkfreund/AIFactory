@@ -12,6 +12,8 @@ import subprocess
 import time
 from pathlib import Path
 
+from server.utils.subprocess_env import child_env
+
 from ...websockets.events import broadcast_event
 from .base import ProviderInfo, ProviderModel, ProviderStrategy
 from .tools import execute_tool, get_tool_definitions
@@ -87,6 +89,7 @@ class OllamaProvider(ProviderStrategy):
                     capture_output=True,
                     text=True,
                     timeout=2,
+                    env=child_env(),
                 )
                 if result.returncode == 0 and result.stdout.strip():
                     lines = result.stdout.strip().splitlines()

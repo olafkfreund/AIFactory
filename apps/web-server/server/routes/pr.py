@@ -35,6 +35,7 @@ from server.services.build_backend import task_repo_dir
 from server.services.http_verdict import honest_status
 from server.services.task_branch import resolve_task_branch_fetching
 from server.specpath import safe_spec_component
+from server.utils.subprocess_env import GITHUB_KEEP, child_env
 
 from .project_authz import require_task_access
 
@@ -138,6 +139,7 @@ async def create_pr_from_task(
                 capture_output=True,
                 text=True,
                 check=True,
+                env=child_env(),
             )
             base_branch = result.stdout.strip()
         except subprocess.CalledProcessError:
@@ -202,6 +204,7 @@ async def create_pr_from_task(
             capture_output=True,
             text=True,
             timeout=30,
+            env=child_env(keep=GITHUB_KEEP),
         )
     except Exception:
         pass  # Non-fatal — rebase will use whatever is available
@@ -215,6 +218,7 @@ async def create_pr_from_task(
             capture_output=True,
             text=True,
             timeout=10,
+            env=child_env(),
         )
         # "No local changes to save" means nothing was stashed
         stashed = (
@@ -235,6 +239,7 @@ async def create_pr_from_task(
             capture_output=True,
             text=True,
             timeout=120,
+            env=child_env(),
         )
         if result.returncode != 0:
             # Abort the failed rebase to leave worktree clean
@@ -244,6 +249,7 @@ async def create_pr_from_task(
                 capture_output=True,
                 text=True,
                 timeout=10,
+                env=child_env(),
             )
             rebase_failed = True
     except subprocess.TimeoutExpired:
@@ -253,6 +259,7 @@ async def create_pr_from_task(
             capture_output=True,
             text=True,
             timeout=10,
+            env=child_env(),
         )
         rebase_failed = True
     except Exception:
@@ -266,6 +273,7 @@ async def create_pr_from_task(
             capture_output=True,
             text=True,
             timeout=10,
+            env=child_env(),
         )
 
     # Authenticate git via the gh credential helper before pushing (#540).
@@ -280,6 +288,7 @@ async def create_pr_from_task(
         capture_output=True,
         text=True,
         timeout=15,
+        env=child_env(keep=GITHUB_KEEP),
     )
 
     # #1459: same failure as #959/PR #962, on the other door. Under the
@@ -299,6 +308,7 @@ async def create_pr_from_task(
             capture_output=True,
             text=True,
             timeout=60,
+            env=child_env(keep=GITHUB_KEEP),
         )
         if fetch_result.returncode != 0:
             logger.info(
@@ -324,7 +334,12 @@ async def create_pr_from_task(
         ]
     try:
         result = subprocess.run(
-            push_cmd, cwd=worktree_path, capture_output=True, text=True, timeout=60
+            push_cmd,
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=child_env(keep=GITHUB_KEEP),
         )
         if result.returncode != 0:
             return {
@@ -442,6 +457,7 @@ async def create_pr_from_task(
                 capture_output=True,
                 text=True,
                 timeout=5,
+                env=child_env(),
             )
             if origin_url_result.returncode == 0:
                 import re as _re

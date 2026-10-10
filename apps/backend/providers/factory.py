@@ -42,7 +42,7 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any
 
-from core import runtime_gating
+from core import process_hardening, runtime_gating
 from providers._ollama_http import resolve_ollama_api_key, resolve_ollama_cloud_base_url
 
 if TYPE_CHECKING:
@@ -317,6 +317,10 @@ def get_provider(provider_name: str, phase: str, **kwargs: Any) -> BaseLLMProvid
         ValueError: If provider_name is unrecognised, or if the provider
             doesn't support the requested phase (e.g. Ollama for coding).
     """
+    # #1680: a non-Claude runner never reaches create_client, so harden here
+    # too, before the provider spawns its agent.
+    if not process_hardening.make_non_dumpable():
+        logger.warning("could not make the process non-dumpable; env stays readable")
     canonical = _resolve_canonical(provider_name)
 
     # A canonical that names a DESTINATION rather than a class (github-models,
