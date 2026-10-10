@@ -766,3 +766,11 @@ recorded.
   split over two lines.
 - Step 5: follow-up #1721 filed; #1689 commented with the LFS/http/url keys.
   The manual GIT_TRACE check on a scratch github.com repo was not run.
+- Review fix (Opus review, blocking): git-lfs applies repo `url.*.insteadOf`
+  / `pushInsteadOf` to the pinned `lfs.url`/`lfs.pushurl` after get-url is
+  checked, so the upload could be redirected, and via an ssh rewrite plus
+  `core.sshCommand` run an agent command in the server. D7's refusal regex is
+  widened to `^(lfs\.customtransfer\.|url\.)` at every site (push_with_lfs and
+  the `pr.py` route); the `lfs_push_argv` docstring no longer claims repo
+  config cannot redirect the endpoint. Real-git tests for both rewrite forms
+  prove the upload is never attempted.

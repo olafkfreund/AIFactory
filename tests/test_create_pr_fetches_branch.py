@@ -230,7 +230,7 @@ def _lfs_present(monkeypatch: pytest.MonkeyPatch) -> None:
 def _record_git(
     monkeypatch: pytest.MonkeyPatch,
     *,
-    check_rc: int = 1,
+    check_rc: int | None = 1,
     upload: Callable[[], subprocess.CompletedProcess[str]],
 ) -> list[list[str]]:
     """Fake get-url / config check / lfs push; pass everything else through."""
@@ -244,7 +244,7 @@ def _record_git(
                 return subprocess.CompletedProcess(
                     argv, 0, "https://github.com/acme/proj\n", ""
                 )
-            if "--get-regexp" in argv:
+            if "--get-regexp" in argv and check_rc is not None:
                 return subprocess.CompletedProcess(argv, check_rc, "", "")
             if "lfs" in argv and argv[argv.index("lfs") + 1] == "push":
                 return upload()
@@ -341,4 +341,35 @@ async def test_lfs_timeout_maps_to_push_timed_out(
     _status, body = await _call_create_pr()
 
     assert body["error"] == "Push timed out"
+    assert not any(_is_push(c) for c in calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", ["insteadOf", "pushInsteadOf"])
+async def test_lfs_url_rewrite_refuses_create_pr(
+    key: str,
+    packed_path_repos: dict[str, Path],
+    fake_gh: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # git-lfs applies url.*.insteadOf to the pinned lfs.url; the REAL config check
+    # (not faked here) must refuse before any upload.
+    _git(
+        packed_path_repos["worktree"],
+        "config",
+        f"url.ssh://evil.invalid/.{key}",
+        "https://github.com/acme/proj.git/",
+    )
+    _patch_route(monkeypatch, packed_path_repos["projects_file"])
+    _lfs_present(monkeypatch)
+    calls = _record_git(
+        monkeypatch,
+        check_rc=None,
+        upload=lambda: subprocess.CompletedProcess([], 0, "", ""),
+    )
+
+    _status, body = await _call_create_pr()
+
+    assert "LFS step refused" in body["error"]
+    assert not any(_is_upload(c) for c in calls)
     assert not any(_is_push(c) for c in calls)

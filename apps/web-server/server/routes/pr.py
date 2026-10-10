@@ -336,10 +336,10 @@ async def create_pr_from_task(
                 else None
             )
             if lfs_argv:
-                # A repo-defined transfer program would run on upload; refuse (rc 1 = none).
+                # A repo transfer program or url.* rewrite would redirect the upload; refuse (rc 1 = none).
                 chk_cmd = ["git", "config", "--name-only", "--get-regexp"]
                 chk = subprocess.run(  # noqa: S603, ASYNC221, PLW1510
-                    [*chk_cmd, r"^lfs\.customtransfer\."],
+                    [*chk_cmd, r"^(lfs\.customtransfer\.|url\.)"],
                     cwd=worktree_path,
                     capture_output=True,
                     text=True,
@@ -351,7 +351,7 @@ async def create_pr_from_task(
                         "success": False,
                         "error": (
                             "Failed to push branch: LFS step refused "
-                            "(lfs.customtransfer.* defined)"
+                            "(lfs.customtransfer.* or url.* defined)"
                         ),
                     }
                 up = subprocess.run(  # noqa: S603, ASYNC221, PLW1510

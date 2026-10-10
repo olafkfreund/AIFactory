@@ -348,3 +348,35 @@ def test_pins_alone_do_not_stop_the_agent(lfs_repo: Path) -> None:
     pwned = _evil_setup(lfs_repo)
     pr_endgame._default_runner(_pinned_argv(lfs_repo), str(lfs_repo))
     assert pwned.exists()
+
+
+@_needs_lfs
+@pytest.mark.parametrize("key", ["insteadOf", "pushInsteadOf"])
+def test_url_rewrite_is_refused_and_never_attempted(lfs_repo: Path, key: str) -> None:
+    # git-lfs applies url.*.insteadOf to the pinned lfs.url, so a repo could send
+    # the upload to a host (or ssh command) of its choosing.
+    pwned = lfs_repo.parent / "PWNED"
+    ssh = lfs_repo.parent / "ssh.sh"
+    ssh.write_text(f"#!/bin/sh\ntouch {pwned}\nexit 1\n")
+    ssh.chmod(ssh.stat().st_mode | stat.S_IXUSR)
+    _g(lfs_repo, "config", "core.sshCommand", str(ssh))
+    _g(
+        lfs_repo,
+        "config",
+        f"url.ssh://evil.invalid/.{key}",
+        "https://github.com/o/r.git/",
+    )
+    seen: list[list[str]] = []
+
+    def rec(argv: list[str], cwd: str | None = None) -> Any:
+        seen.append(argv)
+        if Rec.kind(argv) == "push":
+            return CmdResult(0, "", "")
+        return pr_endgame._default_runner(argv, cwd)
+
+    out = _push_with_lfs(_PUSH, "HEAD", str(lfs_repo), rec)
+    assert not out.ok
+    assert not pwned.exists()
+    kinds = [Rec.kind(a) for a in seen]
+    assert "upload" not in kinds
+    assert "push" not in kinds

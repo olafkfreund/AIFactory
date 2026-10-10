@@ -81,7 +81,11 @@ def lfs_push_argv(push_url_output: str, ref: str) -> list[str] | None:
 
     Hooks are off (#1680), so git-lfs's pre-push no longer uploads objects. The
     endpoint is derived from origin and passed as both ``lfs.url`` and
-    ``lfs.pushurl`` so repo config and ``.lfsconfig`` cannot redirect it.
+    ``lfs.pushurl``, which overrides repo ``lfs.*`` config and ``.lfsconfig``.
+    That is not enough alone: git-lfs still applies ``url.*.insteadOf`` and runs
+    ``lfs.customtransfer.*`` programs, so callers MUST refuse the upload when the
+    repo defines either (``git config --get-regexp '^(lfs\\.customtransfer\\.|url\\.)'``
+    exits 0 or errors).
     """
     if shutil.which("git-lfs") is None:
         return None

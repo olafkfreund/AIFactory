@@ -89,13 +89,22 @@ def push_with_lfs(
     url = runner(["git", "remote", "get-url", "--push", "--all", "origin"], cwd)
     argv = lfs_push_argv(url.out.strip(), ref) if url.ok else None
     if argv:
-        # A repo-defined transfer program would run on upload; refuse (rc 1 = none).
+        # A repo-defined transfer program, or a url.*.insteadOf that git-lfs applies to
+        # the pinned endpoint, would redirect the upload; refuse (rc 1 = none).
         chk = runner(
-            ["git", "config", "--name-only", "--get-regexp", r"^lfs\.customtransfer\."],
+            [
+                "git",
+                "config",
+                "--name-only",
+                "--get-regexp",
+                r"^(lfs\.customtransfer\.|url\.)",
+            ],
             cwd,
         )
         if chk.rc != 1:
-            return CmdResult(1, "", "LFS step refused (lfs.customtransfer.* defined)")
+            return CmdResult(
+                1, "", "LFS step refused (lfs.customtransfer.* or url.* defined)"
+            )
         up = runner(argv, cwd)
         if not up.ok:
             return up
