@@ -20,7 +20,7 @@ Line numbers checked at HEAD 43e87358. The spec's numbers for `set_worker_ref`,
    not-yet-created Job as gone.
 2. **Callers unchanged.** `agent_kubejob.py:362-366` (`except Exception`,
    releases the credential, re-raises), `agent_service.py:921-924` (marks the
-   row failed, "spawn failed during admission") and `agent_queue.py:160-170`
+   row failed, "spawn failed during admission") and `agent_queue.py:156-170`
    (marks failed, "spawn failed on dequeue") all still see the original error.
 3. **Rollback delete also fails (Q2).** Log at ERROR with the traceback
    (`_log.exception`), passing namespace, job_name and task_id through
@@ -43,7 +43,9 @@ Line numbers checked at HEAD 43e87358. The spec's numbers for `set_worker_ref`,
    hands the cancel back). Inside, call
    `await batch.delete_namespaced_job(job_name, namespace, propagation_policy="Background")`
    (the shape of `delete_job` at `:1329-1331`), catch its failure with
-   `except Exception` + `_log.exception`, then bare `raise`.
+   `except Exception` + `_log.exception`, then bare `raise`. The inner
+   `except Exception` carries `# noqa: BLE001` with a reason (strict ruff
+   flags it even with `_log.exception`; the outer one re-raises, so it does not).
 7. **Target.** Act only on the manifest's `job_name`/`namespace`
    (`:1276-1277`). No rebuilt name, no label match, no `delete_collection`
    (the `deletecollection` verb is not granted). Do not reuse `delete_job()`
@@ -142,9 +144,10 @@ cd /mnt/code/Source-home/GitHub/AIFactory-1677
                    await batch.delete_namespaced_job(
                        job_name, namespace, propagation_policy="Background"
                    )
-               except Exception:
+               except Exception:  # noqa: BLE001 - logged; the original error wins
                    _log.exception(
-                       "[build_backend] could not roll back k8s Job %s/%s for task %s after worker_ref write failed",
+                       "[build_backend] could not roll back k8s Job %s/%s for task %s "
+                       "after the worker_ref write failed",
                        sanitize_log(namespace),
                        sanitize_log(job_name),
                        sanitize_log(task_id),
@@ -163,11 +166,14 @@ cd /mnt/code/Source-home/GitHub/AIFactory-1677
    Commit (with step 1): `fix(kubejob): delete the Job when its worker_ref write fails (#1677)`,
    body names plan steps 1 and 2.
    Traps: outer handler is `except BaseException` (do not narrow it; T3 is the
-   only guard), inner is `except Exception`. Strict ruff BLE001 accepts both
-   because one re-raises and the other calls `_log.exception`; switching to
-   `_log.error` or dropping the `raise` makes it fire. Only if it still fires,
-   add `# noqa: BLE001` on that one line. `raise` must be bare. Keep the log
-   message one string (let `ruff format` wrap the arguments). Do not touch
+   only guard), inner is `except Exception`. Strict ruff (standards/ruff.toml)
+   flags the inner one as BLE001 despite `_log.exception` (checked: without the
+   noqa the ratchet reports `BLE001 +1`), so keep the `# noqa: BLE001 - reason`
+   on that `except` line; the outer `except BaseException` re-raises and is not
+   flagged, so give it no noqa (RUF100 would flag an unused one). `raise` must
+   be bare. Strict line-length is 100 and `ruff format` does not split strings:
+   a one-string log message is 118 columns and the ratchet reports `E501 +1`.
+   Keep it as two implicitly concatenated literals, as above. Do not touch
    `child_env` lines (:109, :953), `stamp_spawn` (:1285) or `delete_job`
    (:1307-1343). No `asyncio.shield`, retry, 404 case or `delete_collection`.
    `batch` stays inside the same try, so whatever typing the existing
@@ -209,8 +215,11 @@ cd /mnt/code/Source-home/GitHub/AIFactory-1677
 6. `ruff format --check apps/backend apps/web-server scripts tests && ruff check apps/backend apps/web-server scripts tests` → clean.
 7. `git add -A && python scripts/cq_ratchet.py --staged --ruff "$(command -v ruff)" --config standards/ruff.toml --paths 'apps/backend/*.py' 'apps/web-server/*.py' 'scripts/*.py'`,
    then the same with `--tool mypy --mypy "$(command -v mypy)" --config standards/mypy.ini`
-   → no new findings (`build_backend.py` has 10 pre-existing strict-ruff
-   errors; an 11th fails).
+   → no new findings. The ruff ratchet counts per rule code: `build_backend.py`
+   has 10 pre-existing strict findings, and any code whose count rises fails
+   (checked against the step 2 snippet: 0 regressed; the one-string message and
+   a bare inner `except Exception` gave `E501 +1`, `BLE001 +1`). The test file
+   is outside `--paths`; default `ruff check` covers it.
 8. `python scripts/gen_autonomy_matrix.py --check` → passes (nothing cited
    moved; no matrix file cites these files).
 9. `git diff --stat origin/dev -- . ':!intent' ':!spec' ':!plan' ':!CHANGELOG.md'`
@@ -230,7 +239,7 @@ cd /mnt/code/Source-home/GitHub/AIFactory-1677
     | M4 | drop the bare `raise` | T1, T2, T3 |
     | M5 | swap `job_name, namespace` args | T1, T3 |
     | M6 | drop `propagation_policy` | T1 (`fake.kw`) |
-    | M7 | delete unconditionally (e.g. in outer `finally`) | T0 |
+    | M7 | delete unconditionally (e.g. in outer `finally`) | T0 (and T1, T3: two deletes) |
 
 Skipped: no end-to-end reaper test for the cancel path. `_resolve_row_ref`
 and `reap_vanished_jobs` are unchanged and covered by
