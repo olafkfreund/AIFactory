@@ -55,8 +55,8 @@ inner command name, so the inner command also skips the allowlist.
   names the real dangerous flag or key.
 - The `bash -c 'git -c core.fsmonitor=…'` case is refused on purpose, not by
   the accidental match.
-- Unwrapped commands that are legitimate (`bash -c 'npm test'`,
-  `command -v git`, `find … | xargs grep`) still pass.
+- Unwrapped commands that are legitimate (`bash -c 'npm test'` in a project
+  that allows `npm`, `command -v git`, `find … | xargs grep`) still pass.
 - The sandbox tests cover each case and assert the refusal reason, not just
   that the command was refused.
 
@@ -69,9 +69,9 @@ inner command name, so the inner command also skips the allowlist.
 - Git on the server that touches agent worktrees, and the host operator. A
   `core.fsmonitor` or `--upload-pack` value that slips through runs with the
   backend's privileges.
-- Code: `security/hooks.py`, `security/parser.py`, `security/ast_parser.py`,
-  `security/git_validators.py`, and `tests/test_command_sandbox.py` and
-  `tests/test_sandbox_escape_corpus.py`.
+- Code: `security/hooks.py`, `security/parser.py`, `security/ast_parser.py`
+  and `security/git_validators.py` (under `apps/backend/`), and the repo-root
+  `tests/test_command_sandbox.py` and `tests/test_sandbox_escape_corpus.py`.
 - Probably every validator in `security/validator_registry.py`, such as the
   `rm`/`chmod` path checks from #364, since they are called the same way. Only
   the git cases were run.
@@ -82,10 +82,10 @@ inner command name, so the inner command also skips the allowlist.
   that includes the path where bashlex is not installed.
 - No legitimate use of `command`, `exec`, `xargs`, `sh` or `bash` may be
   removed from the allowlist. Real agent runs depend on them.
-- It depends on #1689. That branch (`fix/1689-fsmonitor-git-config-audit`)
-  already edits `hooks.py`, `parser.py`, `git_validators.py` and
-  `tests/test_command_sandbox.py` (commits 9f9580a2 and bf40c451), and it is
-  not on dev yet. Until it lands, plain `git config core.fsmonitor x` is still
+- It depends on #1689. That branch (`fix/1689-fsmonitor-git-config-audit`,
+  local only, not pushed and no PR yet) already edits `hooks.py`, `parser.py`,
+  `git_validators.py` (commits 9f9580a2 and bf40c451) and
+  `tests/test_command_sandbox.py` (commit 4b40fd61), and it is not on dev yet. Until it lands, plain `git config core.fsmonitor x` is still
   allowed. #1720 must build on it, or the two will conflict.
 - Stay consistent with #1719 (`.git/` write guard) and #1717 (pin
   ssh/pager/editor), which cover the same git-escape area.
