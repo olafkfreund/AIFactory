@@ -10,6 +10,7 @@ import logging
 import os
 import sys
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -53,11 +54,12 @@ class _Post:
         item = self.queue.pop(0)
         if isinstance(item, Exception):
             raise item
+        assert isinstance(item, httpx.Response)
         return item
 
 
 @pytest.fixture(autouse=True)
-def _isolate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Post:
+def _isolate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[_Post]:
     for name in (*_APP_VARS, *_PAT_VARS):
         # setenv first so monkeypatch records the original and undoes what
         # start() later writes straight into os.environ.

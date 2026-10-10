@@ -20,6 +20,7 @@ import json
 import logging
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -508,8 +509,8 @@ def test_a_contract_that_raises_on_read_holds_instead(
     )
 
 
-async def _watch_once(**kw: object) -> dict:
-    return await pe.watch_and_finish(
+async def _watch_once(**kw: object) -> dict[str, Any]:
+    result: dict[str, Any] = await pe.watch_and_finish(
         owner="o",
         repo="r",
         pr=7,
@@ -519,6 +520,7 @@ async def _watch_once(**kw: object) -> dict:
         max_minutes=1,
         **kw,
     )
+    return result
 
 
 @pytest.mark.parametrize(
