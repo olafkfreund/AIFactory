@@ -11,7 +11,11 @@ intent: intent/2026-10-10-1624-naive-datetime-now.md
 This change fixes the stale sweep and all web-server writers, and makes ruff
 DTZ005/DTZ006 a blocking check for web-server. `apps/backend` and
 `scripts/provider_benchmark.py` are carved out with per-file-ignores and left
-to a follow-up issue. Everything below was checked at 1481e274 with ruff
+to a follow-up issue. That staging is the proposed answer to the intent's
+open question 3, not an approved decision. Until the follow-up lands, two
+intent outcomes hold for web-server only: "every writer brought under the
+contract" and "the blocking lint fails on a new naive `datetime.now()`".
+Everything below was checked at 1481e274 with ruff
 0.14.10. `ruff check --isolated --select DTZ005,DTZ006 apps/web-server` finds
 62 calls in 20 files, and `scripts/` has one (`provider_benchmark.py`).
 
@@ -24,7 +28,7 @@ stored value with an aware now, it treats a naive legacy value as UTC:
 existing rule at `standards/coding-standards.md:70` (1.9 Hygiene). There is
 no separate contract document.
 
-### Step 1: stale sweep (intent problem 3)
+### 1. Stale sweep (intent problem 3)
 
 - `apps/web-server/server/routes/stale.py`
   - Line 29: change the import to `from datetime import UTC, datetime, timedelta`
@@ -58,7 +62,7 @@ no separate contract document.
   - The test stays aware throughout and returns no `Any`, so the DTZ and
     mypy --strict ratchets stay clean.
 
-### Step 2: convert 59 web-server writers
+### 2. Convert 59 web-server writers
 
 - Imports: change the existing `from datetime import datetime` to
   `from datetime import UTC, datetime` on the same line, so no line numbers
@@ -67,6 +71,12 @@ no separate contract document.
 - DTZ006 (5 sites): `files.py:382,442,608,672` and `tasks_logs.py:159` become
   `datetime.fromtimestamp(x, UTC)`. This is inlined, not imported from
   `_iso_from_timestamp`, which is private to another route module.
+- Classification (intent outcome 2). Every web-server site is persisted
+  state (task logs, project, settings and profile records, PR review logs,
+  insights sessions, terminal sessions), an API response field (`fetchedAt`,
+  `startedAt`, `TaskProgress.timestamp`), or in-memory/log. All three classes
+  get the same treatment, so the class decides nothing except for the three
+  local-time sites in part 3.
 - DTZ005: every other site becomes `datetime.now(UTC)`. This includes:
   - `logging_config.py:191`. structlog already stamps with
     `TimeStamper(utc=True)` (:81).
@@ -84,7 +94,7 @@ no separate contract document.
   `claude_provider.py`, `from_issue.py`, `tasks.py`, `tasks_logs.py`,
   `context.py` and `pr_data_service.py`.
 
-### Step 3: keep 3 local-time sites, each with a reason
+### 3. Keep 3 local-time sites, each with a reason
 
 Each of these gets `# noqa: DTZ005 - <reason>`:
 
@@ -93,7 +103,7 @@ Each of these gets `# noqa: DTZ005 - <reason>`:
   are matched against the local-date `dailyActivity` keys in the Claude stats
   file.
 
-### Step 4: blocking lint in the root `ruff.toml`
+### 4. Blocking lint in the root `ruff.toml`
 
 - `[lint] select` (lines 107-127): add `"DTZ005"` and `"DTZ006"`, with a
   comment that cites #1624.
@@ -109,7 +119,7 @@ Each of these gets `# noqa: DTZ005 - <reason>`:
   - When several globs match a file, ruff applies all of them, so the
     existing backend F841 and TID251 entries still apply.
 
-### Step 5: docs
+### 5. Docs
 
 - `standards/coding-standards.md:70`: add the contract sentence.
 - `CHANGELOG.md`: add an entry under `## [Unreleased]`.
@@ -120,9 +130,9 @@ Open two issues:
 
 - **Backend and `scripts/provider_benchmark.py`.** That issue deletes both
   carve-outs. It must note one trap: `runners/github/bot_detection.py:266-267`
-  and `services/recovery.py:184-193` compute
-  `datetime.now() - fromisoformat(...)`, so their readers must change in the
-  same commit as their writers.
+  computes `datetime.now() - fromisoformat(...)`, so that reader must change
+  in the same commit as its writer. `services/recovery.py:184-193` already
+  keeps a naive and an aware cutoff and tolerates either form.
 - **CFactory `upstream_ws.py`.** Treat a naive value as UTC before comparing.
 
 ### Reader side: nothing to change in web-server
@@ -133,7 +143,7 @@ are only passed through (`agent_emit.py:266`, `pr_review_service.py:202`).
 No web-server code parses a converted field and compares it with now.
 
 The readers that do exist already normalise: `stale_tasks.py:100` and
-`:142-143`, `delegation_tracker.py:190-197`, `agent_kubejob.py:999-1013`.
+`:142-143`, `delegation_tracker.py:190-197`, `agent_kubejob.py:999-1003`.
 In the backend, `review_state.json` `approved_at` (written at
 `execution.py:524`) is read by `review/formatters.py:297` and
 `review/reviewer.py:218`. Both only call `strftime`, so the worst case is UTC
@@ -150,7 +160,7 @@ These are proposed defaults for the approver to confirm.
    Pods run UTC (`task_service.py:931-934`), so naive rows written in
    production are already UTC, and only dev-machine rows are skewed. The repo
    already uses this rule (`runners/github/providers/protocol.py:130-132`
-   `to_utc`, `agent_kubejob.py:1009-1013`, `qa/review_cycle.py:246-268`).
+   `to_utc`, `agent_kubejob.py:1002-1003`, `qa/review_cycle.py:246-268`).
    This diff has no reader site that needs the rule, so it goes into the
    standard only.
 2. **Wire format.** `+00:00`, written by plain `isoformat()`, with no custom
@@ -159,7 +169,7 @@ These are proposed defaults for the approver to confirm.
    `+00:00`, and JS `new Date` accepts either form.
 3. **Scope.** Staged, as set out above: the stale sweep, the 62 web-server
    calls and the gate land now, with backend and scripts carved out. The
-   follow-up issue covers the backend (~92 calls in 37 files, for example
+   follow-up issue covers the backend (98 calls in 41 files, for example
    `runners/github/models.py` with 11 and `merge/orchestrator.py` with 9) and
    deletes the carve-outs.
 4. **CFactory reader.** Handle it in a separate CFactory issue. Once this
@@ -169,11 +179,11 @@ These are proposed defaults for the approver to confirm.
    - Keep `terminal.py:585` and `settings.py:2128-2129` local, each with a
      `noqa` reason.
    - Convert `logging_config.py:191` to UTC.
-   - Convert `terminal.py:592` to UTC as well. This corrects the default
-     answer, which treated it as a filename; it is persisted API data.
+   - Convert `terminal.py:592` to UTC as well. The intent named only the
+     filename at :585; :592 is persisted API data, not a filename.
    - `stale.py` is not a local-time use. The intent listed it as one, but it
      compares against `updated_at`, which is aware UTC.
-6. **Stale sweep.** Fix it in this task, as plan step 1. A separate PR would
+6. **Stale sweep.** Fix it in this change (part 1). A separate PR would
    need its own intent, spec and plan to land the same line.
 7. **Contract location.** Add one sentence to the existing rule at
    `standards/coding-standards.md:70`.
@@ -213,11 +223,11 @@ These are proposed defaults for the approver to confirm.
    values. The backend `task_logger` keeps writing naive values to
    `task_logs.json` until the follow-up. Python readers handle both forms.
    String sorts can be out of order by the dev host's offset for a while.
-   `new Date()` shows old naive rows wrong until they age out. This was
-   accepted in Q1.
+   `new Date()` shows old naive rows wrong until they age out. This follows
+   from the proposed answer to Q1 and stands only if that is approved.
 2. **Backend writers stay naive** until the follow-up, so backend-written
    views (merge timeline, GitHub runner) keep the one-hour skew under BST.
-   This is the agreed staging.
+   This follows from the proposed staging in Q3, pending approval.
 3. **The test changes the process-wide `TZ`.** The fixture must restore it
    and call `tzset()` again, or later tests in the same worker run in JST.
 4. **Conflict with #1688 (PR #1726)** at `pr_data_service.py:306`. Rebase
@@ -242,7 +252,7 @@ These are proposed defaults for the approver to confirm.
   `ruff check` fails. Add one to `apps/backend` and it passes. Revert both.
 - **No DTZ left in web-server.**
   `ruff check --isolated --select DTZ005,DTZ006 apps/web-server` reports only
-  the 3 sites from Step 3.
+  the 3 sites from part 3.
 - **Ratchet.** Run
   `python scripts/cq_ratchet.py --staged --ruff "$(command -v ruff)" --config standards/ruff.toml --paths 'apps/backend/*.py' 'apps/web-server/*.py' 'scripts/*.py'`
   and the `--tool mypy --mypy "$(command -v mypy)" --config standards/mypy.ini`
