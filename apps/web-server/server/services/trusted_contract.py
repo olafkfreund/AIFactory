@@ -7,10 +7,17 @@ Synchronous, no database I/O. The caller looks the record up (see
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
 from server.services.trusted_contract_store import LOOKUP_FAILED, TrustedRecord
+
+_BACKEND_DIR = Path(__file__).resolve().parents[3] / "backend"
+if str(_BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_DIR))
+
+from core.contract_trust import has_trusted_trace  # noqa: E402
 
 _ISOLATED_STAMPS = ("kubejob", "sandbox-pidns")
 
@@ -25,25 +32,6 @@ def host_isolated() -> bool:
     # run.py inside it carries the server's env (#1680); the agent could read
     # DATABASE_URL and rewrite its own record. Revisit when #1680 lands.
     return selected_backend() == "kubejob" and store_enabled()
-
-
-def _read_json(path: Path) -> Any:
-    try:
-        return json.loads(path.read_text())
-    except (OSError, ValueError):
-        return None
-
-
-def has_trusted_trace(spec_dir: Path) -> bool:
-    """True when the spec dir shows the task came through the trusted-plan path."""
-    spec_dir = Path(spec_dir)
-    for rel in ("context/task_contract.json", "implementation_plan.json"):
-        data = _read_json(spec_dir / rel)
-        if isinstance(data, dict) and "approval" in data:
-            return True
-    req = _read_json(spec_dir / "requirements.json")
-    prov = req.get("provenance") if isinstance(req, dict) else None
-    return isinstance(prov, dict) and prov.get("trusted_plan") is True
 
 
 def _record_verified(spec_dir: Path, record: TrustedRecord) -> bool:

@@ -533,3 +533,10 @@ check exit 0; the D2 diff prints nothing.
   a stricter twin of `test_build_held_migration_exits_before_agent`.
 - Step 1: `test_extra_trusted_contract_survives_strip` is green on arrival
   (`child_env` applies `extra` after the strip); kept as a regression guard.
+- Step 2: `trusted_contract` returns reason strings for the non-hold cases
+  too (`no contract`, `server verified`, `no server verdict`) and
+  `error: <ExceptionName>` on an exception; the plan fixed only hold reasons.
+- Step 2: `trusted_contract` carries `# noqa: PLR0911` (8 returns, one per
+  truth-table row); the strict ratchet flagged it.
+- Step 2: the autonomy matrix is regenerated: the new `core.contract_trust`
+  import changes the `server.services.pr_endgame` closure row.
