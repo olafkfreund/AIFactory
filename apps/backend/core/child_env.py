@@ -13,7 +13,11 @@ from collections.abc import Iterable, Mapping
 from core.auth import is_denied_env_key
 
 # Stripped so a child never silently bills the direct Anthropic API.
-_STRIP_VARS: tuple[str, ...] = ("ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY_FILE")
+_STRIP_VARS: tuple[str, ...] = (
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_API_KEY_FILE",
+    "AIFACTORY_TRUSTED_CONTRACT",
+)
 
 GITHUB_KEEP: tuple[str, ...] = ("GITHUB_TOKEN", "GH_TOKEN")
 

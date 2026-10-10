@@ -69,3 +69,66 @@ def test_scaffold_for_spec_no_contract(tmp_path: Path) -> None:
     from agents.deploy_scaffold import scaffold_deploy_for_spec
 
     assert scaffold_deploy_for_spec(tmp_path / "nope") == []
+
+
+# ── #1673: scaffold only on a contract the server verified ──────────────
+
+import json  # noqa: E402
+import logging  # noqa: E402
+
+import pytest  # noqa: E402
+from agents import deploy_scaffold  # noqa: E402
+from core.contract_trust import ENV, contract_digest  # noqa: E402
+
+_GCP = {"deployment": {"deploy_system": "gcp-cloud-run"}}
+
+
+@pytest.fixture(autouse=True)
+def _no_trusted_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(ENV, raising=False)
+
+
+def _spec(tmp_path: Path, obj: dict) -> Path:
+    spec = tmp_path / ".aifactory" / "specs" / "001-game"
+    (spec / "context").mkdir(parents=True)
+    (spec / "context" / "task_contract.json").write_text(json.dumps(obj))
+    return spec
+
+
+def test_scaffold_for_spec_verified_digest_scaffolds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _spec(tmp_path, _GCP)
+    monkeypatch.setenv(ENV, contract_digest(_GCP))
+    written = deploy_scaffold.scaffold_deploy_for_spec(spec)
+    assert "infra/main.tf" in written
+    assert (tmp_path / "infra" / "main.tf").exists()
+
+
+@pytest.mark.parametrize("case", ["hold", "other-digest", "trace"])
+def test_scaffold_for_spec_withheld(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    case: str,
+) -> None:
+    contract = {**_GCP, "approval": {"sig": "x"}} if case == "trace" else _GCP
+    spec = _spec(tmp_path, contract)
+    if case == "hold":
+        monkeypatch.setenv(ENV, "hold")
+    elif case == "other-digest":
+        monkeypatch.setenv(ENV, contract_digest({"feature": "other"}))
+    with caplog.at_level(logging.WARNING, logger="agents.deploy_scaffold"):
+        assert deploy_scaffold.scaffold_deploy_for_spec(spec) == []
+    assert not (tmp_path / "infra").exists()
+    assert "[trusted-contract] deploy scaffold withheld" in caplog.text
+
+
+def test_scaffold_for_spec_never_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(_spec: Path) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(deploy_scaffold, "trusted_contract", boom, raising=False)
+    assert deploy_scaffold.scaffold_deploy_for_spec(_spec(tmp_path, _GCP)) == []
