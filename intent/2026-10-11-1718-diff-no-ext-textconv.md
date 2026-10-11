@@ -94,3 +94,11 @@ a program and shows that it does not run.
    of `child_env.py`?
 5. Diff views will show binary and LFS-pointer files raw instead of through
    textconv. Is that acceptable, or does any repo rely on textconv rendering?
+
+## Approver decisions (2026-10-11)
+
+- Add `--no-ext-diff --no-textconv` to the five full-patch diff sites, plus a scan test that requires them on every diff-family call.
+- Close the `*.textconv` gap in `_is_dangerous_git_config` here.
+- Leave `git show ref:path` blob reads unchanged.
+- Start now and stay out of `child_env.py`.
+- Binary/LFS-pointer files shown raw in diff views is acceptable.
