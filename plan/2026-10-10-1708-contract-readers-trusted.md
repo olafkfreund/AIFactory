@@ -600,3 +600,9 @@ Other checks, each expected to pass:
   2. #1708 can land before or after #1627 and #1620.
   3. #1708 can land ahead of #1720, #1719, #1717 and #1624, which then
      regenerate the matrix.
+
+## Approver decisions (2026-10-11)
+
+- Keep the `get_deployment_context` docstring rewording at prompts.py:705 (spec correction 2).
+- Accept `isinstance(contract, dict)` over `contract is not None` (same behaviour; needed for the mypy ratchet).
+- Accept the extra tests (two deployment fallback tests, second TypeError test).
