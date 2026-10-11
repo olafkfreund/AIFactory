@@ -490,3 +490,7 @@ the revert. If only the stricter allowlist hurts agent runs (for example
 `timeout 60 npm test` refused), add the inner tool to the project profile
 instead of reverting. Reverting reopens the `env -S`, `timeout`, `command` and
 grouped `-c` bypasses.
+
+## Approver decisions (2026-10-11)
+
+- Steps 2-4 land in one commit (no xfail split).
