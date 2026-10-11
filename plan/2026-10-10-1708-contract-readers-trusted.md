@@ -15,13 +15,17 @@ numbers below.
 
 - **D0 (Q5): one PR to `dev` with all three production changes.**
   - Rebase onto `origin/dev` before any code edit.
-  - Correction to the spec: the branch is **4** commits behind, not 1. They are
-    `1deb7faa` #1674, `ed266886` #1689, `bf4fd672` #1688 and `0bf19434` #1690.
+  - Correction to the spec: the branch is **5** commits behind, not 1 (as of
+    2026-10-11). They are `1deb7faa` #1674, `ed266886` #1689, `bf4fd672` #1688,
+    `0bf19434` #1690 and `4470e4c7` #1728.
   - Those commits move lines only in `core/child_env.py`,
-    `completion_orchestration.py`, `CHANGELOG.md` and `core/auth.py`. In
-    `auth.py` the change is #1674's +8 lines.
+    `completion_orchestration.py`, `CHANGELOG.md`, `scripts/bump-version*`,
+    `core/auth.py`, `tests/test_agent_env_scrub.py` and
+    `tests/test_child_process_env.py`. In `auth.py` the change is #1674's +8
+    lines. The two test files are cited below with dev numbers.
   - `prompts.py`, `tfactory_client.py`, `contract_trust.py`, `client.py`,
-    `simple_client.py` and every test file below are identical on HEAD and dev.
+    `simple_client.py` and every other test file below are identical on HEAD
+    and dev.
 - **D1: one trusted reader.**
   - Replace the body of the existing `_load_contract` in `prompts_pkg/prompts.py`.
   - Make `get_house_standards_context` and `get_constitution_context` call it.
@@ -55,7 +59,14 @@ numbers below.
     cycle: `contract_trust` imports only the stdlib at module level, and
     `core/__init__` is lazy.
 - **D5: the return type becomes `dict[str, Any] | None`.**
-  - This replaces the bare `dict | None` and lowers the mypy count.
+  - This replaces the bare `dict | None` and lowers the strict mypy count for
+    `prompts.py` from 5 to 4.
+  - The verified/legacy branch tests `isinstance(contract, dict)`, not the
+    spec's `contract is not None`. Same behaviour (`trusted_contract` returns a
+    dict or None), but the ratchet's mypy runs with `--ignore-missing-imports`
+    from the repo root, so `core.contract_trust` resolves to `Any` and
+    `return contract` is a new `no-any-return`. The `isinstance` narrows it.
+    With `is not None` the count stays at 5 (dry run, 2026-10-11).
   - The callers keep their `isinstance` checks.
   - Docstrings that say "signed Task Contract ... falling back" become
     "verified contract, or the legacy fallback".
@@ -80,9 +91,12 @@ numbers below.
   - `child_env` already strips the name through `_STRIP_VARS`. The verdict is
     added to `spawn_env` after scrubbing (dev `agent_service.py:1239` and
     `build_backend.py:1269`), so `run.py` keeps the real value.
-- **D9: regenerate the autonomy matrix in the `auth.py` commit.**
+- **D9: regenerate the autonomy matrix in the prompts commit and in the
+  `auth.py` commit.**
   - It cites `core.auth:321` on dev (`autonomy-matrix.json:695,703`,
-    `autonomy-matrix.md:154-155`).
+    `autonomy-matrix.md:154-155`); the new entry moves it to `:323`.
+  - The prompts commit also changes it: `prompts_pkg/__init__.py` joins two
+    gates' `init_reach` (step 1i).
   - Never hand-edit it. `gen_autonomy_matrix.py --check` must pass.
 - **D10: prompt tests.**
   - Add an autouse `delenv(contract_trust.ENV)` fixture.
@@ -161,8 +175,9 @@ numbers below.
 ## Steps
 
 0. **Branch: rebase, no file edits.**
-   - Run `git fetch origin dev && git rebase origin/dev`. The 6 commits ahead
-     touch only `intent/`, `spec/` and `plan/`, so no conflicts are expected.
+   - Run `git fetch origin dev && git rebase origin/dev`. The branch's own
+     commits touch only `intent/`, `spec/` and `plan/`, so no conflicts are
+     expected.
    - Verify by:
      - `git rev-list --count HEAD..origin/dev` prints `0`.
      - `sed -n 158,159p apps/backend/core/auth.py` shows `"S3_ACCESS_KEY",` then `}`.
@@ -172,7 +187,7 @@ numbers below.
      - The pre-rebase matrix cites `core.auth:313` and dev cites `:321`. Never
        carry the old matrix forward; regenerate it.
 
-1. **Prompts: one trusted reader (D1-D6, D10).** Write the tests first, then the
+1. **Prompts: one trusted reader (D1-D6, D9, D10).** Write the tests first, then the
    code. One commit:
    `fix(prompts): read the task contract only through trusted_contract`.
 
@@ -256,7 +271,7 @@ numbers below.
        if state == "hold":
            logger.warning("[trusted-contract] contract prompt blocks withheld: %s", contract_trust.reason_label(why))
            return None
-       if contract is not None:
+       if isinstance(contract, dict):  # verified, or legacy with task_contract.json
            return contract
        if contract_trust.ENV in os.environ or contract_trust.has_trusted_trace(spec_dir):
            logger.warning("[trusted-contract] implementation_plan.json is not verified")
@@ -269,7 +284,9 @@ numbers below.
        return data if isinstance(data, dict) else None
    ```
 
-   Let `ruff format` wrap the long lines.
+   Let `ruff format` wrap the long lines. Keep the docstring as written: it is
+   98 characters, and `ruff format` never wraps a docstring (E501 trap below).
+   Keep `isinstance(contract, dict)` (D5).
 
    1f. **`prompts.py:364-385` (`get_house_standards_context`).**
    - Change the docstring at `:367-368` to "verified contract, or the legacy
@@ -281,8 +298,25 @@ numbers below.
    1g. **`prompts.py:502-530` (`get_constitution_context`).** Make the same
    docstring change at `:505-506`. Replace `:520-528` and keep `:529-530`.
 
-   1h. **`prompts.py:705` (`get_deployment_context`).** Reword the docstring to
-   match (spec correction 2). The logic at `:712` stays as it is.
+   1h. **`prompts.py:705-706` (`get_deployment_context`).** Reword the docstring
+   to match (spec correction 2). Replace the two lines starting "Reads the
+   signed Task Contract and surfaces" with exactly:
+
+   ```
+       Reads the verified contract, or the legacy fallback (``_load_contract``), and
+       surfaces ``deployment`` so the coder / QA agents PLAN FOR HOW THE CHANGE
+       SHIPS, not just what it does: the required
+   ```
+
+   The logic at `:712` stays as it is.
+
+   1i. **Matrix.** Run `$PY/python scripts/gen_autonomy_matrix.py` and commit
+   `docs/static/compliance/autonomy-matrix.json` and
+   `docs/docs/compliance/autonomy-matrix.md` with this step. The new
+   `prompts_pkg -> core.contract_trust` import adds
+   `apps/backend/prompts_pkg/__init__.py` to the `init_reach` of
+   `pr_review_service` and `pr_endgame` (counts 14 -> 15 and 20 -> 21), so
+   `--check` fails without it (dry run, 2026-10-11).
 
    Verify by:
    - Re-running the red check: everything passes.
@@ -306,9 +340,12 @@ numbers below.
      that it does.
    - **D6 edge.** A non-dict `task_contract.json` now takes the plan fallback.
      This is accepted; do not "fix" it.
-   - **Matrix drift.** If the new `prompts_pkg → core.contract_trust` import
-     makes `gen_autonomy_matrix.py --check` drift (transitive local-module
-     counts, as #1627 saw), regenerate it and commit it with this step.
+   - **Matrix drift is certain here** (1i). Regenerate; never hand-edit.
+   - **E501 in docstrings.** The strict ruff ratchet counts per rule code
+     (`prompts.py` has 7 E501 on dev). A reworded docstring line over 100
+     characters is a regression that `ruff format` will not fix. Use the exact
+     1h text; check with `awk 'length>100' apps/backend/prompts_pkg/prompts.py`
+     (7 lines, all pre-existing).
    - **Injection sites are read-only.** Do not edit `:195`, `:201-202`, `:255`,
      `:258`, `:261`, `:901-904` or `:967-975`. They only confirm that every
      injection goes through the three getters.
@@ -328,11 +365,18 @@ numbers below.
    | `tests/test_subtask_queue_agreement.py` | `:223` |
    | `apps/web-server/tests/test_tenancy.py` | `:204`, `:208` |
 
+   Edit by content, not by line number, then run `ruff format apps tests`.
+   Several calls in `tests/test_tfactory_auto_handoff.py` wrap onto three lines,
+   so `contract=None` is no longer on the call line.
+
    Verify the count with:
 
    ```
-   grep -rnE "build_ingest_payload\(|maybe_auto_handoff_tfactory\(" apps tests | grep -v "def "
+   grep -rnE "build_ingest_payload\(|maybe_auto_handoff_tfactory\(" apps tests | grep -v "def " | wc -l
    ```
+
+   It prints `33` after 2b (31 on dev: the 25 sites, `:826`, three production
+   calls and two in `test_trusted_contract_merge.py`).
 
    2b. **Append to `apps/backend/pfactory/test_tfactory_client_issue.py`:**
 
@@ -343,12 +387,12 @@ numbers below.
        _stub_git(monkeypatch)  # if the default comes back, the body runs: keep it off real git
        spec_dir = _spec_dir(tmp_path, {})
        with pytest.raises(TypeError, match=_MISSING):
-           tc.build_ingest_payload(spec_dir, "001")  # type: ignore[call-arg]
+           tc.build_ingest_payload(spec_dir, "001")  # type: ignore[call-arg, unused-ignore]
 
    def test_maybe_auto_handoff_requires_contract(tmp_path: Path) -> None:
        # async def: the bad call raises before a coroutine is created
        with pytest.raises(TypeError, match=_MISSING):
-           tc.maybe_auto_handoff_tfactory(tmp_path, "001")  # type: ignore[call-arg]
+           tc.maybe_auto_handoff_tfactory(tmp_path, "001")  # type: ignore[call-arg, unused-ignore]
    ```
 
    Use the file's existing helper names. If `_stub_git` or `_spec_dir` differ,
@@ -377,9 +421,11 @@ numbers below.
    - GATES.
 
    Traps:
-   - **`type: ignore` codes.** PGH requires the code in brackets. Use
-     `[call-arg]`, or whatever code mypy actually reports. The mypy ratchet
-     count for the file must not rise.
+   - **`type: ignore` codes.** Use exactly `[call-arg, unused-ignore]`. The
+     ratchet's mypy (repo root, `--ignore-missing-imports`) sees
+     `pfactory.tfactory_client` as `Any`, so a bare `[call-arg]` is reported as
+     `unused-ignore` and the file regresses 0 -> 2. A mypy run that resolves
+     the module needs `call-arg`. The pair is clean in both (dry run).
    - **`test_tenancy.py` is strict.** It must stay clean under `mypy --strict`.
    - **Expected warning.** M7 produces a "never awaited" RuntimeWarning.
 
@@ -411,8 +457,9 @@ numbers below.
 
    Verify by:
    - `$PY/python -m pytest -q tests/test_agent_env_scrub.py tests/test_no_unscrubbed_spawn.py tests/test_child_process_env.py`.
-     `test_child_process_env.py:232` proves that `run.py` still receives the
-     verdict through `extra`.
+     `test_extra_trusted_contract_survives_strip` (dev
+     `test_child_process_env.py:303-305`) proves that `run.py` still receives
+     the verdict through `extra`.
    - `grep -n AIFACTORY_TRUSTED_CONTRACT apps/backend/core/child_env.py` still
      shows `:23`.
    - GATES, including `gen_autonomy_matrix.py --check`.
@@ -482,11 +529,13 @@ numbers below.
 
 ## Tests
 
-Measure the baselines again after step 0. The pre-rebase numbers are below.
+Measure the baselines again after step 0. The numbers below were measured on
+`origin/dev` `4470e4c7` and on a dry run of every step in a scratch worktree
+(2026-10-11): all GATES passed, and M1-M8 failed exactly as listed in 4a.
 
 | Run | Before | After |
 |---|---|---|
-| C1 backend suite | 193 passed | 209 passed (baseline + 16) |
+| C1 backend suite | 194 passed (dev `4470e4c7`) | 210 passed (baseline + 16) |
 | C2 new and edited files only | 36 | 52 (11 + 17 + 13 + 6 + 5) |
 | C3 web server | 56 | 56 |
 
@@ -512,16 +561,18 @@ Other checks, each expected to pass:
 
 - **Import cycle:** `cd apps/backend && $PY/python -c "import prompts_pkg"`
   exits 0.
-- **Lint and ratchets:** GATES. The mypy count for `prompts.py` should drop.
+- **Lint and ratchets:** GATES. The mypy count for `prompts.py` drops 5 -> 4.
 - **Autonomy matrix:** `gen_autonomy_matrix.py --check` passes.
 - **Mutations:** M1-M8 each fail exactly as listed in 4a.
 
 ## Rollback
 
 1. **Before merge.** Drop the branch, or `git revert` the step commits newest
-   first. Revert step 3's commit whole, so that auth, `SECRETS` and the matrix
-   go back together. Then run `gen_autonomy_matrix.py --check`.
-2. **After merge to dev.** Revert in one PR with `git revert -m 1 <merge-sha>`,
+   first. Revert step 1's and step 3's commits whole, so the matrix goes back
+   with the code that moved it. Then run `gen_autonomy_matrix.py`, then
+   `--check`.
+2. **After merge to dev.** PRs land on dev as squash commits (one parent), so
+   revert in one PR with `git revert <squash-sha>` (no `-m`),
    then:
    - regenerate the matrix if dev has moved, and run `--check`;
    - add a CHANGELOG revert note;
