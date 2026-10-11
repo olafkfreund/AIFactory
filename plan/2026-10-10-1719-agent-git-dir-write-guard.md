@@ -18,7 +18,9 @@ then reads or runs those files later. This change refuses file-tool writes to
 any path that has a `.git` component.
 
 - **D0 Baseline.** HEAD `371f3ab1` is the old base plus 6 docs-only commits. It
-  is 4 behind `origin/dev`, where PR #1722 (#1689) has merged as `ed266886`.
+  is behind `origin/dev` (5 commits on 2026-10-11; the count grows), where PR
+  #1722 (#1689) has merged as `ed266886`. None of the later dev commits touch
+  the files below.
   Step 0 rebases onto `origin/dev` before any code. Of the touched files, only
   `security/hooks.py`, `tests/test_command_sandbox.py` and `CHANGELOG.md` differ
   on dev. Line numbers below are **dev** line numbers where they differ (HEAD
@@ -36,7 +38,8 @@ any path that has a `.git` component.
 - **D4 Sequencing.** Rebase on #1689 (merged). Do not wait for #1720.
 - **D5 Providers.** Covered: the Claude SDK PreToolUse hook and `ToolExecutor`
   (Ollama, OpenAI-compatible). `simple_client` gets no hooks. Instead,
-  `spec_compaction`'s tools become `[]`, which also removes Bash. External-CLI
+  `spec_compaction`'s tools become `[]`, which also removes Bash. **That alone
+  removes nothing at runtime; see B1 below.** External-CLI
   providers (Codex, Gemini, Copilot, OpenCode, Antigravity) and MCP write tools
   are a follow-up.
 - **D6 On a hit.** Return `{"decision": "block", "reason": refusal}` and log
@@ -63,8 +66,11 @@ any path that has a `.git` component.
   `OSError`, `RuntimeError` or `ValueError` is a refusal. The exceptions are
   named; there is no bare `except`.
 - **D9 Hook.**
-  `async def git_dir_write_hook(input_data: dict[str, Any], tool_use_id: str | None = None, context: Any | None = None) -> dict[str, Any]`,
-  typed like `web_fetch_security_hook`. It returns `{}` unless `tool_name` is
+  `async def git_dir_write_hook(input_data: dict[str, Any], _tool_use_id: str | None = None, _context: Any | None = None) -> dict[str, Any]`,
+  typed like `web_fetch_security_hook`. The leading underscores keep the strict
+  ruff ratchet from counting two new `ARG001`s; the SDK passes all three
+  positionally (`claude_agent_sdk/_internal/query.py:446`), so the names do not
+  matter to it. It returns `{}` unless `tool_name` is
   in `_GIT_DIR_WRITE_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})`.
   It blocks a non-dict `tool_input`. It blocks when
   `tool_input.get("file_path") or tool_input.get("notebook_path")` is not a
@@ -77,10 +83,12 @@ any path that has a `.git` component.
   `security/__init__.py` is not touched.
 - **D11 Executor.** Pass the **raw** `file_path` with
   `cwd=str(self._working_dir)`, so both forms are checked. A refusal returns
-  `ToolResultBlock(content=refusal, is_error=True)`. `Write` and `Edit` are the
-  only write handlers in `_handlers`.
-- **D12 Footprint.** 5 backend files, plus `tests/test_command_sandbox.py` and
-  `CHANGELOG.md`. There is no new module, spawn, env var or allow-list
+  `ToolResultBlock(content=refusal, is_error=True)` through the existing
+  `if error:` return (`error = error or <helper>`), because a seventh `return`
+  in `_exec_edit` trips `PLR0911` in the strict ratchet. `Write` and `Edit` are
+  the only write handlers in `_handlers`.
+- **D12 Footprint.** 5 backend files (6 with D5a: `core/simple_client.py`),
+  plus `tests/test_command_sandbox.py` and `CHANGELOG.md`. There is no new module, spawn, env var or allow-list
   forwarding, so k8s Job pods are unchanged.
 - **D13 Verification.** `TestGitDirWriteGuard` uses a real `git init` and
   `git worktree add`, plus mutation checks, the four related test files, ruff,
@@ -102,19 +110,58 @@ any path that has a `.git` component.
    `:28-30`). The new class stays in that file. `bashlex>=0.18` is a runtime
    dependency (`apps/backend/requirements.txt:46`), so CI never skips it.
 3. **NOTE-B, simple_client callers.** Six agent types reach `simple_client`.
-   Backend: `spec_compaction` (`spec/compaction.py:61-68`), `commit_message`,
-   `insights` and `batch_validation`. Web-server:
-   `apps/web-server/routes/github.py:181` (`batch_analysis`) and
-   `services/conflict_service.py:477`, `:611` (`merge_resolver`). Only
-   `spec_compaction` has write tools today
-   (`Read, Glob, Grep, Write, Edit, Bash`).
+   Backend: `spec/compaction.py:61` (`spec_compaction`),
+   `commit_message.py:258` (`commit_message`),
+   `analysis/insight_extractor.py:375` (`insights`),
+   `runners/github/batch_issues.py:155` (`batch_analysis`),
+   `runners/github/batch_validator.py:208` (`batch_validation`),
+   `merge/ai_resolver/claude_client.py:67` and `core/workspace/merge.py:1440`
+   (`merge_resolver`). Web-server: `apps/web-server/server/routes/github.py:181`
+   (`batch_analysis`) and
+   `apps/web-server/server/services/conflict_service.py:477`, `:611`
+   (`merge_resolver`). Only `spec_compaction` lists write tools in its config
+   today (`Read, Glob, Grep, Write, Edit, Bash`); at runtime all of them have
+   them (B1).
 4. **Executor test masking.** `_validate_path` refuses anything outside
    `working_dir`. Executor tests therefore use `working_dir=orig` and the
    relative `.git/config`, so the new guard does the refusing and the boundary
    check does not.
 
-**Model split.** There are 3 or more file-editing steps across 7 files, so
-hand off to `coder` (Sonnet). Send step 0 and step 1 to start, then steps 2-4
+**B1, blocker: spec Q5 does not remove `spec_compaction`'s tools.**
+`create_simple_client` (`core/simple_client.py:108-118`) passes the config's
+tools as `allowed_tools` and runs under `bypassPermissions`. In the installed
+SDK, `allowed_tools` only auto-approves; the available set is `tools`
+(`claude_agent_sdk/types.py:1582-1596`), which `simple_client` never passes, so
+the CLI gets its default tool set. An empty `allowed_tools` is not even sent
+(`_internal/transport/subprocess_cli.py:256`). So every simple agent type,
+including `commit_message` and `merge_resolver` with `tools: []` today, already
+has Write, Edit and Bash, and the `models.py:170` edit changes nothing at
+runtime. Test #10 as specced only reads `AGENT_CONFIGS`, so it passes against
+the hole.
+
+**Deviation D5a (approver to confirm; adds a sixth backend file).** In
+`core/simple_client.py`, inside `ClaudeAgentOptions(...)` right after
+`permission_mode=` (:117), add:
+
+```python
+            # #1719: no hooks here, so no write tools; allowed_tools does not restrict.
+            disallowed_tools=["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash"],
+```
+
+Every simple client is text or read-only by its docstring, and after the
+`models.py:170` edit no caller's type lists a write tool, so nothing loses a tool it uses. Use a deny list, not
+`tools=allowed_tools`: `insights` and `batch_analysis` list
+`mcp__aifactory__web_fetch`, which is not a built-in name for `--tools`. Keep
+the `models.py:170` edit (the spec's decision; it keeps the config honest).
+Test #11 captures the options and proves the deny list (see Tests). Prototyped
+in a scratch worktree: ruff and mypy ratchets 0 regressed,
+`gen_autonomy_matrix --check` ok, and `tests/test_agent_env_scrub.py`,
+`tests/test_outbound_scrub_all_providers.py` and
+`tests/test_runner_hardening.py` pass. If the approver rejects D5a, drop the
+simple_client edit and test #11, and say in the PR that Q5 is not enforced.
+
+**Model split.** There are 3 or more file-editing steps across 7 files (8
+with D5a), so hand off to `coder` (Sonnet). Send step 0 and step 1 to start, then steps 2-4
 to the same agent with `SendMessage`. Review with a fresh `opus` agent, given
 only this plan path and `git diff origin/dev...HEAD`. The PR says which steps
 the coder did.
@@ -154,14 +201,17 @@ and the pre-commit hook. Run from the worktree root.
 
 1. **`tests/test_command_sandbox.py:213` (EOF): red tests, class
    `TestGitDirWriteGuard`.**
-   - Add module imports near the top: `os`, `re`, `subprocess`, `sys`,
+   - Add module imports near the top: `re`, `subprocess`, `sys`,
      `from pathlib import Path`, `from core.child_env import child_env`,
      `from security.hooks import git_dir_write_hook`,
      `from security.filesystem_validators import git_metadata_write_refusal`,
      `from tools.executor import ToolExecutor` and
      `from agents.tools_pkg.models import AGENT_CONFIGS`.
      - Use plain imports with no aliases. Skip any import the dev file already
-       has, such as `asyncio`.
+       has, such as `asyncio`. Do not add `os`: nothing uses it.
+     - Run `ruff check --fix` and `ruff format` on the file. The new `from`
+       imports must sort into the existing `security.*` block, or default
+       `ruff check` fails `I001`.
    - Fixture `repo(tmp_path)` returns `(orig, wt)`. Every `subprocess.run`
      passes `env=child_env()` and `check=True`:
      1. `git init -q <orig>`
@@ -175,7 +225,7 @@ and the pre-commit hook. Run from the worktree root.
    - Helper `_hook(tool, ti, cwd)` returns
      `asyncio.run(git_dir_write_hook({"tool_name": tool, "tool_input": ti, "cwd": cwd}))`.
      Paths go in `file_path`, except NotebookEdit, which uses `notebook_path`.
-   - The 36 tests are listed in Tests below.
+   - The 36 tests (42 with D5a) are listed in Tests below.
    - The `simple_client` test's docstring names the callers from NOTE-B.
 
    → verify by
@@ -199,31 +249,41 @@ and the pre-commit hook. Run from the worktree root.
      - Append `git_metadata_write_refusal`, per D8:
 
        ```python
-       p = os.path.expanduser(path)
-       if not os.path.isabs(p):
-           p = os.path.join(cwd or os.getcwd(), p)
-       forms = [os.path.normpath(p)]
+       p = Path(path).expanduser()
+       if not p.is_absolute():
+           p = Path(cwd or Path.cwd()) / p
+       forms = [Path(os.path.normpath(p))]
        try:
-           forms.append(str(Path(p).resolve()))
+           forms.append(p.resolve())
        except (OSError, RuntimeError, ValueError):
-           return <refusal>
-       if ".git" in {c.casefold() for f in forms for c in Path(f).parts}:
-           return <refusal>
+           return refusal
+       if ".git" in {c.casefold() for f in forms for c in f.parts}:
+           return refusal
        return None
        ```
+
+     - Use `Path`, not `os.path.expanduser/isabs/join` or `os.getcwd`. Those
+       add `PTH111/117/118/109` and fail the strict ruff ratchet (this file's
+       baseline is 3). `os.path.normpath` has no PTH rule and is the only `os`
+       use.
 
      - The refusal string may echo the path, because only the agent sees it.
      - Add the `# ponytail:` comment for the `--separate-git-dir` ceiling (D7).
    - In `hooks.py`:
-     - Add `from .filesystem_validators import git_metadata_write_refusal` to
-       the relative-import block, in alphabetical order before `.parser`.
+     - Add `from .filesystem_validators import git_metadata_write_refusal  # noqa: E402`
+       to the relative-import block, in alphabetical order before `.parser`.
+       The block sits below `logger = ...`; without the `noqa` the strict
+       ratchet counts a new `E402`.
      - Add a module-level `_GIT_DIR_WRITE_TOOLS` frozenset.
      - Append `git_dir_write_hook` at EOF, per D9 and D6. It logs only the
-       constant message.
+       constant message. Name the unused parameters `_tool_use_id` and
+       `_context` (D9).
    → verify by
    `$P -m pytest -q tests/test_command_sandbox.py::TestGitDirWriteGuard -k "blocked or allowed or malformed or resolve_error or loop or log_has_no_path"`
    passing, while the executor, matcher and simple_client tests stay red. Then
-   run `ruff format --check apps/backend tests && ruff check apps/backend tests`,
+   run `ruff format apps/backend/security tests/test_command_sandbox.py` (the
+   block-reason return lines exceed 88 columns), then
+   `ruff format --check apps/backend tests && ruff check apps/backend tests`,
    and both ratchets with the files staged (see Tests).
    Traps:
    - **CodeQL.** Never log the path, `tool_input` or `tool_name`
@@ -237,51 +297,65 @@ and the pre-commit hook. Run from the worktree root.
      re-editing, never with `git checkout`.
 
 3. **Wiring: `core/client.py:215, :1035-1036`, `tools/executor.py:35,
-   :217-221, :239-243`, `agents/tools_pkg/models.py:170`.**
+   :217, :239`, `agents/tools_pkg/models.py:170`, and with D5a
+   `core/simple_client.py:117`.**
    - `core/client.py`:
-     - After :215, add `from security.hooks import git_dir_write_hook` on its
-       own line.
+     - After :215, add `from security.hooks import git_dir_write_hook  # noqa: E402`
+       on its own line (same reason as in `hooks.py`; the file already uses
+       this `noqa` at :208).
      - Between the WebSearch matcher (:1035) and the #474/#476 comment
-       (:1036), insert:
+       (:1036), insert this, already in `ruff format` shape (on one line it
+       runs past 100 columns):
 
        ```python
-       # #1719: refuse agent writes into git metadata
-       HookMatcher(matcher="Write|Edit|MultiEdit|NotebookEdit", hooks=[git_dir_write_hook]),
+                       # #1719: refuse agent writes into git metadata
+                       HookMatcher(
+                           matcher="Write|Edit|MultiEdit|NotebookEdit",
+                           hooks=[git_dir_write_hook],
+                       ),
        ```
 
    - `tools/executor.py`:
      - Next to :35, add
        `from security.filesystem_validators import git_metadata_write_refusal`.
-     - In `_exec_write`, insert after the `_validate_path` block (:217-219) and
-       before the `mkdir` (:221). In `_exec_edit`, insert the same lines after
-       :239-241 and before `if not resolved.is_file()` (:243):
+     - In `_exec_write` (after :217) and `_exec_edit` (after :239), insert one
+       line between `resolved, error = self._validate_path(file_path)` and
+       `if error:`:
 
        ```python
-       refusal = git_metadata_write_refusal(file_path, str(self._working_dir))
-       if refusal:
-           return ToolResultBlock(content=refusal, is_error=True)
+               error = error or git_metadata_write_refusal(file_path, str(self._working_dir))
        ```
 
-     - Pass the raw `file_path`, not `resolved`.
+     - Pass the raw `file_path`, not `resolved`. Do not add a separate
+       `if refusal: return ...`: that is a seventh `return` in `_exec_edit`,
+       and the strict ratchet fails `PLR0911` (D11).
    - `agents/tools_pkg/models.py:170`: change
      `"tools": BASE_READ_TOOLS + BASE_WRITE_TOOLS,` to
      `"tools": [],  # #1719: text-only summariser; simple_client has no hooks`.
+   - With D5a only: `core/simple_client.py`, the two lines from B1.
    → verify by
    `$P -m pytest -q tests/test_command_sandbox.py::TestGitDirWriteGuard`
-   reporting 36 passed, then the four-file run, ruff, both ratchets and
-   `gen_autonomy_matrix --check` (see Tests).
+   reporting 36 passed (42 with D5a), then the four-file run, ruff, both
+   ratchets and `gen_autonomy_matrix --check` (see Tests).
    Traps:
    - **mypy --strict.** The ratchet is per-file. Keep the existing
      `tool_input: dict` signatures and add no new errors.
    - **Environmental failure.** `tests/test_security.py` GitCommitValidator
      fails while files are staged. That is environmental; ignore it.
-   - **Mutations M12-M15.** Apply and restore each one by editing.
+   - **Strict ruff ratchet.** Checked in a scratch worktree. Without the two
+     `noqa: E402`s, the `_`-prefixed hook parameters, the `Path`-based helper
+     and the `error = error or ...` form, the ratchet regresses four files
+     (`E402` x2, `ARG001` x2, `PTH109/111/117/118`, `PLR0911`). With them,
+     ruff and mypy both report 0 regressed.
+   - **Mutations M12-M16.** Apply and restore each one by editing.
 
 4. **`CHANGELOG.md:3` (`## [Unreleased]` > `### Security`), follow-ups and PR.**
    - Add one bullet on dev's version of `CHANGELOG.md`:
      > (#1719) Agent Write/Edit/MultiEdit/NotebookEdit into any `.git` path is
      > now refused, for SDK agents and the Ollama/OpenAI-compatible
-     > ToolExecutor. `spec_compaction` no longer has write tools. Not covered:
+     > ToolExecutor. Utility (simple) Claude clients no longer get write
+     > tools or Bash (with D5a; without it, say only that `spec_compaction`'s
+     > config lists none). Not covered:
      > Bash writes (follow-up after #1720), external-CLI providers and MCP
      > tools.
    - Draft the three D14 follow-up issues. Check follow-up 3 once #1717's
@@ -300,7 +374,10 @@ and the pre-commit hook. Run from the worktree root.
 
 ## Tests
 
-All 36 new tests are in `TestGitDirWriteGuard` in `tests/test_command_sandbox.py`.
+All 36 new tests (42 with D5a) are in `TestGitDirWriteGuard` in
+`tests/test_command_sandbox.py`. Every snippet, count and mutation below was
+run on Python 3.12.13 in a scratch worktree rebased on `origin/dev`
+(`4470e4c7`).
 
 | # | Test | Cases | Assertion |
 |---|---|---|---|
@@ -313,7 +390,8 @@ All 36 new tests are in `TestGitDirWriteGuard` in `tests/test_command_sandbox.py
 | 7 | `test_executor_write_refused` | 1 | `ToolExecutor(working_dir=orig)` Write to `.git/config` returns `is_error`, and the config bytes are unchanged |
 | 8 | `test_executor_edit_refused` | 1 | Edit of `.git/config` with `old_string="[core]"` returns `is_error`, and the bytes are unchanged |
 | 9 | `test_matcher_covers_write_tools` | 1 | see below |
-| 10 | `test_simple_client_types_have_no_write_tools` | 6 | the type's tools share nothing with Write, Edit, MultiEdit, NotebookEdit or Bash |
+| 10 | `test_simple_client_types_have_no_write_tools` | 6 | the type's `AGENT_CONFIGS` tools share nothing with Write, Edit, MultiEdit, NotebookEdit or Bash |
+| 11 | `test_simple_client_options_disallow_write_tools` (D5a only) | 6 | see below |
 
 Case details:
 
@@ -345,6 +423,15 @@ Case details:
 - **#10, simple_client types:** parametrised over `commit_message`,
   `merge_resolver`, `insights`, `batch_analysis`, `batch_validation` and
   `spec_compaction`. Only `spec_compaction` fails before step 3.
+- **#11, simple_client options (D5a):** the same six types. Capture the
+  options as `tests/test_agent_env_scrub.py:108-125` does: monkeypatch
+  `simple_client.require_auth_token`, `ClaudeSDKClient` (a `_capture(**kw)`
+  that stores `kw["options"]`) and `wrap_client_outbound_scrub`, and
+  `monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok")` first so the
+  function's env write is undone. Call
+  `create_simple_client(agent_type=t, model="claude-haiku-4-5")` and assert
+  the five tool names `<= set(options.disallowed_tools)`. All six fail before
+  the simple_client edit.
 
 **Mutation checks.** Apply each by editing, run with
 `-k <selector>` on `tests/test_command_sandbox.py::TestGitDirWriteGuard`,
@@ -359,14 +446,15 @@ expect exactly the listed failures, then restore by editing.
 | M5 | Ignore `cwd` and always use `os.getcwd()` | `blocked` | 1: symlink_rel_cwd (dotdot is masked, which is expected) |
 | M6 | Remove the try/except around `resolve()` | `resolve_error or loop` | 4 on 3.12 (3 plus loop) |
 | M7 | Drop the `notebook_path` fallback | `allowed` | 1: the notebook case (the blocked notebook case is masked by the missing-path branch) |
-| M8 | Remove the non-dict guard | `malformed` | 1 (AttributeError) |
-| M9 | Remove the non-empty-str check | `malformed` | 3 |
+| M8 | Change the non-dict guard's condition to `if False:` | `malformed` | 1 (AttributeError) |
+| M9 | Change the non-empty-str condition to `if False:` | `malformed` | 3 |
 | M10 | Remove MultiEdit from the frozenset | `blocked` | 1: multiedit |
 | M11 | Add the path to the log call | `log_has_no_path` | 1 |
-| M12 | Delete the guard in `_exec_write` | `executor_write` | 1 |
-| M13 | Delete the guard in `_exec_edit` | `executor_edit` | 1 |
+| M12 | Delete the `error = error or ...` line in `_exec_write` | `executor_write` | 1 |
+| M13 | Delete the `error = error or ...` line in `_exec_edit` | `executor_edit` | 1 |
 | M14 | Remove `\|NotebookEdit` from the matcher, or delete the line | `matcher` | 1 |
-| M15 | Restore `BASE_READ_TOOLS + BASE_WRITE_TOOLS` at `models.py:170` | `simple_client` | 1: spec_compaction |
+| M15 | Restore `BASE_READ_TOOLS + BASE_WRITE_TOOLS` at `models.py:170` | `simple_client_types` | 1: spec_compaction |
+| M16 | (D5a) Drop `"Bash"` from `disallowed_tools` in `simple_client.py` | `disallow` | 6 |
 
 `expanduser` has no mutation of its own. A `~/.git/...` path is caught by the
 component check in either form, so a mutation there could never fail alone.
@@ -375,13 +463,13 @@ component check in either form, so a mutation there could never fail alone.
 above.
 
 1. `$P -m pytest -q tests/test_command_sandbox.py::TestGitDirWriteGuard`
-   → 36 passed.
+   → 36 passed (42 with D5a). All 16 mutations fail exactly as listed.
 2. `$P -m pytest -q tests/test_command_sandbox.py tests/test_runner_hardening.py tests/test_ollama_agentic.py tests/test_no_unscrubbed_spawn.py`
-   → on dev, about 136 passed and 3 skipped. The skips are the live-Ollama
-   tests.
-   - The baseline on dev should be about 100 passed and 3 skipped. Measure it
-     after step 0 and expect that number plus 36.
-   - The `test_no_unscrubbed_spawn.py` count was not collected against dev.
+   → 136 passed and 3 skipped (measured), 142 passed with D5a. The skips
+   are the live-Ollama tests.
+   - With D5a also run `tests/test_agent_env_scrub.py
+     tests/test_outbound_scrub_all_providers.py` (they patch
+     `simple_client`) → pass.
 3. `ruff format --check apps/backend apps/web-server scripts tests && ruff check apps/backend apps/web-server scripts tests`
    → clean.
 4. With the files staged, both must exit 0:
@@ -400,8 +488,10 @@ above.
 - **Fast partial:**
   - Delete the `HookMatcher(matcher="Write|Edit|MultiEdit|NotebookEdit", ...)`
     line in `core/client.py` to disable the SDK guard.
-  - Delete the two `refusal = ...` blocks in `tools/executor.py` to disable the
-    executor guard.
+  - Delete the two `error = error or git_metadata_write_refusal(...)` lines
+    in `tools/executor.py` to disable the executor guard.
+  - With D5a: delete the `disallowed_tools=` line in `core/simple_client.py`
+    and test #11 to give simple clients their default tools back.
   - `spec_compaction` can get `BASE_READ_TOOLS + BASE_WRITE_TOOLS` back on its
     own if compaction turns out to need tools. Test #10 then fails on purpose,
     so update it in the same commit.
