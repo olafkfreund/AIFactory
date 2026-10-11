@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1708
 spec: spec/2026-10-10-1708-contract-readers-trusted.md
 ---
