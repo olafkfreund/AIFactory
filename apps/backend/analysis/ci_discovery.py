@@ -440,6 +440,60 @@ def discover_ci(project_dir: Path) -> CIConfig | None:
     return discovery.discover(project_dir)
 
 
+CI_LINTERS: tuple[str, ...] = (
+    "detekt",
+    "eslint",
+    "flake8",
+    "golangci-lint",
+    "ktlint",
+    "ruff",
+    "spotless",
+    "swiftlint",
+)
+_MAX_WORKFLOW_BYTES = 256 * 1024
+# An anchor follows whitespace, a flow indicator or a line start; not `2>&1` or `?a=1&b=2`.
+_YAML_ANCHOR = re.compile(r"(?:^|(?<=[\s\[\{,:?\ufeff]))&[A-Za-z0-9_-]+", re.M)
+
+
+def ci_linters(project_dir: Path) -> list[str]:
+    """Allowlisted linters CI runs. Detection only; never raises, [] when unsure (#1627)."""
+    try:
+        # Every file `discover_ci` may read: GitHub, CircleCI, Jenkins.
+        wf_dir = project_dir / ".github" / "workflows"
+        if any(
+            d.is_symlink()
+            for d in (project_dir / ".github", wf_dir, project_dir / ".circleci")
+        ):
+            return []
+        for f in (
+            *wf_dir.glob("*.yml"),
+            *wf_dir.glob("*.yaml"),
+            project_dir / ".circleci" / "config.yml",
+            project_dir / "Jenkinsfile",
+        ):
+            if not f.exists() and not f.is_symlink():
+                continue
+            if (
+                f.is_symlink()
+                or not f.is_file()
+                or f.stat().st_size > _MAX_WORKFLOW_BYTES
+            ):
+                return []
+            if _YAML_ANCHOR.search(f.read_text(encoding="utf-8", errors="replace")):
+                return []
+        config = discover_ci(project_dir)
+        if config is None:
+            return []
+        haystacks = [" ".join([w.name, *w.steps]).lower() for w in config.workflows]
+        return [
+            t
+            for t in CI_LINTERS
+            if any(re.search(rf"(?<![a-z0-9]){re.escape(t)}", h) for h in haystacks)
+        ]
+    except Exception:  # noqa: BLE001 - reporting aid, must never break a build
+        return []
+
+
 def get_ci_test_commands(project_dir: Path) -> dict[str, str]:
     """
     Get test commands from CI configuration.

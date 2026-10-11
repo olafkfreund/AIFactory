@@ -11,9 +11,13 @@ the fix: gates are detected+run in the worktree, the run is once-only, and a
 from pathlib import Path
 
 import agents.gate_runner as gate_runner
+import analysis.ci_discovery as ci_discovery
 import implementation_plan.plan as ipp
 import pytest
 from agents.coder import _run_trailing_gates_if_build_complete
+from analysis.ci_discovery import HAS_YAML
+
+requires_yaml = pytest.mark.skipif(not HAS_YAML, reason="PyYAML not installed")
 
 
 class _FakePlan:
@@ -167,3 +171,98 @@ async def test_no_gates_is_recorded_not_silent(tmp_path, monkeypatch):
     marker = spec_dir / ".trailing_gates_done"
     assert marker.exists()
     assert "no gates detected" in marker.read_text()
+
+
+def _ci(worktree: Path, run: str) -> None:
+    d = worktree / ".github" / "workflows"
+    d.mkdir(parents=True)
+    (d / "ci.yml").write_text(
+        f"name: CI\njobs:\n  build:\n    steps:\n      - run: {run}\n"
+    )
+
+
+def _fake_gates(monkeypatch, *names: str) -> None:
+    async def fake_run_gates(cwd, gates, **kw):
+        return [gate_runner.GateResult(name=n, passed=True) for n in names]
+
+    monkeypatch.setattr(gate_runner, "run_gates", fake_run_gates)
+    monkeypatch.setattr(
+        ipp.ImplementationPlan, "load", staticmethod(lambda _p: _FakePlan())
+    )
+
+
+def _evidence(spec_dir: Path) -> str:
+    return (spec_dir / ".trailing_gates_done").read_text().splitlines()[1]
+
+
+@requires_yaml
+@pytest.mark.asyncio
+async def test_ci_linter_without_gate_recorded_skipped(tmp_path, monkeypatch):
+    project_dir, spec_dir, worktree = _setup(
+        tmp_path, go_in_worktree=True, go_in_root=False
+    )
+    _ci(worktree, "golangci-lint run")
+    _fake_gates(monkeypatch, "go-test")
+
+    await _run_trailing_gates_if_build_complete(spec_dir, project_dir)
+
+    ev = _evidence(spec_dir)
+    assert ev.endswith("go-test: passed, golangci-lint: skipped")
+    assert not (spec_dir / "GATE_FAILURES.md").exists()
+    assert gate_runner.evidence_shows_an_executed_gate(ev)
+    assert set(gate_runner.gate_outcomes(ev)) <= {"passed", "failed", "skipped"}
+
+
+@requires_yaml
+@pytest.mark.asyncio
+async def test_ci_text_never_reaches_evidence(tmp_path, monkeypatch):
+    project_dir, spec_dir, worktree = _setup(
+        tmp_path, go_in_worktree=True, go_in_root=False
+    )
+    _ci(worktree, "ktlint --reporter=plain,a:b")
+    _fake_gates(monkeypatch, "go-test")
+
+    await _run_trailing_gates_if_build_complete(spec_dir, project_dir)
+
+    ev = _evidence(spec_dir)
+    assert ev == "go-test: passed, ktlint: skipped"
+    assert "a:b" not in ev
+    assert "plain" not in ev
+    assert gate_runner.gate_outcomes(ev) == ["passed", "skipped"]
+
+
+@requires_yaml
+@pytest.mark.asyncio
+async def test_eslint_covered_by_npm_lint(tmp_path, monkeypatch):
+    project_dir, spec_dir, worktree = _setup(
+        tmp_path, go_in_worktree=False, go_in_root=False
+    )
+    (worktree / "package.json").write_text('{"scripts": {"lint": "eslint ."}}')
+    _ci(worktree, "npx eslint .")
+    _fake_gates(monkeypatch, "lint")
+
+    await _run_trailing_gates_if_build_complete(spec_dir, project_dir)
+
+    ev = _evidence(spec_dir)
+    assert ev == "lint: passed"
+    assert "eslint" not in ev
+
+
+@requires_yaml
+@pytest.mark.asyncio
+async def test_marker_written_when_detection_raises(tmp_path, monkeypatch):
+    project_dir, spec_dir, worktree = _setup(
+        tmp_path, go_in_worktree=True, go_in_root=False
+    )
+    _ci(worktree, "ktlint")
+    _fake_gates(monkeypatch, "go-test")
+
+    def boom(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(ci_discovery, "discover_ci", boom)
+
+    await _run_trailing_gates_if_build_complete(spec_dir, project_dir)
+
+    assert (spec_dir / ".trailing_gates_done").exists()
+    assert _evidence(spec_dir) == "go-test: passed"

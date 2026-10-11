@@ -71,7 +71,7 @@ def test_hooks_path_appended_after_existing_entry(
     monkeypatch.setenv("GIT_CONFIG_KEY_0", "credential.https://github.com.helper")
     monkeypatch.setenv("GIT_CONFIG_VALUE_0", "!gh auth git-credential")
     env = child_env()
-    assert env["GIT_CONFIG_COUNT"] == "4"
+    assert env["GIT_CONFIG_COUNT"] == "7"
     assert env["GIT_CONFIG_KEY_0"] == "credential.https://github.com.helper"
     assert env["GIT_CONFIG_VALUE_0"] == "!gh auth git-credential"
     assert env["GIT_CONFIG_KEY_1"] == "core.hooksPath"
@@ -80,17 +80,29 @@ def test_hooks_path_appended_after_existing_entry(
     assert env["GIT_CONFIG_VALUE_2"] == "false"
     assert env["GIT_CONFIG_KEY_3"] == "protocol.ext.allow"
     assert env["GIT_CONFIG_VALUE_3"] == "never"
+    assert env["GIT_CONFIG_KEY_4"] == "core.sshCommand"
+    assert env["GIT_CONFIG_VALUE_4"] == "ssh"
+    assert env["GIT_CONFIG_KEY_5"] == "core.pager"
+    assert env["GIT_CONFIG_VALUE_5"] == "cat"
+    assert env["GIT_CONFIG_KEY_6"] == "core.editor"
+    assert env["GIT_CONFIG_VALUE_6"] == "true"
 
 
 def test_hooks_path_is_entry_zero_without_count(secret_env: None) -> None:
     env = child_env()
-    assert env["GIT_CONFIG_COUNT"] == "3"
+    assert env["GIT_CONFIG_COUNT"] == "6"
     assert env["GIT_CONFIG_KEY_0"] == "core.hooksPath"
     assert env["GIT_CONFIG_VALUE_0"] == "/dev/null"
     assert env["GIT_CONFIG_KEY_1"] == "core.fsmonitor"
     assert env["GIT_CONFIG_VALUE_1"] == "false"
     assert env["GIT_CONFIG_KEY_2"] == "protocol.ext.allow"
     assert env["GIT_CONFIG_VALUE_2"] == "never"
+    assert env["GIT_CONFIG_KEY_3"] == "core.sshCommand"
+    assert env["GIT_CONFIG_VALUE_3"] == "ssh"
+    assert env["GIT_CONFIG_KEY_4"] == "core.pager"
+    assert env["GIT_CONFIG_VALUE_4"] == "cat"
+    assert env["GIT_CONFIG_KEY_5"] == "core.editor"
+    assert env["GIT_CONFIG_VALUE_5"] == "true"
 
 
 def test_real_git_fsmonitor_disabled_by_child_env(
@@ -180,6 +192,86 @@ def test_real_git_hook_disabled_by_child_env(secret_env: None, tmp_path: Path) -
     assert subprocess.run(cmd, env=scrubbed, capture_output=True).returncode == 0
 
 
+def test_real_git_ssh_pager_editor_pinned(
+    secret_env: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An agent-written .git/config cannot pick ssh, pager or editor (#1717)."""
+    from core import workspace_fetch
+
+    for k in (
+        "GIT_SSH_COMMAND",
+        "GIT_SSH",
+        "GIT_PAGER",
+        "PAGER",
+        "GIT_EDITOR",
+        "VISUAL",
+        "EDITOR",
+        "GIT_DIR",
+        "GIT_INDEX_FILE",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY",
+    ):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("WORKSPACE_URI", "s3://dummy/ws.tar")
+    spec = "001-pin"
+    wt = tmp_path / ".aifactory" / "worktrees" / "tasks" / spec
+    marker = tmp_path / "S"
+    pager = f"touch {tmp_path}/P; cat"
+    editor = f"touch {tmp_path}/E; true"
+
+    def git(*args: str, env: dict[str, str] | None = None) -> str:
+        return subprocess.run(
+            ["git", "-C", str(wt), *args],
+            env=env or {**os.environ},
+            capture_output=True,
+            text=True,
+            timeout=30,
+        ).stdout.strip()
+
+    subprocess.run(
+        ["git", "init", "-q", "-b", "main", str(wt)],
+        env={**os.environ},
+        check=True,
+        timeout=30,
+    )
+    git(
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "i",
+    )
+    git("remote", "add", "origin", "ssh://git@127.0.0.1:1/r.git")
+    git("config", "ssh.variant", "ssh")  # 'simple' variant rejects the port
+    git("config", "core.sshCommand", f"touch {marker}; false")
+    git("config", "core.pager", pager)
+    git("config", "core.editor", editor)
+    git("push", "origin", "HEAD:main")  # control: unpinned git runs it
+    assert marker.exists()
+    marker.unlink()
+    assert workspace_fetch.maybe_push_workspace_branch(tmp_path, spec) is False
+    assert not marker.exists()
+    pinned = child_env()
+    assert git("var", "GIT_PAGER") == pager
+    assert git("var", "GIT_EDITOR") == editor
+    assert git("var", "GIT_PAGER", env=pinned) == "cat"
+    assert git("var", "GIT_EDITOR", env=pinned) == "true"
+    monkeypatch.setenv("GIT_PAGER", "less")
+    monkeypatch.setenv("GIT_EDITOR", "vi")
+    monkeypatch.setenv("GIT_SSH_COMMAND", "ssh -i k")
+    op = child_env()
+    assert op["GIT_SSH_COMMAND"] == "ssh -i k"
+    assert git("var", "GIT_PAGER", env=op) == "less"
+    assert git("var", "GIT_EDITOR", env=op) == "vi"
+
+
 # --- backend in-process helpers (#1680 review fix) ---------------------------
 
 
@@ -219,11 +311,14 @@ def test_core_child_env_extra_count_appends_hooks_entry(
             "GIT_CONFIG_VALUE_0": "x",
         }
     )
-    assert env["GIT_CONFIG_COUNT"] == "4"
+    assert env["GIT_CONFIG_COUNT"] == "7"
     assert env["GIT_CONFIG_KEY_0"] == "credential.helper"
     assert env["GIT_CONFIG_KEY_1"] == "core.hooksPath"
     assert env["GIT_CONFIG_KEY_2"] == "core.fsmonitor"
     assert env["GIT_CONFIG_KEY_3"] == "protocol.ext.allow"
+    assert env["GIT_CONFIG_KEY_4"] == "core.sshCommand"
+    assert env["GIT_CONFIG_KEY_5"] == "core.pager"
+    assert env["GIT_CONFIG_KEY_6"] == "core.editor"
     assert env["GIT_CONFIG_VALUE_1"] == "/dev/null"
 
 

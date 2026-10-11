@@ -2,6 +2,22 @@
 
 ### Security
 
+- **An agent-written `.git/config` can no longer choose the server's ssh command, pager or editor (#1717).**
+  `child_env()` also pins `core.sshCommand=ssh`, `core.pager=cat` and
+  `core.editor=true` (`GIT_CONFIG_COUNT` is now `n+6`). Operators can still
+  override them with `GIT_SSH_COMMAND`, `GIT_PAGER` or `GIT_EDITOR` in the
+  server environment.
+  A repo `pager.<cmd>` setting still wins over `core.pager`; it only runs on a
+  tty, which no server spawn has (tracked in the follow-up).
+- **The git, rm, chmod and db validators now read the command inside a wrapper (#1720).**
+  The bashlex walk is the only unwrapper for both the allowlist and the
+  validators. It now also unwraps `command`, `exec` and `timeout` and grouped
+  `-c` flags (`bash -lc`), and refuses `env -S`/`--split-string`. A validated
+  command run by `xargs` or `find -exec` is refused, because its arguments
+  cannot be checked: use `find -delete` instead of `-exec rm`. Wrapper options
+  are parsed the way GNU env, xargs and bash read them, so an option value or
+  a dash-named command can no longer hide the real command. Without bashlex
+  (a required dependency), every Bash command is refused.
 - **An agent-written git config can no longer run commands in the server (#1689).**
   Every `child_env()` process now pins `core.fsmonitor=false` next to the
   `core.hooksPath` pin (`GIT_CONFIG_COUNT` is now `n+2`). The bash guard refuses
@@ -109,6 +125,9 @@
   that adds `trusted_contracts`.
 
 ### Changed
+
+- Trailing gates now record CI linters that no gate ran (e.g. `ktlint: skipped`)
+  instead of omitting them; reporting only, never blocks (#1627).
 
 - **Opus 5.5 is the flagship.** The `opus` shorthand now resolves to
   `claude-opus-5-5` everywhere it is read: the phase resolver, the approved-model
