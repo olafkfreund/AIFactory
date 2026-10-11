@@ -77,19 +77,21 @@ the model prints env output somewhere.
    list here and move the allowlist to its own issue? An allowlist changes
    every agent spawn, including operator MCP credentials whose names can be
    anything (#1680).
-2. **How strict the executor env should be.** Plain `child_env()` also
-   drops every `*_KEY`/`*_TOKEN`, including `GITHUB_TOKEN`/`GH_TOKEN` and
-   `NPM_TOKEN`, so model commands that run `gh`, push, or install from a
-   private registry would break. The options are `child_env()`,
-   `child_env(runner=True)`, or `child_env(keep=...)` with a named list.
-   All three strip `AIFACTORY_TRUSTED_CONTRACT`.
+2. **How strict the executor env should be.** `GITHUB_TOKEN`/`GH_TOKEN`
+   are on the deny list, so `child_env()` and `child_env(runner=True)` both
+   drop them; plain `child_env()` also drops every other `*_KEY`/`*_TOKEN`,
+   such as `NPM_TOKEN`. Model commands that run `gh`, push, or install from
+   a private registry may break. The options are `child_env()`,
+   `child_env(runner=True)`, or `child_env(keep=...)` with a named list
+   (the only one that can restore a denied name). All three strip
+   `AIFACTORY_TRUSTED_CONTRACT`.
 3. **Lowercase names:** case-fold only in `is_denied_env_key`, which
    changes nothing users can see? Or also set `case_sensitive=True` in the
    web-server settings, which breaks any deployment that sets `APP_*` in
    lowercase?
-4. **Guard tests:** ship these in #1713 or as follow-ups? There are three:
-   blanks applied before the MCP env merge; no credential on the
-   passthrough lists; `tools/executor.py` added to
-   `test_no_unscrubbed_spawn.py`.
+4. **Deferred guard tests:** ship the two the issue deferred in #1713, or
+   as follow-ups? They are: blanks applied before the MCP env merge, and no
+   credential on the passthrough lists. (The executor spawn guard is part
+   of the outcome above.)
 5. **Ordering:** wait for PRs #1749 and #1751 to merge first, or rebase
    over them?
