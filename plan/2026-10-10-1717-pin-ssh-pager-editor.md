@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1717
 spec: spec/2026-10-10-1717-pin-ssh-pager-editor.md
 ---
