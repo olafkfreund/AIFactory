@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 from pathlib import Path
@@ -20,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 from factory_common.logsafe import sanitize_log
 
 from server.project_registry import resolve_project_path
-from server.services import review_redrive_service
+from server.services import review_redrive_service, task_control
 from server.specpath import spec_dir_for
 
 from .build_backend import _TERMINAL_STATES, orphaned_worktree_registrations
@@ -65,6 +66,44 @@ def _report_orphaned_worktrees(job_id: str) -> list[str]:
             sanitize_log(", ".join(orphans)),
         )
     return orphans
+
+
+_REVIEW_PAUSE_REASONS = ("plan_review", "injection_scan")
+
+
+async def _kubejob_review_reason(job_id: str) -> tuple[Path, str] | None:
+    """``(spec_dir, reason)`` when the Job's pushed plan is a review PAUSE, else None (#1633).
+
+    A Job that stops for human review (pre-flight approval, injection scan) exits
+    0 like a finished build, but nothing was built. Only an allowlisted
+    ``reviewReason`` counts: QA's ``human_review/completed`` and ``qa_issues`` are
+    real completions and keep the handoff. Blocking I/O runs in a thread. Never raises.
+    """
+    try:
+        from core import workspace_fetch  # noqa: PLC0415
+
+        project_id, _, spec_id = job_id.partition(":")
+        if not spec_id:
+            return None
+        spec_dir = spec_dir_for(resolve_project_path(project_id), spec_id)
+        await asyncio.to_thread(workspace_fetch.maybe_fetch_plan, spec_dir, spec_id)
+        raw = await asyncio.to_thread(
+            (spec_dir / "implementation_plan.json").read_text, "utf-8"
+        )
+        plan = json.loads(raw)
+        if (
+            isinstance(plan, dict)
+            and plan.get("status") == "human_review"
+            and plan.get("reviewReason") in _REVIEW_PAUSE_REASONS
+        ):
+            return spec_dir, plan["reviewReason"]
+    except Exception:  # noqa: BLE001 - unreadable plan: take today's path
+        _log.debug(
+            "[AgentService] review-pause check failed for %s",
+            sanitize_log(job_id),
+            exc_info=True,
+        )
+    return None
 
 
 class KubejobMixin:
@@ -164,6 +203,9 @@ class KubejobMixin:
                 job_id,
             )
         await self._drain_queue()
+        # Last: the usage fetch is an object-store GET that can stall for minutes,
+        # and must not delay the queue drain (#1633).
+        await self._report_kubejob_usage(job_id, "failed")
 
     async def _record_kubejob_terminal(self, job_id: str, status: str) -> None:
         """Write a terminal status where the task API reads it (#1430).
@@ -187,6 +229,41 @@ class KubejobMixin:
         _log.info("[AgentService] recording terminal status %s for %s", status, job_id)
         await self._update_plan_status(project_path, spec_id, status, job_id)
 
+    async def _report_kubejob_usage(self, job_id: str, status: str) -> None:
+        """Report the spend of a build that ends without a normal completion (#1633).
+
+        Sends a usage snapshot only when fetching the Job's pushed usage wrote NEW,
+        higher spend locally; otherwise the terminal event already carried it (or
+        there is nothing to report), and CFactory dedupes by event id, not status.
+        Best-effort: never raises.
+        """
+        try:
+            from core import workspace_fetch  # noqa: PLC0415
+
+            from . import completion  # noqa: PLC0415
+
+            project_id, _, spec_id = job_id.partition(":")
+            if not spec_id:
+                return
+            spec_dir = spec_dir_for(resolve_project_path(project_id), spec_id)
+            fetched = await asyncio.to_thread(
+                workspace_fetch.maybe_fetch_usage, spec_dir, spec_id
+            )
+            if fetched:
+                completion.emit_usage_snapshot(
+                    spec_dir,
+                    task_id=job_id,
+                    project_id=project_id,
+                    spec_id=spec_id,
+                    status=status,
+                )
+        except Exception:  # noqa: BLE001 - usage reporting must never block bookkeeping
+            _log.debug(
+                "[AgentService] kubejob usage report failed for %s",
+                sanitize_log(job_id),
+                exc_info=True,
+            )
+
     async def _on_kubejob_build_done(self, job_id: str) -> None:
         """A kubejob build reached ``done`` (#852): finish it like a real build.
 
@@ -201,6 +278,29 @@ class KubejobMixin:
         undone by a bookkeeping failure here.
         """
         self._release_task_credential(job_id)
+        # #1633: a Job that stopped for review exits 0 but built nothing. Record
+        # the pause and report its spend; it is not a completion (no handoff,
+        # endgame or #1407 marker).
+        pause = await _kubejob_review_reason(job_id)
+        if pause is not None:
+            try:
+                task_control.write_control(
+                    pause[0],
+                    status="human_review",
+                    review_reason=pause[1],
+                    updated_by="kubejob_review_pause",
+                )
+            except Exception:  # noqa: BLE001
+                _log.exception(
+                    "[AgentService] kubejob review-pause record failed for %s (ignored)",
+                    sanitize_log(job_id),
+                )
+            # The board must leave running/planning now, not at the next poll.
+            await self._safe_emit_task_status(job_id, "human_review", pause[1])
+            _report_orphaned_worktrees(job_id)
+            await self._drain_queue()
+            await self._report_kubejob_usage(job_id, "human_review")
+            return
         # The status the COMPLETION decided, not the one we asked for: its
         # evidence gate downgrades "completed" to "failed" when the build wrote
         # nothing, and recording the optimistic value would put "completed" in
@@ -890,6 +990,10 @@ class KubejobMixin:
                     _log.exception(
                         "[AgentService] reap of abandoned task %s failed", task.id
                     )
+        # After every task is marked failed: the usage fetch is an object-store GET
+        # that can stall, and must not hold up the reap (#1633). Concurrent, so a
+        # blackholed store costs one timeout window, not one per task.
+        await asyncio.gather(*(self._report_kubejob_usage(t, "failed") for t in reaped))
         return reaped
 
     async def is_running_anywhere(self, task_id: str) -> bool:
@@ -1049,5 +1153,6 @@ class KubejobMixin:
         self._release_task_credential(task_id)
         await self._safe_emit_task_status(task_id, "human_review", "errors")
         await self._drain_queue()
+        await self._report_kubejob_usage(task_id, "failed")
         _log.info("[AgentService] Stopped k8s-Job build %s", sanitize_log(task_id))
         return True

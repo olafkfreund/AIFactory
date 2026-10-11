@@ -24,6 +24,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1] / "apps" / "web-server"
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
+from server.services import completion, task_control  # noqa: E402
 from server.services.agent_service import AgentService  # noqa: E402
 
 TASK = "proj:023-some-spec"
@@ -89,3 +90,47 @@ async def test_row_without_a_ref_still_goes_terminal(
     await service._free_durable_slot_on_exit(TASK, spec_dir=tmp_path)
 
     assert [c[0] for c in store.terminal_calls] == [TASK]
+
+
+# ── #1633 C5: a review-parked build's spend is reported even when a Job owns it ──
+
+
+def _snapshots(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    seen: list[dict[str, Any]] = []
+
+    def fake(spec_dir: Path, **kw: Any) -> None:
+        seen.append(kw)
+
+    monkeypatch.setattr(completion, "emit_usage_snapshot", fake)
+    return seen
+
+
+@pytest.mark.asyncio
+async def test_k8s_job_owned_review_task_still_reports_usage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """The snapshot used to sit below the #1628 return, so it never ran here."""
+    store = _Store({"kind": "k8s-job", "namespace": "factory", "job_name": "j"})
+    service = _service(monkeypatch, store)
+    task_control.write_control(tmp_path, status="human_review")
+    seen = _snapshots(monkeypatch)
+
+    await service._free_durable_slot_on_exit(TASK, spec_dir=tmp_path)
+
+    assert [s["status"] for s in seen] == ["human_review"]
+    assert store.terminal_calls == []  # the #1628 guard still holds
+
+
+@pytest.mark.asyncio
+async def test_subprocess_review_task_reports_usage_and_goes_terminal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    store = _Store({"kind": "subprocess"})
+    service = _service(monkeypatch, store)
+    task_control.write_control(tmp_path, status="human_review")
+    seen = _snapshots(monkeypatch)
+
+    await service._free_durable_slot_on_exit(TASK, spec_dir=tmp_path)
+
+    assert [s["status"] for s in seen] == ["human_review"]
+    assert store.terminal_calls == [(TASK, "review")]
