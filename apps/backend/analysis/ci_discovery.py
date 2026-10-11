@@ -452,7 +452,7 @@ CI_LINTERS: tuple[str, ...] = (
 )
 _MAX_WORKFLOW_BYTES = 256 * 1024
 # An anchor follows whitespace, a flow indicator or a line start; not `2>&1` or `?a=1&b=2`.
-_YAML_ANCHOR = re.compile(r"(?:^|(?<=[\s\[\{,:]))&[A-Za-z0-9_-]+", re.M)
+_YAML_ANCHOR = re.compile(r"(?:^|(?<=[\s\[\{,:?\ufeff]))&[A-Za-z0-9_-]+", re.M)
 
 
 def ci_linters(project_dir: Path) -> list[str]:

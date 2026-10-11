@@ -453,3 +453,7 @@ and the CLI read them the same way after the revert.
   the old regex fails them. Also refused: a symlinked `.github`,
   `.github/workflows` or `.circleci` directory (LOW). Deferred to the
   follow-up: a cap on the number of workflow files parsed (LOW).
+- Opus re-review (APPROVE, two LOW, applied by the session model): the
+  lookbehind also admits `?` (flow-context key indicator, `[?&a x]`) and a
+  leading BOM (`﻿&a`), so it now matches every anchor position PyYAML
+  6.0.3 emits; one parametrized test covers the three cases.

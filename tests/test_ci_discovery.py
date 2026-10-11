@@ -826,6 +826,10 @@ class TestCiLinters:
         )
         assert acd.ci_linters(tmp_path) == ["ktlint"]
 
+    @pytest.mark.parametrize("text", ["[?&a x]", "{?&a x: 1}", "﻿&a x"])
+    def test_flow_key_and_bom_anchor_seen(self, text):
+        assert acd._YAML_ANCHOR.search(text)
+
     @requires_yaml
     def test_symlinked_github_dir_refused(self, tmp_path):
         real = tmp_path / "real"
