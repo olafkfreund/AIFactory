@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1719
 intent: intent/2026-10-10-1719-agent-git-dir-write-guard.md
 ---
