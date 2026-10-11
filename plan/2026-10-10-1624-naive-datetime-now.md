@@ -92,6 +92,11 @@ task that went idle 1h ago reads as 1h + offset idle and live work gets reaped.
 - **F3.** `apps/web-server/tests/test_stale_tasks.py` is already 401 lines
   (standards 1.8 cap is 400). The new test grows it. Ruff does not gate this;
   say so in the PR and do not split the file.
+- **F4 (not in the spec, not fixed here).** `routes/context.py:207`
+  `"lastRefreshed": __import__("datetime").datetime.now().isoformat()` is a
+  naive web-server writer that DTZ005 cannot see. The spec's 62 sites do not
+  include it; raise it in the PR and the backend follow-up issue rather than
+  widening this diff.
 - **In-flight overlap.** Only #1633 (PR #1735) shares a file:
   `services/agent_service.py`, hunks at 366-382 and after 407. It does not
   touch our lines; after it merges `:1264` becomes `:1265`, the import at
@@ -144,9 +149,8 @@ put its `bin` on `PATH` before committing so the pre-commit hook runs.
        time.tzset()
 
 
-   def test_route_clock_is_utc_so_fresh_task_is_not_stale_off_utc(
-       non_utc_local_tz: None,
-   ) -> None:
+   @pytest.mark.usefixtures("non_utc_local_tz")
+   def test_route_clock_is_utc_so_fresh_task_is_not_stale_off_utc() -> None:
        """#1624: updated_at is aware UTC since #1619; a naive-local _now() made a
        1h-old task look 10h idle on any host east of UTC and reaped live work."""
        assert time.localtime().tm_gmtoff == 9 * 3600  # fixture took effect
@@ -166,7 +170,10 @@ put its `bin` on `PATH` before committing so the pre-commit hook runs.
    **fails** (1 StaleTask, about 10h idle).
    Traps: file passes the 400-line cap (F3), mention in PR, do not split.
    mypy `--strict` ratchet covers this file: annotate every parameter and
-   return. Use the POSIX TZ string; no tzdata, no `ZoneInfo`.
+   return. Use the POSIX TZ string; no tzdata, no `ZoneInfo`. Use
+   `@pytest.mark.usefixtures`, not a `non_utc_local_tz: None` parameter: the
+   strict ruff ratchet flags the unused parameter as ARG001 (0 -> 1,
+   regression; checked in a scratch worktree).
 
 2. `apps/web-server/server/routes/stale.py:29, 63-70`: the fix (D9).
    `:29` → `from datetime import UTC, datetime, timedelta`. `:63-69`
@@ -239,11 +246,19 @@ put its `bin` on `PATH` before committing so the pre-commit hook runs.
    `grep -n 'from datetime' apps/web-server/server/routes/settings.py` shows
    `UTC` in all three local imports;
    `$PY -m pytest -o asyncio_mode=auto apps/web-server/tests -q` all pass
-   (792 collected).
-   Traps: **`settings.py` has no module-level datetime import** — missing
+   (794 passed at `origin/dev` `0bf19434` with the step 1 test; 791 + 1
+   before the rebase).
+   Traps: run `ruff format` on the touched files: `pr_review_service.py:141`
+   (`completedAt`) is over 88 columns with `(UTC)` and wraps to 3 lines,
+   moving `:147`, `:152`, `:293` down by 2. That is the only format change.
+   Do **not** blanket-replace `datetime.now()`: `routes/context.py:207`
+   (`__import__("datetime").datetime.now()`, invisible to DTZ) has no `UTC`
+   in scope, so a blind edit there is an F821 (undefined name) the ratchet
+   rejects; it is not one of the 62 sites (see F4). **`settings.py` has no module-level datetime import** — missing
    `:2844` is a runtime `NameError` lint will not catch (F1). Same-line edits
-   so `autonomy-matrix/control-objectives.toml:88` citations into
-   `pr_review_service.py` do not shift. No new log lines (CodeQL). Do not
+   for the imports (D11). `docs/compliance/control-objectives.toml:88`
+   cites `pr_review_service.py` as a whole file, with no line number, so the
+   format wrap above does not touch the matrix. No new log lines (CodeQL). Do not
    import `_iso_from_timestamp` (D12). `tests/test_security.py`
    GitCommitValidator fails while files are staged; that is environmental.
 
@@ -261,8 +276,9 @@ put its `bin` on `PATH` before committing so the pre-commit hook runs.
      `python scripts/gen_autonomy_matrix.py --check`.
 
    → verify by `--check` exit 0, and `git diff --stat origin/dev` lists only
-   the planned files (the matrix md/json should show no diff, since edits
-   stayed on their lines).
+   the planned files (the matrix md/json show no diff: the matrix cites
+   `pr_review_service.py` by file, not by line; verified in a scratch
+   worktree).
    Traps: never hand-edit `docs/docs/compliance/autonomy-matrix.md` or
    `docs/static/compliance/autonomy-matrix.json`.
 
@@ -285,17 +301,19 @@ put its `bin` on `PATH` before committing so the pre-commit hook runs.
 
 ## Tests
 
-Run from the worktree root after step 0.
+Run from the worktree root after step 0. Bare `python`/`mypy` below must be
+the venv's, so put its `bin` on `PATH` first.
 
 ```bash
+export PATH=/mnt/code/Source-home/GitHub/AIFactory/apps/backend/.venv/bin:$PATH
 PY=/mnt/code/Source-home/GitHub/AIFactory/apps/backend/.venv/bin/python
 $PY -m pytest apps/web-server/tests/test_stale_tasks.py -q -o asyncio_mode=auto   # 23 passed
-$PY -m pytest apps/web-server/tests -q -o asyncio_mode=auto                      # 792 collected, all pass
+$PY -m pytest apps/web-server/tests -q -o asyncio_mode=auto                      # all pass (794 at 0bf19434)
 ruff check --select DTZ005,DTZ006 apps/web-server                                 # 0 (was 62)
 ruff check apps/backend apps/web-server scripts tests                            # exit 0
 ruff format --check apps/backend apps/web-server scripts tests                   # exit 0
 grep -rn "noqa: DTZ005" apps/web-server/server                                   # 3: settings.py 2128, 2129; terminal.py 585
-# strict ratchet (stage changed files first)
+# strict ratchet (git add the changed files first; --staged reads the index)
 python scripts/cq_ratchet.py --staged --ruff "$(command -v ruff)" --config standards/ruff.toml --paths 'apps/backend/*.py' 'apps/web-server/*.py' 'scripts/*.py'          # exit 0
 python scripts/cq_ratchet.py --staged --tool mypy --mypy "$(command -v mypy)" --config standards/mypy.ini --paths 'apps/backend/*.py' 'apps/web-server/*.py' 'scripts/*.py' # exit 0
 python scripts/gen_autonomy_matrix.py && python scripts/gen_autonomy_matrix.py --check  # exit 0
@@ -303,7 +321,11 @@ $PY -m pytest tests/test_no_unscrubbed_spawn.py -q                              
 ```
 
 `standards/ruff.toml` already selects all `DTZ`; the touched files only lose
-findings, so the ratchet passes.
+findings, so the ratchet passes. Checked by applying steps 1-4 in a scratch
+worktree on `origin/dev` `0bf19434`: ruff ratchet 22 files, 20 improved,
+0 regressed; mypy ratchet 22 unchanged, 0 regressed; default `ruff check`
+and `ruff format --check` exit 0; matrix `--check` exit 0; M1 and M2 fail
+as stated.
 
 Mutation checks (edit the file, re-run, restore by re-editing, re-run green):
 
@@ -311,8 +333,8 @@ Mutation checks (edit the file, re-run, restore by re-editing, re-run green):
 |---|---|---|
 | M1 | `stale.py` `_now()` back to `datetime.now()` | new test fails on the first `== []` (1 StaleTask, ~10h idle); positive control still holds |
 | M2 | delete the first `time.tzset()` in the fixture | fails on `tm_gmtoff == 32400` (unless the host is already +9) |
-| M3 | add `_x = datetime.now()` in a function in `routes/tasks.py` | `ruff check apps/web-server` exits 1 with exactly 1 DTZ005 |
-| M4 | comment out the `"apps/backend/**"` ignore in `ruff.toml` | `ruff check apps/backend` exits 1 with 77 DTZ findings |
+| M3 | append `def _probe() -> None:` / `    _x = datetime.now()` at the end of `routes/tasks.py` | `ruff check apps/web-server` exits 1 with exactly 1 DTZ005 |
+| M4 | comment out the `"apps/backend/**"` ignore in `ruff.toml` | `ruff check apps/backend` exits 1 with 74 DTZ findings (73 DTZ005 + 1 DTZ006): 77 minus 3 in backend `test_*.py` files that the test globs already ignore |
 
 Not tested per site: the other ~60 call-site edits are mechanical; DTZ = 0
 plus the full suite is their check (D15).
