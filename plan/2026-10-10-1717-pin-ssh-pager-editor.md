@@ -324,3 +324,7 @@ bullet together. Afterwards, Tests command 1 gives 48 passed.
 Operator workaround without a deploy: set `GIT_SSH_COMMAND`, `GIT_PAGER` or
 `GIT_EDITOR` in the server environment. Each one overrides its pin, which M5
 and M6 prove.
+
+## Approver decisions (2026-10-11)
+
+- D2: leave the stale `worktree._git_env` docstring (worktree.py:93-103) unchanged in this PR.
