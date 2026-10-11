@@ -2,6 +2,13 @@
 
 ### Security
 
+- **An agent-written `.git/config` can no longer choose the server's ssh command, pager or editor (#1717).**
+  `child_env()` also pins `core.sshCommand=ssh`, `core.pager=cat` and
+  `core.editor=true` (`GIT_CONFIG_COUNT` is now `n+6`). Operators can still
+  override them with `GIT_SSH_COMMAND`, `GIT_PAGER` or `GIT_EDITOR` in the
+  server environment.
+  A repo `pager.<cmd>` setting still wins over `core.pager`; it only runs on a
+  tty, which no server spawn has (tracked in the follow-up).
 - **An agent-written git config can no longer run commands in the server (#1689).**
   Every `child_env()` process now pins `core.fsmonitor=false` next to the
   `core.hooksPath` pin (`GIT_CONFIG_COUNT` is now `n+2`). The bash guard refuses
