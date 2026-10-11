@@ -19,12 +19,14 @@ installation token, which can write to every repo the installation covers.
 
 1. **Agent runner.** `RUNNER_KEEP` starts with `*GITHUB_KEEP`
    (`apps/web-server/server/utils/subprocess_env.py:47-48`), so
-   `make_subprocess_env()` passes `GITHUB_TOKEN`/`GH_TOKEN` to every agent
-   session: build, PR review, spec creation, clarification, changelog and
-   insights. The agent and every tool it runs can read the token. This is the
-   least trusted child and the worst of the four.
+   `make_subprocess_env()` passes `GITHUB_TOKEN`/`GH_TOKEN` to every runner
+   the web-server starts: build, PR review, spec creation, clarification,
+   changelog and insights. Since #1692 (38ea8a79) the non-Claude agent CLIs
+   get a scrubbed env, but the runner process and the Claude CLI the SDK
+   starts from it still hold the token, so the agent's tools can read it.
+   This is the least trusted child and the worst of the four.
 2. **Worktree git calls.** `_git_env()` in `apps/backend/core/worktree.py:92-110`
-   keeps the token for nine git calls. `_setup_git_credentials()` (`:419-441`)
+   keeps the token for eight git calls and the `gh auth setup-git` call. `_setup_git_credentials()` (`:419-441`)
    runs `gh auth setup-git` before every #1106 base fetch, which rewrites the
    global git config on every build.
 3. **Push URL.** `authed_push_url` (`apps/backend/core/git_credentials.py:119-169`)
@@ -36,7 +38,7 @@ installation token, which can write to every repo the installation covers.
    `~/.config/gh/hosts.yml` indefinitely.
 
 The guard test `test_web_server_has_no_env_token_path`
-(`tests/test_github_env.py:250-258`) misses all four. It scans only
+(`tests/test_github_env.py:252-260`) misses all four. It scans only
 `apps/web-server/server`, and its search strings do not match the
 `*GITHUB_KEEP` spread. The "grep exemptions" in the issue are this scan scope;
 the file has no exemption list.
@@ -55,8 +57,8 @@ the file has no exemption list.
 
 - Operators of the web-server and control-plane pod, and owners of the repos
   it builds.
-- Every agent session the web-server starts (six services under
-  `apps/web-server/server/services/`).
+- Every runner the web-server starts (seven modules under
+  `apps/web-server/server/services/` call `make_subprocess_env`).
 - Every build that creates a worktree, plus workspace and TFactory pushes,
   most of which run in kubejob pods.
 - Local and dev installs that log in with `gh auth login --web`.
@@ -76,21 +78,27 @@ the file has no exemption list.
 - The wider test must not flag expected matches: `_STRIPPED` and the askpass
   script text in `git_credentials.py`, and the `GIT_PASS_FILE` askpass in
   `project_workspace_service.py:141-187`.
-- Overlaps #1717 (PR #1748, `core/child_env.py`) and #1692 (the runner path).
+- The runner reads the token in-process today and must keep working:
+  `runners/github/runner.py:92` (PR review), `providers/factory.py:196`
+  (GitHub Models), `core/mcp_credentials.py:189-197` (GitHub MCP), plus the
+  worktree fetch and the pushes above.
+- Overlaps #1717 (PR #1748, open, `core/child_env.py`). #1692 is merged and
+  left `RUNNER_KEEP` as is.
 - Out of scope: the `/proc/<child>/root` and ptrace exposure (#1688
   follow-up 2).
 
 ## Open questions
 
-1. Does the agent runner need the GitHub token at all? No `gh` use turned up
-   under `apps/backend/prompts` or `apps/backend/agents`. Drop it, or give the
-   runner a per-call `GH_CONFIG_DIR` (which hits the token-expiry constraint)?
+1. The runner's own code needs the token (see Constraints), but no `gh` use
+   turned up under `apps/backend/prompts` or `apps/backend/agents`, so the
+   agent's tools seem not to. Is it acceptable for the runner process to keep
+   the token as long as the agent's Claude CLI and tools do not get it, or must
+   the runner itself never hold it in env?
 2. With no server token, keep `gh auth login --web` but point it at a managed
    `GH_CONFIG_DIR` (token still on disk), or remove web login and require
    `GITHUB_TOKEN` or the App?
 3. `gh auth setup-git` in `worktree.py`: replace it with a per-call helper on
    the base fetch, or delete it once every fetch and push caller uses
    `github_env()`?
-4. Fix all four paths here, or split the runner path (overlaps #1692) into its
-   own issue?
+4. Fix all four paths here, or split the runner path into its own issue?
 5. Wait for #1717 / PR #1748 to merge first, or start now and rebase?
