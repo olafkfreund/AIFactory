@@ -627,6 +627,14 @@ class TestGitDirWriteGuard:
         for t in ("Read", "Bash"):
             assert not re.fullmatch(m.group(1), t)
 
+    def test_notebook_path_checked_when_file_path_also_sent(self, repo):
+        orig, wt = repo
+        ti = {
+            "file_path": str(wt / "ok.ipynb"),
+            "notebook_path": str(orig / ".git" / "x.ipynb"),
+        }
+        assert _hook("NotebookEdit", ti, wt).get("decision") == "block"
+
     @pytest.mark.parametrize("agent_type", _SIMPLE_TYPES)
     def test_simple_client_types_have_no_write_tools(self, agent_type):
         """Callers of simple_client (#1719 NOTE-B): commit_message,

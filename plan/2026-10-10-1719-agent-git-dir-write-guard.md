@@ -516,3 +516,13 @@ above.
   "Malformed tool input." and "Missing or invalid file path."
 - Measured counts: baseline 100 passed / 3 skipped; after: 142 passed /
   3 skipped (four-file run).
+- Opus review (CHANGES, fixed by the session model):
+  - MEDIUM: the hook checked `file_path or notebook_path`, so a NotebookEdit
+    carrying a harmless `file_path` skipped its `.git` `notebook_path`. The hook
+    now checks every path key present; new test
+    `test_notebook_path_checked_when_file_path_also_sent` fails on the old line.
+  - LOW: `expanduser()` and `Path.cwd()` moved inside the `try`, so the helper
+    fails closed (a raising hook is not a block).
+  - LOW: the `ponytail:` comment now also names the unnormalised NTFS/HFS+
+    aliases (Linux-only deployment).
+  - D5a confirmed: no `create_simple_client` caller writes through the agent.

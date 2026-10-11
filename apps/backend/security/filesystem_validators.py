@@ -179,16 +179,16 @@ def git_metadata_write_refusal(path: str, cwd: str | None) -> str | None:
     resolution errors.
     """
     refusal = "Refused: writes into git metadata (.git) are not allowed."
-    p = Path(path).expanduser()
-    if not p.is_absolute():
-        p = Path(cwd or Path.cwd()) / p
-    forms = [Path(os.path.normpath(p))]
     try:
-        forms.append(p.resolve())
+        p = Path(path).expanduser()
+        if not p.is_absolute():
+            p = Path(cwd or Path.cwd()) / p
+        forms = [Path(os.path.normpath(p)), p.resolve()]
     except (OSError, RuntimeError, ValueError):
         return refusal
     # ponytail: --separate-git-dir to a path outside any .git is not caught;
-    # upgrade to git rev-parse --git-dir/--git-common-dir.
+    # upgrade to git rev-parse --git-dir/--git-common-dir. Linux-only: NTFS/HFS+
+    # aliases (`.git.`, `GIT~1`, ignorable code points) are not normalised.
     if ".git" in {c.casefold() for f in forms for c in f.parts}:
         return refusal
     return None

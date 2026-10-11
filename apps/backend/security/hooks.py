@@ -269,11 +269,14 @@ async def git_dir_write_hook(
     tool_input = input_data.get("tool_input")
     if not isinstance(tool_input, dict):
         return {"decision": "block", "reason": "Malformed tool input."}
-    path = tool_input.get("file_path") or tool_input.get("notebook_path")
-    if not isinstance(path, str) or not path:
+    # Check every path key present: NotebookEdit writes notebook_path even if
+    # a harmless file_path rides along.
+    paths = [tool_input[k] for k in ("file_path", "notebook_path") if k in tool_input]
+    if not paths or not all(isinstance(p, str) and p for p in paths):
         return {"decision": "block", "reason": "Missing or invalid file path."}
-    refusal = git_metadata_write_refusal(path, input_data.get("cwd"))
-    if refusal:
-        logger.warning("Blocked agent write into git metadata")
-        return {"decision": "block", "reason": refusal}
+    for path in paths:
+        refusal = git_metadata_write_refusal(path, input_data.get("cwd"))
+        if refusal:
+            logger.warning("Blocked agent write into git metadata")
+            return {"decision": "block", "reason": refusal}
     return {}
