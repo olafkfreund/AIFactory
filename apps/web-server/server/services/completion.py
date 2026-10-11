@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import secrets
 import shutil
@@ -207,6 +208,32 @@ def correlation_key(spec_id: str, issue_number: int | None) -> str:
     return str(issue_number) if issue_number is not None else f"af-{spec_id}"
 
 
+class _BadUsageError(Exception):
+    """token_usage.json held a value no real run could have written (#1633)."""
+
+
+_TOKEN_CAP = 1e12
+_COST_CAP = 1e6
+_DURATION_CAP = 1e10
+_MAX_WORKERS = 256
+
+
+def _num(v: object, cap: float) -> float:
+    """A usage number from an untrusted file: None counts as 0, anything else
+    that is not a finite, non-negative int/float within ``cap`` is rejected."""
+    if v is None:
+        return 0
+    if isinstance(v, bool) or not isinstance(v, int | float):
+        raise _BadUsageError
+    if not math.isfinite(v) or v < 0 or v > cap:
+        raise _BadUsageError
+    return v
+
+
+def _str128(v: object) -> str | None:
+    return v[:128] if isinstance(v, str) else None
+
+
 def _worker_records(agg: dict) -> list[dict]:
     """Normalise the persisted per-worker map (#45 P1) into a stable list.
 
@@ -222,33 +249,36 @@ def _worker_records(agg: dict) -> list[dict]:
     for wid, rec in workers.items():
         if not isinstance(rec, dict):
             continue
-        in_tok = int(rec.get("input_tokens", 0) or 0)
-        out_tok = int(rec.get("output_tokens", 0) or 0)
+        in_tok = int(_num(rec.get("input_tokens"), _TOKEN_CAP))
+        out_tok = int(_num(rec.get("output_tokens"), _TOKEN_CAP))
+        provider = _str128(rec.get("provider"))
         record = {
-            "worker_id": rec.get("worker_id") or wid,
-            "phase": rec.get("phase"),
-            "subtask_id": rec.get("subtask_id"),
-            "provider": rec.get("provider"),
-            "model": rec.get("model"),
+            "worker_id": _str128(rec.get("worker_id")) or _str128(wid),
+            "phase": _str128(rec.get("phase")),
+            "subtask_id": _str128(rec.get("subtask_id")),
+            "provider": provider,
+            "model": _str128(rec.get("model")),
             "input_tokens": in_tok,
             "output_tokens": out_tok,
-            "total_tokens": int(rec.get("total_tokens", 0) or 0) or (in_tok + out_tok),
-            "cost_usd": round(float(rec.get("cost_usd", 0.0) or 0.0), 6),
-            "duration_ms": int(rec.get("duration_ms", 0) or 0),
+            "total_tokens": int(_num(rec.get("total_tokens"), _TOKEN_CAP))
+            or (in_tok + out_tok),
+            "cost_usd": round(float(_num(rec.get("cost_usd"), _COST_CAP)), 6),
+            "duration_ms": int(_num(rec.get("duration_ms"), _DURATION_CAP)),
             # Billing mode (#96): api/cloud are metered (show cost);
             # subscription/local are not (show tokens + time). Lets CFactory
             # avoid surfacing a notional dollar cost for subscription/local work.
-            "billing_mode": classify_billing_mode(rec.get("provider")),
+            "billing_mode": classify_billing_mode(provider),
         }
         # RFC-0014 (#803, additive): echo the routing tier the backend's token
         # attribution stamped when a routing policy was active. Omitted entirely
         # when absent (policy off), keeping the envelope byte-identical to v1.3.
-        if rec.get("routing_tier"):
-            record["routing_tier"] = rec["routing_tier"]
+        tier = _str128(rec.get("routing_tier"))
+        if tier:
+            record["routing_tier"] = tier
         records.append(record)
     # Deterministic order for stable events/tests.
     records.sort(key=lambda r: str(r["worker_id"]))
-    return records
+    return records[:_MAX_WORKERS]
 
 
 def _rollup(records: list[dict], key: str) -> dict:
@@ -401,35 +431,36 @@ def usage_from_aggregate(
     """
     if not isinstance(agg, dict):
         return None
-    in_tok = int(agg.get("totalInputTokens", 0) or 0)
-    out_tok = int(agg.get("outputTokens", 0) or 0)
-    if in_tok == 0 and out_tok == 0:
+    # token_usage.json is written by the build Job: treat it as untrusted (#1633).
+    # A bad value drops the usage block, never the terminal event that carries it.
+    try:
+        in_tok = int(_num(agg.get("totalInputTokens"), _TOKEN_CAP))
+        out_tok = int(_num(agg.get("outputTokens"), _TOKEN_CAP))
+        if in_tok == 0 and out_tok == 0:
+            return None
+        total = int(_num(agg.get("totalTokens"), _TOKEN_CAP)) or (in_tok + out_tok)
+        block: dict[str, Any] = {
+            "input_tokens": in_tok,
+            "output_tokens": out_tok,
+            "total_tokens": total,
+            "cost_usd": round(float(_num(agg.get("totalCostUsd"), _COST_CAP)), 6),
+            "model": _str128(agg.get("model")),
+        }
+        cache_read = int(_num(agg.get("cacheReadTokens"), _TOKEN_CAP))
+        cache_creation = int(_num(agg.get("cacheCreationTokens"), _TOKEN_CAP))
+        workers = _worker_records(agg)
+    except _BadUsageError:
         return None
-    total = int(agg.get("totalTokens", 0) or 0) or (in_tok + out_tok)
-    block = {
-        "input_tokens": in_tok,
-        "output_tokens": out_tok,
-        "total_tokens": total,
-        "cost_usd": round(float(agg.get("totalCostUsd", 0.0) or 0.0), 6),
-        "model": agg.get("model"),
-    }
     # #1398: cache writes vs reads. Additive, and only when a cache was actually
     # reported, so the block for a no-cache provider or a pre-#1398 file stays
     # byte-identical. CFactory's TokenUsage ignores unknown keys today.
-    cache_read = int(agg.get("cacheReadTokens", 0) or 0)
-    cache_creation = int(agg.get("cacheCreationTokens", 0) or 0)
     if cache_read or cache_creation:
         block["cache_read_tokens"] = cache_read
         block["cache_creation_tokens"] = cache_creation
-    workers = _worker_records(agg)
     if workers:
         block["workers"] = workers
         block["by_provider"] = _rollup(workers, "provider")
         block["by_model"] = _rollup(workers, "model")
-        # OTel per-worker / per-provider metric emission (#45 P1). Complete
-        # no-op when OTel is disabled (no exporter endpoint) and best-effort
-        # otherwise — never affects the usage block or the completion path.
-        _emit_worker_metrics(workers)
     # Soft budget alert (#45 P2, additive + OBSERVE-ONLY): when the contract set
     # a budget (carried into task_metadata.budgetUsd), attach a usage.budget
     # block comparing the rolled-up aggregate spend (block["cost_usd"]) against
@@ -1001,6 +1032,9 @@ def emit_terminal_completion(
     except Exception:  # noqa: BLE001 - defensive; emit must still proceed
         logger.debug("usage fetch skipped (best-effort)", exc_info=True)
     usage = read_usage(spec_dir)
+    # OTel per-worker metrics (#45 P1), once per terminal event (#1633): not from
+    # usage_from_aggregate, which also serves snapshots and the live mapping.
+    _emit_worker_metrics((usage or {}).get("workers") or [])
     event = build_completion_event(
         task_id=task_id,
         spec_id=spec_id,

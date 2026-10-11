@@ -363,23 +363,6 @@ class AgentService(
                 sanitize_log(task_id),
                 exc_info=True,
             )
-        # #1628: on the /start path this handler fires when SPEC CREATION's
-        # subprocess exits, not the build's — and the build that follows runs as
-        # a k8s Job on the same row. Marking the task terminal there left a row
-        # carrying a live Job reference AND `done`, which `get_active_kubejobs`
-        # (it selects `running`) never returns, so reconcile, the reaper, the
-        # #1249 review re-drive, streamer cancellation and credential release
-        # were all blind to that build. A Job owns its task's lifecycle; the
-        # reconcile loop is what marks it terminal.
-        if await self._k8s_job_owns(task_id):
-            return
-        try:
-            await self._store().mark_terminal(task_id, lifecycle, error=error)
-        except Exception:  # noqa: BLE001 - never break the exit/drain path
-            _log.exception(
-                "[AgentService] could not free durable slot for %s",
-                sanitize_log(task_id),
-            )
         # Running-cost: a build that paused at review still spent real tokens, but
         # emit_terminal_completion only fires on terminal states (done/failed/
         # stuck), so a review-paused build's usage never reaches the cockpit. Emit
@@ -404,6 +387,24 @@ class AgentService(
                     sanitize_log(task_id),
                     exc_info=True,
                 )
+
+        # #1628: on the /start path this handler fires when SPEC CREATION's
+        # subprocess exits, not the build's — and the build that follows runs as
+        # a k8s Job on the same row. Marking the task terminal there left a row
+        # carrying a live Job reference AND `done`, which `get_active_kubejobs`
+        # (it selects `running`) never returns, so reconcile, the reaper, the
+        # #1249 review re-drive, streamer cancellation and credential release
+        # were all blind to that build. A Job owns its task's lifecycle; the
+        # reconcile loop is what marks it terminal.
+        if await self._k8s_job_owns(task_id):
+            return
+        try:
+            await self._store().mark_terminal(task_id, lifecycle, error=error)
+        except Exception:  # noqa: BLE001 - never break the exit/drain path
+            _log.exception(
+                "[AgentService] could not free durable slot for %s",
+                sanitize_log(task_id),
+            )
 
     async def _update_plan_status(
         self,
