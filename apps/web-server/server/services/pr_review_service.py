@@ -19,7 +19,7 @@ import logging
 import re
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 
@@ -66,7 +66,7 @@ class PRReviewProgress:
     phase: PRReviewPhase
     progress: int
     message: str
-    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 logger = logging.getLogger(__name__)
@@ -102,8 +102,8 @@ class PRReviewLogWriter:
         self._pr_number = pr_number
         self._data: dict = {
             "prNumber": pr_number,
-            "createdAt": datetime.now().isoformat(),
-            "updatedAt": datetime.now().isoformat(),
+            "createdAt": datetime.now(UTC).isoformat(),
+            "updatedAt": datetime.now(UTC).isoformat(),
             "phases": {},
         }
 
@@ -112,7 +112,7 @@ class PRReviewLogWriter:
         self._data["phases"][phase.value] = {
             "phase": phase.value,
             "status": "active",
-            "startedAt": datetime.now().isoformat(),
+            "startedAt": datetime.now(UTC).isoformat(),
             "completedAt": None,
             "entries": [],
         }
@@ -126,7 +126,7 @@ class PRReviewLogWriter:
 
         self._data["phases"][phase_key]["entries"].append(
             {
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
                 "message": message,
                 "progress": progress,
             }
@@ -138,18 +138,20 @@ class PRReviewLogWriter:
         phase_key = phase.value
         if phase_key in self._data["phases"]:
             self._data["phases"][phase_key]["status"] = status
-            self._data["phases"][phase_key]["completedAt"] = datetime.now().isoformat()
+            self._data["phases"][phase_key]["completedAt"] = datetime.now(
+                UTC
+            ).isoformat()
             self._save()
 
     def finalize(self, status: str = "completed") -> None:
         """Finalize the log with overall status."""
         self._data["status"] = status
-        self._data["completedAt"] = datetime.now().isoformat()
+        self._data["completedAt"] = datetime.now(UTC).isoformat()
         self._save()
 
     def _save(self) -> None:
         """Save the log data to disk."""
-        self._data["updatedAt"] = datetime.now().isoformat()
+        self._data["updatedAt"] = datetime.now(UTC).isoformat()
         try:
             self._logs_file.parent.mkdir(parents=True, exist_ok=True)
             self._logs_file.write_text(json.dumps(self._data, indent=2))
@@ -290,7 +292,7 @@ class PRReviewService:
 
             self.running_reviews[key] = proc
             self._current_phases[key] = PRReviewPhase.STARTING
-            self._review_start_times[key] = datetime.now().isoformat()
+            self._review_start_times[key] = datetime.now(UTC).isoformat()
 
             # Log the start phase
             log_writer.start_phase(PRReviewPhase.STARTING)

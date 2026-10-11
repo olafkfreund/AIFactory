@@ -12,7 +12,7 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -354,7 +354,7 @@ class CredentialMixin:
                 "newProfileId": new_profile_id,
                 "newProfileName": new_profile_name,
                 "reason": reason,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
             },
         )
 
@@ -433,7 +433,7 @@ class CredentialMixin:
                         "newProfileId": profile_id,
                         "newProfileName": profile_name,
                         "reason": reason,
-                        "timestamp": datetime.now().isoformat(),
+                        "timestamp": datetime.now(UTC).isoformat(),
                     },
                 )
             )

@@ -13,7 +13,7 @@ import mimetypes
 import re
 import subprocess
 import urllib.parse
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -379,7 +379,7 @@ async def list_directory_direct(
                     "path": str(entry),
                     "type": "directory" if entry.is_dir() else "file",
                     "size": stat.st_size if entry.is_file() else 0,
-                    "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                    "modified": datetime.fromtimestamp(stat.st_mtime, UTC).isoformat(),
                     "extension": entry.suffix.lower() if entry.is_file() else None,
                     "language": detect_language(entry.name)
                     if entry.is_file()
@@ -439,7 +439,7 @@ async def read_file_direct(
         "path": str(full_path),
         "content": content,
         "size": stat.st_size,
-        "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        "modified": datetime.fromtimestamp(stat.st_mtime, UTC).isoformat(),
         "language": detect_language(str(full_path)),
     }
 
@@ -605,7 +605,7 @@ async def list_directory(
             path=str(entry.relative_to(resolve_path(project_id, ""))),
             type="directory" if entry.is_dir() else "file",
             size=stat.st_size if entry.is_file() else 0,
-            modified=datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            modified=datetime.fromtimestamp(stat.st_mtime, UTC).isoformat(),
             extension=entry.suffix.lower() if entry.is_file() else None,
             language=detect_language(entry.name) if entry.is_file() else None,
         )
@@ -669,7 +669,7 @@ async def read_file(
         path=path,
         content=content,
         size=stat.st_size,
-        modified=datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        modified=datetime.fromtimestamp(stat.st_mtime, UTC).isoformat(),
         language=detect_language(path),
     )
 

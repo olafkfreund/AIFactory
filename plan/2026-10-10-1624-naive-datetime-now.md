@@ -357,3 +357,11 @@ plus the full suite is their check (D15).
 - The backend + provider_benchmark follow-up is filed before step 3 as **#1740**; put #1740 in the `ruff.toml` comment (step 6 no longer opens it).
 - Start now; rebase again after #1633 (PR #1735) merges.
 - F4 (`routes/context.py:207`) goes to #1740, not this change.
+
+## Deviations (recorded during implementation)
+
+- None in the code. The coder did steps 1-5; the session model did step 0,
+  filed #1740 before step 3 (approver decision) and does step 6.
+- Measured: stale tests 23 passed; DTZ count 62 (57 DTZ005 + 5 DTZ006); web-server
+  suite 794 passed; ruff ratchet 20 improved, 0 regressed; M1-M4 as tabled.
+- F3: `apps/web-server/tests/test_stale_tasks.py` is now 430 lines.

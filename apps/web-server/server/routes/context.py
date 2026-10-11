@@ -742,9 +742,9 @@ async def update_project_env(
             elif "gitToken" in config_dict:
                 projects[projectId]["settings"]["githubToken"] = config_dict["gitToken"]
 
-            from datetime import datetime
+            from datetime import UTC, datetime
 
-            projects[projectId]["updated_at"] = datetime.now().isoformat()
+            projects[projectId]["updated_at"] = datetime.now(UTC).isoformat()
             save_projects(projects)
         except Exception:
             # .env write above already succeeded; this only mirrors gitToken/

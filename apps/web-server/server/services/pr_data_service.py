@@ -13,7 +13,7 @@ the correct working directory (and therefore the correct GitHub remote).
 import functools
 import json
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -304,7 +304,7 @@ class PRDataService:
         for fid in posted_ids:
             if fid not in review_data["posted_finding_ids"]:
                 review_data["posted_finding_ids"].append(fid)
-        review_data["posted_at"] = datetime.now().isoformat()
+        review_data["posted_at"] = datetime.now(UTC).isoformat()
 
         try:
             review_file.write_text(json.dumps(review_data, indent=2))

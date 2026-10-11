@@ -7,7 +7,7 @@ Handles starting, stopping, and monitoring task execution.
 import json
 import logging
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -445,7 +445,7 @@ async def start_task(
 
     if not implementation_plan.exists() or not plan_is_valid:
         # Need to run spec creation first - read title/description from requirements.json
-        from datetime import datetime
+        from datetime import UTC, datetime
 
         logger.info(
             "[StartTask] No valid implementation plan found, will run spec creation for %s",
@@ -510,7 +510,7 @@ async def start_task(
                         ],
                     }
                 ],
-                "last_updated": datetime.now().isoformat(),
+                "last_updated": datetime.now(UTC).isoformat(),
             }
             implementation_plan.write_text(json.dumps(plan_data, indent=2))
 
@@ -521,7 +521,7 @@ async def start_task(
                     {
                         "approved": True,
                         "approved_by": "auto-simple",
-                        "approved_at": datetime.now().isoformat(),
+                        "approved_at": datetime.now(UTC).isoformat(),
                     },
                     indent=2,
                 )
@@ -1215,7 +1215,7 @@ async def create_and_run_task(
     requirements: dict = {
         "title": title,
         "description": description,
-        "created_at": datetime.now().isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
     }
     # Persist upstream provenance (#332) so the PFactory→issue→spec chain is
     # traversable. Optional — omitted entirely when no fields are provided.
@@ -1407,7 +1407,7 @@ async def create_from_trusted_plan(
     requirements: dict = {
         "title": title,
         "description": description,
-        "created_at": datetime.now().isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
     }
     if request.provenance is not None:
         prov = request.provenance.model_dump(exclude_none=True, exclude_defaults=True)

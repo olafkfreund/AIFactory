@@ -28,7 +28,7 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -172,7 +172,7 @@ def _write_spec(
         "title": issue.get("title") or f"Issue #{issue.get('number')}",
         "description": issue.get("body", ""),
         "source": "rfc0011-intake",
-        "created_at": datetime.now().isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "intake": {"tier": tier_value, "autonomy_tier": tier_value},
         "githubIssue": {
             "number": issue.get("number"),

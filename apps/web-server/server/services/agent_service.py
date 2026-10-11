@@ -16,7 +16,7 @@ import sys
 import threading
 from collections import deque
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -1262,7 +1262,7 @@ class AgentService(
 
         # Initialize tracking for sequence numbers and start time
         self._task_sequence_numbers[task_id] = 0
-        self._task_start_times[task_id] = datetime.now().isoformat()
+        self._task_start_times[task_id] = datetime.now(UTC).isoformat()
         # Store spec directory for reading implementation plans during progress updates
         self._spec_dirs[task_id] = spec_dir
 

@@ -8,7 +8,7 @@ import json
 import logging
 import re
 import shutil
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -287,7 +287,7 @@ Created via Magestic AI Web UI
     requirements: dict = {
         "title": task.title,
         "description": task.description,
-        "created_at": datetime.now().isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
     }
 
     # Add metadata if provided
