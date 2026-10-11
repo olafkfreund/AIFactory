@@ -15,12 +15,14 @@ import json
 # Add aifactory to path for imports
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "apps" / "backend"))
 
+import analysis.ci_discovery as acd
 from ci_discovery import (
     HAS_YAML,
     CIConfig,
@@ -688,3 +690,151 @@ class TestEdgeCases:
         result2 = discovery.discover(temp_dir)
 
         assert result1 is not result2
+
+
+# =============================================================================
+# ci_linters (#1627)
+# =============================================================================
+
+_KTLINT_WF = "jobs:\n  build:\n    steps:\n      - run: ktlint\n"
+_BOMB = "a0: &a0 [x, x, x, x, x, x, x, x, x, x]\n" + "".join(
+    f"a{i}: &a{i} [{', '.join([f'*a{i - 1}'] * 10)}]\n" for i in range(1, 10)
+)
+
+
+def _wf(root: Path, text: str, name: str = "ci.yml") -> Path:
+    d = root / ".github" / "workflows"
+    d.mkdir(parents=True, exist_ok=True)
+    f = d / name
+    f.write_text(text)
+    return f
+
+
+class TestCiLinters:
+    @requires_yaml
+    def test_detects_step_and_uses(self, tmp_path):
+        _wf(
+            tmp_path,
+            "name: CI\njobs:\n"
+            "  build:\n    steps:\n      - run: ./gradlew spotlessCheck ktlint\n"
+            "  lint:\n    steps:\n      - uses: ScaCap/action-ktlint@v3\n",
+        )
+        assert acd.ci_linters(tmp_path) == ["ktlint", "spotless"]
+
+    @requires_yaml
+    def test_detects_job_key(self, tmp_path):
+        _wf(
+            tmp_path,
+            "name: CI\njobs:\n  ktlint:\n    steps:\n      - run: ./gradlew check\n",
+        )
+        assert acd.ci_linters(tmp_path) == ["ktlint"]
+
+    @requires_yaml
+    def test_left_bounded(self, tmp_path):
+        _wf(
+            tmp_path,
+            "name: CI\njobs:\n  build:\n    steps:\n      - run: gruff --check\n",
+        )
+        assert acd.ci_linters(tmp_path) == []
+
+    @requires_yaml
+    def test_symlinked_workflow_refused(self, tmp_path):
+        real = tmp_path / "real.yml"
+        real.write_text(f"name: CI\n{_KTLINT_WF}")
+        d = tmp_path / ".github" / "workflows"
+        d.mkdir(parents=True)
+        (d / "ci.yml").symlink_to(real)
+        assert acd.ci_linters(tmp_path) == []
+
+    @requires_yaml
+    def test_oversize_workflow_refused(self, tmp_path):
+        _wf(tmp_path, f"name: CI\n{_KTLINT_WF}# " + "x" * (256 * 1024))
+        assert acd.ci_linters(tmp_path) == []
+
+    @requires_yaml
+    def test_anchor_refused(self, tmp_path):
+        _wf(
+            tmp_path,
+            "name: CI\njobs:\n  build:\n    steps:\n"
+            "      - run: &cmd ktlint\n      - run: *cmd\n",
+        )
+        assert acd.ci_linters(tmp_path) == []
+
+    @requires_yaml
+    def test_alias_bomb_fast(self, tmp_path):
+        _wf(
+            tmp_path,
+            f"name: CI\n{_BOMB}jobs:\n  build:\n    steps:\n"
+            "      - uses: x/y@v1\n        with:\n          x: *a9\n",
+        )
+        t = time.monotonic()
+        assert acd.ci_linters(tmp_path) == []
+        assert time.monotonic() - t < 1.0
+
+    @requires_yaml
+    def test_malformed_yaml(self, tmp_path):
+        _wf(tmp_path, "jobs: [unclosed")
+        assert acd.ci_linters(tmp_path) == []
+
+    def test_no_github_dir(self, tmp_path):
+        assert acd.ci_linters(tmp_path) == []
+
+    @requires_yaml
+    def test_never_raises(self, tmp_path, monkeypatch):
+        _wf(tmp_path, f"name: CI\n{_KTLINT_WF}")
+
+        def boom(*a, **k):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(acd, "discover_ci", boom)
+        assert acd.ci_linters(tmp_path) == []
+
+    def test_names_marker_safe(self):
+        assert len(acd.CI_LINTERS) == 8
+        assert list(acd.CI_LINTERS) == sorted(acd.CI_LINTERS)
+        assert not any("," in n or ":" in n for n in acd.CI_LINTERS)
+
+    @requires_yaml
+    def test_circleci_alias_bomb_refused(self, tmp_path):
+        d = tmp_path / ".circleci"
+        d.mkdir()
+        (d / "config.yml").write_text(
+            f"version: 2.1\n{_BOMB}jobs:\n  build:\n    steps:\n"
+            "      - run: {command: ktlint, x: *a9}\n"
+        )
+        t = time.monotonic()
+        assert acd.ci_linters(tmp_path) == []
+        assert time.monotonic() - t < 1.0
+
+    @requires_yaml
+    def test_circleci_detected(self, tmp_path):
+        d = tmp_path / ".circleci"
+        d.mkdir()
+        (d / "config.yml").write_text(
+            "version: 2.1\njobs:\n  build:\n    steps:\n      - run: ktlint\n"
+        )
+        assert acd.ci_linters(tmp_path) == ["ktlint"]
+
+    @requires_yaml
+    @pytest.mark.parametrize(
+        "cmd", ['"ktlint 2>&1 | tee out.txt"', "\"curl 'x?a=1&b=2' && ktlint\""]
+    )
+    def test_shell_ampersand_is_not_an_anchor(self, tmp_path, cmd):
+        _wf(
+            tmp_path,
+            f"name: CI\njobs:\n  build:\n    steps:\n      - run: {cmd}\n",
+        )
+        assert acd.ci_linters(tmp_path) == ["ktlint"]
+
+    @pytest.mark.parametrize("text", ["[?&a x]", "{?&a x: 1}", "﻿&a x"])
+    def test_flow_key_and_bom_anchor_seen(self, text):
+        assert acd._YAML_ANCHOR.search(text)
+
+    @requires_yaml
+    def test_symlinked_github_dir_refused(self, tmp_path):
+        real = tmp_path / "real"
+        _wf(real, f"name: CI\n{_KTLINT_WF}")
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / ".github").symlink_to(real / ".github")
+        assert acd.ci_linters(proj) == []
