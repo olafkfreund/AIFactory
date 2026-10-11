@@ -451,7 +451,8 @@ CI_LINTERS: tuple[str, ...] = (
     "swiftlint",
 )
 _MAX_WORKFLOW_BYTES = 256 * 1024
-_YAML_ANCHOR = re.compile(r"&[A-Za-z0-9_-]+")
+# An anchor follows whitespace, a flow indicator or a line start; not `2>&1` or `?a=1&b=2`.
+_YAML_ANCHOR = re.compile(r"(?:^|(?<=[\s\[\{,:]))&[A-Za-z0-9_-]+", re.M)
 
 
 def ci_linters(project_dir: Path) -> list[str]:
@@ -459,6 +460,11 @@ def ci_linters(project_dir: Path) -> list[str]:
     try:
         # Every file `discover_ci` may read: GitHub, CircleCI, Jenkins.
         wf_dir = project_dir / ".github" / "workflows"
+        if any(
+            d.is_symlink()
+            for d in (project_dir / ".github", wf_dir, project_dir / ".circleci")
+        ):
+            return []
         for f in (
             *wf_dir.glob("*.yml"),
             *wf_dir.glob("*.yaml"),

@@ -814,3 +814,23 @@ class TestCiLinters:
             "version: 2.1\njobs:\n  build:\n    steps:\n      - run: ktlint\n"
         )
         assert acd.ci_linters(tmp_path) == ["ktlint"]
+
+    @requires_yaml
+    @pytest.mark.parametrize(
+        "cmd", ['"ktlint 2>&1 | tee out.txt"', "\"curl 'x?a=1&b=2' && ktlint\""]
+    )
+    def test_shell_ampersand_is_not_an_anchor(self, tmp_path, cmd):
+        _wf(
+            tmp_path,
+            f"name: CI\njobs:\n  build:\n    steps:\n      - run: {cmd}\n",
+        )
+        assert acd.ci_linters(tmp_path) == ["ktlint"]
+
+    @requires_yaml
+    def test_symlinked_github_dir_refused(self, tmp_path):
+        real = tmp_path / "real"
+        _wf(real, f"name: CI\n{_KTLINT_WF}")
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / ".github").symlink_to(real / ".github")
+        assert acd.ci_linters(proj) == []

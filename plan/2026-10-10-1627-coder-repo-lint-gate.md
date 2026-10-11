@@ -446,3 +446,10 @@ and the CLI read them the same way after the revert.
 - Step 3 (CHANGELOG entry, follow-up issue draft) was done by the session
   model, not the coder. The follow-up is drafted, not filed, per the plan's
   trap. The coder did steps 1-2.
+- Opus review (CHANGES, fixed by the coder): the anchor regex matched `&word`
+  inside shell commands (`2>&1`, `?a=1&b=2`), so most real repos returned `[]`.
+  It now matches only where YAML can start an anchor
+  (`(?:^|(?<=[\s\[\{,:]))&[A-Za-z0-9_-]+`, re.M); new tests cover both cases and
+  the old regex fails them. Also refused: a symlinked `.github`,
+  `.github/workflows` or `.circleci` directory (LOW). Deferred to the
+  follow-up: a cap on the number of workflow files parsed (LOW).
