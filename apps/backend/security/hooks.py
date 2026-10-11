@@ -21,9 +21,12 @@ logger = logging.getLogger(__name__)
 from .ast_parser import UnparseableCommand, extract_command_segments_ast, is_available
 from .egress import check_egress
 from .exec_context import reset_worktree_root, set_worktree_root
+from .filesystem_validators import git_metadata_write_refusal  # noqa: E402
 from .profile import get_security_profile
 from .url_guard import assert_url_not_ssrf
 from .validator import VALIDATORS
+
+_GIT_DIR_WRITE_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
 
 
 async def web_fetch_security_hook(
@@ -253,3 +256,24 @@ def validate_command(
         return False, reason
 
     return True, ""
+
+
+async def git_dir_write_hook(
+    input_data: dict[str, Any],
+    _tool_use_id: str | None = None,
+    _context: Any | None = None,
+) -> dict[str, Any]:
+    """Refuse file-tool writes into any ``.git`` path (#1719)."""
+    if input_data.get("tool_name") not in _GIT_DIR_WRITE_TOOLS:
+        return {}
+    tool_input = input_data.get("tool_input")
+    if not isinstance(tool_input, dict):
+        return {"decision": "block", "reason": "Malformed tool input."}
+    path = tool_input.get("file_path") or tool_input.get("notebook_path")
+    if not isinstance(path, str) or not path:
+        return {"decision": "block", "reason": "Missing or invalid file path."}
+    refusal = git_metadata_write_refusal(path, input_data.get("cwd"))
+    if refusal:
+        logger.warning("Blocked agent write into git metadata")
+        return {"decision": "block", "reason": refusal}
+    return {}

@@ -24,6 +24,11 @@
   server holds it or the plan is unverified. The TFactory handoff `contract`
   argument is now required, and `AIFACTORY_TRUSTED_CONTRACT` is blanked in the
   agent env.
+- **Agent file writes into `.git` are now refused (#1719).** Write, Edit,
+  MultiEdit and NotebookEdit on any path with a `.git` component are blocked,
+  for SDK agents and the Ollama/OpenAI-compatible ToolExecutor. Utility
+  (simple) Claude clients no longer get write tools or Bash. Not covered: Bash
+  writes (follow-up after #1720), external-CLI providers and MCP tools.
 
 - **An agent-written git config can no longer run commands in the server (#1689).**
   Every `child_env()` process now pins `core.fsmonitor=false` next to the

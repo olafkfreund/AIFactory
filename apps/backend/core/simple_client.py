@@ -115,6 +115,8 @@ def create_simple_client(
             env=sdk_env,
             max_thinking_tokens=max_thinking_tokens,
             permission_mode="bypassPermissions",  # Bypass prompts for headless execution
+            # #1719: no hooks here, so no write tools; allowed_tools does not restrict.
+            disallowed_tools=["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash"],
         )
     )
 

@@ -504,3 +504,15 @@ above.
 - Symlink-loop test as planned (block expected on Python <= 3.12; fail-closed path tested by forcing `Path.resolve` to raise).
 - The wider B1 problem (commit_message / merge_resolver clients with Write/Edit/Bash) is filed as #1741; not fixed here.
 - The coder measures the baseline count after step 0.
+
+## Deviations (recorded during implementation)
+
+- The coder did steps 1-3 and the step-4 CHANGELOG bullet; the session model
+  did step 0 (rebase), the commit, follow-ups and PR.
+- The executor guard is wired into `_exec_write` (:219) and `_exec_edit`
+  (:242) only; the plan's `:176` is the Read handler's `_validate_path`.
+- Unspecified strings, chosen by the coder: refusal text "Refused: writes into
+  git metadata (.git) are not allowed."; hook malformed-input reasons
+  "Malformed tool input." and "Missing or invalid file path."
+- Measured counts: baseline 100 passed / 3 skipped; after: 142 passed /
+  3 skipped (four-file run).

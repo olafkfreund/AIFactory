@@ -5,8 +5,10 @@ File System Validators
 Validators for file system operations (chmod, rm, init scripts).
 """
 
+import os
 import re
 import shlex
+from pathlib import Path
 
 from .exec_context import get_worktree_root, target_escapes_worktree
 from .validation_models import ValidationResult
@@ -168,3 +170,25 @@ def validate_init_script(command_string: str) -> ValidationResult:
         return True, ""
 
     return False, f"Only ./init.sh is allowed, got: {script}"
+
+
+def git_metadata_write_refusal(path: str, cwd: str | None) -> str | None:
+    """Return a refusal if ``path`` has a ``.git`` component, else None (#1719).
+
+    Checks the lexical and the symlink-resolved form; fails closed if
+    resolution errors.
+    """
+    refusal = "Refused: writes into git metadata (.git) are not allowed."
+    p = Path(path).expanduser()
+    if not p.is_absolute():
+        p = Path(cwd or Path.cwd()) / p
+    forms = [Path(os.path.normpath(p))]
+    try:
+        forms.append(p.resolve())
+    except (OSError, RuntimeError, ValueError):
+        return refusal
+    # ponytail: --separate-git-dir to a path outside any .git is not caught;
+    # upgrade to git rev-parse --git-dir/--git-common-dir.
+    if ".git" in {c.casefold() for f in forms for c in f.parts}:
+        return refusal
+    return None
