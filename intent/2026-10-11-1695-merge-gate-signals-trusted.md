@@ -92,3 +92,11 @@ tasks on an isolated host.
 5. Cross-repo: is a TFactory change (endpoint, auth, or a VAL/parity schema)
    in scope, or must AIFactory use only what TFactory exposes today
    (`GET /{spec_id}/verdicts.json`, contents and auth not yet confirmed)?
+
+## Approver decisions (2026-10-11)
+
+- Scope: verified trusted tasks only (as #1672); legacy and from-issue tasks stay with #1697.
+- For those tasks, hold the merge when no trusted result exists (fail closed).
+- Sources now: TFactory for the verdict, GitHub checks for host-CI; VAL and parity become follow-ups.
+- Keep the metadata values as tighten-only inputs (agent-written negatives still hold).
+- Use only what TFactory exposes today; no TFactory change in scope.
