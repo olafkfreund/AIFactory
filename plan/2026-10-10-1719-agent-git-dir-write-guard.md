@@ -496,3 +496,11 @@ above.
     own if compaction turns out to need tools. Test #10 then fails on purpose,
     so update it in the same commit.
 - **CHANGELOG conflicts:** keep both entries.
+
+## Approver decisions (2026-10-11)
+
+- **D5a accepted:** enforce spec Q5 with `disallowed_tools` in `core/simple_client.py` (sixth backend file, test #11; 42 tests).
+- **D6 accepted:** the hook logs only the constant message "Blocked agent write into git metadata" (CodeQL py/log-injection).
+- Symlink-loop test as planned (block expected on Python <= 3.12; fail-closed path tested by forcing `Path.resolve` to raise).
+- The wider B1 problem (commit_message / merge_resolver clients with Write/Edit/Bash) is filed as #1741; not fixed here.
+- The coder measures the baseline count after step 0.
