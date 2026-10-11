@@ -4,7 +4,7 @@
 Covers:
 - ``_inject_credential`` rewrites HTTPS URLs and leaves SSH untouched
 - ``clone_or_update(credential=...)`` passes the USERNAME-ONLY URL to git,
-  feeds the token via ``GIT_ASKPASS``/``GIT_PASS`` (AIFactory#1362: it must
+  feeds the token via ``GIT_ASKPASS``/``GIT_PASS_FILE`` (AIFactory#1362: it must
   never be an argv element, where ``/proc/<pid>/cmdline`` publishes it), and
   restores the bare origin afterwards (so not even the username ends up in
   ``.git/config``)
@@ -58,6 +58,12 @@ def test_inject_credential_handles_nested_paths():
 # ---------------------------------------------------------------------------
 
 
+def _read_pass_file(env: dict[str, str]) -> str | None:
+    """Read at spawn time: the askpass dir is removed once the call returns."""
+    p = env.get("GIT_PASS_FILE")
+    return Path(p).read_text() if p else None
+
+
 def _mock_proc(returncode: int = 0):
     proc = MagicMock()
     proc.returncode = returncode
@@ -79,10 +85,12 @@ async def test_clone_or_update_with_credential_uses_askpass_then_sanitizes(tmp_p
 
     captured: list[list[str]] = []
     envs: list[dict[str, str]] = []
+    passes: list[str | None] = []
 
     async def fake_create_subprocess_exec(*args, **kw):
         captured.append(list(args))
         envs.append(dict(kw.get("env") or {}))
+        passes.append(_read_pass_file(envs[-1]))
         return _mock_proc(returncode=0)
 
     with patch("asyncio.create_subprocess_exec", new=fake_create_subprocess_exec):
@@ -102,8 +110,9 @@ async def test_clone_or_update_with_credential_uses_askpass_then_sanitizes(tmp_p
     leaks = [c for c in captured if any("ghp_secret" in arg for arg in c)]
     assert leaks == [], f"token must never be an argv element; got {leaks}"
     # Not vacuous: it reached git by the askpass route instead.
-    askpass = [e for e in envs if e.get("GIT_PASS") == "ghp_secret"]
-    assert askpass, "token never reached GIT_PASS"
+    assert "ghp_secret" in passes, "token never reached GIT_PASS_FILE"
+    assert all("GIT_PASS" not in e for e in envs)
+    askpass = [e for e, p in zip(envs, passes, strict=True) if p == "ghp_secret"]
     assert all(e.get("GIT_ASKPASS") for e in askpass)
 
     # After clone, ``git remote set-url`` must restore the bare URL.

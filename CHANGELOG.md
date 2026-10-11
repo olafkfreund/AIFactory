@@ -2,6 +2,27 @@
 
 ### Security
 
+- **An agent-written git config can no longer run commands in the server (#1689).**
+  Every `child_env()` process now pins `core.fsmonitor=false` next to the
+  `core.hooksPath` pin (`GIT_CONFIG_COUNT` is now `n+2`). The bash guard refuses
+  `git config` on command-running keys and the `-e`/section edit modes, and the
+  key list now also covers `.program`, `credential.*`, `core.askpass`,
+  `core.gitproxy`, `diff.external`, `*.driver`, `*.uploadpack`/`*.receivepack`,
+  `include.path` and `includeif.*`. The guard validates every `&&`/`||`/`;`
+  segment, not only the first, for all validators. `WorktreeManager` git calls
+  use the scrubbed, pinned env, so project hooks no longer run there. Not
+  covered: direct writes to `.git/config`, `bash -c` wrappers, and
+  textconv/filter drivers.
+- **The GitHub token no longer sits in web-server child environments (#1688).**
+  Every `gh` and `git` the web server starts gets the token per call through
+  a fresh 0700 `GH_CONFIG_DIR` holding a 0600 `hosts.yml`, removed when the
+  call ends (stale dirs are swept at startup); git authenticates through
+  `gh auth git-credential`. `gh auth setup-git` is removed from the server,
+  and the workspace clone's askpass reads its credential from a 0600 file
+  instead of `GIT_PASS`. The file is still readable by the same uid while a
+  call runs. Not yet covered: the agent runner, `core/worktree.py`, the
+  build push and `gh auth login`'s stored token (#1723); the `/proc` window
+  (#1724).
 - **A verified trusted task's review tier now comes from its signed contract (#1672).**
   `task_metadata.json` and the path floor can only raise the tier, never lower
   it, so an agent that rewrites `reviewTier` to `low` no longer turns a hold into
@@ -29,8 +50,10 @@
   conflict commits. Agent runners make themselves non-dumpable before starting
   an agent. A test fails on any spawn site that passes the full environment.
   Children other than the agent runner also drop every `*_KEY` and `*_TOKEN`
-  name, and `KMS_*` keys are now scrubbed from agents too. Git LFS objects are
-  not uploaded on these pushes yet (#1690). Follow-ups: #1688 (token per call),
+  name, and `KMS_*` keys are now scrubbed from agents too. LFS objects are now
+  uploaded explicitly on the 4 server PR pushes where git-lfs is installed; a
+  failed upload fails the push. The build-Job push, the TFactory push and
+  git-lfs in the image are pending (#1721). Follow-ups: #1688 (token per call),
   #1689 (other `.git/config` command paths), #1692 (non-Claude agent env).
 - **Agent sessions no longer inherit six more host keys (#1674).**
   `APP_CFACTORY_READ_KEY`, `CONTEXT7_KEY`, `RAPIDAPI_KEY`, `LANGCHAIN_API_KEY`,
@@ -117,6 +140,7 @@
   Recover read the shared job-state store. A store read failure reads as
   running, so Recover refuses rather than double-starting the build.
   Start and plan approval are still pod-local; #1704 tracks them.
+- bump-version.js now updates apps/web-server/openapi.yaml info.version in the same commit, and fails before writing if the spec or its info.version is missing (#1631).
 
 ## 3.6.84 - 2026-09-23
 

@@ -310,7 +310,6 @@ def _routes(**overrides) -> dict[str, CmdResult]:
         "fetch origin": CmdResult(0, "", ""),
         "rev-list --count": CmdResult(0, "3\n", ""),
         "diff --name-only": CmdResult(0, "a.py\n", ""),
-        "auth setup-git": CmdResult(0, "", ""),
         "git push": CmdResult(0, "", ""),
         "pr create": CmdResult(0, "https://github.com/o/r/pull/5", ""),
     }

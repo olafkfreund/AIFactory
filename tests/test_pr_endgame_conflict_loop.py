@@ -7,6 +7,7 @@ across polls) + a scripted review_fn. poll_interval=0 keeps them fast.
 
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
 
@@ -80,6 +81,47 @@ async def test_conflict_resolved_then_remerges_after_rereview():
     assert out["merged"] is True
     assert fixed == [["app.py"]]  # fixer ran once on the conflicted file
     assert runner.ran("git push --force-with-lease")
+
+
+@pytest.mark.asyncio
+async def test_conflict_push_lfs_failure_is_unresolved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #1690: the resolve push uploads LFS objects first; a failed upload means the
+    # ref is not pushed and the loop ends as merge_conflict_unresolved.
+    real_which = shutil.which
+    monkeypatch.setattr(
+        "core.child_env.shutil.which",
+        lambda c, *a, **k: "/x/git-lfs" if c == "git-lfs" else real_which(c, *a, **k),
+    )
+    runner = SeqRunner(
+        {
+            "gh pr merge": [_CONFLICT, _OK],
+            "gh pr update-branch": [_FAIL],
+            "git rebase origin/main": [_FAIL],
+            "diff --name-only --diff-filter=U": [CmdResult(0, "app.py", "")],
+            "rebase --continue": [_OK],
+            "get-url": [CmdResult(0, "https://github.com/o/r", "")],
+            "--get-regexp": [CmdResult(1, "", "")],
+            "lfs push": [_FAIL],
+        }
+    )
+    out = await watch_and_finish(
+        owner="o",
+        repo="r",
+        pr=7,
+        auto_merge=True,
+        review_fn=_approved,
+        conflict_fixer=lambda files, wt: True,
+        worktree="/wt",
+        base_branch="main",
+        runner=runner,
+        poll_interval=0,
+        max_minutes=1,
+    )
+    assert out["reason"] == "merge_conflict_unresolved"
+    assert runner.ran("lfs push")
+    assert not runner.ran("git push --force-with-lease")
 
 
 @pytest.mark.asyncio

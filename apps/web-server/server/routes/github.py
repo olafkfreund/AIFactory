@@ -25,7 +25,7 @@ from server.error_ref import client_error
 from server.services.gh import run_gh_command  # re-exported: see services/gh.py
 from server.services.git_base_url import safe_git_base_url  # #1360
 from server.services.http_verdict import honest_status
-from server.utils.subprocess_env import GITHUB_KEEP, child_env
+from server.utils.subprocess_env import child_env, github_token
 
 logger = logging.getLogger(__name__)
 
@@ -611,6 +611,16 @@ async def start_github_auth():
             "data": {"success": False, "message": "GitHub CLI (gh) is not installed."},
         }
 
+    if github_token():
+        # A server token already authenticates gh; a web login would store a second one.
+        return {
+            "success": True,
+            "data": {
+                "success": True,
+                "message": "already authenticated via GITHUB_TOKEN",
+            },
+        }
+
     # Kill any existing auth process
     if _gh_auth_proc is not None:
         with contextlib.suppress(ProcessLookupError, OSError):
@@ -632,7 +642,7 @@ async def start_github_auth():
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             stdin=asyncio.subprocess.PIPE,
-            env=child_env(keep=GITHUB_KEEP),
+            env=child_env(),
         )
         _gh_auth_proc = proc
 
