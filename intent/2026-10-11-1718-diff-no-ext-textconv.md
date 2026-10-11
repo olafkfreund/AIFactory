@@ -76,9 +76,9 @@ a program and shows that it does not run.
 - Diff output that code reads must not change, apart from losing textconv
   rendering.
 - The test must run in CI with no network, against a real git.
-- #1717 / PR #1748 is editing `apps/backend/core/child_env.py` and
-  `tests/test_child_process_env.py`. Avoid those files, or wait for that PR
-  to merge.
+- #1717 / PR #1748 (open) is editing `apps/backend/core/child_env.py`,
+  `tests/test_child_process_env.py` and `tests/test_github_env.py`. Avoid
+  those files, or wait for that PR to merge.
 - #943 is out of scope.
 
 ## Open questions
