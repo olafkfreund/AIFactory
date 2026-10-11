@@ -201,11 +201,11 @@ def test_ingest_payload_carries_tenant_optionally(tmp_path, monkeypatch):
     spec_dir.mkdir()
     (spec_dir / "spec.md").write_text("## Acceptance Criteria\n- AC#1\n")
 
-    payload = tc.build_ingest_payload(spec_dir, "042-demo")
+    payload = tc.build_ingest_payload(spec_dir, "042-demo", contract=None)
     assert "tenant_id" not in payload  # unstamped spec: field absent
 
     (spec_dir / "task_metadata.json").write_text(json.dumps({"tenant_id": "acme"}))
-    payload = tc.build_ingest_payload(spec_dir, "042-demo")
+    payload = tc.build_ingest_payload(spec_dir, "042-demo", contract=None)
     assert payload["tenant_id"] == "acme"
 
 

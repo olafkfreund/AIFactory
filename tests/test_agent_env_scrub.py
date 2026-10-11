@@ -53,6 +53,8 @@ SECRETS = {
     "LANGCHAIN_API_KEY": "x",
     "OPENAI_COMPATIBLE_API_KEY": "x",
     "S3_ACCESS_KEY": "x",
+    # verdict digest; blank reads as hold in the agent (#1708)
+    "AIFACTORY_TRUSTED_CONTRACT": "x",
 }
 
 KEEP = {

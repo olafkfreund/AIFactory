@@ -155,6 +155,7 @@
         "apps/backend/integrations/graphiti/providers_pkg/llm_providers/__init__.py",
         "apps/backend/integrations/graphiti/queries_pkg/__init__.py",
         "apps/backend/memory/__init__.py",
+        "apps/backend/prompts_pkg/__init__.py",
         "apps/backend/providers/__init__.py",
         "apps/backend/runners/__init__.py",
         "apps/backend/runners/github/__init__.py",
@@ -179,6 +180,7 @@
         "apps/backend/merge/__init__.py",
         "apps/backend/merge/ai_resolver/__init__.py",
         "apps/backend/pfactory/__init__.py",
+        "apps/backend/prompts_pkg/__init__.py",
         "apps/backend/providers/__init__.py",
         "apps/backend/spec/__init__.py",
         "apps/backend/spec/phases/__init__.py",
@@ -692,17 +694,17 @@
             ],
             [
               "`server.services.pr_review_service`",
-              "model-assisted (dynamic import: core.auth:321 (+2 more))",
+              "model-assisted (dynamic import: core.auth:323 (+2 more))",
               "`anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
-              "yes (14): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
+              "yes (15): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
               "269",
               "`runners/github/runner.py`"
             ],
             [
               "`server.services.pr_endgame`",
-              "model-assisted (dynamic import: core.auth:321 (+3 more))",
+              "model-assisted (dynamic import: core.auth:323 (+3 more))",
               "`anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
-              "yes (20): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
+              "yes (21): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
               "365",
               "-"
             ]

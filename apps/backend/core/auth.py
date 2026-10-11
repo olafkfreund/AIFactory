@@ -156,6 +156,8 @@ _AGENT_ENV_DENY_EXACT: set[str] = {
     "LANGCHAIN_API_KEY",
     "OPENAI_COMPATIBLE_API_KEY",
     "S3_ACCESS_KEY",
+    # #1708: the agent must read the verdict as hold, never the real digest.
+    "AIFACTORY_TRUSTED_CONTRACT",
 }
 
 # Generic secret-bearing names (any host var matching is neutralized).

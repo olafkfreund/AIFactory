@@ -37,7 +37,7 @@ def test_dev_base_is_not_sent_as_source_branch(
     monkeypatch.setattr(tc, "_project_git_url", lambda *_: None)
     monkeypatch.setattr(tc, "load_task_contract", lambda *_: {})
 
-    payload = tc.build_ingest_payload(spec_dir, "002-mcp-health")
+    payload = tc.build_ingest_payload(spec_dir, "002-mcp-health", contract=None)
 
     assert payload["source_branch"] == "aifactory/002-mcp-health"
     assert payload["source_branch"] != "dev", "a base branch is never the build output"
@@ -55,7 +55,7 @@ def test_arbitrary_base_is_not_sent_either(
     monkeypatch.setattr(tc, "_project_git_url", lambda *_: None)
     monkeypatch.setattr(tc, "load_task_contract", lambda *_: {})
 
-    payload = tc.build_ingest_payload(spec_dir, "spec-9")
+    payload = tc.build_ingest_payload(spec_dir, "spec-9", contract=None)
     assert payload["source_branch"] == "aifactory/spec-9"
 
 
@@ -71,7 +71,7 @@ def test_a_real_build_branch_is_preserved(
     monkeypatch.setattr(tc, "_project_git_url", lambda *_: None)
     monkeypatch.setattr(tc, "load_task_contract", lambda *_: {})
 
-    payload = tc.build_ingest_payload(spec_dir, "spec-7")
+    payload = tc.build_ingest_payload(spec_dir, "spec-7", contract=None)
     assert payload["source_branch"] == "aifactory/spec-7"
 
 
@@ -85,5 +85,5 @@ def test_missing_task_metadata_still_falls_back(
     monkeypatch.setattr(tc, "_project_git_url", lambda *_: None)
     monkeypatch.setattr(tc, "load_task_contract", lambda *_: {})
 
-    payload = tc.build_ingest_payload(spec_dir, "spec-6")
+    payload = tc.build_ingest_payload(spec_dir, "spec-6", contract=None)
     assert payload["source_branch"] == "aifactory/spec-6"
