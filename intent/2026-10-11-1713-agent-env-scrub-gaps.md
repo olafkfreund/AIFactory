@@ -95,3 +95,10 @@ the model prints env output somewhere.
    of the outcome above.)
 5. **Ordering:** wait for PRs #1749 and #1751 to merge first, or rebase
    over them?
+
+## Approver decisions (2026-10-11)
+
+- Patch the deny list here (OLLAMA_API_KEY; case-insensitive match in `is_denied_env_key` only); the allowlist (#363) gets its own issue.
+- The executor's Bash/Grep spawns use plain `child_env()` (strictest; agents do not push, the server does).
+- Ship the executor spawn guard (`test_no_unscrubbed_spawn.py`) here; the two deferred guard tests (blanks before the MCP env merge, no credential on passthrough lists) become follow-ups.
+- Rebase over #1749 and #1751 rather than wait.
