@@ -239,12 +239,18 @@ def _unwrap_env(
     token after ``env`` is the real command."""
     tokens = [w.word for w in words]
     j = idx + 1
+    opts = True  # GNU env stops reading options at `--`, `-` or VAR=val
     while j < len(tokens):
         tok = tokens[j]
-        if tok.startswith("-"):
+        if opts and tok in ("--", "-"):
+            opts = False
+            j += 1
+            continue
+        if opts and tok.startswith("-"):
             j = _skip_env_opt(tokens, j)
             continue
         if "=" in tok and not tok.startswith("="):
+            opts = False
             j += 1
             continue
         _emit(words, j, depth + 1, acc, dynamic_args=dynamic_args)
@@ -302,11 +308,15 @@ def _unwrap_xargs(
     j = idx + 1
     while j < len(tokens):
         tok = tokens[j]
-        if tok.startswith("-"):
+        if tok == "--":  # the next word is the command, even if it starts with -
+            j += 1
+            break
+        if tok.startswith("-") and tok != "-":
             j = _skip_xargs_opt(tok, j)
             continue
+        break
+    if j < len(tokens):
         _emit(words, j, depth + 1, acc, dynamic_args=True)
-        return
     # ``xargs`` with no explicit command defaults to running ``echo`` — benign.
 
 
@@ -341,7 +351,7 @@ def _skip_command_opts(tokens: list[str], j: int) -> int | None:
 
 def _skip_exec_opts(tokens: list[str], j: int) -> int | None:
     """``exec [-cl] [-a NAME] CMD`` — ``-a`` consumes its value."""
-    while j < len(tokens) and tokens[j].startswith("-"):
+    while j < len(tokens) and tokens[j].startswith("-") and tokens[j] != "-":
         tok = tokens[j]
         # ``a`` last in the group takes the next word; ``-aNAME`` is attached.
         takes_next = not tok.startswith("--") and tok.find("a") == len(tok) - 1

@@ -520,3 +520,13 @@ grouped `-c` bypasses.
   interpreter bypasses (`awk system()`, `source`, `| sh`) and the no-bashlex
   fallback (approver decision pending), plus the LOW false refusals
   (`timeout --sig`, `bash -c -e`).
+- Opus re-review (CHANGES), fixed by the session model: env, xargs and exec
+  kept reading options after the point where the real tool stops, so a
+  dash-named word the tool would run as the command was skipped. Now env stops
+  at `--`, a lone `-` or the first `VAR=val`; xargs takes the word after `--`
+  (and a lone `-`) as the command; exec treats a lone `-` as the command. Six
+  refused rows (`env FOO=1 -C ls`, `env - -C ls`, `env -- -u ls`,
+  `xargs -- -C ls`, `exec - ls`, ...) and three allowed rows; real GNU env
+  confirms `env FOO=1 -- x` runs `--`. One mutation per fix fails its rows
+  (8, 2, 2). 380 passed / 2 skipped. LOW false refusals (`xargs -0n1`,
+  `--max-args 1`, abbreviated env flags) fail closed and are left.

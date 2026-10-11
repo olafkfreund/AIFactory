@@ -304,6 +304,7 @@ _FSMON = "core.fsmonitor"
 _XARGS_GIT = "`git` run by xargs"
 _XARGS_FIND = "run by xargs or find -exec"
 _UNSAFE = "could not be safely parsed"
+_NOT_ALLOWED = "is not in the allowed commands"
 
 WRAPPER_REFUSED = [
     ("command git -c core.fsmonitor=x status", _FSMON),
@@ -357,6 +358,13 @@ WRAPPER_REFUSED = [
     ("env -a x git -c core.fsmonitor=x status", _FSMON),
     ("env --argv0 x git -c core.fsmonitor=x status", _FSMON),
     ("env --unse ls git -c core.fsmonitor=x status", _FSMON),
+    # Options end at VAR=val, `--` or a lone `-`: the next word is the command.
+    ("env PATH=.:/usr/bin FOO=1 -C ls", _NOT_ALLOWED),
+    ("env PATH=.:/usr/bin FOO=1 -C -c 'alias.ls=!touch X' ls", _NOT_ALLOWED),
+    ("env - -C ls", _NOT_ALLOWED),
+    ("env -- -u ls", _NOT_ALLOWED),
+    ("echo | xargs -- -C ls", _NOT_ALLOWED),
+    ("exec - ls", _NOT_ALLOWED),
 ]
 
 WRAPPER_ALLOWED = [
@@ -377,6 +385,9 @@ WRAPPER_ALLOWED = [
     "env -C src ls",
     "xargs -I{} echo {}",
     "xargs -0 -n1 echo",
+    "env -- FOO=1 ls",
+    "env - ls",
+    "xargs -- echo",
     "exec -a name ls",
 ]
 
