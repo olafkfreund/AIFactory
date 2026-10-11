@@ -194,6 +194,39 @@ def _unwrap_dash_c(
             return
 
 
+_ENV_VALUE_LONG = ("--unset", "--chdir", "--argv0")
+_ENV_FLAG_LONG = frozenset(
+    {
+        "--ignore-environment",
+        "--null",
+        "--debug",
+        "--default-signal",
+        "--ignore-signal",
+        "--block-signal",
+        "--list-signal-handling",
+    }
+)
+
+
+def _skip_env_opt(tokens: list[str], j: int) -> int:
+    """Index after the env option at ``tokens[j]``; raises for ``-S`` forms
+    and for options whose value cannot be told apart from the command."""
+    tok = tokens[j]
+    if tok.startswith("--s") or ("S" in tok[1:] and not tok.startswith("--")):
+        raise UnparseableCommand("env -S/--split-string cannot be validated")
+    if tok.startswith("--"):
+        name = tok.split("=", 1)[0]
+        if name != "--" and any(v.startswith(name) for v in _ENV_VALUE_LONG):
+            return j + 1 if "=" in tok else j + 2
+        if name in _ENV_FLAG_LONG or tok == "--":
+            return j + 1
+        raise UnparseableCommand(f"env option {tok} cannot be validated")
+    for i, ch in enumerate(tok[1:], 1):
+        if ch in "uCa":  # value attached (-uNAME) or the next word
+            return j + 1 if i < len(tok) - 1 else j + 2
+    return j + 1
+
+
 def _unwrap_env(
     words: list[Any],
     idx: int,
@@ -205,21 +238,53 @@ def _unwrap_env(
     """``env [-i] [VAR=val]... CMD args`` — the first non-flag, non-assignment
     token after ``env`` is the real command."""
     tokens = [w.word for w in words]
-    for j in range(idx + 1, len(tokens)):
+    j = idx + 1
+    while j < len(tokens):
         tok = tokens[j]
-        # ``-S``/``--split-string`` carries a whole command line in one word.
-        if (
-            tok.startswith("--split-string")
-            or tok.startswith("-S")
-            or (tok.startswith("-") and not tok.startswith("--") and "S" in tok[1:])
-        ):
-            raise UnparseableCommand("env -S/--split-string cannot be validated")
         if tok.startswith("-"):
+            j = _skip_env_opt(tokens, j)
             continue
         if "=" in tok and not tok.startswith("="):
+            j += 1
             continue
         _emit(words, j, depth + 1, acc, dynamic_args=dynamic_args)
         return
+
+
+_XARGS_VALUE_SHORT = "InPdEsLa"  # value attached or the next word
+_XARGS_ATTACHED_SHORT = "iel"  # optional value, attached only
+_XARGS_FLAG_LONG = frozenset(
+    {
+        "--null",
+        "--open-tty",
+        "--exit",
+        "--no-run-if-empty",
+        "--verbose",
+        "--interactive",
+        "--show-limits",
+        "--help",
+        "--version",
+        "--eof",
+        "--replace",
+        "--max-lines",
+    }
+)
+
+
+def _skip_xargs_opt(tok: str, j: int) -> int:
+    """Index after the xargs option ``tok`` at ``j``; raises when its value
+    handling is ambiguous."""
+    if tok.startswith("--"):
+        if "=" in tok or tok in _XARGS_FLAG_LONG or tok == "--":
+            return j + 1
+        raise UnparseableCommand(f"xargs option {tok} cannot be validated")
+    if tok[1:2] in _XARGS_VALUE_SHORT and len(tok) > 1:
+        return j + 1 if tok[2:] else j + 2
+    if tok[1:2] not in _XARGS_ATTACHED_SHORT and any(
+        c in _XARGS_VALUE_SHORT + _XARGS_ATTACHED_SHORT for c in tok[2:]
+    ):
+        raise UnparseableCommand(f"xargs options {tok} cannot be validated")
+    return j + 1
 
 
 def _unwrap_xargs(
@@ -238,11 +303,7 @@ def _unwrap_xargs(
     while j < len(tokens):
         tok = tokens[j]
         if tok.startswith("-"):
-            # Options that take a value: skip the value too.
-            if tok in ("-I", "-i", "-n", "-P", "-d", "-E", "-s", "-L", "-a"):
-                j += 2
-                continue
-            j += 1
+            j = _skip_xargs_opt(tok, j)
             continue
         _emit(words, j, depth + 1, acc, dynamic_args=True)
         return
@@ -282,7 +343,9 @@ def _skip_exec_opts(tokens: list[str], j: int) -> int | None:
     """``exec [-cl] [-a NAME] CMD`` — ``-a`` consumes its value."""
     while j < len(tokens) and tokens[j].startswith("-"):
         tok = tokens[j]
-        j += 2 if tok == "-a" else 1
+        # ``a`` last in the group takes the next word; ``-aNAME`` is attached.
+        takes_next = not tok.startswith("--") and tok.find("a") == len(tok) - 1
+        j += 2 if takes_next else 1
         if tok == "--":
             break
     return j

@@ -338,6 +338,25 @@ WRAPPER_REFUSED = [
     ("exec -a x git -c core.fsmonitor=x status", _FSMON),
     ("sh -ec 'git --upload-pack=/tmp/evil ls-remote x'", "--upload-pack"),
     ("timeout 60 npm test", "npm"),
+    ("env --s='git -c core.fsmonitor=x status'", _UNSAFE),
+    ("env --spl 'git -c core.fsmonitor=x status'", _UNSAFE),
+    ("env --split 'git -c core.fsmonitor=x status'", _UNSAFE),
+    ("exec -la ls git -c core.fsmonitor=x status", _FSMON),
+    ("exec -cla ls git -c core.fsmonitor=x status", _FSMON),
+    (
+        "echo x | FOO='!touch P' xargs -i git --config-env=alias.ls=FOO ls",
+        "config injection",
+    ),
+    ("xargs -tI ls git -c core.fsmonitor=x status", _UNSAFE),
+    ("xargs --process-slot-var ls git -c core.fsmonitor=x status", _UNSAFE),
+    ("xargs --arg-file /usr/bin/ls git -c core.fsmonitor=x status", _UNSAFE),
+    ("env -u ls git -c core.fsmonitor=x status", _FSMON),
+    ("env -C . git -c core.fsmonitor=x status", _FSMON),
+    ("env --unset ls git -c core.fsmonitor=x status", _FSMON),
+    ("env --chdir . git -c core.fsmonitor=x status", _FSMON),
+    ("env -a x git -c core.fsmonitor=x status", _FSMON),
+    ("env --argv0 x git -c core.fsmonitor=x status", _FSMON),
+    ("env --unse ls git -c core.fsmonitor=x status", _FSMON),
 ]
 
 WRAPPER_ALLOWED = [
@@ -354,6 +373,11 @@ WRAPPER_ALLOWED = [
     "command -v nc",
     "timeout -s KILL 5 git status",
     "exec 3>&1",
+    "env -u FOO ls",
+    "env -C src ls",
+    "xargs -I{} echo {}",
+    "xargs -0 -n1 echo",
+    "exec -a name ls",
 ]
 
 

@@ -504,3 +504,19 @@ grouped `-c` bypasses.
   `_skip_timeout_opts` returns `j + 1`; `_unwrap_prefix` does the bounds check.
 - Measured: 320 passed / 2 skipped; M1-M12 each fail; ratchets 1 improved,
   0 regressed.
+- Opus review (CHANGES), fixed by a coder (verified and ratchet-cleaned by the
+  session model): four validator bypasses where a wrapper option's value was
+  emitted as the command:
+  1. env abbreviated `--split-string` (`--s`, `--spl`): any `--s` prefix and
+     any unknown long option now raise.
+  2. exec grouped `-a` (`-la`, `-cla`) consumes NAME; `-aNAME` is attached.
+  3. xargs: `-i`/`-e`/`-l` are attached-only; a value letter after the first
+     position (`-tI`) or an unknown long option without `=` raises.
+  4. env `-u`/`-C`/`-a` and `--unset`/`--chdir`/`--argv0` (unique prefix)
+     consume their value. D7 had deferred this; pulled in because it is a full
+     bypass of the git validator.
+  16 refused and 5 allowed rows added (362 passed / 2 skipped); each fix has a
+  mutation that fails its rows. Deferred to the follow-up: `watch`, the
+  interpreter bypasses (`awk system()`, `source`, `| sh`) and the no-bashlex
+  fallback (approver decision pending), plus the LOW false refusals
+  (`timeout --sig`, `bash -c -e`).
