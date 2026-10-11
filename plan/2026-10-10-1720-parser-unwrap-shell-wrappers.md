@@ -537,3 +537,11 @@ grouped `-c` bypasses.
   groups). `TestWrapperFallbackWithoutBashlex` now expects refusal for the
   former allowed rows too. `security/plan_commands.py` keeps its own fallback
   (out of scope).
+- Opus re-review 2 (CHANGES, one MEDIUM), fixed by the session model: the
+  `command` unwrapper skipped a lone `-` (bash runs `-`), as `exec` did before
+  21f163eb. Same one-condition fix; `command - ls` and `command -p - ls` are
+  refused rows; the mutation fails 4 tests. 385 passed / 2 skipped. The
+  reviewer confirmed env, xargs, exec, timeout and find now pick the real
+  command word. Older bypasses outside this diff filed: #1753 (a variable as
+  the command word), #1754 (`GIT_CONFIG_*` env assignments). LOW false
+  refusals left: `env -- - ls`, `env =x ls`, `timeout --sig KILL 5 ...`.

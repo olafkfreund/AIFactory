@@ -339,7 +339,7 @@ def _unwrap_find_exec(
 
 def _skip_command_opts(tokens: list[str], j: int) -> int | None:
     """``command [-p] CMD`` — None for ``-v``/``-V`` (lookup, runs nothing)."""
-    while j < len(tokens) and tokens[j].startswith("-"):
+    while j < len(tokens) and tokens[j].startswith("-") and tokens[j] != "-":
         tok = tokens[j]
         j += 1
         if tok == "--":

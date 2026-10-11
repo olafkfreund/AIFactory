@@ -365,6 +365,8 @@ WRAPPER_REFUSED = [
     ("env -- -u ls", _NOT_ALLOWED),
     ("echo | xargs -- -C ls", _NOT_ALLOWED),
     ("exec - ls", _NOT_ALLOWED),
+    ("command - ls", _NOT_ALLOWED),
+    ("command -p - ls", _NOT_ALLOWED),
 ]
 
 WRAPPER_ALLOWED = [
