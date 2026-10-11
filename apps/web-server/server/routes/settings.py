@@ -1640,7 +1640,7 @@ async def initialize_claude_profile(profile_id: str):
     This can be used after a profile is created to mark it as ready for use.
     """
     try:
-        from datetime import datetime
+        from datetime import UTC, datetime
 
         data = load_profiles()
         profile_found = False
@@ -1649,7 +1649,7 @@ async def initialize_claude_profile(profile_id: str):
             if p.get("id") == profile_id:
                 # Mark profile as initialized with timestamp
                 p["initialized"] = True
-                p["initializedAt"] = datetime.now().isoformat()
+                p["initializedAt"] = datetime.now(UTC).isoformat()
                 profile_found = True
                 break
 
@@ -2102,7 +2102,7 @@ async def request_usage_update():
     Note: Returns raw data object (not wrapped in {success, data}) because
     the frontend api-client.ts automatically adds that wrapper.
     """
-    from datetime import datetime, timedelta
+    from datetime import UTC, datetime, timedelta
 
     stats_file = Path.home() / ".claude" / "stats-cache.json"
 
@@ -2114,7 +2114,7 @@ async def request_usage_update():
         "weeklyResetTime": None,
         "profileId": "local",
         "profileName": "Local Stats",
-        "fetchedAt": datetime.now().isoformat(),
+        "fetchedAt": datetime.now(UTC).isoformat(),
         "limitType": None,
     }
 
@@ -2125,8 +2125,8 @@ async def request_usage_update():
         stats = json.loads(stats_file.read_text())
 
         # Get today's date
-        today = datetime.now().strftime("%Y-%m-%d")
-        week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+        today = datetime.now().strftime("%Y-%m-%d")  # noqa: DTZ005 - matched against local-date dailyActivity keys in the Claude stats file
+        week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")  # noqa: DTZ005 - matched against local-date dailyActivity keys in the Claude stats file
 
         # Calculate today's usage
         daily_activity = stats.get("dailyActivity", [])
@@ -2162,7 +2162,7 @@ async def request_usage_update():
             "weeklyResetTime": "Weekly",
             "profileId": "local",
             "profileName": f"Local ({today_messages} msgs today)",
-            "fetchedAt": datetime.now().isoformat(),
+            "fetchedAt": datetime.now(UTC).isoformat(),
             "limitType": "session" if session_percent > weekly_percent else "weekly",
             # Extra stats for tooltip
             "todayMessages": today_messages,
@@ -2841,7 +2841,7 @@ async def import_claude_credentials():
 
     # Create an imported profile
     import time
-    from datetime import datetime
+    from datetime import UTC, datetime
 
     profile_id = f"imported-{int(time.time())}"
     new_profile = {
@@ -2851,7 +2851,7 @@ async def import_claude_credentials():
         # directly, so it cannot go through _write_json_store.
         "oauthToken": seal(token),
         "isDefault": len(profiles_data["profiles"]) == 0,
-        "createdAt": datetime.now().isoformat(),
+        "createdAt": datetime.now(UTC).isoformat(),
     }
 
     profiles_data["profiles"].append(new_profile)

@@ -161,6 +161,12 @@
 
 ### Fixed
 
+- **The stale sweep is no longer skewed by the host's UTC offset (#1624).**
+  Web-server timestamps are now aware UTC (`datetime.now(UTC)`), matching the
+  aware `updated_at` written since #1619, so live work is not reaped on hosts
+  east of UTC. The `DTZ005`/`DTZ006` lint gate is on for the web-server; the
+  backend and `scripts/provider_benchmark.py` are carved out until #1740.
+
 - **OpenAPI generator pins opt-in feature flags off (#1632).** `apps/web-server/openapi.yaml`
   no longer depends on `.env` or exported flags; output is written as UTF-8.
 

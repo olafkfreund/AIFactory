@@ -26,7 +26,7 @@ destructive form has to be asked for explicitly.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -61,13 +61,13 @@ logger = logging.getLogger(__name__)
 
 
 def _now() -> datetime:
-    """Naive local now, matching how task timestamps are produced.
+    """Aware UTC now.
 
-    A task's `updated_at` is the spec directory's mtime, which is naive local
-    time. Comparing it against an aware datetime raises, so the clock and the
-    data must agree -- this is the one place that decides which.
+    A task's `updated_at` has been aware UTC since #1619 (`task_service.py`
+    `_iso_from_timestamp`), so the clock must be UTC too: a naive local clock
+    skews idle time by the host's UTC offset (#1624).
     """
-    return datetime.now()  # noqa: DTZ005 - deliberate: mtimes are naive local
+    return datetime.now(UTC)
 
 
 # Status written to a reaped task. `cancelled` rather than `failed` for two

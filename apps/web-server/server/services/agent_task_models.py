@@ -9,7 +9,7 @@ existing callers are unchanged. Imports only stdlib + TaskPhase
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .task_phase import TaskPhase
@@ -22,7 +22,7 @@ class TaskProgress:
     task_id: str
     phase: TaskPhase
     message: str
-    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     subtask: str | None = None
     subtask_index: int | None = None
     subtask_total: int | None = None
@@ -61,6 +61,6 @@ class TaskLog:
 
     task_id: str
     content: str
-    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     level: str = "info"  # info, warning, error, debug
     source: str = "agent"  # agent, stdout, stderr

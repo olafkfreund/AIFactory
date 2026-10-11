@@ -13,7 +13,7 @@ import asyncio
 import logging
 import os
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -311,7 +311,7 @@ class SpecCreationMixin:
 
         # Initialize tracking for sequence numbers and start time
         self._task_sequence_numbers[task_id] = 0
-        self._task_start_times[task_id] = datetime.now().isoformat()
+        self._task_start_times[task_id] = datetime.now(UTC).isoformat()
         if user_id:
             self._task_user_ids[task_id] = user_id
         # Store spec directory for reading implementation plans during progress updates

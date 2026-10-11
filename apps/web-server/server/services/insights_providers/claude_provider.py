@@ -11,7 +11,7 @@ import os
 import shutil
 import subprocess
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from server.utils.subprocess_env import child_env
@@ -297,7 +297,7 @@ class ClaudeProvider(ProviderStrategy):
                                 {
                                     "name": tool_name,
                                     "input": str(tool_input)[:200],
-                                    "timestamp": datetime.now().isoformat(),
+                                    "timestamp": datetime.now(UTC).isoformat(),
                                 }
                             )
                             await broadcast_event(
