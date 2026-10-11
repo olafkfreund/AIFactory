@@ -369,3 +369,7 @@ plus the full suite is their check (D15).
   `changelog_service.py:141` now defaults `--date` to the UTC calendar date
   (matches the frontend). The CLI display of web-server `approved_at` in UTC
   (`review/reviewer.py:218`, `review/formatters.py:297`) is added to #1740.
+- CI (shared-baseline drift gate): `standards/coding-standards.md` is vendored
+  byte-exact from the hub (olafkfreund/Factory) and may not be edited here.
+  Step 5's 1.9 sentence is reverted and proposed in the hub as
+  olafkfreund/Factory#3545; re-vendor after it lands.
