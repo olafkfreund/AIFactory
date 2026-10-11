@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1624
 intent: intent/2026-10-10-1624-naive-datetime-now.md
 ---
