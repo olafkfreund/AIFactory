@@ -102,3 +102,11 @@ the file has no exemption list.
    `github_env()`?
 4. Fix all four paths here, or split the runner path into its own issue?
 5. Wait for #1717 / PR #1748 to merge first, or start now and rebase?
+
+## Approver decisions (2026-10-11)
+
+- The runner process may hold the GitHub token; the agent's Claude CLI and tools must never receive it.
+- Keep `gh auth login --web` but point it at a managed GH_CONFIG_DIR.
+- Replace `gh auth setup-git` in worktree.py with a per-call credential helper.
+- Fix all four paths in this issue.
+- Start now and rebase (#1717 has merged).
