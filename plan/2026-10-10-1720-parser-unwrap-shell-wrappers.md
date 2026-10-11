@@ -25,8 +25,9 @@ as the outer string, or not at all. The fix makes the AST walk the only
 unwrapper, for both the allowlist names and the validator input.
 
 0. **State (D0).** #1689 has merged: `origin/dev` contains `ed266886`
-   "fix(security): ... (#1689) (#1722)". At plan time this branch is 6 ahead
-   (docs only) and 4 behind `origin/dev`, so it is still on pre-#1689 code.
+   "fix(security): ... (#1689) (#1722)". On 2026-10-11 this branch is 7 ahead
+   (docs only) and 5 behind `origin/dev` (`4470e4c7`, #1728, touches no file
+   cited here), so it is still on pre-#1689 code.
    Step 1 rebases before any code edit. **Every line number below is a
    post-rebase (`origin/dev`) line.** `ast_parser.py` is identical on both;
    `hooks.py`, `parser.py`, `git_validators.py`, `tests/test_command_sandbox.py`
@@ -48,8 +49,12 @@ unwrapper, for both the allowlist names and the validator input.
 4. **Recursion (D4).** Every unwrapper calls `_emit` on its target with
    `depth + 1`, so chains (`env timeout git`, `xargs env git`,
    `command exec git`, `find -exec env git`) need no extra code. The bound is
-   the existing `_MAX_DEPTH = 25` (`ast_parser.py:53-55`), refused at `:105-107`.
-   No new depth logic.
+   the existing `_MAX_DEPTH = 25` (`ast_parser.py:53-55`). The existing refusal
+   (`:106-107`) **moves** from `_extract` to the top of `_emit`; it is not
+   duplicated and no other depth logic is added. Left in `_extract` it bounds
+   only `-c` nesting: `env env … ls` recurses through `_emit` alone and was
+   measured unbounded (30 and 400 `env`s both accepted; Python's recursion
+   limit would be the only stop, as an uncaught `RecursionError`).
 5. **`dynamic_args` (D5).** `xargs` and `find -exec/-execdir/-ok/-okdir` set it
    to `True`. Every unwrapper below passes it on unchanged, including into a
    `-c` payload (covers `xargs sh -c 'git "$@"' _`). `find` must set it because
@@ -145,8 +150,18 @@ spec's hooks citations `_extract_commands_fail_closed :72-90` and dev loops
 max-branches 12, max-complexity 10. Hence a dispatch dict in `_emit`, three
 per-name option skippers under `_unwrap_prefix`, and a separate
 `_fallback_wrapper_refusal` in `hooks.py`. Behaviour is as in D8 and D12.
+Two more strict rules the prototype hit: `os.path.basename` in new
+`hooks.py` code is PTH119 (+1 regresses the per-rule ratchet; use
+`Path(word).name`), and `_unwrap_xargs`/`_unwrap_find_exec` ignore the
+incoming `dynamic_args` (they always pass `True`), so they start with
+`del dynamic_args` to stay clear of ARG001.
 
-**Handoff.** Five steps edit files across six files, so steps 2-5 go to the
+**Prototype (2026-10-11).** Steps 2-4 were applied in a scratch worktree of
+`origin/dev` exactly as written here: 320 passed, 2 skipped; default ruff
+format/check clean; both ratchets 0 regressed (`ast_parser.py` improved);
+`gen_autonomy_matrix --check` ok; M1-M12 each fail exactly the tests listed.
+
+**Handoff.** Five steps edit files across five files, so steps 2-5 go to the
 `coder` agent once this plan is approved: start it with this path and step 2,
 then send each later step with `SendMessage` to the same agent. Step 1 is done
 by the session (the coder cannot rebase). Review with a fresh `opus` agent
@@ -182,11 +197,15 @@ given only this path and `git diff`.
      and the `TestAstExtractorUnit` additions, exactly as listed in ## Tests.
    - Rows at `:189-211` stay unchanged.
 
-   → verify by `$PY -m pytest -q tests/test_command_sandbox.py`: new tests fail
-   (ImportError/assertion), all old classes green.
+   → verify by `$PY -m pytest -q tests/test_command_sandbox.py`: **one
+   collection error** (`ImportError: cannot import name
+   'extract_command_segments_ast'`), no tests run. That is the expected red;
+   old classes cannot run until step 3. `ruff format --check tests` and
+   `ruff check tests` clean (run `ruff format tests/test_command_sandbox.py`
+   first; the prototype's rows needed reflowing).
    Traps: `tests/` is outside the ratchet but under default `ruff format --check`
-   and `ruff check tests`. Do not commit this alone unless the new tests are
-   marked `xfail(strict=True)`; otherwise steps 2-4 land in one commit.
+   and `ruff check tests`. Do not commit step 2 alone (the import error would
+   break CI); steps 2-5 land in one commit.
 
 3. **`apps/backend/security/ast_parser.py`: AST walk is the only unwrapper (D2-D10).**
    - `:17-19` module docstring: mention `command`/`exec`/`timeout` and grouped `-c`.
@@ -197,6 +216,8 @@ given only this path and `git diff`.
      non-literal command-word skip (`:139-140`). Replace `:135` and `:141-152`
      (tokens, `acc.append(name)`, if/elif dispatch) with
      `_emit(words, idx, depth, acc, dynamic_args=dynamic_args)`.
+   - Move the depth refusal `:106-107` out of `_extract` to the top of `_emit`
+     (D4).
    - New `_emit` after `:152` (D3), dispatching through a module dict
      `_UNWRAPPERS: dict[str, Callable[..., None]]` (shells → `_unwrap_dash_c`,
      `env`, `xargs`, `find`, and `command`/`exec`/`timeout` → `_unwrap_prefix`).
@@ -206,10 +227,10 @@ given only this path and `git diff`.
    - `_unwrap_env` (`:170-183`): before the flag skip at `:175`, raise
      `UnparseableCommand` per D7; replace `:179-182` with
      `_emit(words, j, depth + 1, acc, dynamic_args=dynamic_args)`.
-   - `_unwrap_xargs` (`:186-203`): replace `:199-201` with
+   - `_unwrap_xargs` (`:186-203`): `del dynamic_args` first; replace `:199-201` with
      `_emit(words, j, depth + 1, acc, dynamic_args=True)`; keep the value skip
      at `:194` and the comment at `:203`.
-   - `_unwrap_find_exec` (`:206-214`): replace `:211-214` with
+   - `_unwrap_find_exec` (`:206-214`): `del dynamic_args` first; replace `:211-214` with
      `_emit(words, j + 1, depth + 1, acc, dynamic_args=True)`. The segment
      includes the trailing `{} ;/+`; acceptable because D13 refuses validated
      targets.
@@ -223,8 +244,11 @@ given only this path and `git diff`.
 
    → verify by `$PY -m pytest -q tests/test_command_sandbox.py::TestAstExtractorUnit tests/test_plan_commands.py`
    green; `ruff format --check apps/backend && ruff check apps/backend`;
-   `git add -N apps/backend/security/ast_parser.py` then both `cq_ratchet`
-   commands from ## Tests, then unstage.
+   `git add apps/backend/security/ast_parser.py`, both `cq_ratchet` commands
+   from ## Tests, then `git reset -q -- apps/backend/security/ast_parser.py`
+   (index only; the working tree is untouched). Not `git add -N`: on a tracked
+   file it stages nothing, `git diff --cached` is empty and the ratchet checks
+   0 files and passes vacuously (measured).
    Traps: max-args 5 (keyword-only `dynamic_args` counts); annotate bashlex
    nodes `list[Any]`; no new depth logic, every unwrapper passes `depth + 1`;
    `env` now emits non-shell targets too, so `plan_commands.py:177` sees more
@@ -239,26 +263,56 @@ given only this path and `git diff`.
    - `_extract_commands_fail_closed` (`:76-94`): return type
      `tuple[list[tuple[str, str, bool]] | None, str]`; bashlex branch calls
      `extract_command_segments_ast`; replace the fallback
-     `return extract_commands(command), ""` (`:93-94`) with a call to a new
-     `_fallback_wrapper_refusal(command, names) -> str | None` holding the D12
-     checks → `(None, reason)` if refused, else the D12 tuple list.
+     `return extract_commands(command), ""` (`:93-94`) with: `segments =
+     split_command_segments(command)`, `names = extract_commands(command)`, a
+     call to the new `_fallback_wrapper_refusal(segments, names)` → `(None,
+     reason)` if it returns a name, else the D12 tuple list
+     `[(n, seg, False) for n in names for seg in get_segments_for_validation(n, segments) or [command]]`.
+     The helper (prototype, ratchet-clean):
+
+     ```python
+     _FALLBACK_WRAPPERS = {"env", "xargs", "exec", "timeout", "watch"}
+     _FALLBACK_SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
+     _FALLBACK_FIND_ACTIONS = {"-exec", "-execdir", "-ok", "-okdir"}
+
+     def _fallback_wrapper_refusal(segments: list[str], names: list[str]) -> str | None:
+         for name in names:
+             if name in _FALLBACK_WRAPPERS:
+                 return name
+         for seg in segments:
+             words = seg.split()
+             if not words:
+                 continue
+             name = Path(words[0]).name  # not os.path.basename: PTH119
+             flags = words[1:]
+             if name == "command" and not any(f in ("-v", "-V") for f in flags):
+                 return name
+             if name in _FALLBACK_SHELLS and any(
+                 f.startswith("-") and not f.startswith("--") and "c" in f[1:] for f in flags
+             ):
+                 return name
+             if name == "find" and _FALLBACK_FIND_ACTIONS.intersection(flags):
+                 return name
+         return None
+     ```
    - New `_validator_refusal(cmds: list[tuple[str, str, bool]], root: str) -> str | None`
      after `:94` (D13): `token = set_worktree_root(root)`; `try` validator(seg);
      `finally reset_worktree_root(token)`.
-   - `bash_security_hook` (`:161-211`): unpack tuples into `names`; allowlist
+   - `bash_security_hook` (`:97-211`; edits at `:161-207`): unpack tuples into `names`; allowlist
      loop over names only (`:179-187`); delete `segments = split_command_segments(command)`
      (`:173`), the dead `allowed = profile.get_all_allowed_commands()` (`:176`),
      and the validator block (`:189-200`); add
      `if (r := _validator_refusal(cmds, cwd)): return {"decision": "block", "reason": r}`;
      `check_egress(command, names)` (`:207`; signature at `egress.py:92`).
-   - `validate_command` (`:232-257`): same change; delete `:239` and
+   - `validate_command` (`:214-257`; edits at `:232-257`): same change; delete `:239` and
      `:246-255`; `if (r := _validator_refusal(cmds, str(project_dir))): return False, r`.
 
    → verify by `$PY -m pytest -q tests/test_command_sandbox.py tests/test_sandbox_escape_corpus.py tests/test_security.py tests/test_plan_commands.py`
    = 320 passed, 2 skipped, nothing staged; ruff and both ratchets on
-   `ast_parser.py` and `hooks.py`; `python scripts/gen_autonomy_matrix.py --check`
+   `ast_parser.py` and `hooks.py` (stage with `git add`, run, `git reset -q --
+   <files>`; not `git add -N`); `python scripts/gen_autonomy_matrix.py --check`
    (if it cites `hooks.py` lines, regenerate, do not hand-edit); then the
-   mutation checks M1-M11 in ## Tests.
+   mutation checks M1-M12 in ## Tests.
    Traps: D14 wording changes → assert substrings; D16 no logging and no
    spawns (CodeQL `py/clear-text-logging-sensitive-data`, `py/log-injection`;
    `test_no_unscrubbed_spawn`); `test_security.py`'s `GitCommitValidator` check
@@ -360,7 +414,7 @@ Plus `test_bash_c_npm_allowed_in_node_project(node_project)` running
 `watch ls`, `command git status`, `bash -lc 'ls'`, `bash -c 'ls'`,
 `find . -exec ls {} +`. Allowed: `git status && ls`, `command -v git`.
 
-**`TestAstExtractorUnit` additions (12 tests)**, exact output checked against
+**`TestAstExtractorUnit` additions (13 tests)**, exact output checked against
 bashlex and `shlex.join`:
 
 - `test_segment_tuples` (6 rows) on `extract_command_segments_ast`:
@@ -376,6 +430,8 @@ bashlex and `shlex.join`:
 - `test_env_split_string_raises` (4 rows, each raises `UnparseableCommand`):
   `env -S 'git status'`, `env -S'git status'`, `env --split-string='git status'`,
   `env --split-string 'git status'`.
+- `test_wrapper_chain_depth_bounded`: `extract_command_segments_ast("env " * 30 + "ls")`
+  raises `UnparseableCommand` (D4; pins the depth refusal in `_emit`).
 - `test_grouped_dash_c_unwrapped`: `extract_commands_ast("bash -lc 'nc x'") == ["bash", "nc"]`.
 - `test_long_option_containing_c_not_treated_as_dash_c`:
   `extract_commands_ast("bash --norc scripts/deploy.sh") == ["bash"]`.
@@ -386,7 +442,8 @@ bashlex and `shlex.join`:
 $PY -m pytest -q tests/test_command_sandbox.py tests/test_sandbox_escape_corpus.py tests/test_security.py tests/test_plan_commands.py
 ruff format --check apps/backend apps/web-server scripts tests
 ruff check apps/backend apps/web-server scripts tests
-# after git add (ratchets read --staged), then unstage before pytest again:
+# after `git add <files>` (ratchets read --staged; `git add -N` stages nothing
+# for a tracked file), then `git reset -q -- <files>` before pytest again:
 python scripts/cq_ratchet.py --staged --ruff "$(command -v ruff)" --config standards/ruff.toml --paths 'apps/backend/*.py' 'apps/web-server/*.py' 'scripts/*.py'
 python scripts/cq_ratchet.py --staged --tool mypy --mypy "$(command -v mypy)" --config standards/mypy.ini --paths 'apps/backend/*.py' 'apps/web-server/*.py' 'scripts/*.py'
 python scripts/gen_autonomy_matrix.py --check
@@ -396,7 +453,7 @@ Expected counts:
 
 | File | Baseline (dev) | After |
 |---|---|---|
-| `test_command_sandbox.py` | 72 | 187 (+64 refused, +28 allowed, +11 fallback, +12 unit) |
+| `test_command_sandbox.py` | 72 | 187 (+64 refused, +26 allowed, +1 npm, +11 fallback, +13 unit) |
 | `test_sandbox_escape_corpus.py` | 15 passed, 2 skipped (bwrap) | unchanged |
 | `test_security.py` | 107 | unchanged |
 | `test_plan_commands.py` | 11 | unchanged |
@@ -415,12 +472,13 @@ confirm green. After all, the full file is 187 passed again.
 | M3 | Delete the `env -S`/`--split-string` raise | the three `env -S`/`--split-string` rows, `test_env_split_string_raises` |
 | M4 | Delete the `dynamic_args` return in `_validator_refusal` | `find / -exec rm -rf {} +`, `find . -exec chmod 755 {} +`, `find . \| xargs rm`, `xargs sh -c 'git "$@"'` |
 | M5 | `_unwrap_dash_c` passes `dynamic_args=False` to the payload | `test_segment_tuples[xargs sh]`, the `xargs sh -c 'git "$@"'` rows |
-| M6 | find's `_emit` passes `dynamic_args=dynamic_args` not `True` | `find / -exec rm -rf {} +`, `find . -exec chmod 755 {} +`, `test_segment_tuples[find]` |
+| M6 | find's `_emit` passes `dynamic_args=dynamic_args` not `True` (and drop its `del dynamic_args`) | `find / -exec rm -rf {} +`, `find . -exec chmod 755 {} +`, `test_segment_tuples[find]` |
 | M7 | Delete the `command -v/-V` return | allowed `command -v nc`, `test_segment_tuples[command -v]` |
 | M8 | `timeout -s` does not consume its value | allowed `timeout -s KILL 5 git status`, refused `timeout -s KILL 5 git -c…` (substring) |
 | M9 | `exec -a` does not consume NAME | `exec -a x git -c…` (substring), `test_segment_tuples[exec -a]` |
 | M10 | Delete the `_validator_refusal` call in `validate_command` only (then in the hook only) | the `test_validate_command_refuses` validator rows fail while `test_hook_refuses` stays green (and vice versa) |
 | M11 | Delete the fallback wrapper refusal | all 9 fallback refused rows |
+| M12 | Delete the depth refusal at the top of `_emit` | `test_wrapper_chain_depth_bounded` |
 
 ## Rollback
 
