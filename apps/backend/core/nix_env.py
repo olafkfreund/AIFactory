@@ -44,6 +44,11 @@ def nix_in_image() -> bool:
     Read by both Job paths (build: ``build_backend``; gate/verify: ``gate_runner``)
     so one gitops flip cannot land on one path and silently miss the other — which
     is exactly how the gate path kept its pin after #258 flipped the build path.
+
+    The gate runs inside the build Job, which inherits neither
+    ``AIFACTORY_PACKED_NIX_IN_IMAGE`` nor ``AIFACTORY_NIX_STORE_PVC``, so on the
+    gate path the flag is off and no store PVC is set until #1736 forwards both
+    together.
     """
     return os.environ.get(_ENV_NIX_IN_IMAGE, "").strip().lower() in (
         "1",
