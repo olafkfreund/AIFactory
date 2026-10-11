@@ -44,6 +44,9 @@ def child_env(
     and, unless ``runner``, every ``*_KEY``/``*_TOKEN`` name;
     restores the ``keep`` names that are set, applies ``extra``, and disables
     git hooks, fsmonitor and the ext:: transport via git env config. The pins
+    also set the ssh command (``ssh``), pager (``cat``) and editor (``true``);
+    ``GIT_SSH_COMMAND``, ``GIT_PAGER`` or ``GIT_EDITOR`` in the server env
+    overrides them. The pins
     are appended last (an existing ``GIT_CONFIG_*`` entry keeps its lower index).
     Build it per call: ``os.environ`` changes at runtime.
     """
@@ -67,7 +70,13 @@ def child_env(
     env[f"GIT_CONFIG_VALUE_{n + 1}"] = "false"
     env[f"GIT_CONFIG_KEY_{n + 2}"] = "protocol.ext.allow"
     env[f"GIT_CONFIG_VALUE_{n + 2}"] = "never"
-    env["GIT_CONFIG_COUNT"] = str(n + 3)
+    env[f"GIT_CONFIG_KEY_{n + 3}"] = "core.sshCommand"
+    env[f"GIT_CONFIG_VALUE_{n + 3}"] = "ssh"
+    env[f"GIT_CONFIG_KEY_{n + 4}"] = "core.pager"
+    env[f"GIT_CONFIG_VALUE_{n + 4}"] = "cat"
+    env[f"GIT_CONFIG_KEY_{n + 5}"] = "core.editor"
+    env[f"GIT_CONFIG_VALUE_{n + 5}"] = "true"
+    env["GIT_CONFIG_COUNT"] = str(n + 6)
     return env
 
 
