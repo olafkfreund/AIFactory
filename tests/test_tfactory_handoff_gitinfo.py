@@ -34,7 +34,7 @@ def test_payload_still_sets_branch_without_git(tmp_path):
     sd = tmp_path / "workspaces" / "proj" / ".aifactory" / "specs" / "1"
     sd.mkdir(parents=True)
     (sd / "spec.md").write_text("## Acceptance Criteria\n- works\n")
-    payload = build_ingest_payload(sd, "1")
+    payload = build_ingest_payload(sd, "1", contract=None)
     assert payload["project_id"] == "proj"
     assert payload["source_branch"] == "aifactory/1"
     assert "git_url" not in payload  # no repo to resolve → graceful
@@ -59,7 +59,7 @@ def test_payload_resolves_repo_from_project_when_worktree_absent(tmp_path):
     sd.mkdir(parents=True)
     (sd / "spec.md").write_text("## Acceptance Criteria\n- works\n")
     # No worktree dir exists → _git_info_and_push returns (None, None).
-    payload = build_ingest_payload(sd, "014-x")
+    payload = build_ingest_payload(sd, "014-x", contract=None)
     assert payload["git_url"] == "https://github.com/o/r.git"
     assert payload["source_branch"] == "aifactory/014-x"
 
@@ -99,7 +99,7 @@ def test_payload_includes_git_fields_for_a_real_worktree(tmp_path, monkeypatch):
     sd = proj / ".aifactory" / "specs" / "1"
     sd.mkdir(parents=True)
     (sd / "spec.md").write_text("## Acceptance Criteria\n- works\n")
-    payload = build_ingest_payload(sd, "1")
+    payload = build_ingest_payload(sd, "1", contract=None)
     assert payload["git_url"] == "https://github.com/o/r.git"
     assert payload["source_branch"] == "aifactory/1"
 
@@ -142,7 +142,7 @@ def test_kubejob_worktree_on_base_still_stamps_build_branch(tmp_path):
     )
     _init_repo_on_branch(wt, "main")
 
-    payload = build_ingest_payload(sd, "042-x")
+    payload = build_ingest_payload(sd, "042-x", contract=None)
     assert payload["source_branch"] == "aifactory/042-x"  # NOT "main"
 
 
@@ -269,5 +269,5 @@ def test_worktree_on_real_build_branch_is_trusted(tmp_path):
     )
     _init_repo_on_branch(wt, "aifactory/043-y")
 
-    payload = build_ingest_payload(sd, "043-y")
+    payload = build_ingest_payload(sd, "043-y", contract=None)
     assert payload["source_branch"] == "aifactory/043-y"

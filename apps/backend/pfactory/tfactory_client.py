@@ -574,7 +574,7 @@ def _issue_from_requirements(req: dict[str, Any]) -> int | None:
 
 
 def build_ingest_payload(
-    spec_dir: Path, spec_id: str, *, contract: dict[str, Any] | None = None
+    spec_dir: Path, spec_id: str, *, contract: dict[str, Any] | None
 ) -> dict:
     """Build the payload for TFactory's self-contained spec intake
     (``POST /api/specs/ingest``): ``{project_id, spec_id, spec_text}``.
@@ -799,7 +799,7 @@ def wants_auto_handoff(spec_dir: Path) -> bool:
 
 
 async def maybe_auto_handoff_tfactory(
-    spec_dir: Path, spec_id: str, *, contract: dict[str, Any] | None = None
+    spec_dir: Path, spec_id: str, *, contract: dict[str, Any] | None
 ) -> dict:
     """On a task's terminal SUCCESS, hand the finished build to TFactory for
     testing — but only when the task opted in (``auto_handover_tfactory`` in

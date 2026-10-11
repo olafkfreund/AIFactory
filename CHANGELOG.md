@@ -18,6 +18,13 @@
   are parsed the way GNU env, xargs and bash read them, so an option value or
   a dash-named command can no longer hide the real command. Without bashlex
   (a required dependency), every Bash command is refused.
+- **The remaining task-contract readers act only on a trusted contract (#1708).**
+  The house-standards, constitution and deployment prompt blocks now read the
+  contract through `contract_trust.trusted_contract` and are withheld when the
+  server holds it or the plan is unverified. The TFactory handoff `contract`
+  argument is now required, and `AIFACTORY_TRUSTED_CONTRACT` is blanked in the
+  agent env.
+
 - **An agent-written git config can no longer run commands in the server (#1689).**
   Every `child_env()` process now pins `core.fsmonitor=false` next to the
   `core.hooksPath` pin (`GIT_CONFIG_COUNT` is now `n+2`). The bash guard refuses

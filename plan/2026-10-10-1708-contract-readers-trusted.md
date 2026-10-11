@@ -606,3 +606,15 @@ Other checks, each expected to pass:
 - Keep the `get_deployment_context` docstring rewording at prompts.py:705 (spec correction 2).
 - Accept `isinstance(contract, dict)` over `contract is not None` (same behaviour; needed for the mypy ratchet).
 - Accept the extra tests (two deployment fallback tests, second TypeError test).
+
+## Deviations (recorded during implementation)
+
+- One commit instead of three per-step commits: the regenerated autonomy
+  matrix carries the step 1 and step 3 line shifts in the same two files.
+- Step 2: the signature change and the `contract=None` call-site edits were
+  made before the two TypeError tests, so its red check was not run; M6/M7
+  show those tests catch a restored default.
+- The coder did steps 1-3 and step 4's mutations and CHANGELOG; the session
+  model did step 0, the commit and PR.
+- Measured: C1 210, C2 52, C3 56 passed; M1-M8 as tabled; ruff and mypy
+  ratchets 1 improved, 0 regressed.

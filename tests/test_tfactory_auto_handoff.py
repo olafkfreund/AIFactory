@@ -34,7 +34,9 @@ def test_wants_auto_handoff(tmp_path):
 
 def test_not_requested_is_noop(tmp_path):
     _spec(tmp_path, False)
-    result = asyncio.run(tc.maybe_auto_handoff_tfactory(tmp_path, "001-x"))
+    result = asyncio.run(
+        tc.maybe_auto_handoff_tfactory(tmp_path, "001-x", contract=None)
+    )
     assert result == {"sent": False, "reason": "not_requested"}
 
 
@@ -48,7 +50,9 @@ def test_opted_in_sends_and_records(tmp_path, monkeypatch):
 
     monkeypatch.setattr(tc, "send_handoff", fake_send)
 
-    result = asyncio.run(tc.maybe_auto_handoff_tfactory(tmp_path, "001-x"))
+    result = asyncio.run(
+        tc.maybe_auto_handoff_tfactory(tmp_path, "001-x", contract=None)
+    )
     assert result["sent"] is True
     assert captured["payload"]["spec_id"] == "001-x"
     # #517: the handoff now uses TFactory's self-contained ingest contract
@@ -76,7 +80,7 @@ def test_ingest_payload_carries_contract_when_trusted(tmp_path):
             }
         )
     )
-    payload = tc.build_ingest_payload(tmp_path, "001-x")
+    payload = tc.build_ingest_payload(tmp_path, "001-x", contract=None)
     assert "contract" in payload
     assert payload["contract"]["tfactory"]["lanes"] == ["unit"]
 
@@ -96,7 +100,7 @@ def test_ingest_payload_omits_contract_for_plain_plan(tmp_path):
             }
         )
     )
-    payload = tc.build_ingest_payload(tmp_path, "001-x")
+    payload = tc.build_ingest_payload(tmp_path, "001-x", contract=None)
     assert "contract" not in payload
 
 
@@ -107,7 +111,9 @@ def test_never_raises_on_bad_input(tmp_path, monkeypatch):
         raise RuntimeError("network down")
 
     monkeypatch.setattr(tc, "send_handoff", boom)
-    result = asyncio.run(tc.maybe_auto_handoff_tfactory(tmp_path, "001-x"))
+    result = asyncio.run(
+        tc.maybe_auto_handoff_tfactory(tmp_path, "001-x", contract=None)
+    )
     assert result["sent"] is False and result["reason"] == "error"
 
 
@@ -168,7 +174,9 @@ def test_empty_build_is_not_handed_off(tmp_path, monkeypatch):
 
     monkeypatch.setattr(tc, "send_handoff", fail_send)
     assert tc.build_commit_count(spec_dir, "005-x") == 0
-    result = asyncio.run(tc.maybe_auto_handoff_tfactory(spec_dir, "005-x"))
+    result = asyncio.run(
+        tc.maybe_auto_handoff_tfactory(spec_dir, "005-x", contract=None)
+    )
     assert result == {"sent": False, "reason": "empty_build"}
 
 
@@ -183,7 +191,9 @@ def test_real_build_is_still_handed_off(tmp_path, monkeypatch):
 
     monkeypatch.setattr(tc, "send_handoff", fake_send)
     assert tc.build_commit_count(spec_dir, "006-x") == 1
-    result = asyncio.run(tc.maybe_auto_handoff_tfactory(spec_dir, "006-x"))
+    result = asyncio.run(
+        tc.maybe_auto_handoff_tfactory(spec_dir, "006-x", contract=None)
+    )
     assert result["sent"] is True
     assert sent["payload"]["spec_id"] == "006-x"
 
@@ -198,7 +208,10 @@ def test_unmeasurable_build_fails_open(tmp_path, monkeypatch):
 
     monkeypatch.setattr(tc, "send_handoff", fake_send)
     assert (
-        asyncio.run(tc.maybe_auto_handoff_tfactory(tmp_path, "007-x"))["sent"] is True
+        asyncio.run(tc.maybe_auto_handoff_tfactory(tmp_path, "007-x", contract=None))[
+            "sent"
+        ]
+        is True
     )
 
 
@@ -217,7 +230,10 @@ def test_kubejob_worktree_on_base_is_unmeasurable_not_empty(tmp_path, monkeypatc
 
     monkeypatch.setattr(tc, "send_handoff", fake_send)
     assert (
-        asyncio.run(tc.maybe_auto_handoff_tfactory(spec_dir, "006-x"))["sent"] is True
+        asyncio.run(tc.maybe_auto_handoff_tfactory(spec_dir, "006-x", contract=None))[
+            "sent"
+        ]
+        is True
     )
 
 
