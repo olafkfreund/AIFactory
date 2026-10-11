@@ -212,6 +212,10 @@ agent then reviews, given only this plan path and `git diff`.
      no-marker assert still holds, because the positive control proved the
      planted command would have run.
    - Root `tests/` is outside the ratchet's scope, but default ruff applies.
+     The reference body above is not `ruff format` clean (packed tuple and
+     call arguments), so `ruff format --check` fails on it as pasted. Run
+     `ruff format tests/test_child_process_env.py` after inserting it, then
+     `ruff format --check tests` must be clean. `ruff check` passes as is.
 
 2. **Code (green).**
    - `apps/backend/core/child_env.py:64-70`: after line 69
@@ -261,7 +265,7 @@ agent then reviews, given only this plan path and `git diff`.
 
    → verify by `python scripts/gen_autonomy_matrix.py --check` (green; needs
    `yaml`) and `git diff origin/dev --stat`, which lists only the 4 files plus
-   `plan/`.
+   the `intent/`, `spec/` and `plan/` files for this slug.
 
    Traps:
    - #1692, #1631, #1632 and #1633 also touch `CHANGELOG.md`. Let them merge
