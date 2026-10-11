@@ -110,6 +110,9 @@
 
 ### Changed
 
+- Trailing gates now record CI linters that no gate ran (e.g. `ktlint: skipped`)
+  instead of omitting them; reporting only, never blocks (#1627).
+
 - **Opus 5.5 is the flagship.** The `opus` shorthand now resolves to
   `claude-opus-5-5` everywhere it is read: the phase resolver, the approved-model
   registry, the budget catalog and the enforcement pricing table. `opus-4.8` was
