@@ -77,9 +77,8 @@ _MISSING = r"required keyword-only argument: 'contract'"
 def test_build_ingest_payload_requires_contract(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _stub_git(
-        monkeypatch
-    )  # if the default comes back, the body runs: keep it off real git
+    # If the default comes back, the body runs: keep it off real git.
+    _stub_git(monkeypatch)
     spec_dir = _spec_dir(tmp_path, {})
     with pytest.raises(TypeError, match=_MISSING):
         tc.build_ingest_payload(spec_dir, "001")  # type: ignore[call-arg, unused-ignore]

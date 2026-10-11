@@ -618,3 +618,12 @@ Other checks, each expected to pass:
   model did step 0, the commit and PR.
 - Measured: C1 210, C2 52, C3 56 passed; M1-M8 as tabled; ruff and mypy
   ratchets 1 improved, 0 regressed.
+- Opus review (CHANGES), resolved by the session model:
+  - HIGH (verdict reaches non-Claude providers): the four CLI providers moved
+    to `child_env` in #1692 (on dev; this branch is rebased onto it), which
+    blanks the verdict. The `tools/executor.py` Bash/grep spawns still inherit
+    the runner env; that is #1713 (commented there), out of this plan's scope.
+  - MEDIUM: `load_tfactory_block` (`tfactory_client.py:69-85`) reads the
+    contract's tfactory block untrusted; filed as #1750.
+  - LOW: the formatter-split `_stub_git` comment in
+    `test_tfactory_client_issue.py` moved to its own line.
