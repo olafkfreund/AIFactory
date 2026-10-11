@@ -526,3 +526,9 @@ above.
   - LOW: the `ponytail:` comment now also names the unnormalised NTFS/HFS+
     aliases (Linux-only deployment).
   - D5a confirmed: no `create_simple_client` caller writes through the agent.
+- Rebase onto #1720 (merged as PR #1755): `hooks.py` keeps #1720's imports
+  (the regex `parser` import is gone) plus `git_metadata_write_refusal`; the
+  test file merges both import lists and keeps both appended blocks. #1720
+  also added a `_hook(command, cwd)` helper, so this PR's helper is renamed
+  `_write_hook(tool, ti, cwd)`. 460 passed / 2 skipped across the sandbox,
+  escape-corpus, security, plan-commands, env-scrub and runner suites.

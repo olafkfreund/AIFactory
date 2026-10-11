@@ -502,7 +502,7 @@ def repo(tmp_path):
     return orig, wt
 
 
-def _hook(tool, ti, cwd):
+def _write_hook(tool, ti, cwd):
     return asyncio.run(
         git_dir_write_hook({"tool_name": tool, "tool_input": ti, "cwd": str(cwd)})
     )
@@ -538,7 +538,7 @@ class TestGitDirWriteGuard:
             "multiedit": ("MultiEdit", orig / ".git" / "config", wt),
             "notebook": ("NotebookEdit", orig / ".git" / "x.ipynb", wt),
         }[case]  # fmt: skip
-        r = _hook(tool, _ti(tool, path), cwd)
+        r = _write_hook(tool, _ti(tool, path), cwd)
         assert r["decision"] == "block"
         assert r["reason"]
 
@@ -557,14 +557,14 @@ class TestGitDirWriteGuard:
         orig, wt = repo
         if tool == "Read":
             path = str(orig / ".git" / "config")
-        assert _hook(tool, _ti(tool, path), wt) == {}
+        assert _write_hook(tool, _ti(tool, path), wt) == {}
 
     @pytest.mark.parametrize(
         "ti", ["x", {}, {"file_path": 3}, {"file_path": ""}], ids=str
     )
     def test_malformed_input_blocked(self, repo, ti):
         _, wt = repo
-        assert _hook("Write", ti, wt)["decision"] == "block"
+        assert _write_hook("Write", ti, wt)["decision"] == "block"
 
     @pytest.mark.parametrize("exc", [OSError, RuntimeError, ValueError])
     def test_resolve_error_refused(self, repo, monkeypatch, exc):
@@ -578,14 +578,14 @@ class TestGitDirWriteGuard:
 
     def test_symlink_loop(self, repo):
         _, wt = repo
-        r = _hook("Write", _ti("Write", wt / "a"), wt)
+        r = _write_hook("Write", _ti("Write", wt / "a"), wt)
         if sys.version_info < (3, 13):
             assert r["decision"] == "block"
 
     def test_block_log_has_no_path(self, repo, caplog):
         orig, wt = repo
         with caplog.at_level("WARNING"):
-            _hook("Write", _ti("Write", orig / ".git" / "config"), wt)
+            _write_hook("Write", _ti("Write", orig / ".git" / "config"), wt)
         assert "Blocked agent write" in caplog.text
         assert str(orig) not in caplog.text
 
@@ -633,7 +633,7 @@ class TestGitDirWriteGuard:
             "file_path": str(wt / "ok.ipynb"),
             "notebook_path": str(orig / ".git" / "x.ipynb"),
         }
-        assert _hook("NotebookEdit", ti, wt).get("decision") == "block"
+        assert _write_hook("NotebookEdit", ti, wt).get("decision") == "block"
 
     @pytest.mark.parametrize("agent_type", _SIMPLE_TYPES)
     def test_simple_client_types_have_no_write_tools(self, agent_type):
