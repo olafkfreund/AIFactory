@@ -65,12 +65,13 @@ tasks on an isolated host.
   never invent a green one.
 - Fix once, in `merge_gate_signals`, so both callers get it. Keep the keyword
   interface of `decide_merge`.
-- Leave alone: the #1672 signed-tier block, the `host_isolated` check (#1691),
+- Leave alone: the #1672 signed-tier block, the `host_isolated` check (#1667),
   and `trusted_contract.py` while PR #1751 (#1708) is in flight.
 - The handback receipt (`handback_received.json`) is #1696. Keep it out of
   scope.
-- GitHub calls go through `gh_client` and its token-scoped env, not a bare
-  `gh` subprocess.
+- GitHub calls reuse the endgame's existing runner (`_default_runner`, which
+  wraps `gh` in `github_env(child_env())`, #1680), not a new bare `gh`
+  subprocess with the server's full environment.
 - Fetched values written to logs must pass CodeQL `py/log-injection`.
 - When TFactory or GitHub is slow or unreachable, the endgame must not hang or
   crash. It must reach a defined result.
