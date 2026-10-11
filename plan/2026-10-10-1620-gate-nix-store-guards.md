@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1620
 spec: spec/2026-10-10-1620-gate-nix-store-guards.md
 ---
