@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1720
 intent: intent/2026-10-10-1720-parser-unwrap-shell-wrappers.md
 ---
