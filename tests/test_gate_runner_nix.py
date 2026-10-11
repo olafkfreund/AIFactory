@@ -339,9 +339,9 @@ def test_gate_timeout_is_configurable():
 
 
 def test_packed_path_drops_the_warm_store_when_nix_in_image(monkeypatch, tmp_path):
-    """The -nix image bakes swift, kotlin, gradle and openjdk-21; the packed
-    path honours nix_in_image() like the co-mount path and the build packed path
-    (build_backend.py:663-664).
+    """The gate image (factory-runner-nix) bakes swift, kotlin, gradle and
+    openjdk-21; the packed path honours nix_in_image() like the co-mount path
+    and the build packed path (_packed_nix_in_image in build_backend.py).
     """
     import agents.gate_runner as gr
     import core.kube_sandbox as ks

@@ -258,3 +258,7 @@ change).
 - Step 3 (one CHANGELOG bullet) was done by the session model rather than the
   coder: a single prose line did not repay another handoff. The coder did
   steps 1-2. Follow-ups: #A = #1736, #B = #1737.
+- Opus review (APPROVE, two LOW): the comments now name "the gate image
+  (factory-runner-nix)" rather than "the -nix image" (the build `-nix` image
+  carries no toolchains), and cite `_packed_nix_in_image` by name instead of
+  the off-by-one `build_backend.py:663-664`.

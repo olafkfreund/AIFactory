@@ -38,9 +38,10 @@ logger = logging.getLogger(__name__)
 
 
 # How long any single gate may run before we treat it as failed (seconds).
-# The budget is 600s and can be raised without a release. The -nix image bakes
-# swift, kotlin, gradle and openjdk-21; why Swift hits the deadline is unknown
-# (SPM fetching over git is a hypothesis), see #1737.
+# The budget is 600s and can be raised without a release. The gate image
+# (factory-runner-nix) bakes swift, kotlin, gradle and openjdk-21; why Swift
+# hits the deadline is unknown (SPM fetching over git is a hypothesis), see
+# #1737.
 def _timeout_from_env(env: Mapping[str, str]) -> int:
     """Gate budget in seconds; 600 unless overridden. Pure, so it is testable
     without reloading the module (a reload swaps module identity and breaks
@@ -488,9 +489,9 @@ def _nix_kube_runner(image: str) -> Callable[[list[str], Path], tuple[int | None
     # nix_in_image for why the image is a sufficient /nix source.
     # Both gate paths (packed and co-mount) drop the PVC when nix_in_image() is
     # true; the build path drops it on its packed path only
-    # (build_backend.py:663-664). Inside the build Job neither variable is
-    # forwarded (_PASSTHROUGH_BUILD_ENV, build_backend.py:259), so the guard is
-    # inert there today. The two must be forwarded together (#1736): forwarding
+    # (_packed_nix_in_image in build_backend.py). Inside the build Job neither
+    # variable is forwarded (_PASSTHROUGH_BUILD_ENV, build_backend.py:259), so
+    # the guard is inert there today. The two must be forwarded together (#1736): forwarding
     # only the PVC brings back the #253 node pin.
     nix_store_pvc = (
         None
