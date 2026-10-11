@@ -351,3 +351,9 @@ plus the full suite is their check (D15).
    reverted, run the reaper's host with `TZ=UTC`.
 4. If only the lint gate causes trouble, revert just the `ruff.toml` hunk
    (drop DTZ005/DTZ006 from select) and keep the code fix.
+
+## Approver decisions (2026-10-11)
+
+- The backend + provider_benchmark follow-up is filed before step 3 as **#1740**; put #1740 in the `ruff.toml` comment (step 6 no longer opens it).
+- Start now; rebase again after #1633 (PR #1735) merges.
+- F4 (`routes/context.py:207`) goes to #1740, not this change.
