@@ -82,11 +82,9 @@ inner command name, so the inner command also skips the allowlist.
   that includes the path where bashlex is not installed.
 - No legitimate use of `command`, `exec`, `xargs`, `sh` or `bash` may be
   removed from the allowlist. Real agent runs depend on them.
-- It depends on #1689. That branch (`fix/1689-fsmonitor-git-config-audit`,
-  local only, not pushed and no PR yet) already edits `hooks.py`, `parser.py`,
-  `git_validators.py` (commits 9f9580a2 and bf40c451) and
-  `tests/test_command_sandbox.py` (commit 4b40fd61), and it is not on dev yet. Until it lands, plain `git config core.fsmonitor x` is still
-  allowed. #1720 must build on it, or the two will conflict.
+- It depends on #1689, which merged to dev as PR #1722 (`ed266886`). It
+  edits `hooks.py`, `parser.py`, `git_validators.py` and
+  `tests/test_command_sandbox.py`; #1720 builds on it.
 - Stay consistent with #1719 (`.git/` write guard) and #1717 (pin
   ssh/pager/editor), which cover the same git-escape area.
 - The sandbox tests, `security-lint.yml` and `security-cleanup-gates.yml` must
