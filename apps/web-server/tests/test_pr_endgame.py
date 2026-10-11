@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -89,8 +91,61 @@ def test_create_pr_parses_number():
     )
     assert pr == 7
     assert r.saw("pr create")
-    # Must configure git auth before pushing, or the deployed push 401s.
-    assert r.saw("auth setup-git")
+    # #1688: auth is per call (github_env); no global helper.
+    assert not r.saw("auth setup-git")
+
+
+def test_default_runner_hands_gh_a_config_dir_not_the_token(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    token = "ghp_1688FakeTokenSentinelDoNotLeak"  # noqa: S105  # gitleaks:allow
+    monkeypatch.setenv("GITHUB_TOKEN", token)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    seen: list[tuple[dict[str, str], str]] = []
+
+    def read_hosts(env: dict[str, str]) -> str:
+        return Path(env["GH_CONFIG_DIR"], "hosts.yml").read_text()
+
+    def fake_run(argv: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
+        env = dict(kw["env"])
+        seen.append((env, read_hosts(env)))  # at call time: the dir is gone after
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(pe.subprocess, "run", fake_run)
+    pe._default_runner(["gh", "pr", "list"], None)
+    assert seen
+    env, hosts = seen[0]
+    assert token in hosts
+    assert all(token not in v for v in env.values())
+    assert "GITHUB_TOKEN" not in env
+    assert list(tmp_path.glob("aif-gh-*")) == []
+
+
+def test_create_pr_upload_failure_still_opens_pr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #1690: a failed LFS upload skips the ref push, but create_pr still warns
+    # and goes on to `gh pr create`.
+    real_which = shutil.which
+    monkeypatch.setattr(
+        "core.child_env.shutil.which",
+        lambda c, *a, **k: "/x/git-lfs" if c == "git-lfs" else real_which(c, *a, **k),
+    )
+    r = FakeRunner(
+        {
+            "get-url": CmdResult(0, "https://github.com/o/r", ""),
+            "--get-regexp": CmdResult(1, "", ""),
+            "lfs push": CmdResult(2, "", "boom"),
+            "pr create": CmdResult(0, "https://github.com/o/r/pull/11", ""),
+        }
+    )
+    pr = pe.create_pr(
+        worktree=Path("/wt"), branch="b", base="main", title="t", body="b", runner=r
+    )
+    assert pr == 11
+    assert r.saw("lfs push")
+    assert not any(c[:2] == ["git", "push"] for c in r.calls)
 
 
 def test_create_pr_fetches_branch_from_origin_before_push():
@@ -120,7 +175,7 @@ def test_create_pr_fetches_branch_from_origin_before_push():
         for i, c in enumerate(r.calls)
         if "fetch" in " ".join(c) and "origin" in " ".join(c)
     )
-    push_i = next(i for i, c in enumerate(r.calls) if "push" in " ".join(c))
+    push_i = next(i for i, c in enumerate(r.calls) if "git push" in " ".join(c))
     assert fetch_i < push_i
 
 

@@ -103,6 +103,9 @@ async def lifespan(app: FastAPI):
     # The serving process (a reload worker included) launches the agents, so it
     # must be non-dumpable too, not only the __main__ supervisor (#1679).
     _make_non_dumpable()
+    from .utils.subprocess_env import sweep_github_dirs  # noqa: PLC0415
+
+    sweep_github_dirs()
     # Before any loop starts; env_bootstrap already loaded a .env PAT (#1671).
     github_app.start()
 

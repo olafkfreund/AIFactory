@@ -6,11 +6,15 @@ code the server runs in-process (git push/fetch, ``gh``).
 
 from __future__ import annotations
 
+import logging
 import os
 import re
+import shutil
 from collections.abc import Iterable, Mapping
 
 from core.auth import is_denied_env_key
+
+logger = logging.getLogger(__name__)
 
 # Stripped so a child never silently bills the direct Anthropic API.
 _STRIP_VARS: tuple[str, ...] = (
@@ -39,7 +43,8 @@ def child_env(
     Drops every host secret ``is_denied_env_key`` matches plus ``_STRIP_VARS``,
     and, unless ``runner``, every ``*_KEY``/``*_TOKEN`` name;
     restores the ``keep`` names that are set, applies ``extra``, and disables
-    git hooks via git env config (an existing ``GIT_CONFIG_*`` entry survives).
+    git hooks, fsmonitor and the ext:: transport via git env config. The pins
+    are appended last (an existing ``GIT_CONFIG_*`` entry keeps its lower index).
     Build it per call: ``os.environ`` changes at runtime.
     """
     env = {
@@ -58,5 +63,56 @@ def child_env(
         n = 0
     env[f"GIT_CONFIG_KEY_{n}"] = "core.hooksPath"
     env[f"GIT_CONFIG_VALUE_{n}"] = "/dev/null"
-    env["GIT_CONFIG_COUNT"] = str(n + 1)
+    env[f"GIT_CONFIG_KEY_{n + 1}"] = "core.fsmonitor"
+    env[f"GIT_CONFIG_VALUE_{n + 1}"] = "false"
+    env[f"GIT_CONFIG_KEY_{n + 2}"] = "protocol.ext.allow"
+    env[f"GIT_CONFIG_VALUE_{n + 2}"] = "never"
+    env["GIT_CONFIG_COUNT"] = str(n + 3)
     return env
+
+
+_GITHUB_ORIGIN = re.compile(
+    r"https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?"
+)
+
+
+def lfs_push_argv(push_url_output: str, ref: str) -> list[str] | None:
+    """Pinned ``git lfs push`` argv for a plain github.com origin, else None (#1690).
+
+    Hooks are off (#1680), so git-lfs's pre-push no longer uploads objects. The
+    endpoint is derived from origin and passed as both ``lfs.url`` and
+    ``lfs.pushurl``, which overrides repo ``lfs.*`` config and ``.lfsconfig``.
+    That is not enough alone: git-lfs still applies ``url.*.insteadOf`` and runs
+    ``lfs.customtransfer.*`` programs, so callers MUST refuse the upload when the
+    repo defines either (``git config --get-regexp '^(lfs\\.customtransfer\\.|url\\.)'``
+    exits 0 or errors).
+    """
+    if shutil.which("git-lfs") is None:
+        return None
+    # Fixed messages: the raw output can carry userinfo.
+    if "\n" in push_url_output or "\r" in push_url_output:
+        logger.warning("origin push URL is not a single line; skipping LFS upload")
+        return None
+    m = _GITHUB_ORIGIN.fullmatch(push_url_output)
+    if m is None or {".", ".."} & set(m.groups()):
+        logger.warning(
+            "origin is not a plain https://github.com/<owner>/<repo> URL; "
+            "skipping LFS upload"
+        )
+        return None
+    e = f"https://github.com/{m[1]}/{m[2]}.git/info/lfs"
+    return [
+        "git",
+        "-c",
+        f"lfs.url={e}",
+        "-c",
+        f"lfs.pushurl={e}",
+        "-c",
+        f"lfs.{e}.locksverify=false",
+        "-c",
+        "lfs.allowincompletepush=false",
+        "lfs",
+        "push",
+        "origin",
+        ref,
+    ]

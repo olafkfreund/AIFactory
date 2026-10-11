@@ -54,13 +54,15 @@ def _is_environ(node: ast.AST) -> bool:
 # spawns inherit the server's secrets exactly like the server's own. Not listed,
 # because they keep runner-only sites that need the full env: cli/workspace_commands.py
 # (merge-preview/commit-message CLI handlers) and agents/gate_runner.py
-# (runs a project's own test gates).
+# (runs a project's own test gates). core/worktree.py is listed because the
+# in-process WorktreeManager runs in the server.
 _BACKEND = _ROOT / "apps" / "backend"
 _BACKEND_FILES = [
     _BACKEND / "core" / "auth.py",
     _BACKEND / "core" / "child_env.py",
     _BACKEND / "core" / "git_credentials.py",
     _BACKEND / "core" / "workspace_fetch.py",
+    _BACKEND / "core" / "worktree.py",
     _BACKEND / "pfactory" / "tfactory_client.py",
     _BACKEND / "trusted_plan.py",
 ]

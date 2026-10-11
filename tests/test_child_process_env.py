@@ -71,18 +71,82 @@ def test_hooks_path_appended_after_existing_entry(
     monkeypatch.setenv("GIT_CONFIG_KEY_0", "credential.https://github.com.helper")
     monkeypatch.setenv("GIT_CONFIG_VALUE_0", "!gh auth git-credential")
     env = child_env()
-    assert env["GIT_CONFIG_COUNT"] == "2"
+    assert env["GIT_CONFIG_COUNT"] == "4"
     assert env["GIT_CONFIG_KEY_0"] == "credential.https://github.com.helper"
     assert env["GIT_CONFIG_VALUE_0"] == "!gh auth git-credential"
     assert env["GIT_CONFIG_KEY_1"] == "core.hooksPath"
     assert env["GIT_CONFIG_VALUE_1"] == "/dev/null"
+    assert env["GIT_CONFIG_KEY_2"] == "core.fsmonitor"
+    assert env["GIT_CONFIG_VALUE_2"] == "false"
+    assert env["GIT_CONFIG_KEY_3"] == "protocol.ext.allow"
+    assert env["GIT_CONFIG_VALUE_3"] == "never"
 
 
 def test_hooks_path_is_entry_zero_without_count(secret_env: None) -> None:
     env = child_env()
-    assert env["GIT_CONFIG_COUNT"] == "1"
+    assert env["GIT_CONFIG_COUNT"] == "3"
     assert env["GIT_CONFIG_KEY_0"] == "core.hooksPath"
     assert env["GIT_CONFIG_VALUE_0"] == "/dev/null"
+    assert env["GIT_CONFIG_KEY_1"] == "core.fsmonitor"
+    assert env["GIT_CONFIG_VALUE_1"] == "false"
+    assert env["GIT_CONFIG_KEY_2"] == "protocol.ext.allow"
+    assert env["GIT_CONFIG_VALUE_2"] == "never"
+
+
+def test_real_git_fsmonitor_disabled_by_child_env(
+    secret_env: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # pre-commit runs pytest under a git hook: ambient GIT_* would aim git at this repo (#819)
+    for k in (
+        "GIT_DIR",
+        "GIT_INDEX_FILE",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY",
+    ):
+        monkeypatch.delenv(k, raising=False)
+    iso = {"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"}
+    base = {**os.environ, **iso}
+    repo, wt = tmp_path / "repo", tmp_path / "wt"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True, env=base)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "i",
+        ],
+        check=True,
+        env=base,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "add", "-q", str(wt), "-b", "w"],
+        check=True,
+        env=base,
+    )
+    subprocess.run(
+        ["git", "-C", str(wt), "config", "core.fsmonitor", "touch M; false"],
+        check=True,
+        env=base,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "status"],
+        env={**child_env(), **iso},
+        capture_output=True,
+    )
+    assert not (repo / "M").exists()
+    subprocess.run(
+        ["git", "-C", str(repo), "status"], env=base, capture_output=True
+    )  # control
+    assert (repo / "M").exists()
 
 
 def test_make_subprocess_env_keep_and_drop(secret_env: None) -> None:
@@ -155,9 +219,11 @@ def test_core_child_env_extra_count_appends_hooks_entry(
             "GIT_CONFIG_VALUE_0": "x",
         }
     )
-    assert env["GIT_CONFIG_COUNT"] == "2"
+    assert env["GIT_CONFIG_COUNT"] == "4"
     assert env["GIT_CONFIG_KEY_0"] == "credential.helper"
     assert env["GIT_CONFIG_KEY_1"] == "core.hooksPath"
+    assert env["GIT_CONFIG_KEY_2"] == "core.fsmonitor"
+    assert env["GIT_CONFIG_KEY_3"] == "protocol.ext.allow"
     assert env["GIT_CONFIG_VALUE_1"] == "/dev/null"
 
 
@@ -179,6 +245,7 @@ def test_trusted_plan_git_env_is_scrubbed_and_headless(
     env = trusted_plan._git_subprocess_env()
     assert env is not None
     assert env["GIT_TERMINAL_PROMPT"] == "0"
+    assert env["GIT_CONFIG_KEY_1"] == "core.fsmonitor"
     assert "DATABASE_URL" not in env
     assert env["GIT_CONFIG_VALUE_0"] == "/dev/null"
 

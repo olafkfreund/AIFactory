@@ -38,7 +38,7 @@ so `test_credential_is_never_written_to_any_log_file` -- which goes through
 logging property on its own. Two independent properties, two tests.
 
 AIFactory#1362 converged this module on TFactory's fork: the token is no
-longer an argv element at all (`GIT_ASKPASS` feeds it via `GIT_PASS`), so
+longer an argv element at all (`GIT_ASKPASS` feeds it via `GIT_PASS_FILE`), so
 `/proc/<pid>/cmdline` is clean too -- the residual #1356 could not reach,
 because it only stopped the argv reaching the log. That property is pinned by
 `test_token_is_absent_from_the_child_argv` below. The argv is STILL never
@@ -85,6 +85,7 @@ class _Spawn(NamedTuple):
     argv: list[str]
     cmdline: bytes
     env: dict[str, str]
+    pass_file: str | None
 
 
 _SECRET = "ghp_" + "ARGVLEAKCANARY" * 3
@@ -224,6 +225,11 @@ async def test_token_is_absent_from_the_child_argv(tmp_path: Path) -> None:
         """Sync helper: ASYNC240 forbids pathlib inside an async def."""
         return Path(f"/proc/{pid}/cmdline").read_bytes()
 
+    def read_pass_file(env: dict[str, str]) -> str | None:
+        """Sync helper, read at spawn time: the dir is gone after the call."""
+        p = env.get("GIT_PASS_FILE")
+        return Path(p).read_text() if p else None
+
     real_exec = asyncio.create_subprocess_exec
     seen: list[_Spawn] = []
 
@@ -234,6 +240,7 @@ async def test_token_is_absent_from_the_child_argv(tmp_path: Path) -> None:
                 argv=[str(a) for a in args],
                 cmdline=read_cmdline(proc.pid),
                 env=dict(kwargs.get("env") or {}),
+                pass_file=read_pass_file(dict(kwargs.get("env") or {})),
             )
         )
         return proc
@@ -257,9 +264,10 @@ async def test_token_is_absent_from_the_child_argv(tmp_path: Path) -> None:
 
     # Guard against a vacuous pass: the credential must actually have been in
     # play on this call, just by a route that isn't argv.
-    assert any(spawn.env.get("GIT_PASS") == _SECRET for spawn in seen), (
-        "the token never reached GIT_PASS -- this test would pass vacuously"
+    assert any(spawn.pass_file == _SECRET for spawn in seen), (
+        "the token never reached GIT_PASS_FILE -- this test would pass vacuously"
     )
+    assert all("GIT_PASS" not in s.env for s in seen)
 
     argv_leaks = [s.argv for s in seen if any(_SECRET in a for a in s.argv)]
     assert argv_leaks == [], (

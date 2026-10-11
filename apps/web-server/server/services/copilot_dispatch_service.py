@@ -27,7 +27,7 @@ from pathlib import Path
 
 from factory_common.logsafe import sanitize_log
 
-from server.utils.subprocess_env import GITHUB_KEEP, child_env
+from server.utils.subprocess_env import child_env, github_env
 
 logger = logging.getLogger(__name__)
 
@@ -62,21 +62,22 @@ class CopilotDispatchService:
         ``task_metadata.json``.  Raises ``RuntimeError`` on gh CLI failure so
         the caller can fall back to the local pipeline.
         """
-        result = subprocess.run(
-            [
-                "gh",
-                "api",
-                "--method",
-                "PATCH",
-                f"/repos/{repo_full_name}/issues/{issue_number}",
-                "-f",
-                f"assignees[]={AGENT_HANDLE}",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env=child_env(keep=GITHUB_KEEP),
-        )
+        with github_env(child_env()) as env:
+            result = subprocess.run(
+                [
+                    "gh",
+                    "api",
+                    "--method",
+                    "PATCH",
+                    f"/repos/{repo_full_name}/issues/{issue_number}",
+                    "-f",
+                    f"assignees[]={AGENT_HANDLE}",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                env=env,
+            )
         if result.returncode != 0:
             raise RuntimeError(
                 f"[copilot-dispatch] gh api PATCH failed: {result.stderr.strip()}"
@@ -112,19 +113,20 @@ class CopilotDispatchService:
             f'(.body // "" | contains("#{issue_number}")))] '
             f"| first | .number"
         )
-        result = subprocess.run(
-            [
-                "gh",
-                "api",
-                f"/repos/{repo_full_name}/pulls",
-                "--jq",
-                jq_filter,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env=child_env(keep=GITHUB_KEEP),
-        )
+        with github_env(child_env()) as env:
+            result = subprocess.run(
+                [
+                    "gh",
+                    "api",
+                    f"/repos/{repo_full_name}/pulls",
+                    "--jq",
+                    jq_filter,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                env=env,
+            )
         if result.returncode != 0:
             logger.warning(
                 "[copilot-dispatch] find_copilot_pr failed repo=%s issue=%d err=%s",
@@ -143,19 +145,20 @@ class CopilotDispatchService:
 
     def get_pr_url(self, repo_full_name: str, pr_number: int) -> str | None:
         """Fetch the HTML URL for a PR number."""
-        result = subprocess.run(
-            [
-                "gh",
-                "api",
-                f"/repos/{repo_full_name}/pulls/{pr_number}",
-                "--jq",
-                ".html_url",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env=child_env(keep=GITHUB_KEEP),
-        )
+        with github_env(child_env()) as env:
+            result = subprocess.run(
+                [
+                    "gh",
+                    "api",
+                    f"/repos/{repo_full_name}/pulls/{pr_number}",
+                    "--jq",
+                    ".html_url",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                env=env,
+            )
         raw = result.stdout.strip()
         return raw if raw and raw != "null" else None
 

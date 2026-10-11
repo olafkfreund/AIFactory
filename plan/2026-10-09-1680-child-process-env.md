@@ -251,7 +251,8 @@ builds are untouched, so a revert affects only in-pod spawns.
   carries `core.hooksPath=/dev/null` to `run.py` and the agent, so a
   project's own hooks no longer run in builds either. Intended.
 - **Git LFS (user decision):** with hooks off, LFS objects are not uploaded
-  on push. Known limit, follow-up #1690.
+  on push. LFS is now uploaded explicitly on the 4 server PR pushes (#1690).
+  The remaining items are in #1721.
 - **Step 9 (Copilot review on #1691):**
   - `KMS_FERNET_KEY` was not denied (pattern matched `_KMS` only); the
     shared pattern now matches `KMS` at a name start too, so agents lose it

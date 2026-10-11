@@ -33,7 +33,7 @@ from factory_common.logsafe import sanitize_log
 from server.services import github_app
 from server.services.build_backend import task_repo_dir
 from server.services.task_branch import resolve_task_branch
-from server.utils.subprocess_env import GITHUB_KEEP, child_env
+from server.utils.subprocess_env import child_env, github_env, lfs_push_argv
 
 logger = logging.getLogger(__name__)
 
@@ -66,15 +66,49 @@ Runner = Callable[[list[str], "str | None"], CmdResult]
 
 
 def _default_runner(argv: list[str], cwd: str | None = None) -> CmdResult:
-    p = subprocess.run(
-        argv,
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        timeout=120,
-        env=child_env(keep=GITHUB_KEEP),
-    )
+    with github_env(child_env()) as env:
+        p = subprocess.run(
+            argv,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=env,
+        )
     return CmdResult(p.returncode, p.stdout.strip(), p.stderr.strip())
+
+
+def push_with_lfs(
+    push_argv: list[str], ref: str, cwd: str, runner: Runner = _default_runner
+) -> CmdResult:
+    """Upload LFS objects, then run ``push_argv`` (#1690).
+
+    Hooks are off (#1680) so git-lfs's pre-push no longer uploads. A failed
+    upload (or a refusal) is returned instead of pushing the ref.
+    """
+    url = runner(["git", "remote", "get-url", "--push", "--all", "origin"], cwd)
+    argv = lfs_push_argv(url.out.strip(), ref) if url.ok else None
+    if argv:
+        # A repo-defined transfer program, or a url.*.insteadOf that git-lfs applies to
+        # the pinned endpoint, would redirect the upload; refuse (rc 1 = none).
+        chk = runner(
+            [
+                "git",
+                "config",
+                "--name-only",
+                "--get-regexp",
+                r"^(lfs\.customtransfer\.|url\.)",
+            ],
+            cwd,
+        )
+        if chk.rc != 1:
+            return CmdResult(
+                1, "", "LFS step refused (lfs.customtransfer.* or url.* defined)"
+            )
+        up = runner(argv, cwd)
+        if not up.ok:
+            return up
+    return runner(push_argv, cwd)
 
 
 # ---------------------------------------------------------------------------
@@ -579,12 +613,6 @@ def create_pr(
     Idempotent-ish: if a PR for the branch already exists, gh reports it and we
     parse the number out.
     """
-    # Ensure git can authenticate the push: configure gh as the credential
-    # helper (idempotent, best-effort). Without this the deployed pod's raw
-    # `git push` fails with "could not read Username" even though gh itself is
-    # authenticated via GITHUB_TOKEN — the PR would never open.
-    runner(["gh", "auth", "setup-git"], None)
-
     # #959: on the kubejob/packed path the build ran in a k8s Job on an ephemeral
     # /work emptyDir and pushed its branch to origin from there
     # (core.workspace_fetch.maybe_push_workspace_branch, #751). THIS control-plane
@@ -606,7 +634,9 @@ def create_pr(
             (fetch.err or fetch.out)[:200],
         )
 
-    push = runner(["git", "push", "-u", "origin", branch], str(worktree))
+    push = push_with_lfs(
+        ["git", "push", "-u", "origin", branch], branch, str(worktree), runner
+    )
     if not push.ok and "up-to-date" not in (push.err + push.out).lower():
         logger.warning("[pr-endgame] git push failed: %s", push.err[:300])
         # keep going — the branch may already be pushed
@@ -1179,9 +1209,11 @@ async def watch_and_finish(
                 )
                 if cr.resolved:
                     push = await asyncio.to_thread(
-                        runner,
+                        push_with_lfs,
                         ["git", "push", "--force-with-lease", "origin", "HEAD"],
+                        "HEAD",
                         worktree,
+                        runner,
                     )
                     if push.ok:
                         continue  # re-review the rebased+resolved branch next poll
