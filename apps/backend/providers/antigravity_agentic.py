@@ -38,16 +38,16 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import os
 import re
 import shutil
 from collections.abc import AsyncGenerator, AsyncIterator
 from pathlib import Path
 from typing import Any
 
+from core.child_env import child_env
 from providers import BaseLLMProvider
 from providers._antigravity_cli import get_antigravity_binary
-from providers.antigravity import _emit_sunset_warning  # Issue #22
+from providers.antigravity import _GEMINI_KEEP, _emit_sunset_warning  # Issue #22
 from providers.types import AssistantMessage, TextBlock
 
 logger = logging.getLogger(__name__)
@@ -194,7 +194,9 @@ class AntigravityAgenticProvider(BaseLLMProvider):
             # can actually edit files. See the CLI's trusted-folders guidance.
             # (Env var name is GEMINI_CLI_TRUST_WORKSPACE — the binary kept the
             # legacy name across the gemini-cli -> antigravity-cli rename.)
-            env = {**os.environ, "GEMINI_CLI_TRUST_WORKSPACE": "true"}
+            env = child_env(
+                keep=_GEMINI_KEEP, extra={"GEMINI_CLI_TRUST_WORKSPACE": "true"}
+            )
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdin=asyncio.subprocess.PIPE,
