@@ -92,3 +92,11 @@ not code execution or a secret leak.
    #1680 has landed is a separate issue to file first.
 5. Order: wait for PR #1751 to merge and branch from the new dev, or start now
    and rebase?
+
+## Approver decisions (2026-10-11)
+
+- On hold, send the handoff with an empty tfactory block (do not skip the handoff).
+- Legacy tasks read `context/task_contract.json` through `load_task_contract`.
+- Delete `load_tfactory_block` (and its exports and pinning tests) if nothing else uses it.
+- Losing the declared profile on hosts that cannot verify is acceptable; file an issue to widen `host_isolated`.
+- Rebase after PR #1751 merges.
