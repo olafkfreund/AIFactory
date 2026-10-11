@@ -46,8 +46,8 @@ def child_env(
     git hooks, fsmonitor and the ext:: transport via git env config. The pins
     also set the ssh command (``ssh``), pager (``cat``) and editor (``true``);
     ``GIT_SSH_COMMAND``, ``GIT_PAGER`` or ``GIT_EDITOR`` in the server env
-    overrides them. The pins
-    are appended last (an existing ``GIT_CONFIG_*`` entry keeps its lower index).
+    overrides them. The pins are appended last (an existing ``GIT_CONFIG_*``
+    entry keeps its lower index).
     Build it per call: ``os.environ`` changes at runtime.
     """
     env = {

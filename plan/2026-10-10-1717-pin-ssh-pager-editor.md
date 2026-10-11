@@ -334,3 +334,9 @@ and M6 prove.
 - None in the code. The coder did steps 1-2 and the step-3 CHANGELOG bullet;
   the session model did step 0 (rebase), the commit, follow-up and PR.
   `ruff format` reflowed the pasted reference body in step 1 (layout only).
+- Opus review (APPROVE, three LOW, applied by the session model): the
+  CHANGELOG now says a repo `pager.<cmd>` setting still beats `core.pager`
+  (tty only, no server spawn has one) and the follow-up tracks it; the
+  `child_env` docstring is rewrapped. The follow-up also notes that the web
+  terminal (`pty/session.py:56`) builds its env from `os.environ`, not
+  `child_env`.
