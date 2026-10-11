@@ -530,3 +530,10 @@ grouped `-c` bypasses.
   confirms `env FOO=1 -- x` runs `--`. One mutation per fix fails its rows
   (8, 2, 2). 380 passed / 2 skipped. LOW false refusals (`xargs -0n1`,
   `--max-args 1`, abbreviated env flags) fail closed and are left.
+- Approver decision (2026-10-11): without bashlex (degraded install) the Bash
+  hook and `validate_command` refuse every command. The regex fallback and
+  `_fallback_wrapper_refusal` are deleted; the review showed five fallback
+  bypasses (quoted `"bash" "-c"`, `"-exec"`, `$(...)`, backticks, brace
+  groups). `TestWrapperFallbackWithoutBashlex` now expects refusal for the
+  former allowed rows too. `security/plan_commands.py` keeps its own fallback
+  (out of scope).

@@ -428,7 +428,7 @@ def test_bash_c_npm_allowed_in_node_project(node_project):
 
 
 class TestWrapperFallbackWithoutBashlex:
-    """Without bashlex, wrappers the regex parser cannot see are refused."""
+    """Without bashlex every command is refused (fail closed)."""
 
     @pytest.fixture(autouse=True)
     def _no_bashlex(self, monkeypatch):
@@ -446,12 +446,11 @@ class TestWrapperFallbackWithoutBashlex:
             "bash -lc 'ls'",
             "bash -c 'ls'",
             "find . -exec ls {} +",
+            "git status && ls",
+            "command -v git",
+            "ls",
         ],
     )
     def test_refused(self, command, temp_dir):
         ok, r = validate_command(command, temp_dir)
         assert ok is False and "without bashlex" in r, (command, r)
-
-    @pytest.mark.parametrize("command", ["git status && ls", "command -v git"])
-    def test_allowed(self, command, temp_dir):
-        assert validate_command(command, temp_dir) == (True, ""), command

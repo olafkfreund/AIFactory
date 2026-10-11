@@ -21,11 +21,6 @@ logger = logging.getLogger(__name__)
 from .ast_parser import UnparseableCommand, extract_command_segments_ast, is_available
 from .egress import check_egress
 from .exec_context import reset_worktree_root, set_worktree_root
-from .parser import (
-    extract_commands,
-    get_segments_for_validation,
-    split_command_segments,
-)
 from .profile import get_security_profile
 from .url_guard import assert_url_not_ssrf
 from .validator import VALIDATORS
@@ -73,42 +68,14 @@ async def web_fetch_security_hook(
     return {}
 
 
-_FALLBACK_WRAPPERS = {"env", "xargs", "exec", "timeout", "watch"}
-_FALLBACK_SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
-_FALLBACK_FIND_ACTIONS = {"-exec", "-execdir", "-ok", "-okdir"}
-
-
-def _fallback_wrapper_refusal(segments: list[str], names: list[str]) -> str | None:
-    """Name of a wrapper the regex parser cannot see through, else None."""
-    for name in names:
-        if name in _FALLBACK_WRAPPERS:
-            return name
-    for seg in segments:
-        words = seg.split()
-        if not words:
-            continue
-        name = Path(words[0]).name
-        flags = words[1:]
-        if name == "command" and not any(f in ("-v", "-V") for f in flags):
-            return name
-        if name in _FALLBACK_SHELLS and any(
-            f.startswith("-") and not f.startswith("--") and "c" in f[1:] for f in flags
-        ):
-            return name
-        if name == "find" and _FALLBACK_FIND_ACTIONS.intersection(flags):
-            return name
-    return None
-
-
 def _extract_commands_fail_closed(
     command: str,
 ) -> tuple[list[tuple[str, str, bool]] | None, str]:
     """Extract ``(name, segment, dynamic_args)`` with the fail-closed AST parser.
 
     Returns ``(commands, "")`` on success, or ``(None, reason)`` when the
-    command must be blocked because it could not be safely parsed. Falls back
-    to the legacy regex parser only when ``bashlex`` is unavailable (degraded
-    install) — never to widen what the AST parser would have blocked.
+    command must be blocked because it could not be safely parsed, or when
+    ``bashlex`` is unavailable (degraded install).
     """
     if is_available():
         try:
@@ -119,20 +86,10 @@ def _extract_commands_fail_closed(
                 f"validation ({exc}). Rewrite it without dynamic shell "
                 'payloads (e.g. avoid `bash -c "$VAR"`).'
             )
-    # Degraded fallback: bashlex not installed.
-    segments = split_command_segments(command)
-    names = extract_commands(command)
-    wrapper = _fallback_wrapper_refusal(segments, names)
-    if wrapper:
-        return None, (
-            f"Command blocked: shell wrapper `{wrapper}` cannot be validated "
-            "without bashlex."
-        )
-    return [
-        (n, seg, False)
-        for n in names
-        for seg in get_segments_for_validation(n, segments) or [command]
-    ], ""
+    # Degraded install: bashlex is a hard requirement, so refuse everything
+    # rather than trust the regex parser (it cannot see through wrappers,
+    # substitutions or quoting).
+    return None, "Command blocked: bash commands cannot be validated without bashlex."
 
 
 def _validator_refusal(cmds: list[tuple[str, str, bool]], root: str) -> str | None:

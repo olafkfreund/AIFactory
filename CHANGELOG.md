@@ -14,9 +14,10 @@
   validators. It now also unwraps `command`, `exec` and `timeout` and grouped
   `-c` flags (`bash -lc`), and refuses `env -S`/`--split-string`. A validated
   command run by `xargs` or `find -exec` is refused, because its arguments
-  cannot be checked: use `find -delete` instead of `-exec rm`. Without bashlex,
-  `env`, `xargs`, `exec`, `timeout`, `watch`, `command`, `bash -c` and
-  `find -exec` are refused.
+  cannot be checked: use `find -delete` instead of `-exec rm`. Wrapper options
+  are parsed the way GNU env, xargs and bash read them, so an option value or
+  a dash-named command can no longer hide the real command. Without bashlex
+  (a required dependency), every Bash command is refused.
 - **An agent-written git config can no longer run commands in the server (#1689).**
   Every `child_env()` process now pins `core.fsmonitor=false` next to the
   `core.hooksPath` pin (`GIT_CONFIG_COUNT` is now `n+2`). The bash guard refuses
