@@ -431,3 +431,18 @@ run `python scripts/gen_autonomy_matrix.py`, then `--check`.
 No state needs migrating or cleaning up. Markers already written with
 `<tool>: skipped` still use a known outcome in `_KNOWN_GATE_OUTCOMES`, so QA
 and the CLI read them the same way after the revert.
+
+## Deviations (recorded during implementation)
+
+- Step 1: C3 and C4 already pass on the old code (they assert nothing extra is
+  added); they bite only under the step-2 mutations. Red count was 15 failed /
+  35 passed, not 33 passed.
+- Step 2: the planned `_BOMB` fixture doubled references per level (2^10
+  nodes), so T7 passed with the anchor guard deleted. The coder changed it to
+  10 references x 10 levels; mutated T7/T12 now hang (killed by `timeout 20`)
+  and pass in <1s with the guard.
+- Step 2: the autonomy matrix drifted (`coder.py` line shift) and was
+  regenerated, as the plan allows.
+- Step 3 (CHANGELOG entry, follow-up issue draft) was done by the session
+  model, not the coder. The follow-up is drafted, not filed, per the plan's
+  trap. The coder did steps 1-2.
