@@ -365,3 +365,7 @@ plus the full suite is their check (D15).
 - Measured: stale tests 23 passed; DTZ count 62 (57 DTZ005 + 5 DTZ006); web-server
   suite 794 passed; ruff ratchet 20 improved, 0 regressed; M1-M4 as tabled.
 - F3: `apps/web-server/tests/test_stale_tasks.py` is now 430 lines.
+- Opus review (APPROVE): rebased after #1633 as planned. Noted in the PR:
+  `changelog_service.py:141` now defaults `--date` to the UTC calendar date
+  (matches the frontend). The CLI display of web-server `approved_at` in UTC
+  (`review/reviewer.py:218`, `review/formatters.py:297`) is added to #1740.
