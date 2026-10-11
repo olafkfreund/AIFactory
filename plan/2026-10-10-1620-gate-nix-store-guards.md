@@ -252,3 +252,9 @@ change).
   Once follow-up (a) forwards both, the fast lever is unsetting
   `AIFACTORY_PACKED_NIX_IN_IMAGE` in gitops, which restores the warm store on
   both gate paths without a release.
+
+## Deviations (recorded during implementation)
+
+- Step 3 (one CHANGELOG bullet) was done by the session model rather than the
+  coder: a single prose line did not repay another handoff. The coder did
+  steps 1-2. Follow-ups: #A = #1736, #B = #1737.
