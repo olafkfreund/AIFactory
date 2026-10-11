@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1720
 spec: spec/2026-10-10-1720-parser-unwrap-shell-wrappers.md
 ---
