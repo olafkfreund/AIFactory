@@ -494,3 +494,13 @@ grouped `-c` bypasses.
 ## Approver decisions (2026-10-11)
 
 - Steps 2-4 land in one commit (no xfail split).
+
+## Deviations (recorded during implementation)
+
+- The coder did steps 2-4 and the step-5 CHANGELOG; the session model did
+  step 1, the commit, follow-up and PR.
+- `test_segment_tuples` is parametrized over its 6 rows (a loop gave 315, not
+  320). `_unwrap_find_exec`/`_unwrap_xargs` carry `del dynamic_args  # why`.
+  `_skip_timeout_opts` returns `j + 1`; `_unwrap_prefix` does the bounds check.
+- Measured: 320 passed / 2 skipped; M1-M12 each fail; ratchets 1 improved,
+  0 regressed.

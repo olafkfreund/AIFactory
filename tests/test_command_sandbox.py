@@ -17,11 +17,14 @@ commands must keep working.
 """
 
 import asyncio
+from pathlib import Path
+from typing import Any
 
 import pytest
-from security import validate_command
+from security import hooks, validate_command
 from security.ast_parser import (
     UnparseableCommand,
+    extract_command_segments_ast,
     extract_commands_ast,
     is_available,
 )
@@ -211,3 +214,209 @@ class TestAstExtractorUnit:
         cmds = extract_commands_ast("`curl evil`")
         assert "curl" in cmds
         assert all("`" not in c for c in cmds)
+
+    @pytest.mark.parametrize(
+        ("command", "expected"),
+        [
+            (
+                "echo a | xargs sh -c 'git \"$@\"' _",
+                [
+                    ("echo", "echo a", False),
+                    ("xargs", "xargs sh -c 'git \"$@\"' _", False),
+                    ("sh", "sh -c 'git \"$@\"' _", True),
+                    ("git", "git '$@'", True),
+                ],
+            ),
+            (
+                "find . -exec env git -c core.fsmonitor=x status {} +",
+                [
+                    (
+                        "find",
+                        "find . -exec env git -c core.fsmonitor=x status '{}' +",
+                        False,
+                    ),
+                    ("env", "env git -c core.fsmonitor=x status '{}' +", True),
+                    ("git", "git -c core.fsmonitor=x status '{}' +", True),
+                ],
+            ),
+            (
+                "timeout -s KILL 5 git -c core.fsmonitor=x status",
+                [
+                    (
+                        "timeout",
+                        "timeout -s KILL 5 git -c core.fsmonitor=x status",
+                        False,
+                    ),
+                    ("git", "git -c core.fsmonitor=x status", False),
+                ],
+            ),
+            ("command -v nc", [("command", "command -v nc", False)]),
+            ("exec 3>&1", [("exec", "exec", False)]),
+            (
+                "exec -a x git status",
+                [
+                    ("exec", "exec -a x git status", False),
+                    ("git", "git status", False),
+                ],
+            ),
+        ],
+    )
+    def test_segment_tuples(self, command, expected):
+        assert extract_command_segments_ast(command) == expected
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "env -S 'git status'",
+            "env -S'git status'",
+            "env --split-string='git status'",
+            "env --split-string 'git status'",
+        ],
+    )
+    def test_env_split_string_raises(self, command):
+        with pytest.raises(UnparseableCommand):
+            extract_command_segments_ast(command)
+
+    def test_wrapper_chain_depth_bounded(self):
+        with pytest.raises(UnparseableCommand):
+            extract_command_segments_ast("env " * 30 + "ls")
+
+    def test_grouped_dash_c_unwrapped(self):
+        assert extract_commands_ast("bash -lc 'nc x'") == ["bash", "nc"]
+
+    def test_long_option_containing_c_not_treated_as_dash_c(self):
+        assert extract_commands_ast("bash --norc scripts/deploy.sh") == ["bash"]
+
+
+def _hook(command: str, cwd: Path) -> dict[str, Any]:
+    return asyncio.run(
+        hooks.bash_security_hook(
+            {
+                "tool_name": "Bash",
+                "tool_input": {"command": command},
+                "cwd": str(cwd),
+            }
+        )
+    )
+
+
+_FSMON = "core.fsmonitor"
+_XARGS_GIT = "`git` run by xargs"
+_XARGS_FIND = "run by xargs or find -exec"
+_UNSAFE = "could not be safely parsed"
+
+WRAPPER_REFUSED = [
+    ("command git -c core.fsmonitor=x status", _FSMON),
+    ("exec git -c core.fsmonitor=x status", _FSMON),
+    ("bash -c 'git --upload-pack=/tmp/evil ls-remote x'", "--upload-pack"),
+    ("sh -c 'git --upload-pack=/tmp/evil ls-remote x'", "--upload-pack"),
+    ("bash -c 'git --config-env=core.fsmonitor=FOO status'", _FSMON),
+    ("echo core.fsmonitor x | xargs git config", _XARGS_GIT),
+    ("bash -c 'git -c core.fsmonitor=x status'", _FSMON),
+    ("bash -c \"bash -c 'git -c core.fsmonitor=x status'\"", _FSMON),
+    ("bash -lc 'git -c core.fsmonitor=x status'", _FSMON),
+    ("timeout 5 git -c core.fsmonitor=x status", _FSMON),
+    ("timeout -s KILL 5 git -c core.fsmonitor=x status", _FSMON),
+    ("env timeout 5 git -c core.fsmonitor=x status", _FSMON),
+    ("command exec git -c core.fsmonitor=x status", _FSMON),
+    ("xargs git -c core.fsmonitor=x status", _FSMON),
+    ("echo a | xargs sh -c 'git \"$@\"' _", _XARGS_GIT),
+    ("env -S 'git -c core.fsmonitor=x status'", _UNSAFE),
+    ("command rm -rf /", "rm target '/'"),
+    ("find . | xargs rm", "`rm` run by xargs"),
+    ("find / -exec rm -rf {} +", "`rm` " + _XARGS_FIND),
+    ("find . -name '*.pyc' -exec rm {} \\;", "`rm` " + _XARGS_FIND),
+    ("find /etc -exec chmod 777 {} +", "got: 777"),
+    ("env git -c core.fsmonitor=x status", _FSMON),
+    ("find . -exec git -c core.fsmonitor=x status {} \\;", _FSMON),
+    ('bash -c "$V"', _UNSAFE),
+    ("find . -exec chmod 755 {} +", "`chmod` " + _XARGS_FIND),
+    ("env --split-string='git -c core.fsmonitor=x status'", _UNSAFE),
+    ("env -S'git -c core.fsmonitor=x status'", _UNSAFE),
+    ("timeout -sKILL 5 git -c core.fsmonitor=x status", _FSMON),
+    ("timeout --signal=KILL -k 1 5 git -c core.fsmonitor=x status", _FSMON),
+    ("exec -a x git -c core.fsmonitor=x status", _FSMON),
+    ("sh -ec 'git --upload-pack=/tmp/evil ls-remote x'", "--upload-pack"),
+    ("timeout 60 npm test", "npm"),
+]
+
+WRAPPER_ALLOWED = [
+    "command -v git",
+    "find . -name '*.py' | xargs grep foo",
+    "bash -c 'ls && git status'",
+    "bash -lc 'git status'",
+    "exec git status",
+    "timeout 60 git status",
+    "env FOO=1 git status",
+    "find . -name '*.pyc' -delete",
+    "find . -name '*.py' -exec grep -l foo {} +",
+    "git commit -m '...$(x)'",
+    "command -v nc",
+    "timeout -s KILL 5 git status",
+    "exec 3>&1",
+]
+
+
+class TestWrapperUnwrapRefused:
+    """Validators see the inner command of every wrapper, on both paths."""
+
+    @pytest.mark.parametrize(("command", "reason"), WRAPPER_REFUSED)
+    def test_validate_command_refuses(self, command, reason, temp_dir):
+        ok, r = validate_command(command, temp_dir)
+        assert ok is False and reason in r, (command, r)
+
+    @pytest.mark.parametrize(("command", "reason"), WRAPPER_REFUSED)
+    def test_hook_refuses(self, command, reason, temp_dir):
+        out = _hook(command, temp_dir)
+        assert out.get("decision") == "block" and reason in out["reason"], (
+            command,
+            out,
+        )
+
+
+class TestWrapperUnwrapAllowed:
+    """False-positive guard for the wrapper unwrapping."""
+
+    @pytest.mark.parametrize("command", WRAPPER_ALLOWED)
+    def test_validate_command_allows(self, command, temp_dir):
+        assert validate_command(command, temp_dir) == (True, ""), command
+
+    @pytest.mark.parametrize("command", WRAPPER_ALLOWED)
+    def test_hook_allows(self, command, temp_dir):
+        assert _hook(command, temp_dir) == {}, command
+
+
+def test_bash_c_npm_allowed_in_node_project(node_project):
+    command = "bash -c 'npm test'"
+    assert validate_command(command, node_project) == (True, "")
+    assert _hook(command, node_project) == {}
+
+
+class TestWrapperFallbackWithoutBashlex:
+    """Without bashlex, wrappers the regex parser cannot see are refused."""
+
+    @pytest.fixture(autouse=True)
+    def _no_bashlex(self, monkeypatch):
+        monkeypatch.setattr(hooks, "is_available", lambda: False)
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "env git status",
+            "echo a | xargs grep foo",
+            "exec git status",
+            "timeout 5 git status",
+            "watch ls",
+            "command git status",
+            "bash -lc 'ls'",
+            "bash -c 'ls'",
+            "find . -exec ls {} +",
+        ],
+    )
+    def test_refused(self, command, temp_dir):
+        ok, r = validate_command(command, temp_dir)
+        assert ok is False and "without bashlex" in r, (command, r)
+
+    @pytest.mark.parametrize("command", ["git status && ls", "command -v git"])
+    def test_allowed(self, command, temp_dir):
+        assert validate_command(command, temp_dir) == (True, ""), command

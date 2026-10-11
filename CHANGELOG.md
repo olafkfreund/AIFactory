@@ -9,6 +9,14 @@
   server environment.
   A repo `pager.<cmd>` setting still wins over `core.pager`; it only runs on a
   tty, which no server spawn has (tracked in the follow-up).
+- **The git, rm, chmod and db validators now read the command inside a wrapper (#1720).**
+  The bashlex walk is the only unwrapper for both the allowlist and the
+  validators. It now also unwraps `command`, `exec` and `timeout` and grouped
+  `-c` flags (`bash -lc`), and refuses `env -S`/`--split-string`. A validated
+  command run by `xargs` or `find -exec` is refused, because its arguments
+  cannot be checked: use `find -delete` instead of `-exec rm`. Without bashlex,
+  `env`, `xargs`, `exec`, `timeout`, `watch`, `command`, `bash -c` and
+  `find -exec` are refused.
 - **An agent-written git config can no longer run commands in the server (#1689).**
   Every `child_env()` process now pins `core.fsmonitor=false` next to the
   `core.hooksPath` pin (`GIT_CONFIG_COUNT` is now `n+2`). The bash guard refuses
