@@ -43,7 +43,8 @@ not code execution or a secret leak.
 - On the `start_task` TFactory path, the test profile sent to TFactory comes
   only from a contract the web server has verified.
 - When the contract is on hold, no tampered profile is sent.
-- Legacy tasks (no trusted-plan trace) still hand off as they do today.
+- Legacy tasks (no trusted-plan trace) still hand off to TFactory with their
+  declared profile.
 - A test covers the route, so a regression fails CI.
 
 ## Affected users and systems
@@ -57,20 +58,24 @@ not code execution or a secret leak.
 
 ## Constraints
 
-- Use the web-server gate (`handoff_contract` plus `lookup`), not
-  `core.contract_trust.trusted_contract` as the issue says. That one runs in
-  the pod and reads `AIFACTORY_TRUSTED_CONTRACT`, which the web server never
-  has, so there it can never return verified.
+- The issue's suggested reader, `core.contract_trust.trusted_contract`, cannot
+  work here. It runs in the pod and reads `AIFACTORY_TRUSTED_CONTRACT`, which
+  the web server never has, so in the web server it can never return verified.
+  The web server's own verdict comes from `lookup` and `resolve_contract`
+  (`server/services/trusted_contract.py`).
 - When in doubt, hold. A lookup failure, an exception, or a trusted trace with
   no record must not fall back to the plan file.
-- Only isolated hosts (kubejob plus `DATABASE_URL`) can verify. On other hosts,
-  trusted-plan tasks would lose their declared profile until #1680 lands. That
-  is a visible change.
+- Only isolated hosts (kubejob plus `DATABASE_URL`, `host_isolated`) can
+  verify. On other hosts, trusted-plan tasks would lose their declared profile.
+  That is a visible change. #1680 landed (`1c2df772`), but `host_isolated`
+  still says "revisit when #1680 lands" and was never widened; no open issue
+  tracks that.
 - `implementation_plan.json` is rewritten during the build and can lose its
   `tfactory` block. The signed copy is `context/task_contract.json`.
 - Overlap: PR #1751 edits `tfactory_client.py` (other functions) and the
   autonomy matrix, which may need regenerating. PR #1752 edits `execution.py`
-  away from line 366. Do not touch #943.
+  away from line 366. Do not touch the Factory#943 cells in the autonomy
+  matrix.
 - Target `dev`, add a CHANGELOG entry, follow the intent, spec and plan gates.
 
 ## Open questions
@@ -83,6 +88,7 @@ not code execution or a secret leak.
 3. `load_tfactory_block`: keep it for the legacy path, or delete it with its
    exports and the tests that pin it?
 4. Is it acceptable that trusted-plan tasks on hosts that cannot verify lose
-   their declared TFactory profile until #1680 lands?
+   their declared TFactory profile? If not, widening `host_isolated` now that
+   #1680 has landed is a separate issue to file first.
 5. Order: wait for PR #1751 to merge and branch from the new dev, or start now
    and rebase?
