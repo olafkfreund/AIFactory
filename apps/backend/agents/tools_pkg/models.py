@@ -167,7 +167,7 @@ AGENT_CONFIGS = {
         "thinking_default": "high",
     },
     "spec_compaction": {
-        "tools": BASE_READ_TOOLS + BASE_WRITE_TOOLS,
+        "tools": [],  # #1719: text-only summariser; simple_client has no hooks
         "mcp_servers": [],
         "aifactory_tools": [],
         "thinking_default": "medium",

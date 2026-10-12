@@ -213,6 +213,7 @@ from prompts_pkg.project_context import (
     load_project_index,
 )
 from security import bash_security_hook, web_fetch_security_hook
+from security.hooks import git_dir_write_hook  # noqa: E402
 
 
 def _validate_custom_mcp_server(server: dict) -> bool:
@@ -1033,6 +1034,11 @@ def create_client(
                 # URLs to cloud metadata / loopback / private / non-http(s).
                 HookMatcher(matcher="WebFetch", hooks=[web_fetch_security_hook]),
                 HookMatcher(matcher="WebSearch", hooks=[web_fetch_security_hook]),
+                # #1719: refuse agent writes into git metadata
+                HookMatcher(
+                    matcher="Write|Edit|MultiEdit|NotebookEdit",
+                    hooks=[git_dir_write_hook],
+                ),
                 # #474 anti-loop guardrail + #476 pre-mutation checkpoint — run on
                 # every tool (matcher=None); each no-ops unless its flag is on.
                 HookMatcher(hooks=[guardrail_pretool_hook, mutation_pretool_hook]),

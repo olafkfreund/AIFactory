@@ -17,10 +17,15 @@ commands must keep working.
 """
 
 import asyncio
+import re
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
+from agents.tools_pkg.models import AGENT_CONFIGS
+from core.child_env import child_env
 from security import hooks, validate_command
 from security.ast_parser import (
     UnparseableCommand,
@@ -28,6 +33,9 @@ from security.ast_parser import (
     extract_commands_ast,
     is_available,
 )
+from security.filesystem_validators import git_metadata_write_refusal
+from security.hooks import git_dir_write_hook
+from tools.executor import ToolExecutor
 
 pytestmark = pytest.mark.skipif(
     not is_available(), reason="bashlex not installed; AST parser unavailable"
@@ -456,3 +464,199 @@ class TestWrapperFallbackWithoutBashlex:
     def test_refused(self, command, temp_dir):
         ok, r = validate_command(command, temp_dir)
         assert ok is False and "without bashlex" in r, (command, r)
+
+
+# --- #1719: agent writes into git metadata ---------------------------------
+
+_WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit", "Bash"}
+_SIMPLE_TYPES = [
+    "commit_message",
+    "merge_resolver",
+    "insights",
+    "batch_analysis",
+    "batch_validation",
+    "spec_compaction",
+]
+
+
+def _git(*args):
+    subprocess.run(["git", *args], env=child_env(), check=True, capture_output=True)
+
+
+@pytest.fixture
+def repo(tmp_path):
+    orig = tmp_path / "orig"
+    wt = tmp_path / "wt"
+    _git("init", "-q", str(orig))
+    _git(
+        "-C", str(orig), "-c", "user.name=t", "-c", "user.email=t@t",
+        "commit", "-q", "--allow-empty", "-m", "init",
+    )  # fmt: skip
+    _git("-C", str(orig), "worktree", "add", "-q", str(wt))
+    (wt / "link").symlink_to(orig / ".git")
+    (tmp_path / "store").mkdir()
+    (tmp_path / "ext").mkdir()
+    (tmp_path / "ext" / ".git").symlink_to(tmp_path / "store")
+    (wt / "a").symlink_to(wt / "b")
+    (wt / "b").symlink_to(wt / "a")
+    return orig, wt
+
+
+def _write_hook(tool, ti, cwd):
+    return asyncio.run(
+        git_dir_write_hook({"tool_name": tool, "tool_input": ti, "cwd": str(cwd)})
+    )
+
+
+def _ti(tool, path):
+    key = "notebook_path" if tool == "NotebookEdit" else "file_path"
+    return {key: str(path)}
+
+
+class TestGitDirWriteGuard:
+    @pytest.mark.parametrize(
+        "case",
+        [
+            "wt_pointer", "abs_config", "hooks", "info", "modules", "dotdot",
+            "symlink_abs", "symlink_rel_cwd", "ext_dotgit_symlink", "upper",
+            "multiedit", "notebook",
+        ],
+    )  # fmt: skip
+    def test_blocked_paths(self, repo, tmp_path, case):
+        orig, wt = repo
+        tool, path, cwd = {
+            "wt_pointer": ("Write", wt / ".git", wt),
+            "abs_config": ("Edit", orig / ".git" / "config", wt),
+            "hooks": ("Write", orig / ".git" / "hooks" / "pre-commit", wt),
+            "info": ("Write", orig / ".git" / "info" / "attributes", wt),
+            "modules": ("Edit", orig / ".git" / "modules" / "x" / "config", wt),
+            "dotdot": ("Write", "src/../.git/config", orig),
+            "symlink_abs": ("Edit", wt / "link" / "config", wt),
+            "symlink_rel_cwd": ("Write", "link/config", wt),
+            "ext_dotgit_symlink": ("Write", tmp_path / "ext" / ".git" / "config", wt),
+            "upper": ("Write", orig / ".GIT" / "config", wt),
+            "multiedit": ("MultiEdit", orig / ".git" / "config", wt),
+            "notebook": ("NotebookEdit", orig / ".git" / "x.ipynb", wt),
+        }[case]  # fmt: skip
+        r = _write_hook(tool, _ti(tool, path), cwd)
+        assert r["decision"] == "block"
+        assert r["reason"]
+
+    @pytest.mark.parametrize(
+        "tool,path",
+        [
+            ("Write", ".gitignore"),
+            ("Write", ".github/workflows/x.yml"),
+            ("Write", "src/git/x.py"),
+            ("Write", "repo.git/readme"),
+            ("NotebookEdit", "nb.ipynb"),
+            ("Read", "ORIG/.git/config"),
+        ],
+    )
+    def test_allowed_paths(self, repo, tool, path):
+        orig, wt = repo
+        if tool == "Read":
+            path = str(orig / ".git" / "config")
+        assert _write_hook(tool, _ti(tool, path), wt) == {}
+
+    @pytest.mark.parametrize(
+        "ti", ["x", {}, {"file_path": 3}, {"file_path": ""}], ids=str
+    )
+    def test_malformed_input_blocked(self, repo, ti):
+        _, wt = repo
+        assert _write_hook("Write", ti, wt)["decision"] == "block"
+
+    @pytest.mark.parametrize("exc", [OSError, RuntimeError, ValueError])
+    def test_resolve_error_refused(self, repo, monkeypatch, exc):
+        _, wt = repo
+
+        def _boom(self, *a, **k):
+            raise exc("x")
+
+        monkeypatch.setattr(Path, "resolve", _boom)
+        assert git_metadata_write_refusal(str(wt / "ok.txt"), str(wt)) is not None
+
+    def test_symlink_loop(self, repo):
+        _, wt = repo
+        r = _write_hook("Write", _ti("Write", wt / "a"), wt)
+        if sys.version_info < (3, 13):
+            assert r["decision"] == "block"
+
+    def test_block_log_has_no_path(self, repo, caplog):
+        orig, wt = repo
+        with caplog.at_level("WARNING"):
+            _write_hook("Write", _ti("Write", orig / ".git" / "config"), wt)
+        assert "Blocked agent write" in caplog.text
+        assert str(orig) not in caplog.text
+
+    def test_executor_write_refused(self, repo):
+        orig, _ = repo
+        cfg = orig / ".git" / "config"
+        before = cfg.read_bytes()
+        res = asyncio.run(
+            ToolExecutor(working_dir=orig).execute(
+                "Write", {"file_path": ".git/config", "content": "x"}
+            )
+        )
+        assert res.is_error
+        assert cfg.read_bytes() == before
+
+    def test_executor_edit_refused(self, repo):
+        orig, _ = repo
+        cfg = orig / ".git" / "config"
+        before = cfg.read_bytes()
+        res = asyncio.run(
+            ToolExecutor(working_dir=orig).execute(
+                "Edit",
+                {"file_path": ".git/config", "old_string": "[core]", "new_string": "x"},
+            )
+        )
+        assert res.is_error
+        assert cfg.read_bytes() == before
+
+    def test_matcher_covers_write_tools(self):
+        src = (
+            Path(__file__).resolve().parents[1] / "apps/backend/core/client.py"
+        ).read_text()
+        m = re.search(
+            r'HookMatcher\(\s*matcher="([^"]+)",\s*hooks=\[git_dir_write_hook\]', src
+        )
+        assert m
+        for t in ("Write", "Edit", "MultiEdit", "NotebookEdit"):
+            assert re.fullmatch(m.group(1), t)
+        for t in ("Read", "Bash"):
+            assert not re.fullmatch(m.group(1), t)
+
+    def test_notebook_path_checked_when_file_path_also_sent(self, repo):
+        orig, wt = repo
+        ti = {
+            "file_path": str(wt / "ok.ipynb"),
+            "notebook_path": str(orig / ".git" / "x.ipynb"),
+        }
+        assert _write_hook("NotebookEdit", ti, wt).get("decision") == "block"
+
+    @pytest.mark.parametrize("agent_type", _SIMPLE_TYPES)
+    def test_simple_client_types_have_no_write_tools(self, agent_type):
+        """Callers of simple_client (#1719 NOTE-B): commit_message,
+        merge_resolver, insights, batch_analysis, batch_validation,
+        spec_compaction. simple_client has no hooks, so none may list writes."""
+        assert not _WRITE_TOOLS & set(AGENT_CONFIGS[agent_type]["tools"])
+
+    @pytest.mark.parametrize("agent_type", _SIMPLE_TYPES)
+    def test_simple_client_options_disallow_write_tools(self, agent_type, monkeypatch):
+        from core import simple_client
+
+        seen = {}
+
+        def _capture(**kw):
+            seen["options"] = kw["options"]
+            return object()
+
+        monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok")
+        monkeypatch.setattr(simple_client, "require_auth_token", lambda: "tok")
+        monkeypatch.setattr(simple_client, "ClaudeSDKClient", _capture)
+        monkeypatch.setattr(simple_client, "wrap_client_outbound_scrub", lambda c: c)
+        simple_client.create_simple_client(
+            agent_type=agent_type, model="claude-haiku-4-5"
+        )
+        assert _WRITE_TOOLS <= set(seen["options"].disallowed_tools)
