@@ -494,3 +494,8 @@ either way. For an emergency without a deploy, operators can turn
 - Step 4: `host_ci_green` merges the last three "unknown" rules into one
   `pending` expression instead of three separate returns (ruff PLR0911, max six
   returns, would regress the ratchet). Behaviour and rule order are unchanged.
+- Step 5: the head resolution and gate check live in a small async helper,
+  `_gated_head(merge_gate, match_head, pr_head, pr)`, instead of inline.
+  `watch_and_finish` carries `# noqa: PLR0911, PLR0915 - merge-gate human-stop
+  (#1695)`: the new human-stop return and statements push the already-long
+  watcher past ruff's return/statement limits, and the ratchet would regress.

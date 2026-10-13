@@ -1168,7 +1168,21 @@ def _split_repo(repo: str) -> tuple[str, str] | None:
     return None
 
 
-async def watch_and_finish(
+async def _gated_head(
+    merge_gate: Callable[[str], bool],
+    match_head: str | None,
+    pr_head: Callable[[], str | None],
+    pr: int,
+) -> str | None:
+    """The head to merge when ``merge_gate`` is green for it, else None (#1695)."""
+    head = match_head or await asyncio.to_thread(pr_head)
+    if head is None or not await asyncio.to_thread(merge_gate, head):
+        logger.info("[pr-endgame] pr=%d merge gate not green yet", pr)
+        return None
+    return head
+
+
+async def watch_and_finish(  # noqa: PLR0911, PLR0915 - merge-gate human-stop (#1695)
     *,
     owner: str,
     repo: str,
@@ -1187,12 +1201,15 @@ async def watch_and_finish(
     poll_interval: int = _POLL_INTERVAL_SECONDS,
     max_minutes: int = _MAX_POLL_MINUTES,
     human_approval_required: bool = False,
+    merge_gate: Callable[[str], bool] | None = None,
 ) -> dict:
     """Poll the PR's reviews and merge only on a CLEAN Copilot approval.
 
     ``human_approval_required`` additionally waits for a human GitHub approval
     of the head commit (``human_approval_head``) and merges bound to that SHA
     (#1663); until then it keeps polling, and the timeout is the human-stop.
+    ``merge_gate`` (#1695): the merge waits until ``merge_gate(head)`` is true
+    and merges only that head; an endgame-pushed head holds for a human.
 
     Merge requires ALL of: ``auto_merge`` on, no CHANGES_REQUESTED, and — when
     ``require_copilot`` (default) — that GitHub Copilot's code review actually ran
@@ -1285,6 +1302,29 @@ async def watch_and_finish(
                 )
                 if match_head is None:
                     continue  # no human approval of the head commit yet
+            if merge_gate is not None:
+                if fix_cycles or conflict_cycles:
+                    logger.info(
+                        "[pr-endgame] pr=%d head was pushed by the endgame and no "
+                        "verdict covers it; handing to a human",
+                        pr,
+                    )
+                    return {
+                        "pr": pr,
+                        "verdict": "approved",
+                        "merged": False,
+                        "reason": "merge_gate_unverified_head",
+                        "fix_cycles": fix_cycles,
+                        "conflict_cycles": conflict_cycles,
+                    }
+                match_head = await _gated_head(
+                    merge_gate,
+                    match_head,
+                    lambda: _pr_head(owner, repo, pr, runner),
+                    pr,
+                )
+                if match_head is None:
+                    continue
             merged = await asyncio.to_thread(
                 merge_pr, owner, repo, pr, runner=runner, match_head=match_head
             )
