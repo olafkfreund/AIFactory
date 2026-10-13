@@ -23,7 +23,7 @@ import json
 import logging
 import os
 import subprocess
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -397,7 +397,9 @@ def _meta_signal(meta: dict[str, object], key: str) -> object:
     return None
 
 
-def merge_gate_signals(spec_dir: Path) -> dict[str, object]:
+def merge_gate_signals(
+    spec_dir: Path, *, fetched: Mapping[str, object] | None = None
+) -> dict[str, object]:
     """The RFC-0011 gate signals this task actually recorded, for ``decide_merge``.
 
     Returns a dict keyed exactly like ``decide_merge``'s keyword arguments.
@@ -416,6 +418,9 @@ def merge_gate_signals(spec_dir: Path) -> dict[str, object]:
     So this NARROWS: it can refuse a merge on recorded evidence of failure, and
     it never invents a green. That is strictly more than the tier ceiling it
     replaces, which read only ``reviewTier`` and ignored the verdict entirely.
+
+    With ``fetched`` (verified tasks, #1695) the verdict and host-CI start from
+    those trusted values and recorded metadata can only tighten them.
     """
     signals: dict[str, object] = {
         "host_ci_green": True,
@@ -428,6 +433,11 @@ def merge_gate_signals(spec_dir: Path) -> dict[str, object]:
         "val_floor": None,
         "ci_parity": True,
     }
+    if fetched is not None:
+        from merge.merge_policy import _verdict_pass  # noqa: PLC0415
+
+        signals["tfactory_verdict"] = fetched.get("tfactory_verdict")
+        signals["host_ci_green"] = fetched.get("host_ci_green") is True
     spec_dir = Path(spec_dir)
     if (spec_dir / _HANDBACK_RECEIPT).is_file():
         signals["tfactory_verdict"] = "handback"
@@ -439,12 +449,18 @@ def merge_gate_signals(spec_dir: Path) -> dict[str, object]:
         return signals
     for key in ("tfactory_verdict", "achieved_val", "val_floor"):
         recorded = _meta_signal(meta, key)
-        if recorded is not None:
-            signals[key] = recorded
+        if recorded is None:
+            continue
+        if fetched is not None and key == "tfactory_verdict" and _verdict_pass(recorded):
+            continue  # metadata can only tighten a fetched verdict
+        signals[key] = recorded
     for key in ("ci_parity", "host_ci_green"):
         recorded = _meta_signal(meta, key)
-        if isinstance(recorded, bool):
-            signals[key] = recorded
+        if not isinstance(recorded, bool):
+            continue
+        if fetched is not None and key == "host_ci_green" and recorded:
+            continue
+        signals[key] = recorded
     # A recorded handback is never overwritten by a stale metadata verdict.
     if (spec_dir / _HANDBACK_RECEIPT).is_file():
         signals["tfactory_verdict"] = "handback"
