@@ -148,10 +148,18 @@ def test_push_branch_pushes_to_origin(monkeypatch, tmp_path) -> None:
             self.returncode = rc
 
     envs = []
+    hosts = []
 
     def fake_run(args, **kwargs):
         calls.append(args)
         envs.append(kwargs.get("env"))
+        env = kwargs.get("env") or {}
+        # the per-call dir is removed on exit: read hosts.yml at call time
+        hosts.append(
+            Path(env["GH_CONFIG_DIR"], "hosts.yml").read_text()
+            if "GH_CONFIG_DIR" in env
+            else ""
+        )
         if args[:2] == ["git", "rev-parse"]:
             return _R(stdout="aifactory/042-x")
         if args[:3] == ["git", "remote", "get-url"]:
@@ -162,11 +170,12 @@ def test_push_branch_pushes_to_origin(monkeypatch, tmp_path) -> None:
     assert wf.maybe_push_workspace_branch(tmp_path, "042-x") is True
     idx = next(i for i, c in enumerate(calls) if c[:2] == ["git", "push"])
     push, push_env = calls[idx], envs[idx]
-    # USERNAME-ONLY URL: since AIFactory#1366 the token rides in GIT_ASKPASS,
-    # never in argv, where /proc/<pid>/cmdline publishes it host-wide.
-    assert push[2] == "https://x-access-token@github.com/o/r.git"
+    # Plain URL: since AIFactory#1366/#1723 the token rides in a per-call
+    # GH_CONFIG_DIR, never in argv, where /proc/<pid>/cmdline publishes it.
+    assert push[2] == "https://github.com/o/r.git"
     assert push[3] == "HEAD:aifactory/042-x"
-    assert push_env["GIT_PASS"] == "ghs_faketoken"  # vacuity guard
+    assert "ghs_faketoken" in hosts[idx]  # vacuity guard
+    assert "GIT_PASS" not in push_env
 
 
 # ---------------------------------------------------------------------------

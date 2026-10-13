@@ -108,6 +108,8 @@ async def lifespan(app: FastAPI):
     sweep_github_dirs()
     # Before any loop starts; env_bootstrap already loaded a .env PAT (#1671).
     github_app.start()
+    github_app.warn_legacy_web_login()
+    github_app.load_web_login()  # no-op when a token or the App is present
 
     settings = get_settings()
 

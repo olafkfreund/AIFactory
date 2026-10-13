@@ -28,7 +28,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Literal
 
-from core.child_env import GITHUB_KEEP, child_env
+from core.child_env import child_env
+from core.git_credentials import github_env
 
 fcntl: ModuleType | None
 try:  # pragma: no cover - platform dependent
@@ -92,18 +93,17 @@ _AMBIENT_GIT_VARS = frozenset(
 def _git_env() -> dict[str, str]:
     """Scrubbed git environment: host secrets dropped, repo-pinning vars removed.
 
-    Built through ``child_env``: the GitHub keep-list survives, and the
-    ``core.hooksPath`` and ``core.fsmonitor`` pins are applied. Ambient ``GIT_*``
-    vars (``_AMBIENT_GIT_VARS``) are dropped.
+    Built through ``child_env``: no GitHub token (#1723): the one network
+    call adds it per call via ``github_env``. The ``core.hooksPath`` and
+    ``core.fsmonitor`` pins are applied. Ambient ``GIT_*`` vars
+    (``_AMBIENT_GIT_VARS``) are dropped.
 
     ``GIT_TERMINAL_PROMPT=0`` is forced on: this manager runs headless (control
     plane pod, build Job), so a remote that wants credentials must FAIL rather
     than block forever on a prompt nobody can answer (#1106 added a network
     fetch to the worktree path; a hang there would wedge the build).
     """
-    env: dict[str, str] = child_env(
-        keep=GITHUB_KEEP, extra={"GIT_TERMINAL_PROMPT": "0"}
-    )
+    env: dict[str, str] = child_env(extra={"GIT_TERMINAL_PROMPT": "0"})
     for k in _AMBIENT_GIT_VARS:
         env.pop(k, None)
     return env
@@ -382,10 +382,12 @@ class WorktreeManager:
             )
             return self.base_branch
 
-        self._setup_git_credentials()
-        fetch = self._run_git(
-            ["fetch", "origin", self.base_branch], timeout=_FETCH_TIMEOUT_SECONDS
-        )
+        with github_env(_git_env()) as env:
+            fetch = self._run_git(
+                ["fetch", "origin", self.base_branch],
+                timeout=_FETCH_TIMEOUT_SECONDS,
+                env=env,
+            )
         if fetch.returncode != 0:
             stderr = fetch.stderr.strip()
             if _REMOTE_REF_MISSING in stderr.lower():
@@ -415,30 +417,6 @@ class WorktreeManager:
         # reliable than origin/<base>, which a remote configured without a
         # fetch refspec leaves unwritten.
         return "FETCH_HEAD"
-
-    def _setup_git_credentials(self) -> None:
-        """Wire ``gh`` as git's credential helper, best-effort (#540 pattern).
-
-        The deployed pod and the build Job hold a gh token but no git credential
-        config, so a raw HTTPS ``git fetch``/``git push`` fails with "could not
-        read Username for https://github.com". Same call the PR push path
-        already makes; done here so the #1106 fetch above fails only for a
-        genuinely broken remote, never for a missing credential helper.
-        """
-        try:
-            subprocess.run(
-                ["gh", "auth", "setup-git"],  # noqa: S607 - fixed argv, no shell
-                cwd=self.project_dir,
-                capture_output=True,
-                text=True,
-                timeout=15,
-                env=_git_env(),
-                check=False,  # advisory: the fetch below reports the real outcome
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            # gh absent (local dev) or slow — the fetch below reports the real
-            # outcome, so nothing to escalate here.
-            logger.debug("gh auth setup-git skipped: %s", exc)
 
     def _resolve_git_lock_path(self) -> Path:
         """Path to the per-base-repo git mutation sentinel.
@@ -591,7 +569,11 @@ class WorktreeManager:
         return result.stdout.strip()
 
     def _run_git(
-        self, args: list[str], cwd: Path | None = None, timeout: float | None = None
+        self,
+        args: list[str],
+        cwd: Path | None = None,
+        timeout: float | None = None,
+        env: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess:
         """Run a git command and return the result.
 
@@ -601,7 +583,8 @@ class WorktreeManager:
 
         ``env=_git_env()`` drops inherited GIT_DIR/GIT_INDEX_FILE/... so the
         command targets the repo at ``cwd`` and not whatever repo the ambient
-        environment points at (see _AMBIENT_GIT_VARS).
+        environment points at (see _AMBIENT_GIT_VARS). An explicit ``env``
+        replaces ``_git_env()`` (the base fetch passes the ``github_env`` one).
         """
         return subprocess.run(
             ["git", "-c", "core.bare=false"] + args,
@@ -610,7 +593,7 @@ class WorktreeManager:
             text=True,
             encoding="utf-8",
             errors="replace",
-            env=_git_env(),
+            env=env if env is not None else _git_env(),
             timeout=timeout,
         )
 

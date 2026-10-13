@@ -134,8 +134,9 @@ def maybe_push_workspace_branch(
         if not branch or not url:
             _log.warning("[workspace_fetch] worktree has no branch/origin; skip push")
             return False
-        # The token rides in GIT_ASKPASS, never in argv — /proc/<pid>/cmdline is
-        # world-readable for the lifetime of the child (AIFactory#1366).
+        # The token rides in a per-call GH_CONFIG_DIR (github_env), never in argv
+        # or env; the URL is not rewritten. /proc/<pid>/cmdline is world-readable
+        # for the lifetime of the child (AIFactory#1366, #1723).
         with authed_push_url(url) as (push_url, git_env):
             res = subprocess.run(  # noqa: S603
                 ["git", "push", push_url, f"HEAD:{branch}"],  # noqa: S607

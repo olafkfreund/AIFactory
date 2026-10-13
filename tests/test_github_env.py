@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import shutil
@@ -252,15 +253,60 @@ def test_askpass_reads_password_from_file() -> None:
     assert not d.exists()
 
 
+def _non_test_sources() -> Iterator[Path]:
+    for root in (_SERVER, _ROOT / "apps" / "backend"):
+        for p in sorted(root.rglob("*.py")):
+            # skip dot-dirs: CI keeps the venv at apps/backend/.venv
+            if any(x.startswith(".") for x in p.relative_to(root).parts):
+                continue
+            if "tests" in p.parts or p.name == "conftest.py":
+                continue
+            if p.name.startswith("test_"):
+                continue
+            yield p
+
+
 def test_web_server_has_no_env_token_path() -> None:
-    needles = ("keep=GITHUB_KEEP", '"setup-git"', 'GIT_PASS"')
-    hits = [
-        f"{p.relative_to(_ROOT)}:{n}"
-        for p in sorted(_SERVER.rglob("*.py"))
-        for n, line in enumerate(p.read_text().splitlines(), 1)
+    needles = (
+        "keep=GITHUB_KEEP",
+        "*GITHUB_KEEP",
+        '"setup-git"',
+        'GIT_PASS"',
+        '"GIT_PASS":',
+    )
+    hits = {
+        (str(p.relative_to(_ROOT)), line.strip())
+        for p in _non_test_sources()
+        for line in p.read_text().splitlines()
         if any(s in line for s in needles)
-    ]
-    assert hits == []
+    }
+    # RUNNER_KEEP keeps the token in the runner process by approver decision (#1723 D1).
+    allowed = {
+        ("apps/web-server/server/utils/subprocess_env.py", "*GITHUB_KEEP,"),
+        (
+            "apps/backend/core/git_credentials.py",
+            '_STRIPPED = ("GITHUB_TOKEN", "GH_TOKEN", "GIT_PASS")',
+        ),
+    }
+    assert hits == allowed
+
+
+def test_every_backend_agent_options_call_passes_env() -> None:
+    # AST, not grep: several docstrings mention ``ClaudeAgentOptions(``.
+    missing = []
+    for p in _non_test_sources():
+        if "backend" not in p.parts:
+            continue
+        for n in ast.walk(ast.parse(p.read_text())):
+            if not isinstance(n, ast.Call):
+                continue
+            name = getattr(n.func, "id", getattr(n.func, "attr", ""))
+            # arg is None means ``**kwargs`` (core/client.py passes env that way)
+            if name == "ClaudeAgentOptions" and not any(
+                k.arg in ("env", None) for k in n.keywords
+            ):
+                missing.append(f"{p.relative_to(_ROOT)}:{n.lineno}")
+    assert missing == []
 
 
 @pytest.mark.asyncio
@@ -276,6 +322,98 @@ async def test_login_route_spawns_nothing_when_token_set() -> None:
     assert r["data"]["success"] is True
     assert "GITHUB_TOKEN" in r["data"]["message"]
     spawn.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_login_route_uses_managed_gh_config_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from server.routes import github as github_routes
+    from server.services import github_app
+
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setattr(github_app, "_managed_gh_dir", lambda: tmp_path / "aif-gh")
+    seen: list[dict[str, str]] = []
+    argvs: list[tuple[object, ...]] = []
+
+    async def spawn(*a: object, **kw: dict[str, str]) -> None:
+        seen.append(kw["env"])
+        argvs.append(a)
+        raise RuntimeError("recorded")
+
+    with (
+        patch("server.routes.github.shutil.which", return_value="/usr/bin/gh"),
+        patch("server.routes.github.asyncio.create_subprocess_exec", spawn),
+    ):
+        await github_routes.start_github_auth()  # type: ignore[no-untyped-call]
+    assert seen[0]["GH_CONFIG_DIR"] == str(tmp_path / "aif-gh")
+    assert "--insecure-storage" in argvs[0]  # token lands in the managed hosts.yml
+
+
+class _EofStream:
+    async def readline(self) -> bytes:
+        return b""
+
+
+class _ExitedProc:
+    returncode = 0
+    stdout = stderr = _EofStream()
+    stdin = None
+
+    async def wait(self) -> int:
+        return 0
+
+
+def _status_seen_by_load(
+    monkeypatch: pytest.MonkeyPatch, routes: object
+) -> list[object]:
+    """Patch load_web_login to record the auth status at the moment it runs."""
+    from server.services import github_app
+
+    seen: list[object] = []
+    monkeypatch.setattr(
+        github_app,
+        "load_web_login",
+        lambda: seen.append(routes._gh_auth_status),
+    )
+    return seen
+
+
+@pytest.mark.asyncio
+async def test_monitor_publishes_the_token_before_reporting_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.routes import github as github_routes
+
+    seen = _status_seen_by_load(monkeypatch, github_routes)
+    monkeypatch.setattr(github_routes, "_gh_auth_status", None)
+    await github_routes._monitor_gh_auth(_ExitedProc())  # type: ignore[arg-type]
+    assert seen == [None], "load_web_login must run before success is set"
+    assert github_routes._gh_auth_status == {"complete": True, "success": True}
+
+
+@pytest.mark.asyncio
+async def test_already_authenticated_exit_publishes_before_success(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from server.routes import github as github_routes
+    from server.services import github_app
+
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setattr(github_app, "_managed_gh_dir", lambda: tmp_path / "aif-gh")
+    seen = _status_seen_by_load(monkeypatch, github_routes)
+
+    async def spawn(*_a: object, **_k: object) -> _ExitedProc:
+        return _ExitedProc()
+
+    with (
+        patch("server.routes.github.shutil.which", return_value="/usr/bin/gh"),
+        patch("server.routes.github.asyncio.create_subprocess_exec", spawn),
+    ):
+        r = await github_routes.start_github_auth()  # type: ignore[no-untyped-call]
+    assert r["data"]["message"] == "Already authenticated with GitHub."
+    assert seen == [None], "load_web_login must run before success is set"
+    assert github_routes._gh_auth_status == {"complete": True, "success": True}
 
 
 def test_run_gh_command_fails_closed_when_tmp_unwritable() -> None:

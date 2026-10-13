@@ -247,7 +247,7 @@ class TestAmbientGitEnv:
 
         assert "GIT_DIR" not in env
         assert "DATABASE_URL" not in env
-        assert env["GH_TOKEN"] == "t"
+        assert "GH_TOKEN" not in env
         assert env["GIT_TERMINAL_PROMPT"] == "0"
         pins = {
             env[f"GIT_CONFIG_KEY_{i}"]: env[f"GIT_CONFIG_VALUE_{i}"]

@@ -28,6 +28,16 @@
   Trusted-plan tasks on hosts other than kubejob with `DATABASE_URL` therefore
   lose their declared profile; legacy tasks are unchanged.
   `pfactory.load_tfactory_block` is removed.
+- **The GitHub token no longer reaches the worktree's git children, the push helper's env, three Claude agent SDK sites, or ~/.config/gh (#1723).**
+  The worktree base fetch and the push/force-push get the token per call
+  through `GH_CONFIG_DIR` (no askpass and no `GIT_PASS` env). `gh auth
+  setup-git` is no longer run during builds. The insights, follow-up review
+  and AI-analyzer agents get `GITHUB_TOKEN` and `GH_TOKEN` blanked. Web login
+  now stores its token in `~/.aifactory/gh`. An existing
+  `~/.config/gh/hosts.yml` token is left in place with a startup warning, so
+  re-log in and remove it.
+  Accepted residual risk: the runner process still holds the token by design,
+  and the same-uid `/proc/<pid>/environ` exposure is out of scope.
 - **An agent-written `.git/config` can no longer choose the server's ssh command, pager or editor (#1717).**
   `child_env()` also pins `core.sshCommand=ssh`, `core.pager=cat` and
   `core.editor=true` (`GIT_CONFIG_COUNT` is now `n+6`). Operators can still

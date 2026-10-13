@@ -31,7 +31,11 @@ except ImportError:
     ClaudeAgentOptions = None
     ClaudeSDKClient = None
 
-from core.auth import ensure_claude_code_oauth_token, get_auth_token
+from core.auth import (
+    ensure_claude_code_oauth_token,
+    get_agent_env_blanks,
+    get_auth_token,
+)
 from debug import (
     debug,
     debug_detailed,
@@ -190,6 +194,7 @@ Current question: {message}"""
                 ],
                 max_turns=30,  # Allow sufficient turns for codebase exploration
                 cwd=str(project_path),
+                env=get_agent_env_blanks(),  # no GitHub token for the CLI (#1723)
                 permission_mode="bypassPermissions",  # Bypass prompts for headless execution
             )
         )

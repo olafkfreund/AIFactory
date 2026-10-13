@@ -370,10 +370,11 @@ def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | 
         url = _git_stdout(repo, ["remote", "get-url", "origin"])
         if not url:
             return None, None
-        # The token rides in GIT_ASKPASS, never in argv — /proc/<pid>/cmdline is
-        # world-readable for the lifetime of the child (AIFactory#1366). The URL
-        # and the credential env are yielded together, so the token is only ever
-        # offered to a remote this process rewrote.
+        # The token rides in a per-call GH_CONFIG_DIR (github_env), never in argv
+        # or env; the URL is not rewritten. /proc/<pid>/cmdline is world-readable
+        # for the lifetime of the child (AIFactory#1366, #1723). The URL and the
+        # credential env are yielded together, so the token is only ever offered
+        # to an https github.com remote.
         with authed_push_url(url) as (push_url, git_env):
             subprocess.run(
                 [

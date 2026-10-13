@@ -278,7 +278,8 @@ def test_real_git_ssh_pager_editor_pinned(
 @pytest.mark.parametrize(
     "url", ["https://github.com/o/r.git", "https://example.com/o/r.git"]
 )
-@pytest.mark.parametrize("token", ["tok", ""])
+# ids: PYTEST_CURRENT_TEST (kept in child env) must not quote the token
+@pytest.mark.parametrize("token", ["ghs_scrubtest", ""], ids=["token", "none"])
 def test_authed_push_url_env_is_scrubbed(
     monkeypatch: pytest.MonkeyPatch, url: str, token: str
 ) -> None:
@@ -292,9 +293,10 @@ def test_authed_push_url_env_is_scrubbed(
         assert "DATABASE_URL" not in env
         assert env["GIT_CONFIG_KEY_0"] == "core.hooksPath"
         assert env["GIT_CONFIG_VALUE_0"] == "/dev/null"
-        # the token only travels via the askpass pair, never as GITHUB_TOKEN
+        # the token only travels via a per-call GH_CONFIG_DIR (#1723)
         assert "GITHUB_TOKEN" not in env
-        assert ("GIT_PASS" in env) == bool(
+        assert "GIT_PASS" not in env
+        assert ("GH_CONFIG_DIR" in env) == bool(
             token and url.startswith("https://github.com/")
         )
 
