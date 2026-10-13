@@ -51,6 +51,9 @@ def test_ai_analyzer_client_blanks_the_token(
     monkeypatch.setattr(cc, "ClaudeAgentOptions", _recorder(seen))
     monkeypatch.setattr(cc, "ClaudeSDKClient", lambda **_kw: object())
     monkeypatch.setattr(cc, "wrap_client_outbound_scrub", lambda c: c)
+    monkeypatch.setattr(
+        cc.ClaudeAnalysisClient, "_validate_oauth_token", lambda _s: None
+    )
     cc.ClaudeAnalysisClient(tmp_path)._create_client(tmp_path / "settings.json")
     _assert_blanked(seen)
 

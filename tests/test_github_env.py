@@ -256,6 +256,9 @@ def test_askpass_reads_password_from_file() -> None:
 def _non_test_sources() -> Iterator[Path]:
     for root in (_SERVER, _ROOT / "apps" / "backend"):
         for p in sorted(root.rglob("*.py")):
+            # skip dot-dirs: CI keeps the venv at apps/backend/.venv
+            if any(x.startswith(".") for x in p.relative_to(root).parts):
+                continue
             if "tests" in p.parts or p.name == "conftest.py":
                 continue
             if p.name.startswith("test_"):
