@@ -538,3 +538,6 @@ None beyond plan approval.
   as a pathspec), with a small self-test, and its docstring states the
   literal-argv limit. `git show <commit>` without `-p`, `merge-tree` merge
   drivers and other non-diff driver paths are filed as a follow-up issue.
+- `apps/web-server/tests/test_merger.py` fakes the runner on the exact
+  `"diff --name-only"` key too; its 8 keys now carry the two flags (found by
+  the full web-server suite after step 3).
