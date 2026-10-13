@@ -499,3 +499,7 @@ either way. For an emergency without a deploy, operators can turn
   `watch_and_finish` carries `# noqa: PLR0911, PLR0915 - merge-gate human-stop
   (#1695)`: the new human-stop return and statements push the already-long
   watcher past ruff's return/statement limits, and the ratchet would regress.
+- Step 6: the gate is built in a module-level `_build_merge_gate(...)`
+  (`# noqa: PLR0913`, same convention as `merge_pr`) instead of inline after
+  `owner, name = parts`; inline it pushed `run_pr_endgame` past PLR0912/PLR0915.
+  The inner callable is named `gate`. Behaviour unchanged.

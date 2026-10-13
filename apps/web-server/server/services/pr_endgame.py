@@ -1558,6 +1558,60 @@ def gather_pr_context(
     }
 
 
+def _build_merge_gate(  # noqa: PLR0913 - one-shot builder for run_pr_endgame
+    spec_dir: Path,
+    spec_id: str,
+    repo_parts: tuple[str, str],
+    trusted: object,
+    review_tier: str | None,
+    human_approval_required: bool,
+    runner: Runner,
+) -> Callable[[str], bool] | None:
+    """The merge-time gate for a non-legacy task, None for a legacy one (#1695, C1).
+
+    An unreadable contract counts as non-legacy, so the merge holds.
+    """
+    try:
+        from server.services.trusted_contract import (  # noqa: PLC0415
+            resolve_contract,
+        )
+
+        state = resolve_contract(spec_dir, trusted)[0]
+    except Exception:  # noqa: BLE001 - unknown is not legacy: fail closed
+        state = "hold"
+    if state == "legacy":
+        return None
+    owner, name = repo_parts
+
+    def gate(head: str) -> bool:
+        def fetch() -> dict[str, object]:
+            try:
+                from pfactory.tfactory_client import (  # noqa: PLC0415
+                    tfactory_verdict,
+                )
+
+                verdict = tfactory_verdict(spec_dir, spec_id)
+            except ImportError:
+                verdict = None
+            return {
+                "tfactory_verdict": verdict,
+                "host_ci_green": host_ci_green(owner, name, head, runner=runner),
+            }
+
+        if human_approval_required:
+            return _clears_with_human_approval(
+                spec_dir, review_tier, trusted, fetch_signals=fetch
+            )
+        return (
+            merge_disposition(
+                spec_dir, review_tier, trusted=trusted, fetch_signals=fetch
+            )
+            == AUTO_MERGE_DISPOSITION
+        )
+
+    return gate
+
+
 async def run_pr_endgame(
     *,
     spec_dir: Path,
@@ -1658,6 +1712,20 @@ async def run_pr_endgame(
         return {"ok": False, "reason": "no_repo", "repo": repo}
     owner, name = parts
 
+    merge_gate = (
+        _build_merge_gate(
+            spec_dir,
+            spec_id,
+            (owner, name),
+            trusted,
+            review_tier,
+            human_approval_required,
+            runner,
+        )
+        if auto_merge
+        else None
+    )
+
     title, body = _pr_title_body(spec_dir, spec_id)
     if review_tier_floor:
         # Advisory rollout (#1456): tell the human reviewer what the paths say,
@@ -1718,6 +1786,7 @@ async def run_pr_endgame(
         on_approved_merged=re_test,
         runner=runner,
         human_approval_required=human_approval_required,
+        merge_gate=merge_gate,
     )
     if background:
         # A strong reference, held until the watcher finishes. The event loop
