@@ -3,6 +3,7 @@
 ``start()`` mints an installation token at boot and writes it to ``GH_TOKEN`` /
 ``GITHUB_TOKEN`` in ``os.environ``; ``child_env`` keeps both for gh/git, so every
 PR path picks it up. No App vars set means nothing changes.
+Web login is published through the same ``_publish()`` (``load_web_login``).
 """
 
 from __future__ import annotations
@@ -11,12 +12,16 @@ import asyncio
 import contextlib
 import logging
 import os
+import shutil
+import subprocess
 import time
 from pathlib import Path
 
 import httpx
 import yaml
 from jose import jwt
+
+from server.utils.subprocess_env import child_env, github_token
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +44,25 @@ def configured() -> bool:
     return _key is not None
 
 
+def _managed_gh_dir() -> Path:
+    """Where web login keeps its gh config, away from ~/.config/gh (#1723)."""
+    from server.paths import get_data_dir  # noqa: PLC0415 - paths migrates on import
+
+    d = get_data_dir() / "gh"
+    d.mkdir(mode=0o700, exist_ok=True)
+    d.chmod(0o700)
+    return d
+
+
+def _default_gh_dir() -> Path:
+    return Path(os.environ.get("GH_CONFIG_DIR") or Path.home() / ".config" / "gh")
+
+
 def _hosts_yml_has_token() -> bool:
-    cfg = Path(os.environ.get("GH_CONFIG_DIR") or Path.home() / ".config" / "gh")
+    return _dir_has_token(_default_gh_dir()) or _dir_has_token(_managed_gh_dir())
+
+
+def _dir_has_token(cfg: Path) -> bool:
     try:
         data = yaml.safe_load((cfg / "hosts.yml").read_text()) or {}
     except FileNotFoundError:
@@ -77,6 +99,46 @@ def _mint() -> str:
 
 def _publish(token: str) -> None:
     os.environ["GH_TOKEN"] = os.environ["GITHUB_TOKEN"] = token
+
+
+def warn_legacy_web_login() -> None:
+    """Warn that an old web-login token sits in the default gh dir (#1723)."""
+    old = _default_gh_dir()
+    if old == _managed_gh_dir():
+        return
+    try:
+        found = _dir_has_token(old)
+    except RuntimeError:
+        logger.warning("%s/hosts.yml is unreadable; check it for an old token", old)
+        return
+    if found:
+        logger.warning(
+            "%s/hosts.yml holds an old web-login GitHub token. AIFactory no longer "
+            "uses it: log in again from the UI and remove that file.",
+            old,
+        )
+
+
+def load_web_login() -> None:
+    """Publish the token ``gh auth login`` stored in the managed dir, if any."""
+    gh = shutil.which("gh")
+    if github_token() or configured() or not gh:
+        return
+    try:
+        out = subprocess.run(  # noqa: S603 - fixed argv, no shell
+            [gh, "auth", "token", "--hostname", "github.com"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+            env=child_env(extra={"GH_CONFIG_DIR": str(_managed_gh_dir())}),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return
+    token = out.stdout.strip()
+    if out.returncode == 0 and token:
+        _publish(token)
+        logger.info("published the web-login GitHub token")
 
 
 def start() -> None:

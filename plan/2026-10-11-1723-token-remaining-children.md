@@ -465,3 +465,7 @@ Run from `/mnt/code/Source-home/GitHub/AIFactory-1723`, with
 
 1. Approved: the login route also publishes the token on its "already authenticated" exit (step 5).
 2. Approved: the legacy-token warning is a separate `warn_legacy_web_login()` startup check that runs even when a token is already set (step 4).
+
+## Deviations during implementation
+
+- Step 4: `github_app.py` uses absolute imports (`from server.utils.subprocess_env import ...`, `from server.paths import get_data_dir`) instead of the relative `..` imports in the step, because ruff TID252 forbids relative parent imports and the ratchet would regress. Same style as `agent_kubejob.py`.
