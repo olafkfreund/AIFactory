@@ -484,3 +484,7 @@ implementation commit(s) (`git revert <sha>`). Verified tasks then return to
 metadata-based signals (the #1695 hole reopens); legacy tasks are unaffected
 either way. For an emergency without a deploy, operators can turn
 `AIFACTORY_AUTO_MERGE` off, which holds every PR for a human.
+
+## Approver decisions (2026-10-13)
+
+1. C1 approved: arm the merge-time signal check only for non-legacy tasks; a failed contract lookup counts as non-legacy so the merge holds. Legacy tasks keep today's behaviour, including the update-branch retry.
