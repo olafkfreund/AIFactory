@@ -170,3 +170,8 @@ Filed as new issues before the PR, per the approver decisions:
 - `ruff check` and `ruff format --check` on the touched files.
 - Runtime: one Ollama-routed build (local runner and Job) still reaches the
   provider and completes a tool-loop turn.
+
+## Approver decisions (2026-10-13)
+
+1. Accepted: model-run git in the tool loop skips repo hooks and uses `true` as editor (from `child_env()`'s pinned git config).
+2. Accepted: lowercase `anthropic_api_key` is blanked even when API-key auth is opted in.
