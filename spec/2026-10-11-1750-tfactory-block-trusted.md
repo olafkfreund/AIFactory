@@ -156,3 +156,8 @@ The Factory#943 matrix cells are not touched.
   `implementation_plan.json`'s `tfactory` block on a trusted spec and start
   it. The payload carries the signed block, or `{}` with the warning logged if
   the record does not verify. It never carries the edited block.
+
+## Approver decisions (2026-10-13)
+
+1. Keep the single `logger.warning` when a held task's profile is withheld (names the state only, not the contract).
+2. Accepted: if the store is unreachable on an isolated host, even correctly signed tasks hand off with `{}` until it is back, matching the merge gate and sibling route.
