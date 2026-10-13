@@ -145,7 +145,7 @@ Filed as new issues before the PR, per the approver decisions:
   `tests/test_child_process_env.py:372` catches this.
 - **Case-folding is stricter for blanks.** A lowercase `anthropic_api_key`
   is now blanked even with API-key auth opted in, because the opt-in check
-  at `core/auth.py:190` is an exact match. Nothing reads the lowercase name,
+  at `core/auth.py:191` is an exact match. Nothing reads the lowercase name,
   so nothing breaks.
 - **Not covered:** a lowercase `anthropic_api_key_file` is not in the deny
   list or `_STRIP_VARS` and is still passed through. Latent, same as today.
