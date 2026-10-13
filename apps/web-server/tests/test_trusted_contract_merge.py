@@ -8,6 +8,7 @@ hold on any divergence. Test numbers follow the spec.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 import logging
@@ -555,3 +556,96 @@ async def test_cross_side_digest_matches_pod_verdict(
 
 def test_has_trusted_trace_is_the_core_predicate() -> None:
     assert tc_mod.has_trusted_trace is contract_trust.has_trusted_trace
+
+
+# --------------------------------------------------------------------------- #
+# #1695: a verified task merges only on signals AIFactory fetched itself
+# --------------------------------------------------------------------------- #
+
+_FETCH_PASS = {"tfactory_verdict": "pass", "host_ci_green": True}
+
+
+def test_1695_verified_green_fetch_auto_merges(tmp_path: Path) -> None:
+    spec, signed = _spec(tmp_path, tier="low")
+    out = pe.merge_disposition(
+        spec, "low", trusted=_rec(signed), fetch_signals=lambda: _FETCH_PASS
+    )
+    assert out == pe.AUTO_MERGE_DISPOSITION
+
+
+@pytest.mark.parametrize(
+    "fetched",
+    [
+        {"tfactory_verdict": None, "host_ci_green": True},
+        {"tfactory_verdict": "pass", "host_ci_green": None},
+    ],
+)
+def test_1695_verified_unknown_signal_does_not_merge(
+    tmp_path: Path, fetched: dict[str, object]
+) -> None:
+    spec, signed = _spec(tmp_path, tier="low")
+    out = pe.merge_disposition(
+        spec, "low", trusted=_rec(signed), fetch_signals=lambda: fetched
+    )
+    assert out != pe.AUTO_MERGE_DISPOSITION
+
+
+def _boom() -> dict[str, object]:
+    raise RuntimeError("tfactory down")
+
+
+def test_1695_verified_raising_fetch_holds(tmp_path: Path) -> None:
+    spec, signed = _spec(tmp_path, tier="low")
+    out = pe.merge_disposition(spec, "low", trusted=_rec(signed), fetch_signals=_boom)
+    assert out == pe.HOLD_BLOCKING_DISPOSITION
+
+
+def test_1695_legacy_never_calls_the_fetch(tmp_path: Path) -> None:
+    spec = tmp_path / ".aifactory" / "specs" / "001-x"
+    spec.mkdir(parents=True)
+    plain = pe.merge_disposition(spec, "low", trusted=None)
+    assert pe.merge_disposition(spec, "low", trusted=None, fetch_signals=_boom) == plain
+
+
+def test_1695_human_approval_cannot_clear_a_red_fetch(tmp_path: Path) -> None:
+    spec, signed = _spec(tmp_path, tier="low")
+    red = lambda: {"tfactory_verdict": "fail", "host_ci_green": True}  # noqa: E731
+    assert (
+        pe._clears_with_human_approval(spec, "low", _rec(signed), fetch_signals=red)
+        is False
+    )
+
+
+@pytest.mark.parametrize("verified", [True, False])
+def test_1695_endgame_arms_the_gate_only_for_non_legacy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verified: bool
+) -> None:
+    spec, signed = _spec(tmp_path, tier="low")
+    captured: dict[str, object] = {}
+
+    async def _fake_watch(**kwargs: object) -> dict[str, object]:
+        captured["gate"] = kwargs.get("merge_gate")
+        return {"merged": False, "reason": "stub"}
+
+    monkeypatch.setattr(pe, "watch_and_finish", _fake_watch)
+    monkeypatch.setattr(pe, "create_pr", lambda **_k: 42)
+    monkeypatch.setattr(pe, "request_copilot_review", lambda *_a, **_k: True)
+    monkeypatch.setattr(pe, "_pr_title_body", lambda _d, _s: ("t", "b"))
+    if not verified:  # legacy: no contract at all
+        _contract_file(spec).unlink()
+    asyncio.run(
+        pe.run_pr_endgame(
+            spec_dir=spec,
+            spec_id="001-x",
+            worktree=spec,
+            branch="aifactory/001-x",
+            base="main",
+            repo="owner/repo",
+            auto_merge=True,
+            review_tier="low",
+            reviewer="copilot",
+            background=False,
+            trusted=_rec(signed) if verified else None,
+        )
+    )
+    assert callable(captured["gate"]) if verified else captured["gate"] is None
