@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from server.background import spawn
 from server.error_ref import client_error
+from server.services import github_app
 from server.services.gh import run_gh_command  # re-exported: see services/gh.py
 from server.services.git_base_url import safe_git_base_url  # #1360
 from server.services.http_verdict import honest_status
@@ -558,6 +559,7 @@ async def _monitor_gh_auth(proc: asyncio.subprocess.Process):
         await asyncio.wait_for(proc.wait(), timeout=300)
 
         if proc.returncode == 0:
+            await asyncio.to_thread(github_app.load_web_login)
             _gh_auth_status = {"complete": True, "success": True}
             log.info("[GitHub Auth] Authentication completed successfully")
         else:
@@ -642,7 +644,7 @@ async def start_github_auth():
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             stdin=asyncio.subprocess.PIPE,
-            env=child_env(),
+            env=child_env(extra={"GH_CONFIG_DIR": str(github_app._managed_gh_dir())}),
         )
         _gh_auth_proc = proc
 
@@ -683,6 +685,7 @@ async def start_github_auth():
         if not device_code:
             # Process may have exited already (e.g., already authenticated)
             if proc.returncode is not None and proc.returncode == 0:
+                await asyncio.to_thread(github_app.load_web_login)
                 _gh_auth_status = {"complete": True, "success": True}
                 return {
                     "success": True,
