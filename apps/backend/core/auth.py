@@ -156,6 +156,7 @@ _AGENT_ENV_DENY_EXACT: set[str] = {
     "LANGCHAIN_API_KEY",
     "OPENAI_COMPATIBLE_API_KEY",
     "S3_ACCESS_KEY",
+    "OLLAMA_API_KEY",
     # #1708: the agent must read the verdict as hold, never the real digest.
     "AIFACTORY_TRUSTED_CONTRACT",
 }
@@ -171,7 +172,9 @@ _AGENT_ENV_DENY_PATTERN = re.compile(
 
 def is_denied_env_key(name: str) -> bool:
     """True when ``name`` is a host secret that must not reach a child process."""
-    return name in _AGENT_ENV_DENY_EXACT or bool(_AGENT_ENV_DENY_PATTERN.search(name))
+    return name.upper() in _AGENT_ENV_DENY_EXACT or bool(
+        _AGENT_ENV_DENY_PATTERN.search(name)
+    )
 
 
 def get_agent_env_blanks() -> dict[str, str]:
