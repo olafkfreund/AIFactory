@@ -116,6 +116,10 @@ async def test_list_tasks_unprioritised_sorts_after_prioritised(tmp_path, monkey
 # ── TFactory routing at task start ─────────────────────────────────────────
 
 
+async def _no_record(_spec_dir):
+    return None
+
+
 async def test_start_task_routes_tfactory_child_away_from_coder(tmp_path, monkeypatch):
     from server.routes import execution as exec_mod
     from server.routes.execution import StartTaskRequest
@@ -126,6 +130,7 @@ async def test_start_task_routes_tfactory_child_away_from_coder(tmp_path, monkey
     monkeypatch.setattr(
         exec_mod, "load_projects", lambda: {"p": {"path": str(project)}}
     )
+    monkeypatch.setattr(exec_mod, "lookup", _no_record)
 
     result = await exec_mod.start_task("p:001-tests", StartTaskRequest(), None)
     assert result["routed_to"] == "tfactory"
@@ -148,6 +153,7 @@ async def test_start_task_tfactory_sends_when_configured(tmp_path, monkeypatch):
     monkeypatch.setattr(
         exec_mod, "load_projects", lambda: {"p": {"path": str(project)}}
     )
+    monkeypatch.setattr(exec_mod, "lookup", _no_record)
 
     # Configure transport + inject a poster so no network is hit. The route
     # imports send_handoff from the module at call time, so patching the env +
@@ -166,6 +172,63 @@ async def test_start_task_tfactory_sends_when_configured(tmp_path, monkeypatch):
     assert result["transport"]["sent"] is True
     assert sent["payload"]["spec_id"] == "001-tests"
     assert sent["payload"]["handoff"] == "tfactory"
+
+
+async def _run_tfactory(tmp_path, monkeypatch, contract, plan):
+    from pfactory import tfactory_client
+    from server.routes import execution as exec_mod
+    from server.routes.execution import StartTaskRequest
+
+    project = tmp_path / "proj"
+    _write_spec(project, "001-tests", ["pfactory", "handoff:tfactory", "type:testing"])
+    spec = project / ".aifactory" / "specs" / "001-tests"
+    (spec / "context").mkdir(parents=True, exist_ok=True)
+    (spec / "context" / "task_contract.json").write_text(json.dumps(contract))
+    if plan is not None:
+        (spec / "implementation_plan.json").write_text(json.dumps(plan))
+    monkeypatch.setattr(
+        exec_mod, "load_projects", lambda: {"p": {"path": str(project)}}
+    )
+    monkeypatch.setattr(exec_mod, "lookup", _no_record)
+    sent = {}
+
+    async def fake_poster(url, payload, headers):
+        sent["payload"] = payload
+        return {"status": 202, "ok": True, "body": "queued"}
+
+    monkeypatch.setenv("TFACTORY_BASE_URL", "https://tf.example")
+    monkeypatch.setattr(tfactory_client, "_httpx_poster", fake_poster)
+    result = await exec_mod.start_task("p:001-tests", StartTaskRequest(), None)
+    return result, sent
+
+
+async def test_start_task_tfactory_hold_withholds_edited_profile(
+    tmp_path, monkeypatch, caplog
+):
+    result, sent = await _run_tfactory(
+        tmp_path,
+        monkeypatch,
+        {"approval": {"by": "pfactory"}, "tfactory": {"lanes": ["unit"]}},
+        {"tfactory": {"lanes": ["forged"]}},
+    )
+    assert result["routed_to"] == "tfactory"
+    assert result["transport"]["sent"] is True
+    assert sent["payload"]["tfactory"] == {}
+    assert any(
+        r.levelname == "WARNING" and "withheld" in r.getMessage()
+        for r in caplog.records
+    )
+    assert not any("forged" in r.getMessage() for r in caplog.records)
+
+
+async def test_start_task_tfactory_legacy_reads_task_contract(tmp_path, monkeypatch):
+    _, sent = await _run_tfactory(
+        tmp_path,
+        monkeypatch,
+        {"contract_version": 2, "tfactory": {"lanes": ["unit"]}},
+        None,
+    )
+    assert sent["payload"]["tfactory"] == {"lanes": ["unit"]}
 
 
 async def test_start_task_does_not_reroute_aifactory_child(tmp_path, monkeypatch):

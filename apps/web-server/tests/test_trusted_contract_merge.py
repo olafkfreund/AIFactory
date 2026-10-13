@@ -25,6 +25,7 @@ for _p in (str(_WS), str(_BACKEND)):
 
 from cli import workspace_commands  # noqa: E402
 from pfactory import tfactory_client as tc  # noqa: E402
+from server.routes import execution as ex  # noqa: E402
 from server.services import pr_endgame as pe  # noqa: E402
 from server.services.trusted_contract import (  # noqa: E402
     handoff_contract,
@@ -291,6 +292,66 @@ def test_20_handoff_uses_the_record_contract(
 
     held = tc.build_ingest_payload(spec, "001-x", contract={})
     assert not held.get("contract")
+
+
+async def _start_tfactory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rec_for: Any
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Start a TFactory-routed trusted spec whose plan file was forged (#1750)."""
+    spec, signed = _spec(tmp_path)
+    req_file = spec / "requirements.json"
+    req = json.loads(req_file.read_text()) if req_file.exists() else {}
+    req["githubIssue"] = {
+        "number": 1,
+        "labels": ["pfactory", "handoff:tfactory", "type:testing"],
+    }
+    req_file.write_text(json.dumps(req))
+    plan_file = spec / "implementation_plan.json"
+    plan = json.loads(plan_file.read_text())
+    plan["tfactory"] = {"lanes": ["forged"]}
+    plan_file.write_text(json.dumps(plan))
+
+    record = rec_for(signed)
+
+    async def fake_lookup(_spec_dir: Path) -> TrustedRecord:
+        return record
+
+    sent: dict[str, Any] = {}
+
+    async def fake_poster(
+        _url: str, payload: dict[str, Any], _headers: Any
+    ) -> dict[str, Any]:
+        sent["payload"] = payload
+        return {"status": 202, "ok": True, "body": "queued"}
+
+    monkeypatch.setattr(ex, "load_projects", lambda: {"p": {"path": str(tmp_path)}})
+    monkeypatch.setattr(ex, "lookup", fake_lookup)
+    monkeypatch.setenv("TFACTORY_BASE_URL", "https://tf.example")
+    monkeypatch.setattr(tc, "_httpx_poster", fake_poster)
+
+    result = await ex.start_task("p:001-x", ex.StartTaskRequest(), None)
+    return result, sent["payload"], signed
+
+
+async def test_30_start_task_hands_off_the_signed_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result, payload, signed = await _start_tfactory(tmp_path, monkeypatch, _rec)
+
+    assert result["routed_to"] == "tfactory"
+    assert payload["tfactory"] == signed["tfactory"]
+    assert payload["tfactory"] != {"lanes": ["forged"]}
+
+
+async def test_31_start_task_non_isolated_host_sends_empty_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "subprocess")
+
+    result, payload, _ = await _start_tfactory(tmp_path, monkeypatch, _rec)
+
+    assert result["routed_to"] == "tfactory"
+    assert payload["tfactory"] == {}
 
 
 def test_kubejob_without_the_durable_store_is_not_isolated(
