@@ -64,6 +64,8 @@ _BACKEND_FILES = [
     _BACKEND / "core" / "workspace_fetch.py",
     _BACKEND / "core" / "worktree.py",
     _BACKEND / "pfactory" / "tfactory_client.py",
+    # Not in-process: runs model-written commands in the tool loop (#1713).
+    _BACKEND / "tools" / "executor.py",
     _BACKEND / "trusted_plan.py",
 ]
 

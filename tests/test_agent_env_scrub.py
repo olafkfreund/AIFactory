@@ -53,6 +53,7 @@ SECRETS = {
     "LANGCHAIN_API_KEY": "x",
     "OPENAI_COMPATIBLE_API_KEY": "x",
     "S3_ACCESS_KEY": "x",
+    "OLLAMA_API_KEY": "x",
     # verdict digest; blank reads as hold in the agent (#1708)
     "AIFACTORY_TRUSTED_CONTRACT": "x",
 }
@@ -105,6 +106,20 @@ def test_empty_when_no_secrets(monkeypatch):
     monkeypatch.setenv("PATH", "/usr/bin")
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok")
     assert get_agent_env_blanks() == {}
+
+
+def test_lowercase_and_mixed_case_denied_names_are_blanked(clean_env, monkeypatch):
+    monkeypatch.setenv("app_api_token", "x")
+    monkeypatch.setenv("Ollama_Api_Key", "x")
+    blanks = get_agent_env_blanks()
+    assert blanks["app_api_token"] == ""
+    assert blanks["Ollama_Api_Key"] == ""
+
+
+def test_deny_exact_entries_are_upper_case():
+    from core.auth import _AGENT_ENV_DENY_EXACT
+
+    assert all(k == k.upper() for k in _AGENT_ENV_DENY_EXACT)
 
 
 def test_simple_client_env_is_scrubbed(clean_env, monkeypatch, tmp_path):

@@ -52,6 +52,7 @@ RUNNER_KEEP: tuple[str, ...] = (
     "GOOGLE_API_KEY",
     "OPENROUTER_API_KEY",
     "VOYAGE_API_KEY",
+    "OLLAMA_API_KEY",
 )
 
 

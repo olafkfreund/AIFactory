@@ -368,7 +368,7 @@ def test_credential_names_dropped_for_tools_kept_for_runner(
     )
     runner = make_subprocess_env()
     assert runner["CLAUDE_CODE_OAUTH_TOKEN"] == "c"
-    # undenied credential-shaped name survives in the runner (#1680)
+    # denied, but RUNNER_KEEP restores it for the runner (#1713)
     assert runner["OLLAMA_API_KEY"] == "c"
     assert "CONTEXT7_KEY" not in runner  # #1674
     assert "S3_ACCESS_KEY" not in runner  # #1674
