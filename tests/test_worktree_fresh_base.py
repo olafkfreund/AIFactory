@@ -216,7 +216,9 @@ def test_base_fetch_gets_the_token_per_call_and_never_runs_setup_git(
             fetches.append((env, Path(env["GH_CONFIG_DIR"], "hosts.yml").read_text()))
         return real_run(argv, **kw)
 
-    monkeypatch.setattr("core.worktree.subprocess.run", recorder)
+    # patch via the class's own module: another test may swap sys.modules["core"]
+    wt_mod = sys.modules[WorktreeManager.__module__]
+    monkeypatch.setattr(wt_mod.subprocess, "run", recorder)
     WorktreeManager(clone).create_worktree("001-add-a-thing")
 
     assert fetches, "no fetch origin <base> call was recorded"

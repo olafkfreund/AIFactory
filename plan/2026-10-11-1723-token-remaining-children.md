@@ -491,3 +491,7 @@ Run from `/mnt/code/Source-home/GitHub/AIFactory-1723`, with
   5. Stale askpass comments in `core/workspace_fetch.py` and
      `pfactory/tfactory_client.py` now describe the `GH_CONFIG_DIR` route.
   6. The new `test_worktree_fresh_base.py` tests sit above the `__main__` block.
+- Step 7e test isolation: the base-fetch test patches `subprocess.run` through
+  `sys.modules[WorktreeManager.__module__]` instead of the dotted string
+  `"core.worktree.subprocess.run"`, which broke when an earlier test swapped
+  `sys.modules["core"]` (full-suite order only).
