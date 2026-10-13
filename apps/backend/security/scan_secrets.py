@@ -384,7 +384,15 @@ def get_staged_files() -> list[str]:
     """Get list of staged files from git (excluding deleted files)."""
     try:
         result = subprocess.run(
-            ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
+            [
+                "git",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--cached",
+                "--name-only",
+                "--diff-filter=ACM",
+            ],
             capture_output=True,
             text=True,
             check=True,
