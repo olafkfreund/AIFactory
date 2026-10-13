@@ -521,3 +521,7 @@ Code-only change; no data, schema, config or migration. To undo:
   restores textconv rendering and re-opens the hole; the plans and specs stay.
 - Partial rollback is possible per site (remove the two tokens), but the scan
   test then fails by design; delete or `xfail` it in the same revert.
+
+## Approver decisions (2026-10-13)
+
+None beyond plan approval.
