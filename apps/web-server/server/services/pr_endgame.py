@@ -910,7 +910,11 @@ def human_approval_head(
 
 
 def _clears_with_human_approval(
-    spec_dir: Path, tier: str | None, trusted: object
+    spec_dir: Path,
+    tier: str | None,
+    trusted: object,
+    *,
+    fetch_signals: Callable[[], Mapping[str, object]] | None = None,
 ) -> bool:
     """Would the tier auto-merge if only the human-only gates were satisfied?"""
     try:
@@ -919,7 +923,11 @@ def _clears_with_human_approval(
         return False  # fail closed: auto-merge stays off
     return (
         merge_disposition(
-            spec_dir, tier, trusted=trusted, satisfied_gates=HUMAN_ONLY_GATES
+            spec_dir,
+            tier,
+            trusted=trusted,
+            satisfied_gates=HUMAN_ONLY_GATES,
+            fetch_signals=fetch_signals,
         )
         == AUTO_MERGE_DISPOSITION
     )
