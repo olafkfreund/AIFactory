@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1713
 intent: intent/2026-10-11-1713-agent-env-scrub-gaps.md
 ---
