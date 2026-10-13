@@ -284,6 +284,8 @@ None beyond plan approval.
 
 ## Deviations during implementation
 
-- Review follow-ups: `load_task_contract` catches `(OSError, ValueError)` so a
-  non-UTF-8 contract file in the legacy state cannot 500 the start request;
-  the hold test asserts exactly one "withheld" warning (decision 3).
+- Review follow-up: the hold test asserts exactly one "withheld" warning
+  (decision 3). The suggested `load_task_contract` change to catch
+  `ValueError` was reverted: `merge_disposition` relies on a non-UTF-8 contract
+  raising so the merge holds (#1658); a bad-UTF-8 legacy contract still 500s
+  `start_task` instead, which fails closed.

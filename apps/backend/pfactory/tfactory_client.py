@@ -89,7 +89,7 @@ def load_task_contract(spec_dir: Path) -> dict:
             continue
         try:
             plan = json.loads(candidate.read_text())
-        except (OSError, ValueError):  # ValueError covers bad JSON and bad UTF-8
+        except (OSError, json.JSONDecodeError):
             continue
         if isinstance(plan, dict) and (
             "tfactory" in plan or "contract_version" in plan or "approval" in plan
