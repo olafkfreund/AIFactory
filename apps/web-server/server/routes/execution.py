@@ -29,7 +29,7 @@ from server.services.audit_service import (
     audit_task_action,
     audit_task_route,
 )
-from server.services.trusted_contract import handoff_contract
+from server.services.trusted_contract import handoff_contract, resolve_contract
 from server.services.trusted_contract_store import (
     TrustedContractStore,
     lookup,
@@ -348,7 +348,6 @@ async def start_task(
         from pfactory.taxonomy import classify_requirements
         from pfactory.tfactory_client import (
             build_handoff_payload,
-            load_tfactory_block,
             send_handoff,
         )
 
@@ -361,9 +360,17 @@ async def start_task(
                 # TFactory. Graceful — when TFACTORY_BASE_URL is unset this is a
                 # no-op ("not_configured") and we still record the local marker.
                 _meta = load_pfactory_metadata(spec_dir, _req)
-                # RFC-0002: carry the contract's tfactory test profile so TFactory
-                # plans from declared lanes/frameworks/endpoints, not inference.
-                _tf = load_tfactory_block(spec_dir)
+                # RFC-0002 / #1750: the declared test profile comes only from the
+                # trusted verdict (signed record, or legacy files); hold sends {}.
+                _state, _contract = resolve_contract(spec_dir, await lookup(spec_dir))
+                _tf = _contract.get("tfactory") if isinstance(_contract, dict) else None
+                _tf = _tf if isinstance(_tf, dict) else {}
+                if _state == "hold":
+                    logger.warning(
+                        "[StartTask] %s trusted contract on hold; declared "
+                        "TFactory profile withheld",
+                        sanitize_log(task_id),
+                    )
                 _payload = build_handoff_payload(
                     spec_id,
                     _req,

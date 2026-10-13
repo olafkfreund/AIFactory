@@ -37,7 +37,6 @@ _log = logging.getLogger(__name__)
 __all__ = [
     "build_handoff_payload",
     "load_task_contract",
-    "load_tfactory_block",
     "maybe_auto_handoff_tfactory",
     "send_handoff",
     "tfactory_config",
@@ -64,25 +63,6 @@ def tfactory_config(env: dict | None = None) -> dict:
         "token": env.get("TFACTORY_TOKEN") or env.get("APP_API_TOKEN") or "",
         "path": env.get("TFACTORY_HANDOFF_PATH") or _DEFAULT_PATH,
     }
-
-
-def load_tfactory_block(spec_dir: Path) -> dict:
-    """Read the Task Contract v2 ``tfactory`` block from implementation_plan.json.
-
-    PFactory computes this block (lanes/frameworks/endpoints/coverage/mutation/
-    security/ac_to_code_map) and it is installed verbatim by trusted_plan ingest.
-    Returns ``{}`` when absent (v1 plans) or unreadable — TFactory then falls
-    back to its own inference.
-    """
-    plan_file = Path(spec_dir) / "implementation_plan.json"
-    if not plan_file.exists():
-        return {}
-    try:
-        plan = json.loads(plan_file.read_text())
-    except (OSError, json.JSONDecodeError):
-        return {}
-    block = plan.get("tfactory")
-    return block if isinstance(block, dict) else {}
 
 
 def load_task_contract(spec_dir: Path) -> dict:
