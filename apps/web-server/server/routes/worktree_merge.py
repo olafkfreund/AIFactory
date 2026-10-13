@@ -178,7 +178,14 @@ async def get_worktree_merge_preview(
     # Get list of changed files
     try:
         result = subprocess.run(
-            ["git", "diff", "--name-status", f"{base_branch}...{work_ref}"],
+            [
+                "git",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--name-status",
+                f"{base_branch}...{work_ref}",
+            ],
             cwd=project_path,
             capture_output=True,
             text=True,
@@ -334,7 +341,14 @@ async def get_worktree_merge_preview(
         # Get files modified in task branch (for conflict detection)
         if uncommitted_files:
             task_files_result = subprocess.run(
-                ["git", "diff", "--name-only", f"{base_branch}...{work_ref}"],
+                [
+                    "git",
+                    "diff",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "--name-only",
+                    f"{base_branch}...{work_ref}",
+                ],
                 cwd=project_path,
                 capture_output=True,
                 text=True,
@@ -712,7 +726,14 @@ async def resolve_worktree_conflicts(
     conflicted_files = []
     try:
         result = subprocess.run(
-            ["git", "diff", "--name-only", "--diff-filter=U"],
+            [
+                "git",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--name-only",
+                "--diff-filter=U",
+            ],
             cwd=project_path,
             capture_output=True,
             text=True,
@@ -1073,7 +1094,14 @@ async def resolve_uncommitted_conflicts(
     # Get task branch files
     try:
         result = subprocess.run(
-            ["git", "diff", "--name-only", f"{base_branch}...{spec_branch}"],
+            [
+                "git",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--name-only",
+                f"{base_branch}...{spec_branch}",
+            ],
             cwd=project_path,
             capture_output=True,
             text=True,
@@ -1379,7 +1407,14 @@ async def resolve_git_merge_conflicts(
     conflicted_files = []
     try:
         result = subprocess.run(
-            ["git", "diff", "--name-only", "--diff-filter=U"],
+            [
+                "git",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--name-only",
+                "--diff-filter=U",
+            ],
             cwd=work_path,
             capture_output=True,
             text=True,
@@ -2121,7 +2156,14 @@ async def get_worktree_status(
 
     try:
         result = subprocess.run(
-            ["git", "diff", "--stat", f"{base_branch}...{work_ref}"],
+            [
+                "git",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--stat",
+                f"{base_branch}...{work_ref}",
+            ],
             cwd=project_path,
             capture_output=True,
             text=True,
@@ -2278,7 +2320,14 @@ async def get_worktree_diff(
     files = []
     try:
         result = subprocess.run(
-            ["git", "diff", "--numstat", f"{base_branch}...{work_ref}"],
+            [
+                "git",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--numstat",
+                f"{base_branch}...{work_ref}",
+            ],
             cwd=project_path,
             capture_output=True,
             text=True,
@@ -2320,7 +2369,14 @@ async def get_worktree_diff(
     # Get file statuses (A/M/D/R)
     try:
         result = subprocess.run(
-            ["git", "diff", "--name-status", f"{base_branch}...{work_ref}"],
+            [
+                "git",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--name-status",
+                f"{base_branch}...{work_ref}",
+            ],
             cwd=project_path,
             capture_output=True,
             text=True,
@@ -2413,7 +2469,15 @@ async def get_worktree_diff(
     for f in files:
         try:
             result = subprocess.run(
-                ["git", "diff", f"{base_branch}...{work_ref}", "--", f["path"]],
+                [
+                    "git",
+                    "diff",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    f"{base_branch}...{work_ref}",
+                    "--",
+                    f["path"],
+                ],
                 cwd=project_path,
                 capture_output=True,
                 text=True,

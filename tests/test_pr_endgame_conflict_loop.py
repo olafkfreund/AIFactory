@@ -59,7 +59,9 @@ async def test_conflict_resolved_then_remerges_after_rereview():
             "gh pr merge": [_CONFLICT, _OK],
             "gh pr update-branch": [_FAIL],  # true conflict -> merge_pr returns False
             "git rebase origin/main": [_FAIL],  # conflict during resolve
-            "diff --name-only --diff-filter=U": [CmdResult(0, "app.py", "")],
+            "diff --no-ext-diff --no-textconv --name-only --diff-filter=U": [
+                CmdResult(0, "app.py", "")
+            ],
             "rebase --continue": [_OK],
             "git push --force-with-lease": [_OK],
         }
@@ -99,7 +101,9 @@ async def test_conflict_push_lfs_failure_is_unresolved(
             "gh pr merge": [_CONFLICT, _OK],
             "gh pr update-branch": [_FAIL],
             "git rebase origin/main": [_FAIL],
-            "diff --name-only --diff-filter=U": [CmdResult(0, "app.py", "")],
+            "diff --no-ext-diff --no-textconv --name-only --diff-filter=U": [
+                CmdResult(0, "app.py", "")
+            ],
             "rebase --continue": [_OK],
             "get-url": [CmdResult(0, "https://github.com/o/r", "")],
             "--get-regexp": [CmdResult(1, "", "")],
@@ -131,7 +135,9 @@ async def test_unresolvable_conflict_human_stops():
             "gh pr merge": [_CONFLICT],
             "gh pr update-branch": [_FAIL],
             "git rebase origin/main": [_FAIL],
-            "diff --name-only --diff-filter=U": [CmdResult(0, "app.py", "")],
+            "diff --no-ext-diff --no-textconv --name-only --diff-filter=U": [
+                CmdResult(0, "app.py", "")
+            ],
         }
     )
     out = await watch_and_finish(

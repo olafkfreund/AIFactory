@@ -1103,7 +1103,14 @@ async def list_project_worktrees(
 
                 # Get diff stats
                 diff_result = subprocess.run(
-                    ["git", "diff", "--shortstat", f"{base_branch}...{branch}"],
+                    [
+                        "git",
+                        "diff",
+                        "--no-ext-diff",
+                        "--no-textconv",
+                        "--shortstat",
+                        f"{base_branch}...{branch}",
+                    ],
                     cwd=wt_path,
                     capture_output=True,
                     text=True,

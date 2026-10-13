@@ -522,6 +522,14 @@ Code-only change; no data, schema, config or migration. To undo:
 - Partial rollback is possible per site (remove the two tokens), but the scan
   test then fails by design; delete or `xfail` it in the same revert.
 
+## Deviations during implementation
+
+- Step 3: `tests/test_pr_endgame_conflict_loop.py` and
+  `tests/test_pr_conflict_resolution.py` fake the runner keyed on the exact
+  string `"diff --name-only --diff-filter=U"`; their keys became
+  `"diff --no-ext-diff --no-textconv --name-only --diff-filter=U"` (7 keys).
+  Two more files touched, so 22 files in total.
+
 ## Approver decisions (2026-10-13)
 
 None beyond plan approval.
