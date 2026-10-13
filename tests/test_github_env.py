@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import shutil
@@ -252,15 +253,57 @@ def test_askpass_reads_password_from_file() -> None:
     assert not d.exists()
 
 
+def _non_test_sources() -> Iterator[Path]:
+    for root in (_SERVER, _ROOT / "apps" / "backend"):
+        for p in sorted(root.rglob("*.py")):
+            if "tests" in p.parts or p.name == "conftest.py":
+                continue
+            if p.name.startswith("test_"):
+                continue
+            yield p
+
+
 def test_web_server_has_no_env_token_path() -> None:
-    needles = ("keep=GITHUB_KEEP", '"setup-git"', 'GIT_PASS"')
-    hits = [
-        f"{p.relative_to(_ROOT)}:{n}"
-        for p in sorted(_SERVER.rglob("*.py"))
-        for n, line in enumerate(p.read_text().splitlines(), 1)
+    needles = (
+        "keep=GITHUB_KEEP",
+        "*GITHUB_KEEP",
+        '"setup-git"',
+        'GIT_PASS"',
+        '"GIT_PASS":',
+    )
+    hits = {
+        (str(p.relative_to(_ROOT)), line.strip())
+        for p in _non_test_sources()
+        for line in p.read_text().splitlines()
         if any(s in line for s in needles)
-    ]
-    assert hits == []
+    }
+    # RUNNER_KEEP keeps the token in the runner process by approver decision (#1723 D1).
+    allowed = {
+        ("apps/web-server/server/utils/subprocess_env.py", "*GITHUB_KEEP,"),
+        (
+            "apps/backend/core/git_credentials.py",
+            '_STRIPPED = ("GITHUB_TOKEN", "GH_TOKEN", "GIT_PASS")',
+        ),
+    }
+    assert hits == allowed
+
+
+def test_every_backend_agent_options_call_passes_env() -> None:
+    # AST, not grep: several docstrings mention ``ClaudeAgentOptions(``.
+    missing = []
+    for p in _non_test_sources():
+        if "backend" not in p.parts:
+            continue
+        for n in ast.walk(ast.parse(p.read_text())):
+            if not isinstance(n, ast.Call):
+                continue
+            name = getattr(n.func, "id", getattr(n.func, "attr", ""))
+            # arg is None means ``**kwargs`` (core/client.py passes env that way)
+            if name == "ClaudeAgentOptions" and not any(
+                k.arg in ("env", None) for k in n.keywords
+            ):
+                missing.append(f"{p.relative_to(_ROOT)}:{n.lineno}")
+    assert missing == []
 
 
 @pytest.mark.asyncio
