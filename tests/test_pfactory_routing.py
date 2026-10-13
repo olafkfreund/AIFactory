@@ -214,9 +214,12 @@ async def test_start_task_tfactory_hold_withholds_edited_profile(
     assert result["routed_to"] == "tfactory"
     assert result["transport"]["sent"] is True
     assert sent["payload"]["tfactory"] == {}
-    assert any(
-        r.levelname == "WARNING" and "withheld" in r.getMessage()
-        for r in caplog.records
+    assert (
+        sum(
+            r.levelname == "WARNING" and "withheld" in r.getMessage()
+            for r in caplog.records
+        )
+        == 1
     )
     assert not any("forged" in r.getMessage() for r in caplog.records)
 

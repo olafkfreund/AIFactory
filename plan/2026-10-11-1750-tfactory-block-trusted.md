@@ -281,3 +281,9 @@ Leave the step 7 issue open; it stands on its own.
 ## Approver decisions (2026-10-13)
 
 None beyond plan approval.
+
+## Deviations during implementation
+
+- Review follow-ups: `load_task_contract` catches `(OSError, ValueError)` so a
+  non-UTF-8 contract file in the legacy state cannot 500 the start request;
+  the hold test asserts exactly one "withheld" warning (decision 3).
