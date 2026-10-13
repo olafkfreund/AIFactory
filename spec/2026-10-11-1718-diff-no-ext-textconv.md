@@ -216,3 +216,7 @@ PR #1748).
 - Manual check: on a dev server, open a task diff in a repo with a planted
   `diff.x.textconv` that touches a marker. The diff renders, and no marker
   appears.
+
+## Approver decisions (2026-10-13)
+
+1. Literal reading: flag all 38 diff-family call sites, and the scan test requires both flags on every diff-family call (not only patch-printing ones).
