@@ -21,7 +21,7 @@ intent: intent/2026-10-11-1695-merge-gate-signals-trusted.md
 ### The timing fact that shapes the design
 
 `run_pr_endgame` decides the disposition before the PR exists
-(`apps/web-server/server/services/pr_endgame.py:1483-1508`). At that moment
+(`apps/web-server/server/services/pr_endgame.py:1483-1507`). At that moment
 neither trusted signal exists yet:
 
 - GitHub has not run any checks, because there is no PR.
