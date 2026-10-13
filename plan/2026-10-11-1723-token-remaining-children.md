@@ -460,3 +460,8 @@ Run from `/mnt/code/Source-home/GitHub/AIFactory-1723`, with
   by hand (spec Risk).
 - Leftover `aif-gh-*` dirs are swept at server start by the existing
   `sweep_github_dirs()` either way.
+
+## Approver decisions (2026-10-13)
+
+1. Approved: the login route also publishes the token on its "already authenticated" exit (step 5).
+2. Approved: the legacy-token warning is a separate `warn_legacy_web_login()` startup check that runs even when a token is already set (step 4).
