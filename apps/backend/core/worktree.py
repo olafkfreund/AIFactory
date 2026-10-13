@@ -624,7 +624,9 @@ class WorktreeManager:
         they're gitignored in the target branch.
         """
         # Get list of staged files
-        result = self._run_git(["diff", "--cached", "--name-only"])
+        result = self._run_git(
+            ["diff", "--no-ext-diff", "--no-textconv", "--cached", "--name-only"]
+        )
         if result.returncode != 0 or not result.stdout.strip():
             return
 
@@ -791,7 +793,8 @@ class WorktreeManager:
 
         # Diff stats
         result = self._run_git(
-            ["diff", "--shortstat", f"{base}...HEAD"], cwd=worktree_path
+            ["diff", "--no-ext-diff", "--no-textconv", "--shortstat", f"{base}...HEAD"],
+            cwd=worktree_path,
         )
         if result.returncode == 0 and result.stdout.strip():
             # Parse: "3 files changed, 50 insertions(+), 10 deletions(-)"
@@ -1003,7 +1006,14 @@ class WorktreeManager:
         )
 
         try:
-            _diff = self._run_git(["diff", f"{self.base_branch}...{info.branch}"])
+            _diff = self._run_git(
+                [
+                    "diff",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    f"{self.base_branch}...{info.branch}",
+                ]
+            )
             _decision = security_pre_merge_gate_sync(
                 _diff.stdout or "", diff_ok=_diff.returncode == 0
             )
@@ -1302,7 +1312,14 @@ class WorktreeManager:
         head = work_ref or "HEAD"
         git_cwd = self.project_dir if work_ref else worktree_path
         result = self._run_git(
-            ["diff", "--name-status", f"{self.base_branch}...{head}"], cwd=git_cwd
+            [
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--name-status",
+                f"{self.base_branch}...{head}",
+            ],
+            cwd=git_cwd,
         )
 
         files = []
