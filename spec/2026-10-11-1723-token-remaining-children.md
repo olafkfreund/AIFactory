@@ -229,3 +229,8 @@ site from appearing (Part 1).
 1. Existing web-login installs keep the token in `~/.config/gh/hosts.yml`.
    Leave it and log a startup warning (proposed), move it into the managed dir
    automatically, or refuse to start until the operator removes it?
+
+## Approver decisions (2026-10-13)
+
+1. Existing web-login tokens in `~/.config/gh/hosts.yml`: leave them in place and log a startup warning. No automatic migration, no refusal to start.
+2. Noted: the build Job runs on the deployment's own image (`AIFACTORY_IMAGE`, root `Dockerfile`), which installs `gh`, so the `gh` dependency risk is resolved.
