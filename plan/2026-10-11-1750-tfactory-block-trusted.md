@@ -277,3 +277,7 @@ Revert the step commits (`git revert <steps 1-2> <steps 3-4> <step 5>`) or
 revert the merged PR. That restores `load_tfactory_block` and the old
 unchecked read; no data, schema or config changes, so nothing else to undo.
 Leave the step 7 issue open; it stands on its own.
+
+## Approver decisions (2026-10-13)
+
+None beyond plan approval.
