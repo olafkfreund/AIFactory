@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1718
 intent: intent/2026-10-11-1718-diff-no-ext-textconv.md
 ---
