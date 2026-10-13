@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1723
 intent: intent/2026-10-11-1723-token-remaining-children.md
 ---
