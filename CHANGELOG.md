@@ -2,6 +2,13 @@
 
 ### Security
 
+- **Tool-loop Bash and Grep commands no longer see host secrets (#1713).**
+  The Ollama, Ollama Cloud, OpenAI-compatible and GitHub Models runtimes now
+  spawn model-written commands with `child_env()`: every denied secret and
+  every `*_KEY`/`*_TOKEN` name is dropped, and git hooks are off. Commands
+  that need a token (`gh`, `git push`, a private `npm install`) now fail
+  with an auth error. `OLLAMA_API_KEY` is denied to agents (the local runner
+  and Jobs still get it), and the deny list now matches names in any case.
 - **An agent-written `.git/config` can no longer choose the server's ssh command, pager or editor (#1717).**
   `child_env()` also pins `core.sshCommand=ssh`, `core.pager=cat` and
   `core.editor=true` (`GIT_CONFIG_COUNT` is now `n+6`). Operators can still
