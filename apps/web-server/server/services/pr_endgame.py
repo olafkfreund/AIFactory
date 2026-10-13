@@ -490,6 +490,7 @@ def merge_disposition(
     *,
     trusted: object,
     satisfied_gates: Iterable[str] = (),
+    fetch_signals: Callable[[], Mapping[str, object]] | None = None,
 ) -> str:
     """The RFC-0011/RFC-0013 merge disposition for this task (#637).
 
@@ -518,6 +519,9 @@ def merge_disposition(
     satisfied system gates clear only ``system_gates`` holds. Gate evidence
     comes only from the caller (a GitHub review, #1663), never from the contract
     or task_metadata.
+
+    ``fetch_signals`` (#1695) is called only for a verified task; its trusted
+    verdict and host-CI feed ``merge_gate_signals``, and a raise holds.
     """
     try:
         from merge.merge_policy import decide_merge, raise_review_tier  # noqa: PLC0415
@@ -542,6 +546,7 @@ def merge_disposition(
         )
         return HOLD_BLOCKING_DISPOSITION
     effective = tier if tier is not None and str(tier).strip() else "low"
+    fetched: Mapping[str, object] | None = None
     try:
         state, contract = resolve_contract(spec_dir, trusted)
         if state == "hold":
@@ -576,6 +581,8 @@ def merge_disposition(
                 )
             if _describe_tier(effective) != "unrecognised":
                 effective = raise_review_tier(signed, effective)
+            if fetch_signals is not None:
+                fetched = fetch_signals()
     except Exception:  # noqa: BLE001 - e.g. RecursionError, UnicodeDecodeError
         # Hold, never raise: an exception here would abort the endgame before
         # the PR is opened, and "we could not read it" is not "not production".
@@ -586,7 +593,7 @@ def merge_disposition(
     return str(
         decide_merge(
             str(effective),
-            **merge_gate_signals(spec_dir),
+            **merge_gate_signals(spec_dir, fetched=fetched),
             deployment=deployment,
             satisfied_gates=list(satisfied_gates),
         )
