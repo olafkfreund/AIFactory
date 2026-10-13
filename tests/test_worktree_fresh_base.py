@@ -188,3 +188,48 @@ def test_local_only_repo_still_builds(tmp_path: Path):
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_git_env_carries_no_github_token(monkeypatch):
+    """#1723: the worktree's git children get no GitHub token in env."""
+    from core.worktree import _git_env
+
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_1723notarealtoken")  # gitleaks:allow
+    monkeypatch.setenv("GH_TOKEN", "ghp_1723notarealtoken")  # gitleaks:allow
+    env = _git_env()
+    assert "GITHUB_TOKEN" not in env
+    assert "GH_TOKEN" not in env
+
+
+def test_base_fetch_gets_the_token_per_call_and_never_runs_setup_git(
+    origin_and_clone, monkeypatch
+):
+    token = "ghp_1723notarealtoken"  # gitleaks:allow
+    monkeypatch.setenv("GITHUB_TOKEN", token)
+    origin, clone = origin_and_clone
+    _advance_origin(origin)
+    real_run = subprocess.run
+    argvs: list[list[str]] = []
+    fetches: list[tuple[dict[str, str], str]] = []
+
+    def recorder(argv, **kw):
+        argvs.append(list(argv))
+        if argv[-3:-1] == ["fetch", "origin"]:
+            env = kw["env"]
+            # the per-call dir is removed on exit: read hosts.yml now
+            fetches.append((env, Path(env["GH_CONFIG_DIR"], "hosts.yml").read_text()))
+        return real_run(argv, **kw)
+
+    monkeypatch.setattr("core.worktree.subprocess.run", recorder)
+    WorktreeManager(clone).create_worktree("001-add-a-thing")
+
+    assert fetches, "no fetch origin <base> call was recorded"
+    env, hosts = fetches[0]
+    assert token in hosts
+    assert token not in "".join(env.values())
+    pairs = {
+        env[f"GIT_CONFIG_KEY_{i}"]: env[f"GIT_CONFIG_VALUE_{i}"]
+        for i in range(int(env["GIT_CONFIG_COUNT"]))
+    }
+    assert pairs["credential.https://github.com.helper"] == "!gh auth git-credential"
+    assert not any("setup-git" in a for argv in argvs for a in argv)

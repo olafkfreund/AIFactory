@@ -11,16 +11,17 @@ long as the ``git`` child lives. These tests pin the fix at three levels:
   not racing the child's exit. It asserts on the argv we constructed AND on
   ``/proc/<pid>/cmdline`` as the kernel published it. Those two halves are
   separate statements so each fires on its own.
-* A **vacuity guard** asserts the token DID reach ``GIT_PASS``. A mutation that
-  simply drops the credential fails as "never reached the env" rather than
+* A **vacuity guard** asserts the token DID reach the per-call ``hosts.yml`` that
+  ``GH_CONFIG_DIR`` names (#1723: no askpass, no ``GIT_PASS``). A mutation that
+  simply drops the credential fails as "never reached hosts.yml" rather than
   passing an argv check trivially.
 * The two production call sites (``core.workspace_fetch`` and
   ``pfactory.tfactory_client``) are checked for the same property on the argv and
   env they actually hand to ``subprocess.run``.
 
 Plus the subtlety carried over from PFactory#616: moving the credential into the
-environment must not make it UNCONDITIONAL. A non-github remote gets no askpass
-vars at all.
+out-of-band must not make it UNCONDITIONAL. A non-github remote gets no
+``GH_CONFIG_DIR`` at all.
 """
 
 from __future__ import annotations
@@ -96,8 +97,10 @@ def test_real_git_child_never_publishes_the_token_in_proc_cmdline(
     with git_credentials.authed_push_url(f"{host}owner/repo.git") as (url, env):
         # Vacuity guard: if a mutation removes the credential entirely, this
         # fails first and the argv assertions below never get to pass trivially.
-        assert env.get("GIT_PASS") == TOKEN, "token never reached the askpass env"
-        assert env.get("GIT_ASKPASS"), "no askpass helper was wired"
+        hosts = Path(env["GH_CONFIG_DIR"], "hosts.yml").read_text()
+        assert TOKEN in hosts, "token never reached hosts.yml"
+        assert TOKEN not in "".join(env.values())
+        assert url == f"{host}owner/repo.git"  # the URL is not rewritten
 
         argv = ["git", "ls-remote", url, "main"]
         proc = subprocess.Popen(  # noqa: S603
@@ -126,7 +129,7 @@ def test_real_git_child_never_publishes_the_token_in_proc_cmdline(
                 time.sleep(0.05)
             assert cmdline, "never read a live /proc/<pid>/cmdline for the git child"
             assert TOKEN.encode() not in cmdline
-            assert b"x-access-token@" in cmdline, "URL lost its username"
+            assert url.encode() in cmdline, "URL was not passed to git"
         finally:
             proc.kill()
             proc.wait(timeout=10)
@@ -142,25 +145,29 @@ def test_credential_is_not_offered_to_a_host_the_module_did_not_build(monkeypatc
         env,
     ):
         assert url == "https://evil.example.com/o/r.git"
+        assert "GH_CONFIG_DIR" not in env
         assert "GIT_ASKPASS" not in env
         assert "GIT_PASS" not in env
 
     # ...and the github.com remote in the same process still IS credentialed,
     # so the assertion above is not passing because nothing works at all.
     with git_credentials.authed_push_url("https://github.com/o/r.git") as (url, env):
-        assert url == "https://x-access-token@github.com/o/r.git"
-        assert env["GIT_PASS"] == TOKEN
+        assert url == "https://github.com/o/r.git"
+        assert TOKEN in Path(env["GH_CONFIG_DIR"], "hosts.yml").read_text()
 
 
-def test_askpass_helper_is_owner_only_and_removed_after_use(monkeypatch):
+def test_gh_config_dir_is_owner_only_and_removed_after_use(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
     from core import git_credentials
 
     with git_credentials.authed_push_url("https://github.com/o/r.git") as (_, env):
-        script = Path(env["GIT_ASKPASS"])
-        assert script.stat().st_mode & 0o777 == 0o700
-        assert script.read_text() == git_credentials._ASKPASS_SCRIPT
-    assert not script.exists()
+        d = Path(env["GH_CONFIG_DIR"])
+        assert d.stat().st_mode & 0o777 == 0o700
+        assert (d / "hosts.yml").stat().st_mode & 0o777 == 0o600
+        for name in ("GITHUB_TOKEN", "GH_TOKEN", "GIT_PASS"):
+            assert name not in env
+        assert env["GIT_TERMINAL_PROMPT"] == "0"
+    assert not d.exists()
 
 
 def test_workspace_fetch_push_keeps_the_token_out_of_argv(monkeypatch, tmp_path):
@@ -173,9 +180,12 @@ def test_workspace_fetch_push_keeps_the_token_out_of_argv(monkeypatch, tmp_path)
     wt.mkdir(parents=True)
 
     calls: list[tuple[list[str], dict[str, str] | None]] = []
+    hosts: dict[str, str] = {}
 
     def _fake_run(argv, **kw):
         calls.append((list(argv), kw.get("env")))
+        if argv[1] == "push":  # the dir is gone after the call: read it now
+            hosts["push"] = Path(kw["env"]["GH_CONFIG_DIR"], "hosts.yml").read_text()
         out = {
             "rev-parse": "feature/x",
             "get-url": "https://github.com/o/r.git",
@@ -190,8 +200,9 @@ def test_workspace_fetch_push_keeps_the_token_out_of_argv(monkeypatch, tmp_path)
     push = next(c for c in calls if c[0][1] == "push")
     argv, env = push
     assert TOKEN not in " ".join(argv)
-    assert "https://x-access-token@github.com/o/r.git" in argv
-    assert env is not None and env["GIT_PASS"] == TOKEN  # vacuity guard
+    assert "https://github.com/o/r.git" in argv
+    assert TOKEN in hosts["push"]  # vacuity guard
+    assert env is not None and "GIT_PASS" not in env
 
 
 def test_tfactory_handoff_push_keeps_the_token_out_of_argv(monkeypatch, tmp_path):
@@ -206,9 +217,12 @@ def test_tfactory_handoff_push_keeps_the_token_out_of_argv(monkeypatch, tmp_path
 
     sha = "a" * 40
     calls: list[tuple[list[str], dict[str, str] | None]] = []
+    hosts: dict[str, str] = {}
 
     def _fake_run(argv, **kw):
         calls.append((list(argv), kw.get("env")))
+        if argv[1] in ("push", "ls-remote"):  # the dir is gone after the call
+            hosts[argv[1]] = Path(kw["env"]["GH_CONFIG_DIR"], "hosts.yml").read_text()
         if argv[1:3] == ["remote", "get-url"]:
             return MagicMock(returncode=0, stdout="https://github.com/o/r.git\n")
         if argv[1] == "rev-parse":
@@ -225,8 +239,9 @@ def test_tfactory_handoff_push_keeps_the_token_out_of_argv(monkeypatch, tmp_path
         assert TOKEN not in " ".join(argv), f"token leaked into argv: {argv[:2]}"
     for verb in ("push", "ls-remote"):
         argv, env = next(c for c in calls if c[0][1] == verb)
-        assert "https://x-access-token@github.com/o/r.git" in argv
-        assert env is not None and env["GIT_PASS"] == TOKEN  # vacuity guard
+        assert "https://github.com/o/r.git" in argv
+        assert TOKEN in hosts[verb]  # vacuity guard
+        assert env is not None and "GIT_PASS" not in env
     assert url == "https://github.com/o/r.git"
 
 

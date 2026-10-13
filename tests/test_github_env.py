@@ -278,6 +278,29 @@ async def test_login_route_spawns_nothing_when_token_set() -> None:
     spawn.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_login_route_uses_managed_gh_config_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from server.routes import github as github_routes
+    from server.services import github_app
+
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setattr(github_app, "_managed_gh_dir", lambda: tmp_path / "aif-gh")
+    seen: list[dict[str, str]] = []
+
+    async def spawn(*_a: object, **kw: dict[str, str]) -> None:
+        seen.append(kw["env"])
+        raise RuntimeError("recorded")
+
+    with (
+        patch("server.routes.github.shutil.which", return_value="/usr/bin/gh"),
+        patch("server.routes.github.asyncio.create_subprocess_exec", spawn),
+    ):
+        await github_routes.start_github_auth()  # type: ignore[no-untyped-call]
+    assert seen[0]["GH_CONFIG_DIR"] == str(tmp_path / "aif-gh")
+
+
 def test_run_gh_command_fails_closed_when_tmp_unwritable() -> None:
     from server.services import gh
 

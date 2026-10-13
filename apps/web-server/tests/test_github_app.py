@@ -67,6 +67,9 @@ def _isolate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[_Post]
         monkeypatch.delenv(name)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("GH_CONFIG_DIR", str(tmp_path / "gh"))
+    managed = tmp_path / "aif-gh"
+    managed.mkdir()
+    monkeypatch.setattr(github_app, "_managed_gh_dir", lambda: managed)
     monkeypatch.setattr(mc, "OPERATOR_CONFIG_PATH", tmp_path / "mcp-credentials.json")
     mc.reset_cache()
     for attr in ("_key", "_app_id", "_installation_id"):
@@ -313,3 +316,76 @@ def test_refresh_loop_exits_when_stopped() -> None:
         await asyncio.wait_for(github_app.refresh_loop(stop), 1)
 
     asyncio.run(run())
+
+
+def test_managed_dir_token_refuses_to_start(
+    rsa_pem: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    _isolate: _Post,
+) -> None:
+    _app_env(monkeypatch, rsa_pem[0])
+    (tmp_path / "aif-gh" / "hosts.yml").write_text(
+        "github.com:\n  oauth_token: gho_x\n"
+    )
+    with pytest.raises(RuntimeError) as exc:
+        github_app.start()
+    assert "gho_x" not in str(exc.value)
+    assert not _isolate.calls
+
+
+def _fake_gh(monkeypatch: pytest.MonkeyPatch, stdout: str, rc: int = 0) -> list[Any]:
+    calls: list[Any] = []
+
+    def run(argv: list[str], **kw: Any) -> Any:
+        calls.append((argv, kw))
+        return type("R", (), {"returncode": rc, "stdout": stdout, "stderr": ""})()
+
+    monkeypatch.setattr(github_app.shutil, "which", lambda _n: "/usr/bin/gh")
+    monkeypatch.setattr(github_app.subprocess, "run", run)
+    return calls
+
+
+def test_load_web_login_publishes_the_managed_token(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("GITHUB_TOKEN", "")
+    monkeypatch.setenv("GH_TOKEN", "")
+    calls = _fake_gh(monkeypatch, "gho_web\n")
+    github_app.load_web_login()
+    assert os.environ["GITHUB_TOKEN"] == os.environ["GH_TOKEN"] == "gho_web"
+    env = calls[0][1]["env"]
+    assert env["GH_CONFIG_DIR"] == str(tmp_path / "aif-gh")
+    assert not env.get("GITHUB_TOKEN")
+
+
+def test_load_web_login_ignores_a_failed_gh(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_gh(monkeypatch, "", rc=1)
+    github_app.load_web_login()
+    assert "GITHUB_TOKEN" not in os.environ
+
+
+def test_load_web_login_spawns_nothing_with_token_or_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _fake_gh(monkeypatch, "gho_web")
+    monkeypatch.setenv("GITHUB_TOKEN", "already")
+    github_app.load_web_login()
+    monkeypatch.delenv("GITHUB_TOKEN")
+    monkeypatch.setattr(github_app, "_key", "k")
+    github_app.load_web_login()
+    assert not calls
+
+
+def test_warn_legacy_web_login_names_path_not_token(
+    caplog: pytest.LogCaptureFixture, tmp_path: Path
+) -> None:
+    with caplog.at_level(logging.WARNING):
+        github_app.warn_legacy_web_login()
+    assert caplog.text == ""  # no default-dir token: silent
+
+    _hosts(tmp_path, "github.com:\n  oauth_token: gho_legacy\n")
+    with caplog.at_level(logging.WARNING):
+        github_app.warn_legacy_web_login()
+    assert str(tmp_path / "gh") in caplog.text
+    assert "gho_legacy" not in caplog.text

@@ -469,3 +469,12 @@ Run from `/mnt/code/Source-home/GitHub/AIFactory-1723`, with
 ## Deviations during implementation
 
 - Step 4: `github_app.py` uses absolute imports (`from server.utils.subprocess_env import ...`, `from server.paths import get_data_dir`) instead of the relative `..` imports in the step, because ruff TID252 forbids relative parent imports and the ratchet would regress. Same style as `agent_kubejob.py`.
+- Step 7f: `followup_reviewer._run_ai_review` needs a full review context, so
+  that site uses the plan's AST fallback (asserts the `ClaudeAgentOptions(...)`
+  call passes `env=get_agent_env_blanks()`). The other two SDK sites use the
+  behavioural recorder.
+- Step 7b: the test token is `"ghs_scrubtest"` with `ids=["token", "none"]`.
+  `github_env` refuses a token that appears in any child env value, and
+  `child_env()` keeps `PYTEST_CURRENT_TEST`, which pytest builds from the
+  parametrize id, so a token in the id tripped the guard.
+- Step 7g: added `test_load_web_login_ignores_a_failed_gh` (not in the plan).
