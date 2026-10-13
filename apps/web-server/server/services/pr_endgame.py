@@ -909,6 +909,72 @@ def human_approval_head(
     return None
 
 
+def _pr_head(owner: str, repo: str, pr: int, runner: Runner) -> str | None:
+    """The PR's current head SHA, or None. Never raises (fail closed, #1695)."""
+    try:
+        res = runner(
+            ["gh", "api", f"/repos/{owner}/{repo}/pulls/{pr}", "--jq", ".head.sha"],
+            None,
+        )
+        return (res.out.strip() or None) if res.ok else None
+    except Exception:  # noqa: BLE001 - fail closed
+        return None
+
+
+_GREEN_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
+
+
+def host_ci_green(
+    owner: str, repo: str, sha: str, *, runner: Runner = _default_runner
+) -> bool | None:
+    """Host CI for exactly commit ``sha``: True green, False red, None unknown.
+
+    Read by SHA, not ``gh pr checks``, so it is the head that gets merged. No CI
+    at all is None, not green. Never raises; nothing fetched is logged (#1695).
+    """
+    try:
+        runs_res = runner(
+            [
+                "gh",
+                "api",
+                "--paginate",
+                f"repos/{owner}/{repo}/commits/{sha}/check-runs",
+                "--jq",
+                ".check_runs[] | {status, conclusion}",
+            ],
+            None,
+        )
+        st_res = runner(
+            [
+                "gh",
+                "api",
+                f"repos/{owner}/{repo}/commits/{sha}/status",
+                "--jq",
+                "{state, total_count}",
+            ],
+            None,
+        )
+        if not (runs_res.ok and st_res.ok):
+            return None
+        runs = [json.loads(ln) for ln in runs_res.out.splitlines() if ln.strip()]
+        status = json.loads(st_res.out)
+        state = status["state"]
+        total = int(status["total_count"])
+        if state in ("failure", "error") or any(
+            r["status"] == "completed" and r["conclusion"] not in _GREEN_CONCLUSIONS
+            for r in runs
+        ):
+            return False
+        pending = (
+            any(r["status"] != "completed" for r in runs)
+            or (total > 0 and state != "success")
+            or (not runs and total == 0)
+        )
+        return None if pending else True
+    except Exception:  # noqa: BLE001 - unknown is not green
+        return None
+
+
 def _clears_with_human_approval(
     spec_dir: Path,
     tier: str | None,

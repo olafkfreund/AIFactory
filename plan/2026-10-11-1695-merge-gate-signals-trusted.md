@@ -488,3 +488,9 @@ either way. For an emergency without a deploy, operators can turn
 ## Approver decisions (2026-10-13)
 
 1. C1 approved: arm the merge-time signal check only for non-legacy tasks; a failed contract lookup counts as non-legacy so the merge holds. Legacy tasks keep today's behaviour, including the update-branch retry.
+
+## Deviations during implementation
+
+- Step 4: `host_ci_green` merges the last three "unknown" rules into one
+  `pending` expression instead of three separate returns (ruff PLR0911, max six
+  returns, would regress the ratchet). Behaviour and rule order are unchanged.
