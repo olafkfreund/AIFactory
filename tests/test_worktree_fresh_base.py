@@ -186,10 +186,6 @@ def test_local_only_repo_still_builds(tmp_path: Path):
     assert _git(["rev-parse", "HEAD"], info.path) == _git(["rev-parse", "main"], repo)
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
-
-
 def test_git_env_carries_no_github_token(monkeypatch):
     """#1723: the worktree's git children get no GitHub token in env."""
     from core.worktree import _git_env
@@ -233,3 +229,7 @@ def test_base_fetch_gets_the_token_per_call_and_never_runs_setup_git(
     }
     assert pairs["credential.https://github.com.helper"] == "!gh auth git-credential"
     assert not any("setup-git" in a for argv in argvs for a in argv)
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

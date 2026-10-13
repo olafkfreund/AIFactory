@@ -104,19 +104,18 @@ def _publish(token: str) -> None:
 def warn_legacy_web_login() -> None:
     """Warn that an old web-login token sits in the default gh dir (#1723)."""
     old = _default_gh_dir()
-    if old == _managed_gh_dir():
-        return
     try:
-        found = _dir_has_token(old)
-    except RuntimeError:
-        logger.warning("%s/hosts.yml is unreadable; check it for an old token", old)
+        if old == _managed_gh_dir() or not _dir_has_token(old):
+            return
+    except (RuntimeError, OSError):  # a warning must never stop startup
+        logger.warning("%s/hosts.yml could not be checked for an old token", old)
         return
-    if found:
-        logger.warning(
-            "%s/hosts.yml holds an old web-login GitHub token. AIFactory no longer "
-            "uses it: log in again from the UI and remove that file.",
-            old,
-        )
+    logger.warning(
+        "%s/hosts.yml holds an old web-login GitHub token. It is still read by "
+        "gh calls until you remove it; log in again from the UI to move to "
+        "~/.aifactory/gh.",
+        old,
+    )
 
 
 def load_web_login() -> None:

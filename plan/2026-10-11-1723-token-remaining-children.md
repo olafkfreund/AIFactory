@@ -478,3 +478,16 @@ Run from `/mnt/code/Source-home/GitHub/AIFactory-1723`, with
   `child_env()` keeps `PYTEST_CURRENT_TEST`, which pytest builds from the
   parametrize id, so a token in the id tripped the guard.
 - Step 7g: added `test_load_web_login_ignores_a_failed_gh` (not in the plan).
+- Review fixes (Opus review of #1723, no blockers):
+  1. `warn_legacy_web_login` catches `(RuntimeError, OSError)` around its whole
+     body, `_managed_gh_dir()` included, and warns without file content, so it
+     can never stop startup. New test with `hosts.yml` as a directory.
+  2. New tests assert that `load_web_login` runs before `_gh_auth_status` is set
+     on both `_monitor_gh_auth` rc 0 and the "already authenticated" exit.
+  3. `gh auth login --web` also gets `--insecure-storage`, so the token lands in
+     the 0600 managed `hosts.yml`, not a system keyring. The route test asserts it.
+  4. The legacy warning now says the old token "is still read by gh calls until
+     you remove it; log in again from the UI to move to ~/.aifactory/gh".
+  5. Stale askpass comments in `core/workspace_fetch.py` and
+     `pfactory/tfactory_client.py` now describe the `GH_CONFIG_DIR` route.
+  6. The new `test_worktree_fresh_base.py` tests sit above the `__main__` block.

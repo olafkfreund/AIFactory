@@ -641,6 +641,7 @@ async def start_github_auth():
             "--git-protocol",
             "https",
             "--web",
+            "--insecure-storage",  # token in the 0600 managed hosts.yml, not a keyring
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             stdin=asyncio.subprocess.PIPE,

@@ -389,3 +389,24 @@ def test_warn_legacy_web_login_names_path_not_token(
         github_app.warn_legacy_web_login()
     assert str(tmp_path / "gh") in caplog.text
     assert "gho_legacy" not in caplog.text
+
+
+def test_warn_legacy_web_login_never_raises_on_an_unreadable_file(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "gh" / "hosts.yml").mkdir(parents=True)  # read_text -> OSError
+    with caplog.at_level(logging.WARNING):
+        github_app.warn_legacy_web_login()
+    assert "could not be checked" in caplog.text
+    assert str(tmp_path / "gh") in caplog.text
+
+    def boom() -> Path:
+        raise OSError("no data dir")
+
+    caplog.clear()
+    monkeypatch.setattr(github_app, "_managed_gh_dir", boom)
+    with caplog.at_level(logging.WARNING):
+        github_app.warn_legacy_web_login()
+    assert "could not be checked" in caplog.text
