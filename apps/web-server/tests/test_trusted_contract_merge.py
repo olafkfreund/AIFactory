@@ -649,3 +649,68 @@ def test_1695_endgame_arms_the_gate_only_for_non_legacy(
         )
     )
     assert callable(captured["gate"]) if verified else captured["gate"] is None
+
+
+# --- #1695 review: the gate built by _build_merge_gate is exercised ---------- #
+
+
+def _gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    verdict: str | None,
+    ci: bool | None,
+    human: bool = False,
+) -> tuple[Any, list[str]]:
+    spec, signed = _spec(tmp_path, tier="low")
+    heads: list[str] = []
+
+    def fake_ci(owner: str, repo: str, sha: str, **_k: object) -> bool | None:
+        heads.append(f"{owner}/{repo}@{sha}")
+        return ci
+
+    monkeypatch.setattr(pe, "host_ci_green", fake_ci)
+    monkeypatch.setattr(tc, "tfactory_verdict", lambda _d, _s, **_k: verdict)
+    gate = pe._build_merge_gate(
+        spec, "001-x", ("o", "r"), _rec(signed), "low", human, lambda *_a, **_k: None
+    )
+    return gate, heads
+
+
+@pytest.mark.parametrize("human", [False, True])
+def test_1695_gate_green_passes_the_exact_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, human: bool
+) -> None:
+    gate, heads = _gate(tmp_path, monkeypatch, verdict="pass", ci=True, human=human)
+    assert gate("deadbeef") is True
+    assert heads == ["o/r@deadbeef"]
+
+
+@pytest.mark.parametrize(
+    ("verdict", "ci"), [("pass", None), ("pass", False), ("fail", True), (None, True)]
+)
+@pytest.mark.parametrize("human", [False, True])
+def test_1695_gate_red_or_unknown_is_false(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    verdict: str | None,
+    ci: bool | None,
+    human: bool,
+) -> None:
+    gate, _ = _gate(tmp_path, monkeypatch, verdict=verdict, ci=ci, human=human)
+    assert gate("deadbeef") is False
+
+
+def test_1695_gate_is_set_when_resolve_contract_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec, signed = _spec(tmp_path, tier="low")
+
+    def boom(*_a: object, **_k: object) -> None:
+        raise RuntimeError("lookup")
+
+    monkeypatch.setattr("server.services.trusted_contract.resolve_contract", boom)
+    gate = pe._build_merge_gate(
+        spec, "001-x", ("o", "r"), _rec(signed), "low", False, lambda *_a, **_k: None
+    )
+    assert gate is not None

@@ -1001,7 +1001,7 @@ def test_1695_red_gate_never_merges() -> None:
     r = FakeRunner({".head.sha": CmdResult(0, "abc", "")})
     res = _gate_watch(r, lambda _h: False)
     assert not r.saw("pr merge")
-    assert res["reason"].startswith("review_timeout")
+    assert res["reason"] == "merge_gate_timeout"
 
 
 def test_1695_green_gate_merges_bound_to_the_head() -> None:
@@ -1076,3 +1076,28 @@ def test_1695_host_ci_green_timeout_is_none() -> None:
         raise subprocess.TimeoutExpired(["gh"], 120)
 
     assert pe.host_ci_green("o", "r", "abc", runner=boom) is None
+
+
+def _suite_runner(suites: list[str]) -> FakeRunner:
+    return FakeRunner(
+        {
+            "check-runs": CmdResult(0, _OK, ""),
+            "/status": CmdResult(0, '{"state":"success","total_count":1}', ""),
+            "check-suites": CmdResult(0, "\n".join(suites), ""),
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("suites", "want"),
+    [
+        (['{"status":"completed","n":1}'], True),
+        (['{"status":"completed","n":1}', '{"status":"queued","n":2}'], None),
+        (['{"status":"in_progress","n":1}'], None),
+        (['{"status":"queued","n":0}'], True),  # an empty suite has nothing to wait for
+    ],
+)
+def test_1695_host_ci_green_waits_for_unfinished_suites(
+    suites: list[str], want: bool | None
+) -> None:
+    assert pe.host_ci_green("o", "r", "abc", runner=_suite_runner(suites)) is want

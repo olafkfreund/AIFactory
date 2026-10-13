@@ -958,9 +958,23 @@ def host_ci_green(
             ],
             None,
         )
-        if not (runs_res.ok and st_res.ok):
+        # A suite that has runs but is not completed means more checks may still
+        # land, so a green partial roll-up must not count (#1695).
+        suites_res = runner(
+            [
+                "gh",
+                "api",
+                "--paginate",
+                f"repos/{owner}/{repo}/commits/{sha}/check-suites",
+                "--jq",
+                ".check_suites[] | {status, n: .latest_check_runs_count}",
+            ],
+            None,
+        )
+        if not (runs_res.ok and st_res.ok and suites_res.ok):
             return None
         runs = [json.loads(ln) for ln in runs_res.out.splitlines() if ln.strip()]
+        suites = [json.loads(ln) for ln in suites_res.out.splitlines() if ln.strip()]
         status = json.loads(st_res.out)
         state = status["state"]
         total = int(status["total_count"])
@@ -971,6 +985,7 @@ def host_ci_green(
             return False
         pending = (
             any(r["status"] != "completed" for r in runs)
+            or any(x["n"] > 0 and x["status"] != "completed" for x in suites)
             or (total > 0 and state != "success")
             or (not runs and total == 0)
         )
@@ -1236,6 +1251,7 @@ async def watch_and_finish(  # noqa: PLR0911, PLR0915 - merge-gate human-stop (#
 
     fix_cycles = 0
     conflict_cycles = 0
+    gate_held = False
     polls = max(1, (max_minutes * 60) // max(1, poll_interval))
     for _ in range(polls):
         await asyncio.sleep(poll_interval)
@@ -1328,6 +1344,7 @@ async def watch_and_finish(  # noqa: PLR0911, PLR0915 - merge-gate human-stop (#
                     pr,
                 )
                 if match_head is None:
+                    gate_held = True
                     continue
             merged = await asyncio.to_thread(
                 merge_pr, owner, repo, pr, runner=runner, match_head=match_head
@@ -1405,7 +1422,9 @@ async def watch_and_finish(  # noqa: PLR0911, PLR0915 - merge-gate human-stop (#
         "pr": pr,
         "verdict": "pending",
         "merged": False,
-        "reason": "review_timeout (no Copilot approval)"
+        "reason": "merge_gate_timeout"
+        if gate_held
+        else "review_timeout (no Copilot approval)"
         if require_copilot
         else "review_timeout",
     }

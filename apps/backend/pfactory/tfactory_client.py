@@ -784,22 +784,24 @@ def tfactory_verdict(
     """The verdict TFactory itself recorded for this spec (#1695).
 
     ``"pass"``, ``"fail"`` or ``None`` (no trusted result: unconfigured,
-    unreachable, wrong project, not triaged, no verdicts). Only a ``reject``
+    unreachable, wrong project, not triaged, no or unknown verdicts). Only a ``reject``
     fails; ``flag`` does not block. Never raises; logs nothing it fetched.
     """
-    config = tfactory_config()
-    base_url = config.get("base_url")
-    project_id = os.environ.get("TFACTORY_PROJECT_ID") or _aifactory_project_name(
-        Path(spec_dir)
-    )
-    if not base_url or not project_id:
-        return None
-    headers = (
-        {"Authorization": f"Bearer {config['token']}"} if config.get("token") else {}
-    )
-    base = f"{base_url}/api/tfactory/tasks/{quote(spec_id, safe='')}"
-    get = getter or _httpx_get
     try:
+        config = tfactory_config()
+        base_url = config.get("base_url")
+        project_id = os.environ.get("TFACTORY_PROJECT_ID") or _aifactory_project_name(
+            Path(spec_dir)
+        )
+        if not base_url or not project_id:
+            return None
+        headers = (
+            {"Authorization": f"Bearer {config['token']}"}
+            if config.get("token")
+            else {}
+        )
+        base = f"{base_url}/api/tfactory/tasks/{quote(spec_id, safe='')}"
+        get = getter or _httpx_get
         code, task = get(base, headers)
         status_json = task.get("status_json") if isinstance(task, dict) else None
         if not (
@@ -817,12 +819,15 @@ def tfactory_verdict(
             and isinstance(doc.get("verdicts"), list)
         ):
             return None
-        entries = [e for e in doc["verdicts"] if isinstance(e, dict)]
+        kinds = [
+            e.get("verdict") if isinstance(e, dict) else None for e in doc["verdicts"]
+        ]
     except Exception:  # noqa: BLE001 - no trusted result is not a pass
         return None
-    if not entries:
+    # A missing or unknown verdict is not green.
+    if not kinds or any(k not in ("accept", "flag", "reject") for k in kinds):
         return None
-    return "fail" if any(e.get("verdict") == "reject" for e in entries) else "pass"
+    return "fail" if "reject" in kinds else "pass"
 
 
 def wants_auto_handoff(spec_dir: Path) -> bool:

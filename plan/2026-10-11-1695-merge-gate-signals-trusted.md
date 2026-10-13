@@ -507,3 +507,17 @@ either way. For an emergency without a deploy, operators can turn
   check (avoids four new PLR2004 hits). Behaviour as planned. This commit also
   runs `ruff format` over `pr_endgame.py`, which CI's format-check required
   after step 1.
+- Review follow-ups (Opus review of #1695):
+  - The gate built by `_build_merge_gate` is now tested directly (exact head
+    reaches `host_ci_green`; unknown or red signals give False; human-approval
+    path; a raising `resolve_contract` still yields a gate). Forcing host CI
+    green inside the gate fails six of these tests (mutation check).
+  - `host_ci_green` also reads `commits/{sha}/check-suites` and returns None
+    while a suite with runs (`latest_check_runs_count > 0`) is not completed.
+  - `watch_and_finish` returns `reason: "merge_gate_timeout"` (not
+    `review_timeout`) when the review was approved but the gate held until the
+    poll budget ran out.
+  - `tfactory_verdict` returns None unless every entry's verdict is `accept`,
+    `flag` or `reject` (a non-dict entry, or a missing or unknown verdict, is
+    not green), and `tfactory_config()` / `_aifactory_project_name()` now run
+    inside the `try` so it never raises.

@@ -87,3 +87,26 @@ def test_spec_id_is_url_quoted() -> None:
     base = "http://tf/api/tfactory/tasks/a%2Fb"
     out, _ = _run({base: _task(), base + "/verdicts.json": _verdicts("accept")}, "a/b")
     assert out == "pass"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"verdicts": [{"verdict": "accept"}, {}]},
+        {"verdicts": [{"verdict": "accept"}, {"verdict": "maybe"}]},
+        {"verdicts": [{"verdict": "accept"}, "accept"]},
+    ],
+)
+def test_missing_or_unknown_verdict_is_none(body: dict[str, object]) -> None:
+    assert _run({TASK: _task(), TASK + "/verdicts.json": (200, body)})[0] is None
+
+
+def test_config_error_never_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom() -> dict[str, str]:
+        raise RuntimeError("env")
+
+    monkeypatch.setattr(tc, "tfactory_config", boom)
+    assert (
+        tc.tfactory_verdict(Path("spec"), "048-feat", getter=lambda _u, _h: (200, {}))
+        is None
+    )
