@@ -11,6 +11,14 @@
   Jobs still get it), and the deny list now matches names in any case. Not
   yet closed: a same-user child can still read its parent's
   `/proc/<pid>/environ` and credential files under `$HOME` (#1762).
+- **Server diffs no longer run a diff driver or textconv from the agent's repo config (#1718).**
+  Every server-side `git diff`/`git diff-tree` now passes `--no-ext-diff --no-textconv`,
+  so a `diff.<x>.textconv`, `diff.<x>.command` or `diff.external` planted in a
+  worktree's `.git/config` cannot run a program when the server reviews, gates or
+  summarises that worktree. The command validator also refuses
+  `git config diff.<x>.textconv` and `git -c diff.<x>.textconv=…`. Binary and
+  LFS-pointer files now show raw (or as "Binary files differ") in diff views and
+  the merge security gate, and count as 0 lines in `--numstat`.
 - **An agent-written `.git/config` can no longer choose the server's ssh command, pager or editor (#1717).**
   `child_env()` also pins `core.sshCommand=ssh`, `core.pager=cat` and
   `core.editor=true` (`GIT_CONFIG_COUNT` is now `n+6`). Operators can still

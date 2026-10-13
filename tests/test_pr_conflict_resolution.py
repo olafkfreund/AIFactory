@@ -57,7 +57,9 @@ def test_conflict_resolved_by_fixer_then_continue():
     runner = FakeRunner(
         {
             "git rebase origin/main": _FAIL,  # conflict
-            "diff --name-only --diff-filter=U": CmdResult(0, "app.py\napi.py", ""),
+            "diff --no-ext-diff --no-textconv --name-only --diff-filter=U": CmdResult(
+                0, "app.py\napi.py", ""
+            ),
             "rebase --continue": _OK,
         }
     )
@@ -79,7 +81,9 @@ def test_fixer_fails_aborts_rebase():
     runner = FakeRunner(
         {
             "git rebase origin/main": _FAIL,
-            "diff --name-only --diff-filter=U": CmdResult(0, "app.py", ""),
+            "diff --no-ext-diff --no-textconv --name-only --diff-filter=U": CmdResult(
+                0, "app.py", ""
+            ),
         }
     )
     res = resolve_pr_conflicts("/wt", "main", fixer=lambda f, w: False, runner=runner)
@@ -92,7 +96,9 @@ def test_continue_failure_aborts_rebase():
     runner = FakeRunner(
         {
             "git rebase origin/main": _FAIL,
-            "diff --name-only --diff-filter=U": CmdResult(0, "app.py", ""),
+            "diff --no-ext-diff --no-textconv --name-only --diff-filter=U": CmdResult(
+                0, "app.py", ""
+            ),
             "rebase --continue": _FAIL,
         }
     )
@@ -112,7 +118,9 @@ def test_rebase_fails_with_no_conflicted_files_is_unresolved():
     runner = FakeRunner(
         {
             "git rebase origin/main": _FAIL,
-            "diff --name-only --diff-filter=U": CmdResult(0, "", ""),
+            "diff --no-ext-diff --no-textconv --name-only --diff-filter=U": CmdResult(
+                0, "", ""
+            ),
         }
     )
     res = resolve_pr_conflicts("/wt", "main", fixer=lambda f, w: True, runner=runner)

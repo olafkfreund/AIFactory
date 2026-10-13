@@ -201,7 +201,14 @@ class ModificationTracker:
         try:
             # Get list of files changed in the worktree vs target branch
             result = subprocess.run(
-                ["git", "diff", "--name-only", f"{target_branch}...{head}"],
+                [
+                    "git",
+                    "diff",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "--name-only",
+                    f"{target_branch}...{head}",
+                ],
                 cwd=git_cwd,
                 capture_output=True,
                 text=True,
@@ -226,7 +233,15 @@ class ModificationTracker:
             for file_path in changed_files:
                 # Get the diff for this file
                 diff_result = subprocess.run(
-                    ["git", "diff", f"{target_branch}...{head}", "--", file_path],
+                    [
+                        "git",
+                        "diff",
+                        "--no-ext-diff",
+                        "--no-textconv",
+                        f"{target_branch}...{head}",
+                        "--",
+                        file_path,
+                    ],
                     cwd=git_cwd,
                     capture_output=True,
                     text=True,

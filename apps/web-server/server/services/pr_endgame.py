@@ -1005,7 +1005,17 @@ def resolve_pr_conflicts(
     if reb.ok:
         return ConflictResolution(True, [], "rebase clean (no conflict)")
 
-    status = runner(["git", "diff", "--name-only", "--diff-filter=U"], worktree)
+    status = runner(
+        [
+            "git",
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--name-only",
+            "--diff-filter=U",
+        ],
+        worktree,
+    )
     conflicted = [f for f in status.out.splitlines() if f.strip()]
     if not conflicted:
         # Rebase failed for some reason other than mergeable conflicts.

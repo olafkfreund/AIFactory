@@ -99,6 +99,8 @@ GIT_RCE_PAYLOADS = [
     "K=core.fsmonitor; git config $K x",
     'git config "$K" x',
     "git config protocol.ext.allow always",
+    "git config diff.x.textconv cat",
+    "git -c diff.x.textconv=cat diff",
 ]
 
 # Ordinary agent commands — must NOT be blocked (false-positive guard). Every

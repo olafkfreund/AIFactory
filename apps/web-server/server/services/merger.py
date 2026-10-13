@@ -182,7 +182,15 @@ def _branch_ahead_and_changed(
     ahead = count(f"origin/{base}..{ref}")
     unpushed = count(f"origin/{branch}..{ref}") if on_origin else ahead
     changed = runner(
-        ["git", "diff", "--name-only", f"origin/{base}...{ref}"], str(worktree)
+        [
+            "git",
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--name-only",
+            f"origin/{base}...{ref}",
+        ],
+        str(worktree),
     )
     if ahead is None or unpushed is None or not changed.ok:
         # A failed diff or count must not be read as "measured, zero" --

@@ -653,7 +653,15 @@ def _check_git_conflicts(project_dir: Path, spec_name: str) -> dict:
             # Fallback: if we didn't parse conflicts, use diff to find files changed in both branches
             if not result["conflicting_files"]:
                 main_files_result = subprocess.run(
-                    ["git", "diff", "--name-only", merge_base, main_commit],
+                    [
+                        "git",
+                        "diff",
+                        "--no-ext-diff",
+                        "--no-textconv",
+                        "--name-only",
+                        merge_base,
+                        main_commit,
+                    ],
                     cwd=project_dir,
                     capture_output=True,
                     text=True,
@@ -665,7 +673,15 @@ def _check_git_conflicts(project_dir: Path, spec_name: str) -> dict:
                 )
 
                 spec_files_result = subprocess.run(
-                    ["git", "diff", "--name-only", merge_base, spec_commit],
+                    [
+                        "git",
+                        "diff",
+                        "--no-ext-diff",
+                        "--no-textconv",
+                        "--name-only",
+                        merge_base,
+                        spec_commit,
+                    ],
                     cwd=project_dir,
                     capture_output=True,
                     text=True,

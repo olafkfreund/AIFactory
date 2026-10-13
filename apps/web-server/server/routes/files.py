@@ -917,7 +917,15 @@ async def get_git_diff(
         ) from exc
 
     try:
-        cmd = ["git", "diff", "--name-status", base, "--"]
+        cmd = [
+            "git",
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--name-status",
+            base,
+            "--",
+        ]
         if path:
             cmd.append(path)
 

@@ -31,9 +31,9 @@ _CONFIG_FLAGS = {"-c", "--config-env"}
 def _is_dangerous_git_config(key: str) -> bool:
     """True for git config keys that can execute a command — the
     pager/editor/ssh/fsmonitor/hooks/alias/upload-pack families (#321 C4), plus
-    gpg/credential programs, askpass/gitproxy, external diff and diff drivers,
-    upload/receive-pack, and include paths (#1689). ``filter.*`` and ``lfs.*``
-    are deliberately not listed (LFS, #1690)."""
+    gpg/credential programs, askpass/gitproxy, external diff, diff drivers and
+    textconv (#1718), upload/receive-pack, and include paths (#1689).
+    ``filter.*`` and ``lfs.*`` are deliberately not listed (LFS, #1690)."""
     k = key.strip().lower()
     return (
         k.startswith("alias.")
@@ -52,6 +52,7 @@ def _is_dangerous_git_config(key: str) -> bool:
         or k.startswith("credential.")
         or k in {"core.askpass", "core.gitproxy", "diff.external", "include.path"}
         or k.endswith(".driver")
+        or k.endswith(".textconv")  # diff.<x>.textconv runs a program (#1718)
         or k.endswith((".uploadpack", ".receivepack"))
         or k.startswith("includeif.")
         or k.startswith("protocol.")  # protocol.ext.allow enables ext:: transport RCE
@@ -223,7 +224,14 @@ def _unstage_spec_artifacts() -> list[str]:
     """
     try:
         result = subprocess.run(
-            ["git", "diff", "--cached", "--name-only"],
+            [
+                "git",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--cached",
+                "--name-only",
+            ],
             capture_output=True,
             text=True,
             timeout=10,

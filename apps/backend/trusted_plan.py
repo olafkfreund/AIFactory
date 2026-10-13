@@ -673,7 +673,15 @@ def check_baseline_drift(
         )
 
     ahead = _git(Path(project_dir), "rev-list", "--count", f"{resolved}..HEAD")
-    changed = _git(Path(project_dir), "diff", "--name-only", resolved, "HEAD")
+    changed = _git(
+        Path(project_dir),
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--name-only",
+        resolved,
+        "HEAD",
+    )
     changed_files = set((changed or "").splitlines())
     overlap = sorted(changed_files & set(_blast_radius_files(plan)))
 
