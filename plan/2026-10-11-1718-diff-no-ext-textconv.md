@@ -308,7 +308,7 @@ at `core/workspace/git_utils.py:121-128` (no `-p`).
 ## Files touched
 
 17 call-site files (site table), `tests/test_command_sandbox.py`, new
-`tests/test_diff_no_ext_textconv.py`, `CHANGELOG.md`: 20 files.
+`tests/test_diff_no_ext_textconv.py`, `CHANGELOG.md`: 20 files (22 with the two fake-runner tests in Deviations).
 `apps/backend/security/git_validators.py` is one of the 17 (step 2 does both
 its clause and its site).
 
@@ -533,3 +533,8 @@ Code-only change; no data, schema, config or migration. To undo:
 ## Approver decisions (2026-10-13)
 
 None beyond plan approval.
+- Review hardening (after the Opus review): the scan test now requires both
+  flags to come before any `"--"` in the argv (git reads anything after `--`
+  as a pathspec), with a small self-test, and its docstring states the
+  literal-argv limit. `git show <commit>` without `-p`, `merge-tree` merge
+  drivers and other non-diff driver paths are filed as a follow-up issue.

@@ -73,8 +73,12 @@ def _is_diff_family(sub: str, consts: set[str]) -> bool:
     return sub in _DIFF_CMDS or (sub in _PATCH_CMDS and bool(consts & _PATCH_FLAGS))
 
 
-def _git_diff_calls() -> Iterator[tuple[str, int, set[str]]]:
-    """Yield (path, line, string constants) for every git diff-family argv."""
+def _git_diff_calls() -> Iterator[tuple[str, int, list[str | None]]]:
+    """Yield (path, line, argv constants) for every git diff-family argv.
+
+    Known limit: only literal argv is seen. A call whose subcommand is built at
+    runtime (``cmd.append("diff")``, shell strings) is invisible to this scan.
+    """
     for path, rel in _sources():
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=rel)
         arg_of: dict[int, str] = {}
@@ -102,12 +106,27 @@ def _git_diff_calls() -> Iterator[tuple[str, int, set[str]]]:
             if sub is None and "git" in callee:
                 sub = next((v for v in vals if v is not None), None)
             if sub is not None and _is_diff_family(sub, consts):
-                yield rel, node.lineno, consts
+                yield rel, node.lineno, vals
+
+
+def _flags_before_pathspec(vals: list[str | None]) -> bool:
+    # After "--" git reads the flags as pathspecs, so they must come first.
+    head = vals[: vals.index("--")] if "--" in vals else vals
+    return _REQUIRED.issubset(set(head))
+
+
+def test_flags_after_double_dash_do_not_count() -> None:
+    assert not _flags_before_pathspec(
+        ["git", "diff", "a", "--", "p", "--no-ext-diff", "--no-textconv"]
+    )
+    assert _flags_before_pathspec(
+        ["git", "diff", "--no-ext-diff", "--no-textconv", "a", "--", "p"]
+    )
 
 
 def test_every_git_diff_call_disables_drivers_and_textconv() -> None:
     calls = list(_git_diff_calls())
-    offenders = [f"{p}:{n}" for p, n, c in calls if not _REQUIRED.issubset(c)]
+    offenders = [f"{p}:{n}" for p, n, v in calls if not _flags_before_pathspec(v)]
     assert not offenders, (
         "git diff-family calls missing --no-ext-diff --no-textconv (#1718):\n"
         + "\n".join(offenders)
@@ -115,7 +134,7 @@ def test_every_git_diff_call_disables_drivers_and_textconv() -> None:
 
 
 def test_scan_still_sees_the_full_patch_sites() -> None:
-    full_patch = {p for p, _, c in _git_diff_calls() if not c & _SUMMARY}
+    full_patch = {p for p, _, v in _git_diff_calls() if not set(v) & _SUMMARY}
     missing = _FULL_PATCH_FILES - full_patch
     assert not missing, f"matcher no longer finds the full-patch diff in: {missing}"
 
