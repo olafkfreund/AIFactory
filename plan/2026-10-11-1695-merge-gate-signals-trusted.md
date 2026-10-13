@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1695
 spec: spec/2026-10-11-1695-merge-gate-signals-trusted.md
 ---
