@@ -218,3 +218,7 @@ fails); removing `OLLAMA_API_KEY` from both `_AGENT_ENV_DENY_EXACT` and
 `RUNNER_KEEP` together restores the old key handling; reverting the
 `name.upper()` change restores case-sensitive matching (then drop the two new
 tests in `tests/test_agent_env_scrub.py`).
+
+## Approver decisions (2026-10-13)
+
+None beyond plan approval.
