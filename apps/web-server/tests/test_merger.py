@@ -140,7 +140,9 @@ def test_branch_ahead_and_changed_measures(tmp_path):
             "fetch origin main": CmdResult(0, "", ""),
             "fetch origin aifactory/1": CmdResult(0, "", ""),
             "rev-list --count": CmdResult(0, "3\n", ""),
-            "diff --no-ext-diff --no-textconv --name-only": CmdResult(0, "a.py\nb.py\n", ""),
+            "diff --no-ext-diff --no-textconv --name-only": CmdResult(
+                0, "a.py\nb.py\n", ""
+            ),
         }
     )
     got = mg._branch_ahead_and_changed(tmp_path, "main", "aifactory/1", r)
@@ -198,7 +200,9 @@ def test_branch_ahead_and_changed_unmeasurable_when_diff_fails(tmp_path):
             "fetch origin main": CmdResult(0, "", ""),
             "fetch origin aifactory/1": CmdResult(0, "", ""),
             "rev-list --count": CmdResult(0, "3\n", ""),
-            "diff --no-ext-diff --no-textconv --name-only": CmdResult(1, "", "ambiguous argument"),
+            "diff --no-ext-diff --no-textconv --name-only": CmdResult(
+                1, "", "ambiguous argument"
+            ),
         }
     )
     got = mg._branch_ahead_and_changed(tmp_path, "main", "aifactory/1", r)
@@ -385,7 +389,11 @@ def test_process_spec_skips_empty_branch_no_pr_opened(tmp_path, monkeypatch):
 def test_process_spec_skips_zero_changed_files_even_if_ahead(tmp_path, monkeypatch):
     monkeypatch.setenv("AIFACTORY_AUTO_PR", "true")
     spec_dir = _spec(tmp_path, "001-x")
-    r = FakeRunner(_routes(**{"diff --no-ext-diff --no-textconv --name-only": CmdResult(0, "", "")}))
+    r = FakeRunner(
+        _routes(
+            **{"diff --no-ext-diff --no-textconv --name-only": CmdResult(0, "", "")}
+        )
+    )
     out = mg._process_spec("proj", tmp_path, spec_dir, dry_run=False, runner=r)
     assert out["action"] == "skipped"
     assert "no_content" in out["reason"]
