@@ -371,7 +371,7 @@ def _status_seen_by_load(
     monkeypatch.setattr(
         github_app,
         "load_web_login",
-        lambda: seen.append(getattr(routes, "_gh_auth_status")),
+        lambda: seen.append(routes._gh_auth_status),
     )
     return seen
 
