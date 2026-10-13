@@ -38,6 +38,14 @@
   re-log in and remove it.
   Accepted residual risk: the runner process still holds the token by design,
   and the same-uid `/proc/<pid>/environ` exposure is out of scope.
+- **Verified tasks auto-merge only on a TFactory verdict and green CI that AIFactory fetched itself (#1695).**
+  At merge time the PR endgame reads the TFactory verdict from TFactory's API
+  and the host-CI result from GitHub checks for the exact head commit, and
+  merges only that commit. `task_metadata.json` can still hold a merge but no
+  longer clear one. Operator-visible: a host without `TFACTORY_BASE_URL`, or a
+  repo without CI, never auto-merges a verified task; it times out to a human
+  after 20 minutes. A head pushed by the endgame's own fix or conflict cycle
+  also goes to a human. Legacy and from-issue tasks are unchanged (#1697).
 - **An agent-written `.git/config` can no longer choose the server's ssh command, pager or editor (#1717).**
   `child_env()` also pins `core.sshCommand=ssh`, `core.pager=cat` and
   `core.editor=true` (`GIT_CONFIG_COUNT` is now `n+6`). Operators can still

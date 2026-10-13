@@ -975,3 +975,129 @@ def test_human_approval_head_runner_error_fails_closed() -> None:
         raise subprocess.TimeoutExpired("gh", 30)
 
     assert pe.human_approval_head("o", "r", 5, runner=boom) is None
+
+
+# ── #1695: merge-time gate and host-CI read ──────────────────────────────────
+
+
+def _gate_watch(r: FakeRunner, gate: Any, **kw: Any) -> dict[str, Any]:
+    return asyncio.run(
+        pe.watch_and_finish(
+            owner="o",
+            repo="r",
+            pr=11,
+            auto_merge=True,
+            review_fn=kw.pop("review_fn", lambda: pe.ReviewState("approved")),
+            merge_gate=gate,
+            runner=r,
+            poll_interval=0,
+            max_minutes=1,
+            **kw,
+        )
+    )
+
+
+def test_1695_red_gate_never_merges() -> None:
+    r = FakeRunner({".head.sha": CmdResult(0, "abc", "")})
+    res = _gate_watch(r, lambda _h: False)
+    assert not r.saw("pr merge")
+    assert res["reason"] == "merge_gate_timeout"
+
+
+def test_1695_green_gate_merges_bound_to_the_head() -> None:
+    r = FakeRunner(
+        {".head.sha": CmdResult(0, "abc", ""), "pr merge": CmdResult(0, "merged", "")}
+    )
+    res = _gate_watch(r, lambda h: h == "abc")
+    assert res["merged"] is True
+    assert r.saw("--match-head-commit abc")
+    assert not r.saw("update-branch")
+
+
+def test_1695_endgame_pushed_head_holds_for_a_human() -> None:
+    states = [
+        pe.ReviewState("changes_requested", findings=[{}]),
+        pe.ReviewState("approved"),
+    ]
+    r = FakeRunner({".head.sha": CmdResult(0, "abc", "")})
+    res = _gate_watch(
+        r,
+        lambda _h: True,
+        review_fn=lambda: states.pop(0) if states else pe.ReviewState("approved"),
+        fix_fn=lambda _f: True,
+    )
+    assert res["reason"] == "merge_gate_unverified_head"
+    assert not r.saw("pr merge")
+
+
+def _ci_runner(runs: list[str], status: str, rc: int = 0) -> FakeRunner:
+    return FakeRunner(
+        {
+            "check-runs": CmdResult(rc, "\n".join(runs), ""),
+            "/status": CmdResult(rc, status, ""),
+        }
+    )
+
+
+_OK = '{"status":"completed","conclusion":"success"}'
+
+
+@pytest.mark.parametrize(
+    ("runs", "status", "rc", "want"),
+    [
+        ([_OK], '{"state":"success","total_count":1}', 0, True),
+        (
+            [_OK, '{"status":"completed","conclusion":"failure"}'],
+            '{"state":"success","total_count":1}',
+            0,
+            False,
+        ),
+        (
+            [_OK, '{"status":"in_progress","conclusion":null}'],
+            '{"state":"success","total_count":1}',
+            0,
+            None,
+        ),
+        ([], '{"state":"pending","total_count":0}', 0, None),
+        ([_OK], '{"state":"pending","total_count":2}', 0, None),
+        ([_OK], '{"state":"success","total_count":1}', 1, None),
+    ],
+)
+def test_1695_host_ci_green(
+    runs: list[str], status: str, rc: int, want: bool | None
+) -> None:
+    assert (
+        pe.host_ci_green("o", "r", "abc", runner=_ci_runner(runs, status, rc)) is want
+    )
+
+
+def test_1695_host_ci_green_timeout_is_none() -> None:
+    def boom(_argv: list[str], _cwd: str | None = None) -> CmdResult:
+        raise subprocess.TimeoutExpired(["gh"], 120)
+
+    assert pe.host_ci_green("o", "r", "abc", runner=boom) is None
+
+
+def _suite_runner(suites: list[str]) -> FakeRunner:
+    return FakeRunner(
+        {
+            "check-runs": CmdResult(0, _OK, ""),
+            "/status": CmdResult(0, '{"state":"success","total_count":1}', ""),
+            "check-suites": CmdResult(0, "\n".join(suites), ""),
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("suites", "want"),
+    [
+        (['{"status":"completed","n":1}'], True),
+        (['{"status":"completed","n":1}', '{"status":"queued","n":2}'], None),
+        (['{"status":"in_progress","n":1}'], None),
+        (['{"status":"queued","n":0}'], True),  # an empty suite has nothing to wait for
+    ],
+)
+def test_1695_host_ci_green_waits_for_unfinished_suites(
+    suites: list[str], want: bool | None
+) -> None:
+    assert pe.host_ci_green("o", "r", "abc", runner=_suite_runner(suites)) is want

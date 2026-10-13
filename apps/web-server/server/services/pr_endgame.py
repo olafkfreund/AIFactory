@@ -23,7 +23,7 @@ import json
 import logging
 import os
 import subprocess
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -397,7 +397,9 @@ def _meta_signal(meta: dict[str, object], key: str) -> object:
     return None
 
 
-def merge_gate_signals(spec_dir: Path) -> dict[str, object]:
+def merge_gate_signals(
+    spec_dir: Path, *, fetched: Mapping[str, object] | None = None
+) -> dict[str, object]:
     """The RFC-0011 gate signals this task actually recorded, for ``decide_merge``.
 
     Returns a dict keyed exactly like ``decide_merge``'s keyword arguments.
@@ -416,6 +418,9 @@ def merge_gate_signals(spec_dir: Path) -> dict[str, object]:
     So this NARROWS: it can refuse a merge on recorded evidence of failure, and
     it never invents a green. That is strictly more than the tier ceiling it
     replaces, which read only ``reviewTier`` and ignored the verdict entirely.
+
+    With ``fetched`` (verified tasks, #1695) the verdict and host-CI start from
+    those trusted values and recorded metadata can only tighten them.
     """
     signals: dict[str, object] = {
         "host_ci_green": True,
@@ -428,6 +433,11 @@ def merge_gate_signals(spec_dir: Path) -> dict[str, object]:
         "val_floor": None,
         "ci_parity": True,
     }
+    if fetched is not None:
+        from merge.merge_policy import _verdict_pass  # noqa: PLC0415
+
+        signals["tfactory_verdict"] = fetched.get("tfactory_verdict")
+        signals["host_ci_green"] = fetched.get("host_ci_green") is True
     spec_dir = Path(spec_dir)
     if (spec_dir / _HANDBACK_RECEIPT).is_file():
         signals["tfactory_verdict"] = "handback"
@@ -439,12 +449,22 @@ def merge_gate_signals(spec_dir: Path) -> dict[str, object]:
         return signals
     for key in ("tfactory_verdict", "achieved_val", "val_floor"):
         recorded = _meta_signal(meta, key)
-        if recorded is not None:
-            signals[key] = recorded
+        if recorded is None:
+            continue
+        if (
+            fetched is not None
+            and key == "tfactory_verdict"
+            and _verdict_pass(recorded)
+        ):
+            continue  # metadata can only tighten a fetched verdict
+        signals[key] = recorded
     for key in ("ci_parity", "host_ci_green"):
         recorded = _meta_signal(meta, key)
-        if isinstance(recorded, bool):
-            signals[key] = recorded
+        if not isinstance(recorded, bool):
+            continue
+        if fetched is not None and key == "host_ci_green" and recorded:
+            continue
+        signals[key] = recorded
     # A recorded handback is never overwritten by a stale metadata verdict.
     if (spec_dir / _HANDBACK_RECEIPT).is_file():
         signals["tfactory_verdict"] = "handback"
@@ -474,6 +494,7 @@ def merge_disposition(
     *,
     trusted: object,
     satisfied_gates: Iterable[str] = (),
+    fetch_signals: Callable[[], Mapping[str, object]] | None = None,
 ) -> str:
     """The RFC-0011/RFC-0013 merge disposition for this task (#637).
 
@@ -502,6 +523,9 @@ def merge_disposition(
     satisfied system gates clear only ``system_gates`` holds. Gate evidence
     comes only from the caller (a GitHub review, #1663), never from the contract
     or task_metadata.
+
+    ``fetch_signals`` (#1695) is called only for a verified task; its trusted
+    verdict and host-CI feed ``merge_gate_signals``, and a raise holds.
     """
     try:
         from merge.merge_policy import decide_merge, raise_review_tier  # noqa: PLC0415
@@ -526,6 +550,7 @@ def merge_disposition(
         )
         return HOLD_BLOCKING_DISPOSITION
     effective = tier if tier is not None and str(tier).strip() else "low"
+    fetched: Mapping[str, object] | None = None
     try:
         state, contract = resolve_contract(spec_dir, trusted)
         if state == "hold":
@@ -560,6 +585,8 @@ def merge_disposition(
                 )
             if _describe_tier(effective) != "unrecognised":
                 effective = raise_review_tier(signed, effective)
+            if fetch_signals is not None:
+                fetched = fetch_signals()
     except Exception:  # noqa: BLE001 - e.g. RecursionError, UnicodeDecodeError
         # Hold, never raise: an exception here would abort the endgame before
         # the PR is opened, and "we could not read it" is not "not production".
@@ -570,7 +597,7 @@ def merge_disposition(
     return str(
         decide_merge(
             str(effective),
-            **merge_gate_signals(spec_dir),
+            **merge_gate_signals(spec_dir, fetched=fetched),
             deployment=deployment,
             satisfied_gates=list(satisfied_gates),
         )
@@ -886,8 +913,93 @@ def human_approval_head(
     return None
 
 
+def _pr_head(owner: str, repo: str, pr: int, runner: Runner) -> str | None:
+    """The PR's current head SHA, or None. Never raises (fail closed, #1695)."""
+    try:
+        res = runner(
+            ["gh", "api", f"/repos/{owner}/{repo}/pulls/{pr}", "--jq", ".head.sha"],
+            None,
+        )
+        return (res.out.strip() or None) if res.ok else None
+    except Exception:  # noqa: BLE001 - fail closed
+        return None
+
+
+_GREEN_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
+
+
+def host_ci_green(
+    owner: str, repo: str, sha: str, *, runner: Runner = _default_runner
+) -> bool | None:
+    """Host CI for exactly commit ``sha``: True green, False red, None unknown.
+
+    Read by SHA, not ``gh pr checks``, so it is the head that gets merged. No CI
+    at all is None, not green. Never raises; nothing fetched is logged (#1695).
+    """
+    try:
+        runs_res = runner(
+            [
+                "gh",
+                "api",
+                "--paginate",
+                f"repos/{owner}/{repo}/commits/{sha}/check-runs",
+                "--jq",
+                ".check_runs[] | {status, conclusion}",
+            ],
+            None,
+        )
+        st_res = runner(
+            [
+                "gh",
+                "api",
+                f"repos/{owner}/{repo}/commits/{sha}/status",
+                "--jq",
+                "{state, total_count}",
+            ],
+            None,
+        )
+        # A suite that has runs but is not completed means more checks may still
+        # land, so a green partial roll-up must not count (#1695).
+        suites_res = runner(
+            [
+                "gh",
+                "api",
+                "--paginate",
+                f"repos/{owner}/{repo}/commits/{sha}/check-suites",
+                "--jq",
+                ".check_suites[] | {status, n: .latest_check_runs_count}",
+            ],
+            None,
+        )
+        if not (runs_res.ok and st_res.ok and suites_res.ok):
+            return None
+        runs = [json.loads(ln) for ln in runs_res.out.splitlines() if ln.strip()]
+        suites = [json.loads(ln) for ln in suites_res.out.splitlines() if ln.strip()]
+        status = json.loads(st_res.out)
+        state = status["state"]
+        total = int(status["total_count"])
+        if state in ("failure", "error") or any(
+            r["status"] == "completed" and r["conclusion"] not in _GREEN_CONCLUSIONS
+            for r in runs
+        ):
+            return False
+        pending = (
+            any(r["status"] != "completed" for r in runs)
+            or any(x["n"] > 0 and x["status"] != "completed" for x in suites)
+            or (total > 0 and state != "success")
+            or (not runs and total == 0)
+        )
+        return None if pending else True
+    except Exception:  # noqa: BLE001 - unknown is not green
+        return None
+
+
 def _clears_with_human_approval(
-    spec_dir: Path, tier: str | None, trusted: object
+    spec_dir: Path,
+    tier: str | None,
+    trusted: object,
+    *,
+    fetch_signals: Callable[[], Mapping[str, object]] | None = None,
 ) -> bool:
     """Would the tier auto-merge if only the human-only gates were satisfied?"""
     try:
@@ -896,7 +1008,11 @@ def _clears_with_human_approval(
         return False  # fail closed: auto-merge stays off
     return (
         merge_disposition(
-            spec_dir, tier, trusted=trusted, satisfied_gates=HUMAN_ONLY_GATES
+            spec_dir,
+            tier,
+            trusted=trusted,
+            satisfied_gates=HUMAN_ONLY_GATES,
+            fetch_signals=fetch_signals,
         )
         == AUTO_MERGE_DISPOSITION
     )
@@ -1071,7 +1187,21 @@ def _split_repo(repo: str) -> tuple[str, str] | None:
     return None
 
 
-async def watch_and_finish(
+async def _gated_head(
+    merge_gate: Callable[[str], bool],
+    match_head: str | None,
+    pr_head: Callable[[], str | None],
+    pr: int,
+) -> str | None:
+    """The head to merge when ``merge_gate`` is green for it, else None (#1695)."""
+    head = match_head or await asyncio.to_thread(pr_head)
+    if head is None or not await asyncio.to_thread(merge_gate, head):
+        logger.info("[pr-endgame] pr=%d merge gate not green yet", pr)
+        return None
+    return head
+
+
+async def watch_and_finish(  # noqa: PLR0911, PLR0915 - merge-gate human-stop (#1695)
     *,
     owner: str,
     repo: str,
@@ -1090,12 +1220,15 @@ async def watch_and_finish(
     poll_interval: int = _POLL_INTERVAL_SECONDS,
     max_minutes: int = _MAX_POLL_MINUTES,
     human_approval_required: bool = False,
+    merge_gate: Callable[[str], bool] | None = None,
 ) -> dict:
     """Poll the PR's reviews and merge only on a CLEAN Copilot approval.
 
     ``human_approval_required`` additionally waits for a human GitHub approval
     of the head commit (``human_approval_head``) and merges bound to that SHA
     (#1663); until then it keeps polling, and the timeout is the human-stop.
+    ``merge_gate`` (#1695): the merge waits until ``merge_gate(head)`` is true
+    and merges only that head; an endgame-pushed head holds for a human.
 
     Merge requires ALL of: ``auto_merge`` on, no CHANGES_REQUESTED, and — when
     ``require_copilot`` (default) — that GitHub Copilot's code review actually ran
@@ -1118,6 +1251,7 @@ async def watch_and_finish(
 
     fix_cycles = 0
     conflict_cycles = 0
+    gate_held = False
     polls = max(1, (max_minutes * 60) // max(1, poll_interval))
     for _ in range(polls):
         await asyncio.sleep(poll_interval)
@@ -1188,6 +1322,30 @@ async def watch_and_finish(
                 )
                 if match_head is None:
                     continue  # no human approval of the head commit yet
+            if merge_gate is not None:
+                if fix_cycles or conflict_cycles:
+                    logger.info(
+                        "[pr-endgame] pr=%d head was pushed by the endgame and no "
+                        "verdict covers it; handing to a human",
+                        pr,
+                    )
+                    return {
+                        "pr": pr,
+                        "verdict": "approved",
+                        "merged": False,
+                        "reason": "merge_gate_unverified_head",
+                        "fix_cycles": fix_cycles,
+                        "conflict_cycles": conflict_cycles,
+                    }
+                match_head = await _gated_head(
+                    merge_gate,
+                    match_head,
+                    lambda: _pr_head(owner, repo, pr, runner),
+                    pr,
+                )
+                if match_head is None:
+                    gate_held = True
+                    continue
             merged = await asyncio.to_thread(
                 merge_pr, owner, repo, pr, runner=runner, match_head=match_head
             )
@@ -1264,7 +1422,9 @@ async def watch_and_finish(
         "pr": pr,
         "verdict": "pending",
         "merged": False,
-        "reason": "review_timeout (no Copilot approval)"
+        "reason": "merge_gate_timeout"
+        if gate_held
+        else "review_timeout (no Copilot approval)"
         if require_copilot
         else "review_timeout",
     }
@@ -1421,6 +1581,60 @@ def gather_pr_context(
     }
 
 
+def _build_merge_gate(  # noqa: PLR0913 - one-shot builder for run_pr_endgame
+    spec_dir: Path,
+    spec_id: str,
+    repo_parts: tuple[str, str],
+    trusted: object,
+    review_tier: str | None,
+    human_approval_required: bool,
+    runner: Runner,
+) -> Callable[[str], bool] | None:
+    """The merge-time gate for a non-legacy task, None for a legacy one (#1695, C1).
+
+    An unreadable contract counts as non-legacy, so the merge holds.
+    """
+    try:
+        from server.services.trusted_contract import (  # noqa: PLC0415
+            resolve_contract,
+        )
+
+        state = resolve_contract(spec_dir, trusted)[0]
+    except Exception:  # noqa: BLE001 - unknown is not legacy: fail closed
+        state = "hold"
+    if state == "legacy":
+        return None
+    owner, name = repo_parts
+
+    def gate(head: str) -> bool:
+        def fetch() -> dict[str, object]:
+            try:
+                from pfactory.tfactory_client import (  # noqa: PLC0415
+                    tfactory_verdict,
+                )
+
+                verdict = tfactory_verdict(spec_dir, spec_id)
+            except ImportError:
+                verdict = None
+            return {
+                "tfactory_verdict": verdict,
+                "host_ci_green": host_ci_green(owner, name, head, runner=runner),
+            }
+
+        if human_approval_required:
+            return _clears_with_human_approval(
+                spec_dir, review_tier, trusted, fetch_signals=fetch
+            )
+        return (
+            merge_disposition(
+                spec_dir, review_tier, trusted=trusted, fetch_signals=fetch
+            )
+            == AUTO_MERGE_DISPOSITION
+        )
+
+    return gate
+
+
 async def run_pr_endgame(
     *,
     spec_dir: Path,
@@ -1521,6 +1735,20 @@ async def run_pr_endgame(
         return {"ok": False, "reason": "no_repo", "repo": repo}
     owner, name = parts
 
+    merge_gate = (
+        _build_merge_gate(
+            spec_dir,
+            spec_id,
+            (owner, name),
+            trusted,
+            review_tier,
+            human_approval_required,
+            runner,
+        )
+        if auto_merge
+        else None
+    )
+
     title, body = _pr_title_body(spec_dir, spec_id)
     if review_tier_floor:
         # Advisory rollout (#1456): tell the human reviewer what the paths say,
@@ -1581,6 +1809,7 @@ async def run_pr_endgame(
         on_approved_merged=re_test,
         runner=runner,
         human_approval_required=human_approval_required,
+        merge_gate=merge_gate,
     )
     if background:
         # A strong reference, held until the watcher finishes. The event loop
