@@ -303,3 +303,8 @@ PR must report no new `py/log-injection`.
 2. **`"flag"` verdicts.** This spec follows TFactory's own handback rule:
    only `"reject"` fails, and `"flag"` does not block. The stricter option is
    to treat any `"flag"` as not a pass. Confirm.
+
+## Approver decisions (2026-10-13)
+
+1. Hold the merge after an endgame-pushed fix or conflict commit (fail closed); no verdict covers that commit.
+2. A TFactory `"flag"` verdict does not block; only `"reject"` fails, following TFactory's own handback rule.
