@@ -19,6 +19,15 @@
   `git config diff.<x>.textconv` and `git -c diff.<x>.textconv=…`. Binary and
   LFS-pointer files now show raw (or as "Binary files differ") in diff views and
   the merge security gate, and count as 0 lines in `--numstat`.
+- **The TFactory test profile now comes from the trusted contract (#1750).**
+  `start_task` hands TFactory the `tfactory` block from the verified signed
+  record, not from `implementation_plan.json`, which the agent can edit. When
+  the record cannot be verified (store unreachable, tampered contract, or a
+  host that does not isolate the agent) the handoff is still sent with an
+  empty profile, TFactory infers its own plan, and a warning is logged.
+  Trusted-plan tasks on hosts other than kubejob with `DATABASE_URL` therefore
+  lose their declared profile; legacy tasks are unchanged.
+  `pfactory.load_tfactory_block` is removed.
 - **An agent-written `.git/config` can no longer choose the server's ssh command, pager or editor (#1717).**
   `child_env()` also pins `core.sshCommand=ssh`, `core.pager=cat` and
   `core.editor=true` (`GIT_CONFIG_COUNT` is now `n+6`). Operators can still
