@@ -28,6 +28,7 @@ import subprocess
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from core.child_env import child_env
 from core.git_credentials import authed_push_url
@@ -40,6 +41,7 @@ __all__ = [
     "maybe_auto_handoff_tfactory",
     "send_handoff",
     "tfactory_config",
+    "tfactory_verdict",
     "wants_auto_handoff",
 ]
 
@@ -761,6 +763,66 @@ async def send_pr_attach(
         "reason": None if ok else "http_error",
         "status": result.get("status"),
     }
+
+
+_HTTP_OK, _HTTP_REDIRECT = 200, 300
+
+# (url, headers) -> (status code, parsed JSON body or None)
+Getter = Callable[[str, dict[str, str]], tuple[int, object]]
+
+
+def _httpx_get(url: str, headers: dict[str, str]) -> tuple[int, object]:
+    import httpx  # noqa: PLC0415 - optional dependency, only on this path
+
+    resp = httpx.get(url, headers=headers, timeout=10.0)
+    return resp.status_code, resp.json() if resp.is_success else None
+
+
+def tfactory_verdict(
+    spec_dir: Path, spec_id: str, *, getter: Getter | None = None
+) -> str | None:
+    """The verdict TFactory itself recorded for this spec (#1695).
+
+    ``"pass"``, ``"fail"`` or ``None`` (no trusted result: unconfigured,
+    unreachable, wrong project, not triaged, no verdicts). Only a ``reject``
+    fails; ``flag`` does not block. Never raises; logs nothing it fetched.
+    """
+    config = tfactory_config()
+    base_url = config.get("base_url")
+    project_id = os.environ.get("TFACTORY_PROJECT_ID") or _aifactory_project_name(
+        Path(spec_dir)
+    )
+    if not base_url or not project_id:
+        return None
+    headers = (
+        {"Authorization": f"Bearer {config['token']}"} if config.get("token") else {}
+    )
+    base = f"{base_url}/api/tfactory/tasks/{quote(spec_id, safe='')}"
+    get = getter or _httpx_get
+    try:
+        code, task = get(base, headers)
+        status_json = task.get("status_json") if isinstance(task, dict) else None
+        if not (
+            _HTTP_OK <= code < _HTTP_REDIRECT
+            and isinstance(task, dict)
+            and task.get("project_id") == project_id
+            and isinstance(status_json, dict)
+            and status_json.get("status") == "triaged"
+        ):
+            return None
+        code, doc = get(f"{base}/verdicts.json", headers)
+        if not (
+            _HTTP_OK <= code < _HTTP_REDIRECT
+            and isinstance(doc, dict)
+            and isinstance(doc.get("verdicts"), list)
+        ):
+            return None
+        entries = [e for e in doc["verdicts"] if isinstance(e, dict)]
+    except Exception:  # noqa: BLE001 - no trusted result is not a pass
+        return None
+    if not entries:
+        return None
+    return "fail" if any(e.get("verdict") == "reject" for e in entries) else "pass"
 
 
 def wants_auto_handoff(spec_dir: Path) -> bool:

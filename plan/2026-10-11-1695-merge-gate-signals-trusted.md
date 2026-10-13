@@ -503,3 +503,7 @@ either way. For an emergency without a deploy, operators can turn
   (`# noqa: PLR0913`, same convention as `merge_pr`) instead of inline after
   `owner, name = parts`; inline it pushed `run_pr_endgame` past PLR0912/PLR0915.
   The inner callable is named `gate`. Behaviour unchanged.
+- Step 7: `_HTTP_OK, _HTTP_REDIRECT = 200, 300` module constants for the 2xx
+  check (avoids four new PLR2004 hits). Behaviour as planned. This commit also
+  runs `ruff format` over `pr_endgame.py`, which CI's format-check required
+  after step 1.

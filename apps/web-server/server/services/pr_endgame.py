@@ -451,7 +451,11 @@ def merge_gate_signals(
         recorded = _meta_signal(meta, key)
         if recorded is None:
             continue
-        if fetched is not None and key == "tfactory_verdict" and _verdict_pass(recorded):
+        if (
+            fetched is not None
+            and key == "tfactory_verdict"
+            and _verdict_pass(recorded)
+        ):
             continue  # metadata can only tighten a fetched verdict
         signals[key] = recorded
     for key in ("ci_parity", "host_ci_green"):
