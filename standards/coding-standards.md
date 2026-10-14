@@ -68,7 +68,10 @@ params; cyclomatic <= 10; cognitive <= 15; nesting <= 3 (use guard clauses). No
 god-files.
 
 1.9 **Hygiene.** `pathlib` over `os.path`; tz-aware datetimes (`DTZ`), no naive
-`now()`/`utcnow()`; `logging`, not `print()`, in service code (`T20`).
+`now()`/`utcnow()` (write aware UTC, `datetime.now(UTC)`, serialised with
+`isoformat()` as `+00:00`; a reader comparing a stored value against an aware now
+treats a naive legacy value as UTC: `dt if dt.tzinfo else dt.replace(tzinfo=UTC)`);
+`logging`, not `print()`, in service code (`T20`).
 
 1.10 **Dead code and comments.** No commented-out code (`ERA`); no unused
 imports/vars/args (`F401`/`F841`/`ARG`); no `if False`. Comments explain WHY, not
