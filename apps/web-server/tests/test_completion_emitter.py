@@ -68,15 +68,15 @@ def test_correlation_key_issue_vs_synthetic():
     assert correlation_key("spec-9", None) == "af-spec-9"
 
 
-def _spec_with(tmp_path, name, requirements):
+def _spec_with(tmp_path: Path, name: str, requirements: dict[str, object]) -> Path:
     d = tmp_path / name
     d.mkdir()
     (d / "requirements.json").write_text(json.dumps(requirements))
     return d
 
 
-def test_key_is_scoped_to_the_repo(tmp_path):
-    keys = []
+def test_key_is_scoped_to_the_repo(tmp_path: Path) -> None:
+    keys: list[str] = []
     for name, repo in (("s1", "a/x"), ("s2", "b/y")):
         d = _spec_with(
             tmp_path,
@@ -95,7 +95,9 @@ def test_key_is_scoped_to_the_repo(tmp_path):
     assert keys == ["a/x#7", "b/y#7"]
 
 
-def test_read_issue_repo_parses_the_issue_url_and_falls_back_to_bare(tmp_path):
+def test_read_issue_repo_parses_the_issue_url_and_falls_back_to_bare(
+    tmp_path: Path,
+) -> None:
     d = _spec_with(
         tmp_path,
         "s1",
