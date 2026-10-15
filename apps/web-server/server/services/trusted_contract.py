@@ -17,7 +17,12 @@ _BACKEND_DIR = Path(__file__).resolve().parents[3] / "backend"
 if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
-from core.contract_trust import ENV, LEGACY, contract_digest, has_trusted_trace  # noqa: E402
+from core.contract_trust import (  # noqa: E402
+    ENV,
+    LEGACY,
+    contract_digest,
+    has_trusted_trace,
+)
 
 _ISOLATED_STAMPS = ("kubejob", "sandbox-pidns")
 
