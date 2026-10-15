@@ -186,7 +186,7 @@ def _unwrap_dash_c(
             and "c" in tok[1:]
             and j + 1 < len(tokens)
         ):
-            _require_literal(words, idx + 1, j)
+            _require_literal(words, idx + 1, j + 1)  # incl. the -c word (-$c)
             payload_word = words[j + 1]
             if not _word_parts_are_literal(payload_word):
                 raise UnparseableCommand(
@@ -350,6 +350,10 @@ def _unwrap_find_exec(
             _emit(words, j + 1, depth + 1, acc, dynamic_args=True)
 
 
+def _is_opt(tok: str) -> bool:
+    return tok.startswith("-") and tok != "-"
+
+
 def _skip_command_opts(tokens: list[str], j: int) -> int | None:
     """``command [-p] CMD`` — None for ``-v``/``-V`` (lookup, runs nothing)."""
     while j < len(tokens) and tokens[j].startswith("-") and tokens[j] != "-":
@@ -399,6 +403,12 @@ def _unwrap_prefix(
 ) -> None:
     """``command``/``exec``/``timeout`` run the command that follows their options."""
     tokens = [w.word for w in words]
+    opts_end = next(
+        (k for k in range(idx + 1, len(tokens)) if not _is_opt(tokens[k])),
+        len(tokens),
+    )
+    # Before the ``-v`` exemption: ``-$X`` could hide or fake the ``v``.
+    _require_literal(words, idx + 1, opts_end)
     j = _PREFIX_OPT_SKIPPERS[_basename(tokens[idx])](tokens, idx + 1)
     if j is None:  # ``command -v``: a lookup, runs nothing
         return

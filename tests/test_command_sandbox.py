@@ -96,6 +96,16 @@ DYNAMIC_COMMAND_WORD = [
     "bash $X",
     "bash $X -c ls",
     "find $X -name y",
+    # The word that decides what runs (-c, -v) must itself be literal.
+    "command -$X -v git",
+    "command -$v rm x",
+    "bash -$c 'git status'",
+    "sh -${cfg} ls",
+    "exec -$X git status",
+    "timeout -$X 5 git status",
+    "xargs -n1 -$X git",
+    "env -i -$X git",
+    "find . -$X git {} +",
 ]
 
 # `git -c …` config injection / transport-exec hijack — must be blocked even
