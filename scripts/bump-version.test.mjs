@@ -5,6 +5,7 @@
 //     existsSync-then-read shape silently erased (readIfPresent)
 //   - js/regex-injection + js/incomplete-sanitization (changelogHasVersion)
 //   - setOpenapiVersion (#1631): info:-scoped constant regex, replacer fn (no $-expansion)
+//   - setLockVersions (#1727): root, packages[""] and apps/frontend-web only
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -13,7 +14,7 @@ import test from 'node:test';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { readIfPresent, changelogHasVersion, setOpenapiVersion } = require('./bump-version.js');
+const { readIfPresent, changelogHasVersion, setOpenapiVersion, setLockVersions } = require('./bump-version.js');
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'bumpver-'));
 
@@ -104,4 +105,35 @@ test('setOpenapiVersion returns null when info has no version', () => {
 
 test('setOpenapiVersion writes $-patterns in the version literally', () => {
   assert.equal(setOpenapiVersion(OPENAPI_HEADER, '$&').split('\n')[4], '  version: $&');
+});
+
+const LOCK = {
+  name: 'aifactory',
+  version: '1.0.0',
+  lockfileVersion: 3,
+  packages: {
+    '': { name: 'aifactory', version: '1.0.0' },
+    'apps/frontend-web': { name: 'aifactory-web', version: '1.0.0' },
+    'node_modules/x': { version: '1.0.0' },
+  },
+};
+
+test('setLockVersions sets the three app version sites and nothing else', () => {
+  const out = JSON.parse(setLockVersions(JSON.stringify(LOCK), '9.9.9'));
+  assert.equal(out.version, '9.9.9');
+  assert.equal(out.packages[''].version, '9.9.9');
+  assert.equal(out.packages['apps/frontend-web'].version, '9.9.9');
+  assert.equal(out.packages['node_modules/x'].version, '1.0.0');
+});
+
+test('setLockVersions returns null without the workspace entry', () => {
+  const lock = structuredClone(LOCK);
+  delete lock.packages['apps/frontend-web'];
+  assert.equal(setLockVersions(JSON.stringify(lock), '9.9.9'), null);
+});
+
+test('setLockVersions keeps npm formatting: 2-space indent, trailing newline', () => {
+  const want = structuredClone(LOCK);
+  want.version = want.packages[''].version = want.packages['apps/frontend-web'].version = '9.9.9';
+  assert.equal(setLockVersions(JSON.stringify(LOCK, null, 2) + '\n', '9.9.9'), JSON.stringify(want, null, 2) + '\n');
 });
