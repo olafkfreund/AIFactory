@@ -38,7 +38,7 @@ import shutil
 import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -231,7 +231,7 @@ def run_config(name: str, project_dir: str | None = None) -> dict:
         "config": name,
         "label": cfg["label"],
         "project": str(project),
-        "started_at": datetime.now().isoformat(),
+        "started_at": datetime.now(UTC).isoformat(),
     }
 
     # 1) spec ONLY (Claude baseline). --no-build is critical: without it

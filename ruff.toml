@@ -124,7 +124,7 @@ select = [
     # and the four remaining fire-and-forget UI/telemetry emits carry a per-line
     # `# noqa: RUF006` stating what is lost if one is dropped.
     "RUF006", # store a reference to the return value of asyncio.create_task
-    # #1624: aware UTC timestamps; web-server clean, backend/scripts carved out below
+    # #1624/#1740: aware UTC timestamps, gated repo-wide (tests exempt below)
     "DTZ005", # datetime.now() without tz
     "DTZ006", # datetime.fromtimestamp() without tz
 ]
@@ -224,9 +224,6 @@ known-third-party = ["spec"]
 "apps/backend/services/*" = ["TID251"]
 "apps/backend/integrations/*" = ["TID251"]
 "apps/web-server/*" = ["TID251"]
-# DTZ005/DTZ006 carve-out (#1624): naive datetimes remain here until #1740.
-"apps/backend/**" = ["DTZ005", "DTZ006"]
-"scripts/provider_benchmark.py" = ["DTZ005", "DTZ006"]
 # Documented exceptions WITHIN the qa boundary: these are the agent-bearing
 # adapter modules of the qa package (they run live agent sessions and so must
 # import the SDK). The pure-logic leaf modules — review_cycle.py and
