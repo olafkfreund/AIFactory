@@ -269,6 +269,8 @@ class Rec:
             return "gate"
         if argv[:3] == ["git", "remote", "get-url"]:
             return "geturl"
+        if "filter.lfs.clean" in argv:
+            return "filter"
         if "--get-regexp" in argv:
             return "check"
         if "lfs" in argv and argv[argv.index("lfs") + 1] == "push":
@@ -284,6 +286,7 @@ class Rec:
             "gate": CmdResult(0, "", ""),
             "geturl": CmdResult(0, _GITHUB, ""),
             "check": CmdResult(1, "", ""),
+            "filter": CmdResult(1, "", ""),
             "upload": CmdResult(0, "", ""),
             "push": CmdResult(0, "", ""),
         }
@@ -329,9 +332,7 @@ _NO_ENDPOINT = (
 )
 
 
-# An LFS repo must never push pointers without their objects (#1721): every
-# origin the pinned upload cannot serve refuses the push.
-@pytest.mark.parametrize(
+_NO_ENDPOINT_ORIGINS = pytest.mark.parametrize(
     "geturl",
     [
         CmdResult(2, _GITHUB, "err"),
@@ -343,15 +344,30 @@ _NO_ENDPOINT = (
     ],
     ids=["get-url-fails", "file", "gitlab", "azure-devops", "scp-ssh", "ssh-url"],
 )
-def test_lfs_repo_without_endpoint_refuses_push(
+
+
+# No local clean filter: commits are raw blobs, so the push runs as on dev (#1721).
+@_NO_ENDPOINT_ORIGINS
+def test_lfs_repo_without_endpoint_or_filter_pushes(
     geturl: CmdResult, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _which_lfs(True, monkeypatch)
     rec = Rec(geturl=geturl)
+    assert _push_with_lfs(_PUSH, "HEAD", "/wt", rec).ok
+    assert rec.kinds() == ["gate", "geturl", "filter", "push"]
+
+
+# Safety net: a local clean filter may have made pointers we cannot upload.
+@_NO_ENDPOINT_ORIGINS
+def test_lfs_filter_without_endpoint_refuses_push(
+    geturl: CmdResult, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _which_lfs(True, monkeypatch)
+    rec = Rec(geturl=geturl, filter=CmdResult(0, "git-lfs clean -- %f", ""))
     out = _push_with_lfs(_PUSH, "HEAD", "/wt", rec)
     assert not out.ok
     assert out.err == _NO_ENDPOINT
-    assert rec.kinds() == ["gate", "geturl"]
+    assert rec.kinds() == ["gate", "geturl", "filter"]
 
 
 def test_lfs_repo_without_git_lfs_pushes(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -398,6 +414,7 @@ def lfs_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     monkeypatch.setenv("GIT_TERMINAL_PROMPT", "0")
     for k in ("HTTPS_PROXY", "HTTP_PROXY"):
@@ -528,3 +545,44 @@ def test_url_rewrite_is_refused_and_never_attempted(lfs_repo: Path, key: str) ->
     kinds = [Rec.kind(a) for a in seen]
     assert "upload" not in kinds
     assert "push" not in kinds
+
+
+def _commit_bin(repo: Path) -> str:
+    (repo / ".gitattributes").write_text("*.bin filter=lfs diff=lfs merge=lfs -text\n")
+    (repo / "a.bin").write_bytes(b"x" * 100)
+    _g(repo, "add", ".")
+    _g(repo, "commit", "-m", "bin")
+    return _g(repo, "cat-file", "-p", "HEAD:a.bin")
+
+
+def _real_but_push(seen: list[list[str]], upload_ok: bool = False) -> Any:
+    def rec(argv: list[str], cwd: str | None = None) -> Any:
+        seen.append(argv)
+        if Rec.kind(argv) == "push" or (upload_ok and Rec.kind(argv) == "upload"):
+            return CmdResult(0, "", "")
+        return pr_endgame._default_runner(argv, cwd)
+
+    return rec
+
+
+@_needs_lfs
+def test_gitlab_lfs_repo_commits_raw_blobs_and_pushes(lfs_repo: Path) -> None:
+    # As on dev (#1721): no endpoint, so no filter, raw blobs, plain push.
+    _g(lfs_repo, "remote", "set-url", "origin", "https://gitlab.com/o/r.git")
+    assert child_env.enable_lfs_clean_filter(lfs_repo) is False
+    assert _commit_bin(lfs_repo) == "x" * 100
+    seen: list[list[str]] = []
+    assert _push_with_lfs(_PUSH, "HEAD", str(lfs_repo), _real_but_push(seen)).ok
+    assert [Rec.kind(a) for a in seen] == ["gate", "geturl", "filter", "push"]
+
+
+@_needs_lfs
+def test_github_https_repo_gets_local_filter_and_uploads(lfs_repo: Path) -> None:
+    assert child_env.enable_lfs_clean_filter(lfs_repo) is True
+    assert "--skip" in _g(lfs_repo, "config", "--local", "filter.lfs.smudge")
+    assert not list((lfs_repo / ".git" / "hooks").glob("pre-push"))
+    assert _commit_bin(lfs_repo).startswith("version https://git-lfs")
+    seen: list[list[str]] = []
+    rec = _real_but_push(seen, upload_ok=True)
+    assert _push_with_lfs(_PUSH, "HEAD", str(lfs_repo), rec).ok
+    assert [Rec.kind(a) for a in seen][-2:] == ["upload", "push"]

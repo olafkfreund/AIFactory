@@ -141,6 +141,25 @@ class TestWorktreeCreation:
         assert info.is_active is True
         assert (info.path / "README.md").exists()
 
+    def test_create_worktree_enables_lfs_filter_first(
+        self, temp_git_repo: Path, monkeypatch
+    ):
+        """#1721: the local LFS clean filter is set before the checkout."""
+        import core.worktree as cw
+
+        seen: list[tuple[Path, bool]] = []
+        wt = temp_git_repo / ".aifactory" / "worktrees" / "tasks" / "lfs-spec"
+        monkeypatch.setattr(
+            cw,
+            "enable_lfs_clean_filter",
+            lambda repo: seen.append((repo, wt.exists())) or False,
+        )
+        manager = WorktreeManager(temp_git_repo)
+        manager.setup()
+        info = manager.create_worktree("lfs-spec")
+        assert seen == [(temp_git_repo, False)]
+        assert info.path == wt
+
     def test_create_worktree_with_spec_name(self, temp_git_repo: Path):
         """Worktree branch is derived from spec name."""
         manager = WorktreeManager(temp_git_repo)

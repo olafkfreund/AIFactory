@@ -10,7 +10,9 @@ import logging
 import os
 import re
 import shutil
+import subprocess
 from collections.abc import Callable, Iterable, Mapping
+from pathlib import Path
 
 from core.auth import is_denied_env_key
 
@@ -157,18 +159,22 @@ def lfs_upload(
         ],
         60,
     )
-    if gate != 0:
+    # No git-lfs binary: no clean filter ran here, so no new pointers either.
+    if gate != 0 or shutil.which("git-lfs") is None:
         return None
-    if shutil.which("git-lfs") is None:
-        return None  # no clean filter here, so this push adds no new pointers
-    # From here the push may carry pointers whose objects exist only locally:
-    # refuse rather than push them without their objects (#1721).
     url_rc, url, _ = run(["git", "remote", "get-url", "--push", "--all", "origin"], 60)
     argv = lfs_push_argv(url.strip(), ref) if url_rc == 0 else None
     if argv is None:
+        # Safety net: only a repo with the clean filter on can hold new pointers;
+        # without it commits are raw blobs and the push goes ahead as before.
+        filt, _, _ = run(["git", "config", "--local", "--get", "filter.lfs.clean"], 60)
         return (
-            "LFS repo but no supported LFS endpoint for this origin; "
-            "refusing to push pointers without objects"
+            None
+            if filt != 0
+            else (
+                "LFS repo but no supported LFS endpoint for this origin; "
+                "refusing to push pointers without objects"
+            )
         )
     check_rc, _, _ = run(
         [
@@ -183,6 +189,39 @@ def lfs_upload(
     if check_rc != 1:
         return "LFS step refused (lfs.customtransfer.* or url.* defined)"
     upload_rc, _, err = run(argv, LFS_UPLOAD_TIMEOUT)
-    if upload_rc != 0:
-        return err.strip() or "git lfs push failed"
-    return None
+    return None if upload_rc == 0 else (err.strip() or "git lfs push failed")
+
+
+def enable_lfs_clean_filter(repo: Path) -> bool:
+    """Turn on git-lfs's clean filter (smudge skipped) in ``repo`` (#1721).
+
+    Only for an https github.com origin, which ``lfs_upload`` can upload to:
+    other repos keep committing raw blobs, so their pushes need no LFS step.
+    ``--skip-repo`` writes no hook files (hooks are off, #1680). Best-effort.
+    """
+    if shutil.which("git-lfs") is None:
+        return False
+    env = child_env()
+
+    def git(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(  # noqa: S603
+            ["git", *args],  # noqa: S607
+            cwd=repo,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+
+    try:
+        url = git("remote", "get-url", "--push", "--all", "origin")
+        if url.returncode != 0 or not _GITHUB_ORIGIN.fullmatch(url.stdout.strip()):
+            return False
+        ok = git("lfs", "install", "--local", "--skip-smudge", "--skip-repo")
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning("git lfs install --local failed: %s", exc)
+        return False
+    if ok.returncode != 0:
+        logger.warning("git lfs install --local failed: %s", ok.stderr.strip()[:200])
+    return ok.returncode == 0

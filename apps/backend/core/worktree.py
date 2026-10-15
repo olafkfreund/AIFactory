@@ -28,7 +28,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Literal
 
-from core.child_env import child_env
+from core.child_env import child_env, enable_lfs_clean_filter
 from core.git_credentials import github_env
 
 fcntl: ModuleType | None
@@ -847,6 +847,9 @@ class WorktreeManager:
 
             # Delete branch if it exists (from previous attempt)
             self._run_git(["branch", "-D", branch_name])
+
+            # Before the checkout, so LFS files are cleaned from the start (#1721).
+            enable_lfs_clean_filter(self.project_dir)
 
             # Create worktree with new branch from base
             result = self._run_git(

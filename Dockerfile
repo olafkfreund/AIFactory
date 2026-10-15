@@ -188,9 +188,11 @@ RUN apk add --no-cache \
         socat \
         "wget>=1.25.0-r15"
 
-# The Wolfi package turns smudge on system-wide (filter.lfs.required=true): clones
-# would download LFS objects and fail without them. Keep clean, skip smudge (#1721).
-RUN git lfs install --system --skip-smudge
+# The Wolfi package writes system-wide filter.lfs.* (smudge on, required=true),
+# which would turn every repo's LFS files into pointers we may have no endpoint
+# to upload to. Remove them: only repos with an https github.com origin get the
+# clean filter, locally, when their worktree is created (#1721).
+RUN git lfs uninstall --system
 
 # Node must come only from the node-runtime COPY above, never from apk: an apk
 # nodejs would be rebuilt against a glibc newer than this base pins and break

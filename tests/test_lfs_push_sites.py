@@ -92,9 +92,11 @@ def test_handoff_upload_precedes_push(monkeypatch, tmp_path, upload_fails):
     assert pushes == ([] if upload_fails else [upload + 1])
 
 
-def test_workspace_lfs_repo_on_gitlab_is_not_pushed(monkeypatch, tmp_path, caplog):
-    # Packed path: the worktree dies with the Job, so pointers pushed without
-    # their objects would lose the objects for good (#1721).
+@pytest.mark.parametrize("has_filter", [False, True], ids=["raw-blobs", "filter-on"])
+def test_workspace_lfs_repo_on_gitlab(monkeypatch, tmp_path, caplog, has_filter):
+    # No filter: raw blobs, the push runs as on dev. Filter on (safety net): the
+    # pointers have no endpoint, and on the packed path the worktree dies with the
+    # Job, so pushing them would lose the objects for good (#1721).
     monkeypatch.setenv("WORKSPACE_URI", "s3://bucket/workspace")
     monkeypatch.setattr(child_env.shutil, "which", lambda _: "/usr/bin/git-lfs")
     (tmp_path / ".aifactory" / "worktrees" / "tasks" / "042-x").mkdir(parents=True)
@@ -103,13 +105,16 @@ def test_workspace_lfs_repo_on_gitlab_is_not_pushed(monkeypatch, tmp_path, caplo
     def fake_run(argv, **kwargs):
         calls.append(argv)
         out = {"rev-parse": "aifactory/042-x", "remote": "https://gitlab.com/o/r"}
-        return SimpleNamespace(returncode=0, stdout=out.get(argv[1], ""), stderr="")
+        rc = 0 if has_filter or "filter.lfs.clean" not in argv else 1
+        return SimpleNamespace(returncode=rc, stdout=out.get(argv[1], ""), stderr="")
 
     monkeypatch.setattr(workspace_fetch.subprocess, "run", fake_run)
     with caplog.at_level("WARNING", logger="core.workspace_fetch"):
-        assert workspace_fetch.maybe_push_workspace_branch(tmp_path, "042-x") is False
-    assert not any(argv[:2] == ["git", "push"] for argv in calls)
-    assert "no supported LFS endpoint" in caplog.text
+        pushed = workspace_fetch.maybe_push_workspace_branch(tmp_path, "042-x")
+    assert pushed is not has_filter
+    assert any(argv[:2] == ["git", "push"] for argv in calls) is not has_filter
+    assert ("no supported LFS endpoint" in caplog.text) is has_filter
+    assert not any("lfs" in argv and "push" in argv for argv in calls)
 
 
 def test_handoff_lfs_timeout_is_an_lfs_error(monkeypatch, tmp_path, caplog):
