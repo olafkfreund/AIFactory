@@ -171,7 +171,8 @@ RUN want="$(tr -dc '0-9.' < /tmp/.nvmrc | cut -d. -f1)" \
 # (1.38.0-r1 and later already exist); drop each once the base digest ships it.
 # Verified present in the Wolfi x86_64 APKINDEX, then confirmed against the
 # pinned base digest itself — a floor above the newest available version fails
-# the build outright.
+# the build outright. git-lfs: floor checked the same way (3.7.1-r2 .. 3.8.0-r3);
+# the explicit `git lfs push` before every push needs it (#1690, #1721).
 RUN apk add --no-cache \
         bash \
         "busybox>=1.38.0-r0" \
@@ -181,10 +182,15 @@ RUN apk add --no-cache \
         ca-certificates \
         curl \
         git \
+        "git-lfs>=3.7.1" \
         gh \
         gnupg \
         socat \
         "wget>=1.25.0-r15"
+
+# The Wolfi package turns smudge on system-wide (filter.lfs.required=true): clones
+# would download LFS objects and fail without them. Keep clean, skip smudge (#1721).
+RUN git lfs install --system --skip-smudge
 
 # Node must come only from the node-runtime COPY above, never from apk: an apk
 # nodejs would be rebuilt against a glibc newer than this base pins and break
