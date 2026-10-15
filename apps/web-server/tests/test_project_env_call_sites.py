@@ -1,5 +1,6 @@
 """Call-site regression tests for per-project `.aifactory/.env` loading (#1745)."""
 
+import contextlib
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -44,10 +45,8 @@ def _make_fake_exec(recorded_envs: list[dict[str, str]]) -> Any:
     async def fake_create_subprocess_exec(*_args: Any, **kwargs: Any) -> Any:
         stdin_fd = kwargs.get("stdin")
         if isinstance(stdin_fd, int):
-            try:
+            with contextlib.suppress(OSError):
                 os.close(stdin_fd)
-            except OSError:
-                pass
         recorded_envs.append(dict(kwargs["env"]))
         raise _SentinelError("stop before spawning subprocess")
 
@@ -91,14 +90,12 @@ async def test_pr_review_service_start_review_filters_project_env(
 
     monkeypatch.setattr(service, "_emit_error", fake_emit_error)
 
-    try:
+    with contextlib.suppress(_SentinelError):
         await service.start_review(
             project_id="proj-1",
             pr_number=42,
             project_path=project_path,
         )
-    except _SentinelError:
-        pass
 
     _assert_filtered_env(recorded_envs)
 
@@ -134,14 +131,12 @@ async def test_agent_service_spawn_task_execution_filters_project_env(
         _make_fake_exec(recorded_envs),
     )
 
-    try:
+    with contextlib.suppress(_SentinelError):
         await service._spawn_task_execution(
             task_id="proj-1:001",
             project_path=project_path,
             spec_id="001",
         )
-    except _SentinelError:
-        pass
 
     _assert_filtered_env(recorded_envs)
 
@@ -168,14 +163,12 @@ async def test_agent_service_start_spec_creation_filters_project_env(
         _make_fake_exec(recorded_envs),
     )
 
-    try:
+    with contextlib.suppress(_SentinelError):
         await service.start_spec_creation(
             task_id="proj-1:001",
             project_path=project_path,
             title="Test spec",
             description="Test description",
         )
-    except _SentinelError:
-        pass
 
     _assert_filtered_env(recorded_envs)

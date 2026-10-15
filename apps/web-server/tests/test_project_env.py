@@ -3,12 +3,12 @@
 import inspect
 import logging
 import re
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
-from server.routes import context as context_routes
-from server.routes import github as github_routes
-from server.routes import projects as projects_routes
+from server.routes import context, github, projects
 from server.services import project_env
 from server.services.project_env import (
     PROJECT_ENV_KEYS,
@@ -103,12 +103,12 @@ def test_skipped_warning_logs_key_not_value(
 @pytest.mark.parametrize(
     "writer",
     [
-        projects_routes.update_project_settings,
-        context_routes.update_project_env,
-        github_routes._persist_cli_token_to_project,
+        projects.update_project_settings,
+        context.update_project_env,
+        github._persist_cli_token_to_project,
     ],
 )
-def test_writer_coverage(writer: object) -> None:
+def test_writer_coverage(writer: Callable[..., Any]) -> None:
     source = inspect.getsource(inspect.unwrap(writer))
     literals = set(re.findall(r'"([A-Z][A-Z0-9_]{2,})"', source))
     assert literals
