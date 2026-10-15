@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1698
 intent: intent/2026-10-15-1698-pr-tier-mismatch.md
 ---
