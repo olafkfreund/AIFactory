@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 _WS = Path(__file__).resolve().parents[1]
 _BACKEND = _WS.parents[0] / "backend"
@@ -31,6 +32,7 @@ for _p in (str(_WS), str(_BACKEND)):
         sys.path.insert(0, _p)
 
 from merge import merge_policy  # noqa: E402
+from server.database.models import Base  # noqa: E402
 from server.services import handback_receipt_store as hrs  # noqa: E402
 from server.services import pr_endgame as pe  # noqa: E402
 
@@ -609,9 +611,6 @@ def test_1695_no_fetch_is_todays_dict(tmp_path: Path) -> None:
 
 
 async def _receipt_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
-    from server.database.models import Base
-    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'r.db'}")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
