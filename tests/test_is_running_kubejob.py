@@ -187,6 +187,17 @@ async def test_poll_error_does_not_invent_membership(
 
 
 @pytest.mark.asyncio
+async def test_poll_error_keeps_a_dispatch_marked_build(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A build marked at dispatch (#1662) survives a first-tick poll error."""
+    service = _service(monkeypatch, [TASK], _RaisingBackend())
+    service._active_kubejob_task_ids.add(TASK)
+    await service.reconcile_kubejob_builds()
+    assert service.is_running(TASK) is True
+
+
+@pytest.mark.asyncio
 async def test_streamer_liveness_check_follows_the_same_set(
     monkeypatch: pytest.MonkeyPatch,
 ):

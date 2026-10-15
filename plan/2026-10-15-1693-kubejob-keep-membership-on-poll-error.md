@@ -40,6 +40,12 @@ spec: spec/2026-10-15-1693-kubejob-keep-membership-on-poll-error.md
    Trap: read the set before line `:825` replaces it — the `except` is
    inside the loop, so it already does.
 
+**Deviation, added at review.** A third test,
+`test_poll_error_keeps_a_dispatch_marked_build`: a build marked at dispatch
+(`_active_kubejob_task_ids.add(TASK)`, #1662) whose first tick's poll raises
+still reads as running. It fails on base, because the per-tick reset empties
+`_kubejob_dispatched_this_tick`, so nothing kept it in the set.
+
 ## Tests
 
 ```
