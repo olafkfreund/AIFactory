@@ -72,7 +72,7 @@ through. Agents can write that file.
    - `pr_review_service.py:275-276`: replace `_load_env_file(project_path / ".aifactory" / ".env", env)` with `load_project_env(project_path, env)`, and add the import.
    - `agent_service.py:1066-1082` and `agent_spec_creation.py:239-255`: replace the whole `project_env_file` block (comment, `if exists`, `try/except`) with one comment line plus `load_project_env(project_path, env)`, and add the import.
    - Verify: `../backend/.venv/bin/python -m pytest tests/test_project_env.py tests/test_project_env_call_sites.py tests/test_agent_service_admission.py tests/test_pr_endgame.py -q` all pass.
-   - Traps: keep the backend `.env` loaders as they are. Use the import style of each file (`from server.services.project_env import load_project_env`, matching the neighbouring `server.` imports). Do not reformat untouched code.
+   - Traps: keep the backend `.env` loaders as they are. Use the import style of each file: the neighbouring imports are relative, so `from .project_env import load_project_env` (deviation: the draft said the absolute `server.services` form). Do not reformat untouched code.
 
 ## Tests
 
