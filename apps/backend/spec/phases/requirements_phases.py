@@ -6,7 +6,7 @@ Phases for requirements gathering, historical context, and research.
 """
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from task_logger import LogEntryType, LogPhase
@@ -93,7 +93,7 @@ class RequirementsPhaseMixin:
                         "query": task_query,
                         "hints": hints,
                         "hint_count": len(hints),
-                        "created_at": datetime.now().isoformat(),
+                        "created_at": datetime.now(UTC).isoformat(),
                     },
                     f,
                     indent=2,

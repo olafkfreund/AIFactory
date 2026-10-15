@@ -38,6 +38,7 @@ from .agent_queue import QueueMixin
 from .agent_skill_context import SkillContextMixin
 from .agent_spec_creation import SpecCreationMixin
 from .agent_worktree_sync import WorktreeSyncMixin
+from .project_env import load_project_env
 
 # Module-level logger for the admission-control paths (RFC-0016 #668). The rest
 # of this (legacy) module still uses local ``import logging`` inside methods.
@@ -1064,22 +1065,8 @@ class AgentService(
             except Exception as e:
                 logger.warning(f"[AgentService] Failed to load backend .env: {e}")
 
-        # Load project .aifactory/.env for project-level settings (USE_CLAUDE_MD, etc.)
-        project_env_file = project_path / ".aifactory" / ".env"
-        if project_env_file.exists():
-            try:
-                with open(project_env_file) as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith("#") and "=" in line:
-                            key, value = line.split("=", 1)
-                            key = key.strip()
-                            value = value.strip()
-                            if key not in env:
-                                env[key] = value
-                logger.info("[AgentService] Loaded project .env for task execution")
-            except Exception as e:
-                logger.warning(f"[AgentService] Failed to load project .env: {e}")
+        # Project .aifactory/.env: allowlisted project settings only (#1745)
+        load_project_env(project_path, env)
 
         # Get OAuth token from the pool (#670) so concurrent builds draw DISTINCT
         # credentials; returned to the pool when this build ends.

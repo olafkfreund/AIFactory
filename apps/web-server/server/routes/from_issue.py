@@ -35,6 +35,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from server.error_ref import client_error
+from server.services.completion import correlation_key, read_issue_repo
 
 from ..tenancy import resolve_tenant, stamp_spec_tenant
 
@@ -231,12 +232,15 @@ def _write_spec(
     return spec_dir
 
 
-def _find_existing_spec(project_path: Path, issue_number: int) -> str | None:
+def _find_existing_spec(
+    project_path: Path, issue_number: int, repo_ref: str | None = None
+) -> str | None:
     """Return the spec id already recorded for this issue number, if any (#878).
 
     Keys on ``requirements.provenance.issue_number``, which ``_write_spec``
     stamps on first write — so a redelivered issue adopts the existing spec
-    instead of minting a duplicate build.
+    instead of minting a duplicate build. When both the stored and the requested
+    repo are known and differ, it is another repo's issue and does not match (#1775).
     """
     specs_dir = project_path / ".aifactory" / "specs"
     if not specs_dir.is_dir():
@@ -254,6 +258,9 @@ def _find_existing_spec(project_path: Path, issue_number: int) -> str | None:
             isinstance(provenance, dict)
             and provenance.get("issue_number") == issue_number
         ):
+            stored = provenance.get("repo")
+            if repo_ref and stored and stored != repo_ref:
+                continue
             return spec_dir.name
     return None
 
@@ -322,7 +329,9 @@ async def create_from_issue(
     # mint a duplicate spec/build — no-op onto the existing one.
     issue_number = issue.get("number")
     if isinstance(issue_number, int):
-        existing_spec_id = _find_existing_spec(projects_path, issue_number)
+        existing_spec_id = _find_existing_spec(
+            projects_path, issue_number, _declared_repo(request) or None
+        )
         if existing_spec_id is not None:
             return {
                 "success": True,
@@ -330,6 +339,14 @@ async def create_from_issue(
                 "spec_id": existing_spec_id,
                 "deduplicated": True,
                 "issue_number": issue_number,
+                # The stored spec's repo is the truth for a dedup (#1775).
+                "correlation_key": correlation_key(
+                    existing_spec_id,
+                    issue_number,
+                    read_issue_repo(
+                        projects_path / ".aifactory" / "specs" / existing_spec_id
+                    ),
+                ),
                 "message": (
                     f"Issue #{issue_number} already ingested as spec "
                     f"{existing_spec_id}; not creating a duplicate."
@@ -398,6 +415,9 @@ async def create_from_issue(
         "tier": tier.value,
         "execution": execution,
         "issue_number": issue.get("number"),
+        "correlation_key": correlation_key(
+            spec_id, issue.get("number"), _declared_repo(request) or None
+        ),
         "message": f"Ingested issue as {tier.value}-tier build ({execution['model']}).",
     }
 

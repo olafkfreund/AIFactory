@@ -110,6 +110,7 @@ def create_simple_client(
             model=model,
             system_prompt=system_prompt,
             allowed_tools=allowed_tools,
+            tools=allowed_tools,  # #1741: base set; allowed_tools alone does not limit under bypass
             max_turns=max_turns,
             cwd=str(cwd.resolve()) if cwd else None,
             env=sdk_env,

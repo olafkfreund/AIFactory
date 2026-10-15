@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: AIFactory Web API
   description: Web API for AIFactory — self-hosted AI task management + agent orchestration
-  version: 3.10.0
+  version: 3.10.1
 paths:
   /api/auth/register:
     post:
@@ -10013,16 +10013,6 @@ paths:
     get:
       summary: Health Check
       operationId: health_check_api_health_get
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-  /:
-    get:
-      summary: Root
-      operationId: root__get
       responses:
         '200':
           description: Successful Response

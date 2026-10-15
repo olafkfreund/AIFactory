@@ -3,7 +3,7 @@ Main orchestrator for AI-powered project analysis.
 """
 
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -64,7 +64,7 @@ class AIAnalyzerRunner:
 
         # Initialize results
         insights = {
-            "analysis_timestamp": datetime.now().isoformat(),
+            "analysis_timestamp": datetime.now(UTC).isoformat(),
             "project_dir": str(self.project_dir),
             "cost_estimate": cost_estimate.__dict__,
         }

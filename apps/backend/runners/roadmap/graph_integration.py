@@ -3,7 +3,7 @@ Graphiti integration for retrieving graph hints during roadmap generation.
 """
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from debug import debug, debug_error, debug_success
@@ -87,7 +87,7 @@ class GraphHintsProvider:
                     "enabled": False,
                     "reason": "Graphiti not configured",
                     "hints": [],
-                    "created_at": datetime.now().isoformat(),
+                    "created_at": datetime.now(UTC).isoformat(),
                 },
                 f,
                 indent=2,
@@ -101,7 +101,7 @@ class GraphHintsProvider:
                     "enabled": True,
                     "hints": hints,
                     "hint_count": len(hints),
-                    "created_at": datetime.now().isoformat(),
+                    "created_at": datetime.now(UTC).isoformat(),
                 },
                 f,
                 indent=2,
@@ -115,7 +115,7 @@ class GraphHintsProvider:
                     "enabled": True,
                     "error": error,
                     "hints": [],
-                    "created_at": datetime.now().isoformat(),
+                    "created_at": datetime.now(UTC).isoformat(),
                 },
                 f,
                 indent=2,

@@ -1,5 +1,50 @@
 ## [Unreleased]
 
+## 3.10.1 - 2026-10-15
+
+### Security
+
+- **Only allowlisted keys from `.aifactory/.env` reach subprocess environments (#1745).**
+  The review, task and spec-creation launchers now load the project `.env`
+  through one shared loader that copies only the keys the factory writes or
+  reads. Loader, shell and exec variables (`LD_*`, `NODE_OPTIONS`, `PYTHON*`,
+  `PATH`, most `GIT_*` and others) and the operator-only `AIFACTORY_*` security
+  knobs are always refused. Skipped keys are logged by name only. The
+  git-config parts of #1745 remain open.
+- **Simple-client helpers get only their own tool set (#1741).** Helpers run
+  under `bypassPermissions`, so `allowed_tools` restricted nothing and the CLI
+  offered its default tools. Each helper's list is now passed as the SDK base
+  tool set. `insights` and `batch_analysis`, which read untrusted text, lose
+  WebSearch and WebFetch.
+- **A pod can tell a server `legacy` verdict from no server (#1711, #1710).**
+  The server now sends `AIFACTORY_TRUSTED_CONTRACT=legacy`. A pod that gets
+  `legacy` but finds a contract file holds the task, which closes the #1673
+  residual gap. A kubejob test now checks that each verdict reaches the build pod.
+
+### Fixed
+
+- **Completion events use a repo-scoped correlation key, `<repo>#<n>` (#1775).**
+  The repo is read from the spec's provenance or GitHub issue. Needs CFactory
+  with CFactory#487, which accepts both key formats.
+- **A kubejob build stays running when one status poll fails (#1693).** A
+  per-row poll error keeps the row if it was live on the previous tick, so the
+  log streamer, cockpit badge and `/recover` guard keep their answer.
+- **The build Job sees the same nix-store settings as the control plane (#1736).**
+  `AIFACTORY_PACKED_NIX_IN_IMAGE` and `AIFACTORY_NIX_STORE_PVC` are forwarded
+  together, and the build Job no longer mounts the unseeded `/nix/store` PVC.
+- **`apps/backend` writes timezone-aware UTC timestamps (#1740).** Stored naive
+  values are read as host local time, so mixing old and new snapshots no longer
+  raises `TypeError`.
+- **The dev placeholder `GET /` is no longer in the OpenAPI spec (#1731).**
+- **`bump-version.js` also updates `package-lock.json` (#1727, #1631).**
+
+### CI
+
+- TechDocs fails when turning on a feature flag would change the OpenAPI spec (#1729).
+- CI runs the `scripts/` node tests (#1727).
+- New tests pin agent-env blanks before the MCP env merge (#1758) and guard
+  credential names on env passthrough lists (#1759).
+
 ## 3.10.0 - 2026-10-15
 
 ### Security

@@ -230,7 +230,7 @@ AGENT_CONFIGS = {
     # UTILITY PHASES (Minimal, no MCP)
     # ═══════════════════════════════════════════════════════════════════════
     "insights": {
-        "tools": BASE_READ_TOOLS + WEB_TOOLS,
+        "tools": BASE_READ_TOOLS,  # #1741: reads untrusted text; no web egress
         "mcp_servers": ["aifactory"],
         "aifactory_tools": [],
         "thinking_default": "medium",
@@ -276,7 +276,7 @@ AGENT_CONFIGS = {
         "thinking_default": "medium",
     },
     "batch_analysis": {
-        "tools": BASE_READ_TOOLS + WEB_TOOLS,
+        "tools": BASE_READ_TOOLS,  # #1741: reads untrusted text; no web egress
         "mcp_servers": ["aifactory"],
         "aifactory_tools": [],
         "thinking_default": "low",
