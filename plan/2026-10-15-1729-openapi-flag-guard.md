@@ -33,7 +33,7 @@ Env: `V=<main clone>/apps/web-server/.venv/bin` (has both requirement sets),
      ```yaml
 
            # 5. The generator pins SAML/SCIM/mcp-remote/rmux off (#1632). Prove the
-           #    pin holds: with every flag exported on, the output must still equal
+           #    pin holds: with every listed flag exported on, the output must still equal
            #    the committed spec that step 4 just matched to the flags-off run
            #    (#1729). A new env gate goes in both lists.
            - name: Check the OpenAPI spec ignores feature flags
@@ -47,7 +47,7 @@ Env: `V=<main clone>/apps/web-server/.venv/bin` (has both requirement sets),
              run: |
                /tmp/ws/bin/python scripts/generate-openapi-spec.py
                if ! git diff --exit-code -- apps/web-server/openapi.yaml; then
-                 echo "::error::Feature flags changed the generated OpenAPI spec. Pin the new gate off in scripts/generate-openapi-spec.py and add it here."
+                 echo "::error::A flag set in this step is no longer pinned off by scripts/generate-openapi-spec.py; restore the pin."
                  exit 1
                fi
      ```
