@@ -6,6 +6,8 @@ import importlib.util
 import os
 from pathlib import Path
 
+import pytest
+
 _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "restore_project_env.py"
 _spec = importlib.util.spec_from_file_location("restore_project_env", _SCRIPT)
 assert _spec and _spec.loader
@@ -42,6 +44,23 @@ def test_existing_env_is_never_overwritten(tmp_path: Path) -> None:
     (p / ".aifactory" / ".env").write_text("KEEP=1\n")
     assert rpe.restore(p, apply=True).startswith("skip")
     assert (p / ".aifactory" / ".env").read_text() == "KEEP=1\n"
+
+
+def test_env_created_after_the_check_is_not_overwritten(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    p = _project(tmp_path, ".env.migrated-2026-10-15")
+    env = p / ".aifactory" / ".env"
+    real_link = os.link
+
+    def racing_link(src: Path, dst: Path) -> None:
+        env.write_text("WRITTEN-MEANWHILE=1\n")
+        real_link(src, dst)
+
+    monkeypatch.setattr(rpe.os, "link", racing_link)
+    assert rpe.restore(p, apply=True).startswith("skip")
+    assert env.read_text() == "WRITTEN-MEANWHILE=1\n"
+    assert (p / ".aifactory" / ".env.migrated-2026-10-15").exists()
 
 
 def test_project_without_migrated_file_is_skipped(tmp_path: Path) -> None:

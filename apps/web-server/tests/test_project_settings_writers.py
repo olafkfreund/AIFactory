@@ -9,14 +9,12 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
+import server.routes.context as context_routes
+import server.routes.github as github_routes
+import server.routes.projects as projects_routes
+import server.services.project_settings_store as pss
 from server.crypto import kms
 from server.database.models import Base
-from server.routes import (
-    context as context_routes,
-    github as github_routes,
-    projects as projects_routes,
-)
-from server.services import project_settings_store as pss
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,

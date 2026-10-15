@@ -16,6 +16,7 @@ them out before rolling back (see the plan's Rollback section).
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -34,7 +35,12 @@ def restore(project: Path, *, apply: bool) -> str:
     if current.exists():
         return f"skip  {project}: .aifactory/.env already exists"
     if apply:
-        migrated[-1].rename(current)
+        try:
+            # link() fails if .env appeared meanwhile; rename() would replace it.
+            os.link(migrated[-1], current)
+        except FileExistsError:
+            return f"skip  {project}: .aifactory/.env already exists"
+        migrated[-1].unlink()
     return f"{'done' if apply else 'would'}  {project}: {migrated[-1].name} -> .env"
 
 

@@ -23,7 +23,8 @@ _WS = Path(__file__).resolve().parents[1]
 if str(_WS) not in sys.path:
     sys.path.insert(0, str(_WS))
 
-from server.services import pr_endgame as pe, project_settings_store  # noqa: E402
+import server.services.project_settings_store as pss  # noqa: E402
+from server.services import pr_endgame as pe  # noqa: E402
 from server.services.pr_endgame import CmdResult  # noqa: E402
 from server.services.project_settings_store import project_key  # noqa: E402
 
@@ -451,7 +452,7 @@ def test_require_copilot_false_allows_human_approval():
 
 def test_flags_read_project_env_over_global(tmp_path, monkeypatch):
     monkeypatch.setenv("AIFACTORY_AUTO_PR", "false")  # global default off
-    project_settings_store._SNAPSHOT[project_key(tmp_path)] = {
+    pss._SNAPSHOT[project_key(tmp_path)] = {
         "AIFACTORY_AUTO_PR": "true",
         "AIFACTORY_AUTO_MERGE": "false",
     }
@@ -464,7 +465,7 @@ def test_flags_read_project_env_over_global(tmp_path, monkeypatch):
 
 def test_agent_written_env_file_is_ignored(tmp_path, monkeypatch):
     monkeypatch.delenv("AIFACTORY_AUTO_MERGE", raising=False)
-    project_settings_store._SNAPSHOT[project_key(tmp_path)] = {}
+    pss._SNAPSHOT[project_key(tmp_path)] = {}
     env_dir = tmp_path / ".aifactory"
     env_dir.mkdir()
     (env_dir / ".env").write_text("AIFACTORY_AUTO_MERGE=true\n")
@@ -474,9 +475,9 @@ def test_agent_written_env_file_is_ignored(tmp_path, monkeypatch):
 def test_auto_merge_held_when_settings_never_loaded(tmp_path, monkeypatch):
     """#1795: no loaded settings (DB down since start) holds auto-merge."""
     monkeypatch.setenv("AIFACTORY_AUTO_MERGE", "true")  # global default on
-    project_settings_store._SNAPSHOT.pop(project_key(tmp_path), None)
+    pss._SNAPSHOT.pop(project_key(tmp_path), None)
     assert pe.is_auto_merge_enabled(tmp_path) is False
-    project_settings_store._SNAPSHOT[project_key(tmp_path)] = {}
+    pss._SNAPSHOT[project_key(tmp_path)] = {}
     assert pe.is_auto_merge_enabled(tmp_path) is True
 
 
@@ -719,9 +720,7 @@ def test_resolve_pr_reviewer(tmp_path, monkeypatch):
     monkeypatch.setenv("AIFACTORY_PR_REVIEWER", "bogus")
     assert pe.resolve_pr_reviewer(None) == "aifactory"  # invalid → default
     # project setting wins
-    project_settings_store._SNAPSHOT[project_key(tmp_path)] = {
-        "AIFACTORY_PR_REVIEWER": "any"
-    }
+    pss._SNAPSHOT[project_key(tmp_path)] = {"AIFACTORY_PR_REVIEWER": "any"}
     assert pe.resolve_pr_reviewer(tmp_path) == "any"
 
 

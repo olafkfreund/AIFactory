@@ -426,7 +426,16 @@ names the step: `feat(settings): step N ... (#1795)`.
   corrupt row, and a failed tracked-file check all raise
   `ProjectSettingsUnavailableError`, and nothing is stored or renamed. See
   spec D2 and D4.
-- The rollback script is `scripts/restore_project_env.py`.
+- The rollback script is `scripts/restore_project_env.py`. It restores with
+  `os.link` and then unlinks, so a `.env` created after the check is never
+  replaced. `rename()` would silently replace it.
+- Re-sealing a plaintext row on read is a conditional `UPDATE ... WHERE
+  settings = <raw read>`, so it never overwrites a save committed after the
+  read (`test_reseal_does_not_overwrite_a_newer_save`).
+- Imports that mix an aliased and a plain name from one package use
+  `import server.x.y as alias`. The repo's `ruff.toml` (`combine-as-imports =
+  false`) and the ratchet's `standards/ruff.toml` (`true`) disagree on the
+  `from ... import` form.
 - Runner check: the changelog runner (direct SDK), conflict resolution
   (in-process, `create_simple_client`) and the insights runner
   (`ClaudeSDKClient`) never loaded the project MCP config. Ideation and

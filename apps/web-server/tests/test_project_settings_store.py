@@ -9,10 +9,11 @@ import subprocess
 from collections.abc import AsyncGenerator, Generator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 import pytest_asyncio
-from server.crypto import kms
+from server.crypto import kms, secret_field
 from server.database.models import Base, ProjectSettings
 from server.services import project_settings_store as pss
 from server.services.project_settings_store import (
@@ -21,6 +22,7 @@ from server.services.project_settings_store import (
     cached_setting,
     project_key,
 )
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -455,14 +457,43 @@ async def test_plaintext_row_is_sealed_on_read_once_a_key_exists(
     project_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    await store.put_settings(project_dir, {"GITHUB_TOKEN": "tok-1795-plain"})
+    await store.put_settings(project_dir, {"GITHUB_TOKEN": "plain-17"})
     assert not (await _row(session_factory, project_dir)).settings.startswith("enc.v1:")  # type: ignore[union-attr]
 
     _set_fernet_key(monkeypatch, b"c")
-    assert await store.get_settings(project_dir) == {"GITHUB_TOKEN": "tok-1795-plain"}
+    assert await store.get_settings(project_dir) == {"GITHUB_TOKEN": "plain-17"}
     raw = (await _row(session_factory, project_dir)).settings  # type: ignore[union-attr]
     assert raw.startswith("enc.v1:")
-    assert "tok-1795-plain" not in raw
+    assert "plain-17" not in raw
+
+
+async def test_reseal_does_not_overwrite_a_newer_save(
+    store: ProjectSettingsStore,
+    session_factory: async_sessionmaker[AsyncSession],
+    project_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A save committed between the read and the re-seal wins."""
+    await store.put_settings(project_dir, {"GITHUB_TOKEN": "plain-17"})
+    _set_fernet_key(monkeypatch, b"d")
+    newer = secret_field.seal(json.dumps({"GITHUB_TOKEN": "newer-17"}))
+    assert newer is not None
+    real_reseal = pss._reseal_if_unchanged
+
+    async def racing_reseal(session: Any, key: str, raw: str, resealed: str) -> None:
+        await session.execute(
+            update(ProjectSettings)
+            .where(ProjectSettings.project_key == key)
+            .values(settings=newer)
+        )
+        await session.commit()
+        await real_reseal(session, key, raw, resealed)
+
+    monkeypatch.setattr(pss, "_reseal_if_unchanged", racing_reseal)
+    assert await store.get_settings(project_dir) == {"GITHUB_TOKEN": "plain-17"}
+    assert (await _row(session_factory, project_dir)).settings == newer  # type: ignore[union-attr]
+    monkeypatch.setattr(pss, "_reseal_if_unchanged", real_reseal)
+    assert await store.get_settings(project_dir) == {"GITHUB_TOKEN": "newer-17"}
 
 
 @pytest.mark.parametrize(

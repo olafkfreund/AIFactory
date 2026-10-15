@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from factory_common.logsafe import sanitize_log
+from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 
 from server.crypto import secret_field
@@ -222,6 +223,16 @@ def _warn_reappeared(env_file: Path) -> None:
     )
 
 
+async def _reseal_if_unchanged(session: Any, key: str, raw: str, resealed: str) -> None:
+    # Conditional: a save committed since our read must not be overwritten.
+    await session.execute(
+        update(ProjectSettings)
+        .where(ProjectSettings.project_key == key, ProjectSettings.settings == raw)
+        .values(settings=resealed)
+    )
+    await session.commit()
+
+
 class ProjectSettingsStore:
     """Async store for per-project settings with lazy one-time `.env` import."""
 
@@ -239,13 +250,13 @@ class ProjectSettingsStore:
                 if env_file.exists() and key not in _WARNED_REAPPEARED:
                     _WARNED_REAPPEARED.add(key)
                     _warn_reappeared(env_file)
-                decoded = _decode_settings(row.settings, p_path)
-                if not secret_field.is_sealed(row.settings):
+                raw = row.settings
+                decoded = _decode_settings(raw, p_path)
+                if not secret_field.is_sealed(raw):
                     # Written before a KMS key existed: seal it now if we can.
-                    resealed = secret_field.seal(row.settings)
+                    resealed = secret_field.seal(raw)
                     if resealed and secret_field.is_sealed(resealed):
-                        row.settings = resealed
-                        await session.commit()
+                        await _reseal_if_unchanged(session, key, raw, resealed)
                 _SNAPSHOT[key] = dict(decoded)
                 return decoded
 
