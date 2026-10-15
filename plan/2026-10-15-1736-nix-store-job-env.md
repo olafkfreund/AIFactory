@@ -93,8 +93,11 @@ Traps: `bb` is `server.services.build_backend` (`:36`). Do not remove the
   paragraph with: "The build Job forwards both AIFACTORY_PACKED_NIX_IN_IMAGE
   and AIFACTORY_NIX_STORE_PVC (#1736), so the gate path inside it reads
   the same values; the build Job itself mounts no store."
-  Also `:42`: "(build: ``build_backend``; gate/verify: ``gate_runner``)"
-  becomes "(gate/verify: ``gate_runner``, including gates inside the build Job)".
+  Also `:42-44` ("Read by both Job paths ...") no longer holds: the build
+  path stops reading it. Implemented as one merged paragraph replacing
+  `:42-50`: read by the gate path, including gates inside the build Job; the
+  build Job forwards both (#1736); the build Job mounts no store.
+  (Deviation: merged wording, made while implementing step 3.)
 - `tests/test_gate_runner_nix.py:342-344` docstring: drop "and the build
   packed path (_packed_nix_in_image in build_backend.py)".
 - `docs/docs/environment-reference.md`: `:241` purpose → "Gate Jobs resolve
