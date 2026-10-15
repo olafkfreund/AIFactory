@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 
+from core import auth_preflight
 from pfactory.taxonomy import classify_labels
 from pfactory.tfactory_client import (
     build_handoff_payload,
@@ -150,3 +151,128 @@ async def test_send_transport_exception_is_caught():
     assert res["sent"] is False
     assert res["reason"] == "error"
     assert "refused" in res["error"]
+
+
+async def test_send_enforce_blocks_failed_auth(monkeypatch):
+    monkeypatch.setenv("AIFACTORY_AUTH_PREFLIGHT", "enforce")
+
+    def failed_auth(models, **kw):
+        assert models == ["gemini"]
+        assert kw["timeout"] == 3  # handoffs must not wait on the 10 s build timeout
+        return [auth_preflight.PreflightResult("google", "auth_failed", "invalid key")]
+
+    monkeypatch.setattr(
+        auth_preflight,
+        "run_auth_preflight",
+        failed_auth,
+    )
+    posted = False
+
+    async def poster(url, payload, headers):
+        nonlocal posted
+        posted = True
+        return {"status": 202, "ok": True}
+
+    payload = {"contract": {"execution": {"phase_models": {"planning": "gemini"}}}}
+    res = await send_handoff(
+        payload, config={"base_url": "https://tf.example"}, poster=poster
+    )
+    assert res == {
+        "sent": False,
+        "reason": "auth_preflight_failed",
+        "provider": "google",
+        "detail": "invalid key",
+    }
+    assert not posted
+
+
+async def test_send_warn_posts_after_failed_auth(monkeypatch):
+    monkeypatch.setenv("AIFACTORY_AUTH_PREFLIGHT", "warn")
+    monkeypatch.setattr(
+        auth_preflight,
+        "run_auth_preflight",
+        lambda models, **_: [
+            auth_preflight.PreflightResult("google", "auth_failed", "invalid key")
+        ],
+    )
+    posted = False
+
+    async def poster(url, payload, headers):
+        nonlocal posted
+        posted = True
+        return {"status": 202, "ok": True}
+
+    payload = {"contract": {"execution": {"phase_models": {"planning": "gemini"}}}}
+    res = await send_handoff(
+        payload, config={"base_url": "https://tf.example"}, poster=poster
+    )
+    assert res["sent"] is True
+    assert posted
+
+
+async def test_send_enforce_posts_after_inconclusive_auth(monkeypatch):
+    monkeypatch.setenv("AIFACTORY_AUTH_PREFLIGHT", "enforce")
+    monkeypatch.setattr(
+        auth_preflight,
+        "run_auth_preflight",
+        lambda models, **_: [
+            auth_preflight.PreflightResult("google", "inconclusive", "timeout")
+        ],
+    )
+    posted = False
+
+    async def poster(url, payload, headers):
+        nonlocal posted
+        posted = True
+        return {"status": 202, "ok": True}
+
+    payload = {"contract": {"execution": {"phase_models": {"planning": "gemini"}}}}
+    res = await send_handoff(
+        payload, config={"base_url": "https://tf.example"}, poster=poster
+    )
+    assert res["sent"] is True
+    assert posted
+
+
+async def test_send_off_skips_auth_preflight(monkeypatch):
+    monkeypatch.setenv("AIFACTORY_AUTH_PREFLIGHT", "off")
+    probed = False
+
+    def unexpected_probe(models, **_):
+        nonlocal probed
+        probed = True
+        return []
+
+    monkeypatch.setattr(auth_preflight, "run_auth_preflight", unexpected_probe)
+
+    async def poster(url, payload, headers):
+        return {"status": 202, "ok": True}
+
+    payload = {"contract": {"execution": {"phase_models": {"planning": "gemini"}}}}
+    res = await send_handoff(
+        payload, config={"base_url": "https://tf.example"}, poster=poster
+    )
+    assert res["sent"] is True
+    assert not probed
+
+
+async def test_send_posts_when_auth_preflight_raises(monkeypatch):
+    monkeypatch.setenv("AIFACTORY_AUTH_PREFLIGHT", "enforce")
+
+    def broken_probe(models, **_):
+        raise RuntimeError("probe broke")
+
+    monkeypatch.setattr(auth_preflight, "run_auth_preflight", broken_probe)
+    posted = False
+
+    async def poster(url, payload, headers):
+        nonlocal posted
+        posted = True
+        return {"status": 202, "ok": True}
+
+    payload = {"contract": {"execution": {"phase_models": {"planning": "gemini"}}}}
+    res = await send_handoff(
+        payload, config={"base_url": "https://tf.example"}, poster=poster
+    )
+    assert res["sent"] is True
+    assert posted
