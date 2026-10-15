@@ -19,7 +19,9 @@ test pins it behaviourally.
 
 1. `tests/test_env_blanks_mcp_order.py` (new): one test,
    `test_mcp_env_merges_over_agent_blanks(tmp_path, monkeypatch)`:
-   - `monkeypatch.setenv("GITHUB_TOKEN", host)`, `setenv("DATABASE_URL", host)`.
+   - `monkeypatch.setenv("GITHUB_TOKEN", host)`, `setenv("DATABASE_URL", host)`,
+     and `setenv("CLAUDE_CODE_OAUTH_TOKEN", ...)`: `create_client` writes that
+     var into `os.environ` (`client.py:605`); monkeypatch restores it.
    - stub entry: `SimpleNamespace(id="github", credential_provider=None,
      build_server_config=lambda creds, read_only: {"command": "x", "env":
      {"GITHUB_TOKEN": operator}})`.

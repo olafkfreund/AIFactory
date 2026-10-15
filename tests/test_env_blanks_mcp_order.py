@@ -23,6 +23,8 @@ def test_mcp_env_merges_over_agent_blanks(
     operator = "operator-mcp-value"
     monkeypatch.setenv("GITHUB_TOKEN", host)
     monkeypatch.setenv("DATABASE_URL", host)
+    # create_client writes this into os.environ; monkeypatch restores it.
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat01-test")
 
     stub = SimpleNamespace(
         id="github",
