@@ -12,6 +12,7 @@ from server.services.project_env import (
     PROJECT_ENV_KEYS,
     is_project_env_key,
 )
+from server.services.project_settings_store import is_store_key
 
 
 @pytest.mark.parametrize(
@@ -62,4 +63,4 @@ def test_writer_coverage(writer: Callable[..., Any]) -> None:
     literals = set(re.findall(r'"([A-Z][A-Z0-9_]{2,})"', source))
     assert literals
     for key in sorted(literals):
-        assert is_project_env_key(key), f"Writer key {key!r} is not in allowlist"
+        assert is_store_key(key), f"Writer key {key!r} is not in allowlist"

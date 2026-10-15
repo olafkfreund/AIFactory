@@ -3,10 +3,10 @@ matrix to the frontend's Project Settings → MCP Servers tab.
 
 Read-only in V1: the response describes WHAT would happen on the next
 agent spawn for this project, but doesn't let the caller mutate it.
-Force-enable / force-disable still goes through ``.aifactory/.env`` —
-deliberately keeping the UI explanatory (not a "MCP control plane by
-accident") so operators retain a single source of truth for which
-servers run.
+Force-enable / force-disable goes through the project settings
+(the portal MCP view) — deliberately keeping this endpoint explanatory (not
+a "MCP control plane by accident") so operators retain a single source
+of truth for which servers run.
 """
 
 from __future__ import annotations
