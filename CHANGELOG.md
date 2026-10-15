@@ -2,6 +2,14 @@
 
 ### Security
 
+- **Git config and exec settings can no longer be smuggled in through the environment (#1754).**
+  `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n`, `GIT_SSH_COMMAND`, `GIT_EXEC_PATH`,
+  `GIT_DIR` and every other `GIT_*` key outside a short safe list (author and
+  committer identity, prompt, locks) are refused wherever a command sets them:
+  as a prefix, through `env`, `export`, `read`, `printf -v` or `let`.
+  `GIT_PAGER`, `GIT_EDITOR`, `PAGER`, `EDITOR` and `VISUAL` accept only
+  `cat`, `true` or `:`. Clearing the environment (`env -i`, `env -`,
+  `exec -c`) or unsetting the git safety pins is refused.
 - **A variable as the Bash command word no longer bypasses the allowlist (#1753).**
   The command parser skipped a command whose first word was `$X`, `"$X"`,
   `${X}`, `$(...)` or a backtick, so `echo hi; $X status` was allowed with
