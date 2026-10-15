@@ -141,6 +141,114 @@ def test_helper_accepts_real_names(monkeypatch: pytest.MonkeyPatch) -> None:
     assert _argv("https://github.com/my-org/my.repo_1") == _pinned(e=e)
 
 
+# ── shared upload ──────────────────────────────────────────────────────────
+
+
+def test_lfs_upload_gate_skips_everything_else() -> None:
+    calls: list[tuple[list[str], int]] = []
+
+    def run(argv: list[str], timeout: int) -> tuple[int, str, str]:
+        calls.append((argv, timeout))
+        return 1, "", ""
+
+    assert child_env.lfs_upload(run, "HEAD") is None
+    assert calls == [
+        (
+            [
+                "git",
+                "grep",
+                "-q",
+                "-F",
+                "-e",
+                "filter=lfs",
+                "HEAD",
+                "--",
+                ":(glob)**/.gitattributes",
+            ],
+            60,
+        )
+    ]
+
+
+def test_lfs_upload_order_and_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    _which_lfs(True, monkeypatch)
+    calls: list[tuple[list[str], int]] = []
+    results = iter([(0, "", ""), (0, _GITHUB, ""), (1, "", ""), (0, "", "")])
+
+    def run(argv: list[str], timeout: int) -> tuple[int, str, str]:
+        calls.append((argv, timeout))
+        return next(results)
+
+    assert child_env.lfs_upload(run, "HEAD") is None
+    assert [argv[:2] for argv, _ in calls] == [
+        ["git", "grep"],
+        ["git", "remote"],
+        ["git", "config"],
+        ["git", "-c"],
+    ]
+    assert calls[-1] == (_pinned(), child_env.LFS_UPLOAD_TIMEOUT)
+    assert [timeout for _, timeout in calls] == [60, 60, 60, 600]
+
+
+def test_lfs_upload_refuses_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    _which_lfs(True, monkeypatch)
+    calls: list[list[str]] = []
+    results = iter([(0, "", ""), (0, _GITHUB, ""), (0, "url.evil.insteadOf", "")])
+
+    def run(argv: list[str], timeout: int) -> tuple[int, str, str]:
+        calls.append(argv)
+        return next(results)
+
+    assert child_env.lfs_upload(run, "HEAD") == (
+        "LFS step refused (lfs.customtransfer.* or url.* defined)"
+    )
+    assert [argv[:2] for argv in calls] == [
+        ["git", "grep"],
+        ["git", "remote"],
+        ["git", "config"],
+    ]
+
+
+def test_lfs_upload_returns_upload_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
+    _which_lfs(True, monkeypatch)
+    results = iter([(0, "", ""), (0, _GITHUB, ""), (1, "", ""), (2, "", " boom \n")])
+
+    def run(argv: list[str], timeout: int) -> tuple[int, str, str]:
+        return next(results)
+
+    assert child_env.lfs_upload(run, "HEAD") == "boom"
+
+
+def test_lfs_upload_real_git_without_attributes(tmp_path: Path) -> None:
+    _g(tmp_path, "init")
+    (tmp_path / "plain.txt").write_text("plain\n")
+    _g(tmp_path, "add", "plain.txt")
+    _g(tmp_path, "commit", "-m", "plain")
+    calls: list[list[str]] = []
+
+    def run(argv: list[str], timeout: int) -> tuple[int, str, str]:
+        calls.append(argv)
+        p = subprocess.run(
+            argv, cwd=tmp_path, capture_output=True, text=True, timeout=timeout
+        )
+        return p.returncode, p.stdout, p.stderr
+
+    assert child_env.lfs_upload(run, "HEAD") is None
+    assert calls == [
+        [
+            "git",
+            "grep",
+            "-q",
+            "-F",
+            "-e",
+            "filter=lfs",
+            "HEAD",
+            "--",
+            ":(glob)**/.gitattributes",
+        ]
+    ]
+
+
 # ── wrapper ─────────────────────────────────────────────────────────────────
 
 _GITHUB = "https://github.com/o/r"

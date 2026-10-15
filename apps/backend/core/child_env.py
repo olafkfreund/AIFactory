@@ -10,7 +10,7 @@ import logging
 import os
 import re
 import shutil
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 
 from core.auth import is_denied_env_key
 
@@ -125,3 +125,57 @@ def lfs_push_argv(push_url_output: str, ref: str) -> list[str] | None:
         "origin",
         ref,
     ]
+
+
+LFS_UPLOAD_TIMEOUT = 600
+
+
+def lfs_upload(
+    run: Callable[[list[str], int], tuple[int, str, str]], ref: str
+) -> str | None:
+    """Upload ``ref``'s LFS objects before a push; None = done or not needed (#1721).
+
+    ``run(argv, timeout)`` runs git in the repo with the push's env and returns
+    ``(rc, stdout, stderr)``. A repo whose ``.gitattributes`` at ``ref`` has no
+    ``filter=lfs`` runs nothing else, so it sees no refusal and no upload. The
+    upload gets ``LFS_UPLOAD_TIMEOUT``: large objects outlast 60-180 s push
+    timeouts. Otherwise returns the refusal or upload error.
+    """
+    gate, _, _ = run(
+        [
+            "git",
+            "grep",
+            "-q",
+            "-F",
+            "-e",
+            "filter=lfs",
+            ref,
+            "--",
+            ":(glob)**/.gitattributes",
+        ],
+        60,
+    )
+    if gate != 0:
+        return None
+    url_rc, url, _ = run(["git", "remote", "get-url", "--push", "--all", "origin"], 60)
+    if url_rc != 0:
+        return None
+    argv = lfs_push_argv(url.strip(), ref)
+    if argv is None:
+        return None
+    check_rc, _, _ = run(
+        [
+            "git",
+            "config",
+            "--name-only",
+            "--get-regexp",
+            r"^(lfs\.customtransfer\.|url\.)",
+        ],
+        60,
+    )
+    if check_rc != 1:
+        return "LFS step refused (lfs.customtransfer.* or url.* defined)"
+    upload_rc, _, err = run(argv, LFS_UPLOAD_TIMEOUT)
+    if upload_rc != 0:
+        return err.strip() or "git lfs push failed"
+    return None
