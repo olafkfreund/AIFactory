@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -89,3 +90,48 @@ def test_handoff_upload_precedes_push(monkeypatch, tmp_path, upload_fails):
     assert calls[upload][1]["timeout"] == 600
     assert all(call[1]["env"] is calls[upload][1]["env"] for call in calls[1:])
     assert pushes == ([] if upload_fails else [upload + 1])
+
+
+def test_workspace_lfs_repo_on_gitlab_is_not_pushed(monkeypatch, tmp_path, caplog):
+    # Packed path: the worktree dies with the Job, so pointers pushed without
+    # their objects would lose the objects for good (#1721).
+    monkeypatch.setenv("WORKSPACE_URI", "s3://bucket/workspace")
+    monkeypatch.setattr(child_env.shutil, "which", lambda _: "/usr/bin/git-lfs")
+    (tmp_path / ".aifactory" / "worktrees" / "tasks" / "042-x").mkdir(parents=True)
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        out = {"rev-parse": "aifactory/042-x", "remote": "https://gitlab.com/o/r"}
+        return SimpleNamespace(returncode=0, stdout=out.get(argv[1], ""), stderr="")
+
+    monkeypatch.setattr(workspace_fetch.subprocess, "run", fake_run)
+    with caplog.at_level("WARNING", logger="core.workspace_fetch"):
+        assert workspace_fetch.maybe_push_workspace_branch(tmp_path, "042-x") is False
+    assert not any(argv[:2] == ["git", "push"] for argv in calls)
+    assert "no supported LFS endpoint" in caplog.text
+
+
+def test_handoff_lfs_timeout_is_an_lfs_error(monkeypatch, tmp_path, caplog):
+    monkeypatch.setattr(child_env.shutil, "which", lambda _: "/usr/bin/git-lfs")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    url = "https://github.com/o/r"
+    monkeypatch.setattr(
+        tfactory_client, "_locate_build_commit", lambda *_: (repo, "a" * 40)
+    )
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        if "lfs" in argv and "push" in argv:
+            raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+        rc = 1 if argv[:2] == ["git", "config"] else 0
+        out = url if argv[:3] == ["git", "remote", "get-url"] else ""
+        return SimpleNamespace(returncode=rc, stdout=out, stderr="")
+
+    monkeypatch.setattr(tfactory_client.subprocess, "run", fake_run)
+    with caplog.at_level("WARNING", logger="pfactory.tfactory_client"):
+        assert tfactory_client._git_info_and_push(tmp_path, "042-x") == (url, None)
+    assert not any(argv[:2] == ["git", "push"] for argv in calls)
+    assert "timed out" in caplog.text

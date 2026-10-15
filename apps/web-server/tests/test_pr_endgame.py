@@ -155,6 +155,7 @@ def test_create_pr_fetches_branch_from_origin_before_push():
     # it from origin before the push/gh-pr-create or the refspec doesn't resolve.
     r = FakeRunner(
         {
+            "git grep": CmdResult(1, "", ""),  # no filter=lfs: no LFS step (#1721)
             "fetch origin": CmdResult(0, "", ""),
             "git push": CmdResult(0, "", ""),
             "pr create": CmdResult(0, "https://github.com/o/r/pull/9", ""),

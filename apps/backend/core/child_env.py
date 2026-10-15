@@ -135,6 +135,8 @@ def lfs_upload(
 ) -> str | None:
     """Upload ``ref``'s LFS objects before a push; None = done or not needed (#1721).
 
+    Blocking for up to ``LFS_UPLOAD_TIMEOUT``: async callers use a thread.
+
     ``run(argv, timeout)`` runs git in the repo with the push's env and returns
     ``(rc, stdout, stderr)``. A repo whose ``.gitattributes`` at ``ref`` has no
     ``filter=lfs`` runs nothing else, so it sees no refusal and no upload. The
@@ -157,12 +159,17 @@ def lfs_upload(
     )
     if gate != 0:
         return None
+    if shutil.which("git-lfs") is None:
+        return None  # no clean filter here, so this push adds no new pointers
+    # From here the push may carry pointers whose objects exist only locally:
+    # refuse rather than push them without their objects (#1721).
     url_rc, url, _ = run(["git", "remote", "get-url", "--push", "--all", "origin"], 60)
-    if url_rc != 0:
-        return None
-    argv = lfs_push_argv(url.strip(), ref)
+    argv = lfs_push_argv(url.strip(), ref) if url_rc == 0 else None
     if argv is None:
-        return None
+        return (
+            "LFS repo but no supported LFS endpoint for this origin; "
+            "refusing to push pointers without objects"
+        )
     check_rc, _, _ = run(
         [
             "git",

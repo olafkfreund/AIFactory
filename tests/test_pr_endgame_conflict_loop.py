@@ -64,6 +64,7 @@ async def test_conflict_resolved_then_remerges_after_rereview():
             ],
             "rebase --continue": [_OK],
             "git push --force-with-lease": [_OK],
+            "git grep": [_FAIL],  # no filter=lfs: no LFS step (#1721)
         }
     )
     fixed = []

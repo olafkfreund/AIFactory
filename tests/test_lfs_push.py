@@ -323,18 +323,43 @@ def test_all_ok_order_and_push_argv_unchanged(monkeypatch: pytest.MonkeyPatch) -
     assert out is pushed
 
 
-def test_get_url_failure_pushes_without_lfs(monkeypatch: pytest.MonkeyPatch) -> None:
-    _which_lfs(True, monkeypatch)
-    rec = Rec(geturl=CmdResult(2, _GITHUB, "err"))
-    _push_with_lfs(_PUSH, "HEAD", "/wt", rec)
-    assert rec.kinds() == ["gate", "geturl", "push"]
+_NO_ENDPOINT = (
+    "LFS repo but no supported LFS endpoint for this origin; "
+    "refusing to push pointers without objects"
+)
 
 
-def test_non_github_remote_pushes_without_lfs(monkeypatch: pytest.MonkeyPatch) -> None:
+# An LFS repo must never push pointers without their objects (#1721): every
+# origin the pinned upload cannot serve refuses the push.
+@pytest.mark.parametrize(
+    "geturl",
+    [
+        CmdResult(2, _GITHUB, "err"),
+        CmdResult(0, "/srv/origin.git", ""),
+        CmdResult(0, "https://gitlab.com/o/r.git", ""),
+        CmdResult(0, "https://dev.azure.com/o/p/_git/r", ""),
+        CmdResult(0, "git@github.com:o/r.git", ""),
+        CmdResult(0, "ssh://git@github.com/o/r", ""),
+    ],
+    ids=["get-url-fails", "file", "gitlab", "azure-devops", "scp-ssh", "ssh-url"],
+)
+def test_lfs_repo_without_endpoint_refuses_push(
+    geturl: CmdResult, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _which_lfs(True, monkeypatch)
-    rec = Rec(geturl=CmdResult(0, "/srv/origin.git", ""))
-    _push_with_lfs(_PUSH, "HEAD", "/wt", rec)
-    assert rec.kinds() == ["gate", "geturl", "push"]
+    rec = Rec(geturl=geturl)
+    out = _push_with_lfs(_PUSH, "HEAD", "/wt", rec)
+    assert not out.ok
+    assert out.err == _NO_ENDPOINT
+    assert rec.kinds() == ["gate", "geturl"]
+
+
+def test_lfs_repo_without_git_lfs_pushes(monkeypatch: pytest.MonkeyPatch) -> None:
+    # No git-lfs binary means no clean filter ran here: no new pointers to lose.
+    _which_lfs(False, monkeypatch)
+    rec = Rec()
+    assert _push_with_lfs(_PUSH, "HEAD", "/wt", rec).ok
+    assert rec.kinds() == ["gate", "push"]
 
 
 def test_no_lfs_gate_skips_url_refusal_and_upload() -> None:

@@ -393,7 +393,10 @@ def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | 
                 )
                 return p.returncode, p.stdout, p.stderr
 
-            err = lfs_upload(run, sha)
+            try:
+                err = lfs_upload(run, sha)
+            except subprocess.TimeoutExpired as exc:
+                err = f"timed out after {exc.timeout} s"
             if err:
                 _log.warning(
                     "[handoff] LFS upload for %s failed; not pushing: %s",
@@ -991,7 +994,10 @@ async def maybe_auto_handoff_tfactory(
     if build_commit_count(spec_dir, spec_id) == 0:
         return {"sent": False, "reason": "empty_build"}
     try:
-        payload = build_ingest_payload(spec_dir, spec_id, contract=contract)
+        # Off the event loop: it pushes the build branch (LFS upload up to 600 s).
+        payload = await asyncio.to_thread(
+            build_ingest_payload, spec_dir, spec_id, contract=contract
+        )
         result = await send_handoff(payload)
     except Exception as exc:  # noqa: BLE001 — must never break task completion
         return {"sent": False, "reason": "error", "error": str(exc)[:300]}
