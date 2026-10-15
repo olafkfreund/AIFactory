@@ -50,6 +50,9 @@ Check environment: `export PATH=<main clone>/apps/backend/.venv/bin:$PATH`, run 
    `merge/timeline_tracker.py:128,199,248,281,288`.
    - Check: `ruff check --select DTZ --config 'lint.per-file-ignores={}' apps/backend/merge`
      reports 0, and `pytest tests/test_merge_*.py -q` passes.
+   - Deviation (done): also `merge/timeline_models.py:244-245`
+     `field(default_factory=datetime.now)` → `lambda: datetime.now(UTC)`. A bare
+     reference is invisible to DTZ005, found by grep.
    - Traps: `orchestrator.py` subtracts `start_time` from `completed_at`, so
      both must be aware (lines 233/263/294 and 337/387).
 3. **Remaining backend writers.** `datetime.now()` → `datetime.now(UTC)` at:

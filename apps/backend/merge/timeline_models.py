@@ -241,13 +241,13 @@ class FileTimeline:
     task_views: dict[str, TaskFileView] = field(default_factory=dict)
 
     # Metadata
-    created_at: datetime = field(default_factory=datetime.now)
-    last_updated: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    last_updated: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def add_main_event(self, event: MainBranchEvent) -> None:
         """Add a main branch event and increment drift for all active tasks."""
         self.main_branch_history.append(event)
-        self.last_updated = datetime.now()
+        self.last_updated = datetime.now(UTC)
 
         # Update commits_behind_main for all active tasks
         for task_view in self.task_views.values():
@@ -257,7 +257,7 @@ class FileTimeline:
     def add_task_view(self, task_view: TaskFileView) -> None:
         """Add or update a task's view of this file."""
         self.task_views[task_view.task_id] = task_view
-        self.last_updated = datetime.now()
+        self.last_updated = datetime.now(UTC)
 
     def get_task_view(self, task_id: str) -> TaskFileView | None:
         """Get a task's view of this file."""
