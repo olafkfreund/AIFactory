@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1696
 intent: intent/2026-10-15-1696-handback-receipt-db.md
 ---
