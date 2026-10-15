@@ -6,9 +6,9 @@ event so the cockpit (CFactory) can thread the unit of work end to end:
 
 Conforms to the Factory correlation-key RFC (olafkfreund/Factory#4 / RFC-0001):
 ``{correlation_key, service, task_id, status, phase, updated_at}`` + an optional
-``correlation`` chain block. The shared key is the source GitHub issue number
-(rendered as a string), with a synthetic ``af-<spec_id>`` fallback so it is never
-null.
+``correlation`` chain block. The shared key is ``<repo>#<issue number>`` when the
+task knows its repo (RFC-0001 §2, #1775), the bare issue number otherwise, with a
+synthetic ``af-<spec_id>`` fallback so it is never null.
 
 Additive envelope upgrade (#466) — every field below rides *alongside* the
 existing ones; nothing is removed, so existing consumers (CFactory) keep working
@@ -34,6 +34,7 @@ import json
 import logging
 import math
 import os
+import re
 import secrets
 import shutil
 import time
@@ -41,6 +42,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from factory_common.logsafe import sanitize_log
 
@@ -203,9 +205,35 @@ def read_issue_number(spec_dir: Path) -> int | None:
         return None
 
 
-def correlation_key(spec_id: str, issue_number: int | None) -> str:
-    """RFC-0001 §2: issue# as a string, synthetic ``af-<spec_id>`` fallback."""
-    return str(issue_number) if issue_number is not None else f"af-{spec_id}"
+_ISSUE_URL_PATH = re.compile(r"^/([^/]+/[^/]+)/issues/\d+$")
+
+
+def read_issue_repo(spec_dir: Path) -> str | None:
+    """The source repo (``owner/repo``) from requirements.json: ``provenance.repo``,
+    then ``githubIssue.repo``, then parsed from ``githubIssue.url`` (#1775)."""
+    try:
+        reqs = json.loads((spec_dir / "requirements.json").read_text())
+    except (OSError, ValueError):
+        return None
+    prov = reqs.get("provenance")
+    issue = reqs.get("githubIssue")
+    for block in (prov, issue):
+        repo = block.get("repo") if isinstance(block, dict) else None
+        if repo and isinstance(repo, str):
+            return repo
+    url = issue.get("url") if isinstance(issue, dict) else None
+    if isinstance(url, str) and (m := _ISSUE_URL_PATH.match(urlparse(url).path)):
+        return m.group(1)
+    return None
+
+
+def correlation_key(
+    spec_id: str, issue_number: int | None, repo: str | None = None
+) -> str:
+    """RFC-0001 §2: ``<repo>#<n>``, else bare issue#, else synthetic ``af-<spec_id>``."""
+    if issue_number is None:
+        return f"af-{spec_id}"
+    return f"{repo}#{issue_number}" if repo else str(issue_number)
 
 
 class _BadUsageError(Exception):
@@ -512,6 +540,7 @@ def build_completion_event(
     halt_reason: str | None = None,
     injection_scan: dict | None = None,
     tenant_id: str | None = None,
+    repo: str | None = None,
 ) -> dict:
     """The RFC-0001 completion-event envelope (six core fields + chain block).
 
@@ -556,13 +585,14 @@ def build_completion_event(
             sanitize_log(correlation_key(spec_id, None)),
         )
     event = {
-        "correlation_key": correlation_key(spec_id, issue_number),
+        "correlation_key": correlation_key(spec_id, issue_number, repo),
         "service": SERVICE_NAME,
         "task_id": task_id,
         "status": status,
         "phase": phase,
         "correlation": {
             "issue_number": issue_number,
+            "repo": repo,
             "spec_id": spec_id,
             "project_id": project_id,
         },
@@ -616,6 +646,7 @@ def build_worker_event(
     event_id: str | None = None,
     traceparent: str | None = None,
     tracestate: str | None = None,
+    repo: str | None = None,
 ) -> dict:
     """A LIVE per-worker sub-event (RFC-0001 v1.3, #45 P1).
 
@@ -652,13 +683,14 @@ def build_worker_event(
         "duration_ms": int(rec.get("duration_ms", 0) or 0),
     }
     event = {
-        "correlation_key": correlation_key(spec_id, issue_number),
+        "correlation_key": correlation_key(spec_id, issue_number, repo),
         "service": SERVICE_NAME,
         "task_id": task_id,
         "status": _WORKER_STATUS,
         "phase": _WORKER_PHASE,
         "correlation": {
             "issue_number": issue_number,
+            "repo": repo,
             "spec_id": spec_id,
             "project_id": project_id,
         },
@@ -690,6 +722,7 @@ def build_worker_progress_event(
     event_id: str | None = None,
     traceparent: str | None = None,
     tracestate: str | None = None,
+    repo: str | None = None,
 ) -> dict:
     """A LIVE per-worker PROGRESS heartbeat event (#45 Tier 2).
 
@@ -722,13 +755,14 @@ def build_worker_progress_event(
         "elapsed_ms": int(rec.get("elapsed_ms", 0) or 0),
     }
     event = {
-        "correlation_key": correlation_key(spec_id, issue_number),
+        "correlation_key": correlation_key(spec_id, issue_number, repo),
         "service": SERVICE_NAME,
         "task_id": task_id,
         "status": _WORKER_PROGRESS_STATUS,
         "phase": _WORKER_PROGRESS_PHASE,
         "correlation": {
             "issue_number": issue_number,
+            "repo": repo,
             "spec_id": spec_id,
             "project_id": project_id,
         },
@@ -772,6 +806,7 @@ def emit_worker_completion(
             task_id=task_id,
             spec_id=spec_id,
             issue_number=read_issue_number(spec_dir),
+            repo=read_issue_repo(spec_dir),
             project_id=project_id,
             worker=worker,
         )
@@ -860,6 +895,7 @@ def emit_worker_progress(
             task_id=task_id,
             spec_id=spec_id,
             issue_number=read_issue_number(spec_dir),
+            repo=read_issue_repo(spec_dir),
             project_id=project_id,
             worker=worker,
         )
@@ -1040,6 +1076,7 @@ def emit_terminal_completion(
         spec_id=spec_id,
         status=status,
         issue_number=read_issue_number(spec_dir),
+        repo=read_issue_repo(spec_dir),
         project_id=project_id,
         usage=usage,
         halt_reason=_read_halt_reason(spec_dir),
@@ -1106,6 +1143,7 @@ def emit_usage_snapshot(  # noqa: PLR0913 - event fields, all required by the en
             spec_id=spec_id,
             status=status,
             issue_number=read_issue_number(spec_dir),
+            repo=read_issue_repo(spec_dir),
             project_id=project_id,
             usage=usage,
             injection_scan=_read_injection_scan(spec_dir),

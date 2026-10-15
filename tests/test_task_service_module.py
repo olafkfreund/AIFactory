@@ -112,3 +112,38 @@ def test_load_spec_metadata_tolerates_float_id_and_malformed_subtask(tmp_path):
     meta = load_spec_metadata(spec)  # must not raise
     assert [s.id for s in meta["subtasks"]] == ["1.1", "s2"]
     assert meta["subtasks"][0].status == "pending"  # 'ready' coerced
+
+
+def test_task_rows_declare_the_correlation_key(tmp_path, monkeypatch):
+    # #1775: CFactory's adapter keys a polled row on `correlationKey` first, so a
+    # row without it silently splits from the task's events onto a bare key.
+    import json
+
+    from server.routes import task_service
+    from server.routes.task_models import Task
+
+    specs = tmp_path / ".aifactory" / "specs"
+    for spec_id, reqs in (
+        ("001-a", {"githubIssue": {"number": 7, "repo": "owner/repo"}}),
+        ("002-b", {"title": "no issue"}),
+    ):
+        (specs / spec_id).mkdir(parents=True)
+        (specs / spec_id / "requirements.json").write_text(json.dumps(reqs))
+    monkeypatch.setattr(
+        task_service, "load_projects", lambda: {"p": {"path": str(tmp_path)}}
+    )
+
+    def row(spec_id: str) -> dict:
+        task = Task(
+            id=f"p:{spec_id}",
+            spec_id=spec_id,
+            project_id="p",
+            title=spec_id,
+            description="",
+            created_at="2026-10-15T00:00:00Z",
+            updated_at="2026-10-15T00:00:00Z",
+        )
+        return task_service.task_to_dict(task)
+
+    assert row("001-a")["correlationKey"] == "owner/repo#7"
+    assert row("002-b")["correlationKey"] == "af-002-b"
