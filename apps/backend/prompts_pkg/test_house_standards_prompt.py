@@ -122,6 +122,18 @@ def test_verified_renders_same_block_as_legacy(
     assert get_house_standards_context(tmp_path) == legacy
 
 
+def test_legacy_ignores_plan_fallback_quietly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _write_contract(tmp_path, _standards(), where="implementation_plan.json")
+    monkeypatch.setenv(contract_trust.ENV, "legacy")
+    with caplog.at_level(logging.WARNING):
+        assert get_house_standards_context(tmp_path) == ""
+    assert "implementation_plan.json is not verified" not in caplog.text
+
+
 def test_hold_ignores_plan_fallback_hole_a(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
