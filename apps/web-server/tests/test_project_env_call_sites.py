@@ -137,7 +137,7 @@ async def test_store_failure_fails_the_launch(
     )
 
     with pytest.raises(
-        project_settings_store.ProjectSettingsUnavailable,
+        project_settings_store.ProjectSettingsUnavailableError,
         match="project settings unavailable: database error",
     ):
         await PRReviewService().start_review(

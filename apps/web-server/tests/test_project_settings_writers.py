@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
 from typing import Any
@@ -10,9 +11,11 @@ import pytest
 import pytest_asyncio
 from server.crypto import kms
 from server.database.models import Base
-from server.routes import context as context_routes
-from server.routes import github as github_routes
-from server.routes import projects as projects_routes
+from server.routes import (
+    context as context_routes,
+    github as github_routes,
+    projects as projects_routes,
+)
 from server.services import project_settings_store as pss
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -150,11 +153,8 @@ async def test_patch_env_mcp_fields_round_trip_through_get_env(
     assert "AGENT_MCP_planner_ADD" not in stored
 
 
-async def test_patch_env_rejects_invalid_agent_name_in_overrides(
-    project_dir: Path,
-) -> None:
-    import json
-
+@pytest.mark.usefixtures("project_dir")
+async def test_patch_env_rejects_invalid_agent_name_in_overrides() -> None:
     res = await context_routes.update_project_env(
         projectId="proj-1",
         config=context_routes.ProjectEnvUpdate(

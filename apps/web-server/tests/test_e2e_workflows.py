@@ -35,6 +35,7 @@ from typing import Generator
 from unittest.mock import MagicMock, patch
 
 import pytest
+from server.services import project_settings_store
 from server.services.http_verdict import REFUSED_STATUS
 from verdict_helpers import verdict
 
@@ -295,10 +296,28 @@ class TestProfileManagementWorkflow:
 # ============================================================================
 
 
+@pytest.fixture
+def memory_settings_store(monkeypatch) -> dict[str, dict[str, str]]:
+    """No DB here: an in-memory stand-in for the settings store (#1795)."""
+    stored: dict[str, dict[str, str]] = {}
+
+    async def fake_get(path, *_a):
+        return dict(stored.get(str(path), {}))
+
+    async def fake_put(path, values, *_a):
+        stored[str(path)] = dict(values)
+
+    monkeypatch.setattr(project_settings_store, "get_settings", fake_get)
+    monkeypatch.setattr(project_settings_store, "put_settings", fake_put)
+    return stored
+
+
 class TestProjectSetupWorkflow:
     """Test complete project onboarding and configuration."""
 
-    def test_project_onboarding_workflow(self, tmp_path: Path, monkeypatch):
+    def test_project_onboarding_workflow(
+        self, tmp_path: Path, monkeypatch, memory_settings_store
+    ):
         """
         Test the complete project setup workflow (#912):
         1. Scan the filesystem for candidate projects
@@ -313,23 +332,10 @@ class TestProjectSetupWorkflow:
         from fastapi import HTTPException
         from server import config
         from server.routes import projects as projects_routes
-        from server.services import project_settings_store
 
         monkeypatch.setattr(
             config.settings, "PROJECTS_DATA_DIR", str(tmp_path / "data")
         )
-
-        # No DB here: an in-memory stand-in for the settings store (#1795).
-        stored: dict[str, dict[str, str]] = {}
-
-        async def fake_get(path, *_a):
-            return dict(stored.get(str(path), {}))
-
-        async def fake_put(path, values, *_a):
-            stored[str(path)] = dict(values)
-
-        monkeypatch.setattr(project_settings_store, "get_settings", fake_get)
-        monkeypatch.setattr(project_settings_store, "put_settings", fake_put)
 
         # #1278 confines scan/register to the browsable roots, so a tmp_path
         # outside $HOME is refused with 403 before the scan runs.
@@ -398,7 +404,7 @@ class TestProjectSetupWorkflow:
         )
         assert result["success"] is True
 
-        env = stored[str(app_dir)]
+        env = memory_settings_store[str(app_dir)]
         assert env["AI_FACTORY_MODEL"] == "claude-test-model"
         assert env["MAIN_BRANCH"] == "main"
         assert env["AIFACTORY_AUTO_PR"] == "true"

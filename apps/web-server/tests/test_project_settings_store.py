@@ -158,7 +158,7 @@ async def test_reappearing_file_is_ignored_and_logs_keys_only(
     (env_dir / ".env").write_text(
         "AIFACTORY_AUTO_MERGE=true\n"
         "GITHUB_TOKEN=ghp_top_secret_value_1795\n"
-        "LD_PRELOAD=/tmp/evil.so\n",
+        "LD_PRELOAD=/opt/evil.so\n",
         encoding="utf-8",
     )
 
@@ -174,7 +174,11 @@ async def test_reappearing_file_is_ignored_and_logs_keys_only(
     assert "GITHUB_TOKEN" in warnings[0]
     assert "LD_PRELOAD" in warnings[0]
     assert "ghp_top_secret_value_1795" not in caplog.text
-    assert "/tmp/evil.so" not in caplog.text
+    assert "/opt/evil.so" not in caplog.text
+
+
+def _git(*args: str) -> None:
+    subprocess.run(["git", *args], check=True, capture_output=True)  # noqa: S603, S607
 
 
 async def test_git_tracked_file_is_not_imported_and_not_renamed(
@@ -182,24 +186,15 @@ async def test_git_tracked_file_is_not_imported_and_not_renamed(
     project_dir: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    subprocess.run(["git", "init", str(project_dir)], check=True, capture_output=True)
-    subprocess.run(
-        ["git", "-C", str(project_dir), "config", "user.email", "test@example.com"],
-        check=True,
-    )
-    subprocess.run(
-        ["git", "-C", str(project_dir), "config", "user.name", "Test"],
-        check=True,
-    )
+    _git("init", str(project_dir))
+    _git("-C", str(project_dir), "config", "user.email", "test@example.com")
+    _git("-C", str(project_dir), "config", "user.name", "Test")
     env_dir = project_dir / ".aifactory"
     env_dir.mkdir()
     env_file = env_dir / ".env"
     content = "AIFACTORY_AUTO_MERGE=true\nUSE_CLAUDE_MD=true\n"
     env_file.write_text(content, encoding="utf-8")
-    subprocess.run(
-        ["git", "-C", str(project_dir), "add", "-f", ".aifactory/.env"],
-        check=True,
-    )
+    _git("-C", str(project_dir), "add", "-f", ".aifactory/.env")
 
     with caplog.at_level(logging.WARNING, logger=pss.logger.name):
         settings = await store.get_settings(project_dir)
@@ -238,7 +233,7 @@ async def test_put_settings_refuses_ld_preload(
 ) -> None:
     with pytest.raises(ValueError, match="LD_PRELOAD"):
         await store.put_settings(
-            project_dir, {"USE_CLAUDE_MD": "true", "LD_PRELOAD": "/tmp/x.so"}
+            project_dir, {"USE_CLAUDE_MD": "true", "LD_PRELOAD": "/opt/x.so"}
         )
 
 
@@ -252,17 +247,17 @@ async def test_kms_fernet_key_encrypts_raw_column(
     monkeypatch.setenv("KMS_FERNET_KEY", fernet_key)
     kms._INSTANCE = None
 
-    secret_token = "ghp_super_secret_token_value_1795"
-    await store.put_settings(project_dir, {"GITHUB_TOKEN": secret_token})
+    sentinel = "ghp_super_sentinel_value_1795"
+    await store.put_settings(project_dir, {"GITHUB_TOKEN": sentinel})
 
     async with session_factory() as session:
         row = await session.get(ProjectSettings, project_key(project_dir))
         assert row is not None
         assert row.settings.startswith("enc.v1:")
-        assert secret_token not in row.settings
+        assert sentinel not in row.settings
         assert "GITHUB_TOKEN" not in row.settings
 
-    assert await store.get_settings(project_dir) == {"GITHUB_TOKEN": secret_token}
+    assert await store.get_settings(project_dir) == {"GITHUB_TOKEN": sentinel}
 
 
 async def test_load_project_env_skips_custom_mcp_servers_and_does_not_override(

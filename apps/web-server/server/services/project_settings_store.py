@@ -99,8 +99,8 @@ def _parse_env_file(path: Path) -> tuple[dict[str, str], list[str]]:
 def _is_tracked(project_path: str | Path) -> bool:
     """Return True iff git tracks ``.aifactory/.env`` inside ``project_path``."""
     try:
-        res = subprocess.run(
-            ["git", "-C", str(project_path), "ls-files", "--", ".aifactory/.env"],
+        res = subprocess.run(  # noqa: S603 - fixed argv, no shell
+            ["git", "-C", str(project_path), "ls-files", "--", ".aifactory/.env"],  # noqa: S607
             env=child_env(),
             capture_output=True,
             text=True,
@@ -340,7 +340,7 @@ async def refresh_all(session_factory: Any = None) -> None:
     await ProjectSettingsStore(session_factory).refresh_all()
 
 
-class ProjectSettingsUnavailable(RuntimeError):
+class ProjectSettingsUnavailableError(RuntimeError):
     """The settings store could not be read, so a launch must not start (#1795)."""
 
 
@@ -357,7 +357,7 @@ async def _settings_for_spawn(
             sanitize_log(str(project_path)),
             sanitize_log(type(e).__name__),
         )
-        raise ProjectSettingsUnavailable(
+        raise ProjectSettingsUnavailableError(
             "project settings unavailable: database error"
         ) from e
 

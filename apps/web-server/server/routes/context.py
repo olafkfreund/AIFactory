@@ -62,9 +62,9 @@ class ProjectEnvUpdate(BaseModel):
     claudeToken: str | None = Field(default=None, repr=False)
     # Graphiti Provider Config (nested object from frontend)
     graphitiProviderConfig: dict | None = None
-    mcpServers: dict | None = None
-    agentMcpOverrides: dict | None = None
-    customMcpServers: list | None = None
+    mcpServers: dict[str, Any] | None = None  # noqa: N815 - frontend field name
+    agentMcpOverrides: dict[str, Any] | None = None  # noqa: N815 - frontend field name
+    customMcpServers: list[Any] | None = None  # noqa: N815 - frontend field name
 
 
 class TestGraphitiRequest(BaseModel):
@@ -521,9 +521,9 @@ async def get_project_env(projectId: str = Path(...)):
         # MCP settings (#1795)
         elif key == "CONTEXT7_ENABLED":
             mcp_servers["context7Enabled"] = value.lower() == "true"
-        elif key == "PLAYWRIGHT_MCP_ENABLED":
-            mcp_servers["playwrightEnabled"] = value.lower() == "true"
-        elif key == "PUPPETEER_MCP_ENABLED" and "playwrightEnabled" not in mcp_servers:
+        elif key == "PLAYWRIGHT_MCP_ENABLED" or (
+            key == "PUPPETEER_MCP_ENABLED" and "playwrightEnabled" not in mcp_servers
+        ):
             mcp_servers["playwrightEnabled"] = value.lower() == "true"
         elif (m := _AGENT_MCP_KEY_RE.fullmatch(key)) is not None:
             agent_name, action = m.group(1), m.group(2)

@@ -23,8 +23,7 @@ _WS = Path(__file__).resolve().parents[1]
 if str(_WS) not in sys.path:
     sys.path.insert(0, str(_WS))
 
-from server.services import pr_endgame as pe  # noqa: E402
-from server.services import project_settings_store  # noqa: E402
+from server.services import pr_endgame as pe, project_settings_store  # noqa: E402
 from server.services.pr_endgame import CmdResult  # noqa: E402
 from server.services.project_settings_store import project_key  # noqa: E402
 

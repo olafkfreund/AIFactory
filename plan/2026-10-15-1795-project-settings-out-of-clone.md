@@ -218,7 +218,7 @@ names the step: `feat(settings): step N ... (#1795)`.
 
    Deviation (revised at the maintainer's review): when the store cannot be
    read, the module-level `load_project_env` and `mcp_spawn_env` raise
-   `ProjectSettingsUnavailable("project settings unavailable: database
+   `ProjectSettingsUnavailableError("project settings unavailable: database
    error")`, so the launch fails instead of starting with no settings. With
    no settings, a task would lose its tokens, `MAIN_BRANCH`, model and
    flags without any sign of it. They never fall back to the file. Tests

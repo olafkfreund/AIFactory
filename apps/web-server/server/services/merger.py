@@ -40,8 +40,7 @@ from typing import Any
 
 from server.project_registry import load_projects, resolve_project_path
 from server.routes.task_service import get_spec_dirs
-from server.services import pr_endgame as pe
-from server.services import project_settings_store
+from server.services import pr_endgame as pe, project_settings_store
 from server.services.pr_endgame import Runner
 from server.services.task_control import read_control, write_control
 from server.tenancy import UNREADABLE_TENANT, spec_tenant
