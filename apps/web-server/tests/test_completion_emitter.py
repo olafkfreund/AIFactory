@@ -22,6 +22,7 @@ from server.services.completion import (  # noqa: E402
     emit_worker_progress,
     notify_completion,
     read_issue_number,
+    read_issue_repo,
     read_usage,
 )
 
@@ -65,6 +66,45 @@ def test_read_issue_absent_is_none(tmp_path):
 def test_correlation_key_issue_vs_synthetic():
     assert correlation_key("spec-9", 412) == "412"
     assert correlation_key("spec-9", None) == "af-spec-9"
+
+
+def _spec_with(tmp_path, name, requirements):
+    d = tmp_path / name
+    d.mkdir()
+    (d / "requirements.json").write_text(json.dumps(requirements))
+    return d
+
+
+def test_key_is_scoped_to_the_repo(tmp_path):
+    keys = []
+    for name, repo in (("s1", "a/x"), ("s2", "b/y")):
+        d = _spec_with(
+            tmp_path,
+            name,
+            {"metadata": {"githubIssueNumber": 7}, "provenance": {"repo": repo}},
+        )
+        ev = build_completion_event(
+            task_id="t",
+            spec_id=name,
+            status="done",
+            issue_number=read_issue_number(d),
+            repo=read_issue_repo(d),
+        )
+        keys.append(ev["correlation_key"])
+        assert ev["correlation"]["repo"] == repo
+    assert keys == ["a/x#7", "b/y#7"]
+
+
+def test_read_issue_repo_parses_the_issue_url_and_falls_back_to_bare(tmp_path):
+    d = _spec_with(
+        tmp_path,
+        "s1",
+        {"githubIssue": {"number": 7, "url": "https://github.com/o/r/issues/7"}},
+    )
+    assert read_issue_repo(d) == "o/r"
+    bare = _spec_with(tmp_path, "s2", {"githubIssue": {"number": 7}})
+    assert read_issue_repo(bare) is None
+    assert correlation_key("s2", 7, read_issue_repo(bare)) == "7"
 
 
 def test_envelope_has_rfc_core_fields():
