@@ -36,6 +36,9 @@ Check environment: `export PATH=<main clone>/apps/backend/.venv/bin:$PATH`, run 
      raises, there are 2 snapshots, and every `started_at.tzinfo is not None`.
    - Check: `pytest tests/test_merge_types.py -q`. The new test must fail with
      `TypeError` when the two merge files are reverted.
+   - Deviation (done): `TestTaskSnapshot`'s roundtrip fixture now uses an aware
+     `started_at`, because the loader returns aware values and a naive original no
+     longer compares equal.
    - Traps: keep the `if data.get(...) else None` conditionals intact. Do not
      reformat untouched code.
 2. **Merge writers.** `datetime.now()` → `datetime.now(UTC)` in

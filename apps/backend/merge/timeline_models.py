@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ class MainBranchEvent:
     def from_dict(cls, data: dict) -> MainBranchEvent:
         return cls(
             commit_hash=data["commit_hash"],
-            timestamp=datetime.fromisoformat(data["timestamp"]),
+            timestamp=datetime.fromisoformat(data["timestamp"]).astimezone(UTC),
             content=data["content"],
             source=data["source"],
             merged_from_task=data.get("merged_from_task"),
@@ -94,7 +94,7 @@ class BranchPoint:
         return cls(
             commit_hash=data["commit_hash"],
             content=data["content"],
-            timestamp=datetime.fromisoformat(data["timestamp"]),
+            timestamp=datetime.fromisoformat(data["timestamp"]).astimezone(UTC),
         )
 
 
@@ -115,7 +115,7 @@ class WorktreeState:
     def from_dict(cls, data: dict) -> WorktreeState:
         return cls(
             content=data["content"],
-            last_modified=datetime.fromisoformat(data["last_modified"]),
+            last_modified=datetime.fromisoformat(data["last_modified"]).astimezone(UTC),
         )
 
 
@@ -217,7 +217,7 @@ class TaskFileView:
             else TaskIntent("", ""),
             commits_behind_main=data.get("commits_behind_main", 0),
             status=status,
-            merged_at=datetime.fromisoformat(data["merged_at"])
+            merged_at=datetime.fromisoformat(data["merged_at"]).astimezone(UTC)
             if data.get("merged_at")
             else None,
         )
@@ -297,8 +297,8 @@ class FileTimeline:
     def from_dict(cls, data: dict) -> FileTimeline:
         timeline = cls(
             file_path=data["file_path"],
-            created_at=datetime.fromisoformat(data["created_at"]),
-            last_updated=datetime.fromisoformat(data["last_updated"]),
+            created_at=datetime.fromisoformat(data["created_at"]).astimezone(UTC),
+            last_updated=datetime.fromisoformat(data["last_updated"]).astimezone(UTC),
         )
         timeline.main_branch_history = [
             MainBranchEvent.from_dict(e) for e in data.get("main_branch_history", [])
