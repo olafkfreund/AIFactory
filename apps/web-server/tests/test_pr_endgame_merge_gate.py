@@ -31,9 +31,9 @@ for _p in (str(_WS), str(_BACKEND)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+import server.services.handback_receipt_store as hrs  # noqa: E402
 from merge import merge_policy  # noqa: E402
 from server.database.models import Base  # noqa: E402
-from server.services import handback_receipt_store as hrs  # noqa: E402
 from server.services import pr_endgame as pe  # noqa: E402
 
 # Captured before conftest's autouse stub replaces it (#1696).
