@@ -15,8 +15,10 @@ Closes #1711 and #1710. Approved decisions carried from the spec:
   None, "no contract")`; a contract file + `legacy` → `("hold", contract,
   "server saw no signed contract")`. ENV unset keeps today's trace fallback.
   Every other row unchanged.
-- D3: `prompts._load_contract` returns `None` silently under `legacy` (no
-  `implementation_plan.json` fallback, no warning).
+- D3 (revised in review): `prompts._load_contract` returns `None` silently under
+  `legacy` only when the spec dir shows no trusted trace; with a trace it still
+  warns, because the server said legacy yet the dir claims trusted-plan
+  provenance. Either way the `implementation_plan.json` fallback is withheld.
 - D4: one parametrized kubejob integration test: the server verdict reaches the
   Job manifest and the pod's `_resolve_build_contract` acts on it.
 
@@ -59,12 +61,17 @@ in the worktree. Never create a `.venv` in the worktree.
 
 3. **Prompt readers stay quiet under `legacy`.** `apps/backend/prompts_pkg/prompts.py:596`
    - before `if contract_trust.ENV in os.environ or ...`, add
-     `if os.environ.get(contract_trust.ENV) == contract_trust.LEGACY:` /
-     `return None  # the server vouched for no contract`.
+     `traced = contract_trust.has_trusted_trace(spec_dir)`, then
+     `if os.environ.get(contract_trust.ENV) == contract_trust.LEGACY and not traced:` /
+     `return None  # the server vouched for no contract`; the warning line
+     reuses `traced`. (Review: an unconditional early return hid the warning
+     for legacy + a trusted trace.)
    - Test, `apps/backend/prompts_pkg/test_house_standards_prompt.py`:
      `test_legacy_ignores_plan_fallback_quietly`: standards in
      `implementation_plan.json` (no `approval`), `setenv(ENV, "legacy")` →
-     `""` and `"implementation_plan.json is not verified" not in caplog.text`.
+     `""` and `"implementation_plan.json is not verified" not in caplog.text`;
+     `test_legacy_with_trace_still_warns`: same plan with an `approval` key →
+     `""` and the warning is logged.
    - Check: `pytest -q apps/backend/prompts_pkg/`
    - Traps: none.
 

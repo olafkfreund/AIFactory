@@ -594,9 +594,10 @@ def _load_contract(spec_dir: Path) -> dict[str, Any] | None:
         return None
     if isinstance(contract, dict):  # verified, or legacy with task_contract.json
         return contract
-    if os.environ.get(contract_trust.ENV) == contract_trust.LEGACY:
+    traced = contract_trust.has_trusted_trace(spec_dir)
+    if os.environ.get(contract_trust.ENV) == contract_trust.LEGACY and not traced:
         return None  # the server vouched for no contract
-    if contract_trust.ENV in os.environ or contract_trust.has_trusted_trace(spec_dir):
+    if contract_trust.ENV in os.environ or traced:
         logger.warning("[trusted-contract] implementation_plan.json is not verified")
         return None
     # ponytail: true-legacy fallback, drop once every task carries a server verdict
