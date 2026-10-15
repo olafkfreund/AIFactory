@@ -15,6 +15,7 @@ from fastapi import APIRouter, Path, Query
 from pydantic import BaseModel, Field, SecretStr
 
 from server.error_ref import client_error
+from server.services import project_settings_store
 from server.services.http_verdict import honest_status
 from server.services.pr_endgame import is_graphiti_enabled
 from server.utils.subprocess_env import child_env
@@ -114,6 +115,14 @@ async def get_project_context(projectId: str = Path(...)):
     # `_flag` is the existing resolver: per-project setting wins, else the
     # deployment env var, both default OFF. A project that has not enabled
     # Graphiti now reads `false`, which is the whole point.
+    try:
+        await project_settings_store.get_settings(project_path)
+    except Exception:  # noqa: BLE001 - fall back to existing snapshot / global default
+        logger.warning(
+            "failed to load project settings for %s",
+            sanitize_log(str(project_path)),
+            exc_info=True,
+        )
     memory_enabled = is_graphiti_enabled(project_path)
 
     # Collect recent memories from all specs

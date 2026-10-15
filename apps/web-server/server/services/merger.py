@@ -41,6 +41,7 @@ from typing import Any
 from server.project_registry import load_projects, resolve_project_path
 from server.routes.task_service import get_spec_dirs
 from server.services import pr_endgame as pe
+from server.services import project_settings_store
 from server.services.pr_endgame import Runner
 from server.services.task_control import read_control, write_control
 from server.tenancy import UNREADABLE_TENANT, spec_tenant
@@ -657,6 +658,12 @@ async def merger_loop(*, stop: asyncio.Event | None = None) -> None:
     interval = interval_s()
     while not stop.is_set():
         try:
+            try:
+                await project_settings_store.refresh_all()
+            except Exception:  # noqa: BLE001 - never block merger sweep on settings refresh
+                logger.warning(
+                    "project-settings refresh failed before merger sweep", exc_info=True
+                )
             # Shells out to git/gh per spec: blocking, so off the event loop.
             await asyncio.to_thread(sweep_once)
         except Exception:

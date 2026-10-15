@@ -306,6 +306,11 @@ class ProjectSettingsStore:
         return {ENV: json.dumps(mcp)}
 
 
+def is_loaded(project_path: str | Path) -> bool:
+    """True once this process has read or written the project's settings."""
+    return project_key(project_path) in _SNAPSHOT
+
+
 def cached_setting(project_path: str | Path, key: str) -> str | None:
     """Return ``key`` for ``project_path`` from the in-process snapshot, or ``None``."""
     proj = _SNAPSHOT.get(project_key(project_path))
@@ -335,24 +340,35 @@ async def refresh_all(session_factory: Any = None) -> None:
     await ProjectSettingsStore(session_factory).refresh_all()
 
 
+class ProjectSettingsUnavailable(RuntimeError):
+    """The settings store could not be read, so a launch must not start (#1795)."""
+
+
+async def _settings_for_spawn(
+    project_path: str | Path, session_factory: Any = None
+) -> dict[str, str]:
+    # Starting with no settings would silently drop tokens, branch and flags;
+    # never fall back to the file either.
+    try:
+        return await get_settings(project_path, session_factory)
+    except Exception as e:
+        logger.error(
+            "project settings unavailable for %s: %s",
+            sanitize_log(str(project_path)),
+            sanitize_log(type(e).__name__),
+        )
+        raise ProjectSettingsUnavailable(
+            "project settings unavailable: database error"
+        ) from e
+
+
 async def load_project_env(
     project_path: str | Path,
     env: dict[str, str],
     session_factory: Any = None,
 ) -> None:
     """Copy stored keys passing ``is_project_env_key`` into ``env`` without overriding."""
-    if session_factory is not None:
-        await ProjectSettingsStore(session_factory).load_project_env(project_path, env)
-        return
-    try:
-        settings = await get_settings(project_path)
-    except Exception as e:  # noqa: BLE001 - fail closed if DB is uninitialized/unavailable
-        logger.warning(
-            "Failed to load project settings for %s; skipping project env: %s",
-            sanitize_log(str(project_path)),
-            sanitize_log(str(e)),
-        )
-        return
+    settings = await _settings_for_spawn(project_path, session_factory)
     for k, v in settings.items():
         if is_project_env_key(k) and k not in env:
             env[k] = v
@@ -362,16 +378,6 @@ async def mcp_spawn_env(
     project_path: str | Path, session_factory: Any = None
 ) -> dict[str, str]:
     """Return ``{ENV: json.dumps(mcp_keys)}`` for ``project_path``."""
-    if session_factory is not None:
-        return await ProjectSettingsStore(session_factory).mcp_spawn_env(project_path)
-    try:
-        settings = await get_settings(project_path)
-    except Exception as e:  # noqa: BLE001 - fail closed if DB is uninitialized/unavailable
-        logger.warning(
-            "Failed to load project MCP settings for %s; defaulting to empty: %s",
-            sanitize_log(str(project_path)),
-            sanitize_log(str(e)),
-        )
-        return {ENV: "{}"}
+    settings = await _settings_for_spawn(project_path, session_factory)
     mcp = {k: v for k, v in settings.items() if _is_mcp_key(k)}
     return {ENV: json.dumps(mcp)}

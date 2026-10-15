@@ -33,6 +33,7 @@ from server.services.review_redrive_service import (
     worktree_spec_dir,
 )
 
+from . import project_settings_store
 from .task_control import write_control
 from .trusted_contract import handoff_contract
 from .trusted_contract_store import lookup
@@ -98,6 +99,13 @@ async def run_terminal_completion(
     asked for, or the plan says "completed" for a build this function already
     ruled failed (#1430).
     """
+    try:
+        await project_settings_store.refresh_all()
+    except Exception:  # noqa: BLE001 - never break the completion path
+        logger.warning(
+            "project-settings refresh failed before terminal completion", exc_info=True
+        )
+
     # #1550: on the co-mount Job path the gate marker is written into the task
     # worktree's spec dir and nothing else brings it home (the packed path's
     # object-store fetch is a no-op here). Copy it before anything reads it --

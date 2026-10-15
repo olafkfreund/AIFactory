@@ -39,6 +39,17 @@ from server.services.job_state_store import (  # noqa: E402
     SpawnArgs,
 )
 
+
+@pytest.fixture(autouse=True)
+def _empty_project_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No DB here: the project has no stored settings (#1795)."""
+
+    async def _empty(*_args: Any, **_kwargs: Any) -> dict[str, str]:
+        return {}
+
+    monkeypatch.setattr("server.services.project_settings_store.get_settings", _empty)
+
+
 _DATA_ROOT = "/home/nonroot/.aifactory"
 
 

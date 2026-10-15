@@ -216,10 +216,15 @@ names the step: `feat(settings): step N ... (#1795)`.
    apps/backend/.venv/bin/pytest apps/web-server/tests -q -k "agent_service or build_backend or spec_creation or pr_review"
    ```
 
-   Deviation: the module-level `load_project_env` and `mcp_spawn_env` catch a
-   DB error, log a warning and fail closed: no project settings, and MCP config
-   `{}`. They never fall back to the file. A spawn is not blocked by a DB
-   fault, and unit tests that never run `init_db()` keep passing.
+   Deviation (revised at the maintainer's review): when the store cannot be
+   read, the module-level `load_project_env` and `mcp_spawn_env` raise
+   `ProjectSettingsUnavailable("project settings unavailable: database
+   error")`, so the launch fails instead of starting with no settings. With
+   no settings, a task would lose its tokens, `MAIN_BRANCH`, model and
+   flags without any sign of it. They never fall back to the file. Tests
+   with no DB stub `get_settings`.
+   `tests/test_project_env_call_sites.py::test_store_failure_fails_the_launch`
+   covers the rule.
 
    Traps:
    - grep for every caller of `load_project_env` first. After this step
@@ -299,6 +304,15 @@ names the step: `feat(settings): step N ... (#1795)`.
      apps/web-server/tests/test_context_memory_status_enabled.py \
      apps/web-server/tests -q -k "merger or completion_orchestration"
    ```
+
+   Addition (maintainer's review): `is_auto_merge_enabled(project_path)`
+   returns `False` when the project's settings have never loaded in this
+   process (`project_settings_store.is_loaded`). That happens when the DB has
+   been down since start. Auto-merge is then held, not left to the defaults.
+   The merge-gate, review-tier and merge-decision tests mark their projects
+   as loaded.
+   `tests/test_pr_endgame.py::test_auto_merge_held_when_settings_never_loaded`
+   covers the rule.
 
    Traps:
    - `refresh_all` must never raise into the merger loop or the

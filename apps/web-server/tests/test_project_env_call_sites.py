@@ -38,7 +38,7 @@ def _prepare_project_env(
     project_path = tmp_path / "project"
     project_path.mkdir(parents=True)
 
-    async def fake_get_settings(_path: str | Path) -> dict[str, str]:
+    async def fake_get_settings(_path: str | Path, *_args: Any) -> dict[str, str]:
         return dict(_SEEDED_SETTINGS)
 
     monkeypatch.setattr(project_settings_store, "get_settings", fake_get_settings)
@@ -108,6 +108,42 @@ async def test_pr_review_service_start_review_filters_project_env(
         )
 
     _assert_filtered_env(recorded_envs)
+
+
+@pytest.mark.asyncio
+async def test_store_failure_fails_the_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1795: a DB error fails the start; no child runs with empty settings."""
+    project_path, recorded_envs = _prepare_project_env(tmp_path, monkeypatch)
+
+    async def broken_get_settings(*_args: Any) -> dict[str, str]:
+        raise RuntimeError("database is down")
+
+    monkeypatch.setattr(project_settings_store, "get_settings", broken_get_settings)
+    backend_dir = tmp_path / "backend"
+    runner_script = backend_dir / "runners" / "github" / "runner.py"
+    runner_script.parent.mkdir(parents=True)
+    runner_script.write_text("# stub runner\n", encoding="utf-8")
+    monkeypatch.setattr(
+        pr_review_service,
+        "get_settings",
+        lambda: SimpleNamespace(BACKEND_PATH=str(backend_dir)),
+    )
+    monkeypatch.setattr(
+        pr_review_service.asyncio,
+        "create_subprocess_exec",
+        _make_fake_exec(recorded_envs),
+    )
+
+    with pytest.raises(
+        project_settings_store.ProjectSettingsUnavailable,
+        match="project settings unavailable: database error",
+    ):
+        await PRReviewService().start_review(
+            project_id="proj-1", pr_number=42, project_path=project_path
+        )
+    assert recorded_envs == []
 
 
 @pytest.mark.asyncio
