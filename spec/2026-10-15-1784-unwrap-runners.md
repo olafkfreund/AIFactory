@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1784
 intent: intent/2026-10-15-1784-unwrap-runners.md
 ---
