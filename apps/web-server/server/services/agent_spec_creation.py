@@ -24,6 +24,7 @@ from server.specpath import spec_dir_for
 
 from ..utils.subprocess_env import make_subprocess_env
 from .agent_task_models import TaskProgress
+from .project_env import load_project_env
 from .task_phase import TaskPhase
 
 if TYPE_CHECKING:
@@ -237,22 +238,8 @@ class SpecCreationMixin:
             except Exception as e:
                 logger.warning(f"[AgentService] Failed to load backend .env: {e}")
 
-        # Load project .aifactory/.env for project-level settings (USE_CLAUDE_MD, etc.)
-        project_env_file = project_path / ".aifactory" / ".env"
-        if project_env_file.exists():
-            try:
-                with open(project_env_file) as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith("#") and "=" in line:
-                            key, value = line.split("=", 1)
-                            key = key.strip()
-                            value = value.strip()
-                            if key not in env:
-                                env[key] = value
-                logger.info("[AgentService] Loaded project .env for spec creation")
-            except Exception as e:
-                logger.warning(f"[AgentService] Failed to load project .env: {e}")
+        # Project .aifactory/.env: allowlisted project settings only (#1745)
+        load_project_env(project_path, env)
 
         # Get OAuth token from the pool (#670) so concurrent builds draw DISTINCT
         # credentials; returned to the pool when this build ends.
