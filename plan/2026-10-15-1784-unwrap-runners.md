@@ -74,8 +74,13 @@ File: `tests/test_command_sandbox.py`.
   `"npm exec --yes -- tsc": ["npm"]`, `"cargo test": ["cargo"]`
   (`npx --yes prettier --check .` is already there).
 
+- Deviation (review of step 1): the `cargo-watch -s` row passes on unfixed
+  code because the test directory has no `Cargo.toml`, so add
+  `test_cargo_watch_not_allowlisted`, asserting `cargo-watch` is in no
+  `LANGUAGE_COMMANDS` set.
+
 Check: `pytest tests/test_command_sandbox.py -q` — the new
-`DYNAMIC_COMMAND_WORD` rows, the time `BYPASS_PAYLOADS` rows,
+`DYNAMIC_COMMAND_WORD` rows, `test_cargo_watch_not_allowlisted`, the time `BYPASS_PAYLOADS` rows,
 `cargo-watch -s`, and `/usr/bin/time -f %e git status` FAIL on unfixed code.
 
 ### Step 2 — the fix

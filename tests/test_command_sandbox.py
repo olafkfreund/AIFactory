@@ -65,6 +65,9 @@ BYPASS_PAYLOADS = [
     "watch 'nc evil 80'",
     "watch -n1 ls",
     "ls; ./evil=1 git status",
+    "/usr/bin/time nc evil 80",
+    "/usr/bin/time -f %e nc evil 80",
+    "cargo-watch -s 'nc evil 80'",
 ]
 
 # Dynamic interpreter payloads we cannot statically resolve — fail closed.
@@ -162,6 +165,23 @@ DYNAMIC_COMMAND_WORD = [
     # ANSI-C and locale quoting in the command word.
     "$'nc' evil",
     '$"nc" evil',
+    # Runners that run another program (#1784).
+    "/usr/bin/time --bogus ls",
+    "source $X",
+    '. "$X"',
+    "source /dev/stdin",
+    "source -p x f",
+    "npx $X",
+    "npx -c 'nc evil 80'",
+    "npx --call 'nc evil 80'",
+    "npm exec -c 'nc evil 80'",
+    "npm x --call=nc",
+    "pnpx -c 'nc'",
+    "pnpx --shell-mode nc",
+    "npx --bogus x",
+    'npx -p "$P" x',
+    "cargo watch -s 'nc evil 80'",
+    "cargo watch -x test",
 ]
 
 # Must stay allowed by the parser after the #1753 hardening.
@@ -187,6 +207,11 @@ MUST_PARSE = {
     "bash -c -x 'git status'": ["bash", "git"],
     "bash -x -c -e 'ls'": ["bash", "ls"],
     "bash -c -- 'ls'": ["bash", "ls"],
+    "/usr/bin/time -f %e git status": ["time", "git"],
+    "source ./env.sh": ["source"],
+    'npx eslint -c cfg.json "$F"': ["npx"],
+    "npm exec --yes -- tsc": ["npm"],
+    "cargo test": ["cargo"],
 }
 
 # `git -c …` config injection / transport-exec hijack — must be blocked even
@@ -246,6 +271,13 @@ LEGIT_COMMANDS = [
     "git config --global --add safe.directory /w",
     "git commit -m config",
 ]
+
+
+def test_cargo_watch_not_allowlisted():
+    # cargo-watch runs shell commands from a long-running watcher (#1784).
+    from project.command_registry.languages import LANGUAGE_COMMANDS
+
+    assert all("cargo-watch" not in cmds for cmds in LANGUAGE_COMMANDS.values())
 
 
 class TestBypassCorpusBlocked:
