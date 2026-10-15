@@ -188,6 +188,12 @@
 
 ### Changed
 
+- PR bodies now state the review tier the merge gate decides on (#1698). For
+  a verified trusted task the body says `Effective review tier: <tier> (signed
+  floor <tier>)`, and when the agent-writable `reviewTier` is below the signed
+  tier it adds a "Possible tampering" warning naming both. The merge decision
+  is unchanged. The merger's PR body no longer echoes the raw on-disk tier; it
+  shows a constant label marked "not checked against a signed contract".
 - Trailing gates now record CI linters that no gate ran (e.g. `ktlint: skipped`)
   instead of omitting them; reporting only, never blocks (#1627).
 
