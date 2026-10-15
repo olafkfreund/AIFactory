@@ -11,7 +11,7 @@ Contains methods for executing individual phases of the ideation pipeline:
 
 import asyncio
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from ui import print_key_value, print_status
@@ -91,7 +91,7 @@ class PhaseExecutor:
                         "enabled": False,
                         "reason": "Graphiti not configured",
                         "hints_by_type": {},
-                        "created_at": datetime.now().isoformat(),
+                        "created_at": datetime.now(UTC).isoformat(),
                     },
                     f,
                     indent=2,
@@ -137,7 +137,7 @@ class PhaseExecutor:
                     "enabled": True,
                     "hints_by_type": hints_by_type,
                     "total_hints": total_hints,
-                    "created_at": datetime.now().isoformat(),
+                    "created_at": datetime.now(UTC).isoformat(),
                 },
                 f,
                 indent=2,
@@ -200,7 +200,7 @@ class PhaseExecutor:
                 "include_kanban_context": self.analyzer.include_kanban,
                 "max_ideas_per_type": self.max_ideas_per_type,
             },
-            "created_at": datetime.now().isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
         }
 
         with open(context_file, "w") as f:

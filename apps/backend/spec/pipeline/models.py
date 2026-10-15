@@ -10,7 +10,7 @@ from __future__ import annotations
 import contextlib
 import json
 import shutil
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -68,8 +68,8 @@ def cleanup_orphaned_pending_folders(specs_dir: Path) -> None:
 
         # Check folder age - only clean up folders older than 10 minutes
         try:
-            folder_mtime = datetime.fromtimestamp(folder.stat().st_mtime)
-            if datetime.now() - folder_mtime < timedelta(minutes=10):
+            folder_mtime = datetime.fromtimestamp(folder.stat().st_mtime, UTC)
+            if datetime.now(UTC) - folder_mtime < timedelta(minutes=10):
                 continue
         except OSError:
             continue

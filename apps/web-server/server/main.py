@@ -732,7 +732,8 @@ def create_app() -> FastAPI:
         )
     else:
         # Placeholder for development
-        @app.get("/")
+        # include_in_schema=False: spec must not depend on static/ (#1731)
+        @app.get("/", include_in_schema=False)
         async def root():
             return {
                 "message": "AIFactory Web Server",

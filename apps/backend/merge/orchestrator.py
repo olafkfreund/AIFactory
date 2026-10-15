@@ -19,7 +19,7 @@ with maximum automation and minimum AI token usage.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -229,8 +229,8 @@ class MergeOrchestrator:
             target_branch=target_branch,
         )
 
-        report = MergeReport(started_at=datetime.now(), tasks_merged=[task_id])
-        start_time = datetime.now()
+        report = MergeReport(started_at=datetime.now(UTC), tasks_merged=[task_id])
+        start_time = datetime.now(UTC)
 
         try:
             # Find worktree if not provided
@@ -260,7 +260,7 @@ class MergeOrchestrator:
             if not modifications:
                 debug_warning(MODULE, f"No modifications found for task {task_id}")
                 logger.info(f"No modifications found for task {task_id}")
-                report.completed_at = datetime.now()
+                report.completed_at = datetime.now(UTC)
                 return report
 
             # Process each modified file
@@ -291,7 +291,7 @@ class MergeOrchestrator:
             report.success = False
             report.error = str(e)
 
-        report.completed_at = datetime.now()
+        report.completed_at = datetime.now(UTC)
         report.stats.duration_seconds = (
             report.completed_at - start_time
         ).total_seconds()
@@ -331,10 +331,10 @@ class MergeOrchestrator:
             MergeReport with combined results
         """
         report = MergeReport(
-            started_at=datetime.now(),
+            started_at=datetime.now(UTC),
             tasks_merged=[r.task_id for r in requests],
         )
-        start_time = datetime.now()
+        start_time = datetime.now(UTC)
 
         try:
             # Sort by priority (higher first)
@@ -384,14 +384,14 @@ class MergeOrchestrator:
             report.success = False
             report.error = str(e)
 
-        report.completed_at = datetime.now()
+        report.completed_at = datetime.now(UTC)
         report.stats.duration_seconds = (
             report.completed_at - start_time
         ).total_seconds()
 
         # Save report
         if not self.dry_run:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
             self._save_report(report, f"multi_{timestamp}")
 
         return report
@@ -653,7 +653,7 @@ class MergeOrchestrator:
     def _save_report(self, report: MergeReport, name: str) -> None:
         """Save a merge report to disk."""
         self.reports_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         report_path = self.reports_dir / f"{name}_{timestamp}.json"
         report.save(report_path)
         logger.info(f"Saved merge report to {report_path}")
