@@ -216,6 +216,18 @@ function setOpenapiVersion(text, version) {
   return text.replace(re, (_m, head) => `${head}  version: ${version}`);
 }
 
+// Rewrite root and workspace versions in package-lock.json (#1727).
+function setLockVersions(text, version) {
+  const lock = JSON.parse(text);
+  if (!lock.packages || !lock.packages[''] || !lock.packages['apps/frontend-web']) {
+    return null;
+  }
+  lock.version = version;
+  lock.packages[''].version = version;
+  lock.packages['apps/frontend-web'].version = version;
+  return JSON.stringify(lock, null, 2) + '\n';
+}
+
 // Main function
 function main() {
   const bumpType = process.argv[2];
@@ -263,6 +275,12 @@ function main() {
   const openapiNext = setOpenapiVersion(openapiRaw, newVersion);
   if (openapiNext === null) error(`No info.version line in ${openapiPath}`);
 
+  const lockPath = path.join(__dirname, '..', 'package-lock.json');
+  const lockRaw = readIfPresent(lockPath);
+  if (lockRaw === null) error(`package-lock.json not found at ${lockPath}`);
+  const lockNext = setLockVersions(lockRaw, newVersion);
+  if (lockNext === null) error(`No root/apps/frontend-web entries in ${lockPath}`);
+
   // 5. Update all version files
   info('Updating package.json files...');
   updatePackageJson(newVersion);
@@ -276,6 +294,10 @@ function main() {
   info('Updating apps/web-server/openapi.yaml...');
   fs.writeFileSync(openapiPath, openapiNext);
   success('Updated apps/web-server/openapi.yaml');
+
+  info('Updating package-lock.json...');
+  fs.writeFileSync(lockPath, lockNext);
+  success('Updated package-lock.json');
 
   // 6. Check if CHANGELOG.md has entry for this version
   info('Checking CHANGELOG.md...');
@@ -307,7 +329,7 @@ function main() {
 
   // 7. Create git commit
   info('Creating git commit...');
-  run('git', ['add', '--', 'apps/frontend-web/package.json', 'package.json', 'apps/backend/__init__.py', 'apps/web-server/openapi.yaml']);
+  run('git', ['add', '--', 'apps/frontend-web/package.json', 'package.json', 'apps/backend/__init__.py', 'apps/web-server/openapi.yaml', 'package-lock.json']);
   run('git', ['commit', '-m', `chore: bump version to ${newVersion}`]);
   success(`Created commit: "chore: bump version to ${newVersion}"`);
 
@@ -346,4 +368,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { readIfPresent, changelogHasVersion, setOpenapiVersion };
+module.exports = { readIfPresent, changelogHasVersion, setOpenapiVersion, setLockVersions };
