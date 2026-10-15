@@ -229,14 +229,14 @@ async def test_12_kubejob_dispatch_stamps_before_job_is_created(
     assert env[_ENV] == "hold"
 
 
-async def test_kubejob_legacy_and_stray_server_env_carry_no_value(
+async def test_kubejob_legacy_overrides_stray_server_env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, store: TrustedContractStore
 ) -> None:
     monkeypatch.setenv(_ENV, "forged")
     _order, _stamped, env = await _kubejob_dispatch(
         tmp_path, monkeypatch, store, record=None
     )
-    assert _ENV not in env
+    assert env[_ENV] == "legacy"
 
 
 async def test_inpod_spawn_merges_value_after_stamp(
@@ -265,10 +265,10 @@ async def test_inpod_spawn_merges_value_after_stamp(
     assert envs[0][_ENV] == "hold"
 
 
-async def test_inpod_legacy_spawn_carries_no_value(
+async def test_inpod_legacy_spawn_sends_legacy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, store: TrustedContractStore
 ) -> None:
     monkeypatch.setenv(_ENV, "forged")
     envs: list = []
     await _spawn(tmp_path / "proj", monkeypatch, envs)
-    assert _ENV not in envs[0]
+    assert envs[0][_ENV] == "legacy"

@@ -17,7 +17,7 @@ _BACKEND_DIR = Path(__file__).resolve().parents[3] / "backend"
 if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
-from core.contract_trust import ENV, contract_digest, has_trusted_trace  # noqa: E402
+from core.contract_trust import ENV, LEGACY, contract_digest, has_trusted_trace  # noqa: E402
 
 _ISOLATED_STAMPS = ("kubejob", "sandbox-pidns")
 
@@ -57,11 +57,11 @@ def handoff_contract(spec_dir: Path, trusted: Any) -> dict[str, Any] | None:
 
 
 async def spawn_env(spec_dir: Path) -> dict[str, str]:
-    """The verdict handed to run.py (#1673): a digest if verified, ``hold``, or nothing."""
+    """The verdict handed to run.py (#1673): a digest if verified, ``hold``, or ``legacy``."""
     state, contract = resolve_contract(spec_dir, await lookup(spec_dir))
     if state == "verified":
         return {ENV: contract_digest(contract)}
-    return {ENV: "hold"} if state == "hold" else {}
+    return {ENV: "hold"} if state == "hold" else {ENV: LEGACY}
 
 
 def resolve_contract(spec_dir: Path, trusted: Any) -> tuple[str, dict[str, Any]]:
