@@ -1,8 +1,8 @@
 """Build-time auth pre-flight (#611 / RFC-0008 §3.2 a+b).
 
 Covers the live credential probe (classification + mode resolution + provider
-mapping) and the opt-in headless ANTHROPIC_API_KEY preference. The HTTP layer
-(`_http_status`) is monkeypatched so these stay offline and quota-free.
+mapping) and the opt-in headless ANTHROPIC_API_KEY preference. The HTTP helpers
+are monkeypatched so these stay offline and quota-free.
 """
 
 from __future__ import annotations
@@ -111,6 +111,69 @@ def test_probe_skipped_without_credential():
     assert r.status == "skipped"
 
 
+@pytest.mark.parametrize(
+    "code,body,status",
+    [
+        (200, "", "ok"),
+        (401, "", "auth_failed"),
+        (403, "", "auth_failed"),
+        (400, '{"reason": "API_KEY_INVALID"}', "auth_failed"),
+        (400, "bad request", "inconclusive"),
+        (503, "unavailable", "inconclusive"),
+    ],
+)
+def test_probe_google_classifies_response(monkeypatch, code, body, status):
+    monkeypatch.setattr(ap, "_http_get", lambda url, headers: (code, body))
+    result = ap.probe_google({"GEMINI_API_KEY": "gemini-secret"})
+    assert result.status == status
+    assert result.credential_kind == "api_key"
+    if status == "auth_failed":
+        assert "GEMINI_API_KEY" in result.detail
+    assert "gemini-secret" not in result.detail
+
+
+def test_probe_google_transport_error_is_inconclusive(monkeypatch):
+    def fail(url, headers):
+        raise urllib.error.URLError("network down")
+
+    monkeypatch.setattr(ap, "_http_get", fail)
+    assert ap.probe_google({"GEMINI_API_KEY": "gemini-secret"}).status == "inconclusive"
+
+
+def test_probe_google_skips_without_key(monkeypatch):
+    def fail(url, headers):
+        pytest.fail("no request expected without a key")
+
+    monkeypatch.setattr(ap, "_http_get", fail)
+    assert ap.probe_google({}).status == "skipped"
+
+
+@pytest.mark.parametrize(
+    "env,key",
+    [
+        ({"GOOGLE_API_KEY": "google-secret"}, "google-secret"),
+        (
+            {"GEMINI_API_KEY": "gemini-secret", "GOOGLE_API_KEY": "google-secret"},
+            "gemini-secret",
+        ),
+    ],
+)
+def test_probe_google_uses_key_in_header(monkeypatch, env, key):
+    captured = {}
+
+    def fake(url, headers):
+        captured["url"] = url
+        captured["headers"] = headers
+        return 200, ""
+
+    monkeypatch.setattr(ap, "_http_get", fake)
+    result = ap.probe_google(env)
+    assert result.status == "ok"
+    assert captured["url"] == ap._GOOGLE_MODELS_URL
+    assert key not in captured["url"] + result.detail
+    assert captured["headers"] == {"x-goog-api-key": key}
+
+
 # ── provider mapping + orchestration ─────────────────────────────────────────
 
 
@@ -120,8 +183,11 @@ def test_providers_for_models_maps_claude_to_anthropic():
     ]
 
 
-def test_providers_for_models_ignores_non_anthropic():
-    assert ap.providers_for_models(["gemini-2.5-pro", "gpt-5.3"]) == []
+def test_providers_for_models_maps_gemini_and_deduplicates():
+    assert ap.providers_for_models(["gemini", "claude-x", "gemini-2.5-pro"]) == [
+        "google",
+        "anthropic",
+    ]
 
 
 def test_run_auth_preflight_probes_anthropic(monkeypatch):
@@ -133,7 +199,7 @@ def test_run_auth_preflight_probes_anthropic(monkeypatch):
 
 
 def test_run_auth_preflight_empty_for_non_probeable():
-    assert ap.run_auth_preflight(["gemini-2.5-pro"]) == []
+    assert ap.run_auth_preflight(["gpt-4o"]) == []
 
 
 # ── (b) opt-in headless ANTHROPIC_API_KEY preference ─────────────────────────

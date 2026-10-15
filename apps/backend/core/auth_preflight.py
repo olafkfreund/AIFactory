@@ -28,9 +28,13 @@ import os
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from http import HTTPStatus
 from typing import Literal
 
 _ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models?limit=1"
+_GOOGLE_MODELS_URL = (
+    "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1"
+)
 _ANTHROPIC_VERSION = "2023-06-01"
 # Beta header the Claude Code OAuth token is presented with against the API.
 _OAUTH_BETA = "oauth-2025-04-20"
@@ -68,12 +72,17 @@ def preflight_mode(env: dict[str, str] | None = None) -> Mode:
 def _http_status(url: str, headers: dict[str, str]) -> int:
     """GET ``url`` and return the HTTP status code (raising URLError on transport
     failure so the caller can classify it as inconclusive)."""
+    return _http_get(url, headers)[0]
+
+
+def _http_get(url: str, headers: dict[str, str]) -> tuple[int, str]:
+    """GET ``url`` and return the HTTP status and response body."""
     req = urllib.request.Request(url, headers=headers, method="GET")
     try:
         with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:  # noqa: S310
-            return resp.status
+            return resp.status, resp.read().decode("utf-8", errors="replace")[:2000]
     except urllib.error.HTTPError as exc:
-        return exc.code
+        return exc.code, exc.read().decode("utf-8", errors="replace")[:2000]
 
 
 def probe_anthropic(env: dict[str, str] | None = None) -> PreflightResult:
@@ -127,9 +136,44 @@ def probe_anthropic(env: dict[str, str] | None = None) -> PreflightResult:
     )
 
 
+def probe_google(env: dict[str, str] | None = None) -> PreflightResult:
+    """Probe a Gemini API key with a generation-free models request."""
+    source = os.environ if env is None else env
+    key = (source.get("GEMINI_API_KEY") or "").strip()
+    key_name = "GEMINI_API_KEY"
+    if not key:
+        key = (source.get("GOOGLE_API_KEY") or "").strip()
+        key_name = "GOOGLE_API_KEY"
+    if not key:
+        return PreflightResult(
+            "google", "skipped", "no google credential in environment", "api_key"
+        )
+
+    try:
+        code, body = _http_get(_GOOGLE_MODELS_URL, {"x-goog-api-key": key})
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return PreflightResult(
+            "google", "inconclusive", "probe transport error", "api_key"
+        )
+
+    if code == HTTPStatus.OK:
+        return PreflightResult("google", "ok", "credential accepted (200)", "api_key")
+    # Google rejects an invalid key with 400 + reason API_KEY_INVALID, not 401.
+    rejected = code == HTTPStatus.BAD_REQUEST and "API_KEY_INVALID" in body
+    if code in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN) or rejected:
+        return PreflightResult(
+            "google",
+            "auth_failed",
+            f"credential rejected ({code}) — invalid {key_name}",
+            "api_key",
+        )
+    return PreflightResult(
+        "google", "inconclusive", f"unexpected status {code}", "api_key"
+    )
+
+
 # Model-name prefixes → the provider whose credential the build will use.
-# Slice 1 (#611) probes anthropic only (the demo's silent-empty-build cause and
-# the pinned planning provider); gemini/openai probes are a follow-up.
+# Anthropic and Google credentials can be checked before a build starts.
 def providers_for_models(models: list[str]) -> list[str]:
     """Return the distinct probeable providers implied by ``models``."""
     out: list[str] = []
@@ -137,10 +181,12 @@ def providers_for_models(models: list[str]) -> list[str]:
         name = (m or "").lower()
         if name.startswith("claude") and "anthropic" not in out:
             out.append("anthropic")
+        elif name.startswith("gemini") and "google" not in out:
+            out.append("google")
     return out
 
 
-_PROBES = {"anthropic": probe_anthropic}
+_PROBES = {"anthropic": probe_anthropic, "google": probe_google}
 
 
 def run_auth_preflight(
