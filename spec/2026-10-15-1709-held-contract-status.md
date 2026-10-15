@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1709
 intent: intent/2026-10-15-1709-held-contract-status.md
 ---
