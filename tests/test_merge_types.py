@@ -15,7 +15,7 @@ Covers:
 """
 
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Add aifactory directory to path for imports
@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "Apps" / "backend"))
 from merge import (
     ChangeType,
     FileAnalysis,
+    FileEvolution,
     SemanticChange,
     TaskSnapshot,
 )
@@ -241,7 +242,7 @@ class TestTaskSnapshot:
         original = TaskSnapshot(
             task_id="task-003",
             task_intent="Test roundtrip",
-            started_at=datetime(2024, 1, 1, 0, 0, 0),
+            started_at=datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
             semantic_changes=[
                 SemanticChange(
                     change_type=ChangeType.ADD_IMPORT,
@@ -265,4 +266,36 @@ class TestTaskSnapshot:
         assert len(restored.semantic_changes) == len(original.semantic_changes)
         assert (
             restored.semantic_changes[0].target == original.semantic_changes[0].target
+        )
+
+    def test_file_evolution_sorts_legacy_snapshot_with_aware_snapshot(self):
+        evolution = FileEvolution.from_dict(
+            {
+                "file_path": "test.py",
+                "baseline_commit": "abc123",
+                "baseline_captured_at": "2026-01-01T09:00:00",
+                "baseline_content_hash": "hash",
+                "baseline_snapshot_path": "test.py",
+                "task_snapshots": [
+                    {
+                        "task_id": "task-001",
+                        "task_intent": "First change",
+                        "started_at": "2026-01-01T10:00:00",
+                    }
+                ],
+            }
+        )
+
+        evolution.add_task_snapshot(
+            TaskSnapshot(
+                task_id="task-002",
+                task_intent="Second change",
+                started_at=datetime.now(UTC),
+            )
+        )
+
+        assert len(evolution.task_snapshots) == 2
+        assert all(
+            snapshot.started_at.tzinfo is not None
+            for snapshot in evolution.task_snapshots
         )

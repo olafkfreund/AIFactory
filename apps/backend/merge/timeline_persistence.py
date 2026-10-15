@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -117,7 +117,7 @@ class TimelinePersistence:
         index_path = self.timelines_dir / "index.json"
         index = {
             "files": file_paths,
-            "last_updated": datetime.now().isoformat(),
+            "last_updated": datetime.now(UTC).isoformat(),
         }
         with open(index_path, "w") as f:
             json.dump(index, f, indent=2)

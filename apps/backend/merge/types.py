@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -402,8 +402,8 @@ class TaskSnapshot:
         return cls(
             task_id=data["task_id"],
             task_intent=data["task_intent"],
-            started_at=datetime.fromisoformat(data["started_at"]),
-            completed_at=datetime.fromisoformat(data["completed_at"])
+            started_at=datetime.fromisoformat(data["started_at"]).astimezone(UTC),
+            completed_at=datetime.fromisoformat(data["completed_at"]).astimezone(UTC)
             if data.get("completed_at")
             else None,
             content_hash_before=data.get("content_hash_before", ""),
@@ -456,7 +456,9 @@ class FileEvolution:
         return cls(
             file_path=data["file_path"],
             baseline_commit=data["baseline_commit"],
-            baseline_captured_at=datetime.fromisoformat(data["baseline_captured_at"]),
+            baseline_captured_at=datetime.fromisoformat(
+                data["baseline_captured_at"]
+            ).astimezone(UTC),
             baseline_content_hash=data["baseline_content_hash"],
             baseline_snapshot_path=data["baseline_snapshot_path"],
             task_snapshots=[
