@@ -65,45 +65,45 @@ def is_available() -> bool:
     return _BASHLEX_AVAILABLE
 
 
-# Unquoted glob or brace expansion: bash turns one word into several (#1753).
-# ``[`` alone (the test command) and a bare ``{}`` stay literal.
-_EXPANDS = re.compile(r"[*?]|\[.*\]|\{[^{}]*(?:,|\.\.)[^{}]*\}")
+# Allow list of word shapes (#1753): bash expands anything else (globs,
+# braces, ``~``, ``$``, escapes) into words we cannot see statically.
+_SAFE_UNQUOTED = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./=:@%+,-"
+)
+_DQ_UNSAFE = frozenset("$`\\")
 
 
-def _unquoted(raw: str) -> str:
-    """``raw`` with every quoted or backslash-escaped character blanked."""
-    out: list[str] = []
-    quote = ""  # "", "'", '"' or "$'"
+def _static_shape(raw: str) -> bool:
+    """True when the raw word expands to exactly itself: safe unquoted
+    characters, backslash escapes, single-quoted text, double-quoted text
+    without ``$``, backtick or backslash, and ``{}`` (never expands). A lone ``[``/``]`` is the test
+    command."""
+    if raw in ("[", "]"):
+        return True
     i = 0
     while i < len(raw):
         c = raw[i]
-        if c == "\\" and quote != "'":
-            out.append("  ")
+        if c in ("'", '"'):
+            end = raw.find(c, i + 1)
+            if end < 0 or (c == '"' and _DQ_UNSAFE & set(raw[i + 1 : end])):
+                return False
+            i = end + 1
+        # ``{}`` never expands; an escape is one literal char (``\;``).
+        elif raw.startswith("{}", i) or (c == "\\" and i + 1 < len(raw)):
             i += 2
-            continue
-        if quote:
-            if c == quote[-1]:
-                quote = ""
-            out.append(" ")
-        elif c in "'\"":
-            quote = c
-            out.append(" ")
-        elif c == "$" and raw[i + 1 : i + 2] == "'":
-            quote = "$'"
-            out.append("  ")
+        elif c in _SAFE_UNQUOTED:
             i += 1
         else:
-            out.append(c)
-        i += 1
-    return "".join(out)
+            return False
+    return True
 
 
 def _word_parts_are_literal(node) -> bool:
     """True when a bashlex word node has no command/parameter substitution
-    and no unquoted glob or brace expansion — i.e. it is a static literal we
-    can safely re-parse."""
+    and an allow-listed shape (``_static_shape``) — i.e. it is a static literal
+    we can safely re-parse."""
     raw = getattr(node, "raw", None)  # source text, quotes kept (set in _extract)
-    if raw is not None and _EXPANDS.search(_unquoted(raw)):
+    if raw is not None and not _static_shape(raw):
         return False
     for part in getattr(node, "parts", []) or []:
         # commandsubstitution / parameter (variable) / arithmetic etc. mean the
@@ -207,6 +207,11 @@ def _emit(
         unwrap(words, idx, depth, acc, dynamic_args=dynamic_args)
 
 
+# Shell short flags that neither take a value nor read stdin (#1753).
+_SHELL_FLAGS = frozenset("eulxvc")
+_STDIN_SCRIPT = re.compile(r"-|/dev/stdin|/dev/fd/.*|/proc/[^/]+/fd/.*")
+
+
 def _unwrap_dash_c(
     words: list[Any],
     idx: int,
@@ -215,38 +220,31 @@ def _unwrap_dash_c(
     *,
     dynamic_args: bool,
 ) -> None:
-    """``<shell> -c '<payload>'`` (also ``-lc``, ``-ec``) — recurse into the
-    payload, fail closed if it is not a static literal."""
+    """Accept only ``<shell> [-eulxv]... -c '<payload>' [args]`` (recurse into
+    the payload) or ``<shell> [-eulxv]... <script> [args]``. Anything else —
+    value-taking, long or ``+`` options, ``-s``/``-i``, or a script that is
+    stdin — fails closed."""
     tokens = [w.word for w in words]
     for j in range(idx + 1, len(tokens)):
+        _require_literal(words, j, j + 1)
         tok = tokens[j]
-        if (
-            tok.startswith("-")
-            and not tok.startswith("--")
-            and "c" in tok[1:]
-            and j + 1 < len(tokens)
-        ):
-            _require_literal(words, idx + 1, j + 1)  # incl. the -c word (-$c)
+        if tok.startswith("-") and tok != "-":
+            if tok.startswith("--") or not set(tok[1:]) <= _SHELL_FLAGS:
+                raise UnparseableCommand(f"shell option {tok} cannot be validated")
+            if "c" not in tok:
+                continue
             # bash -c -- 'P': the payload is the word after ``--``.
-            skip = tokens[j + 1] == "--" and j + 2 < len(tokens)
-            payload_word = words[j + 2 if skip else j + 1]
-            if not _word_parts_are_literal(payload_word):
+            k = j + 2 if tokens[j + 1 : j + 2] == ["--"] else j + 1
+            if k >= len(tokens) or not _word_parts_are_literal(words[k]):
                 raise UnparseableCommand(
                     "shell -c payload is not a static literal; cannot validate"
                 )
-            _extract(payload_word.word, depth + 1, acc, dynamic_args=dynamic_args)
+            _extract(words[k].word, depth + 1, acc, dynamic_args=dynamic_args)
             return
-    # No ``-c``: options up to the script name must be literal (``bash $X``).
-    script = next(
-        (j for j in range(idx + 1, len(tokens)) if not tokens[j].startswith("-")),
-        None,
-    )
-    _require_literal(words, idx + 1, len(tokens) if script is None else script + 1)
-    opts = tokens[idx + 1 : script]
-    if script is None or any(
-        t.startswith("-") and not t.startswith("--") and "s" in t[1:] for t in opts
-    ):
-        raise UnparseableCommand("shell reads commands from stdin; cannot validate")
+        if tok.startswith("+") or _STDIN_SCRIPT.fullmatch(tok):
+            raise UnparseableCommand(f"shell operand {tok} cannot be validated")
+        return  # a script path; its arguments are data
+    raise UnparseableCommand("shell reads commands from stdin; cannot validate")
 
 
 _ENV_VALUE_LONG = ("--unset", "--chdir", "--argv0")

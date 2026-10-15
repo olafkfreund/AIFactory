@@ -8,6 +8,13 @@ intent: intent/2026-10-15-1753-variable-command-word.md
 
 ## Design
 
+Design change from the fifth review of PR #1782: the literal check is an allow
+list of word shapes (`_static_shape`: safe unquoted characters, backslash
+escapes, single-quoted
+text, double-quoted text without `$`/backtick/backslash, `{}`, lone `[`/`]`),
+and shell wrappers accept only `[-eulxv]... -c '<payload>'` or
+`[-eulxv]... <script>`. See plan step 2 for details.
+
 `_emit` (`apps/backend/security/ast_parser.py:150`) is the single place every
 command word is recorded: the top-level walk in `_extract` and every wrapper
 target (`env`, `xargs`, `find -exec`, `command`/`exec`/`timeout`) go through it.

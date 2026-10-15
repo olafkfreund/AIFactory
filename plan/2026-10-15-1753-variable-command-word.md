@@ -53,6 +53,31 @@ Trap: use single-quoted Python strings for rows containing `"$X"`.
 
 File: `apps/backend/security/ast_parser.py`. Apply decisions 1 and 2.
 
+**Design change (fifth review of PR #1782): allow lists, not deny lists.**
+The deviations below were found one by one; this replaces their deny rules.
+
+- Word shape. `_static_shape(raw)` runs on the raw, quote-kept source text of
+  the command word and of every word a wrapper checks (`_word_parts_are_literal`
+  calls it). Unquoted characters must be in `[A-Za-z0-9_./=:@%+,-]`;
+  single-quoted text may hold anything; double-quoted text anything but `$`,
+  backtick and backslash. An unquoted backslash escape is allowed: it is
+  always one literal character, and refusing it would refuse the common
+  `find ... -exec CMD {} \;` (a deviation from the review's "no escapes").
+  Exceptions: `{}` (never expands; this covers
+  `-I{}`, a small widening of "the exact word `{}`") and a lone `[` or `]`.
+  This replaces the `_EXPANDS` glob/brace regex and refuses nested braces,
+  globs, `~`, `$`, backticks and escapes in those positions. A tilde command
+  word (`~/bin/x`) is refused; write the literal path.
+- Shell grammar. `_unwrap_dash_c` accepts only
+  `sh|bash [-eulxv]... -c '<literal payload>' [args]` (flags combinable, `-c`
+  may be grouped, `-c -- 'P'` allowed) or `sh|bash [-eulxv]... <literal
+  script> [args]`. Refused: any other flag (`-o`, `-O`, `-s`, `-i`, ...),
+  any `--long` option, `+`-prefixed options, a script of `-`, `/dev/stdin`,
+  `/dev/fd/*` or `/proc/*/fd/*`, and no `-c` and no script (stdin).
+  `bash --norc script.sh` is now refused; `test_long_option_...` expects that.
+- Out of scope: array-subscript arguments to builtins.
+- `MUST_PARSE` in the tests pins the commands that must stay allowed.
+
 Check: `pytest tests/test_command_sandbox.py tests/test_plan_commands.py -q`
 all pass; `ruff check` and `ruff format --check` on both files.
 
