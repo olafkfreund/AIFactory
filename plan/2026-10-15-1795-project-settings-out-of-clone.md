@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1795
 spec: spec/2026-10-15-1795-project-settings-out-of-clone.md
 ---
