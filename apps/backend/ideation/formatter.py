@@ -6,7 +6,7 @@ Formats and merges ideation outputs into a cohesive ideation.json file.
 
 import json
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Add aifactory to path
@@ -90,12 +90,12 @@ class IdeationFormatter:
         session_id = (
             existing_session.get("id")
             if existing_session
-            else f"ideation-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+            else f"ideation-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}"
         )
         generated_at = (
             existing_session.get("generated_at")
             if existing_session
-            else datetime.now().isoformat()
+            else datetime.now(UTC).isoformat()
         )
 
         ideation_session = {
@@ -115,7 +115,7 @@ class IdeationFormatter:
                 "by_status": {},
             },
             "generated_at": generated_at,
-            "updated_at": datetime.now().isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
         }
 
         # Count by type and status
