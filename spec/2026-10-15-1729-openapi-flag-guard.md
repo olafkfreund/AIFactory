@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1729
 intent: intent/2026-10-15-1729-openapi-flag-guard.md
 ---
