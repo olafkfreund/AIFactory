@@ -188,6 +188,12 @@
 
 ### Changed
 
+- A held task contract now shows on the task (#1709). The hold reason
+  (e.g. `contract held (digest mismatch); normal build`) is written to the
+  task plan as `contractHold`, returned on the task row and shown as a neutral
+  "Contract held" badge in the task header. It never changes the task's status
+  or review reason, so a hold is not counted as a build failure. A held
+  migration still stops the build with exit 1, as before.
 - Trailing gates now record CI linters that no gate ran (e.g. `ktlint: skipped`)
   instead of omitting them; reporting only, never blocks (#1627).
 
