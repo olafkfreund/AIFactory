@@ -95,8 +95,8 @@ def load_project_env(project_path: Path, env: dict[str, str]) -> None:
         return
 
     skipped: set[str] = set()
-    for line in text.splitlines():
-        line = line.strip()
+    for raw in text.splitlines():
+        line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
