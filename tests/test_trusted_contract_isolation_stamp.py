@@ -8,6 +8,7 @@ Job dispatch, ``sandbox-pidns`` only when the real argv is bwrap with
 from __future__ import annotations
 
 import importlib
+import json
 import sys
 from pathlib import Path
 
@@ -19,6 +20,7 @@ for _p in (_REPO / "apps" / "web-server", _REPO / "apps" / "backend"):
     if str(_p) not in sys.path:
         sys.path.append(str(_p))
 
+from cli.build_commands import _resolve_build_contract  # noqa: E402
 from server.database.models import Base  # noqa: E402
 from server.services import agent_service as agent_mod  # noqa: E402
 from server.services import build_backend as bb  # noqa: E402
@@ -272,3 +274,45 @@ async def test_inpod_legacy_spawn_sends_legacy(
     envs: list = []
     await _spawn(tmp_path / "proj", monkeypatch, envs)
     assert envs[0][_ENV] == "legacy"
+
+
+@pytest.mark.parametrize(
+    ("state", "pod_file", "expect"),
+    [
+        ("verified", True, "contract"),
+        ("hold", True, "exit"),
+        ("legacy", True, "exit"),
+        ("legacy", False, "none"),
+    ],
+)
+async def test_kubejob_verdict_reaches_pod_build(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    store: TrustedContractStore,
+    state: str,
+    pod_file: bool,
+    expect: str,
+) -> None:
+    contract = {"feature": "f", "change_mode": "migration"}
+    monkeypatch.setattr(
+        tcm,
+        "resolve_contract",
+        lambda _sd, _t: (state, contract if state == "verified" else {}),
+    )
+    _order, _stamped, env = await _kubejob_dispatch(
+        tmp_path, monkeypatch, store, record=None
+    )
+    spec = tmp_path / "pod-spec"
+    (spec / "context").mkdir(parents=True)
+    if pod_file:
+        (spec / "context" / "task_contract.json").write_text(json.dumps(contract))
+
+    monkeypatch.setenv(_ENV, env[_ENV])
+    if expect == "contract":
+        assert _resolve_build_contract(spec) == contract
+    elif expect == "exit":
+        with pytest.raises(SystemExit) as exc:
+            _resolve_build_contract(spec)
+        assert exc.value.code == 1
+    else:
+        assert _resolve_build_contract(spec) is None
