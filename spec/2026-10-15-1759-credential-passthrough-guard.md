@@ -14,10 +14,13 @@ New file `tests/test_env_passthrough_credentials.py`, one parametrized test
 over the five named lists from the intent.
 
 - A name is **credential-shaped** when `is_denied_env_key(name)`
-  (`apps/backend/core/auth.py:173`) or `_CREDENTIAL_NAME.search(name)`
-  (`apps/backend/core/child_env.py:32`) is true. These are exactly the two
-  rules `child_env()` uses to drop a name, so "credential" means "a name the
-  scrub would otherwise remove".
+  (`apps/backend/core/auth.py:173`), `_CREDENTIAL_NAME.search(name)`
+  (`apps/backend/core/child_env.py:32`) or `name in _STRIP_VARS`
+  (`apps/backend/core/child_env.py:20`) is true. These are exactly the three
+  rules `child_env()` uses to drop a name (`child_env.py:55-60`), so
+  "credential" means "a name the scrub would otherwise remove". (`_STRIP_VARS`
+  added in review of PR #1778: without it `ANTHROPIC_API_KEY_FILE` could join
+  a list unnoticed.)
 - `EXEMPT: dict[str, frozenset[str]]` in the test file pins, per list, the
   credential-shaped names it carries today, each group with a one-line why
   (the reader that needs it, the issue that decided it):
@@ -55,7 +58,7 @@ over the five named lists from the intent.
 - Importing `providers.antigravity` and `server.services.build_backend` in
   one test process: both already import in `tests/` today
   (`tests/test_build_backend_kubejob.py:36`).
-- A change to `is_denied_env_key` or `_CREDENTIAL_NAME` can change which
+- A change to `is_denied_env_key`, `_CREDENTIAL_NAME` or `_STRIP_VARS` can change which
   names count; the test then fails and the exemptions are re-reviewed.
 
 ## Verification
@@ -63,4 +66,5 @@ over the five named lists from the intent.
 - `pytest tests/test_env_passthrough_credentials.py` passes on the branch.
 - Regression proof: append `"JWT_SECRET"` to `RUNNER_KEEP` in a scratch
   copy; the test fails naming `RUNNER_KEEP` and `JWT_SECRET`. Revert.
+  Same with `"ANTHROPIC_API_KEY_FILE"` (the `_STRIP_VARS` rule).
 - `ruff check` and `ruff format --check` on the new file pass.

@@ -13,7 +13,7 @@ sys.path.insert(0, str(_ROOT / "apps" / "backend"))
 sys.path.insert(0, str(_ROOT / "apps" / "web-server"))
 
 from core.auth import _AGENT_ENV_KEEP, is_denied_env_key  # noqa: E402
-from core.child_env import _CREDENTIAL_NAME, GITHUB_KEEP  # noqa: E402
+from core.child_env import _CREDENTIAL_NAME, _STRIP_VARS, GITHUB_KEEP  # noqa: E402
 from providers.antigravity import _GEMINI_KEEP  # noqa: E402
 from server.services.build_backend import _PASSTHROUGH_BUILD_ENV  # noqa: E402
 from server.utils.subprocess_env import RUNNER_KEEP  # noqa: E402
@@ -27,14 +27,14 @@ LISTS: dict[str, Collection[str]] = {
 }
 
 EXEMPT: dict[str, frozenset[str]] = {
-    # gh / git subprocesses authenticating to GitHub (#1680, #1713).
+    # gh / git subprocesses authenticating to GitHub (#1680).
     "GITHUB_KEEP": frozenset(
         {
             "GITHUB_TOKEN",
             "GH_TOKEN",
         }
     ),
-    # Backend runner subprocesses (GitHub CLI + Graphiti/provider LLM & embedder keys, #1680).
+    # Backend runner subprocesses: GitHub and provider keys (#1680, OLLAMA #1713).
     "RUNNER_KEEP": frozenset(
         {
             "GITHUB_TOKEN",
@@ -48,7 +48,8 @@ EXEMPT: dict[str, frozenset[str]] = {
             "OLLAMA_API_KEY",
         }
     ),
-    # KubeJob / worker build pods (Claude auth, GitHub, Graphiti providers, S3 artifact store).
+    # Build Job pods: Claude auth, GitHub, non-Claude provider keys for
+    # byo_llm / phase routing (#689), S3 artifact store.
     "_PASSTHROUGH_BUILD_ENV": frozenset(
         {
             "ANTHROPIC_AUTH_TOKEN",
@@ -63,14 +64,14 @@ EXEMPT: dict[str, frozenset[str]] = {
             "S3_SECRET_KEY",
         }
     ),
-    # Claude Agent SDK subprocess auth tokens (#1713).
+    # Agent's own auth, never blanked by get_agent_env_blanks (#363).
     "_AGENT_ENV_KEEP": frozenset(
         {
             "CLAUDE_CODE_OAUTH_TOKEN",
             "ANTHROPIC_AUTH_TOKEN",
         }
     ),
-    # Antigravity / Gemini CLI provider subprocesses (#1713).
+    # Antigravity CLI: antigravity.py and antigravity_agentic.py (#1692).
     "_GEMINI_KEEP": frozenset(
         {
             "GEMINI_API_KEY",
@@ -85,7 +86,9 @@ def _credential_names(names: Iterable[str]) -> set[str]:
     return {
         n
         for n in names
-        if is_denied_env_key(n) or _CREDENTIAL_NAME.search(n) is not None
+        if is_denied_env_key(n)
+        or _CREDENTIAL_NAME.search(n) is not None
+        or n in _STRIP_VARS
     }
 
 

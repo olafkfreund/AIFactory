@@ -12,7 +12,9 @@ first on `PATH` (no `.venv` in the worktree).
 
 ## Approved decisions (carried from the spec)
 
-1. Credential-shaped = `is_denied_env_key(n) or _CREDENTIAL_NAME.search(n)`.
+1. Credential-shaped = `is_denied_env_key(n) or _CREDENTIAL_NAME.search(n)
+   or n in _STRIP_VARS` (deviation from the first approved plan, added in
+   review of PR #1778; `_STRIP_VARS` is the third rule `child_env()` drops by).
 2. Lists covered: `GITHUB_KEEP`, `RUNNER_KEEP`, `_PASSTHROUGH_BUILD_ENV`,
    `_AGENT_ENV_KEEP`, `_GEMINI_KEEP`. Inline `keep=(...)` tuples are out.
 3. Per-list `EXEMPT` sets as in the spec table, compared by equality.
@@ -29,7 +31,7 @@ New file. Contents:
   (`apps/backend` and `apps/web-server` inserted at 0), imports with
   `# noqa: E402`:
   `from core.auth import _AGENT_ENV_KEEP, is_denied_env_key`,
-  `from core.child_env import _CREDENTIAL_NAME, GITHUB_KEEP`,
+  `from core.child_env import _CREDENTIAL_NAME, _STRIP_VARS, GITHUB_KEEP`,
   `from providers.antigravity import _GEMINI_KEEP`,
   `from server.services.build_backend import _PASSTHROUGH_BUILD_ENV`,
   `from server.utils.subprocess_env import RUNNER_KEEP`.
@@ -59,6 +61,7 @@ In the worktree, temporarily append `"JWT_SECRET",` to `RUNNER_KEEP`
 (`apps/web-server/server/utils/subprocess_env.py:47`), run the step-1
 check, confirm it fails naming `RUNNER_KEEP` and `JWT_SECRET`, then
 `git checkout -- apps/web-server/server/utils/subprocess_env.py`.
+Repeat with `"ANTHROPIC_API_KEY_FILE",`: it must fail naming that name.
 
 Check: `git diff --quiet apps/` after revert.
 
