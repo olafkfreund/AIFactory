@@ -233,13 +233,15 @@ def _record_git(
     check_rc: int | None = 1,
     upload: Callable[[], subprocess.CompletedProcess[str]],
 ) -> list[list[str]]:
-    """Fake get-url / config check / lfs push; pass everything else through."""
+    """Fake the LFS gate / get-url / config check / upload."""
     real = subprocess.run
     calls: list[list[str]] = []
 
     def rec(argv: Any, *a: Any, **kw: Any) -> Any:
         if isinstance(argv, list):
             calls.append(argv)
+            if argv[:2] == ["git", "grep"]:
+                return subprocess.CompletedProcess(argv, 0, "", "")
             if argv[:3] == ["git", "remote", "get-url"]:
                 return subprocess.CompletedProcess(
                     argv, 0, "https://github.com/acme/proj\n", ""

@@ -265,6 +265,8 @@ class Rec:
 
     @staticmethod
     def kind(argv: list[str]) -> str:
+        if argv[:2] == ["git", "grep"]:
+            return "gate"
         if argv[:3] == ["git", "remote", "get-url"]:
             return "geturl"
         if "--get-regexp" in argv:
@@ -279,6 +281,7 @@ class Rec:
         self.calls.append(argv)
         self.cwds.append(cwd)
         default = {
+            "gate": CmdResult(0, "", ""),
             "geturl": CmdResult(0, _GITHUB, ""),
             "check": CmdResult(1, "", ""),
             "upload": CmdResult(0, "", ""),
@@ -296,7 +299,7 @@ def test_upload_failure_skips_push(monkeypatch: pytest.MonkeyPatch) -> None:
     boom = CmdResult(2, "", "boom")
     rec = Rec(upload=boom)
     out = _push_with_lfs(_PUSH, "HEAD", "/wt", rec)
-    assert out is boom
+    assert out == CmdResult(1, "", "boom")
     assert "push" not in rec.kinds()
 
 
@@ -306,7 +309,7 @@ def test_customtransfer_refuses(rc: int, monkeypatch: pytest.MonkeyPatch) -> Non
     rec = Rec(check=CmdResult(rc, "lfs.customtransfer.x.path" if rc == 0 else "", ""))
     out = _push_with_lfs(_PUSH, "HEAD", "/wt", rec)
     assert not out.ok
-    assert rec.kinds() == ["geturl", "check"]
+    assert rec.kinds() == ["gate", "geturl", "check"]
 
 
 def test_all_ok_order_and_push_argv_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -314,7 +317,7 @@ def test_all_ok_order_and_push_argv_unchanged(monkeypatch: pytest.MonkeyPatch) -
     pushed = CmdResult(0, "pushed", "")
     rec = Rec(push=pushed)
     out = _push_with_lfs(_PUSH, "HEAD", "/wt", rec)
-    assert rec.kinds() == ["geturl", "check", "upload", "push"]
+    assert rec.kinds() == ["gate", "geturl", "check", "upload", "push"]
     assert rec.calls[-1] == _PUSH
     assert set(rec.cwds) == {"/wt"}
     assert out is pushed
@@ -324,14 +327,25 @@ def test_get_url_failure_pushes_without_lfs(monkeypatch: pytest.MonkeyPatch) -> 
     _which_lfs(True, monkeypatch)
     rec = Rec(geturl=CmdResult(2, _GITHUB, "err"))
     _push_with_lfs(_PUSH, "HEAD", "/wt", rec)
-    assert rec.kinds() == ["geturl", "push"]
+    assert rec.kinds() == ["gate", "geturl", "push"]
 
 
 def test_non_github_remote_pushes_without_lfs(monkeypatch: pytest.MonkeyPatch) -> None:
     _which_lfs(True, monkeypatch)
     rec = Rec(geturl=CmdResult(0, "/srv/origin.git", ""))
     _push_with_lfs(_PUSH, "HEAD", "/wt", rec)
-    assert rec.kinds() == ["geturl", "push"]
+    assert rec.kinds() == ["gate", "geturl", "push"]
+
+
+def test_no_lfs_gate_skips_url_refusal_and_upload() -> None:
+    pushed = CmdResult(0, "pushed", "")
+    rec = Rec(
+        gate=CmdResult(1, "", ""),
+        check=CmdResult(0, "url.evil.insteadOf", ""),
+        push=pushed,
+    )
+    assert _push_with_lfs(_PUSH, "HEAD", "/wt", rec) is pushed
+    assert rec.kinds() == ["gate", "push"]
 
 
 # ── integration (real git + git-lfs, no network) ────────────────────────────
@@ -378,6 +392,7 @@ def lfs_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     _g(repo, "init", "--initial-branch", "main")
     _g(repo, "remote", "add", "origin", _GITHUB)
     (repo / ".lfsconfig").write_text("[lfs]\n\turl = https://evil.invalid/a\n")
+    (repo / ".gitattributes").write_text("*.bin filter=lfs diff=lfs merge=lfs -text\n")
     (repo / "f.txt").write_text("x\n")
     _g(repo, "add", ".")
     _g(repo, "commit", "-m", "seed")

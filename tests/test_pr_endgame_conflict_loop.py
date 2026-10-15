@@ -105,6 +105,7 @@ async def test_conflict_push_lfs_failure_is_unresolved(
                 CmdResult(0, "app.py", "")
             ],
             "rebase --continue": [_OK],
+            "git grep": [_OK],
             "get-url": [CmdResult(0, "https://github.com/o/r", "")],
             "--get-regexp": [CmdResult(1, "", "")],
             "lfs push": [_FAIL],

@@ -33,7 +33,7 @@ from factory_common.logsafe import sanitize_log
 from server.services import github_app
 from server.services.build_backend import task_repo_dir
 from server.services.task_branch import resolve_task_branch
-from server.utils.subprocess_env import child_env, github_env, lfs_push_argv
+from server.utils.subprocess_env import child_env, github_env, lfs_upload
 
 logger = logging.getLogger(__name__)
 
@@ -65,14 +65,16 @@ class CmdResult:
 Runner = Callable[[list[str], "str | None"], CmdResult]
 
 
-def _default_runner(argv: list[str], cwd: str | None = None) -> CmdResult:
+def _default_runner(
+    argv: list[str], cwd: str | None = None, timeout: int = 120
+) -> CmdResult:
     with github_env(child_env()) as env:
         p = subprocess.run(
             argv,
             cwd=cwd,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=timeout,
             env=env,
         )
     return CmdResult(p.returncode, p.stdout.strip(), p.stderr.strip())
@@ -81,33 +83,23 @@ def _default_runner(argv: list[str], cwd: str | None = None) -> CmdResult:
 def push_with_lfs(
     push_argv: list[str], ref: str, cwd: str, runner: Runner = _default_runner
 ) -> CmdResult:
-    """Upload LFS objects, then run ``push_argv`` (#1690).
+    """Gate LFS upload on attributes, then run ``push_argv`` (#1690, #1721).
 
     Hooks are off (#1680) so git-lfs's pre-push no longer uploads. A failed
     upload (or a refusal) is returned instead of pushing the ref.
     """
-    url = runner(["git", "remote", "get-url", "--push", "--all", "origin"], cwd)
-    argv = lfs_push_argv(url.out.strip(), ref) if url.ok else None
-    if argv:
-        # A repo-defined transfer program, or a url.*.insteadOf that git-lfs applies to
-        # the pinned endpoint, would redirect the upload; refuse (rc 1 = none).
-        chk = runner(
-            [
-                "git",
-                "config",
-                "--name-only",
-                "--get-regexp",
-                r"^(lfs\.customtransfer\.|url\.)",
-            ],
-            cwd,
+
+    def run(argv: list[str], timeout: int) -> tuple[int, str, str]:
+        r = (
+            _default_runner(argv, cwd, timeout)
+            if runner is _default_runner
+            else runner(argv, cwd)
         )
-        if chk.rc != 1:
-            return CmdResult(
-                1, "", "LFS step refused (lfs.customtransfer.* or url.* defined)"
-            )
-        up = runner(argv, cwd)
-        if not up.ok:
-            return up
+        return r.rc, r.out, r.err
+
+    err = lfs_upload(run, ref)
+    if err:
+        return CmdResult(1, "", err)
     return runner(push_argv, cwd)
 
 

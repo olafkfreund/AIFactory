@@ -134,6 +134,7 @@ def test_create_pr_upload_failure_still_opens_pr(
     )
     r = FakeRunner(
         {
+            "git grep": CmdResult(0, "", ""),
             "get-url": CmdResult(0, "https://github.com/o/r", ""),
             "--get-regexp": CmdResult(1, "", ""),
             "lfs push": CmdResult(2, "", "boom"),

@@ -168,6 +168,8 @@ async def test_fix_push_lfs_failure_returns_false(
 
     def rec(argv: list[str], *_a: Any, **_k: Any) -> subprocess.CompletedProcess[str]:
         calls.append(argv)
+        if argv[:2] == ["git", "grep"]:
+            return subprocess.CompletedProcess(argv, 0, "", "")
         if argv[:3] == ["git", "remote", "get-url"]:
             return subprocess.CompletedProcess(argv, 0, "https://github.com/o/r\n", "")
         if "--get-regexp" in argv:
