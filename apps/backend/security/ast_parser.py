@@ -128,6 +128,11 @@ def _require_literal(words: list[Any], start: int, stop: int) -> None:
         )
 
 
+# Inside ``${…}`` and heredoc bodies (text bashlex leaves unparsed) only
+# ``$(…)`` and backticks run a command (#1797).
+_RUNS_COMMAND = re.compile(r"\$\(|`")
+
+
 def _collect_command_nodes(
     node: Any, out: list[Any], seen: set[int] | None = None
 ) -> None:
@@ -137,7 +142,14 @@ def _collect_command_nodes(
     if id(node) in visited:
         return
     visited.add(id(node))
-    if getattr(node, "kind", None) == "command":
+    kind = getattr(node, "kind", None)
+    if kind in ("parameter", "heredoc") and _RUNS_COMMAND.search(
+        getattr(node, "value", "")
+    ):
+        raise UnparseableCommand(
+            "command substitution inside ${…} or a heredoc body cannot be validated"
+        )
+    if kind == "command":
         out.append(node)
     for val in vars(node).values():
         for c in val if isinstance(val, list) else (val,):
