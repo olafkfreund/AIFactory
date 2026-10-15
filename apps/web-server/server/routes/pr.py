@@ -355,11 +355,12 @@ async def create_pr_from_task(
             worktree_branch,
         ]
     try:
-        result = await asyncio.to_thread(
+        pushed = await asyncio.to_thread(
             _upload_and_push, str(worktree_path), worktree_branch, push_cmd
         )
-        if isinstance(result, str):
-            return {"success": False, "error": result}
+        if isinstance(pushed, str):
+            return {"success": False, "error": pushed}
+        result = pushed
         if result.returncode != 0:
             return {
                 "success": False,
