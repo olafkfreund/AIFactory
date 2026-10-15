@@ -6,7 +6,7 @@ Spec document creation and validation.
 """
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -41,7 +41,7 @@ def create_minimal_plan(spec_dir: Path, task_description: str) -> Path:
             }
         ],
         "metadata": {
-            "created_at": datetime.now().isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "complexity": "simple",
             "estimated_sessions": 1,
         },
