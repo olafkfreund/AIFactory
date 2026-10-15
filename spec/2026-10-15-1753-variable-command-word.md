@@ -20,8 +20,12 @@ target (`env`, `xargs`, `find -exec`, `command`/`exec`/`timeout`) go through it.
 
 `_word_parts_are_literal` already treats `parameter`, `commandsubstitution`,
 `arithmetic` and `processsubstitution` parts as dynamic; quoted `"$X"` carries
-a `parameter` part too. Leading `VAR=value` words are still skipped first, so
-`FOO=$BAR git status` stays allowed.
+a `parameter` part too. bashlex makes real `VAR=value` prefixes assignment
+nodes, which `_command_words` drops, so `FOO=$BAR git status` stays allowed;
+a word with `=` that reaches `_extract` is run and is checked like any other.
+Wrappers (`env`, `xargs`, `command`/`exec`/`timeout`, shells, `find`) also
+require every word they skip before their command to be literal, since a
+dynamic one can word-split into that command (see plan step 2 deviations).
 
 The hook (`security/hooks.py:86`) already turns `UnparseableCommand` into a
 block with a reason. No caller changes.

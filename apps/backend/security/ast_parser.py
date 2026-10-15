@@ -80,6 +80,16 @@ def _word_parts_are_literal(node) -> bool:
     return True
 
 
+def _require_literal(words: list[Any], start: int, stop: int) -> None:
+    """Raise unless ``words[start:stop]`` are all static literals. A wrapper's
+    skipped flags/values word-split at run time, so ``$X`` there can become
+    the command it runs (#1753)."""
+    if not all(_word_parts_are_literal(w) for w in words[start:stop]):
+        raise UnparseableCommand(
+            "wrapper argument is not a static literal; cannot validate"
+        )
+
+
 def _collect_command_nodes(node, out: list) -> None:
     """Walk the bashlex AST collecting every ``command`` node (recursing into
     pipelines, lists, compound commands and command substitutions)."""
@@ -176,6 +186,7 @@ def _unwrap_dash_c(
             and "c" in tok[1:]
             and j + 1 < len(tokens)
         ):
+            _require_literal(words, idx + 1, j)
             payload_word = words[j + 1]
             if not _word_parts_are_literal(payload_word):
                 raise UnparseableCommand(
@@ -183,6 +194,12 @@ def _unwrap_dash_c(
                 )
             _extract(payload_word.word, depth + 1, acc, dynamic_args=dynamic_args)
             return
+    # No ``-c``: options up to the script name must be literal (``bash $X``).
+    script = next(
+        (j for j in range(idx + 1, len(tokens)) if not tokens[j].startswith("-")),
+        len(tokens) - 1,
+    )
+    _require_literal(words, idx + 1, script + 1)
 
 
 _ENV_VALUE_LONG = ("--unset", "--chdir", "--argv0")
@@ -244,8 +261,10 @@ def _unwrap_env(
             opts = False
             j += 1
             continue
+        break
+    _require_literal(words, idx + 1, j)
+    if j < len(tokens):
         _emit(words, j, depth + 1, acc, dynamic_args=dynamic_args)
-        return
 
 
 _XARGS_VALUE_SHORT = "InPdEsLa"  # value attached or the next word
@@ -306,6 +325,7 @@ def _unwrap_xargs(
             j = _skip_xargs_opt(tok, j)
             continue
         break
+    _require_literal(words, idx + 1, j)
     if j < len(tokens):
         _emit(words, j, depth + 1, acc, dynamic_args=True)
     # ``xargs`` with no explicit command defaults to running ``echo`` — benign.
@@ -322,6 +342,8 @@ def _unwrap_find_exec(
     """``find ... -exec/-execdir/-ok CMD ... ;|+`` — the token after the action
     is the command find runs for each match."""
     del dynamic_args  # find always substitutes matched paths
+    # Any word can split into a new ``-exec`` action, so all must be literal.
+    _require_literal(words, idx + 1, len(words))
     tokens = [w.word for w in words]
     for j in range(idx + 1, len(tokens) - 1):
         if tokens[j] in _FIND_EXEC_ACTIONS:
@@ -378,7 +400,10 @@ def _unwrap_prefix(
     """``command``/``exec``/``timeout`` run the command that follows their options."""
     tokens = [w.word for w in words]
     j = _PREFIX_OPT_SKIPPERS[_basename(tokens[idx])](tokens, idx + 1)
-    if j is None or j >= len(tokens):
+    if j is None:  # ``command -v``: a lookup, runs nothing
+        return
+    _require_literal(words, idx + 1, j)
+    if j >= len(tokens):
         return
     _emit(words, j, depth + 1, acc, dynamic_args=dynamic_args)
 

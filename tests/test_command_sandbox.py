@@ -86,6 +86,16 @@ DYNAMIC_COMMAND_WORD = [
     "env $X evil",
     "ls; $X=1",
     'ls; "$X"=y z',
+    # A dynamic word a wrapper skips can split into the command it runs.
+    "env $X=1 git status",
+    "env -$X git status",
+    "xargs -$X git status",
+    "timeout $X git status",
+    "exec -a $X git status",
+    "command -$X git status",
+    "bash $X",
+    "bash $X -c ls",
+    "find $X -name y",
 ]
 
 # `git -c …` config injection / transport-exec hijack — must be blocked even

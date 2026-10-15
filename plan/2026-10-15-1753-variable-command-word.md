@@ -65,6 +65,19 @@ and `ls; "$X"=y z` go in `DYNAMIC_COMMAND_WORD` (they raise);
 `ls; ./evil=1 git status` is a literal word, so it goes in `BYPASS_PAYLOADS`
 (surfaced as `evil=1` and blocked by the allowlist, not a parser raise).
 
+Deviation (re-review of PR #1782): a wrapper's skipped words word-split at run
+time, so a dynamic one can become the command it runs (`env $X=1 git status`,
+`env -$X`, `xargs -$X`, `timeout $X`, `exec -a $X`, `command -$X`, `bash $X`,
+`find $X`; confirmed in bash). Add `_require_literal(words, start, stop)` and
+call it in every unwrapper on the words it skips: env and xargs up to the
+command, `command`/`exec`/`timeout` up to the command (not for
+`command -v`), a shell up to its `-c` (or up to the script name when there is
+no `-c`), and every word of `find`. Accepted fail-closed refusals:
+`env FOO=$X git`, `find "$DIR" ...`, `find . -exec git $X {} +`. Dynamic
+arguments after the inner command (`timeout 60 git log "$REF"`,
+`bash script.sh "$A"`) are still allowed. Rows for each wrapper go in
+`DYNAMIC_COMMAND_WORD`.
+
 ### Step 3 — CHANGELOG
 
 Add a `### Security` bullet under `## [Unreleased]` in `CHANGELOG.md`.
