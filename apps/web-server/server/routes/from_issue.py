@@ -36,6 +36,7 @@ from pydantic import BaseModel, Field
 
 from server.error_ref import client_error
 
+from ..services.completion import correlation_key, read_issue_repo
 from ..tenancy import resolve_tenant, stamp_spec_tenant
 
 # Add the backend dir to sys.path so backend seams resolve (mirrors execution.py).
@@ -330,6 +331,14 @@ async def create_from_issue(
                 "spec_id": existing_spec_id,
                 "deduplicated": True,
                 "issue_number": issue_number,
+                # The stored spec's repo is the truth for a dedup (#1775).
+                "correlation_key": correlation_key(
+                    existing_spec_id,
+                    issue_number,
+                    read_issue_repo(
+                        projects_path / ".aifactory" / "specs" / existing_spec_id
+                    ),
+                ),
                 "message": (
                     f"Issue #{issue_number} already ingested as spec "
                     f"{existing_spec_id}; not creating a duplicate."
@@ -398,6 +407,9 @@ async def create_from_issue(
         "tier": tier.value,
         "execution": execution,
         "issue_number": issue.get("number"),
+        "correlation_key": correlation_key(
+            spec_id, issue.get("number"), _declared_repo(request) or None
+        ),
         "message": f"Ingested issue as {tier.value}-tier build ({execution['model']}).",
     }
 
