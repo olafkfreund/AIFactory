@@ -223,3 +223,37 @@ def test_resolve_build_contract_records_and_clears_hold(
     monkeypatch.setenv(ENV, contract_digest(C))
     assert _resolve_build_contract(tmp_path) == C
     assert json.loads(plan_file.read_text()) == {"status": "in_progress"}
+
+
+def test_record_hold_writes_the_source_spec_dir_too(tmp_path: Path) -> None:
+    """#1709: in isolated mode the UI reads the source copy, not the worktree's."""
+    wt, src = tmp_path / "wt", tmp_path / "src"
+    for d in (wt, src):
+        d.mkdir()
+        (d / "implementation_plan.json").write_text(json.dumps({"phases": []}))
+    ct.record_hold(wt, "note", src)
+    for d in (wt, src):
+        assert (
+            json.loads((d / "implementation_plan.json").read_text())[ct.HOLD_KEY]
+            == "note"
+        )
+    ct.record_hold(wt, None, src)
+    for d in (wt, src):
+        assert ct.HOLD_KEY not in json.loads(
+            (d / "implementation_plan.json").read_text()
+        )
+
+
+def test_hold_note_survives_an_implementation_plan_round_trip(tmp_path: Path) -> None:
+    """#1709: from_dict/to_dict keep only known fields; the first load/save
+    (17 sites) would otherwise drop the note."""
+    from implementation_plan import ImplementationPlan
+
+    plan_file = tmp_path / "implementation_plan.json"
+    plan_file.write_text(json.dumps({"feature": "f", "phases": []}))
+    ct.record_hold(tmp_path, "contract held (held by server); normal build")
+    ImplementationPlan.load(plan_file).save(plan_file)
+    assert (
+        json.loads(plan_file.read_text())[ct.HOLD_KEY]
+        == "contract held (held by server); normal build"
+    )

@@ -261,3 +261,63 @@ def test_build_verified_migration_prepares_workspace(
 def test_build_legacy_migration_unchanged(tmp_path: Path) -> None:
     _agent, prepare = _run_build(tmp_path, _contract())
     assert prepare.call_count == 1
+
+
+def test_build_held_migration_notes_the_source_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1709: isolated mode works on a worktree COPY of the spec, but the UI and
+    the packed push read the source spec dir, and the held migration exits
+    before any sync back. The note must land in the source plan."""
+    import shutil
+
+    monkeypatch.setenv(ENV, "hold")
+    source = tmp_path / "spec"
+    (source / "context").mkdir(parents=True)
+    (source / "context" / "task_contract.json").write_text(json.dumps(_contract()))
+    (source / "implementation_plan.json").write_text(json.dumps({"phases": []}))
+    wt_spec = tmp_path / "wt" / ".aifactory" / "specs" / "spec"
+    shutil.copytree(source, wt_spec)
+    review_state_cls = MagicMock()
+    review_state_cls.load.return_value.is_approval_valid.return_value = True
+    with contextlib.ExitStack() as stack:
+        for p in (
+            patch("cli.utils.validate_environment", MagicMock(return_value=True)),
+            patch("cli.utils.print_banner", MagicMock()),
+            patch.object(
+                build_commands,
+                "choose_workspace",
+                MagicMock(return_value=build_commands.WorkspaceMode.ISOLATED),
+            ),
+            patch.object(
+                build_commands,
+                "get_existing_build_worktree",
+                MagicMock(return_value=None),
+            ),
+            patch.object(
+                build_commands,
+                "setup_workspace",
+                MagicMock(return_value=(tmp_path / "wt", None, wt_spec)),
+            ),
+            patch.object(build_commands, "ReviewState", review_state_cls),
+        ):
+            stack.enter_context(p)
+        with pytest.raises(SystemExit) as exc:
+            build_commands.handle_build_command(
+                project_dir=tmp_path,
+                spec_dir=source,
+                model="claude-sonnet-4-5",
+                max_iterations=1,
+                verbose=False,
+                force_isolated=True,
+                force_direct=False,
+                auto_continue=True,
+                skip_qa=True,
+                force_bypass_approval=False,
+                stop_after_planning=True,
+            )
+    assert exc.value.code == 1
+    note = "migration contract held (held by server); build stopped"
+    for d in (source, wt_spec):
+        plan = json.loads((d / "implementation_plan.json").read_text())
+        assert plan["contractHold"] == note

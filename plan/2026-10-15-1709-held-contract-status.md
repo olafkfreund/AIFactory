@@ -158,6 +158,57 @@ touch `reviewReasonBadge` or `REVIEW_REASON_BADGES`.
 `CHANGELOG.md` under `## [Unreleased]`, a `### Added` (or existing section)
 bullet: held task contract now shows on the task (#1709).
 
+## Review fixes (PR #1803 review)
+
+The first review found the note would almost never reach the UI. These steps
+were added after the review; D1-D6 still hold, with D1/D3 refined as below.
+
+### Step 6 — write the note to the source spec dir too (CRITICAL)
+
+Cause: in isolated mode `_resolve_build_contract` runs after
+`spec_dir = localized_spec_dir` (`cli/build_commands.py:461-474`), so the note
+went into the worktree copy (`core/workspace/setup.py:221` copytree). The UI
+reads the project's `.aifactory/specs/<id>/implementation_plan.json`, and
+`cli/main.py:532` `maybe_push_plan` pushes the SOURCE spec dir; the held
+migration then `sys.exit(1)`s with no sync back.
+
+Change (D3 refined): `record_hold(spec_dir, note, source_spec_dir=None)`
+writes `spec_dir` and, when `source_spec_dir` is given, the source plan too
+(both copies, so a later `sync_plan_to_source` copy2 of the worktree plan keeps
+the note). `_resolve_build_contract(spec_dir, source_spec_dir=None)` passes it
+through; the call at `build_commands.py:474` passes `source_spec_dir`.
+`scaffold_deploy_for_spec(spec_dir, source_spec_dir=None)` likewise; its caller
+`agents/coder.py:1092` passes the `source_spec_dir` already in scope.
+
+Test (`tests/test_migration_mapper.py`, reusing the `_run_build` harness
+pattern): `setup_workspace` returns a DISTINCT worktree spec dir (a copy of
+the source); held migration exits 1 and the SOURCE plan carries
+`contractHold`. Fails before this step.
+
+### Step 7 — keep `contractHold` through `ImplementationPlan` (CRITICAL)
+
+Cause: `ImplementationPlan.from_dict`/`to_dict`
+(`implementation_plan/plan.py:74-136`) keep only known fields, so the first
+`load()`/`save()` drops the note. Change: add `contractHold: str | None = None`
+to the dataclass (`# noqa: N815`, the name is the JSON key; strict-ruff
+ratchet), `from_dict` (`data.get("contractHold")`) and `to_dict`
+(emit only when set), exactly like `recoveryNote`. Not cleared by the
+`recoveryNote` reset at `plan.py:454` (the note is cleared only by the next
+non-hold build start).
+
+Test: `record_hold`, then `ImplementationPlan.load(p).save(p)`, the note
+survives.
+
+### Step 8 — atomic write (HIGH)
+
+The source plan is also written by the web server. `record_hold` writes with
+`core.file_utils.write_json_atomic` (temp file in the same dir + `os.replace`)
+inside `contextlib.suppress(OSError)`, instead of `Path.write_text`.
+
+Check for steps 6-8:
+`python -m pytest tests/test_contract_trust.py tests/test_deploy_scaffold.py tests/test_migration_mapper.py tests/test_trusted_contract_isolation_stamp.py tests/test_task_service_module.py -q`
+plus the `implementation_plan` tests (`tests/test_implementation_plan*.py`).
+
 ## Tests (summary)
 
 Steps 1-3 add pytest cases; the regression proof is step 2 (a), which fails on

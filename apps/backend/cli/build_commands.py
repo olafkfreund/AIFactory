@@ -200,7 +200,9 @@ def _record_preflight_pause(spec_dir: Path) -> None:
         logger.warning("could not record pre-flight pause: %s", type(exc).__name__)
 
 
-def _resolve_build_contract(spec_dir: Path) -> dict[str, Any] | None:
+def _resolve_build_contract(
+    spec_dir: Path, source_spec_dir: Path | None = None
+) -> dict[str, Any] | None:
     """The contract the server verified, or None. A held migration stops the build (#1673)."""
     from core.contract_trust import (  # noqa: PLC0415
         reason_label,
@@ -212,18 +214,18 @@ def _resolve_build_contract(spec_dir: Path) -> dict[str, Any] | None:
     state, contract, why = trusted_contract(spec_dir)
     held: dict[str, Any] | None = contract  # typed local: core.* resolves to Any here
     if state != "hold":
-        record_hold(spec_dir, None)
+        record_hold(spec_dir, None, source_spec_dir)
         return held
     if is_migration(contract):
         msg = f"[trusted-contract] migration contract held ({reason_label(why)}); build stopped"
         logger.warning(msg)
         print_status(msg, "error")
-        record_hold(spec_dir, msg.removeprefix("[trusted-contract] "))
+        record_hold(spec_dir, msg.removeprefix("[trusted-contract] "), source_spec_dir)
         sys.exit(1)
     msg = f"[trusted-contract] contract held ({reason_label(why)}); normal build"
     logger.warning(msg)
     print_status(msg, "warning")
-    record_hold(spec_dir, msg.removeprefix("[trusted-contract] "))
+    record_hold(spec_dir, msg.removeprefix("[trusted-contract] "), source_spec_dir)
     return None
 
 
@@ -471,7 +473,7 @@ def handle_build_command(
                 prepare_migration_workspace,
             )
 
-            _contract = _resolve_build_contract(spec_dir)
+            _contract = _resolve_build_contract(spec_dir, source_spec_dir)
             if is_migration(_contract):
                 summary = prepare_migration_workspace(
                     working_dir, project_dir, _contract

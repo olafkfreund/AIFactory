@@ -54,21 +54,31 @@ def _read_json(path: Path) -> Any:
         return None
 
 
-def record_hold(spec_dir: Path, note: str | None) -> None:
+def record_hold(
+    spec_dir: Path, note: str | None, source_spec_dir: Path | None = None
+) -> None:
     """Put a hold note on the task's plan for the task status (#1709); None clears it.
 
-    Never creates a plan, never raises: the note is display-only.
+    In isolated mode ``spec_dir`` is the worktree copy; the UI and the packed
+    push read ``source_spec_dir``, so both get the note. Never creates a plan,
+    never raises: the note is display-only.
     """
-    plan_file = Path(spec_dir) / "implementation_plan.json"
-    plan = _read_json(plan_file)
-    if not isinstance(plan, dict) or plan.get(HOLD_KEY) == note:
-        return
-    if note is None:
-        plan.pop(HOLD_KEY)
-    else:
-        plan[HOLD_KEY] = note
-    with contextlib.suppress(OSError):
-        plan_file.write_text(json.dumps(plan, indent=2), encoding="utf-8")
+    from core.file_utils import write_json_atomic  # noqa: PLC0415
+
+    for d in (spec_dir, source_spec_dir):
+        if d is None:
+            continue
+        plan_file = Path(d) / "implementation_plan.json"
+        plan = _read_json(plan_file)
+        if not isinstance(plan, dict) or plan.get(HOLD_KEY) == note:
+            continue
+        if note is None:
+            plan.pop(HOLD_KEY)
+        else:
+            plan[HOLD_KEY] = note
+        # Atomic: the web server writes the source plan too.
+        with contextlib.suppress(OSError):
+            write_json_atomic(plan_file, plan)
 
 
 def has_trusted_trace(spec_dir: Path) -> bool:

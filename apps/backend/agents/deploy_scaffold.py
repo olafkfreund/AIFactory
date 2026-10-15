@@ -81,7 +81,9 @@ def _worktree_root(spec_dir: Path) -> Path:
     return spec_dir.parent
 
 
-def scaffold_deploy_for_spec(spec_dir: Path) -> list[str]:
+def scaffold_deploy_for_spec(
+    spec_dir: Path, source_spec_dir: Path | None = None
+) -> list[str]:
     """Read a spec's contract ``deployment`` block and scaffold the deploy
     artifacts into its worktree. Best-effort: returns the written paths, or an
     empty list when there's no PaaS target / on any error (never raises, so a
@@ -92,7 +94,9 @@ def scaffold_deploy_for_spec(spec_dir: Path) -> list[str]:
             msg = f"[trusted-contract] deploy scaffold withheld: {reason_label(why)}"
             logger.warning(msg)
             print_status(msg, "warning")
-            record_hold(spec_dir, msg.removeprefix("[trusted-contract] "))
+            record_hold(
+                spec_dir, msg.removeprefix("[trusted-contract] "), source_spec_dir
+            )
             return []
         return scaffold_deploy(
             data.get("deployment") if data else None, _worktree_root(spec_dir)
