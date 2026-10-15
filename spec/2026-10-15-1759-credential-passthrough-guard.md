@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1759
 intent: intent/2026-10-15-1759-credential-passthrough-guard.md
 ---
