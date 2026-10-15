@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## 3.10.0 - 2026-10-15
+
 ### Security
 
 - **Tool-loop Bash and Grep commands no longer inherit host secrets in their environment (#1713).**
