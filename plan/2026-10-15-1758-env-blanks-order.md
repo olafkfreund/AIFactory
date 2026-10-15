@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1758
 spec: spec/2026-10-15-1758-env-blanks-order.md
 ---
