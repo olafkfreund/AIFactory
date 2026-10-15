@@ -714,3 +714,103 @@ def test_1695_gate_is_set_when_resolve_contract_raises(
         spec, "001-x", ("o", "r"), _rec(signed), "low", False, lambda *_a, **_k: None
     )
     assert gate is not None
+
+
+# --- #1698: the PR body states the tier the gate decides on ---------------- #
+
+
+@pytest.mark.parametrize(
+    ("tier", "signed", "expected"),
+    [
+        ("low", "blocking", ("blocking", True)),
+        ("blocking", "auto", ("blocking", False)),
+        (None, "auto", ("auto", False)),
+        ("auto", "auto", ("auto", False)),
+    ],
+)
+def test_raise_to_signed(
+    tier: str | None, signed: str, expected: tuple[str, bool]
+) -> None:
+    assert pe._raise_to_signed(tier, signed) == expected
+
+
+def test_raise_to_signed_unrecognised_tier_is_preserved() -> None:
+    effective, below = pe._raise_to_signed("bogus", "auto")
+    assert effective == "bogus"
+    assert below is True
+
+
+def test_review_tier_note_flags_tier_below_signed(tmp_path: Path) -> None:
+    spec, signed = _spec(tmp_path, review_tier="blocking")
+
+    note = pe.review_tier_note(spec, "low", trusted=_rec(signed))
+
+    assert "Effective review tier: blocking (signed floor blocking)." in note
+    assert "Possible tampering" in note
+    assert "reviewTier low is below the signed tier blocking" in note
+    assert "the merge gate decides on blocking." in note
+
+
+def test_review_tier_note_matching_signed_has_no_tampering_warning(
+    tmp_path: Path,
+) -> None:
+    spec, signed = _spec(tmp_path, review_tier="auto")
+
+    note = pe.review_tier_note(spec, "auto", trusted=_rec(signed))
+
+    assert note == "Effective review tier: auto (signed floor auto)."
+    assert "Possible tampering" not in note
+
+
+def test_review_tier_note_legacy_without_contract(tmp_path: Path) -> None:
+    spec, _ = _spec(tmp_path)
+    _contract_file(spec).unlink()
+
+    note = pe.review_tier_note(spec, "low", trusted=None)
+
+    assert "Review tier: low (not checked" in note
+
+
+def test_review_tier_note_crafted_tier_uses_constant_label(tmp_path: Path) -> None:
+    spec, _ = _spec(tmp_path)
+    _contract_file(spec).unlink()
+
+    note = pe.review_tier_note(spec, "low\n\n@evil", trusted=None)
+
+    assert "unrecognised" in note
+    assert "@evil" not in note
+
+
+def test_1698_endgame_body_flags_tier_below_signed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec, signed = _spec(tmp_path, review_tier="blocking")
+    captured: dict[str, str] = {}
+
+    async def _fake_watch(**_k: object) -> dict[str, object]:
+        return {"merged": False, "reason": "stub"}
+
+    def _fake_create_pr(**kwargs: Any) -> int:
+        captured["body"] = kwargs["body"]
+        return 42
+
+    monkeypatch.setattr(pe, "watch_and_finish", _fake_watch)
+    monkeypatch.setattr(pe, "create_pr", _fake_create_pr)
+    monkeypatch.setattr(pe, "request_copilot_review", lambda *_a, **_k: True)
+    monkeypatch.setattr(pe, "_pr_title_body", lambda _d, _s: ("t", "b"))
+    asyncio.run(
+        pe.run_pr_endgame(
+            spec_dir=spec,
+            spec_id="001-x",
+            worktree=spec,
+            branch="aifactory/001-x",
+            base="main",
+            repo="owner/repo",
+            auto_merge=False,
+            review_tier="low",
+            reviewer="copilot",
+            background=False,
+            trusted=_rec(signed),
+        )
+    )
+    assert "Possible tampering" in captured["body"]
