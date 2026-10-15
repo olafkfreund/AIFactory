@@ -2,6 +2,12 @@
 
 ### Security
 
+- **A variable as the Bash command word no longer bypasses the allowlist (#1753).**
+  The command parser skipped a command whose first word was `$X`, `"$X"`,
+  `${X}`, `$(...)` or a backtick, so `echo hi; $X status` was allowed with
+  only `echo` checked. Any non-literal command word now fails closed and the
+  command is blocked, including a bare `` `cmd` `` or `$(cmd)` used as the
+  command.
 - **Tool-loop Bash and Grep commands no longer inherit host secrets in their environment (#1713).**
   The Ollama, Ollama Cloud, OpenAI-compatible and GitHub Models runtimes now
   spawn model-written commands with `child_env()`: every denied secret and
