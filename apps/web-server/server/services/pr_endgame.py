@@ -484,6 +484,55 @@ def _contract_unreadable(spec_dir: Path) -> bool:
         return True
 
 
+def _raise_to_signed(tier: str | None, signed: str) -> tuple[str, bool]:
+    """``(tier decided on, metadata tier below signed)``; signed is the floor (#1672)."""
+    from merge.merge_policy import raise_review_tier  # noqa: PLC0415
+
+    blank = tier is None or not str(tier).strip()
+    effective = "low" if blank else str(tier)
+    below = not blank and raise_review_tier(tier, signed) != tier
+    if _describe_tier(effective) != "unrecognised":
+        effective = raise_review_tier(signed, effective) or effective
+    return effective, below
+
+
+def review_tier_note(spec_dir: Path, tier: str | None, *, trusted: object) -> str:
+    """The PR-body line for the review tier the merge gate uses (#1698).
+
+    Labels only (``_describe_tier``): the metadata tier is agent-writable.
+    Never raises.
+    """
+    try:
+        from server.services.trusted_contract import (  # noqa: PLC0415
+            resolve_contract,
+        )
+
+        state, contract = resolve_contract(spec_dir, trusted)
+        execution = contract.get("execution") if state == "verified" else None
+        signed = execution.get("review_tier") if isinstance(execution, dict) else None
+        if isinstance(signed, str) and _describe_tier(signed) not in (
+            "none",
+            "unrecognised",
+        ):
+            effective, below = _raise_to_signed(tier, signed)
+            note = (
+                f"Effective review tier: {_describe_tier(effective)} "
+                f"(signed floor {_describe_tier(signed)})."
+            )
+            if below:
+                note += (
+                    f"\n\n> **Possible tampering:** task metadata reviewTier "
+                    f"{_describe_tier(tier)} is below the signed tier "
+                    f"{_describe_tier(signed)}; the merge gate decides on "
+                    f"{_describe_tier(effective)}."
+                )
+            return note
+    except Exception:  # noqa: BLE001 - a body line must never break the endgame
+        logger.debug("[pr-endgame] review tier note fell back", exc_info=True)
+    label = _describe_tier(tier if tier is not None and str(tier).strip() else None)
+    return f"Review tier: {label} (not checked against a signed contract)."
+
+
 def merge_disposition(
     spec_dir: Path,
     tier: str | None,
@@ -524,7 +573,7 @@ def merge_disposition(
     verdict and host-CI feed ``merge_gate_signals``, and a raise holds.
     """
     try:
-        from merge.merge_policy import decide_merge, raise_review_tier  # noqa: PLC0415
+        from merge.merge_policy import decide_merge  # noqa: PLC0415
 
         from server.services.trusted_contract import (  # noqa: PLC0415
             host_isolated,
@@ -562,25 +611,23 @@ def merge_disposition(
             signed = (
                 execution.get("review_tier") if isinstance(execution, dict) else None
             )
-            if _describe_tier(signed) in ("none", "unrecognised"):
+            if not isinstance(signed, str) or _describe_tier(signed) in (
+                "none",
+                "unrecognised",
+            ):
                 logger.warning(
                     "[pr-endgame] verified contract has no signed review_tier; "
                     "auto-merge withheld"
                 )
                 return HOLD_BLOCKING_DISPOSITION
-            if (
-                tier is not None
-                and str(tier).strip()
-                and raise_review_tier(tier, signed) != tier
-            ):
+            effective, below = _raise_to_signed(tier, signed)
+            if below:
                 logger.warning(
                     "[pr-endgame] reviewTier %s below signed %s; "
                     "deciding on the stricter tier",
                     sanitize_log(_describe_tier(tier)),
                     sanitize_log(_describe_tier(signed)),
                 )
-            if _describe_tier(effective) != "unrecognised":
-                effective = raise_review_tier(signed, effective)
             if fetch_signals is not None:
                 fetched = fetch_signals()
     except Exception:  # noqa: BLE001 - e.g. RecursionError, UnicodeDecodeError

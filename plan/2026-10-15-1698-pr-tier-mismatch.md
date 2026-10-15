@@ -128,6 +128,12 @@ or copy it, whichever the import layout allows):
 - crafted tier `"low\n\n@evil"` on legacy: note contains `unrecognised` and not `@evil`.
 
 Check: `cd apps/web-server && python -m pytest tests/test_pr_tier_note.py tests/test_trusted_contract_merge.py tests/test_pr_endgame_review_tier.py tests/test_pr_endgame_merge_gate.py -q`
+Deviation (agy, mypy --strict): `_raise_to_signed` uses
+`raise_review_tier(signed, effective) or effective` (the function is typed
+`str | None`; it never returns None here), and `merge_disposition`'s
+no-signed-tier guard adds `not isinstance(signed, str) or`, so a non-string
+signed tier holds through that guard instead of by an exception. Same
+disposition, pinned by test 26.
 Traps: `merge_disposition` behaviour must be byte-for-byte the same; tests
 21-28 in `test_trusted_contract_merge.py` pin it. `raise_review_tier` takes
 `(tier, floor)` and returns the stricter; check its signature in
