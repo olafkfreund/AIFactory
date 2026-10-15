@@ -662,3 +662,27 @@ class TestGitDirWriteGuard:
             agent_type=agent_type, model="claude-haiku-4-5"
         )
         assert _WRITE_TOOLS <= set(seen["options"].disallowed_tools)
+
+    @pytest.mark.parametrize("agent_type", _SIMPLE_TYPES)
+    def test_simple_client_options_limit_base_tools(self, agent_type, monkeypatch):
+        from core import simple_client
+
+        seen = {}
+
+        def _capture(**kw):
+            seen["options"] = kw["options"]
+            return object()
+
+        monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok")
+        monkeypatch.setattr(simple_client, "require_auth_token", lambda: "tok")
+        monkeypatch.setattr(simple_client, "ClaudeSDKClient", _capture)
+        monkeypatch.setattr(simple_client, "wrap_client_outbound_scrub", lambda c: c)
+        simple_client.create_simple_client(
+            agent_type=agent_type, model="claude-haiku-4-5"
+        )
+        assert seen["options"].tools == AGENT_CONFIGS[agent_type]["tools"]
+        tools = seen["options"].tools
+        if agent_type in ("commit_message", "merge_resolver", "spec_compaction"):
+            assert tools == []
+        else:  # read helpers see untrusted text: never Read plus web egress
+            assert tools and not {"WebFetch", "WebSearch"} & set(tools)
