@@ -139,11 +139,6 @@ def _extract(
         if idx >= len(words):
             continue
 
-        # If the command word is itself a substitution (e.g. a bare
-        # ``$(...)`` / backtick command), bashlex already collected its inner
-        # commands separately — don't emit the substitution text as a name.
-        if not _word_parts_are_literal(words[idx]):
-            continue
         _emit(words, idx, depth, acc, dynamic_args=dynamic_args)
 
 
@@ -158,6 +153,11 @@ def _emit(
     """Record the command at ``words[idx]`` and recurse into its wrapper target."""
     if depth > _MAX_DEPTH:
         raise UnparseableCommand("command nesting too deep to validate")
+    # ``$X``/``$(...)`` as the command word runs a program we cannot see (#1753).
+    if not _word_parts_are_literal(words[idx]):
+        raise UnparseableCommand(
+            "command word is not a static literal; cannot validate"
+        )
     tokens = [w.word for w in words]
     name = _basename(tokens[idx])
     acc.append((name, shlex.join(tokens[idx:]), dynamic_args))
