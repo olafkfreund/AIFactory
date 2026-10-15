@@ -29,6 +29,7 @@ from server.background import spawn
 
 from ..config import get_settings
 from ..websockets.events import broadcast_event
+from .project_env import load_project_env
 
 
 class PRReviewPhase(str, Enum):
@@ -272,8 +273,8 @@ class PRReviewService:
         # Load backend .env for tokens and API keys
         _load_env_file(backend_path / ".env", env)
 
-        # Load project-level .aifactory/.env for project settings
-        _load_env_file(project_path / ".aifactory" / ".env", env)
+        # Project .aifactory/.env: allowlisted project settings only (#1745)
+        load_project_env(project_path, env)
 
         # Initialize execution log writer
         logs_dir = project_path / ".aifactory" / "github" / "pr"

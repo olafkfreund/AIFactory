@@ -295,7 +295,7 @@ def display_review_status(spec_dir: Path) -> None:
                 # Format the timestamp nicely
                 try:
                     dt = datetime.fromisoformat(status["approved_at"])
-                    formatted = dt.strftime("%Y-%m-%d %H:%M")
+                    formatted = dt.astimezone().strftime("%Y-%m-%d %H:%M")
                     content.append(f"{muted('Approved at:')} {formatted}")
                 except ValueError:
                     content.append(f"{muted('Approved at:')} {status['approved_at']}")

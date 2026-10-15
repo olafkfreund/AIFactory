@@ -159,7 +159,8 @@ jobs:
       #    continue-on-error here — a spec we cannot generate is a real failure.
       #    The generator pins SAML_ENABLED, SCIM_ENABLED, AIFACTORY_MCP_REMOTE_ENABLED,
       #    AIFACTORY_RMUX_ENABLED and APP_RMUX_ENABLED to false, so the spec is
-      #    the default deployment (#1632).
+      #    the default deployment (#1632). Step 5 reruns it with them all on and fails
+      #    if the spec changes (#1729).
       - name: Regenerate OpenAPI spec
         run: |
           python3 -m venv /tmp/ws
@@ -194,7 +195,26 @@ jobs:
           echo "  /tmp/ws/bin/pip install -r apps/web-server/requirements.txt"
           echo "  /tmp/ws/bin/pip install -r apps/backend/requirements.txt"
           echo "  APP_DISABLE_AUTH=true /tmp/ws/bin/python scripts/generate-openapi-spec.py"
-          echo "  (output ignores .env and exported feature flags; apps/web-server/static/ must be absent)"
+          echo "  (output ignores .env, exported feature flags and apps/web-server/static/)"
           echo
           git diff -- docs/dependencies.md apps/web-server/openapi.yaml
           exit 1
+
+      # 5. The generator pins SAML/SCIM/mcp-remote/rmux off (#1632). Prove the
+      #    pin holds: with every listed flag exported on, the output must still equal
+      #    the committed spec that step 4 just matched to the flags-off run
+      #    (#1729). A new env gate goes in both lists.
+      - name: Check the OpenAPI spec ignores feature flags
+        env:
+          APP_DISABLE_AUTH: "true"
+          SAML_ENABLED: "true"
+          SCIM_ENABLED: "true"
+          AIFACTORY_MCP_REMOTE_ENABLED: "true"
+          AIFACTORY_RMUX_ENABLED: "true"
+          APP_RMUX_ENABLED: "true"
+        run: |
+          /tmp/ws/bin/python scripts/generate-openapi-spec.py
+          if ! git diff --exit-code -- apps/web-server/openapi.yaml; then
+            echo "::error::A flag set in this step is no longer pinned off by scripts/generate-openapi-spec.py; restore the pin."
+            exit 1
+          fi

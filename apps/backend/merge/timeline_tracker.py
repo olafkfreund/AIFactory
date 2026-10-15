@@ -13,7 +13,7 @@ This service is the "brain" of the intent-aware merge system. It:
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .timeline_git import TimelineGitHelper
@@ -125,7 +125,7 @@ class FileTimelineTracker:
         if not branch_point_commit:
             branch_point_commit = self.git.get_current_main_commit()
 
-        timestamp = datetime.now()
+        timestamp = datetime.now(UTC)
 
         for file_path in files_to_modify:
             # Get or create timeline for this file
@@ -196,7 +196,7 @@ class FileTimelineTracker:
             # Create main branch event
             event = MainBranchEvent(
                 commit_hash=commit_hash,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(UTC),
                 content=content,
                 source="human",
                 commit_message=commit_info.get("message", ""),
@@ -245,7 +245,7 @@ class FileTimelineTracker:
         # Update worktree state
         task_view.worktree_state = WorktreeState(
             content=new_content,
-            last_modified=datetime.now(),
+            last_modified=datetime.now(UTC),
         )
 
         self._persist_timeline(file_path)
@@ -278,14 +278,14 @@ class FileTimelineTracker:
 
             # Mark task as merged
             task_view.status = "merged"
-            task_view.merged_at = datetime.now()
+            task_view.merged_at = datetime.now(UTC)
 
             # Add main branch event for the merge
             content = self.git.get_file_content_at_commit(file_path, merge_commit)
             if content:
                 event = MainBranchEvent(
                     commit_hash=merge_commit,
-                    timestamp=datetime.now(),
+                    timestamp=datetime.now(UTC),
                     content=content,
                     source="merged_task",
                     merged_from_task=task_id,

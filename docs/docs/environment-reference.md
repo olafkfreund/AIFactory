@@ -238,14 +238,14 @@ How `run.py` executes and what lets a build schedule on any node. Read in
 | `AIFACTORY_IMAGE` | (built-in) | no | Running image; fallback build-Job image when `AIFACTORY_BUILD_IMAGE` unset. |
 | `AIFACTORY_BUILD_IMAGE` | (unset) | no | Override the image for the `kubejob` build Job only. Point at a `:sha-<short>-nix` tag for in-image Nix. |
 | `AIFACTORY_PACK_WORKSPACE` | off | no | Pack `/work` to object storage and unpack in the Job (removes the workspace node-pin). |
-| `AIFACTORY_PACKED_NIX_IN_IMAGE` | off | no | Resolve `/nix` from the build image instead of the Nix-store PVC (removes the last node-pin). |
+| `AIFACTORY_PACKED_NIX_IN_IMAGE` | off | no | Gate Jobs resolve `/nix` from the image instead of the Nix-store PVC (removes the last node-pin). Forwarded into the build Job (#1736). |
 | `WORKSPACE_URI` | `""` | conditional | Object-storage URI the Job unpacks `/work` from (set by the pack path; `core/workspace_fetch.py`). |
 | `AIFACTORY_DATA_ROOT` | `/home/nonroot/.aifactory` | no | Data PVC mount root; used to compute worktree subPaths and sandbox mounts. |
 | `AIFACTORY_SANDBOX_NAMESPACE` | `factory` | no | K8s namespace the build Job runs in. |
 | `AIFACTORY_BUILD_SA` | `aifactory-sandbox` | no | ServiceAccount for the build Job. |
 | `AIFACTORY_BUILD_DEADLINE_SECONDS` | `21600` (6h) | no | Active-deadline for the build Job. |
 | `AIFACTORY_SANDBOX_REPO_PVC` | `aifactory-data` | no | PVC holding the repo/worktree (co-mounted into the Job). |
-| `AIFACTORY_NIX_STORE_PVC` | `""` | no | Warm Nix-store PVC to mount into the Job. Empty on the in-image-Nix path. |
+| `AIFACTORY_NIX_STORE_PVC` | `""` | no | Warm Nix-store PVC that gate Jobs mount (seeded from the image). Forwarded into the build Job; the build Job itself never mounts it (#1736). |
 | `AIFACTORY_CLI_CREDS_SECRET` | `""` | no | K8s Secret name holding CLI credentials mounted into the build Job. |
 | `APP_BACKEND_PATH` | `/home/projects/MagesticAI/apps/backend` | no | Backend path inside the build Job. |
 

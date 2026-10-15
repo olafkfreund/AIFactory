@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -54,7 +54,7 @@ class ArtifactWriter:
     ) -> None:
         self.spec_dir = Path(spec_dir)
         self.source_spec_dir = Path(source_spec_dir) if source_spec_dir else None
-        self._now = now or (lambda: datetime.now().isoformat())
+        self._now = now or (lambda: datetime.now(UTC).isoformat())
 
     def _dirs(self) -> list[Path]:
         dirs = [self.spec_dir]

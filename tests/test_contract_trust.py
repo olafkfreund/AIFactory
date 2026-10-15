@@ -83,7 +83,7 @@ def test_missing_file_under_digest_holds(
 
 
 @pytest.mark.parametrize("content", [None, "[1]", "{"])
-@pytest.mark.parametrize("env", [None, "hold"])
+@pytest.mark.parametrize("env", [None, "hold", "legacy"])
 def test_missing_or_bad_file_is_silent_legacy(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -99,6 +99,16 @@ def test_missing_or_bad_file_is_silent_legacy(
         state, contract, _why = trusted_contract(tmp_path)
     assert (state, contract) == ("legacy", None)
     assert "[trusted-contract]" not in caplog.text
+
+
+def test_legacy_env_holds_a_contract_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write(tmp_path, C)
+    monkeypatch.setenv(ENV, "legacy")
+    state, contract, why = trusted_contract(tmp_path)
+    assert (state, contract, why) == ("hold", C, "server saw no signed contract")
+    assert ct.reason_label(why) == why
 
 
 def test_trace_without_env_holds(tmp_path: Path) -> None:
