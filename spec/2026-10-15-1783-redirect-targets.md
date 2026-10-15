@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1783
 intent: intent/2026-10-15-1783-redirect-targets.md
 ---
