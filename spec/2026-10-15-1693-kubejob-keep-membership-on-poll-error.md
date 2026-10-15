@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1693
 intent: intent/2026-10-15-1693-kubejob-keep-membership-on-poll-error.md
 ---
