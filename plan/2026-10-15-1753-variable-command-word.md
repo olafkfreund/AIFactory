@@ -56,8 +56,14 @@ File: `apps/backend/security/ast_parser.py`. Apply decisions 1 and 2.
 Check: `pytest tests/test_command_sandbox.py tests/test_plan_commands.py -q`
 all pass; `ruff check` and `ruff format --check` on both files.
 
-Trap: leading `VAR=value` words are skipped before `_emit`, so
-`FOO=$BAR git status` stays allowed; do not move the check before that loop.
+Deviation (review of PR #1782): also delete the leading-`=` skip loop in
+`_extract` (`:131-140`) and call `_emit(words, 0, ...)`. bashlex already turns
+real `VAR=value` prefixes into assignment nodes, which `_command_words` drops,
+so that loop only skipped words bash runs (`ls; ./evil=1 arg`, `ls; $X=1`).
+`FOO=1 git status` and `FOO=$BAR git status` stay allowed. Rows: `ls; $X=1`
+and `ls; "$X"=y z` go in `DYNAMIC_COMMAND_WORD` (they raise);
+`ls; ./evil=1 git status` is a literal word, so it goes in `BYPASS_PAYLOADS`
+(surfaced as `evil=1` and blocked by the allowlist, not a parser raise).
 
 ### Step 3 — CHANGELOG
 

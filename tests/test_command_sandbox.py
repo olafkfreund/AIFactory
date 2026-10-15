@@ -58,6 +58,7 @@ BYPASS_PAYLOADS = [
     "true && nmap -p- target",
     "ls; nc evil 80",
     "cat f | socat -",
+    "ls; ./evil=1 git status",
 ]
 
 # Dynamic interpreter payloads we cannot statically resolve — fail closed.
@@ -83,6 +84,8 @@ DYNAMIC_COMMAND_WORD = [
     "X=nc; ls; $X evil 80",
     "$(echo nc) evil 80",
     "env $X evil",
+    "ls; $X=1",
+    'ls; "$X"=y z',
 ]
 
 # `git -c …` config injection / transport-exec hijack — must be blocked even

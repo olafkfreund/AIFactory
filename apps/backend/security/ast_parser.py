@@ -128,18 +128,9 @@ def _extract(
         if not words:
             continue
 
-        # Skip leading ``VAR=value`` assignment words to find the real command.
-        idx = 0
-        while (
-            idx < len(words)
-            and "=" in words[idx].word
-            and not words[idx].word.startswith("=")
-        ):
-            idx += 1
-        if idx >= len(words):
-            continue
-
-        _emit(words, idx, depth, acc, dynamic_args=dynamic_args)
+        # bashlex makes real ``VAR=value`` prefixes assignment nodes, which
+        # ``_command_words`` drops; a word with ``=`` left here is run (#1753).
+        _emit(words, 0, depth, acc, dynamic_args=dynamic_args)
 
 
 def _emit(
