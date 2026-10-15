@@ -81,6 +81,16 @@ export function TaskHeader({
               )}
             </>
           )}
+          {task.contractHold && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Badge variant="outline" className="text-xs">Contract held</Badge>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="max-w-xs">
+                <p className="text-sm">{task.contractHold}</p>
+              </TooltipContent>
+            </Tooltip>
+          )}
         </div>
       </div>
       <div className="flex items-center gap-1 shrink-0 -mr-1 -mt-1">
