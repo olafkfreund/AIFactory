@@ -127,7 +127,7 @@ and both test files:
 - `_http_status` no longer reads the body (`read_body=False`); `_http_get` reads it through
   `_read_body`, which returns `""` on `OSError` / `http.client.HTTPException`.
 - `_cached(provider, secret, probe)`: module dict, key
-  `(provider, sha256(secret))`, TTL 300 s, stores `ok`/`auth_failed` only.
+  `(provider, secret)` (sha256 dropped: CodeQL py/weak-sensitive-data-hashing), TTL 300 s, stores `ok`/`auth_failed` only.
 - Probes and `run_auth_preflight` take `timeout` (default 10 s);
   `_handoff_preflight_block` passes `_HANDOFF_PREFLIGHT_TIMEOUT_S = 3`.
 - Both probes catch `ValueError` → `inconclusive`, detail

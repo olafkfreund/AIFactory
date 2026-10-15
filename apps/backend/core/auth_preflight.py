@@ -24,7 +24,6 @@ benchmark runs flip to ``enforce`` for fail-fast behaviour. ``inconclusive``
 
 from __future__ import annotations
 
-import hashlib
 import http.client
 import json
 import os
@@ -65,8 +64,10 @@ class PreflightResult:
         return self.status == "auth_failed"
 
 
-# Definite results (ok / auth_failed) per (provider, sha256(credential)), so a
-# handoff does not re-probe every time. Inconclusive results are never cached.
+# Definite results (ok / auth_failed) per (provider, credential), so a handoff
+# does not re-probe every time. Inconclusive results are never cached. Keyed on
+# the raw credential: in-process only (os.environ already holds it), never
+# logged; a fast hash of it trips CodeQL py/weak-sensitive-data-hashing.
 _CACHE_TTL_S = 300
 _cache: dict[tuple[str, str], tuple[float, PreflightResult]] = {}
 
@@ -74,7 +75,7 @@ _cache: dict[tuple[str, str], tuple[float, PreflightResult]] = {}
 def _cached(
     provider: str, secret: str, probe: Callable[[], PreflightResult]
 ) -> PreflightResult:
-    key = (provider, hashlib.sha256(secret.encode()).hexdigest())
+    key = (provider, secret)
     hit = _cache.get(key)
     if hit and time.monotonic() - hit[0] < _CACHE_TTL_S:
         return hit[1]

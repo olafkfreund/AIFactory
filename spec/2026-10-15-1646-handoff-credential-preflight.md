@@ -109,7 +109,9 @@ matching points above.
    mode cannot crash a build. `_http_status` (anthropic) is back to not reading
    the body at all.
 4. **Latency.** A module-level cache keyed by
-   `(provider, sha256(credential))` with a 5-minute TTL holds `ok` and
+   `(provider, credential)` (not sha256 as review asked: CodeQL
+   `py/weak-sensitive-data-hashing` fails the PR on a fast hash of the key;
+   the dict is in-process only, like `os.environ`, and never logged) with a 5-minute TTL holds `ok` and
    `auth_failed` results only; `inconclusive` is never cached. Probes take a
    `timeout`; the handoff passes 3 s, the build path keeps 10 s. Claude models
    in `phase_models` are probed on handoffs too.
