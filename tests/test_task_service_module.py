@@ -147,3 +147,41 @@ def test_task_rows_declare_the_correlation_key(tmp_path, monkeypatch):
 
     assert row("001-a")["correlationKey"] == "owner/repo#7"
     assert row("002-b")["correlationKey"] == "af-002-b"
+
+
+def test_task_rows_surface_contract_hold_from_plan(tmp_path, monkeypatch):
+    # #1709: task_to_dict copies a string contractHold from the spec's plan
+    # into the row and leaves the key absent otherwise.
+    import json
+
+    from server.routes import task_service
+    from server.routes.task_models import Task
+
+    specs = tmp_path / ".aifactory" / "specs"
+    for spec_id, plan in (
+        ("001-held", {"contractHold": "contract held (held by server); normal build"}),
+        ("002-clean", {"phases": []}),
+    ):
+        (specs / spec_id).mkdir(parents=True)
+        (specs / spec_id / "implementation_plan.json").write_text(json.dumps(plan))
+    monkeypatch.setattr(
+        task_service, "load_projects", lambda: {"p": {"path": str(tmp_path)}}
+    )
+
+    def row(spec_id: str) -> dict:
+        task = Task(
+            id=f"p:{spec_id}",
+            spec_id=spec_id,
+            project_id="p",
+            title=spec_id,
+            description="",
+            created_at="2026-10-15T00:00:00Z",
+            updated_at="2026-10-15T00:00:00Z",
+        )
+        return task_service.task_to_dict(task)
+
+    assert (
+        row("001-held")["contractHold"]
+        == "contract held (held by server); normal build"
+    )
+    assert "contractHold" not in row("002-clean")
