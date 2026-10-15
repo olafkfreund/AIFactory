@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1745
 intent: intent/2026-10-15-1745-aifactory-env-allowlist.md
 ---
