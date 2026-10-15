@@ -1,4 +1,4 @@
-"""Call-site regression tests for per-project `.aifactory/.env` loading (#1745)."""
+"""Call-site regression tests for per-project settings loading (#1745, #1795)."""
 
 import contextlib
 import os
@@ -12,13 +12,19 @@ from server.services import (
     agent_service,
     agent_spec_creation,
     pr_review_service,
+    project_settings_store,
     trusted_contract,
     trusted_contract_store,
 )
 from server.services.agent_service import AgentService
 from server.services.pr_review_service import PRReviewService
 
-_ENV_CONTENT = "USE_CLAUDE_MD=true\nLD_PRELOAD=x\nNODE_OPTIONS=x\nBASH_ENV=x\n"
+_SEEDED_SETTINGS = {
+    "USE_CLAUDE_MD": "true",
+    "LD_PRELOAD": "x",
+    "NODE_OPTIONS": "x",
+    "BASH_ENV": "x",
+}
 _REFUSED_KEYS = ("LD_PRELOAD", "NODE_OPTIONS", "BASH_ENV")
 
 
@@ -30,11 +36,14 @@ def _prepare_project_env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[Path, list[dict[str, str]]]:
     project_path = tmp_path / "project"
-    env_dir = project_path / ".aifactory"
-    env_dir.mkdir(parents=True)
-    (env_dir / ".env").write_text(_ENV_CONTENT, encoding="utf-8")
+    project_path.mkdir(parents=True)
 
-    for key in ("USE_CLAUDE_MD", *_REFUSED_KEYS):
+    async def fake_get_settings(_path: str | Path) -> dict[str, str]:
+        return dict(_SEEDED_SETTINGS)
+
+    monkeypatch.setattr(project_settings_store, "get_settings", fake_get_settings)
+
+    for key in ("USE_CLAUDE_MD", project_settings_store.ENV, *_REFUSED_KEYS):
         monkeypatch.delenv(key, raising=False)
 
     recorded_envs: list[dict[str, str]] = []
@@ -57,6 +66,7 @@ def _assert_filtered_env(recorded_envs: list[dict[str, str]]) -> None:
     assert len(recorded_envs) == 1
     env = recorded_envs[0]
     assert env.get("USE_CLAUDE_MD") == "true"
+    assert env.get(project_settings_store.ENV) == "{}"
     for key in _REFUSED_KEYS:
         assert key not in env
 

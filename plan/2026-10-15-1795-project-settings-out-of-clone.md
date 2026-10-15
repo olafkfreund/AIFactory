@@ -216,6 +216,11 @@ names the step: `feat(settings): step N ... (#1795)`.
    apps/backend/.venv/bin/pytest apps/web-server/tests -q -k "agent_service or build_backend or spec_creation or pr_review"
    ```
 
+   Deviation: the module-level `load_project_env` and `mcp_spawn_env` catch a
+   DB error, log a warning and fail closed: no project settings, and MCP config
+   `{}`. They never fall back to the file. A spawn is not blocked by a DB
+   fault, and unit tests that never run `init_db()` keep passing.
+
    Traps:
    - grep for every caller of `load_project_env` first. After this step
      there must be no sync caller left;

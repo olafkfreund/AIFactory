@@ -341,11 +341,37 @@ async def load_project_env(
     session_factory: Any = None,
 ) -> None:
     """Copy stored keys passing ``is_project_env_key`` into ``env`` without overriding."""
-    await ProjectSettingsStore(session_factory).load_project_env(project_path, env)
+    if session_factory is not None:
+        await ProjectSettingsStore(session_factory).load_project_env(project_path, env)
+        return
+    try:
+        settings = await get_settings(project_path)
+    except Exception as e:  # noqa: BLE001 - fail closed if DB is uninitialized/unavailable
+        logger.warning(
+            "Failed to load project settings for %s; skipping project env: %s",
+            sanitize_log(str(project_path)),
+            sanitize_log(str(e)),
+        )
+        return
+    for k, v in settings.items():
+        if is_project_env_key(k) and k not in env:
+            env[k] = v
 
 
 async def mcp_spawn_env(
     project_path: str | Path, session_factory: Any = None
 ) -> dict[str, str]:
     """Return ``{ENV: json.dumps(mcp_keys)}`` for ``project_path``."""
-    return await ProjectSettingsStore(session_factory).mcp_spawn_env(project_path)
+    if session_factory is not None:
+        return await ProjectSettingsStore(session_factory).mcp_spawn_env(project_path)
+    try:
+        settings = await get_settings(project_path)
+    except Exception as e:  # noqa: BLE001 - fail closed if DB is uninitialized/unavailable
+        logger.warning(
+            "Failed to load project MCP settings for %s; defaulting to empty: %s",
+            sanitize_log(str(project_path)),
+            sanitize_log(str(e)),
+        )
+        return {ENV: "{}"}
+    mcp = {k: v for k, v in settings.items() if _is_mcp_key(k)}
+    return {ENV: json.dumps(mcp)}

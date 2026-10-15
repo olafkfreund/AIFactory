@@ -339,3 +339,65 @@ async def test_snapshot_and_refresh_all(
     await pss.refresh_all(session_factory=session_factory)
 
     assert cached_setting(p1, "AIFACTORY_AUTO_MERGE") == "true"
+
+
+async def test_load_project_env_filters_disallowed_keys(
+    store: ProjectSettingsStore, project_dir: Path
+) -> None:
+    env_dir = project_dir / ".aifactory"
+    env_dir.mkdir()
+    (env_dir / ".env").write_text(
+        "USE_CLAUDE_MD=true\nLD_PRELOAD=x\nNODE_OPTIONS=x\nBASH_ENV=x\n",
+        encoding="utf-8",
+    )
+    env: dict[str, str] = {}
+    await store.load_project_env(project_dir, env)
+    assert env == {"USE_CLAUDE_MD": "true"}
+
+
+async def test_no_override_and_strips_quotes(
+    store: ProjectSettingsStore, project_dir: Path
+) -> None:
+    env_dir = project_dir / ".aifactory"
+    env_dir.mkdir()
+    (env_dir / ".env").write_text(
+        'USE_CLAUDE_MD="false"\n'
+        "MAIN_BRANCH='develop'\n"
+        'AI_FACTORY_MODEL="claude-opus-4-6"\n',
+        encoding="utf-8",
+    )
+    env = {"USE_CLAUDE_MD": "true"}
+    await store.load_project_env(project_dir, env)
+    assert env["USE_CLAUDE_MD"] == "true"
+    assert env["MAIN_BRANCH"] == "develop"
+    assert env["AI_FACTORY_MODEL"] == "claude-opus-4-6"
+
+
+async def test_skipped_warning_logs_key_not_value(
+    store: ProjectSettingsStore,
+    project_dir: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    env_dir = project_dir / ".aifactory"
+    env_dir.mkdir()
+    (env_dir / ".env").write_text(
+        "LD_PRELOAD=sentinel-value-1745\n",
+        encoding="utf-8",
+    )
+    env: dict[str, str] = {}
+    with caplog.at_level(logging.WARNING, logger=pss.logger.name):
+        await store.load_project_env(project_dir, env)
+
+    assert env == {}
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "LD_PRELOAD" in warnings[0]
+    assert "sentinel-value-1745" not in warnings[0]
+
+
+async def test_missing_file_is_noop(
+    store: ProjectSettingsStore, project_dir: Path
+) -> None:
+    env = {"EXISTING": "1"}
+    await store.load_project_env(project_dir, env)
+    assert env == {"EXISTING": "1"}
