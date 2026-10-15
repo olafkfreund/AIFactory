@@ -97,6 +97,17 @@ Check environment: `export PATH=<main clone>/apps/backend/.venv/bin:$PATH`, run 
      `# #1624/#1740: aware UTC timestamps, gated repo-wide (tests exempt below)`.
    - Check: `ruff check .` and `ruff format --check` on all touched files.
 
+## Review changes (lead review of PR #1781)
+
+5. User-facing display times stay local, while stored values stay UTC. Call
+   `.astimezone()` before `strftime` in `review/html_generator.py:242`,
+   `review/state.py:184`, `review/formatters.py:297` and `review/reviewer.py:218`.
+   This replaces the spec's "display strings show UTC" risk: display now matches
+   the base branch.
+6. `tests/test_recovery.py::test_legacy_naive_attempt_counts_inside_window`: a
+   naive attempt timestamp from 1 minute ago counts inside the window (count 1).
+   Check: `pytest tests/test_recovery.py -q`.
+
 ## Tests
 
 - `pytest tests/test_merge_types.py -q`: the new test passes, and fails on base.

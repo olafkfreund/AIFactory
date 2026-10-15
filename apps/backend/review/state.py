@@ -181,7 +181,7 @@ class ReviewState:
             spec_dir: Spec directory path (required if auto_save=True)
             auto_save: Whether to automatically save after adding feedback
         """
-        timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M")
+        timestamp = datetime.now(UTC).astimezone().strftime("%Y-%m-%d %H:%M")
         self.feedback.append(f"[{timestamp}] {feedback}")
 
         if auto_save and spec_dir:
