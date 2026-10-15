@@ -32,7 +32,7 @@ from typing import Any
 from urllib.parse import quote, urlparse
 
 from core import auth_preflight
-from core.child_env import child_env
+from core.child_env import child_env, lfs_upload
 from core.git_credentials import authed_push_url
 
 _log = logging.getLogger(__name__)
@@ -380,6 +380,27 @@ def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | 
         # credential env are yielded together, so the token is only ever offered
         # to an https github.com remote.
         with authed_push_url(url) as (push_url, git_env):
+
+            def run(argv: list[str], t: int) -> tuple[int, str, str]:
+                p = subprocess.run(  # noqa: S603
+                    argv,
+                    cwd=str(repo),
+                    env=git_env,
+                    capture_output=True,
+                    text=True,
+                    timeout=t,
+                    check=False,
+                )
+                return p.returncode, p.stdout, p.stderr
+
+            err = lfs_upload(run, sha)
+            if err:
+                _log.warning(
+                    "[handoff] LFS upload for %s failed; not pushing: %s",
+                    build_branch,
+                    err[:200],
+                )
+                return url, None
             subprocess.run(
                 [
                     "git",

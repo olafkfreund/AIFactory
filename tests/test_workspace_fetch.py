@@ -164,6 +164,8 @@ def test_push_branch_pushes_to_origin(monkeypatch, tmp_path) -> None:
             return _R(stdout="aifactory/042-x")
         if args[:3] == ["git", "remote", "get-url"]:
             return _R(stdout="https://github.com/o/r.git")
+        if args[:2] == ["git", "grep"]:
+            return _R(rc=1)  # no filter=lfs: no LFS step (#1721)
         return _R(rc=0)  # push
 
     monkeypatch.setattr(wf.subprocess, "run", fake_run)

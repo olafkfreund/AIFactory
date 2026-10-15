@@ -1,0 +1,91 @@
+"""LFS objects must land before either backend branch push (#1721)."""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+_BACKEND = Path(__file__).parent.parent / "apps" / "backend"
+if str(_BACKEND) not in sys.path:
+    sys.path.insert(0, str(_BACKEND))
+
+from core import child_env, workspace_fetch  # noqa: E402
+from pfactory import tfactory_client  # noqa: E402
+
+
+@pytest.mark.parametrize("upload_fails", [True, False], ids=["failure", "success"])
+def test_workspace_upload_precedes_push(monkeypatch, tmp_path, upload_fails):
+    monkeypatch.setenv("WORKSPACE_URI", "s3://bucket/workspace")
+    monkeypatch.setattr(child_env.shutil, "which", lambda _: "/usr/bin/git-lfs")
+    wt = tmp_path / ".aifactory" / "worktrees" / "tasks" / "042-x"
+    wt.mkdir(parents=True)
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        if argv[:2] == ["git", "rev-parse"]:
+            out = "aifactory/042-x"
+        elif argv[:3] == ["git", "remote", "get-url"]:
+            out = "https://github.com/o/r"
+        else:
+            out = ""
+        rc = 1 if argv[:2] == ["git", "config"] else 0
+        if "lfs" in argv and "push" in argv and upload_fails:
+            rc = 2
+        return SimpleNamespace(
+            returncode=rc, stdout=out, stderr="boom" if rc == 2 else ""
+        )
+
+    monkeypatch.setattr(workspace_fetch.subprocess, "run", fake_run)
+    assert workspace_fetch.maybe_push_workspace_branch(tmp_path, "042-x") is (
+        not upload_fails
+    )
+    argv = [call[0] for call in calls]
+    upload = next(i for i, args in enumerate(argv) if "lfs" in args and "push" in args)
+    pushes = [i for i, args in enumerate(argv) if args[:2] == ["git", "push"]]
+    assert argv[upload][-1] == "HEAD"
+    assert calls[upload][1]["timeout"] == 600
+    assert all(call[1]["env"] is calls[upload][1]["env"] for call in calls[2:])
+    assert pushes == ([] if upload_fails else [upload + 1])
+
+
+@pytest.mark.parametrize("upload_fails", [True, False], ids=["failure", "success"])
+def test_handoff_upload_precedes_push(monkeypatch, tmp_path, upload_fails):
+    monkeypatch.setattr(child_env.shutil, "which", lambda _: "/usr/bin/git-lfs")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    sha = "a" * 40
+    url = "https://github.com/o/r"
+    monkeypatch.setattr(tfactory_client, "_locate_build_commit", lambda *_: (repo, sha))
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        if argv[:3] == ["git", "remote", "get-url"]:
+            out = url
+        elif argv[:2] == ["git", "ls-remote"]:
+            out = f"{sha}\trefs/heads/aifactory/042-x"
+        else:
+            out = ""
+        rc = 1 if argv[:2] == ["git", "config"] else 0
+        if "lfs" in argv and "push" in argv and upload_fails:
+            rc = 2
+        return SimpleNamespace(
+            returncode=rc, stdout=out, stderr="boom" if rc == 2 else ""
+        )
+
+    monkeypatch.setattr(tfactory_client.subprocess, "run", fake_run)
+    assert tfactory_client._git_info_and_push(tmp_path, "042-x") == (
+        url,
+        None if upload_fails else "aifactory/042-x",
+    )
+    argv = [call[0] for call in calls]
+    upload = next(i for i, args in enumerate(argv) if "lfs" in args and "push" in args)
+    pushes = [i for i, args in enumerate(argv) if args[:2] == ["git", "push"]]
+    assert argv[upload][-1] == sha
+    assert calls[upload][1]["timeout"] == 600
+    assert all(call[1]["env"] is calls[upload][1]["env"] for call in calls[1:])
+    assert pushes == ([] if upload_fails else [upload + 1])
