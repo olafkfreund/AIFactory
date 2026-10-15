@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1727
 spec: spec/2026-10-15-1727-bump-version-lockfile-ci.md
 ---
