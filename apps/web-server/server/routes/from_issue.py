@@ -232,12 +232,15 @@ def _write_spec(
     return spec_dir
 
 
-def _find_existing_spec(project_path: Path, issue_number: int) -> str | None:
+def _find_existing_spec(
+    project_path: Path, issue_number: int, repo_ref: str | None = None
+) -> str | None:
     """Return the spec id already recorded for this issue number, if any (#878).
 
     Keys on ``requirements.provenance.issue_number``, which ``_write_spec``
     stamps on first write — so a redelivered issue adopts the existing spec
-    instead of minting a duplicate build.
+    instead of minting a duplicate build. When both the stored and the requested
+    repo are known and differ, it is another repo's issue and does not match (#1775).
     """
     specs_dir = project_path / ".aifactory" / "specs"
     if not specs_dir.is_dir():
@@ -255,6 +258,9 @@ def _find_existing_spec(project_path: Path, issue_number: int) -> str | None:
             isinstance(provenance, dict)
             and provenance.get("issue_number") == issue_number
         ):
+            stored = provenance.get("repo")
+            if repo_ref and stored and stored != repo_ref:
+                continue
             return spec_dir.name
     return None
 
@@ -323,7 +329,9 @@ async def create_from_issue(
     # mint a duplicate spec/build — no-op onto the existing one.
     issue_number = issue.get("number")
     if isinstance(issue_number, int):
-        existing_spec_id = _find_existing_spec(projects_path, issue_number)
+        existing_spec_id = _find_existing_spec(
+            projects_path, issue_number, _declared_repo(request) or None
+        )
         if existing_spec_id is not None:
             return {
                 "success": True,
