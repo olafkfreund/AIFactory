@@ -62,9 +62,12 @@ Approved decisions carried from the spec:
 2. `apps/backend/pfactory/tfactory_client.py` + `tests/test_pfactory_tfactory_client.py`
    - Add `import asyncio` to the imports (`:20-31`).
    - Add a helper above `send_handoff`:
-     `_handoff_preflight_block(payload: dict) -> dict | None`. It imports
-     `preflight_mode, run_auth_preflight` from `core.auth_preflight` inside the
-     function; returns `None` when mode is `off` or there are no models. Models:
+     `_handoff_preflight_block(payload: dict) -> dict | None`. It calls
+     `auth_preflight.preflight_mode()` / `auth_preflight.run_auth_preflight()`
+     through a top-level `from core import auth_preflight` (deviation: the plan
+     first said a lazy import, but the repo's ruff ratchet rejects a new
+     PLC0415, and `core.child_env` is already imported at top level, so the
+     lazy import bought nothing). Returns `None` when mode is `off` or there are no models. Models:
      `((payload.get("contract") or {}).get("execution") or {}).get("phase_models")`,
      string values only, guarding each level with `isinstance(..., dict)`.
      Logs each non-`ok`, non-`skipped` result with `_log.warning` (provider and
@@ -94,9 +97,8 @@ Approved decisions carried from the spec:
    `tests/test_tfactory_auto_handoff.py`; `ruff check`, `ruff format --check`.
    Prove (a) fails on unfixed `tfactory_client.py` (copy the old file from
    `origin/dev` in temporarily).
-   Traps: `send_handoff` must never raise; the helper import must be lazy (the
-   module is imported by the web server with `apps/backend` on `sys.path`);
-   the probe is blocking, so it must run in `asyncio.to_thread`.
+   Traps: `send_handoff` must never raise; call through the module
+   (`auth_preflight.run_auth_preflight`) so tests can monkeypatch it; the probe is blocking, so it must run in `asyncio.to_thread`.
 
 ## Tests
 
