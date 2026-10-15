@@ -1828,6 +1828,7 @@ async def run_pr_endgame(
     merge_gate = _with_receipt_veto(merge_gate, spec_dir, asyncio.get_running_loop())
 
     title, body = _pr_title_body(spec_dir, spec_id)
+    body = f"{body}\n\n{review_tier_note(spec_dir, review_tier, trusted=trusted)}"
     if review_tier_floor:
         # Advisory rollout (#1456): tell the human reviewer what the paths say,
         # even while the floor is not yet allowed to withhold the merge. Both

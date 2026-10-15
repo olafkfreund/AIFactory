@@ -779,3 +779,38 @@ def test_review_tier_note_crafted_tier_uses_constant_label(tmp_path: Path) -> No
 
     assert "unrecognised" in note
     assert "@evil" not in note
+
+
+def test_1698_endgame_body_flags_tier_below_signed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec, signed = _spec(tmp_path, review_tier="blocking")
+    captured: dict[str, str] = {}
+
+    async def _fake_watch(**_k: object) -> dict[str, object]:
+        return {"merged": False, "reason": "stub"}
+
+    def _fake_create_pr(**kwargs: Any) -> int:
+        captured["body"] = kwargs["body"]
+        return 42
+
+    monkeypatch.setattr(pe, "watch_and_finish", _fake_watch)
+    monkeypatch.setattr(pe, "create_pr", _fake_create_pr)
+    monkeypatch.setattr(pe, "request_copilot_review", lambda *_a, **_k: True)
+    monkeypatch.setattr(pe, "_pr_title_body", lambda _d, _s: ("t", "b"))
+    asyncio.run(
+        pe.run_pr_endgame(
+            spec_dir=spec,
+            spec_id="001-x",
+            worktree=spec,
+            branch="aifactory/001-x",
+            base="main",
+            repo="owner/repo",
+            auto_merge=False,
+            review_tier="low",
+            reviewer="copilot",
+            background=False,
+            trusted=_rec(signed),
+        )
+    )
+    assert "Possible tampering" in captured["body"]

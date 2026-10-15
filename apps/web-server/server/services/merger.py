@@ -278,7 +278,7 @@ def honest_pr_title_and_body(
         "no verification gates recorded for this build"
     )
     qa_status = _qa_status_for(spec_dir)
-    tier_line = f"\n- Review tier: {review_tier}" if review_tier else ""
+    tier_line = f"\n- {pe.review_tier_note(spec_dir, review_tier, trusted=None)}"
     issue = _issue_number(spec_dir)
     fixes_line = f"\n\nFixes #{issue}" if issue is not None else ""
     body = (
