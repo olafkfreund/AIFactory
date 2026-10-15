@@ -207,8 +207,13 @@ def _emit(
         unwrap(words, idx, depth, acc, dynamic_args=dynamic_args)
 
 
-# Shell short flags that neither take a value nor read stdin (#1753).
-_SHELL_FLAGS = frozenset("eulxvc")
+# Shell flags (``-x``/``+x``) that take no value and do not read stdin.
+_SHELL_FLAGS = frozenset("eulxv")
+# ``-c`` payloads are re-parsed with bashlex, so only POSIX/bash grammar
+# shells qualify (zsh ``=cmd`` and ksh differ).
+_DASH_C_SHELLS = frozenset({"bash", "sh", "dash"})
+# Cheap refusals only. A script operand is trusted file content (like
+# ``source``, ``BASH_ENV`` and ``-l`` profiles), not a parser boundary.
 _STDIN_SCRIPT = re.compile(r"-|/dev/stdin|/dev/fd/.*|/proc/[^/]+/fd/.*")
 
 
@@ -220,31 +225,38 @@ def _unwrap_dash_c(
     *,
     dynamic_args: bool,
 ) -> None:
-    """Accept only ``<shell> [-eulxv]... -c '<payload>' [args]`` (recurse into
-    the payload) or ``<shell> [-eulxv]... <script> [args]``. Anything else —
-    value-taking, long or ``+`` options, ``-s``/``-i``, or a script that is
-    stdin — fails closed."""
+    """Accept only ``<shell> [-+flags]... -c [-+flags]... '<payload>' [args]``
+    (recurse into the payload; bash/sh/dash only) or
+    ``<shell> [-+flags]... <script> [args]``. Flags come from
+    ``_SHELL_FLAGS``; any other option fails closed. As in bash, the operand
+    is the first non-option word, wherever ``-c`` appears."""
     tokens = [w.word for w in words]
-    for j in range(idx + 1, len(tokens)):
+    dash_c = False
+    j = idx + 1
+    while j < len(tokens):
         _require_literal(words, j, j + 1)
         tok = tokens[j]
-        if tok.startswith("-") and tok != "-":
-            if tok.startswith("--") or not set(tok[1:]) <= _SHELL_FLAGS:
-                raise UnparseableCommand(f"shell option {tok} cannot be validated")
-            if "c" not in tok:
-                continue
-            # bash -c -- 'P': the payload is the word after ``--``.
-            k = j + 2 if tokens[j + 1 : j + 2] == ["--"] else j + 1
-            if k >= len(tokens) or not _word_parts_are_literal(words[k]):
-                raise UnparseableCommand(
-                    "shell -c payload is not a static literal; cannot validate"
-                )
-            _extract(words[k].word, depth + 1, acc, dynamic_args=dynamic_args)
-            return
-        if tok.startswith("+") or _STDIN_SCRIPT.fullmatch(tok):
-            raise UnparseableCommand(f"shell operand {tok} cannot be validated")
-        return  # a script path; its arguments are data
-    raise UnparseableCommand("shell reads commands from stdin; cannot validate")
+        if tok == "--":
+            j += 1
+            break
+        if tok[:1] not in ("-", "+") or tok == "-":
+            break
+        flags = set(tok[1:])
+        if tok[0] == "-" and "c" in flags:
+            dash_c = True
+            flags.discard("c")
+        if not flags <= _SHELL_FLAGS or not tok[1:]:  # a bare `+`
+            raise UnparseableCommand(f"shell option {tok} cannot be validated")
+        j += 1
+    if j >= len(tokens):
+        raise UnparseableCommand("shell has no command or script; cannot validate")
+    _require_literal(words, j, j + 1)
+    if dash_c:
+        if _basename(tokens[idx]) not in _DASH_C_SHELLS:
+            raise UnparseableCommand(f"{tokens[idx]} -c cannot be validated")
+        _extract(tokens[j], depth + 1, acc, dynamic_args=dynamic_args)
+    elif _STDIN_SCRIPT.fullmatch(tokens[j]):
+        raise UnparseableCommand(f"shell operand {tokens[j]} cannot be validated")
 
 
 _ENV_VALUE_LONG = ("--unset", "--chdir", "--argv0")

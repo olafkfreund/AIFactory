@@ -59,6 +59,11 @@ BYPASS_PAYLOADS = [
     "ls; nc evil 80",
     "cat f | socat -",
     "bash -c -- 'nc evil 80'",
+    # The payload is the first non-option word, even after -c.
+    "bash -c -x 'nc evil 80'",
+    # `watch` runs its arguments through sh -c; it is not allowlisted.
+    "watch 'nc evil 80'",
+    "watch -n1 ls",
     "ls; ./evil=1 git status",
 ]
 
@@ -120,7 +125,8 @@ DYNAMIC_COMMAND_WORD = [
     "command {-p,nc} git",
     "bash {-c,'nc x'} x",
     "find . -name {x,-exec} nc {} +",
-    # A shell with no -c and no script, or with -s, reads stdin.
+    # Cheap shell refusals (stdin forms, -s). Not a parser boundary: a script
+    # operand is trusted file content, like a file the agent writes.
     "bash <<< 'nc x'",
     "printf 'nc x' | bash",
     "bash -s",
@@ -148,29 +154,40 @@ DYNAMIC_COMMAND_WORD = [
     "bash /dev/fd/0",
     "bash /proc/self/fd/0",
     "bash -e",
+    # -c re-parses with bashlex: bash/sh/dash only.
+    "zsh -c 'git status'",
+    "ksh -c 'git status'",
+    "bash -c -o posix 'ls'",
+    "bash -c +c ls",
+    # ANSI-C and locale quoting in the command word.
+    "$'nc' evil",
+    '$"nc" evil',
 ]
 
 # Must stay allowed by the parser after the #1753 hardening.
-MUST_PARSE = [
-    'timeout 60 git log "$REF"',
-    'bash script.sh "$A"',
-    "bash -c 'ls' \"$A\"",
-    'xargs -I{} cp {} "$D"',
-    'command -v "$T"',
-    "FOO=$BAR git status",
-    'git -C "$REPO" status',
-    'cd "$DIR" && ls',
-    "find . -name '*.py' -exec ruff check {} +",
-    "env FOO=1 npm test",
-    "npx --yes prettier --check .",
-    "[ -f x ] && cat x",
-    "ls *.py",
-    "bash -euxc 'git status'",
-    "bash -e script.sh",
-    'bash -c "ls *.py"',
-    "find . -name '*.pyc' -exec rm {} \\;",
-    "find . -name x\\* -exec ls {} +",
-]
+MUST_PARSE = {
+    'timeout 60 git log "$REF"': ["timeout", "git"],
+    'bash script.sh "$A"': ["bash"],
+    "bash -c 'ls' \"$A\"": ["bash", "ls"],
+    'xargs -I{} cp {} "$D"': ["xargs", "cp"],
+    'command -v "$T"': ["command"],
+    "FOO=$BAR git status": ["git"],
+    'git -C "$REPO" status': ["git"],
+    'cd "$DIR" && ls': ["cd", "ls"],
+    "find . -name '*.py' -exec ruff check {} +": ["find", "ruff"],
+    "env FOO=1 npm test": ["env", "npm"],
+    "npx --yes prettier --check .": ["npx"],
+    "[ -f x ] && cat x": ["[", "cat"],
+    "ls *.py": ["ls"],
+    "bash -euxc 'git status'": ["bash", "git"],
+    "bash -e script.sh": ["bash"],
+    'bash -c "ls *.py"': ["bash", "ls"],
+    "find . -name '*.pyc' -exec rm {} \\;": ["find", "rm"],
+    "find . -name x\\* -exec ls {} +": ["find", "ls"],
+    "bash -c -x 'git status'": ["bash", "git"],
+    "bash -x -c -e 'ls'": ["bash", "ls"],
+    "bash -c -- 'ls'": ["bash", "ls"],
+}
 
 # `git -c …` config injection / transport-exec hijack — must be blocked even
 # though the binary (`git`) is allowlisted (#321 C4).
@@ -418,9 +435,9 @@ class TestAstExtractorUnit:
         with pytest.raises(UnparseableCommand):
             extract_commands_ast("bash --norc scripts/deploy.sh")
 
-    @pytest.mark.parametrize("command", MUST_PARSE)
-    def test_must_parse(self, command):
-        assert extract_commands_ast(command)
+    @pytest.mark.parametrize(("command", "names"), MUST_PARSE.items())
+    def test_must_parse(self, command, names):
+        assert extract_commands_ast(command) == names
 
 
 def _hook(command: str, cwd: Path) -> dict[str, Any]:

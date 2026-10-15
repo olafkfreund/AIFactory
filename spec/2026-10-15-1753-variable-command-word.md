@@ -12,8 +12,15 @@ Design change from the fifth review of PR #1782: the literal check is an allow
 list of word shapes (`_static_shape`: safe unquoted characters, backslash
 escapes, single-quoted
 text, double-quoted text without `$`/backtick/backslash, `{}`, lone `[`/`]`),
-and shell wrappers accept only `[-eulxv]... -c '<payload>'` or
-`[-eulxv]... <script>`. See plan step 2 for details.
+and shell wrappers accept only `[-+flags]... [-c] [-+flags]... <operand>`
+(the operand is the first non-option word; `-c` payloads re-parsed for
+bash/sh/dash only). See plan step 2 for details.
+
+Trust boundary: a shell script operand, `source`/`.`, `BASH_ENV` and `-l`
+profile files are trusted file content, the same as any file the agent
+writes. They are not a parser boundary; the stdin-path refusals
+(`-`, `/dev/stdin`, `/dev/fd/*`, `/proc/*/fd/*`) are cheap checks only.
+`watch` leaves the base allowlist because it runs its arguments via `sh -c`.
 
 `_emit` (`apps/backend/security/ast_parser.py:150`) is the single place every
 command word is recorded: the top-level walk in `_extract` and every wrapper
