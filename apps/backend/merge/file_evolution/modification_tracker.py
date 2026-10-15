@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from ..semantic_analyzer import SemanticAnalyzer
@@ -112,7 +112,7 @@ class ModificationTracker:
             snapshot = TaskSnapshot(
                 task_id=task_id,
                 task_intent="",
-                started_at=datetime.now(),
+                started_at=datetime.now(UTC),
                 content_hash_before=compute_content_hash(old_content),
             )
 
@@ -121,7 +121,7 @@ class ModificationTracker:
         semantic_changes = analysis.changes
 
         # Update snapshot
-        snapshot.completed_at = datetime.now()
+        snapshot.completed_at = datetime.now(UTC)
         snapshot.content_hash_after = compute_content_hash(new_content)
         snapshot.semantic_changes = semantic_changes
         snapshot.raw_diff = raw_diff
@@ -324,7 +324,7 @@ class ModificationTracker:
             task_id: The task identifier
             evolutions: Current evolution data (will be updated)
         """
-        now = datetime.now()
+        now = datetime.now(UTC)
         for evolution in evolutions.values():
             snapshot = evolution.get_task_snapshot(task_id)
             if snapshot and snapshot.completed_at is None:

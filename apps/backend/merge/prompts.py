@@ -516,14 +516,14 @@ def optimize_prompt_for_length(
         last_events = context.main_evolution[-half:]
 
         # Create a placeholder event for the middle
-        from datetime import datetime
+        from datetime import UTC, datetime
 
         from .file_timeline import MainBranchEvent
 
         omitted_count = len(context.main_evolution) - max_evolution_events
         placeholder = MainBranchEvent(
             commit_hash="...",
-            timestamp=datetime.now(),
+            timestamp=datetime.now(UTC),
             content="[Content omitted for brevity]",
             source="human",
             commit_message=f"({omitted_count} commits omitted for brevity)",

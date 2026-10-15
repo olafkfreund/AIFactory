@@ -8,8 +8,8 @@ it whenever routes/schemas change so the published API docs stay accurate.
 Usage:
     APP_DISABLE_AUTH=true apps/web-server/.venv/bin/python scripts/generate-openapi-spec.py
 
-Output is pinned to all feature flags off (independent of .env, exported flags and cwd);
-apps/web-server/static/ must not exist.
+Output is pinned to all feature flags off (independent of .env, exported flags and cwd)
+and does not depend on apps/web-server/static/ (#1731).
 """
 
 from __future__ import annotations

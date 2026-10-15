@@ -14,6 +14,7 @@ import json
 import shutil
 import sys
 import tempfile
+from datetime import datetime, timedelta
 from pathlib import Path
 
 # Add parent directory to path for imports
@@ -114,6 +115,25 @@ def test_load_survives_memory_dir_removed_after_init():
         assert manager.attempt_history_file.exists()
         print("  ✓ Survives memory dir removal")
         print()
+    finally:
+        cleanup_test_environment(temp_dir)
+
+
+def test_legacy_naive_attempt_counts_inside_window():
+    """#1740: attempt timestamps written before the UTC change are naive local
+    time. One from a minute ago must still count inside the window."""
+    temp_dir, spec_dir, project_dir = setup_test_environment()
+    try:
+        manager = RecoveryManager(spec_dir, project_dir)
+        history = manager._load_attempt_history()
+        naive = (datetime.now() - timedelta(minutes=1)).isoformat()
+        history["subtasks"]["C1"] = {
+            "attempts": [{"timestamp": naive}],
+            "status": "pending",
+        }
+        manager._save_attempt_history(history)
+
+        assert manager.get_attempt_count("C1") == 1
     finally:
         cleanup_test_environment(temp_dir)
 

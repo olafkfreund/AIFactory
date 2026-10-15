@@ -9,7 +9,7 @@ import contextlib
 import json
 import threading
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 
@@ -73,7 +73,7 @@ class BuildStatus:
                 "number": self.session_number,
                 "started_at": self.session_started,
             },
-            "last_update": self.last_update or datetime.now().isoformat(),
+            "last_update": self.last_update or datetime.now(UTC).isoformat(),
         }
 
     @classmethod
@@ -152,7 +152,7 @@ class StatusManager:
             self._write_pending = False
             self._write_timer = None
             # Update timestamp inside lock to prevent race conditions
-            self._status.last_update = datetime.now().isoformat()
+            self._status.last_update = datetime.now(UTC).isoformat()
             # Capture consistent snapshot while holding lock
             status_dict = self._status.to_dict()
 
@@ -242,7 +242,7 @@ class StatusManager:
             self._status.active = True
             self._status.spec = spec
             self._status.state = state
-            self._status.session_started = datetime.now().isoformat()
+            self._status.session_started = datetime.now(UTC).isoformat()
         self.write(immediate=True)
 
     def set_inactive(self) -> None:

@@ -6,7 +6,7 @@ Spec validation with auto-fix capabilities.
 """
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -20,7 +20,7 @@ def create_minimal_research(spec_dir: Path, reason: str = "No research needed") 
                 "integrations_researched": [],
                 "research_skipped": True,
                 "reason": reason,
-                "created_at": datetime.now().isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
             },
             f,
             indent=2,
@@ -41,7 +41,7 @@ def create_minimal_critique(
                 "issues_found": [],
                 "no_issues_found": True,
                 "critique_summary": reason,
-                "created_at": datetime.now().isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
             },
             f,
             indent=2,
@@ -60,7 +60,7 @@ def create_empty_hints(spec_dir: Path, enabled: bool, reason: str) -> Path:
                 "enabled": enabled,
                 "reason": reason,
                 "hints": [],
-                "created_at": datetime.now().isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
             },
             f,
             indent=2,
