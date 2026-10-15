@@ -148,14 +148,33 @@ _AGENT_ENV_DENY_EXACT: set[str] = {
     "LINEAR_API_KEY",
     "GITHUB_TOKEN",
     "GH_TOKEN",
+    # Host keys that matched neither list (#1674). Their readers keep them: web
+    # server (own env), runner via RUNNER_KEEP, kubejob run.py via Job spec.
+    "APP_CFACTORY_READ_KEY",
+    "CONTEXT7_KEY",
+    "RAPIDAPI_KEY",
+    "LANGCHAIN_API_KEY",
+    "OPENAI_COMPATIBLE_API_KEY",
+    "S3_ACCESS_KEY",
+    "OLLAMA_API_KEY",
+    # #1708: the agent must read the verdict as hold, never the real digest.
+    "AIFACTORY_TRUSTED_CONTRACT",
 }
 
 # Generic secret-bearing names (any host var matching is neutralized).
 # TRUSTED_PLAN_KEY: the HMAC keys that sign trusted plans; an agent holding one
 # could re-sign a task contract it edited (#1667).
 _AGENT_ENV_DENY_PATTERN = re.compile(
-    r"(SECRET|PASSWORD|PRIVATE_KEY|CREDENTIAL|_KMS|PASSPHRASE|TRUSTED_PLAN_KEY)", re.I
+    r"(SECRET|PASSWORD|PRIVATE_KEY|CREDENTIAL|(?:^|_)KMS|PASSPHRASE|TRUSTED_PLAN_KEY)",
+    re.I,
 )
+
+
+def is_denied_env_key(name: str) -> bool:
+    """True when ``name`` is a host secret that must not reach a child process."""
+    return name.upper() in _AGENT_ENV_DENY_EXACT or bool(
+        _AGENT_ENV_DENY_PATTERN.search(name)
+    )
 
 
 def get_agent_env_blanks() -> dict[str, str]:
@@ -174,7 +193,7 @@ def get_agent_env_blanks() -> dict[str, str]:
         # ANTHROPIC_API_KEY — don't blank it. Default (off) still scrubs it.
         if key == "ANTHROPIC_API_KEY" and allow_api_key:
             continue
-        if key in _AGENT_ENV_DENY_EXACT or _AGENT_ENV_DENY_PATTERN.search(key):
+        if is_denied_env_key(key):
             blanks[key] = ""
     return blanks
 
@@ -204,6 +223,8 @@ def get_token_from_keychain() -> str | None:
 
 def _get_token_from_macos_keychain() -> str | None:
     """Get token from macOS Keychain."""
+    from core.child_env import child_env  # noqa: PLC0415 - circular import
+
     try:
         result = subprocess.run(
             [
@@ -216,6 +237,7 @@ def _get_token_from_macos_keychain() -> str | None:
             capture_output=True,
             text=True,
             timeout=5,
+            env=child_env(),
         )
 
         if result.returncode != 0:

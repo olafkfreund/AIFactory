@@ -13,7 +13,7 @@ import mimetypes
 import re
 import subprocess
 import urllib.parse
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -30,6 +30,7 @@ from server.services.argv_safety import (
 )
 from server.services.http_verdict import honest_status
 from server.specpath import browse_roots, registered_project_roots, within_roots
+from server.utils.subprocess_env import child_env
 
 from ..config import get_settings
 from .project_authz import require_project_access
@@ -378,7 +379,7 @@ async def list_directory_direct(
                     "path": str(entry),
                     "type": "directory" if entry.is_dir() else "file",
                     "size": stat.st_size if entry.is_file() else 0,
-                    "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                    "modified": datetime.fromtimestamp(stat.st_mtime, UTC).isoformat(),
                     "extension": entry.suffix.lower() if entry.is_file() else None,
                     "language": detect_language(entry.name)
                     if entry.is_file()
@@ -438,7 +439,7 @@ async def read_file_direct(
         "path": str(full_path),
         "content": content,
         "size": stat.st_size,
-        "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        "modified": datetime.fromtimestamp(stat.st_mtime, UTC).isoformat(),
         "language": detect_language(str(full_path)),
     }
 
@@ -604,7 +605,7 @@ async def list_directory(
             path=str(entry.relative_to(resolve_path(project_id, ""))),
             type="directory" if entry.is_dir() else "file",
             size=stat.st_size if entry.is_file() else 0,
-            modified=datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            modified=datetime.fromtimestamp(stat.st_mtime, UTC).isoformat(),
             extension=entry.suffix.lower() if entry.is_file() else None,
             language=detect_language(entry.name) if entry.is_file() else None,
         )
@@ -668,7 +669,7 @@ async def read_file(
         path=path,
         content=content,
         size=stat.st_size,
-        modified=datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        modified=datetime.fromtimestamp(stat.st_mtime, UTC).isoformat(),
         language=detect_language(path),
     )
 
@@ -815,7 +816,9 @@ async def search_files(
             query,
             search_root,
         ]
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=30, env=child_env()
+        )
 
         for line in proc.stdout.strip().split("\n"):
             if not line:
@@ -914,7 +917,15 @@ async def get_git_diff(
         ) from exc
 
     try:
-        cmd = ["git", "diff", "--name-status", base, "--"]
+        cmd = [
+            "git",
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--name-status",
+            base,
+            "--",
+        ]
         if path:
             cmd.append(path)
 
@@ -924,6 +935,7 @@ async def get_git_diff(
             capture_output=True,
             text=True,
             timeout=30,
+            env=child_env(),
         )
 
         if proc.returncode != 0:

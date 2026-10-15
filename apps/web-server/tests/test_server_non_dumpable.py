@@ -68,6 +68,11 @@ def test_lifespan_hardens_the_serving_process_first() -> None:
 
 
 def test_hardening_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(main.ctypes, "CDLL", lambda *_a, **_k: FailingLibc())
+    main._make_non_dumpable()  # first call puts the backend on sys.path
+    from core import process_hardening  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        process_hardening.ctypes, "CDLL", lambda *_a, **_k: FailingLibc()
+    )
     with pytest.raises(SystemExit):
         main._make_non_dumpable()

@@ -140,7 +140,9 @@ def test_branch_ahead_and_changed_measures(tmp_path):
             "fetch origin main": CmdResult(0, "", ""),
             "fetch origin aifactory/1": CmdResult(0, "", ""),
             "rev-list --count": CmdResult(0, "3\n", ""),
-            "diff --name-only": CmdResult(0, "a.py\nb.py\n", ""),
+            "diff --no-ext-diff --no-textconv --name-only": CmdResult(
+                0, "a.py\nb.py\n", ""
+            ),
         }
     )
     got = mg._branch_ahead_and_changed(tmp_path, "main", "aifactory/1", r)
@@ -166,7 +168,7 @@ def test_branch_ahead_and_changed_zero_is_measured_not_unmeasurable(tmp_path):
         {
             "fetch origin": CmdResult(0, "", ""),
             "rev-list --count": CmdResult(0, "0\n", ""),
-            "diff --name-only": CmdResult(0, "", ""),
+            "diff --no-ext-diff --no-textconv --name-only": CmdResult(0, "", ""),
         }
     )
     got = mg._branch_ahead_and_changed(tmp_path, "main", "aifactory/1", r)
@@ -181,7 +183,7 @@ def test_branch_ahead_and_changed_unmeasurable_when_base_fetch_fails(tmp_path):
             "fetch origin main": CmdResult(1, "", "connection reset"),
             "fetch origin aifactory/1": CmdResult(0, "", ""),
             "rev-list --count": CmdResult(0, "3\n", ""),
-            "diff --name-only": CmdResult(0, "a.py\n", ""),
+            "diff --no-ext-diff --no-textconv --name-only": CmdResult(0, "a.py\n", ""),
         }
     )
     got = mg._branch_ahead_and_changed(tmp_path, "main", "aifactory/1", r)
@@ -198,7 +200,9 @@ def test_branch_ahead_and_changed_unmeasurable_when_diff_fails(tmp_path):
             "fetch origin main": CmdResult(0, "", ""),
             "fetch origin aifactory/1": CmdResult(0, "", ""),
             "rev-list --count": CmdResult(0, "3\n", ""),
-            "diff --name-only": CmdResult(1, "", "ambiguous argument"),
+            "diff --no-ext-diff --no-textconv --name-only": CmdResult(
+                1, "", "ambiguous argument"
+            ),
         }
     )
     got = mg._branch_ahead_and_changed(tmp_path, "main", "aifactory/1", r)
@@ -309,8 +313,7 @@ def _routes(**overrides) -> dict[str, CmdResult]:
         "pr list": CmdResult(0, "", ""),
         "fetch origin": CmdResult(0, "", ""),
         "rev-list --count": CmdResult(0, "3\n", ""),
-        "diff --name-only": CmdResult(0, "a.py\n", ""),
-        "auth setup-git": CmdResult(0, "", ""),
+        "diff --no-ext-diff --no-textconv --name-only": CmdResult(0, "a.py\n", ""),
         "git push": CmdResult(0, "", ""),
         "pr create": CmdResult(0, "https://github.com/o/r/pull/5", ""),
     }
@@ -386,7 +389,11 @@ def test_process_spec_skips_empty_branch_no_pr_opened(tmp_path, monkeypatch):
 def test_process_spec_skips_zero_changed_files_even_if_ahead(tmp_path, monkeypatch):
     monkeypatch.setenv("AIFACTORY_AUTO_PR", "true")
     spec_dir = _spec(tmp_path, "001-x")
-    r = FakeRunner(_routes(**{"diff --name-only": CmdResult(0, "", "")}))
+    r = FakeRunner(
+        _routes(
+            **{"diff --no-ext-diff --no-textconv --name-only": CmdResult(0, "", "")}
+        )
+    )
     out = mg._process_spec("proj", tmp_path, spec_dir, dry_run=False, runner=r)
     assert out["action"] == "skipped"
     assert "no_content" in out["reason"]
@@ -486,7 +493,7 @@ def test_sweep_accounts_for_every_spec(tmp_path, monkeypatch):
             return CmdResult(0, f"aifactory/{spec_id}", "")
         if "rev-list --count" in joined:
             return CmdResult(0, "0\n" if spec_id == "002-empty" else "3\n", "")
-        if "diff --name-only" in joined:
+        if "diff --no-ext-diff --no-textconv --name-only" in joined:
             return CmdResult(0, "" if spec_id == "002-empty" else "a.py\n", "")
         if "pr list" in joined:
             return CmdResult(0, "", "")
@@ -1001,7 +1008,7 @@ def _local_only_routes(ls_remote_rc: int) -> dict[str, CmdResult]:
         "ls-remote": CmdResult(ls_remote_rc, "", ""),
         "rev-parse --verify": CmdResult(0, "", ""),
         "rev-list --count": CmdResult(0, "2\n", ""),
-        "diff --name-only": CmdResult(0, "a.py\n", ""),
+        "diff --no-ext-diff --no-textconv --name-only": CmdResult(0, "a.py\n", ""),
     }
 
 

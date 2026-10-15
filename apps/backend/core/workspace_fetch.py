@@ -14,14 +14,19 @@ no-op and today's behaviour is unchanged.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import subprocess
+import tempfile
 from pathlib import Path
 
+from core.child_env import child_env
 from core.git_credentials import authed_push_url
 
 _log = logging.getLogger(__name__)
+
+_USAGE_MAX_BYTES = 1 << 20
 
 WORKSPACE_URI_ENV = "WORKSPACE_URI"
 
@@ -49,6 +54,7 @@ def _mark_git_safe_directory(dest: Path) -> None:
                 ["git", "config", "--global", "--add", "safe.directory", path],  # noqa: S607
                 check=True,
                 capture_output=True,
+                env=child_env(),
             )
         except (OSError, subprocess.CalledProcessError) as exc:
             _log.warning("[workspace_fetch] could not mark %s git-safe: %s", path, exc)
@@ -115,6 +121,7 @@ def maybe_push_workspace_branch(
         return subprocess.run(  # noqa: S603
             ["git", *args],  # noqa: S607
             cwd=str(wt),
+            env=child_env(),
             capture_output=True,
             text=True,
             timeout=120,
@@ -127,8 +134,9 @@ def maybe_push_workspace_branch(
         if not branch or not url:
             _log.warning("[workspace_fetch] worktree has no branch/origin; skip push")
             return False
-        # The token rides in GIT_ASKPASS, never in argv — /proc/<pid>/cmdline is
-        # world-readable for the lifetime of the child (AIFactory#1366).
+        # The token rides in a per-call GH_CONFIG_DIR (github_env), never in argv
+        # or env; the URL is not rewritten. /proc/<pid>/cmdline is world-readable
+        # for the lifetime of the child (AIFactory#1366, #1723).
         with authed_push_url(url) as (push_url, git_env):
             res = subprocess.run(  # noqa: S603
                 ["git", "push", push_url, f"HEAD:{branch}"],  # noqa: S607
@@ -202,18 +210,33 @@ def maybe_push_usage(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
         return False
 
 
+def _total_tokens(raw: bytes) -> float | None:
+    """``totalTokens`` of a usage document, or None when it is not a JSON object."""
+    try:
+        doc = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(doc, dict):
+        return None
+    total = doc.get("totalTokens", 0)
+    return total if isinstance(total, int | float) else 0
+
+
 def maybe_fetch_usage(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
     """Control-plane counterpart to :func:`maybe_push_usage`.
 
-    If the data-PVC spec dir has no ``token_usage.json`` (the packed path never
-    wrote it there), fetch the one the Job pushed and write it locally so
-    ``completion.read_usage`` finds it and the completion event carries real token
-    usage to CFactory. No-op when the file already exists (co-mount path) or no
-    pushed copy exists. Best-effort: never raises.
+    Fetches the ``token_usage.json`` the Job pushed and writes it locally so
+    ``completion.read_usage`` and the completion event carry real token usage.
+    The object is always fetched (a failed or stopped build may have pushed a
+    higher total than a stale local copy) but written only when the local copy is
+    missing, unreadable, or has a strictly lower ``totalTokens`` (#1633). Objects
+    over 1 MiB, or that are not a JSON object, are skipped.
+
+    Returns True only when a write happened (new spend to report). With no object
+    store, or nothing pushed, the local file is kept and False is returned.
+    Best-effort: never raises.
     """
     dest = Path(spec_dir) / _USAGE_FILE
-    if dest.is_file():
-        return False
     try:
         from core.artifact_store import ArtifactStore  # noqa: PLC0415
 
@@ -221,15 +244,34 @@ def maybe_fetch_usage(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
     except Exception as exc:  # noqa: BLE001 - no pushed usage / store unreachable
         _log.debug("[workspace_fetch] no pushed usage to fetch: %s", exc)
         return False
+    if len(data) > _USAGE_MAX_BYTES:
+        _log.warning("[workspace_fetch] pushed usage skipped: %d bytes", len(data))
+        return False
+    fetched = _total_tokens(data)
+    if fetched is None:
+        _log.warning("[workspace_fetch] pushed usage skipped: not a JSON object")
+        return False
+    try:
+        local = _total_tokens(dest.read_bytes())
+    except OSError:
+        local = None  # missing/unreadable local: accept any valid object
+    if local is not None and fetched <= local:
+        return False
+    tmp = ""
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(data)
+        fd, tmp = tempfile.mkstemp(dir=dest.parent)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        Path(tmp).replace(dest)
         _log.info(
             "[workspace_fetch] fetched %s from object store (packed path)", _USAGE_FILE
         )
         return True
     except OSError as exc:
         _log.warning("[workspace_fetch] could not write fetched usage: %s", exc)
+        if tmp:
+            Path(tmp).unlink(missing_ok=True)
         return False
 
 

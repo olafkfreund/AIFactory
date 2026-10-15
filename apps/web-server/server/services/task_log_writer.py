@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from ..websockets.events import emit_task_logs_stream
@@ -81,7 +81,7 @@ class TaskLogWriter:
                 pass
 
         # Create new structure
-        now = datetime.now().isoformat()
+        now = datetime.now(UTC).isoformat()
         return {
             "spec_id": spec_id,
             "created_at": now,
@@ -114,7 +114,7 @@ class TaskLogWriter:
     def _save(self, data: dict) -> None:
         """Save task_logs.json."""
         self.spec_dir.mkdir(parents=True, exist_ok=True)
-        data["updated_at"] = datetime.now().isoformat()
+        data["updated_at"] = datetime.now(UTC).isoformat()
         with open(self.log_file, "w") as f:
             json.dump(data, f, indent=2)
 
@@ -170,7 +170,7 @@ class TaskLogWriter:
         phase_key = self.PHASE_MAP.get(phase, "coding")
 
         entry = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "type": entry_type,
             "content": content,
         }
@@ -189,7 +189,7 @@ class TaskLogWriter:
         # Update phase status
         if data["phases"][phase_key]["status"] == "pending":
             data["phases"][phase_key]["status"] = "active"
-            data["phases"][phase_key]["started_at"] = datetime.now().isoformat()
+            data["phases"][phase_key]["started_at"] = datetime.now(UTC).isoformat()
 
         self._save(data)
 
@@ -252,7 +252,7 @@ class TaskLogWriter:
             # Start new tool
             tool_name, tool_input = tool_info
             self._current_tool = tool_name
-            self._tool_start_time = datetime.now().isoformat()
+            self._tool_start_time = datetime.now(UTC).isoformat()
             self._tool_input = tool_input
             self._pending_tool_output = []
 
@@ -288,9 +288,9 @@ class TaskLogWriter:
         data["phases"][phase_key]["status"] = status
 
         if status == "active" and not data["phases"][phase_key]["started_at"]:
-            data["phases"][phase_key]["started_at"] = datetime.now().isoformat()
+            data["phases"][phase_key]["started_at"] = datetime.now(UTC).isoformat()
         elif status in ("completed", "failed"):
-            data["phases"][phase_key]["completed_at"] = datetime.now().isoformat()
+            data["phases"][phase_key]["completed_at"] = datetime.now(UTC).isoformat()
 
             # Flush any pending text
             self._flush_pending_text(spec_id, phase)

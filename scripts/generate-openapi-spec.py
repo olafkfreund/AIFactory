@@ -7,10 +7,14 @@ it whenever routes/schemas change so the published API docs stay accurate.
 
 Usage:
     APP_DISABLE_AUTH=true apps/web-server/.venv/bin/python scripts/generate-openapi-spec.py
+
+Output is pinned to all feature flags off (independent of .env, exported flags and cwd);
+apps/web-server/static/ must not exist.
 """
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -23,10 +27,30 @@ sys.path.insert(0, str(WEB_SERVER))
 
 def main() -> int:
     import yaml
+
+    # Pin every env-gated router OFF so the spec is the default deployment's API,
+    # independent of .env, the shell, or the cwd (#1632). Direct assignment beats
+    # server/env_bootstrap.py:27's setdefault, and pydantic ranks process env above
+    # env_file (server/config.py:246-250). Gates: main.py:541/545 (SAML/SCIM),
+    # mcp_remote/__init__.py:50, rmux/integration.py:45-56.
+    # ponytail: fixed flag list; a new env gate is missed until added here
+    # (follow-up: two-env spec-equality guard).
+    os.environ.update(
+        dict.fromkeys(
+            (
+                "SAML_ENABLED",
+                "SCIM_ENABLED",
+                "AIFACTORY_MCP_REMOTE_ENABLED",
+                "AIFACTORY_RMUX_ENABLED",
+                "APP_RMUX_ENABLED",
+            ),
+            "false",
+        )
+    )
     from server.main import app  # noqa: E402 — needs sys.path above
 
     spec = app.openapi()
-    with open(OUT, "w") as f:
+    with OUT.open("w", encoding="utf-8") as f:
         yaml.safe_dump(spec, f, sort_keys=False, allow_unicode=True, width=100)
     print(
         f"Wrote {OUT.relative_to(REPO)} — "

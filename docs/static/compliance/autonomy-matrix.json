@@ -116,13 +116,14 @@
       "objective": "A task with no recorded review tier is decided as low, so the live merge path treats a blank tier exactly as the policy treats low."
     },
     "wiring.live_overlay": {
+      "claim": "Accepted residual risks (#1671): non-Claude runners and the GitHub MCP server still receive the App token; PAT copies in project .env files and the UI settings token are not removed by this change; stored per-project clone PATs are unchanged (follow-up).",
       "evidence": "apps/web-server/server/services/pr_endgame.py",
       "frameworks": [
         "ISO 27001:2022 A.8.32",
         "SOC 2 CC8.1",
         "NIST 800-53 CM"
       ],
-      "objective": "On the live merge path a high risk or production deployment holds the merge for a human regardless of the path-floor flag; a required human-approval gate clears only on a GitHub approval of the head commit by someone other than the PR author or a bot; an unreadable contract holds it too."
+      "objective": "On the live merge path a high risk or production deployment holds the merge for a human regardless of the path-floor flag; a required human-approval gate clears only on a GitHub approval of the head commit by someone other than the PR author or a bot; an unreadable contract holds it too. The PR author is the GitHub App bot and no PAT is in the server pod."
     },
     "wiring.path_floor_flag": {
       "evidence": "apps/web-server/server/services/pr_endgame.py",
@@ -154,9 +155,11 @@
         "apps/backend/integrations/graphiti/providers_pkg/llm_providers/__init__.py",
         "apps/backend/integrations/graphiti/queries_pkg/__init__.py",
         "apps/backend/memory/__init__.py",
+        "apps/backend/prompts_pkg/__init__.py",
         "apps/backend/providers/__init__.py",
         "apps/backend/runners/__init__.py",
-        "apps/backend/runners/github/__init__.py"
+        "apps/backend/runners/github/__init__.py",
+        "apps/web-server/server/database/__init__.py"
       ]
     },
     {
@@ -177,10 +180,12 @@
         "apps/backend/merge/__init__.py",
         "apps/backend/merge/ai_resolver/__init__.py",
         "apps/backend/pfactory/__init__.py",
+        "apps/backend/prompts_pkg/__init__.py",
         "apps/backend/providers/__init__.py",
         "apps/backend/spec/__init__.py",
         "apps/backend/spec/phases/__init__.py",
-        "apps/backend/spec/pipeline/__init__.py"
+        "apps/backend/spec/pipeline/__init__.py",
+        "apps/web-server/server/database/__init__.py"
       ]
     }
   ],
@@ -689,18 +694,18 @@
             ],
             [
               "`server.services.pr_review_service`",
-              "model-assisted (dynamic import: core.auth:304 (+2 more))",
+              "model-assisted (dynamic import: core.auth:326 (+2 more))",
               "`anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
-              "yes (13): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
-              "263",
+              "yes (15): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
+              "269",
               "`runners/github/runner.py`"
             ],
             [
               "`server.services.pr_endgame`",
-              "model-assisted (dynamic import: core.auth:304 (+3 more))",
+              "model-assisted (dynamic import: core.auth:326 (+3 more))",
               "`anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
-              "yes (19): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
-              "356",
+              "yes (21): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
+              "365",
               "-"
             ]
           ]
@@ -815,10 +820,10 @@
             ],
             [
               "`wiring.live_overlay`",
-              "On the live merge path a high risk or production deployment holds the merge for a human regardless of the path-floor flag; a required human-approval gate clears only on a GitHub approval of the head commit by someone other than the PR author or a bot; an unreadable contract holds it too.",
+              "On the live merge path a high risk or production deployment holds the merge for a human regardless of the path-floor flag; a required human-approval gate clears only on a GitHub approval of the head commit by someone other than the PR author or a bot; an unreadable contract holds it too. The PR author is the GitHub App bot and no PAT is in the server pod.",
               "ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 CM",
               "`apps/web-server/server/services/pr_endgame.py`",
-              "-"
+              "Accepted residual risks (#1671): non-Claude runners and the GitHub MCP server still receive the App token; PAT copies in project .env files and the UI settings token are not removed by this change; stored per-project clone PATs are unchanged (follow-up)."
             ],
             [
               "`wiring.path_floor_flag`",

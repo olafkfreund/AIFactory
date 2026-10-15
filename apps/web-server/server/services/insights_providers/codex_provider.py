@@ -81,9 +81,9 @@ class CodexProvider(ProviderStrategy):
         cmd.append(codex_cmd)
 
         # Scrub ANTHROPIC_API_KEY (OAuth-only policy — see core/auth.py).
-        from ...utils.subprocess_env import make_subprocess_env
+        from ...utils.subprocess_env import child_env
 
-        env = make_subprocess_env()
+        env = child_env(keep=("CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY"))
         env["PYTHONUNBUFFERED"] = "1"
 
         logger.info(f"[CodexProvider] Starting: codex exec --model {effective_model}")

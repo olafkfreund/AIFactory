@@ -8,8 +8,10 @@ hold on any divergence. Test numbers follow the spec.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
+import logging
 import sys
 from pathlib import Path
 from typing import Any
@@ -24,6 +26,7 @@ for _p in (str(_WS), str(_BACKEND)):
 
 from cli import workspace_commands  # noqa: E402
 from pfactory import tfactory_client as tc  # noqa: E402
+from server.routes import execution as ex  # noqa: E402
 from server.services import pr_endgame as pe  # noqa: E402
 from server.services.trusted_contract import (  # noqa: E402
     handoff_contract,
@@ -53,7 +56,9 @@ def _isolated_host(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AIFACTORY_TRUSTED_PLAN_KEY_PFACTORY__T1", KEY)
 
 
-def _plan(deployment: dict[str, Any] | None = None) -> dict[str, Any]:
+def _plan(
+    deployment: dict[str, Any] | None = None, review_tier: object = "auto"
+) -> dict[str, Any]:
     plan: dict[str, Any] = {
         "feature": "Contract tamper gate",
         "workflow_type": "feature",
@@ -76,6 +81,8 @@ def _plan(deployment: dict[str, Any] | None = None) -> dict[str, Any]:
     }
     if deployment is not None:
         plan["deployment"] = deployment
+    if review_tier is not None:
+        plan["execution"] = {"review_tier": review_tier}
     return plan
 
 
@@ -89,10 +96,14 @@ def _sign(plan: dict[str, Any]) -> dict[str, Any]:
 
 
 def _spec(
-    tmp_path: Path, deployment: dict[str, Any] | None = None, *, tier: str = "low"
+    tmp_path: Path,
+    deployment: dict[str, Any] | None = None,
+    *,
+    tier: str = "low",
+    review_tier: object = "auto",
 ) -> tuple[Path, dict[str, Any]]:
     """A spec dir written the way ``ingest_trusted_plan`` writes it."""
-    signed = _sign(_plan(deployment))
+    signed = _sign(_plan(deployment, review_tier=review_tier))
     spec = tmp_path / ".aifactory" / "specs" / "001-x"
     spec.mkdir(parents=True)
     result = ingest_trusted_plan(spec, signed)
@@ -284,6 +295,66 @@ def test_20_handoff_uses_the_record_contract(
     assert not held.get("contract")
 
 
+async def _start_tfactory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rec_for: Any
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Start a TFactory-routed trusted spec whose plan file was forged (#1750)."""
+    spec, signed = _spec(tmp_path)
+    req_file = spec / "requirements.json"
+    req = json.loads(req_file.read_text()) if req_file.exists() else {}
+    req["githubIssue"] = {
+        "number": 1,
+        "labels": ["pfactory", "handoff:tfactory", "type:testing"],
+    }
+    req_file.write_text(json.dumps(req))
+    plan_file = spec / "implementation_plan.json"
+    plan = json.loads(plan_file.read_text())
+    plan["tfactory"] = {"lanes": ["forged"]}
+    plan_file.write_text(json.dumps(plan))
+
+    record = rec_for(signed)
+
+    async def fake_lookup(_spec_dir: Path) -> TrustedRecord:
+        return record
+
+    sent: dict[str, Any] = {}
+
+    async def fake_poster(
+        _url: str, payload: dict[str, Any], _headers: Any
+    ) -> dict[str, Any]:
+        sent["payload"] = payload
+        return {"status": 202, "ok": True, "body": "queued"}
+
+    monkeypatch.setattr(ex, "load_projects", lambda: {"p": {"path": str(tmp_path)}})
+    monkeypatch.setattr(ex, "lookup", fake_lookup)
+    monkeypatch.setenv("TFACTORY_BASE_URL", "https://tf.example")
+    monkeypatch.setattr(tc, "_httpx_poster", fake_poster)
+
+    result = await ex.start_task("p:001-x", ex.StartTaskRequest(), None)
+    return result, sent["payload"], signed
+
+
+async def test_30_start_task_hands_off_the_signed_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result, payload, signed = await _start_tfactory(tmp_path, monkeypatch, _rec)
+
+    assert result["routed_to"] == "tfactory"
+    assert payload["tfactory"] == signed["tfactory"]
+    assert payload["tfactory"] != {"lanes": ["forged"]}
+
+
+async def test_31_start_task_non_isolated_host_sends_empty_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "subprocess")
+
+    result, payload, _ = await _start_tfactory(tmp_path, monkeypatch, _rec)
+
+    assert result["routed_to"] == "tfactory"
+    assert payload["tfactory"] == {}
+
+
 def test_kubejob_without_the_durable_store_is_not_isolated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -328,3 +399,318 @@ def test_a_record_never_verifies_on_a_non_isolated_host(
         tmp_path, spec, "001-x", "dev", "auto", trusted=_rec(signed)
     )
     assert (tier, floor) == ("blocking", "blocking")
+
+
+def _warn(caplog: pytest.LogCaptureFixture, level: int = logging.WARNING) -> None:
+    caplog.set_level(level, logger=pe.logger.name)
+
+
+def test_21_forged_low_below_signed_blocking_holds(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    _warn(caplog)
+    spec, signed = _spec(tmp_path, review_tier="blocking")
+
+    assert pe.merge_disposition(spec, "low", trusted=_rec(signed)) == HOLD
+    assert "below signed" in caplog.text
+
+
+def test_22_human_approval_cannot_clear_signed_blocking(tmp_path: Path) -> None:
+    spec, signed = _spec(tmp_path, review_tier="blocking")
+
+    assert pe._clears_with_human_approval(spec, "auto", _rec(signed)) is False
+
+
+def test_23_forged_low_below_signed_async_holds_async(tmp_path: Path) -> None:
+    spec, signed = _spec(tmp_path, review_tier="async")
+
+    assert pe.merge_disposition(spec, "low", trusted=_rec(signed)) == "hold-async"
+
+
+def test_24_tier_above_signed_is_kept_without_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    _warn(caplog)
+    spec, signed = _spec(tmp_path, review_tier="auto")
+
+    assert pe.merge_disposition(spec, "blocking", trusted=_rec(signed)) == HOLD
+    assert "below signed" not in caplog.text
+
+
+def test_25_verified_contract_without_signed_tier_holds(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    _warn(caplog)
+    spec, signed = _spec(tmp_path, review_tier=None)
+
+    assert pe.merge_disposition(spec, "low", trusted=_rec(signed)) == HOLD
+    assert "no signed review_tier" in caplog.text
+
+
+@pytest.mark.parametrize("signed_tier", ["bogus", 1])
+def test_26_unusable_signed_tier_holds(tmp_path: Path, signed_tier: object) -> None:
+    spec, signed = _spec(tmp_path, review_tier=signed_tier)
+
+    assert pe.merge_disposition(spec, "low", trusted=_rec(signed)) == HOLD
+
+
+@pytest.mark.parametrize("tier", [None, ""])
+def test_27_blank_tier_takes_signed_auto(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, tier: str | None
+) -> None:
+    _warn(caplog)
+    spec, signed = _spec(tmp_path, review_tier="auto")
+
+    assert pe.merge_disposition(spec, tier, trusted=_rec(signed)) == "auto-merge"
+    assert "below signed" not in caplog.text
+
+
+def test_28_unrecognised_tier_not_raised_to_signed(tmp_path: Path) -> None:
+    spec, signed = _spec(tmp_path, review_tier="auto")
+
+    assert pe.merge_disposition(spec, "bogus", trusted=_rec(signed)) == HOLD
+
+
+def test_29_forged_tier_never_reaches_the_log(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    _warn(caplog, logging.DEBUG)
+    spec, signed = _spec(tmp_path, review_tier="auto")
+
+    assert pe.merge_disposition(spec, "auto\nFORGED", trusted=_rec(signed)) == HOLD
+    assert "FORGED" not in caplog.text
+
+
+# ── #1673: the server verdict handed to the build process ───────────────
+
+from core import contract_trust  # noqa: E402
+from core.contract_trust import ENV, contract_digest, trusted_contract  # noqa: E402
+from server.services import trusted_contract as tc_mod  # noqa: E402
+from server.services.trusted_contract import spawn_env  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _no_trusted_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(ENV, raising=False)
+
+
+def _lookup(monkeypatch: pytest.MonkeyPatch, result: Any) -> None:
+    async def fake(_spec: Path) -> Any:
+        return result
+
+    monkeypatch.setattr("server.services.trusted_contract.lookup", fake)
+
+
+async def test_spawn_env_verified_is_digest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec, signed = _spec(tmp_path, PROD)
+    _lookup(monkeypatch, _rec(signed))
+    assert await spawn_env(spec) == {ENV: contract_digest(signed)}
+
+
+@pytest.mark.parametrize(
+    "case", ["lookup-failed", "none-stamp", "edited-disk", "trace", "subprocess"]
+)
+async def test_spawn_env_holds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    spec, signed = _spec(tmp_path, PROD)
+    result: Any = _rec(signed)
+    if case == "lookup-failed":
+        result = LOOKUP_FAILED
+    elif case == "none-stamp":
+        result = _rec(signed, "none")
+    elif case == "edited-disk":
+        _contract_file(spec).write_text(json.dumps({**signed, "feature": "edited"}))
+    elif case == "trace":
+        result = None
+    elif case == "subprocess":
+        monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "subprocess")
+    _lookup(monkeypatch, result)
+    assert await spawn_env(spec) == {ENV: "hold"}
+
+
+async def test_spawn_env_legacy_is_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = tmp_path / ".aifactory" / "specs" / "001-x"
+    spec.mkdir(parents=True)
+    _lookup(monkeypatch, None)
+    assert await spawn_env(spec) == {}
+
+
+async def test_cross_side_digest_matches_pod_verdict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec, signed = _spec(tmp_path, PROD)
+    _lookup(monkeypatch, _rec(signed))
+    _contract_file(spec).write_text(
+        json.dumps(dict(reversed(list(signed.items()))), indent=2)
+    )
+    env = await spawn_env(spec)
+    monkeypatch.setenv(ENV, env[ENV])
+    state, contract, _why = trusted_contract(spec)
+    assert (state, contract) == ("verified", signed)
+
+
+def test_has_trusted_trace_is_the_core_predicate() -> None:
+    assert tc_mod.has_trusted_trace is contract_trust.has_trusted_trace
+
+
+# --------------------------------------------------------------------------- #
+# #1695: a verified task merges only on signals AIFactory fetched itself
+# --------------------------------------------------------------------------- #
+
+_FETCH_PASS = {"tfactory_verdict": "pass", "host_ci_green": True}
+
+
+def test_1695_verified_green_fetch_auto_merges(tmp_path: Path) -> None:
+    spec, signed = _spec(tmp_path, tier="low")
+    out = pe.merge_disposition(
+        spec, "low", trusted=_rec(signed), fetch_signals=lambda: _FETCH_PASS
+    )
+    assert out == pe.AUTO_MERGE_DISPOSITION
+
+
+@pytest.mark.parametrize(
+    "fetched",
+    [
+        {"tfactory_verdict": None, "host_ci_green": True},
+        {"tfactory_verdict": "pass", "host_ci_green": None},
+    ],
+)
+def test_1695_verified_unknown_signal_does_not_merge(
+    tmp_path: Path, fetched: dict[str, object]
+) -> None:
+    spec, signed = _spec(tmp_path, tier="low")
+    out = pe.merge_disposition(
+        spec, "low", trusted=_rec(signed), fetch_signals=lambda: fetched
+    )
+    assert out != pe.AUTO_MERGE_DISPOSITION
+
+
+def _boom() -> dict[str, object]:
+    raise RuntimeError("tfactory down")
+
+
+def test_1695_verified_raising_fetch_holds(tmp_path: Path) -> None:
+    spec, signed = _spec(tmp_path, tier="low")
+    out = pe.merge_disposition(spec, "low", trusted=_rec(signed), fetch_signals=_boom)
+    assert out == pe.HOLD_BLOCKING_DISPOSITION
+
+
+def test_1695_legacy_never_calls_the_fetch(tmp_path: Path) -> None:
+    spec = tmp_path / ".aifactory" / "specs" / "001-x"
+    spec.mkdir(parents=True)
+    plain = pe.merge_disposition(spec, "low", trusted=None)
+    assert pe.merge_disposition(spec, "low", trusted=None, fetch_signals=_boom) == plain
+
+
+def test_1695_human_approval_cannot_clear_a_red_fetch(tmp_path: Path) -> None:
+    spec, signed = _spec(tmp_path, tier="low")
+    red = lambda: {"tfactory_verdict": "fail", "host_ci_green": True}  # noqa: E731
+    assert (
+        pe._clears_with_human_approval(spec, "low", _rec(signed), fetch_signals=red)
+        is False
+    )
+
+
+@pytest.mark.parametrize("verified", [True, False])
+def test_1695_endgame_arms_the_gate_only_for_non_legacy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verified: bool
+) -> None:
+    spec, signed = _spec(tmp_path, tier="low")
+    captured: dict[str, object] = {}
+
+    async def _fake_watch(**kwargs: object) -> dict[str, object]:
+        captured["gate"] = kwargs.get("merge_gate")
+        return {"merged": False, "reason": "stub"}
+
+    monkeypatch.setattr(pe, "watch_and_finish", _fake_watch)
+    monkeypatch.setattr(pe, "create_pr", lambda **_k: 42)
+    monkeypatch.setattr(pe, "request_copilot_review", lambda *_a, **_k: True)
+    monkeypatch.setattr(pe, "_pr_title_body", lambda _d, _s: ("t", "b"))
+    if not verified:  # legacy: no contract at all
+        _contract_file(spec).unlink()
+    asyncio.run(
+        pe.run_pr_endgame(
+            spec_dir=spec,
+            spec_id="001-x",
+            worktree=spec,
+            branch="aifactory/001-x",
+            base="main",
+            repo="owner/repo",
+            auto_merge=True,
+            review_tier="low",
+            reviewer="copilot",
+            background=False,
+            trusted=_rec(signed) if verified else None,
+        )
+    )
+    assert callable(captured["gate"]) if verified else captured["gate"] is None
+
+
+# --- #1695 review: the gate built by _build_merge_gate is exercised ---------- #
+
+
+def _gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    verdict: str | None,
+    ci: bool | None,
+    human: bool = False,
+) -> tuple[Any, list[str]]:
+    spec, signed = _spec(tmp_path, tier="low")
+    heads: list[str] = []
+
+    def fake_ci(owner: str, repo: str, sha: str, **_k: object) -> bool | None:
+        heads.append(f"{owner}/{repo}@{sha}")
+        return ci
+
+    monkeypatch.setattr(pe, "host_ci_green", fake_ci)
+    monkeypatch.setattr(tc, "tfactory_verdict", lambda _d, _s, **_k: verdict)
+    gate = pe._build_merge_gate(
+        spec, "001-x", ("o", "r"), _rec(signed), "low", human, lambda *_a, **_k: None
+    )
+    return gate, heads
+
+
+@pytest.mark.parametrize("human", [False, True])
+def test_1695_gate_green_passes_the_exact_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, human: bool
+) -> None:
+    gate, heads = _gate(tmp_path, monkeypatch, verdict="pass", ci=True, human=human)
+    assert gate("deadbeef") is True
+    assert heads == ["o/r@deadbeef"]
+
+
+@pytest.mark.parametrize(
+    ("verdict", "ci"), [("pass", None), ("pass", False), ("fail", True), (None, True)]
+)
+@pytest.mark.parametrize("human", [False, True])
+def test_1695_gate_red_or_unknown_is_false(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    verdict: str | None,
+    ci: bool | None,
+    human: bool,
+) -> None:
+    gate, _ = _gate(tmp_path, monkeypatch, verdict=verdict, ci=ci, human=human)
+    assert gate("deadbeef") is False
+
+
+def test_1695_gate_is_set_when_resolve_contract_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec, signed = _spec(tmp_path, tier="low")
+
+    def boom(*_a: object, **_k: object) -> None:
+        raise RuntimeError("lookup")
+
+    monkeypatch.setattr("server.services.trusted_contract.resolve_contract", boom)
+    gate = pe._build_merge_gate(
+        spec, "001-x", ("o", "r"), _rec(signed), "low", False, lambda *_a, **_k: None
+    )
+    assert gate is not None

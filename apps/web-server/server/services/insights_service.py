@@ -13,7 +13,7 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from factory_common.logsafe import sanitize_log
@@ -94,8 +94,8 @@ class InsightsSession:
     title: str
     messages: list[InsightsMessage] = field(default_factory=list)
     model_config: dict | None = None
-    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
-    updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 class InsightsService:
@@ -123,7 +123,7 @@ class InsightsService:
 
     def _save_session(self, project_path: Path, session: InsightsSession) -> None:
         """Save a session to disk."""
-        session.updated_at = datetime.now().isoformat()
+        session.updated_at = datetime.now(UTC).isoformat()
         session_file = self._get_session_file(project_path, session.id)
 
         data = {
@@ -186,8 +186,8 @@ class InsightsService:
                     for msg in data.get("messages", [])
                 ],
                 model_config=data.get("modelConfig"),
-                created_at=data.get("createdAt", datetime.now().isoformat()),
-                updated_at=data.get("updatedAt", datetime.now().isoformat()),
+                created_at=data.get("createdAt", datetime.now(UTC).isoformat()),
+                updated_at=data.get("updatedAt", datetime.now(UTC).isoformat()),
             )
 
             self._sessions[session_id] = session
@@ -354,7 +354,7 @@ class InsightsService:
             id=f"msg-{uuid.uuid4().hex[:8]}",
             role="user",
             content=message,
-            timestamp=datetime.now().isoformat(),
+            timestamp=datetime.now(UTC).isoformat(),
         )
         session.messages.append(user_msg)
 
@@ -394,7 +394,7 @@ class InsightsService:
                     id=f"msg-{uuid.uuid4().hex[:8]}",
                     role="assistant",
                     content=response_content,
-                    timestamp=datetime.now().isoformat(),
+                    timestamp=datetime.now(UTC).isoformat(),
                     provider=provider_id,
                     provider_model=provider_model,
                 )

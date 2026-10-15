@@ -28,7 +28,9 @@ import subprocess
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
+from core.child_env import child_env
 from core.git_credentials import authed_push_url
 
 _log = logging.getLogger(__name__)
@@ -36,10 +38,10 @@ _log = logging.getLogger(__name__)
 __all__ = [
     "build_handoff_payload",
     "load_task_contract",
-    "load_tfactory_block",
     "maybe_auto_handoff_tfactory",
     "send_handoff",
     "tfactory_config",
+    "tfactory_verdict",
     "wants_auto_handoff",
 ]
 
@@ -63,25 +65,6 @@ def tfactory_config(env: dict | None = None) -> dict:
         "token": env.get("TFACTORY_TOKEN") or env.get("APP_API_TOKEN") or "",
         "path": env.get("TFACTORY_HANDOFF_PATH") or _DEFAULT_PATH,
     }
-
-
-def load_tfactory_block(spec_dir: Path) -> dict:
-    """Read the Task Contract v2 ``tfactory`` block from implementation_plan.json.
-
-    PFactory computes this block (lanes/frameworks/endpoints/coverage/mutation/
-    security/ac_to_code_map) and it is installed verbatim by trusted_plan ingest.
-    Returns ``{}`` when absent (v1 plans) or unreadable — TFactory then falls
-    back to its own inference.
-    """
-    plan_file = Path(spec_dir) / "implementation_plan.json"
-    if not plan_file.exists():
-        return {}
-    try:
-        plan = json.loads(plan_file.read_text())
-    except (OSError, json.JSONDecodeError):
-        return {}
-    block = plan.get("tfactory")
-    return block if isinstance(block, dict) else {}
 
 
 def load_task_contract(spec_dir: Path) -> dict:
@@ -295,7 +278,7 @@ def _git_stdout(cwd: Path, args: list[str], env: dict[str, str] | None = None) -
     return subprocess.run(
         ["git", *args],
         cwd=str(cwd),
-        env=env,
+        env=env if env is not None else child_env(),
         capture_output=True,
         text=True,
         timeout=60,
@@ -389,10 +372,11 @@ def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | 
         url = _git_stdout(repo, ["remote", "get-url", "origin"])
         if not url:
             return None, None
-        # The token rides in GIT_ASKPASS, never in argv — /proc/<pid>/cmdline is
-        # world-readable for the lifetime of the child (AIFactory#1366). The URL
-        # and the credential env are yielded together, so the token is only ever
-        # offered to a remote this process rewrote.
+        # The token rides in a per-call GH_CONFIG_DIR (github_env), never in argv
+        # or env; the URL is not rewritten. /proc/<pid>/cmdline is world-readable
+        # for the lifetime of the child (AIFactory#1366, #1723). The URL and the
+        # credential env are yielded together, so the token is only ever offered
+        # to an https github.com remote.
         with authed_push_url(url) as (push_url, git_env):
             subprocess.run(
                 [
@@ -573,7 +557,7 @@ def _issue_from_requirements(req: dict[str, Any]) -> int | None:
 
 
 def build_ingest_payload(
-    spec_dir: Path, spec_id: str, *, contract: dict[str, Any] | None = None
+    spec_dir: Path, spec_id: str, *, contract: dict[str, Any] | None
 ) -> dict:
     """Build the payload for TFactory's self-contained spec intake
     (``POST /api/specs/ingest``): ``{project_id, spec_id, spec_text}``.
@@ -781,6 +765,71 @@ async def send_pr_attach(
     }
 
 
+_HTTP_OK, _HTTP_REDIRECT = 200, 300
+
+# (url, headers) -> (status code, parsed JSON body or None)
+Getter = Callable[[str, dict[str, str]], tuple[int, object]]
+
+
+def _httpx_get(url: str, headers: dict[str, str]) -> tuple[int, object]:
+    import httpx  # noqa: PLC0415 - optional dependency, only on this path
+
+    resp = httpx.get(url, headers=headers, timeout=10.0)
+    return resp.status_code, resp.json() if resp.is_success else None
+
+
+def tfactory_verdict(
+    spec_dir: Path, spec_id: str, *, getter: Getter | None = None
+) -> str | None:
+    """The verdict TFactory itself recorded for this spec (#1695).
+
+    ``"pass"``, ``"fail"`` or ``None`` (no trusted result: unconfigured,
+    unreachable, wrong project, not triaged, no or unknown verdicts). Only a ``reject``
+    fails; ``flag`` does not block. Never raises; logs nothing it fetched.
+    """
+    try:
+        config = tfactory_config()
+        base_url = config.get("base_url")
+        project_id = os.environ.get("TFACTORY_PROJECT_ID") or _aifactory_project_name(
+            Path(spec_dir)
+        )
+        if not base_url or not project_id:
+            return None
+        headers = (
+            {"Authorization": f"Bearer {config['token']}"}
+            if config.get("token")
+            else {}
+        )
+        base = f"{base_url}/api/tfactory/tasks/{quote(spec_id, safe='')}"
+        get = getter or _httpx_get
+        code, task = get(base, headers)
+        status_json = task.get("status_json") if isinstance(task, dict) else None
+        if not (
+            _HTTP_OK <= code < _HTTP_REDIRECT
+            and isinstance(task, dict)
+            and task.get("project_id") == project_id
+            and isinstance(status_json, dict)
+            and status_json.get("status") == "triaged"
+        ):
+            return None
+        code, doc = get(f"{base}/verdicts.json", headers)
+        if not (
+            _HTTP_OK <= code < _HTTP_REDIRECT
+            and isinstance(doc, dict)
+            and isinstance(doc.get("verdicts"), list)
+        ):
+            return None
+        kinds = [
+            e.get("verdict") if isinstance(e, dict) else None for e in doc["verdicts"]
+        ]
+    except Exception:  # noqa: BLE001 - no trusted result is not a pass
+        return None
+    # A missing or unknown verdict is not green.
+    if not kinds or any(k not in ("accept", "flag", "reject") for k in kinds):
+        return None
+    return "fail" if "reject" in kinds else "pass"
+
+
 def wants_auto_handoff(spec_dir: Path) -> bool:
     """True if the task opted into auto-handover to TFactory on completion.
 
@@ -798,7 +847,7 @@ def wants_auto_handoff(spec_dir: Path) -> bool:
 
 
 async def maybe_auto_handoff_tfactory(
-    spec_dir: Path, spec_id: str, *, contract: dict[str, Any] | None = None
+    spec_dir: Path, spec_id: str, *, contract: dict[str, Any] | None
 ) -> dict:
     """On a task's terminal SUCCESS, hand the finished build to TFactory for
     testing — but only when the task opted in (``auto_handover_tfactory`` in

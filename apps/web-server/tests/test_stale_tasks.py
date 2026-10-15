@@ -12,6 +12,8 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import time
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -399,3 +401,30 @@ def test_a_failing_sweep_does_not_kill_the_loop(
 
     asyncio.run(drive())
     assert calls >= 2, "loop died on the first failing tick"
+
+
+@pytest.fixture
+def non_utc_local_tz(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Force local time to UTC+9 so a naive-local clock is 9h off UTC."""
+    monkeypatch.setenv("TZ", "JST-9")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+@pytest.mark.usefixtures("non_utc_local_tz")
+def test_route_clock_is_utc_so_fresh_task_is_not_stale_off_utc() -> None:
+    """#1624: updated_at is aware UTC since #1619; a naive-local _now() made a
+    1h-old task look 10h idle on any host east of UTC and reaped live work."""
+    assert time.localtime().tm_gmtoff == 9 * 3600  # fixture took effect
+    stale = pytest.importorskip("server.routes.stale")  # pattern at :149
+
+    def task(hours_ago: float) -> dict[str, str]:
+        ts = (datetime.now(UTC) - timedelta(hours=hours_ago)).isoformat()
+        return {"id": "p:001-x", "status": "in_progress", "updated_at": ts}
+
+    now = stale._now()
+    assert find_stale([task(1)], now=now, stale_after=timedelta(hours=2)) == []
+    # Positive control: proves the [] above is not vacuous.
+    assert len(find_stale([task(3)], now=now, stale_after=timedelta(hours=2))) == 1

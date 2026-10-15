@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from core.auth import get_agent_env_blanks
 from core.outbound_scrub import wrap_client_outbound_scrub
 
 try:
@@ -130,6 +131,7 @@ class ClaudeAnalysisClient:
                     max_turns=self.MAX_TURNS,
                     cwd=str(self.project_dir.resolve()),
                     settings=str(settings_file.resolve()),
+                    env=get_agent_env_blanks(),  # no GitHub token for the CLI (#1723)
                     # Bypass prompts for headless execution
                     permission_mode="bypassPermissions",
                 )

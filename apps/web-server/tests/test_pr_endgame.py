@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -89,8 +91,61 @@ def test_create_pr_parses_number():
     )
     assert pr == 7
     assert r.saw("pr create")
-    # Must configure git auth before pushing, or the deployed push 401s.
-    assert r.saw("auth setup-git")
+    # #1688: auth is per call (github_env); no global helper.
+    assert not r.saw("auth setup-git")
+
+
+def test_default_runner_hands_gh_a_config_dir_not_the_token(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    token = "ghp_1688FakeTokenSentinelDoNotLeak"  # noqa: S105  # gitleaks:allow
+    monkeypatch.setenv("GITHUB_TOKEN", token)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    seen: list[tuple[dict[str, str], str]] = []
+
+    def read_hosts(env: dict[str, str]) -> str:
+        return Path(env["GH_CONFIG_DIR"], "hosts.yml").read_text()
+
+    def fake_run(argv: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
+        env = dict(kw["env"])
+        seen.append((env, read_hosts(env)))  # at call time: the dir is gone after
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(pe.subprocess, "run", fake_run)
+    pe._default_runner(["gh", "pr", "list"], None)
+    assert seen
+    env, hosts = seen[0]
+    assert token in hosts
+    assert all(token not in v for v in env.values())
+    assert "GITHUB_TOKEN" not in env
+    assert list(tmp_path.glob("aif-gh-*")) == []
+
+
+def test_create_pr_upload_failure_still_opens_pr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #1690: a failed LFS upload skips the ref push, but create_pr still warns
+    # and goes on to `gh pr create`.
+    real_which = shutil.which
+    monkeypatch.setattr(
+        "core.child_env.shutil.which",
+        lambda c, *a, **k: "/x/git-lfs" if c == "git-lfs" else real_which(c, *a, **k),
+    )
+    r = FakeRunner(
+        {
+            "get-url": CmdResult(0, "https://github.com/o/r", ""),
+            "--get-regexp": CmdResult(1, "", ""),
+            "lfs push": CmdResult(2, "", "boom"),
+            "pr create": CmdResult(0, "https://github.com/o/r/pull/11", ""),
+        }
+    )
+    pr = pe.create_pr(
+        worktree=Path("/wt"), branch="b", base="main", title="t", body="b", runner=r
+    )
+    assert pr == 11
+    assert r.saw("lfs push")
+    assert not any(c[:2] == ["git", "push"] for c in r.calls)
 
 
 def test_create_pr_fetches_branch_from_origin_before_push():
@@ -120,7 +175,7 @@ def test_create_pr_fetches_branch_from_origin_before_push():
         for i, c in enumerate(r.calls)
         if "fetch" in " ".join(c) and "origin" in " ".join(c)
     )
-    push_i = next(i for i, c in enumerate(r.calls) if "push" in " ".join(c))
+    push_i = next(i for i, c in enumerate(r.calls) if "git push" in " ".join(c))
     assert fetch_i < push_i
 
 
@@ -920,3 +975,129 @@ def test_human_approval_head_runner_error_fails_closed() -> None:
         raise subprocess.TimeoutExpired("gh", 30)
 
     assert pe.human_approval_head("o", "r", 5, runner=boom) is None
+
+
+# ── #1695: merge-time gate and host-CI read ──────────────────────────────────
+
+
+def _gate_watch(r: FakeRunner, gate: Any, **kw: Any) -> dict[str, Any]:
+    return asyncio.run(
+        pe.watch_and_finish(
+            owner="o",
+            repo="r",
+            pr=11,
+            auto_merge=True,
+            review_fn=kw.pop("review_fn", lambda: pe.ReviewState("approved")),
+            merge_gate=gate,
+            runner=r,
+            poll_interval=0,
+            max_minutes=1,
+            **kw,
+        )
+    )
+
+
+def test_1695_red_gate_never_merges() -> None:
+    r = FakeRunner({".head.sha": CmdResult(0, "abc", "")})
+    res = _gate_watch(r, lambda _h: False)
+    assert not r.saw("pr merge")
+    assert res["reason"] == "merge_gate_timeout"
+
+
+def test_1695_green_gate_merges_bound_to_the_head() -> None:
+    r = FakeRunner(
+        {".head.sha": CmdResult(0, "abc", ""), "pr merge": CmdResult(0, "merged", "")}
+    )
+    res = _gate_watch(r, lambda h: h == "abc")
+    assert res["merged"] is True
+    assert r.saw("--match-head-commit abc")
+    assert not r.saw("update-branch")
+
+
+def test_1695_endgame_pushed_head_holds_for_a_human() -> None:
+    states = [
+        pe.ReviewState("changes_requested", findings=[{}]),
+        pe.ReviewState("approved"),
+    ]
+    r = FakeRunner({".head.sha": CmdResult(0, "abc", "")})
+    res = _gate_watch(
+        r,
+        lambda _h: True,
+        review_fn=lambda: states.pop(0) if states else pe.ReviewState("approved"),
+        fix_fn=lambda _f: True,
+    )
+    assert res["reason"] == "merge_gate_unverified_head"
+    assert not r.saw("pr merge")
+
+
+def _ci_runner(runs: list[str], status: str, rc: int = 0) -> FakeRunner:
+    return FakeRunner(
+        {
+            "check-runs": CmdResult(rc, "\n".join(runs), ""),
+            "/status": CmdResult(rc, status, ""),
+        }
+    )
+
+
+_OK = '{"status":"completed","conclusion":"success"}'
+
+
+@pytest.mark.parametrize(
+    ("runs", "status", "rc", "want"),
+    [
+        ([_OK], '{"state":"success","total_count":1}', 0, True),
+        (
+            [_OK, '{"status":"completed","conclusion":"failure"}'],
+            '{"state":"success","total_count":1}',
+            0,
+            False,
+        ),
+        (
+            [_OK, '{"status":"in_progress","conclusion":null}'],
+            '{"state":"success","total_count":1}',
+            0,
+            None,
+        ),
+        ([], '{"state":"pending","total_count":0}', 0, None),
+        ([_OK], '{"state":"pending","total_count":2}', 0, None),
+        ([_OK], '{"state":"success","total_count":1}', 1, None),
+    ],
+)
+def test_1695_host_ci_green(
+    runs: list[str], status: str, rc: int, want: bool | None
+) -> None:
+    assert (
+        pe.host_ci_green("o", "r", "abc", runner=_ci_runner(runs, status, rc)) is want
+    )
+
+
+def test_1695_host_ci_green_timeout_is_none() -> None:
+    def boom(_argv: list[str], _cwd: str | None = None) -> CmdResult:
+        raise subprocess.TimeoutExpired(["gh"], 120)
+
+    assert pe.host_ci_green("o", "r", "abc", runner=boom) is None
+
+
+def _suite_runner(suites: list[str]) -> FakeRunner:
+    return FakeRunner(
+        {
+            "check-runs": CmdResult(0, _OK, ""),
+            "/status": CmdResult(0, '{"state":"success","total_count":1}', ""),
+            "check-suites": CmdResult(0, "\n".join(suites), ""),
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("suites", "want"),
+    [
+        (['{"status":"completed","n":1}'], True),
+        (['{"status":"completed","n":1}', '{"status":"queued","n":2}'], None),
+        (['{"status":"in_progress","n":1}'], None),
+        (['{"status":"queued","n":0}'], True),  # an empty suite has nothing to wait for
+    ],
+)
+def test_1695_host_ci_green_waits_for_unfinished_suites(
+    suites: list[str], want: bool | None
+) -> None:
+    assert pe.host_ci_green("o", "r", "abc", runner=_suite_runner(suites)) is want

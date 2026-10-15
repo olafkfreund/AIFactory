@@ -108,6 +108,8 @@ class TimelineGitHelper:
                 [
                     "git",
                     "diff-tree",
+                    "--no-ext-diff",
+                    "--no-textconv",
                     "--no-commit-id",
                     "--name-only",
                     "-r",
@@ -156,7 +158,15 @@ class TimelineGitHelper:
 
             # Get diff stat
             result = subprocess.run(
-                ["git", "diff-tree", "--stat", "--no-commit-id", commit_hash],
+                [
+                    "git",
+                    "diff-tree",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "--stat",
+                    "--no-commit-id",
+                    commit_hash,
+                ],
                 cwd=self.project_path,
                 capture_output=True,
                 text=True,
@@ -238,7 +248,14 @@ class TimelineGitHelper:
         git_cwd = self.project_path if work_ref else worktree_path
         try:
             result = subprocess.run(
-                ["git", "diff", "--name-only", f"{target_branch}...{head}"],
+                [
+                    "git",
+                    "diff",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "--name-only",
+                    f"{target_branch}...{head}",
+                ],
                 cwd=git_cwd,
                 capture_output=True,
                 text=True,

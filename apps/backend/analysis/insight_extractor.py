@@ -88,7 +88,14 @@ def get_session_diff(
 
     try:
         result = subprocess.run(
-            ["git", "diff", commit_before, commit_after],
+            [
+                "git",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                commit_before,
+                commit_after,
+            ],
             cwd=project_dir,
             capture_output=True,
             text=True,
@@ -133,7 +140,15 @@ def get_changed_files(
 
     try:
         result = subprocess.run(
-            ["git", "diff", "--name-only", commit_before, commit_after],
+            [
+                "git",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--name-only",
+                commit_before,
+                commit_after,
+            ],
             cwd=project_dir,
             capture_output=True,
             text=True,

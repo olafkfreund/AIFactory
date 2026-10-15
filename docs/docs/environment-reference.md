@@ -140,7 +140,10 @@ present. Read mainly in `apps/backend/phase_config.py`, `providers/*`,
 | `OLLAMA_EMBEDDING_MODEL` | `""` | conditional | Ollama embedding model (required for Ollama embeddings). |
 | `OLLAMA_EMBEDDING_DIM` | `0` | conditional | Ollama embedding dimension; must match the model. |
 | `OPENCODE_DEFAULT_MODEL` | `""` | conditional | Model for the OpenCode agentic provider (`providers/opencode_agentic.py`). |
-| `GH_TOKEN` / `GITHUB_TOKEN` | (none) | conditional | GitHub token for PR endgame, workspace fetch, testing (`providers/factory.py`, `runners/github/runner.py`). Required to open/merge PRs. |
+| `GH_TOKEN` / `GITHUB_TOKEN` | (none) | conditional | GitHub token for PR endgame, workspace fetch, testing (`providers/factory.py`, `runners/github/runner.py`). Required to open/merge PRs. With the GitHub App on, the server sets both itself and refuses to start if a PAT is present at boot. |
+| `AIFACTORY_GITHUB_APP_ID` | (none) | no | GitHub App ID (#1671). All three `AIFACTORY_GITHUB_APP_*` vars or none. |
+| `AIFACTORY_GITHUB_APP_INSTALLATION_ID` | (none) | no | Installation ID of the App on the target repos. |
+| `AIFACTORY_GITHUB_APP_PRIVATE_KEY` | (none) | no | App PEM private key. Secret only; popped from the environment at boot. |
 | `GITHUB_BOT_TOKEN` | (none) | no | Separate bot identity for GitHub actions (`runners/github/runner.py`). |
 | `GITHUB_REPO` | (none) | conditional | Target repo for the GitHub runner CLI. |
 
@@ -157,6 +160,7 @@ needs them (cloud/KMS SDKs); they never reach agents.
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` | AWS credentials (boto3 / workspace store / deploy); scrubbed from agents. |
 | `GOOGLE_APPLICATION_CREDENTIALS` | GCP service-account path; scrubbed from agents. |
 | `AZURE_CLIENT_SECRET` | Azure app secret; scrubbed from agents. |
+| `APP_CFACTORY_READ_KEY`, `CONTEXT7_KEY`, `RAPIDAPI_KEY`, `LANGCHAIN_API_KEY`, `OPENAI_COMPATIBLE_API_KEY`, `S3_ACCESS_KEY` | Host keys scrubbed from agents (#1674). `OPENAI_COMPATIBLE_API_KEY` is restored for the runner via `RUNNER_KEEP`; `S3_ACCESS_KEY` is denied to agents and the in-pod runner (kubejob Jobs still receive both for `run.py`). |
 
 Any host var whose name matches `SECRET|PASSWORD|PRIVATE_KEY|CREDENTIAL|_KMS|PASSPHRASE`
 is also blanked generically.

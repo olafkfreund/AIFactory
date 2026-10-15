@@ -41,6 +41,9 @@ class _Agent:
     def is_running(self, _task_id: str) -> bool:
         return self._running
 
+    async def is_running_anywhere(self, _task_id: str) -> bool:
+        return self._running
+
 
 @pytest.fixture
 def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

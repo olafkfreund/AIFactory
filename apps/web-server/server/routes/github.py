@@ -22,9 +22,11 @@ from pydantic import BaseModel
 
 from server.background import spawn
 from server.error_ref import client_error
+from server.services import github_app
 from server.services.gh import run_gh_command  # re-exported: see services/gh.py
 from server.services.git_base_url import safe_git_base_url  # #1360
 from server.services.http_verdict import honest_status
+from server.utils.subprocess_env import child_env, github_token
 
 logger = logging.getLogger(__name__)
 
@@ -387,6 +389,7 @@ def install_github_cli():
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=child_env(),
         )
 
     # Step 1: Check if gh is already installed
@@ -433,6 +436,7 @@ def install_github_cli():
             capture_output=True,
             text=True,
             timeout=120,
+            env=child_env(),
         )
         if result.returncode != 0:
             return {
@@ -555,6 +559,7 @@ async def _monitor_gh_auth(proc: asyncio.subprocess.Process):
         await asyncio.wait_for(proc.wait(), timeout=300)
 
         if proc.returncode == 0:
+            await asyncio.to_thread(github_app.load_web_login)
             _gh_auth_status = {"complete": True, "success": True}
             log.info("[GitHub Auth] Authentication completed successfully")
         else:
@@ -608,6 +613,16 @@ async def start_github_auth():
             "data": {"success": False, "message": "GitHub CLI (gh) is not installed."},
         }
 
+    if github_token():
+        # A server token already authenticates gh; a web login would store a second one.
+        return {
+            "success": True,
+            "data": {
+                "success": True,
+                "message": "already authenticated via GITHUB_TOKEN",
+            },
+        }
+
     # Kill any existing auth process
     if _gh_auth_proc is not None:
         with contextlib.suppress(ProcessLookupError, OSError):
@@ -626,9 +641,11 @@ async def start_github_auth():
             "--git-protocol",
             "https",
             "--web",
+            "--insecure-storage",  # token in the 0600 managed hosts.yml, not a keyring
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             stdin=asyncio.subprocess.PIPE,
+            env=child_env(extra={"GH_CONFIG_DIR": str(github_app._managed_gh_dir())}),
         )
         _gh_auth_proc = proc
 
@@ -669,6 +686,7 @@ async def start_github_auth():
         if not device_code:
             # Process may have exited already (e.g., already authenticated)
             if proc.returncode is not None and proc.returncode == 0:
+                await asyncio.to_thread(github_app.load_web_login)
                 _gh_auth_status = {"complete": True, "success": True}
                 return {
                     "success": True,
@@ -858,6 +876,7 @@ async def add_git_remote(request: AddRemoteRequest):
             cwd=request.projectPath,
             check=True,
             capture_output=True,
+            env=child_env(),
         )
         return {"success": True, "data": {"remoteUrl": remote_url}}
     except subprocess.CalledProcessError as e:

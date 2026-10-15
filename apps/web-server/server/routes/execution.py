@@ -7,7 +7,7 @@ Handles starting, stopping, and monitoring task execution.
 import json
 import logging
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +29,7 @@ from server.services.audit_service import (
     audit_task_action,
     audit_task_route,
 )
-from server.services.trusted_contract import handoff_contract
+from server.services.trusted_contract import handoff_contract, resolve_contract
 from server.services.trusted_contract_store import (
     TrustedContractStore,
     lookup,
@@ -257,7 +257,7 @@ async def get_task_status(
 ):
     """Get execution status for a specific task."""
     agent_service = get_agent_service()
-    is_running = agent_service.is_running(task_id)
+    is_running = await agent_service.is_running_anywhere(task_id)
 
     return TaskExecutionStatus(
         task_id=task_id,
@@ -272,7 +272,7 @@ async def is_task_running(
 ):
     """Check if a specific task is currently running."""
     agent_service = get_agent_service()
-    is_running = agent_service.is_running(task_id)
+    is_running = await agent_service.is_running_anywhere(task_id)
 
     return {
         "task_id": task_id,
@@ -348,7 +348,6 @@ async def start_task(
         from pfactory.taxonomy import classify_requirements
         from pfactory.tfactory_client import (
             build_handoff_payload,
-            load_tfactory_block,
             send_handoff,
         )
 
@@ -361,9 +360,17 @@ async def start_task(
                 # TFactory. Graceful — when TFACTORY_BASE_URL is unset this is a
                 # no-op ("not_configured") and we still record the local marker.
                 _meta = load_pfactory_metadata(spec_dir, _req)
-                # RFC-0002: carry the contract's tfactory test profile so TFactory
-                # plans from declared lanes/frameworks/endpoints, not inference.
-                _tf = load_tfactory_block(spec_dir)
+                # RFC-0002 / #1750: the declared test profile comes only from the
+                # trusted verdict (signed record, or legacy files); hold sends {}.
+                _state, _contract = resolve_contract(spec_dir, await lookup(spec_dir))
+                _tf = _contract.get("tfactory") if isinstance(_contract, dict) else None
+                _tf = _tf if isinstance(_tf, dict) else {}
+                if _state == "hold":
+                    logger.warning(
+                        "[StartTask] %s trusted contract on hold; declared "
+                        "TFactory profile withheld",
+                        sanitize_log(task_id),
+                    )
                 _payload = build_handoff_payload(
                     spec_id,
                     _req,
@@ -445,7 +452,7 @@ async def start_task(
 
     if not implementation_plan.exists() or not plan_is_valid:
         # Need to run spec creation first - read title/description from requirements.json
-        from datetime import datetime
+        from datetime import UTC, datetime
 
         logger.info(
             "[StartTask] No valid implementation plan found, will run spec creation for %s",
@@ -510,7 +517,7 @@ async def start_task(
                         ],
                     }
                 ],
-                "last_updated": datetime.now().isoformat(),
+                "last_updated": datetime.now(UTC).isoformat(),
             }
             implementation_plan.write_text(json.dumps(plan_data, indent=2))
 
@@ -521,7 +528,7 @@ async def start_task(
                     {
                         "approved": True,
                         "approved_by": "auto-simple",
-                        "approved_at": datetime.now().isoformat(),
+                        "approved_at": datetime.now(UTC).isoformat(),
                     },
                     indent=2,
                 )
@@ -963,7 +970,7 @@ async def stop_task(
     """Stop a running task."""
     agent_service = get_agent_service()
 
-    if not agent_service.is_running(task_id):
+    if not await agent_service.is_running_anywhere(task_id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Task is not running",
@@ -988,7 +995,7 @@ async def stop_task(
     }
 
 
-def _refuse_recovery_while_running(
+async def _refuse_recovery_while_running(
     task_id: str, agent_service: Any, *, force: bool
 ) -> None:
     """409 when a build for ``task_id`` is still running and ``force`` is unset.
@@ -996,14 +1003,14 @@ def _refuse_recovery_while_running(
     #1619: recovery resets the task record and never deletes the k8s Job, so
     recovering a live build leaves the Job writing against a reset task and,
     with autoRestart, can put a second Job on it. Reads the same
-    ``is_running`` the cockpit's card reads, so the refusal and the badge
+    ``is_running_anywhere`` the cockpit's card reads, so the refusal and the badge
     cannot disagree.
 
     A separate function rather than an inline branch: ``recover_task`` is
     already at the strict-ruff branch ceiling, and a guard that gets
     inlined-and-forgotten is how the badge and the refusal drift apart.
     """
-    if force or not agent_service.is_running(task_id):
+    if force or not await agent_service.is_running_anywhere(task_id):
         return
     raise HTTPException(
         status_code=status.HTTP_409_CONFLICT,
@@ -1071,7 +1078,7 @@ async def recover_task(
     # same task. The cockpit offered exactly this over healthy builds while
     # is_running() could not see them. Expressed against the same predicate the
     # card reads, so the refusal and the badge can never disagree.
-    _refuse_recovery_while_running(task_id, agent_service, force=request.force)
+    await _refuse_recovery_while_running(task_id, agent_service, force=request.force)
     if task_id in agent_service.running_tasks:
         try:
             proc = agent_service.running_tasks[task_id]
@@ -1215,7 +1222,7 @@ async def create_and_run_task(
     requirements: dict = {
         "title": title,
         "description": description,
-        "created_at": datetime.now().isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
     }
     # Persist upstream provenance (#332) so the PFactory→issue→spec chain is
     # traversable. Optional — omitted entirely when no fields are provided.
@@ -1407,7 +1414,7 @@ async def create_from_trusted_plan(
     requirements: dict = {
         "title": title,
         "description": description,
-        "created_at": datetime.now().isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
     }
     if request.provenance is not None:
         prov = request.provenance.model_dump(exclude_none=True, exclude_defaults=True)

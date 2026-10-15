@@ -1238,6 +1238,7 @@ async def _run_trailing_gates_if_build_complete(
     """
     try:
         from .gate_runner import (
+            GateResult,
             detect_gates,
             failing_gates,
             gate_dir_for,
@@ -1349,6 +1350,15 @@ async def _run_trailing_gates_if_build_complete(
             "info",
         )
         results = await run_gates(gate_dir, gates)
+        from analysis.ci_discovery import ci_linters  # noqa: PLC0415
+
+        # A CI linter no gate ran is recorded `skipped`, never silently absent (#1627).
+        ran = {r.name for r in results if not r.skipped}
+        results += [
+            GateResult(name=tool, passed=True, skipped=True)
+            for tool in ci_linters(gate_dir)
+            if ("lint" if tool == "eslint" else tool) not in ran
+        ]
         summary = summarize_gates(results)
         failures = failing_gates(results)
         # Build-layout guard (#601): a root-vs-src import-shadowing layout makes

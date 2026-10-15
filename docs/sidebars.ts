@@ -33,6 +33,7 @@ const sidebars: SidebarsConfig = {
         'concepts/solo-mode',
         'concepts/mcp-servers',
         'concepts/mcp-credentials',
+        'concepts/github-app',
         'concepts/mcp-stdio-keys',
         'concepts/portal-clones',
         'concepts/gvisor-sandbox',

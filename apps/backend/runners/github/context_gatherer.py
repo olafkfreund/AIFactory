@@ -557,6 +557,8 @@ class PRContextGatherer:
             proc = await asyncio.create_subprocess_exec(
                 "git",
                 "diff",
+                "--no-ext-diff",
+                "--no-textconv",
                 f"{base_ref}...{head_ref}",
                 "--",
                 path,

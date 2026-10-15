@@ -37,6 +37,7 @@ from collections.abc import AsyncGenerator, AsyncIterator
 from pathlib import Path
 from typing import Any
 
+from core.child_env import child_env
 from providers import BaseLLMProvider
 from providers.types import AssistantMessage, TextBlock
 
@@ -242,6 +243,7 @@ class CodexAgenticProvider(BaseLLMProvider):
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=child_env(keep=("OPENAI_API_KEY", "CODEX_API_KEY")),
         )
 
         # Drain stderr concurrently. The response read loop only consumes

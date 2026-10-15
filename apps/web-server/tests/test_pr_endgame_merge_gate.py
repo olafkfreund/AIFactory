@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -505,3 +507,93 @@ def test_a_contract_that_raises_on_read_holds_instead(
     assert (
         pe.merge_disposition(spec, "low", trusted=None) == pe.HOLD_BLOCKING_DISPOSITION
     )
+
+
+async def _watch_once(**kw: object) -> dict[str, Any]:
+    result: dict[str, Any] = await pe.watch_and_finish(
+        owner="o",
+        repo="r",
+        pr=7,
+        auto_merge=True,
+        review_fn=lambda: pe.ReviewState("changes_requested"),
+        poll_interval=0,
+        max_minutes=1,
+        **kw,
+    )
+    return result
+
+
+@pytest.mark.parametrize(
+    ("configured", "required", "warns"),
+    [(False, True, True), (True, True, False), (False, False, False)],
+    ids=["human_gate_without_app_warns", "with_app_silent", "no_human_gate_silent"],
+)
+async def test_human_gate_warning(
+    configured: bool,
+    required: bool,
+    warns: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(pe.github_app, "configured", lambda: configured)
+    with caplog.at_level(logging.WARNING, logger=pe.logger.name):
+        await _watch_once(human_approval_required=required)
+    hits = [r for r in caplog.records if "no GitHub App configured" in r.getMessage()]
+    assert len(hits) == (1 if warns else 0)
+
+
+# --------------------------------------------------------------------------- #
+# #1695: fetched (trusted) signals; metadata can only tighten them
+# --------------------------------------------------------------------------- #
+
+_PASS = {"tfactory_verdict": "pass", "host_ci_green": True}
+
+
+def test_1695_recorded_fail_tightens_a_fetched_pass(tmp_path: Path) -> None:
+    spec = _spec(tmp_path, tfactoryVerdict="fail")
+    assert pe.merge_gate_signals(spec, fetched=_PASS)["tfactory_verdict"] == "fail"
+
+
+def test_1695_handback_receipt_beats_the_fetched_verdict(tmp_path: Path) -> None:
+    spec = _spec(tmp_path, tfactoryVerdict="fail")
+    (spec / pe._HANDBACK_RECEIPT).write_text("{}")
+    out = pe.merge_gate_signals(spec, fetched=_PASS)
+    assert out["tfactory_verdict"] == "handback"
+
+
+def test_1695_recorded_pass_cannot_clear_a_fetched_fail(tmp_path: Path) -> None:
+    spec = _spec(tmp_path, tfactoryVerdict="pass")
+    fetched = {"tfactory_verdict": "fail", "host_ci_green": True}
+    assert pe.merge_gate_signals(spec, fetched=fetched)["tfactory_verdict"] == "fail"
+
+
+@pytest.mark.parametrize(
+    "fetched", [{"tfactory_verdict": None, "host_ci_green": None}, {}]
+)
+def test_1695_missing_fetched_values_fail_closed(
+    tmp_path: Path, fetched: dict[str, object]
+) -> None:
+    out = pe.merge_gate_signals(_spec(tmp_path), fetched=fetched)
+    assert out["host_ci_green"] is False
+    assert out["tfactory_verdict"] is None
+
+
+def test_1695_recorded_host_ci_false_tightens(tmp_path: Path) -> None:
+    spec = _spec(tmp_path, hostCiGreen=False)
+    assert pe.merge_gate_signals(spec, fetched=_PASS)["host_ci_green"] is False
+
+
+def test_1695_recorded_host_ci_true_cannot_clear_an_unknown(tmp_path: Path) -> None:
+    spec = _spec(tmp_path, hostCiGreen=True)
+    fetched = {"tfactory_verdict": "pass", "host_ci_green": None}
+    assert pe.merge_gate_signals(spec, fetched=fetched)["host_ci_green"] is False
+
+
+def test_1695_no_fetch_is_todays_dict(tmp_path: Path) -> None:
+    assert pe.merge_gate_signals(_spec(tmp_path)) == {
+        "host_ci_green": True,
+        "tfactory_verdict": "pass",
+        "achieved_val": 0,
+        "val_floor": None,
+        "ci_parity": True,
+    }

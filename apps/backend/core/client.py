@@ -205,6 +205,7 @@ from agents.tools_pkg import (
 )
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from claude_agent_sdk.types import HookMatcher
+from core import process_hardening  # noqa: E402
 from core.auth import get_agent_env_blanks, get_sdk_env_vars, require_auth_token
 from prompts_pkg.project_context import (
     detect_infra_markers,
@@ -212,6 +213,7 @@ from prompts_pkg.project_context import (
     load_project_index,
 )
 from security import bash_security_hook, web_fetch_security_hook
+from security.hooks import git_dir_write_hook  # noqa: E402
 
 
 def _validate_custom_mcp_server(server: dict) -> bool:
@@ -596,6 +598,8 @@ def create_client(
        (see security.py for ALLOWED_COMMANDS)
     4. Tool filtering - Each agent type only sees relevant tools (prevents misuse)
     """
+    if not process_hardening.make_non_dumpable():
+        logger.warning("could not make the process non-dumpable; env stays readable")
     oauth_token = require_auth_token()
     # Ensure SDK can access it via its expected env var
     os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
@@ -1030,6 +1034,11 @@ def create_client(
                 # URLs to cloud metadata / loopback / private / non-http(s).
                 HookMatcher(matcher="WebFetch", hooks=[web_fetch_security_hook]),
                 HookMatcher(matcher="WebSearch", hooks=[web_fetch_security_hook]),
+                # #1719: refuse agent writes into git metadata
+                HookMatcher(
+                    matcher="Write|Edit|MultiEdit|NotebookEdit",
+                    hooks=[git_dir_write_hook],
+                ),
                 # #474 anti-loop guardrail + #476 pre-mutation checkpoint — run on
                 # every tool (matcher=None); each no-ops unless its flag is on.
                 HookMatcher(hooks=[guardrail_pretool_hook, mutation_pretool_hook]),

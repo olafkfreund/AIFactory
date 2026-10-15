@@ -274,7 +274,14 @@ def get_changed_files_from_branch(
         List of (file_path, status) tuples
     """
     result = subprocess.run(
-        ["git", "diff", "--name-status", f"{base_branch}...{spec_branch}"],
+        [
+            "git",
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--name-status",
+            f"{base_branch}...{spec_branch}",
+        ],
         cwd=project_dir,
         capture_output=True,
         text=True,

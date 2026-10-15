@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from server.error_ref import client_error
 from server.services.http_verdict import honest_status
 from server.specpath import browse_roots, within_roots
+from server.utils.subprocess_env import child_env, github_env
 
 logger = logging.getLogger(__name__)
 
@@ -52,14 +53,16 @@ def _confined(path: str) -> str:
 def run_git_command(args: list[str], cwd: str) -> dict:
     """Run a git command and return result."""
     try:
-        result = subprocess.run(
-            ["git"] + args,
-            check=False,
-            capture_output=True,
-            text=True,
-            cwd=cwd,
-            timeout=30,
-        )
+        with github_env(child_env()) as env:
+            result = subprocess.run(
+                ["git"] + args,
+                check=False,
+                capture_output=True,
+                text=True,
+                cwd=cwd,
+                timeout=30,
+                env=env,
+            )
         if result.returncode != 0:
             return {"success": False, "error": result.stderr.strip()}
         return {"success": True, "output": result.stdout.strip()}
@@ -386,6 +389,7 @@ async def check_claude_code_version():
                 capture_output=True,
                 text=True,
                 timeout=5,
+                env=child_env(),
             )
             if result.returncode == 0:
                 claude_path = result.stdout.strip()
@@ -398,6 +402,7 @@ async def check_claude_code_version():
                 capture_output=True,
                 text=True,
                 timeout=5,
+                env=child_env(),
             )
             if result.returncode == 0:
                 return {
@@ -453,6 +458,7 @@ async def install_claude_code():
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=child_env(),
         )
 
     # Step 1: Check if claude is already installed
@@ -498,6 +504,7 @@ async def install_claude_code():
                 capture_output=True,
                 text=True,
                 timeout=60,
+                env=child_env(),
             )
             if result.returncode != 0:
                 return {
@@ -776,6 +783,7 @@ def _check_npm_package_installed(package: str) -> bool:
             capture_output=True,
             text=True,
             timeout=8,
+            env=child_env(),
         )
         return result.returncode == 0 and package in result.stdout
     except Exception:
@@ -1434,14 +1442,16 @@ def run_gh_command(args: list[str], cwd: str) -> dict:
         Dict with success status, output or error message
     """
     try:
-        result = subprocess.run(
-            ["gh"] + args,
-            check=False,
-            capture_output=True,
-            text=True,
-            cwd=cwd,
-            timeout=30,
-        )
+        with github_env(child_env()) as env:
+            result = subprocess.run(
+                ["gh"] + args,
+                check=False,
+                capture_output=True,
+                text=True,
+                cwd=cwd,
+                timeout=30,
+                env=env,
+            )
         if result.returncode != 0:
             return {"success": False, "error": result.stderr.strip()}
         return {"success": True, "output": result.stdout.strip()}

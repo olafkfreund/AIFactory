@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from factory_common.logsafe import sanitize_log
@@ -157,7 +157,7 @@ async def get_task_logs(
                 "type": "qa_report",
                 "content": qa_report.read_text(),
                 "timestamp": datetime.fromtimestamp(
-                    qa_report.stat().st_mtime
+                    qa_report.stat().st_mtime, UTC
                 ).isoformat(),
             }
         )

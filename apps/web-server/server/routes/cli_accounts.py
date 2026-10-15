@@ -30,6 +30,7 @@ from pydantic import BaseModel, Field, SecretStr
 from server.error_ref import client_error
 from server.paths import atomic_write_secret_json
 from server.services.http_verdict import honest_status
+from server.utils.subprocess_env import child_env
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -172,6 +173,7 @@ def _detect_cli_version(cli: str) -> str | None:
                     capture_output=True,
                     text=True,
                     timeout=5,
+                    env=child_env(),
                 )
                 if result.returncode == 0 and result.stdout.strip():
                     bin_path = result.stdout.strip()
@@ -219,6 +221,7 @@ def _detect_cli_version(cli: str) -> str | None:
             capture_output=True,
             text=True,
             timeout=5,
+            env=child_env(),
         )
         if result.returncode == 0:
             raw = result.stdout.strip()
@@ -308,6 +311,7 @@ def _check_latest_version(cli: str) -> str | None:
             capture_output=True,
             text=True,
             timeout=8,
+            env=child_env(),
         )
         if result.returncode == 0:
             return result.stdout.strip()
@@ -864,6 +868,7 @@ def _run_login_shell(args: list[str], timeout: int = 60) -> subprocess.Completed
         capture_output=True,
         text=True,
         timeout=timeout,
+        env=child_env(),
     )
 
 
@@ -941,6 +946,7 @@ def install_or_update_cli(cli: str):
             capture_output=True,
             text=True,
             timeout=10,
+            env=child_env(),
         )
         if node_check.returncode != 0:
             return {

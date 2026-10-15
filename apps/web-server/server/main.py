@@ -7,7 +7,6 @@ Main entry point for the web server that provides:
 - Static file serving for the React SPA
 """
 
-import ctypes
 import logging
 import sys
 from contextlib import asynccontextmanager, suppress
@@ -74,6 +73,7 @@ from .routes import (
 from .routes import (
     settings as settings_routes,
 )
+from .services import github_app
 from .services.skills_service import init_skills_service
 from .websockets import (
     events as events_ws,
@@ -103,6 +103,13 @@ async def lifespan(app: FastAPI):
     # The serving process (a reload worker included) launches the agents, so it
     # must be non-dumpable too, not only the __main__ supervisor (#1679).
     _make_non_dumpable()
+    from .utils.subprocess_env import sweep_github_dirs  # noqa: PLC0415
+
+    sweep_github_dirs()
+    # Before any loop starts; env_bootstrap already loaded a .env PAT (#1671).
+    github_app.start()
+    github_app.warn_legacy_web_login()
+    github_app.load_web_login()  # no-op when a token or the App is present
 
     settings = get_settings()
 
@@ -190,6 +197,15 @@ async def lifespan(app: FastAPI):
     else:
         logger.info(
             "Completion outbox relay disabled (AIFACTORY_COMPLETION_OUTBOX unset)"
+        )
+
+    app.state.github_app_refresh_stop = None
+    app.state.github_app_refresh_task = None
+    if github_app.configured():
+        gh_stop = _asyncio.Event()
+        app.state.github_app_refresh_stop = gh_stop
+        app.state.github_app_refresh_task = _asyncio.create_task(
+            github_app.refresh_loop(stop=gh_stop)
         )
 
     # Start the RFC-0011 label-driven intake poller when enabled (#636). Off by
@@ -292,6 +308,12 @@ async def lifespan(app: FastAPI):
             await _asyncio.wait_for(app.state.outbox_relay_task, timeout=5.0)
         except (TimeoutError, _asyncio.CancelledError):
             app.state.outbox_relay_task.cancel()
+    if app.state.github_app_refresh_task is not None:
+        app.state.github_app_refresh_stop.set()
+        try:
+            await _asyncio.wait_for(app.state.github_app_refresh_task, timeout=5.0)
+        except (TimeoutError, _asyncio.CancelledError):
+            app.state.github_app_refresh_task.cancel()
     if app.state.stale_reaper_task is not None:
         app.state.stale_reaper_stop.set()
         try:
@@ -761,14 +783,13 @@ def _make_non_dumpable() -> None:
     Children reset to dumpable on execve and still inherit the full env (#1680).
     Fails closed: a server that cannot hide its secrets must not start.
     """
-    if not sys.platform.startswith("linux"):
-        return
-    pr_set_dumpable = 4
-    libc = ctypes.CDLL(None, use_errno=True)
-    if libc.prctl(pr_set_dumpable, 0, 0, 0, 0) != 0:
-        raise SystemExit(
-            f"prctl(PR_SET_DUMPABLE, 0) failed: errno {ctypes.get_errno()}"
-        )
+    backend = str(Path(__file__).resolve().parents[2] / "backend")
+    if backend not in sys.path:
+        sys.path.insert(0, backend)
+    from core.process_hardening import make_non_dumpable  # noqa: PLC0415
+
+    if not make_non_dumpable():
+        raise SystemExit("prctl(PR_SET_DUMPABLE, 0) failed")
 
 
 if __name__ == "__main__":

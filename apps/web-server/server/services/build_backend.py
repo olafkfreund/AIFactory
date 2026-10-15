@@ -106,6 +106,7 @@ from factory_common.logsafe import sanitize_log
 
 from server.services.task_branch import record_branch
 from server.specpath import safe_spec_component, spec_dir_for
+from server.utils.subprocess_env import child_env, github_env
 
 from .task_phase import (
     _append_parallel_flags,
@@ -254,7 +255,7 @@ _FIXED_BUILD_ENV: dict[str, str] = {
 # Provider/runtime env to propagate WHEN PRESENT in the control-plane env. Mirrors
 # core/auth.py::_AGENT_ENV_KEEP (the SDK passthrough the agent legitimately needs)
 # plus GITHUB_TOKEN/GH_TOKEN for run.py's PR endgame. ANTHROPIC_API_KEY is NOT
-# here — OAuth-only policy (subprocess_env._STRIP_VARS).
+# here — OAuth-only policy (core.child_env._STRIP_VARS).
 _PASSTHROUGH_BUILD_ENV: tuple[str, ...] = (
     # The build Job runs the trailing gates itself, and
     # `gate_runner._select_runner` reads these to decide whether a gate goes to a
@@ -949,15 +950,15 @@ def _git(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[
     # GIT_TERMINAL_PROMPT=0: never block a dispatch on an interactive credential
     # prompt — an unreachable/unauthorised remote (e.g. the #960 refresh fetch)
     # must fail fast instead of hanging the server.
-    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
-    return subprocess.run(
-        ["git", *args],
-        check=check,
-        capture_output=True,
-        text=True,
-        timeout=300,
-        env=env,
-    )
+    with github_env(child_env(extra={"GIT_TERMINAL_PROMPT": "0"})) as env:
+        return subprocess.run(
+            ["git", *args],
+            check=check,
+            capture_output=True,
+            text=True,
+            timeout=300,
+            env=env,
+        )
 
 
 def _git_out(args: list[str]) -> str:
@@ -1256,7 +1257,16 @@ class KubeJobBuildBackend:
 
         # #671 OAuth-env defect: mirror the in-pod build env into the Job (the
         # pooled token + the SDK passthrough). Goes into container env, NOT argv.
+        # #1667: stamp before the Job exists so the record never lags the build.
+        # #1673: and before the verdict below, which reads the stamp.
+        from .trusted_contract_store import stamp_spawn  # noqa: PLC0415
+
+        await stamp_spawn(spec_dir_for(project_path, spec_id), "kubejob")
+
         extra_env = build_job_env(oauth_token)
+        from .trusted_contract import spawn_env  # noqa: PLC0415
+
+        extra_env.update(await spawn_env(spec_dir_for(project_path, spec_id)))
 
         manifest = build_run_py_job_manifest(
             task_id=task_id,
@@ -1278,23 +1288,34 @@ class KubeJobBuildBackend:
         owns_client = batch is None
         if owns_client:
             batch = await self._batch_api()
-        # #1667: stamp before the Job exists so the record never lags the build.
-        from .trusted_contract_store import stamp_spawn  # noqa: PLC0415
-
-        await stamp_spawn(spec_dir_for(project_path, spec_id), "kubejob")
-
         try:
             await batch.create_namespaced_job(namespace, manifest)
+            try:
+                await self._store.set_worker_ref(
+                    task_id,
+                    {"kind": "k8s-job", "namespace": namespace, "job_name": job_name},
+                )
+            except BaseException:
+                # #1677: a raise from dispatch must mean nothing is running.
+                try:
+                    await batch.delete_namespaced_job(
+                        job_name, namespace, propagation_policy="Background"
+                    )
+                except Exception:  # noqa: BLE001 - logged; the original error wins
+                    _log.exception(
+                        "[build_backend] could not roll back k8s Job %s/%s for task %s "
+                        "after the worker_ref write failed",
+                        sanitize_log(namespace),
+                        sanitize_log(job_name),
+                        sanitize_log(task_id),
+                    )
+                raise
         finally:
             if owns_client:
                 api = getattr(batch, "api_client", None)
                 if api is not None:
                     await api.close()
 
-        await self._store.set_worker_ref(
-            task_id,
-            {"kind": "k8s-job", "namespace": namespace, "job_name": job_name},
-        )
         _log.info(
             "[build_backend] dispatched run.py Job %s/%s for task %s",
             sanitize_log(namespace),

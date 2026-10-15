@@ -8,7 +8,7 @@ WebSocket I/O is handled in websockets/terminal.py.
 import json
 import logging
 import subprocess
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -582,14 +582,14 @@ async def save_terminal_buffer(terminal_id: str, request: dict):
         sessions_dir.mkdir(parents=True, exist_ok=True)
 
         # Generate session filename with timestamp
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005 - local wall-clock session filename shown to users
         session_filename = f"terminal_{terminal_id}_{timestamp}.json"
         session_file = sessions_dir / session_filename
 
         # Prepare session data
         session_data = {
             "terminalId": terminal_id,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "cwd": session.cwd,
             "shell": session.shell,
             "buffer": buffer_content,

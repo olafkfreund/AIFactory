@@ -157,6 +157,9 @@ jobs:
       #    since 3.4.2, and `continue-on-error: true` hid it: the job stayed
       #    green while the published spec rotted 20+ releases behind. No
       #    continue-on-error here — a spec we cannot generate is a real failure.
+      #    The generator pins SAML_ENABLED, SCIM_ENABLED, AIFACTORY_MCP_REMOTE_ENABLED,
+      #    AIFACTORY_RMUX_ENABLED and APP_RMUX_ENABLED to false, so the spec is
+      #    the default deployment (#1632).
       - name: Regenerate OpenAPI spec
         run: |
           python3 -m venv /tmp/ws
@@ -191,6 +194,7 @@ jobs:
           echo "  /tmp/ws/bin/pip install -r apps/web-server/requirements.txt"
           echo "  /tmp/ws/bin/pip install -r apps/backend/requirements.txt"
           echo "  APP_DISABLE_AUTH=true /tmp/ws/bin/python scripts/generate-openapi-spec.py"
+          echo "  (output ignores .env and exported feature flags; apps/web-server/static/ must be absent)"
           echo
           git diff -- docs/dependencies.md apps/web-server/openapi.yaml
           exit 1

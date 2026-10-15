@@ -26,6 +26,7 @@ from server.error_ref import client_error
 from server.services.argv_safety import assert_not_option
 from server.services.http_verdict import honest_status
 from server.specpath import contained_path, registered_project_roots
+from server.utils.subprocess_env import child_env
 
 logger = logging.getLogger(__name__)
 
@@ -279,6 +280,7 @@ async def open_worktree_in_ide(request: OpenInIDERequest):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
+            env=child_env(),
         )
 
         return {"success": True, "data": {"opened": True}}
@@ -318,6 +320,7 @@ async def open_worktree_in_terminal(request: OpenInTerminalRequest):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
+            env=child_env(),
         )
 
         return {"success": True, "data": {"opened": True}}

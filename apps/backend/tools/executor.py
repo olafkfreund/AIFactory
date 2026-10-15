@@ -31,7 +31,9 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from core.child_env import child_env
 from providers.types import ToolResultBlock
+from security.filesystem_validators import git_metadata_write_refusal
 from security.tool_input_validator import validate_tool_input
 
 logger = logging.getLogger(__name__)
@@ -215,6 +217,7 @@ class ToolExecutor:
         content = tool_input["content"]
 
         resolved, error = self._validate_path(file_path)
+        error = error or git_metadata_write_refusal(file_path, str(self._working_dir))
         if error:
             return ToolResultBlock(content=error, is_error=True)
 
@@ -237,6 +240,7 @@ class ToolExecutor:
         new_string = tool_input["new_string"]
 
         resolved, error = self._validate_path(file_path)
+        error = error or git_metadata_write_refusal(file_path, str(self._working_dir))
         if error:
             return ToolResultBlock(content=error, is_error=True)
 
@@ -315,6 +319,7 @@ class ToolExecutor:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(self._working_dir),
+                env=child_env(),
             )
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=float(timeout)
@@ -420,6 +425,7 @@ class ToolExecutor:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(self._working_dir),
+                env=child_env(),
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30.0)
         except TimeoutError:

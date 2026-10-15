@@ -1,0 +1,402 @@
+# ruff: noqa: ARG001, S105, S603, S607, PLW1510
+"""Child processes must not inherit the web server's secrets (#1680)."""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT / "apps" / "backend"))
+sys.path.insert(0, str(_ROOT / "apps" / "web-server"))
+
+from server.utils.subprocess_env import (  # noqa: E402
+    GITHUB_KEEP,
+    child_env,
+    make_subprocess_env,
+)
+
+SECRETS = (
+    "DATABASE_URL",
+    "JWT_SECRET",
+    "API_TOKEN",
+    "AIFACTORY_TOKEN",
+    "AIFACTORY_TRUSTED_PLAN_KEY_PFACTORY",
+    "S3_SECRET_KEY",
+    "APP_OIDC_CLIENT_SECRET",
+    "GITHUB_TOKEN",
+    "KMS_FERNET_KEY",
+)
+
+
+@pytest.fixture
+def secret_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for k in ("GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"):
+        monkeypatch.delenv(k, raising=False)
+    for k in SECRETS:
+        monkeypatch.setenv(k, "s3cret")
+    monkeypatch.setenv("OPENAI_API_KEY", "oa")
+    monkeypatch.setenv("OPENAI_COMPATIBLE_API_KEY", "oc")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "an")
+    monkeypatch.setenv("PATH", os.environ.get("PATH", "/usr/bin"))
+    monkeypatch.setenv("HOME", os.environ.get("HOME", "/root"))
+
+
+def test_child_env_drops_secrets(secret_env: None) -> None:
+    env = child_env()
+    for k in SECRETS:
+        assert k not in env, f"leaked {k}"
+
+
+def test_child_env_keeps_path_and_home(secret_env: None) -> None:
+    env = child_env()
+    assert env["PATH"] == os.environ["PATH"]
+    assert env["HOME"] == os.environ["HOME"]
+
+
+def test_keep_restores_only_named(secret_env: None) -> None:
+    env = child_env(keep=GITHUB_KEEP)
+    assert env["GITHUB_TOKEN"] == "s3cret"
+    assert "DATABASE_URL" not in env
+
+
+def test_hooks_path_appended_after_existing_entry(
+    secret_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "credential.https://github.com.helper")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "!gh auth git-credential")
+    env = child_env()
+    assert env["GIT_CONFIG_COUNT"] == "7"
+    assert env["GIT_CONFIG_KEY_0"] == "credential.https://github.com.helper"
+    assert env["GIT_CONFIG_VALUE_0"] == "!gh auth git-credential"
+    assert env["GIT_CONFIG_KEY_1"] == "core.hooksPath"
+    assert env["GIT_CONFIG_VALUE_1"] == "/dev/null"
+    assert env["GIT_CONFIG_KEY_2"] == "core.fsmonitor"
+    assert env["GIT_CONFIG_VALUE_2"] == "false"
+    assert env["GIT_CONFIG_KEY_3"] == "protocol.ext.allow"
+    assert env["GIT_CONFIG_VALUE_3"] == "never"
+    assert env["GIT_CONFIG_KEY_4"] == "core.sshCommand"
+    assert env["GIT_CONFIG_VALUE_4"] == "ssh"
+    assert env["GIT_CONFIG_KEY_5"] == "core.pager"
+    assert env["GIT_CONFIG_VALUE_5"] == "cat"
+    assert env["GIT_CONFIG_KEY_6"] == "core.editor"
+    assert env["GIT_CONFIG_VALUE_6"] == "true"
+
+
+def test_hooks_path_is_entry_zero_without_count(secret_env: None) -> None:
+    env = child_env()
+    assert env["GIT_CONFIG_COUNT"] == "6"
+    assert env["GIT_CONFIG_KEY_0"] == "core.hooksPath"
+    assert env["GIT_CONFIG_VALUE_0"] == "/dev/null"
+    assert env["GIT_CONFIG_KEY_1"] == "core.fsmonitor"
+    assert env["GIT_CONFIG_VALUE_1"] == "false"
+    assert env["GIT_CONFIG_KEY_2"] == "protocol.ext.allow"
+    assert env["GIT_CONFIG_VALUE_2"] == "never"
+    assert env["GIT_CONFIG_KEY_3"] == "core.sshCommand"
+    assert env["GIT_CONFIG_VALUE_3"] == "ssh"
+    assert env["GIT_CONFIG_KEY_4"] == "core.pager"
+    assert env["GIT_CONFIG_VALUE_4"] == "cat"
+    assert env["GIT_CONFIG_KEY_5"] == "core.editor"
+    assert env["GIT_CONFIG_VALUE_5"] == "true"
+
+
+def test_real_git_fsmonitor_disabled_by_child_env(
+    secret_env: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # pre-commit runs pytest under a git hook: ambient GIT_* would aim git at this repo (#819)
+    for k in (
+        "GIT_DIR",
+        "GIT_INDEX_FILE",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY",
+    ):
+        monkeypatch.delenv(k, raising=False)
+    iso = {"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"}
+    base = {**os.environ, **iso}
+    repo, wt = tmp_path / "repo", tmp_path / "wt"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True, env=base)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "i",
+        ],
+        check=True,
+        env=base,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "add", "-q", str(wt), "-b", "w"],
+        check=True,
+        env=base,
+    )
+    subprocess.run(
+        ["git", "-C", str(wt), "config", "core.fsmonitor", "touch M; false"],
+        check=True,
+        env=base,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "status"],
+        env={**child_env(), **iso},
+        capture_output=True,
+    )
+    assert not (repo / "M").exists()
+    subprocess.run(
+        ["git", "-C", str(repo), "status"], env=base, capture_output=True
+    )  # control
+    assert (repo / "M").exists()
+
+
+def test_make_subprocess_env_keep_and_drop(secret_env: None) -> None:
+    env = make_subprocess_env()
+    assert env["OPENAI_API_KEY"] == "oa"
+    assert env["OPENAI_COMPATIBLE_API_KEY"] == "oc"
+    assert env["GITHUB_TOKEN"] == "s3cret"
+    assert "DATABASE_URL" not in env
+    assert "ANTHROPIC_API_KEY" not in env
+
+
+def test_make_subprocess_env_can_keep_anthropic_key(secret_env: None) -> None:
+    env = make_subprocess_env(strip_anthropic_api_key=False)
+    assert env["ANTHROPIC_API_KEY"] == "an"
+
+
+def test_real_git_hook_disabled_by_child_env(secret_env: None, tmp_path: Path) -> None:
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
+    base = {**os.environ, "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"}
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, env=base)
+    hook = tmp_path / ".git" / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\nexit 1\n")
+    hook.chmod(0o755)
+    cmd = [*git, "-C", str(tmp_path), "commit", "--allow-empty", "-qm", "x"]
+    assert subprocess.run(cmd, env=base, capture_output=True).returncode != 0
+    scrubbed = {
+        **child_env(),
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_NOSYSTEM": "1",
+    }
+    assert subprocess.run(cmd, env=scrubbed, capture_output=True).returncode == 0
+
+
+def test_real_git_ssh_pager_editor_pinned(
+    secret_env: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An agent-written .git/config cannot pick ssh, pager or editor (#1717)."""
+    from core import workspace_fetch
+
+    for k in (
+        "GIT_SSH_COMMAND",
+        "GIT_SSH",
+        "GIT_PAGER",
+        "PAGER",
+        "GIT_EDITOR",
+        "VISUAL",
+        "EDITOR",
+        "GIT_DIR",
+        "GIT_INDEX_FILE",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY",
+    ):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("WORKSPACE_URI", "s3://dummy/ws.tar")
+    spec = "001-pin"
+    wt = tmp_path / ".aifactory" / "worktrees" / "tasks" / spec
+    marker = tmp_path / "S"
+    pager = f"touch {tmp_path}/P; cat"
+    editor = f"touch {tmp_path}/E; true"
+
+    def git(*args: str, env: dict[str, str] | None = None) -> str:
+        return subprocess.run(
+            ["git", "-C", str(wt), *args],
+            env=env or {**os.environ},
+            capture_output=True,
+            text=True,
+            timeout=30,
+        ).stdout.strip()
+
+    subprocess.run(
+        ["git", "init", "-q", "-b", "main", str(wt)],
+        env={**os.environ},
+        check=True,
+        timeout=30,
+    )
+    git(
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "i",
+    )
+    git("remote", "add", "origin", "ssh://git@127.0.0.1:1/r.git")
+    git("config", "ssh.variant", "ssh")  # 'simple' variant rejects the port
+    git("config", "core.sshCommand", f"touch {marker}; false")
+    git("config", "core.pager", pager)
+    git("config", "core.editor", editor)
+    git("push", "origin", "HEAD:main")  # control: unpinned git runs it
+    assert marker.exists()
+    marker.unlink()
+    assert workspace_fetch.maybe_push_workspace_branch(tmp_path, spec) is False
+    assert not marker.exists()
+    pinned = child_env()
+    assert git("var", "GIT_PAGER") == pager
+    assert git("var", "GIT_EDITOR") == editor
+    assert git("var", "GIT_PAGER", env=pinned) == "cat"
+    assert git("var", "GIT_EDITOR", env=pinned) == "true"
+    monkeypatch.setenv("GIT_PAGER", "less")
+    monkeypatch.setenv("GIT_EDITOR", "vi")
+    monkeypatch.setenv("GIT_SSH_COMMAND", "ssh -i k")
+    op = child_env()
+    assert op["GIT_SSH_COMMAND"] == "ssh -i k"
+    assert git("var", "GIT_PAGER", env=op) == "less"
+    assert git("var", "GIT_EDITOR", env=op) == "vi"
+
+
+# --- backend in-process helpers (#1680 review fix) ---------------------------
+
+
+@pytest.mark.parametrize(
+    "url", ["https://github.com/o/r.git", "https://example.com/o/r.git"]
+)
+# ids: PYTEST_CURRENT_TEST (kept in child env) must not quote the token
+@pytest.mark.parametrize("token", ["ghs_scrubtest", ""], ids=["token", "none"])
+def test_authed_push_url_env_is_scrubbed(
+    monkeypatch: pytest.MonkeyPatch, url: str, token: str
+) -> None:
+    from core.git_credentials import authed_push_url
+
+    monkeypatch.setenv("DATABASE_URL", "postgres://secret")
+    monkeypatch.setenv("GITHUB_TOKEN", token)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GIT_CONFIG_COUNT", raising=False)
+    with authed_push_url(url) as (_, env):
+        assert "DATABASE_URL" not in env
+        assert env["GIT_CONFIG_KEY_0"] == "core.hooksPath"
+        assert env["GIT_CONFIG_VALUE_0"] == "/dev/null"
+        # the token only travels via a per-call GH_CONFIG_DIR (#1723)
+        assert "GITHUB_TOKEN" not in env
+        assert "GIT_PASS" not in env
+        assert ("GH_CONFIG_DIR" in env) == bool(
+            token and url.startswith("https://github.com/")
+        )
+
+
+def test_core_child_env_extra_count_appends_hooks_entry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.child_env import child_env as core_child_env
+
+    env = core_child_env(
+        extra={
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "credential.helper",
+            "GIT_CONFIG_VALUE_0": "x",
+        }
+    )
+    assert env["GIT_CONFIG_COUNT"] == "7"
+    assert env["GIT_CONFIG_KEY_0"] == "credential.helper"
+    assert env["GIT_CONFIG_KEY_1"] == "core.hooksPath"
+    assert env["GIT_CONFIG_KEY_2"] == "core.fsmonitor"
+    assert env["GIT_CONFIG_KEY_3"] == "protocol.ext.allow"
+    assert env["GIT_CONFIG_KEY_4"] == "core.sshCommand"
+    assert env["GIT_CONFIG_KEY_5"] == "core.pager"
+    assert env["GIT_CONFIG_KEY_6"] == "core.editor"
+    assert env["GIT_CONFIG_VALUE_1"] == "/dev/null"
+
+
+def test_opt_in_keeps_both_anthropic_credentials(
+    secret_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY_FILE", "/run/key")
+    env = make_subprocess_env(strip_anthropic_api_key=False)
+    assert env["ANTHROPIC_API_KEY_FILE"] == "/run/key"
+    assert "ANTHROPIC_API_KEY_FILE" not in make_subprocess_env()
+
+
+def test_trusted_plan_git_env_is_scrubbed_and_headless(
+    secret_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import trusted_plan  # noqa: PLC0415
+
+    monkeypatch.setenv("GIT_TERMINAL_PROMPT", "1")
+    env = trusted_plan._git_subprocess_env()
+    assert env is not None
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+    assert env["GIT_CONFIG_KEY_1"] == "core.fsmonitor"
+    assert "DATABASE_URL" not in env
+    assert env["GIT_CONFIG_VALUE_0"] == "/dev/null"
+
+
+def test_credential_names_dropped_for_tools_kept_for_runner(
+    secret_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for k in (
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "CONTEXT7_KEY",
+        "S3_ACCESS_KEY",
+        "OLLAMA_API_KEY",
+    ):
+        monkeypatch.setenv(k, "c")
+    tools = child_env()
+    for k in (
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "CONTEXT7_KEY",
+        "S3_ACCESS_KEY",
+        "OLLAMA_API_KEY",
+    ):
+        assert k not in tools, f"leaked {k}"
+    assert (
+        child_env(keep=("CLAUDE_CODE_OAUTH_TOKEN",))["CLAUDE_CODE_OAUTH_TOKEN"] == "c"
+    )
+    runner = make_subprocess_env()
+    assert runner["CLAUDE_CODE_OAUTH_TOKEN"] == "c"
+    # denied, but RUNNER_KEEP restores it for the runner (#1713)
+    assert runner["OLLAMA_API_KEY"] == "c"
+    assert "CONTEXT7_KEY" not in runner  # #1674
+    assert "S3_ACCESS_KEY" not in runner  # #1674
+    assert "DATABASE_URL" not in runner
+
+
+def test_github_app_private_key_never_reaches_a_child(
+    secret_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The App key is popped at boot; the deny pattern is the second layer (#1671)."""
+    name = "AIFACTORY_GITHUB_APP_PRIVATE_KEY"
+    monkeypatch.setenv(name, "-----BEGIN RSA PRIVATE KEY-----x")
+    assert name not in child_env()
+    assert name not in child_env(keep=GITHUB_KEEP)
+    assert name not in make_subprocess_env()
+    assert name not in make_subprocess_env(strip_anthropic_api_key=False)
+
+
+def test_make_subprocess_env_drops_trusted_contract(
+    secret_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AIFACTORY_TRUSTED_CONTRACT", "x")
+    assert "AIFACTORY_TRUSTED_CONTRACT" not in make_subprocess_env()
+    assert "AIFACTORY_TRUSTED_CONTRACT" not in child_env()
+
+
+def test_extra_trusted_contract_survives_strip(secret_env: None) -> None:
+    env = make_subprocess_env(extra={"AIFACTORY_TRUSTED_CONTRACT": "d"})
+    assert env["AIFACTORY_TRUSTED_CONTRACT"] == "d"

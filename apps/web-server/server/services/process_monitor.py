@@ -907,6 +907,18 @@ async def monitor_process(
         # Task was cancelled, cleanup already handled by stop_task
         pass
     except Exception as e:
+        # #1771: record the terminal status like a failed exit does, or the
+        # board shows in_progress forever. Never let this skip the cleanup.
+        if spec_id and project_path:
+            try:
+                await service._update_plan_status(
+                    project_path, spec_id, "failed", task_id, emit_events=False
+                )
+            except Exception:
+                logger.exception(
+                    "[AgentService] could not record terminal status for %s",
+                    sanitize_log(task_id),
+                )
         # Unexpected error, ensure cleanup
         if task_id in service.running_tasks:
             del service.running_tasks[task_id]

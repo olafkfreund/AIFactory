@@ -220,7 +220,7 @@ def test_no_downstream_stage_receives_subtasks(tmp_path: Path):
     spec = tmp_path / "spec"
     spec.mkdir()
     (spec / "spec.md").write_text("## Acceptance Criteria\n- it works\n")
-    ingest = build_ingest_payload(spec, "101-demo")
+    ingest = build_ingest_payload(spec, "101-demo", contract=None)
 
     assert not [k for k in (*handoff, *ingest) if "subtask" in k.lower()]
 

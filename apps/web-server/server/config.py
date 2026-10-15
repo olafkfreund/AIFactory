@@ -11,6 +11,8 @@ from pathlib import Path
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from server.utils.subprocess_env import child_env
+
 from .paths import get_data_dir, get_data_file, write_secret_file
 
 logger = logging.getLogger(__name__)
@@ -366,6 +368,7 @@ class Settings(BaseSettings):
                     ],
                     check=True,
                     capture_output=True,
+                    env=child_env(),
                 )
                 key_file.chmod(0o600)
                 print(f"Certificate generated: {cert_file}")

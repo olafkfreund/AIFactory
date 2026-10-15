@@ -835,7 +835,7 @@ jobs:
         run: npm -w apps/frontend-web run test
 
   frontend-quality:
-    name: frontend lint + format (blocking, #647)
+    name: "frontend lint + format (blocking, #647)"
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # Blocking frontend gate (#647): ESLint 9 flat config

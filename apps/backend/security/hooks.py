@@ -18,13 +18,15 @@ from project_analyzer import BASE_COMMANDS, SecurityProfile, is_command_allowed
 
 logger = logging.getLogger(__name__)
 
-from .ast_parser import UnparseableCommand, extract_commands_ast, is_available
+from .ast_parser import UnparseableCommand, extract_command_segments_ast, is_available
 from .egress import check_egress
 from .exec_context import reset_worktree_root, set_worktree_root
-from .parser import extract_commands, get_command_for_validation, split_command_segments
+from .filesystem_validators import git_metadata_write_refusal  # noqa: E402
 from .profile import get_security_profile
 from .url_guard import assert_url_not_ssrf
 from .validator import VALIDATORS
+
+_GIT_DIR_WRITE_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
 
 
 async def web_fetch_security_hook(
@@ -69,25 +71,54 @@ async def web_fetch_security_hook(
     return {}
 
 
-def _extract_commands_fail_closed(command: str) -> tuple[list[str] | None, str]:
-    """Extract command names with the fail-closed AST parser.
+def _extract_commands_fail_closed(
+    command: str,
+) -> tuple[list[tuple[str, str, bool]] | None, str]:
+    """Extract ``(name, segment, dynamic_args)`` with the fail-closed AST parser.
 
     Returns ``(commands, "")`` on success, or ``(None, reason)`` when the
-    command must be blocked because it could not be safely parsed. Falls back
-    to the legacy regex parser only when ``bashlex`` is unavailable (degraded
-    install) — never to widen what the AST parser would have blocked.
+    command must be blocked because it could not be safely parsed, or when
+    ``bashlex`` is unavailable (degraded install).
     """
     if is_available():
         try:
-            return extract_commands_ast(command), ""
+            return extract_command_segments_ast(command), ""
         except UnparseableCommand as exc:
             return None, (
                 "Command blocked: could not be safely parsed for security "
                 f"validation ({exc}). Rewrite it without dynamic shell "
                 'payloads (e.g. avoid `bash -c "$VAR"`).'
             )
-    # Degraded fallback: bashlex not installed.
-    return extract_commands(command), ""
+    # Degraded install: bashlex is a hard requirement, so refuse everything
+    # rather than trust the regex parser (it cannot see through wrappers,
+    # substitutions or quoting).
+    return None, "Command blocked: bash commands cannot be validated without bashlex."
+
+
+def _validator_refusal(cmds: list[tuple[str, str, bool]], root: str) -> str | None:
+    """Run the per-command validators on each unwrapped segment.
+
+    Returns the refusal reason, or None when every validator passes. Arguments
+    xargs or ``find -exec`` append at run time cannot be checked, so a
+    validated command reached that way is refused.
+    """
+    for name, seg, dynamic_args in cmds:
+        if name not in VALIDATORS:
+            continue
+        token = set_worktree_root(root)
+        try:
+            allowed, reason = VALIDATORS[name](seg)
+        finally:
+            reset_worktree_root(token)
+        if not allowed:
+            return reason
+        if dynamic_args:
+            return (
+                f"`{name}` run by xargs or find -exec takes arguments the "
+                f"{name} validator cannot check. Pass explicit arguments "
+                "instead (or use `find -delete`)."
+            )
+    return None
 
 
 async def bash_security_hook(
@@ -165,45 +196,26 @@ async def bash_security_hook(
             "reason": f"Could not parse command for security validation: {command}",
         }
 
-    # Split into segments for per-command validation
-    segments = split_command_segments(command)
-
-    # Get all allowed commands
-    allowed = profile.get_all_allowed_commands()
-
-    # Check each command against the allowlist
-    for cmd in commands:
-        # Check if command is allowed
+    names = [n for n, _, _ in commands]
+    for cmd in names:
         is_allowed, reason = is_command_allowed(cmd, profile)
-
         if not is_allowed:
             return {
                 "decision": "block",
                 "reason": reason,
             }
 
-        # Additional validation for sensitive commands. Expose the worktree
-        # root (cwd) so path validators (rm/chmod) can reject escapes (#364).
-        if cmd in VALIDATORS:
-            cmd_segment = get_command_for_validation(cmd, segments)
-            if not cmd_segment:
-                cmd_segment = command
-
-            validator = VALIDATORS[cmd]
-            token = set_worktree_root(cwd)
-            try:
-                allowed, reason = validator(cmd_segment)
-            finally:
-                reset_worktree_root(token)
-            if not allowed:
-                return {"decision": "block", "reason": reason}
+    # Expose the worktree root (cwd) so path validators (rm/chmod) can reject
+    # escapes (#364).
+    if reason := _validator_refusal(commands, cwd):
+        return {"decision": "block", "reason": reason}
 
     # Egress policy (#363 AC3): defense-in-depth over the allowlist. When opted
     # in (AIFACTORY_EGRESS_POLICY=deny|allowlist) an allowlisted network tool
     # (curl/wget/ssh/…) is still blocked unless the target host is permitted —
     # so a prompt-injected command can't exfiltrate even though the binary is
     # allowed. Default off → no behavior change.
-    egress_ok, egress_reason = check_egress(command, commands)
+    egress_ok, egress_reason = check_egress(command, names)
     if not egress_ok:
         return {"decision": "block", "reason": egress_reason}
 
@@ -235,25 +247,36 @@ def validate_command(
     if not commands:
         return False, "Could not parse command"
 
-    segments = split_command_segments(command)
-
-    for cmd in commands:
+    for cmd in (n for n, _, _ in commands):
         is_allowed_result, reason = is_command_allowed(cmd, profile)
         if not is_allowed_result:
             return False, reason
 
-        if cmd in VALIDATORS:
-            cmd_segment = get_command_for_validation(cmd, segments)
-            if not cmd_segment:
-                cmd_segment = command
-
-            validator = VALIDATORS[cmd]
-            token = set_worktree_root(str(project_dir))
-            try:
-                allowed, reason = validator(cmd_segment)
-            finally:
-                reset_worktree_root(token)
-            if not allowed:
-                return False, reason
+    if reason := _validator_refusal(commands, str(project_dir)):
+        return False, reason
 
     return True, ""
+
+
+async def git_dir_write_hook(
+    input_data: dict[str, Any],
+    _tool_use_id: str | None = None,
+    _context: Any | None = None,
+) -> dict[str, Any]:
+    """Refuse file-tool writes into any ``.git`` path (#1719)."""
+    if input_data.get("tool_name") not in _GIT_DIR_WRITE_TOOLS:
+        return {}
+    tool_input = input_data.get("tool_input")
+    if not isinstance(tool_input, dict):
+        return {"decision": "block", "reason": "Malformed tool input."}
+    # Check every path key present: NotebookEdit writes notebook_path even if
+    # a harmless file_path rides along.
+    paths = [tool_input[k] for k in ("file_path", "notebook_path") if k in tool_input]
+    if not paths or not all(isinstance(p, str) and p for p in paths):
+        return {"decision": "block", "reason": "Missing or invalid file path."}
+    for path in paths:
+        refusal = git_metadata_write_refusal(path, input_data.get("cwd"))
+        if refusal:
+            logger.warning("Blocked agent write into git metadata")
+            return {"decision": "block", "reason": refusal}
+    return {}

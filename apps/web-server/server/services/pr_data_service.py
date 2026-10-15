@@ -13,13 +13,14 @@ the correct working directory (and therefore the correct GitHub remote).
 import functools
 import json
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from factory_common.logsafe import sanitize_log
 
 from server.error_ref import client_error
+from server.utils.subprocess_env import child_env, github_env
 
 logger = logging.getLogger(__name__)
 
@@ -58,13 +59,15 @@ def _run_gh(args: list[str], cwd: str | None = None, timeout: int = 30) -> dict:
     import subprocess
 
     try:
-        result = subprocess.run(
-            ["gh"] + args,
-            capture_output=True,
-            text=True,
-            cwd=cwd,
-            timeout=timeout,
-        )
+        with github_env(child_env()) as env:
+            result = subprocess.run(
+                ["gh"] + args,
+                capture_output=True,
+                text=True,
+                cwd=cwd,
+                timeout=timeout,
+                env=env,
+            )
         if result.returncode != 0:
             return {"success": False, "error": result.stderr.strip()}
         return {"success": True, "output": result.stdout.strip()}
@@ -301,7 +304,7 @@ class PRDataService:
         for fid in posted_ids:
             if fid not in review_data["posted_finding_ids"]:
                 review_data["posted_finding_ids"].append(fid)
-        review_data["posted_at"] = datetime.now().isoformat()
+        review_data["posted_at"] = datetime.now(UTC).isoformat()
 
         try:
             review_file.write_text(json.dumps(review_data, indent=2))
