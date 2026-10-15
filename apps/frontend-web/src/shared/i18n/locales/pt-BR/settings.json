@@ -416,7 +416,8 @@
     "noProjectSelected": {
       "title": "Nenhum Projeto Selecionado",
       "description": "Selecione um projeto na barra lateral para configurar suas preferências."
-    }
+    },
+    "legacySettingsFile": "As configurações foram importadas de .aifactory/{{file}}. Esse arquivo ainda guarda cópias em texto puro dos tokens; exclua-o."
   },
   "connection": {
     "successTitle": "Conexão bem-sucedida",

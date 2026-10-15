@@ -32,3 +32,13 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if "rmux" in item.keywords:
             item.add_marker(skip_marker)
+
+
+@pytest.fixture(autouse=True)
+def _empty_project_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No DB here: the project has no stored settings (#1795)."""
+
+    async def _empty(*_args: object, **_kwargs: object) -> dict[str, str]:
+        return {}
+
+    monkeypatch.setattr("server.services.project_settings_store.get_settings", _empty)

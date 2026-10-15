@@ -8,6 +8,7 @@ Main entry point for the web server that provides:
 """
 
 import logging
+import os
 import sys
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
@@ -73,7 +74,7 @@ from .routes import (
 from .routes import (
     settings as settings_routes,
 )
-from .services import github_app
+from .services import github_app, project_settings_store
 from .services.skills_service import init_skills_service
 from .websockets import (
     events as events_ws,
@@ -133,6 +134,9 @@ async def lifespan(app: FastAPI):
             app_settings.autoBuildPath = str(backend_path)
             save_app_settings(app_settings)
             logger.info(f"Auto-configured autoBuildPath: {backend_path}")
+
+    # #1795: children never fall back to .aifactory/.env
+    os.environ.setdefault(project_settings_store.ENV, "{}")
 
     # Initialize database (creates tables if needed)
     await init_db()
