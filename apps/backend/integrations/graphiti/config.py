@@ -58,7 +58,7 @@ Environment Variables:
 import json
 import os
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Optional
@@ -527,7 +527,7 @@ class GraphitiState:
         """Record an error in the state."""
         self.error_log.append(
             {
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
                 "error": error_msg[:500],  # Limit error message length
             }
         )

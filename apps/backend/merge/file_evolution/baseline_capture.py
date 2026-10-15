@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from ..types import FileEvolution, TaskSnapshot, compute_content_hash
@@ -155,7 +155,7 @@ class BaselineCapture:
             Dictionary mapping file paths to their FileEvolution objects
         """
         commit = self.get_current_commit()
-        captured_at = datetime.now()
+        captured_at = datetime.now(UTC)
         captured: dict[str, FileEvolution] = {}
 
         # Discover files if not specified
