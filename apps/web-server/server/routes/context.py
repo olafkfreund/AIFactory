@@ -8,6 +8,7 @@ import logging
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path as FilePath
+from typing import Any
 
 from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, Path, Query
@@ -201,7 +202,7 @@ async def refresh_project_index(projectId: str = Path(...)):
         files = result.stdout.strip().split("\n") if result.returncode == 0 else []
 
         # Create basic index
-        index = {
+        index: dict[str, Any] = {
             "files": len(files),
             "languages": {},
             "frameworks": [],
@@ -742,8 +743,6 @@ async def update_project_env(
                     ]
             elif "gitToken" in config_dict:
                 projects[projectId]["settings"]["githubToken"] = config_dict["gitToken"]
-
-            from datetime import UTC, datetime
 
             projects[projectId]["updated_at"] = datetime.now(UTC).isoformat()
             save_projects(projects)

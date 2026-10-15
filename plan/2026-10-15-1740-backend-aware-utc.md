@@ -88,6 +88,10 @@ Check environment: `export PATH=<main clone>/apps/backend/.venv/bin:$PATH`, run 
      using the file's existing datetime import if it has one, or else
      `__import__("datetime").datetime.now(__import__("datetime").UTC)`. Prefer a
      normal import.
+   - Deviation (done): a module-level import is used, so the function-local
+     `from datetime import UTC, datetime` (old line 745) is removed, and `index` is
+     annotated `dict[str, Any]`. The `__import__` call had typed it `Any`, and
+     without the annotation mypy --strict infers `object` (ratchet 18 -> 20).
    - `ruff.toml`: delete lines 227-229 (the carve-out comment and both entries).
      Reword the comment on line 127 to
      `# #1624/#1740: aware UTC timestamps, gated repo-wide (tests exempt below)`.
