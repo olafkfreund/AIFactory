@@ -2,6 +2,11 @@
 
 ### Security
 
+- **Commands inside redirect targets are now checked (#1783).**
+  The Bash command parser skipped redirect targets, so `ls > $(nc …)`,
+  `cat < <(nc …)` and `cat <<< $(nc …)` checked only the outer command. It
+  now walks every node of the parsed command, so no part of it can hide a
+  command.
 - **A variable as the Bash command word no longer bypasses the allowlist (#1753).**
   The command parser skipped a command whose first word was `$X`, `"$X"`,
   `${X}`, `$(...)` or a backtick, so `echo hi; $X status` was allowed with
