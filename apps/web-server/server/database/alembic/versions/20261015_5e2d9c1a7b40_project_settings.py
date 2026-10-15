@@ -11,7 +11,7 @@ Adds:
 Additive: nothing reads the table once the code is reverted.
 
 Revision ID: 5e2d9c1a7b40
-Revises: 0400a6b429b0
+Revises: 5d1c9e3a7b20
 Create Date: 2026-10-15
 """
 
@@ -23,7 +23,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "5e2d9c1a7b40"
-down_revision: str | Sequence[str] | None = "0400a6b429b0"
+down_revision: str | Sequence[str] | None = "5d1c9e3a7b20"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

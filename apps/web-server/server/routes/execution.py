@@ -29,6 +29,7 @@ from server.services.audit_service import (
     audit_task_action,
     audit_task_route,
 )
+from server.services.handback_receipt_store import record as record_handback_receipt
 from server.services.trusted_contract import handoff_contract, resolve_contract
 from server.services.trusted_contract_store import (
     TrustedContractStore,
@@ -1580,6 +1581,8 @@ async def apply_task_correction(
     )
     # A confirm=False preview and a rejected triage write nothing: not an action.
     if result.get("success") and result.get("confirm"):
+        # The QA Fixer can delete the spec-dir receipt; this copy holds the merge.
+        await record_handback_receipt(spec_dir)
         await audit_task_action(
             _access,
             ACTION_TASK_APPLY_CORRECTION,

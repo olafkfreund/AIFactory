@@ -31,6 +31,7 @@ Two principles, both **fail closed**:
 from __future__ import annotations
 
 import os
+import re
 import shlex
 from collections.abc import Callable
 from typing import Any
@@ -64,9 +65,46 @@ def is_available() -> bool:
     return _BASHLEX_AVAILABLE
 
 
+# Allow list of word shapes (#1753): bash expands anything else (globs,
+# braces, ``~``, ``$``, escapes) into words we cannot see statically.
+_SAFE_UNQUOTED = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./=:@%+,-"
+)
+_DQ_UNSAFE = frozenset("$`\\")
+
+
+def _static_shape(raw: str) -> bool:
+    """True when the raw word expands to exactly itself: safe unquoted
+    characters, backslash escapes, single-quoted text, double-quoted text
+    without ``$``, backtick or backslash, and ``{}`` (never expands). A lone ``[``/``]`` is the test
+    command."""
+    if raw in ("[", "]"):
+        return True
+    i = 0
+    while i < len(raw):
+        c = raw[i]
+        if c in ("'", '"'):
+            end = raw.find(c, i + 1)
+            if end < 0 or (c == '"' and _DQ_UNSAFE & set(raw[i + 1 : end])):
+                return False
+            i = end + 1
+        # ``{}`` never expands; an escape is one literal char (``\;``).
+        elif raw.startswith("{}", i) or (c == "\\" and i + 1 < len(raw)):
+            i += 2
+        elif c in _SAFE_UNQUOTED:
+            i += 1
+        else:
+            return False
+    return True
+
+
 def _word_parts_are_literal(node) -> bool:
-    """True when a bashlex word node has no command/parameter substitution —
-    i.e. it is a static literal we can safely re-parse."""
+    """True when a bashlex word node has no command/parameter substitution
+    and an allow-listed shape (``_static_shape``) — i.e. it is a static literal
+    we can safely re-parse."""
+    raw = getattr(node, "raw", None)  # source text, quotes kept (set in _extract)
+    if raw is not None and not _static_shape(raw):
+        return False
     for part in getattr(node, "parts", []) or []:
         # commandsubstitution / parameter (variable) / arithmetic etc. mean the
         # final value is not knowable statically.
@@ -78,6 +116,16 @@ def _word_parts_are_literal(node) -> bool:
         ):
             return False
     return True
+
+
+def _require_literal(words: list[Any], start: int, stop: int) -> None:
+    """Raise unless ``words[start:stop]`` are all static literals. A wrapper's
+    skipped flags/values word-split at run time, so ``$X`` there can become
+    the command it runs (#1753)."""
+    if not all(_word_parts_are_literal(w) for w in words[start:stop]):
+        raise UnparseableCommand(
+            "wrapper argument is not a static literal; cannot validate"
+        )
 
 
 def _collect_command_nodes(node, out: list) -> None:
@@ -127,24 +175,12 @@ def _extract(
         words = _command_words(node)
         if not words:
             continue
+        for w in words:  # ``.word`` drops quotes; the glob check needs them
+            w.raw = command_string[w.pos[0] : w.pos[1]]
 
-        # Skip leading ``VAR=value`` assignment words to find the real command.
-        idx = 0
-        while (
-            idx < len(words)
-            and "=" in words[idx].word
-            and not words[idx].word.startswith("=")
-        ):
-            idx += 1
-        if idx >= len(words):
-            continue
-
-        # If the command word is itself a substitution (e.g. a bare
-        # ``$(...)`` / backtick command), bashlex already collected its inner
-        # commands separately — don't emit the substitution text as a name.
-        if not _word_parts_are_literal(words[idx]):
-            continue
-        _emit(words, idx, depth, acc, dynamic_args=dynamic_args)
+        # bashlex makes real ``VAR=value`` prefixes assignment nodes, which
+        # ``_command_words`` drops; a word with ``=`` left here is run (#1753).
+        _emit(words, 0, depth, acc, dynamic_args=dynamic_args)
 
 
 def _emit(
@@ -158,12 +194,27 @@ def _emit(
     """Record the command at ``words[idx]`` and recurse into its wrapper target."""
     if depth > _MAX_DEPTH:
         raise UnparseableCommand("command nesting too deep to validate")
+    # ``$X``/``$(...)`` as the command word runs a program we cannot see (#1753).
+    if not _word_parts_are_literal(words[idx]):
+        raise UnparseableCommand(
+            "command word is not a static literal; cannot validate"
+        )
     tokens = [w.word for w in words]
     name = _basename(tokens[idx])
     acc.append((name, shlex.join(tokens[idx:]), dynamic_args))
     unwrap = _UNWRAPPERS.get(name)
     if unwrap is not None:
         unwrap(words, idx, depth, acc, dynamic_args=dynamic_args)
+
+
+# Shell flags (``-x``/``+x``) that take no value and do not read stdin.
+_SHELL_FLAGS = frozenset("eulxv")
+# ``-c`` payloads are re-parsed with bashlex, so only POSIX/bash grammar
+# shells qualify (zsh ``=cmd`` and ksh differ).
+_DASH_C_SHELLS = frozenset({"bash", "sh", "dash"})
+# Cheap refusals only. A script operand is trusted file content (like
+# ``source``, ``BASH_ENV`` and ``-l`` profiles), not a parser boundary.
+_STDIN_SCRIPT = re.compile(r"-|/dev/stdin|/dev/fd/.*|/proc/[^/]+/fd/.*")
 
 
 def _unwrap_dash_c(
@@ -174,24 +225,38 @@ def _unwrap_dash_c(
     *,
     dynamic_args: bool,
 ) -> None:
-    """``<shell> -c '<payload>'`` (also ``-lc``, ``-ec``) — recurse into the
-    payload, fail closed if it is not a static literal."""
+    """Accept only ``<shell> [-+flags]... -c [-+flags]... '<payload>' [args]``
+    (recurse into the payload; bash/sh/dash only) or
+    ``<shell> [-+flags]... <script> [args]``. Flags come from
+    ``_SHELL_FLAGS``; any other option fails closed. As in bash, the operand
+    is the first non-option word, wherever ``-c`` appears."""
     tokens = [w.word for w in words]
-    for j in range(idx + 1, len(tokens)):
+    dash_c = False
+    j = idx + 1
+    while j < len(tokens):
+        _require_literal(words, j, j + 1)
         tok = tokens[j]
-        if (
-            tok.startswith("-")
-            and not tok.startswith("--")
-            and "c" in tok[1:]
-            and j + 1 < len(tokens)
-        ):
-            payload_word = words[j + 1]
-            if not _word_parts_are_literal(payload_word):
-                raise UnparseableCommand(
-                    "shell -c payload is not a static literal; cannot validate"
-                )
-            _extract(payload_word.word, depth + 1, acc, dynamic_args=dynamic_args)
-            return
+        if tok == "--":
+            j += 1
+            break
+        if tok[:1] not in ("-", "+") or tok == "-":
+            break
+        flags = set(tok[1:])
+        if tok[0] == "-" and "c" in flags:
+            dash_c = True
+            flags.discard("c")
+        if not flags <= _SHELL_FLAGS or not tok[1:]:  # a bare `+`
+            raise UnparseableCommand(f"shell option {tok} cannot be validated")
+        j += 1
+    if j >= len(tokens):
+        raise UnparseableCommand("shell has no command or script; cannot validate")
+    _require_literal(words, j, j + 1)
+    if dash_c:
+        if _basename(tokens[idx]) not in _DASH_C_SHELLS:
+            raise UnparseableCommand(f"{tokens[idx]} -c cannot be validated")
+        _extract(tokens[j], depth + 1, acc, dynamic_args=dynamic_args)
+    elif _STDIN_SCRIPT.fullmatch(tokens[j]):
+        raise UnparseableCommand(f"shell operand {tokens[j]} cannot be validated")
 
 
 _ENV_VALUE_LONG = ("--unset", "--chdir", "--argv0")
@@ -253,8 +318,10 @@ def _unwrap_env(
             opts = False
             j += 1
             continue
+        break
+    _require_literal(words, idx + 1, j)
+    if j < len(tokens):
         _emit(words, j, depth + 1, acc, dynamic_args=dynamic_args)
-        return
 
 
 _XARGS_VALUE_SHORT = "InPdEsLa"  # value attached or the next word
@@ -315,6 +382,7 @@ def _unwrap_xargs(
             j = _skip_xargs_opt(tok, j)
             continue
         break
+    _require_literal(words, idx + 1, j)
     if j < len(tokens):
         _emit(words, j, depth + 1, acc, dynamic_args=True)
     # ``xargs`` with no explicit command defaults to running ``echo`` — benign.
@@ -331,10 +399,16 @@ def _unwrap_find_exec(
     """``find ... -exec/-execdir/-ok CMD ... ;|+`` — the token after the action
     is the command find runs for each match."""
     del dynamic_args  # find always substitutes matched paths
+    # Any word can split into a new ``-exec`` action, so all must be literal.
+    _require_literal(words, idx + 1, len(words))
     tokens = [w.word for w in words]
     for j in range(idx + 1, len(tokens) - 1):
         if tokens[j] in _FIND_EXEC_ACTIONS:
             _emit(words, j + 1, depth + 1, acc, dynamic_args=True)
+
+
+def _is_opt(tok: str) -> bool:
+    return tok.startswith("-") and tok != "-"
 
 
 def _skip_command_opts(tokens: list[str], j: int) -> int | None:
@@ -386,8 +460,17 @@ def _unwrap_prefix(
 ) -> None:
     """``command``/``exec``/``timeout`` run the command that follows their options."""
     tokens = [w.word for w in words]
+    opts_end = next(
+        (k for k in range(idx + 1, len(tokens)) if not _is_opt(tokens[k])),
+        len(tokens),
+    )
+    # Before the ``-v`` exemption: ``-$X`` could hide or fake the ``v``.
+    _require_literal(words, idx + 1, opts_end)
     j = _PREFIX_OPT_SKIPPERS[_basename(tokens[idx])](tokens, idx + 1)
-    if j is None or j >= len(tokens):
+    if j is None:  # ``command -v``: a lookup, runs nothing
+        return
+    _require_literal(words, idx + 1, j)
+    if j >= len(tokens):
         return
     _emit(words, j, depth + 1, acc, dynamic_args=dynamic_args)
 

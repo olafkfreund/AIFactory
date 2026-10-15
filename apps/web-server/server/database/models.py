@@ -1251,6 +1251,23 @@ class TrustedContract(Base):
         return f"<TrustedContract spec_id={self.spec_id!r}>"
 
 
+class HandbackReceipt(Base):
+    """TFactory handback receipt held outside the spec directory."""
+
+    __tablename__ = "handback_receipts"
+
+    spec_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    spec_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        return f"<HandbackReceipt spec_id={self.spec_id!r}>"
+
+
 class ProjectSettings(Base):
     """Per-project settings, kept outside the agent-writable clone (#1795).
 
