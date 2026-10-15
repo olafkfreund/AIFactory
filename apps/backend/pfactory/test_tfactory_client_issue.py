@@ -88,3 +88,30 @@ def test_maybe_auto_handoff_requires_contract(tmp_path: Path) -> None:
     # async def: the bad call raises before a coroutine is created
     with pytest.raises(TypeError, match=_MISSING):
         tc.maybe_auto_handoff_tfactory(tmp_path, "001")  # type: ignore[call-arg, unused-ignore]
+
+
+def test_handoff_contract_carries_the_build_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # #1775: AIFactory sends TFactory no issue repo, so the key rides the contract
+    # (TFactory prefers it) or TFactory keys the verify task on a bare "382".
+    _stub_git(monkeypatch)
+    spec_dir = _spec_dir(
+        tmp_path, {"githubIssue": {"number": 382}, "provenance": {"repo": "o/r"}}
+    )
+    payload = tc.build_ingest_payload(spec_dir, "048-feat", contract=None)
+    assert payload["contract"]["correlation_key"] == "o/r#382"
+
+
+def test_handoff_keeps_a_pfactory_contract_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub_git(monkeypatch)
+    monkeypatch.setattr(
+        tc, "load_task_contract", lambda *_: {"correlation_key": "o/r#7"}
+    )
+    spec_dir = _spec_dir(
+        tmp_path, {"githubIssue": {"number": 382}, "provenance": {"repo": "o/r"}}
+    )
+    payload = tc.build_ingest_payload(spec_dir, "048-feat", contract=None)
+    assert payload["contract"]["correlation_key"] == "o/r#7"

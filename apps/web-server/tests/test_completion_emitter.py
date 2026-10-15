@@ -6,6 +6,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 _WS = Path(__file__).resolve().parents[1]
 if str(_WS) not in sys.path:
     sys.path.insert(0, str(_WS))
@@ -1453,3 +1455,27 @@ def test_progress_sentinel_is_rolling_and_never_clobbers(tmp_path, monkeypatch):
     assert json.loads((spec / "WORKER.sub-A.json").read_text()) == {
         "keep": "worker_done"
     }
+
+
+@pytest.mark.parametrize(
+    "requirements",
+    [
+        {"metadata": {"githubIssueNumber": 7}, "provenance": {"repo": "a/x"}},
+        {"githubIssue": {"number": 7, "repo": "gitlab:g/p"}},
+        {"githubIssue": {"number": 7, "url": "https://github.com/o/r/issues/7"}},
+        {"githubIssue": {"number": 7}},
+    ],
+)
+def test_tfactory_handoff_key_matches_the_event_key(
+    tmp_path: Path, requirements: dict[str, object]
+) -> None:
+    # #1775: the TFactory handoff mirrors this module's key readers (it lives in
+    # the backend and this module is stdlib-only); a drift splits the work item.
+    backend = str(Path(__file__).resolve().parents[2] / "backend")
+    if backend not in sys.path:
+        sys.path.insert(0, backend)
+    from pfactory.tfactory_client import _event_correlation_key  # noqa: PLC0415
+
+    d = _spec_with(tmp_path, "s", requirements)
+    expected = correlation_key("s", read_issue_number(d), read_issue_repo(d))
+    assert _event_correlation_key(requirements) == expected
