@@ -111,7 +111,9 @@ def review_tier_note(spec_dir: Path, tier: str | None, *, trusted: object) -> st
    `merge_disposition`, drop it from that function's lazy import (keep
    `decide_merge`). Do not touch the holds before and after.
 
-Tests, new file `apps/web-server/tests/test_pr_tier_note.py`, reusing
+Tests, appended to `apps/web-server/tests/test_trusted_contract_merge.py`
+(deviation: a separate file could not import its helpers the way CI collects
+`apps/web-server/tests`), reusing
 `_spec`, `_rec` and the autouse `_isolated_host` from
 `test_trusted_contract_merge.py` (import them; re-declare the autouse fixture
 via `from tests.test_trusted_contract_merge import _isolated_host  # noqa: F401`
@@ -127,7 +129,7 @@ or copy it, whichever the import layout allows):
 - legacy (`trusted=None`, contract file removed): `Review tier: low (not checked`.
 - crafted tier `"low\n\n@evil"` on legacy: note contains `unrecognised` and not `@evil`.
 
-Check: `cd apps/web-server && python -m pytest tests/test_pr_tier_note.py tests/test_trusted_contract_merge.py tests/test_pr_endgame_review_tier.py tests/test_pr_endgame_merge_gate.py -q`
+Check (repo root, as CI runs it): `pytest apps/web-server/tests/test_trusted_contract_merge.py apps/web-server/tests/test_pr_endgame_review_tier.py apps/web-server/tests/test_pr_endgame_merge_gate.py -q -o asyncio_mode=auto`
 Deviation (agy, mypy --strict): `_raise_to_signed` uses
 `raise_review_tier(signed, effective) or effective` (the function is typed
 `str | None`; it never returns None here), and `merge_disposition`'s
@@ -153,7 +155,7 @@ Tests:
 - `apps/web-server/tests/test_merger.py:286`: change to
   `assert "Review tier: medium (not checked against a signed contract)" in body`.
   Add one assertion in a `None` tier test: `"Review tier: none (not checked" in body`.
-- New test in `test_pr_tier_note.py`: run `run_pr_endgame` with
+- New test in `test_trusted_contract_merge.py`: run `run_pr_endgame` with
   `background=False`, `auto_merge=False`, `reviewer="copilot"`,
   monkeypatched `create_pr` capturing `body`, `request_copilot_review`,
   `watch_and_finish` (pattern of
@@ -161,7 +163,7 @@ Tests:
   `_spec(review_tier="blocking")`, `review_tier="low"`: the captured body
   contains `Possible tampering`.
 
-Check: `cd apps/web-server && python -m pytest tests/test_merger.py tests/test_pr_tier_note.py tests/test_pr_endgame.py -q`
+Check (repo root): `pytest apps/web-server/tests/test_merger.py apps/web-server/tests/test_trusted_contract_merge.py apps/web-server/tests/test_pr_endgame.py -q -o asyncio_mode=auto`
 Traps: the merger body must not contain `clean` or `qa-passed`
 (`test_honest_body_never_claims_qa_passed`); the note text has neither.
 Do not change `_pr_title_body` (other tests pin it).
