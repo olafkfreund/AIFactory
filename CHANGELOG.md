@@ -10,6 +10,11 @@
   `GIT_PAGER`, `GIT_EDITOR`, `PAGER`, `EDITOR` and `VISUAL` accept only
   `cat`, `true` or `:`. Clearing the environment (`env -i`, `env -`,
   `exec -c`) or unsetting the git safety pins is refused.
+- **Commands inside redirect targets are now checked (#1783).**
+  The Bash command parser skipped redirect targets, so `ls > $(nc …)`,
+  `cat < <(nc …)` and `cat <<< $(nc …)` checked only the outer command. It
+  now walks every node of the parsed command, so no part of it can hide a
+  command.
 - **A variable as the Bash command word no longer bypasses the allowlist (#1753).**
   The command parser skipped a command whose first word was `$X`, `"$X"`,
   `${X}`, `$(...)` or a backtick, so `echo hi; $X status` was allowed with
@@ -196,6 +201,12 @@
 
 ### Changed
 
+- A held task contract now shows on the task (#1709). The hold reason
+  (e.g. `contract held (digest mismatch); normal build`) is written to the
+  task plan as `contractHold`, returned on the task row and shown as a neutral
+  "Contract held" badge in the task header. It never changes the task's status
+  or review reason, so a hold is not counted as a build failure. A held
+  migration still stops the build with exit 1, as before.
 - Trailing gates now record CI linters that no gate ran (e.g. `ktlint: skipped`)
   instead of omitting them; reporting only, never blocks (#1627).
 

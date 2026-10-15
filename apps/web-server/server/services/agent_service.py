@@ -27,7 +27,7 @@ from server.specpath import spec_dir_for
 
 from ..config import get_settings
 from ..utils.subprocess_env import make_subprocess_env
-from . import task_control
+from . import project_settings_store, task_control
 from .agent_credential import CredentialMixin
 from .agent_emit import (
     EmitMixin,
@@ -38,7 +38,6 @@ from .agent_queue import QueueMixin
 from .agent_skill_context import SkillContextMixin
 from .agent_spec_creation import SpecCreationMixin
 from .agent_worktree_sync import WorktreeSyncMixin
-from .project_env import load_project_env
 
 # Module-level logger for the admission-control paths (RFC-0016 #668). The rest
 # of this (legacy) module still uses local ``import logging`` inside methods.
@@ -1065,8 +1064,8 @@ class AgentService(
             except Exception as e:
                 logger.warning(f"[AgentService] Failed to load backend .env: {e}")
 
-        # Project .aifactory/.env: allowlisted project settings only (#1745)
-        load_project_env(project_path, env)
+        # Project settings store: allowlisted project settings only (#1745, #1795)
+        await project_settings_store.load_project_env(project_path, env)
 
         # Get OAuth token from the pool (#670) so concurrent builds draw DISTINCT
         # credentials; returned to the pool when this build ends.
@@ -1225,6 +1224,7 @@ class AgentService(
         from .trusted_contract import spawn_env  # noqa: PLC0415
 
         env.update(await spawn_env(spec_dir))
+        env.update(await project_settings_store.mcp_spawn_env(project_path))
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,

@@ -18,6 +18,7 @@ from .models import (
     Organization,
     OrgMember,
     Project,
+    ProjectSettings,
     Task,
     TrustedContract,
     User,
@@ -41,5 +42,6 @@ __all__ = [
     "JobState",
     "TrustedContract",
     "HandbackReceipt",
+    "ProjectSettings",
     "LLMEndpoint",
 ]
