@@ -72,6 +72,60 @@ _SAFE_UNQUOTED = frozenset(
 )
 _DQ_UNSAFE = frozenset("$`\\")
 
+_SAFE_GIT_KEYS = frozenset(
+    {
+        "GIT_AUTHOR_NAME",
+        "GIT_AUTHOR_EMAIL",
+        "GIT_AUTHOR_DATE",
+        "GIT_COMMITTER_NAME",
+        "GIT_COMMITTER_EMAIL",
+        "GIT_COMMITTER_DATE",
+        "GIT_TERMINAL_PROMPT",
+        "GIT_OPTIONAL_LOCKS",
+        "GIT_FLUSH",
+        "GIT_MERGE_AUTOEDIT",
+        "GIT_LFS_SKIP_SMUDGE",
+    }
+)
+_PROGRAM_KEYS = frozenset(
+    {"GIT_PAGER", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "PAGER", "EDITOR", "VISUAL"}
+)
+_NOOP_PROGRAMS = frozenset({"", "cat", "true", ":"})
+_REFUSED_KEYS = frozenset({"SSH_ASKPASS"})
+_VAR_SETTERS = frozenset(
+    {
+        "export",
+        "read",
+        "let",
+        "unset",
+        "declare",
+        "typeset",
+        "local",
+        "readonly",
+        "mapfile",
+        "readarray",
+        "getopts",
+    }
+)
+_NAMEREF_SETTERS = frozenset({"declare", "typeset", "local"})
+_NAME_ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
+
+
+def _env_key_refusal(assignment: str) -> None:
+    """Refuse setting or unsetting env keys that change git config or what git runs."""
+    raw_name, eq, value = assignment.partition("=")
+    name = raw_name.removesuffix("+")
+    if name in _PROGRAM_KEYS:
+        allowed = not eq or value in _NOOP_PROGRAMS
+    else:
+        allowed = name not in _REFUSED_KEYS and (
+            not name.startswith("GIT_") or name in _SAFE_GIT_KEYS
+        )
+    if not allowed:
+        raise UnparseableCommand(
+            f"setting {name} can change git config or what git runs; not permitted"
+        )
+
 
 def _static_shape(raw: str) -> bool:
     """True when the raw word expands to exactly itself: safe unquoted
@@ -128,6 +182,56 @@ def _require_literal(words: list[Any], start: int, stop: int) -> None:
         )
 
 
+def _check_var_word(w: Any) -> None:
+    """Require a static variable name/assignment word and check its key."""
+    if not (_static_shape(w.raw) or _NAME_ASSIGN.match(w.raw)):
+        raise UnparseableCommand(
+            "variable name is not a static literal; cannot validate"
+        )
+    _env_key_refusal(w.word)
+
+
+def _check_var_setter(words: list[Any], idx: int) -> None:
+    """Validate options and variable names for shell builtins that set/unset vars."""
+    setter = _basename(words[idx].word)
+    for k in range(idx + 1, len(words)):
+        w = words[k]
+        if w.word.startswith("-"):
+            _require_literal(words, k, k + 1)
+            if (
+                setter in _NAMEREF_SETTERS
+                and not w.word.startswith("--")
+                and "n" in w.word[1:]
+            ):
+                raise UnparseableCommand("nameref is not permitted")
+        else:
+            _check_var_word(w)
+
+
+def _check_printf(words: list[Any], idx: int) -> None:
+    """Validate ``printf -v NAME`` / ``printf -vNAME`` variable targets."""
+    k = idx + 1
+    while k < len(words):
+        tok = words[k].word
+        if tok == "--" or not tok.startswith("-") or tok == "-":
+            break
+        _require_literal(words, k, k + 1)
+        if tok == "-v":
+            if k + 1 >= len(words):
+                raise UnparseableCommand("printf -v missing variable name")
+            _check_var_word(words[k + 1])
+            k += 2
+        elif tok.startswith("-v"):
+            if not _static_shape(words[k].raw):
+                raise UnparseableCommand(
+                    "variable name is not a static literal; cannot validate"
+                )
+            _env_key_refusal(tok[2:])
+            k += 1
+        else:
+            k += 1
+
+
 def _collect_command_nodes(node, out: list) -> None:
     """Walk the bashlex AST collecting every ``command`` node (recursing into
     pipelines, lists, compound commands and command substitutions)."""
@@ -172,6 +276,9 @@ def _extract(
         _collect_command_nodes(tree, cmd_nodes)
 
     for node in cmd_nodes:
+        for part in getattr(node, "parts", []):
+            if getattr(part, "kind", None) == "assignment":
+                _env_key_refusal(part.word)
         words = _command_words(node)
         if not words:
             continue
@@ -202,6 +309,10 @@ def _emit(
     tokens = [w.word for w in words]
     name = _basename(tokens[idx])
     acc.append((name, shlex.join(tokens[idx:]), dynamic_args))
+    if name in _VAR_SETTERS:
+        _check_var_setter(words, idx)
+    elif name == "printf":
+        _check_printf(words, idx)
     unwrap = _UNWRAPPERS.get(name)
     if unwrap is not None:
         unwrap(words, idx, depth, acc, dynamic_args=dynamic_args)
@@ -273,6 +384,29 @@ _ENV_FLAG_LONG = frozenset(
 )
 
 
+def _check_env_opt(tokens: list[str], j: int) -> None:
+    """Refuse ``env`` options that clear the environment or unset protected keys."""
+    tok = tokens[j]
+    if tok.startswith("--"):
+        opt, eq, val = tok.partition("=")
+        if opt != "--" and "--ignore-environment".startswith(opt):
+            raise UnparseableCommand("env --ignore-environment clears environment pins")
+        if opt != "--" and "--unset".startswith(opt):
+            if not eq and j + 1 >= len(tokens):
+                raise UnparseableCommand("env --unset missing variable name")
+            _env_key_refusal(val if eq else tokens[j + 1])
+        return
+    for i, ch in enumerate(tok[1:], 1):
+        if ch == "i":
+            raise UnparseableCommand("env -i clears environment pins")
+        if ch in "uCa":
+            if ch == "u":
+                if i == len(tok) - 1 and j + 1 >= len(tokens):
+                    raise UnparseableCommand("env -u missing variable name")
+                _env_key_refusal(tok[i + 1 :] if i < len(tok) - 1 else tokens[j + 1])
+            return
+
+
 def _skip_env_opt(tokens: list[str], j: int) -> int:
     """Index after the env option at ``tokens[j]``; raises for ``-S`` forms
     and for options whose value cannot be told apart from the command."""
@@ -308,13 +442,17 @@ def _unwrap_env(
     while j < len(tokens):
         tok = tokens[j]
         if opts and tok in ("--", "-"):
+            if tok == "-":
+                raise UnparseableCommand("env - clears environment pins")
             opts = False
             j += 1
             continue
         if opts and tok.startswith("-"):
+            _check_env_opt(tokens, j)
             j = _skip_env_opt(tokens, j)
             continue
         if "=" in tok and not tok.startswith("="):
+            _env_key_refusal(tok)
             opts = False
             j += 1
             continue
@@ -427,6 +565,8 @@ def _skip_exec_opts(tokens: list[str], j: int) -> int | None:
     """``exec [-cl] [-a NAME] CMD`` — ``-a`` consumes its value."""
     while j < len(tokens) and tokens[j].startswith("-") and tokens[j] != "-":
         tok = tokens[j]
+        if not tok.startswith("--") and "c" in tok[1:]:
+            raise UnparseableCommand("exec -c clears environment pins")
         # ``a`` last in the group takes the next word; ``-aNAME`` is attached.
         takes_next = not tok.startswith("--") and tok.find("a") == len(tok) - 1
         j += 2 if takes_next else 1

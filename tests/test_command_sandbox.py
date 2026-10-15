@@ -526,7 +526,7 @@ WRAPPER_REFUSED = [
     ("env --spl 'git -c core.fsmonitor=x status'", _UNSAFE),
     ("env --split 'git -c core.fsmonitor=x status'", _UNSAFE),
     ("exec -la ls git -c core.fsmonitor=x status", _FSMON),
-    ("exec -cla ls git -c core.fsmonitor=x status", _FSMON),
+    ("exec -cla ls git -c core.fsmonitor=x status", _UNSAFE),  # exec -c (#1754)
     (
         "echo x | FOO='!touch P' xargs -i git --config-env=alias.ls=FOO ls",
         "config injection",
@@ -544,7 +544,7 @@ WRAPPER_REFUSED = [
     # Options end at VAR=val, `--` or a lone `-`: the next word is the command.
     ("env PATH=.:/usr/bin FOO=1 -C ls", _NOT_ALLOWED),
     ("env PATH=.:/usr/bin FOO=1 -C -c 'alias.ls=!touch X' ls", _NOT_ALLOWED),
-    ("env - -C ls", _NOT_ALLOWED),
+    ("env - -C ls", _UNSAFE),  # env - clears the git pins (#1754)
     ("env -- -u ls", _NOT_ALLOWED),
     ("echo | xargs -- -C ls", _NOT_ALLOWED),
     ("exec - ls", _NOT_ALLOWED),
