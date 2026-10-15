@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1711
 intent: intent/2026-10-15-1711-trusted-contract-legacy.md
 ---
