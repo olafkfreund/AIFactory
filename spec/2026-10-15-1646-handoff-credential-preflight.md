@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1646
 intent: intent/2026-10-15-1646-handoff-credential-preflight.md
 ---
