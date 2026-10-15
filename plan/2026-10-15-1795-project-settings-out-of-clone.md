@@ -29,16 +29,22 @@ After the rebase, find each site by the symbol named, not by the number.
   - Not `EncryptedString`. That type raises when no KMS key is set.
     `seal()` writes plaintext with a warning when no KMS was chosen, and
     raises when a chosen KMS fails.
-  - A value that cannot be decrypted (`unseal()` returns `""`) is
-    treated as `{}`, and an error is logged.
+  - A sealed value that cannot be decrypted (`unseal()` returns `""`),
+    or a row that is not a JSON object, raises
+    `ProjectSettingsUnavailableError`. It is never treated as `{}`.
+    (Deviation at review; spec D2.) A plaintext row is re-sealed on read
+    once a KMS key works.
 - **Accepted keys** (`STORE_KEYS`): `is_project_env_key(k)`, or
   `k == "CUSTOM_MCP_SERVERS"`. The #1790 allowlist is not widened.
 - **Lazy import on the first read of each project.** If there is no row:
   - read `<project>/.aifactory/.env` and keep only `STORE_KEYS`; log the
-    skipped names, never values;
-  - if git tracks the file (`git -C <project> ls-files --
-    .aifactory/.env` prints it), do not import it and do not rename it;
-    store an empty row and log a warning;
+    skipped names, never values. If the read fails, raise
+    `ProjectSettingsUnavailableError`, store nothing and rename nothing;
+  - if git tracks the file (`git -c core.fsmonitor=false -c
+    core.hooksPath=/dev/null -C <project> ls-files -- .aifactory/.env`,
+    run in `asyncio.to_thread`, prints it), do not import it and do not
+    rename it; store an empty row and log a warning. Exit 128 (not a repo)
+    means untracked. Any other failure raises, and the import waits;
   - otherwise, insert the row (an empty row if there was no file), then
     rename the file to `.env.migrated-<UTC YYYY-MM-DD>`. Add `-1`, `-2`
     and so on if that name is taken, so nothing is overwritten. Ignore
@@ -281,8 +287,9 @@ names the step: `feat(settings): step N ... (#1795)`.
      - `routes/merger.py`, before both `asyncio.to_thread(sweep, ...)`
        calls (`report_merger` at `:95`, and `run_merger`);
      - `services/completion_orchestration.py:run_terminal_completion`
-       (`:81`): one call at the top of the body, wrapped so that a
-       failure only logs;
+       (`:81`): one `get_settings(project_path)` call at the top of the
+       body, wrapped so that a failure only logs. (Deviation at review:
+       it loads its own project, not `refresh_all()`.)
      - `routes/context.py:get_project_context` (`:80`): use
        `await project_settings_store.get_settings(project_path)` before
        `is_graphiti_enabled(project_path)` at `:117`, which fills the
@@ -409,6 +416,23 @@ names the step: `feat(settings): step N ... (#1795)`.
    ```
    Runs in CI; the worktree has no `node_modules`.
 
+## Review changes (standing approval, recorded as deviations)
+
+- The migration now revises `5d1c9e3a7b20` (#1794's `handback_receipts`),
+  so Alembic keeps a single head.
+- `ProjectSettingsUnavailable` is renamed `ProjectSettingsUnavailableError`
+  (N818).
+- Store reads fail closed: an unreadable legacy file, an undecryptable or
+  corrupt row, and a failed tracked-file check all raise
+  `ProjectSettingsUnavailableError`, and nothing is stored or renamed. See
+  spec D2 and D4.
+- The rollback script is `scripts/restore_project_env.py`.
+- Runner check: the changelog runner (direct SDK), conflict resolution
+  (in-process, `create_simple_client`) and the insights runner
+  (`ClaudeSDKClient`) never loaded the project MCP config. Ideation and
+  roadmap call `create_client`, but the web-server never starts them; only
+  the CLI does. So no extra launcher needs `AIFACTORY_PROJECT_MCP_CONFIG`.
+
 ## Who does what
 
 - Steps 2, 3, 4, 5 and 6 go to agy (`agy-implement`), one call per step,
@@ -441,7 +465,11 @@ fails on dev's `client.py`.
 - The migration is additive, so `alembic downgrade -1` drops
   `project_settings`.
 - Projects that were already imported have their file at
-  `.aifactory/.env.migrated-<date>`. To restore the old behaviour,
-  rename it back to `.env`.
+  `.aifactory/.env.migrated-<date>`. To restore the old behaviour, run
+  `python scripts/restore_project_env.py`. It is a dry run by default;
+  add `--apply`, and optionally list project paths. It renames the newest
+  `.env.migrated-*` back to `.env` for every registered project, and never
+  overwrites an existing `.env`. (Added at review, with
+  `tests/test_restore_project_env.py`.)
 - Values saved through the UI after the upgrade exist only in the table.
   Before the downgrade, copy them out with `get_settings`.

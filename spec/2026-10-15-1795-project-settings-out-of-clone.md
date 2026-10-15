@@ -82,9 +82,16 @@ the house answer to that case (#1276, #1290):
 
 Sealing the whole blob is simpler than picking out which keys are
 secret. It also covers the values that hold secrets under a non-secret
-name, such as HTTP headers inside `CUSTOM_MCP_SERVERS`. On read, a value
-that can't be decrypted (`unseal` returns `""`) is treated as an empty
-settings dict, and an error is logged.
+name, such as HTTP headers inside `CUSTOM_MCP_SERVERS`.
+
+**Amended at review (deviation, standing approval):** a sealed row that
+can't be decrypted (`unseal` returns `""`: wrong or rotated key, or a KMS
+outage), or a row that isn't valid JSON, raises
+`ProjectSettingsUnavailableError`. It is not treated as empty. Launches and
+writers then fail loudly, `refresh_all` keeps the old snapshot, and no save
+can overwrite a row that could still be recovered. When a KMS key is
+configured and a row is still plaintext (written before the key existed),
+the read re-seals it.
 
 ### D3. Store module `server/services/project_settings_store.py`
 
@@ -128,10 +135,18 @@ passed in, and by default it is imported lazily.
 ### D4. Import (one time per project)
 
 1. Read `<project>/.aifactory/.env` with #1790's line parser, keeping
-   only `STORE_KEYS`. Log the skipped names.
+   only `STORE_KEYS`. Log the skipped names. **Amended at review:** if
+   the file can't be read (`OSError` or `UnicodeDecodeError`), raise
+   `ProjectSettingsUnavailableError`. Insert nothing and rename nothing,
+   so the next read tries again.
 2. **A git-tracked file is not imported:** if `git -C <project> ls-files
    -- .aifactory/.env` prints the path, log a warning and store an empty
-   row. The file is left untouched. Content that came with a clone is
+   row. The file is left untouched. **Amended at review:** the check fails
+   closed. Only exit 128 (not a repo) counts as untracked. A timeout, a
+   missing `git`, an `OSError` or any other exit code raises and the import
+   waits. The call passes `-c core.fsmonitor=false -c
+   core.hooksPath=/dev/null`, because it runs in an agent-writable clone,
+   and it runs in `asyncio.to_thread`. Content that came with a clone is
    not settings the operator chose. Renaming it would also dirty the
    worktree.
 3. Insert the row, then rename the file to `.env.migrated-<UTC date>`.
@@ -180,7 +195,9 @@ entry points refresh the snapshot first:
 
 - `merger_loop`, before each `to_thread(sweep_once)`;
 - `routes/merger.py`, both sweep routes;
-- `completion_orchestration.run_terminal_completion` (`:81`);
+- `completion_orchestration.run_terminal_completion` (`:81`). Amended at
+  review: this loads only its own project (`get_settings(project_path)`),
+  not every project;
 - `routes/context.get_project_context` (`:80`), before
   `is_graphiti_enabled` at `:117`.
 

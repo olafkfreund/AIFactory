@@ -396,3 +396,123 @@ async def test_missing_file_is_noop(
     env = {"EXISTING": "1"}
     await store.load_project_env(project_dir, env)
     assert env == {"EXISTING": "1"}
+
+
+def _set_fernet_key(monkeypatch: pytest.MonkeyPatch, seed: bytes) -> None:
+    monkeypatch.setenv("KMS_FERNET_KEY", base64.urlsafe_b64encode(seed * 32).decode())
+    kms._INSTANCE = None
+
+
+async def _row(
+    session_factory: async_sessionmaker[AsyncSession], project_dir: Path
+) -> ProjectSettings | None:
+    async with session_factory() as session:
+        return await session.get(ProjectSettings, project_key(project_dir))
+
+
+async def test_unreadable_legacy_file_stores_nothing_and_retries(
+    store: ProjectSettingsStore,
+    session_factory: async_sessionmaker[AsyncSession],
+    project_dir: Path,
+) -> None:
+    """A read error must not commit an empty row or rename the file."""
+    env_file = project_dir / ".aifactory" / ".env"
+    env_file.parent.mkdir()
+    env_file.write_bytes(b"USE_CLAUDE_MD=\xff\xfe\n")
+
+    with pytest.raises(pss.ProjectSettingsUnavailableError):
+        await store.get_settings(project_dir)
+    assert await _row(session_factory, project_dir) is None
+    assert env_file.exists()
+
+    env_file.write_text("USE_CLAUDE_MD=true\n", encoding="utf-8")
+    assert await store.get_settings(project_dir) == {"USE_CLAUDE_MD": "true"}
+    assert not env_file.exists()
+
+
+async def test_undecryptable_row_raises_and_is_not_overwritten(
+    store: ProjectSettingsStore,
+    session_factory: async_sessionmaker[AsyncSession],
+    project_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A wrong or rotated key fails loudly; the sealed row stays recoverable."""
+    _set_fernet_key(monkeypatch, b"a")
+    await store.put_settings(project_dir, {"GITHUB_TOKEN": "tok-1795-abc"})
+    before = (await _row(session_factory, project_dir)).settings  # type: ignore[union-attr]
+    pss._SNAPSHOT[project_key(project_dir)] = {"GITHUB_TOKEN": "tok-1795-abc"}
+
+    _set_fernet_key(monkeypatch, b"b")
+    with pytest.raises(pss.ProjectSettingsUnavailableError):
+        await store.get_settings(project_dir)
+    assert pss._SNAPSHOT[project_key(project_dir)] == {"GITHUB_TOKEN": "tok-1795-abc"}
+    assert (await _row(session_factory, project_dir)).settings == before  # type: ignore[union-attr]
+
+
+async def test_plaintext_row_is_sealed_on_read_once_a_key_exists(
+    store: ProjectSettingsStore,
+    session_factory: async_sessionmaker[AsyncSession],
+    project_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await store.put_settings(project_dir, {"GITHUB_TOKEN": "tok-1795-plain"})
+    assert not (await _row(session_factory, project_dir)).settings.startswith("enc.v1:")  # type: ignore[union-attr]
+
+    _set_fernet_key(monkeypatch, b"c")
+    assert await store.get_settings(project_dir) == {"GITHUB_TOKEN": "tok-1795-plain"}
+    raw = (await _row(session_factory, project_dir)).settings  # type: ignore[union-attr]
+    assert raw.startswith("enc.v1:")
+    assert "tok-1795-plain" not in raw
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [FileNotFoundError("git"), subprocess.TimeoutExpired("git", 10), 1],
+    ids=["git-missing", "timeout", "exit-1"],
+)
+async def test_git_check_failure_defers_the_import(
+    store: ProjectSettingsStore,
+    session_factory: async_sessionmaker[AsyncSession],
+    project_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fault: BaseException | int,
+) -> None:
+    """The tracked-file check fails closed: no row, no rename, retry later."""
+    env_file = project_dir / ".aifactory" / ".env"
+    env_file.parent.mkdir()
+    env_file.write_text("USE_CLAUDE_MD=true\n", encoding="utf-8")
+
+    def broken_run(*_args: object, **_kwargs: object) -> object:
+        if isinstance(fault, BaseException):
+            raise fault
+        return subprocess.CompletedProcess([], fault, "", "")
+
+    monkeypatch.setattr(subprocess, "run", broken_run)
+    with pytest.raises(pss.ProjectSettingsUnavailableError):
+        await store.get_settings(project_dir)
+    assert await _row(session_factory, project_dir) is None
+    assert env_file.exists()
+
+
+async def test_not_a_git_repo_counts_as_untracked(
+    store: ProjectSettingsStore, project_dir: Path
+) -> None:
+    env_file = project_dir / ".aifactory" / ".env"
+    env_file.parent.mkdir()
+    env_file.write_text("USE_CLAUDE_MD=true\n", encoding="utf-8")
+    assert await store.get_settings(project_dir) == {"USE_CLAUDE_MD": "true"}
+
+
+def test_git_check_disables_fsmonitor_and_hooks(
+    project_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[list[str]] = []
+
+    def fake_run(argv: list[str], **_kwargs: object) -> object:
+        seen.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert pss._is_tracked(project_dir) is False
+    assert "core.fsmonitor=false" in seen[0]
+    assert "core.hooksPath=/dev/null" in seen[0]

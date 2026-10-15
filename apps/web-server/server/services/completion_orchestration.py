@@ -100,10 +100,11 @@ async def run_terminal_completion(
     ruled failed (#1430).
     """
     try:
-        await project_settings_store.refresh_all()
+        # #1795: fresh settings for this project before the sync pr_endgame reads.
+        await project_settings_store.get_settings(project_path)
     except Exception:  # noqa: BLE001 - never break the completion path
         logger.warning(
-            "project-settings refresh failed before terminal completion", exc_info=True
+            "project-settings load failed before terminal completion", exc_info=True
         )
 
     # #1550: on the co-mount Job path the gate marker is written into the task

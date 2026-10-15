@@ -8,6 +8,7 @@ imported once (keeping only ``STORE_KEYS``) and renamed to
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -62,21 +63,34 @@ def _is_mcp_key(k: str) -> bool:
     return k in _MCP_FIXED_KEYS or bool(_AGENT_MCP_KEY.fullmatch(k))
 
 
+class ProjectSettingsUnavailableError(RuntimeError):
+    """The settings store could not be read, so a launch must not start (#1795)."""
+
+
+def _unavailable(
+    what: str, project_path: str | Path
+) -> ProjectSettingsUnavailableError:
+    logger.error(
+        "project settings unavailable for %s: %s",
+        sanitize_log(str(project_path)),
+        sanitize_log(what),
+    )
+    return ProjectSettingsUnavailableError("project settings unavailable: " + what)
+
+
 def _parse_env_file(path: Path) -> tuple[dict[str, str], list[str]]:
     """Parse ``path`` using #1790's line rules, keeping only ``STORE_KEYS``.
 
-    Returns ``(accepted_dict, skipped_key_names)``. Never returns or logs values
-    for skipped keys.
+    Returns ``(accepted_dict, skipped_key_names)``. Raises
+    ``ProjectSettingsUnavailableError`` when the file can't be read, so nothing
+    is stored or renamed and the next read tries again.
     """
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as e:
-        logger.warning(
-            "Failed to read project env file %s: %s",
-            sanitize_log(str(path)),
-            sanitize_log(str(e)),
-        )
-        return {}, []
+        raise _unavailable(
+            f"cannot read legacy env file ({type(e).__name__})", path
+        ) from e
 
     accepted: dict[str, str] = {}
     skipped: set[str] = set()
@@ -96,20 +110,45 @@ def _parse_env_file(path: Path) -> tuple[dict[str, str], list[str]]:
     return accepted, sorted(skipped)
 
 
+_GIT_NOT_A_REPO = 128
+
+
 def _is_tracked(project_path: str | Path) -> bool:
-    """Return True iff git tracks ``.aifactory/.env`` inside ``project_path``."""
+    """Return True iff git tracks ``.aifactory/.env`` inside ``project_path``.
+
+    Fails closed: only exit 128 (not a git repo) counts as untracked. Any other
+    error raises, so the import waits for a later read. The clone is
+    agent-writable, so its fsmonitor and hooks are switched off for this call.
+    """
     try:
         res = subprocess.run(  # noqa: S603 - fixed argv, no shell
-            ["git", "-C", str(project_path), "ls-files", "--", ".aifactory/.env"],  # noqa: S607
+            [  # noqa: S607
+                "git",
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-C",
+                str(project_path),
+                "ls-files",
+                "--",
+                ".aifactory/.env",
+            ],
             env=child_env(),
             capture_output=True,
             text=True,
             timeout=10,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError) as e:
+        raise _unavailable(
+            f"git check failed ({type(e).__name__})", project_path
+        ) from e
+    if res.returncode == _GIT_NOT_A_REPO:
         return False
-    return res.returncode == 0 and bool(res.stdout.strip())
+    if res.returncode != 0:
+        raise _unavailable(f"git check exited {res.returncode}", project_path)
+    return bool(res.stdout.strip())
 
 
 def _rename_legacy(env_file: Path) -> Path | None:
@@ -138,28 +177,21 @@ def _rename_legacy(env_file: Path) -> Path | None:
 
 
 def _decode_settings(raw: str, project_path: str | Path) -> dict[str, str]:
-    """Unseal and JSON-decode a stored settings column; return ``{}`` on failure."""
+    """Unseal and JSON-decode a stored settings column.
+
+    A row that can't be decrypted or parsed raises: treating it as empty would
+    launch tasks without their tokens and let the next save overwrite a
+    recoverable row (wrong or rotated key, KMS outage).
+    """
     unsealed = secret_field.unseal(raw)
     if not unsealed:
-        logger.error(
-            "Failed to decrypt project settings for %s; treating as empty",
-            sanitize_log(str(project_path)),
-        )
-        return {}
+        raise _unavailable("stored settings cannot be decrypted", project_path)
     try:
         parsed = json.loads(unsealed)
-    except json.JSONDecodeError:
-        logger.error(
-            "Corrupt project settings JSON for %s; treating as empty",
-            sanitize_log(str(project_path)),
-        )
-        return {}
+    except json.JSONDecodeError as e:
+        raise _unavailable("stored settings are not valid JSON", project_path) from e
     if not isinstance(parsed, dict):
-        logger.error(
-            "Non-object project settings JSON for %s; treating as empty",
-            sanitize_log(str(project_path)),
-        )
-        return {}
+        raise _unavailable("stored settings are not a JSON object", project_path)
     return {
         str(k): str(v)
         for k, v in parsed.items()
@@ -175,6 +207,19 @@ def _resolve_session_factory(session_factory: Any = None) -> Any:
     from server.database.engine import async_session_factory  # noqa: PLC0415
 
     return async_session_factory
+
+
+def _warn_reappeared(env_file: Path) -> None:
+    try:
+        accepted, skipped = _parse_env_file(env_file)
+        names = ", ".join(sorted(set(accepted) | set(skipped))) or "<none>"
+    except ProjectSettingsUnavailableError:
+        names = "<unreadable>"
+    logger.warning(
+        "Ignoring %s because project settings are already in the store (keys: %s)",
+        sanitize_log(str(env_file)),
+        sanitize_log(names),
+    )
 
 
 class ProjectSettingsStore:
@@ -193,24 +238,21 @@ class ProjectSettingsStore:
             if row is not None:
                 if env_file.exists() and key not in _WARNED_REAPPEARED:
                     _WARNED_REAPPEARED.add(key)
-                    accepted_ignored, skipped_ignored = _parse_env_file(env_file)
-                    ignored_names = (
-                        ", ".join(sorted(set(accepted_ignored) | set(skipped_ignored)))
-                        or "<none>"
-                    )
-                    logger.warning(
-                        "Ignoring %s because project settings are already in the store (keys: %s)",
-                        sanitize_log(str(env_file)),
-                        sanitize_log(ignored_names),
-                    )
+                    _warn_reappeared(env_file)
                 decoded = _decode_settings(row.settings, p_path)
+                if not secret_field.is_sealed(row.settings):
+                    # Written before a KMS key existed: seal it now if we can.
+                    resealed = secret_field.seal(row.settings)
+                    if resealed and secret_field.is_sealed(resealed):
+                        row.settings = resealed
+                        await session.commit()
                 _SNAPSHOT[key] = dict(decoded)
                 return decoded
 
             imported: dict[str, str] = {}
             should_rename = False
             if env_file.exists():
-                if _is_tracked(p_path):
+                if await asyncio.to_thread(_is_tracked, p_path):
                     _WARNED_REAPPEARED.add(key)
                     logger.warning(
                         "Refusing to import git-tracked %s; storing empty project settings",
@@ -231,14 +273,16 @@ class ProjectSettingsStore:
             try:
                 await session.commit()
             except IntegrityError:
+                # Another replica imported first: its row wins, it renames.
                 await session.rollback()
                 existing = await session.get(ProjectSettings, key)
-                if existing is not None:
-                    decoded = _decode_settings(existing.settings, p_path)
-                    _SNAPSHOT[key] = dict(decoded)
-                    return decoded
-                _SNAPSHOT[key] = {}
-                return {}
+                if existing is None:
+                    raise _unavailable(
+                        "concurrent import left no row", p_path
+                    ) from None
+                decoded = _decode_settings(existing.settings, p_path)
+                _SNAPSHOT[key] = dict(decoded)
+                return decoded
 
         if should_rename:
             _rename_legacy(env_file)
@@ -340,10 +384,6 @@ async def refresh_all(session_factory: Any = None) -> None:
     await ProjectSettingsStore(session_factory).refresh_all()
 
 
-class ProjectSettingsUnavailableError(RuntimeError):
-    """The settings store could not be read, so a launch must not start (#1795)."""
-
-
 async def _settings_for_spawn(
     project_path: str | Path, session_factory: Any = None
 ) -> dict[str, str]:
@@ -351,6 +391,8 @@ async def _settings_for_spawn(
     # never fall back to the file either.
     try:
         return await get_settings(project_path, session_factory)
+    except ProjectSettingsUnavailableError:
+        raise
     except Exception as e:
         logger.error(
             "project settings unavailable for %s: %s",
