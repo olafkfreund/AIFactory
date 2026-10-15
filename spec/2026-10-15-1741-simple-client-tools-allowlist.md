@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1741
 intent: intent/2026-10-15-1741-simple-client-tools-allowlist.md
 ---
