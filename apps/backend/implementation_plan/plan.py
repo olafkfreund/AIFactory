@@ -11,7 +11,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -137,7 +137,7 @@ class ImplementationPlan:
 
     def save(self, path: Path) -> None:
         """Save plan to JSON file."""
-        self.updated_at = datetime.now().isoformat()
+        self.updated_at = datetime.now(UTC).isoformat()
         if not self.created_at:
             self.created_at = self.updated_at
 

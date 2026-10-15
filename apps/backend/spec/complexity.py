@@ -11,7 +11,7 @@ Integrates with BMad Method's track-based planning system.
 import json
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Optional
@@ -537,7 +537,7 @@ def save_assessment(spec_dir: Path, assessment: ComplexityAssessment) -> Path:
         "phases_to_run": phases,
         "needs_research": assessment.needs_research,
         "needs_self_critique": assessment.needs_self_critique,
-        "created_at": datetime.now().isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
     }
 
     # Add BMad track info if available

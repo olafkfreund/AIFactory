@@ -11,7 +11,7 @@ Performance improvements for quick/simple spec creation:
 
 import json
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypedDict
 
@@ -215,7 +215,7 @@ def create_quick_spec_from_template(
             }
         ],
         "metadata": {
-            "created_at": datetime.now().isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "complexity": "simple",
             "estimated_sessions": 1,
             "generated_from": "template",
