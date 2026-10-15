@@ -377,11 +377,14 @@ export interface ProjectEnvConfig {
 
   // Custom MCP servers defined by the user
   customMcpServers?: CustomMcpServer[];
+
+  // Name of the renamed .aifactory/.env left after the one-time import (#1795)
+  legacySettingsFile?: string;
 }
 
 /**
  * Per-agent MCP override configuration.
- * Stored in .aifactory/.env as AGENT_MCP_<agent>_ADD and AGENT_MCP_<agent>_REMOVE
+ * Stored in the project settings as AGENT_MCP_<agent>_ADD and AGENT_MCP_<agent>_REMOVE
  */
 export interface AgentMcpOverride {
   /** MCP servers to add beyond the agent's defaults */

@@ -1,12 +1,6 @@
-"""Shared loader for per-project `.aifactory/.env` files (#1745)."""
+"""Allowlist for per-project settings keys (#1745, #1795)."""
 
-import logging
 import re
-from pathlib import Path
-
-from factory_common.logsafe import sanitize_log
-
-logger = logging.getLogger(__name__)
 
 _AGENT_MCP_KEY = re.compile(r"AGENT_MCP_[A-Za-z0-9_]+_(?:ADD|REMOVE)")
 _REFUSED_KEY = re.compile(
@@ -77,41 +71,3 @@ def is_project_env_key(key: str) -> bool:
         (key in PROJECT_ENV_KEYS or _AGENT_MCP_KEY.fullmatch(key))
         and (key in _FACTORY_GIT_KEYS or not _REFUSED_KEY.fullmatch(key))
     )
-
-
-def load_project_env(project_path: Path, env: dict[str, str]) -> None:
-    """Load allowed keys from ``<project_path>/.aifactory/.env`` into ``env`` without overriding."""
-    env_file = project_path / ".aifactory" / ".env"
-    if not env_file.exists():
-        return
-    try:
-        text = env_file.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as e:
-        logger.warning(
-            "Failed to read project env file %s: %s",
-            sanitize_log(str(env_file)),
-            sanitize_log(str(e)),
-        )
-        return
-
-    skipped: set[str] = set()
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        if not is_project_env_key(key):
-            skipped.add(key)
-            continue
-        if key not in env:
-            env[key] = value
-
-    if skipped:
-        skipped_names = ", ".join(sorted(skipped))
-        logger.warning(
-            "Skipped disallowed keys in %s: %s",
-            sanitize_log(str(env_file)),
-            sanitize_log(skipped_names),
-        )

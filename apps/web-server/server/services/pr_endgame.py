@@ -30,7 +30,7 @@ from typing import Any
 
 from factory_common.logsafe import sanitize_log
 
-from server.services import github_app
+from server.services import github_app, project_settings_store
 from server.services.build_backend import task_repo_dir
 from server.services.task_branch import resolve_task_branch
 from server.utils.subprocess_env import child_env, github_env, lfs_push_argv
@@ -119,23 +119,16 @@ _TRUTHY = {"1", "true", "yes", "on"}
 
 
 def _project_env(project_path: Path | None, key: str) -> str | None:
-    """Read ``key`` from a project's ``.aifactory/.env`` (the per-project settings
-    store the Settings UI writes via PATCH /api/projects/{id}/settings). Returns
-    None when unset/unreadable so the caller can fall back to the global env.
+    """Read ``key`` from a project's in-process settings snapshot (#1795).
+
+    Async entry points populate ``project_settings_store._SNAPSHOT`` from the
+    ``project_settings`` database table before invoking ``pr_endgame``. Returns
+    ``None`` when ``project_path`` is ``None`` or the key is unset, so the
+    caller can fall back to the global env.
     """
     if project_path is None:
         return None
-    env_path = Path(project_path) / ".aifactory" / ".env"
-    try:
-        for line in env_path.read_text().splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                if k.strip() == key:
-                    return v.strip()
-    except OSError:
-        return None
-    return None
+    return project_settings_store.cached_setting(project_path, key)
 
 
 def _flag(key: str, project_path: Path | None) -> bool:
@@ -152,6 +145,9 @@ def is_auto_pr_enabled(project_path: Path | None = None) -> bool:
 
 
 def is_auto_merge_enabled(project_path: Path | None = None) -> bool:
+    # #1795: settings never loaded (DB down since start) -> hold, don't use defaults
+    if project_path is not None and not project_settings_store.is_loaded(project_path):
+        return False
     return _flag("AIFACTORY_AUTO_MERGE", project_path)
 
 
