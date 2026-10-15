@@ -1581,6 +1581,20 @@ def gather_pr_context(
     }
 
 
+def _with_receipt_veto(
+    gate: Callable[[str], bool], spec_dir: Path, loop: asyncio.AbstractEventLoop
+) -> Callable[[str], bool]:
+    def check(head: str) -> bool:
+        from .handback_receipt_store import on_record  # noqa: PLC0415
+
+        # Runs in a worker thread: _gated_head uses asyncio.to_thread.
+        if asyncio.run_coroutine_threadsafe(on_record(spec_dir), loop).result():
+            return False
+        return gate(head)
+
+    return check
+
+
 def _build_merge_gate(  # noqa: PLR0913 - one-shot builder for run_pr_endgame
     spec_dir: Path,
     spec_id: str,
@@ -1703,6 +1717,16 @@ async def run_pr_endgame(
     # `gather_pr_context` (which already parses task_metadata.json for the base
     # branch) and passed in, so this feature adds no second filesystem path
     # built from a request-supplied spec id.
+    if auto_merge:
+        from .handback_receipt_store import on_record  # noqa: PLC0415
+
+        # #1696: the QA Fixer can delete handback_received.json, but not the DB row.
+        if await on_record(spec_dir):
+            logger.info(
+                "[pr-endgame] %s: TFactory handback on record; auto-merge withheld",
+                sanitize_log(spec_id),
+            )
+            auto_merge = False
     human_approval_required = False
     if auto_merge:
         disposition = merge_disposition(spec_dir, review_tier, trusted=trusted)
@@ -1748,6 +1772,10 @@ async def run_pr_endgame(
         if auto_merge
         else None
     )
+    if merge_gate is not None:
+        merge_gate = _with_receipt_veto(
+            merge_gate, spec_dir, asyncio.get_running_loop()
+        )
 
     title, body = _pr_title_body(spec_dir, spec_id)
     if review_tier_floor:
