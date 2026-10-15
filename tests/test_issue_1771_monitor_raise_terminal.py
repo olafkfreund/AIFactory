@@ -51,9 +51,9 @@ async def test_monitor_raise_records_terminal_failed(tmp_path: Path) -> None:
         await monitor_process(
             service,
             task_id,
-            _RaisingProcess(),
+            _RaisingProcess(),  # type: ignore[arg-type]
             tmp_path,
-            spec_id,  # type: ignore[arg-type]
+            spec_id,
         )
 
     control = task_control.read_control(spec_dir)
