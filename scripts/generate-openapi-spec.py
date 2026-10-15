@@ -33,8 +33,8 @@ def main() -> int:
     # server/env_bootstrap.py:27's setdefault, and pydantic ranks process env above
     # env_file (server/config.py:246-250). Gates: main.py:541/545 (SAML/SCIM),
     # mcp_remote/__init__.py:50, rmux/integration.py:45-56.
-    # ponytail: fixed flag list; a new env gate is missed until added here
-    # (follow-up: two-env spec-equality guard).
+    # A new env gate must be added here and to techdocs.yml step 5,
+    # which reruns this with every flag on and fails on any diff (#1729).
     os.environ.update(
         dict.fromkeys(
             (
