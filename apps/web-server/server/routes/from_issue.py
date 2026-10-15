@@ -35,8 +35,8 @@ from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from server.error_ref import client_error
+from server.services.completion import correlation_key, read_issue_repo
 
-from ..services.completion import correlation_key, read_issue_repo
 from ..tenancy import resolve_tenant, stamp_spec_tenant
 
 # Add the backend dir to sys.path so backend seams resolve (mirrors execution.py).
