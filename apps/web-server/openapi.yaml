@@ -10019,16 +10019,6 @@ paths:
           content:
             application/json:
               schema: {}
-  /:
-    get:
-      summary: Root
-      operationId: root__get
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
 components:
   schemas:
     APIKeyRequest:
