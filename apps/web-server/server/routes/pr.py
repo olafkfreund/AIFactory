@@ -323,7 +323,7 @@ async def create_pr_from_task(
         with github_env(child_env()) as env:
             # Hooks are off (#1680); #1721 gates explicit LFS upload on attributes.
             def run(argv: list[str], timeout: int) -> tuple[int, str, str]:
-                p = subprocess.run(  # noqa: S603, ASYNC221, PLW1510
+                p = subprocess.run(  # noqa: S603, PLW1510
                     argv,
                     cwd=worktree_path,
                     capture_output=True,
@@ -335,7 +335,10 @@ async def create_pr_from_task(
 
             err = lfs_upload(run, worktree_branch)
             if err:
-                return {"success": False, "error": f"Failed to push LFS objects: {err}"}
+                return {
+                    "success": False,
+                    "error": client_error(logger, "Failed to push LFS objects", err),
+                }
             result = subprocess.run(
                 push_cmd,
                 cwd=worktree_path,

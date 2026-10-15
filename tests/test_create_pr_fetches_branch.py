@@ -300,7 +300,7 @@ async def test_lfs_customtransfer_refuses_create_pr(
 
     _status, body = await _call_create_pr()
 
-    assert "LFS step refused" in body["error"]
+    assert "Failed to push LFS objects" in body["error"]
     assert not any(_is_upload(c) for c in calls)
     assert not any(_is_push(c) for c in calls)
 
@@ -372,6 +372,6 @@ async def test_lfs_url_rewrite_refuses_create_pr(
 
     _status, body = await _call_create_pr()
 
-    assert "LFS step refused" in body["error"]
+    assert "Failed to push LFS objects" in body["error"]
     assert not any(_is_upload(c) for c in calls)
     assert not any(_is_push(c) for c in calls)
