@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1797
 spec: spec/2026-10-15-1797-unparsed-expansions.md
 ---
