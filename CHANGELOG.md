@@ -2,6 +2,11 @@
 
 ### Security
 
+- **`time`, `source`, `npx` and `cargo watch` no longer hide the program they run (#1784).**
+  `/usr/bin/time CMD` now checks `CMD`. `source` and `.` take only a literal
+  file. `npx`, `pnpx` and `npm exec` accept a fixed set of options and refuse
+  `-c`/`--call`/`--shell-mode`, which run a shell command string. `cargo watch`
+  is refused and `cargo-watch` leaves the Rust allowlist.
 - **A variable as the Bash command word no longer bypasses the allowlist (#1753).**
   The command parser skipped a command whose first word was `$X`, `"$X"`,
   `${X}`, `$(...)` or a backtick, so `echo hi; $X status` was allowed with
