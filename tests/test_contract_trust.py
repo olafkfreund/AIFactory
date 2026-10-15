@@ -188,3 +188,38 @@ def test_record_hold_ignores_missing_or_non_dict_plan(tmp_path: Path) -> None:
     plan_file.write_text("[]")
     ct.record_hold(tmp_path, "note")
     assert plan_file.read_text() == "[]"
+
+
+def test_resolve_build_contract_records_and_clears_hold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cli.build_commands import _resolve_build_contract
+
+    plan_file = tmp_path / "implementation_plan.json"
+
+    # (a) ENV=hold, migration contract -> SystemExit(1) and contractHold recorded
+    mig = {**C, "change_mode": "migration"}
+    _write(tmp_path, mig)
+    plan_file.write_text(json.dumps({"status": "in_progress"}))
+    monkeypatch.setenv(ENV, "hold")
+    with pytest.raises(SystemExit) as exc:
+        _resolve_build_contract(tmp_path)
+    assert exc.value.code == 1
+    assert json.loads(plan_file.read_text()) == {
+        "status": "in_progress",
+        "contractHold": "migration contract held (held by server); build stopped",
+    }
+
+    # (b) ENV=hold, non-migration contract -> returns None and contractHold recorded
+    _write(tmp_path, C)
+    plan_file.write_text(json.dumps({"status": "in_progress"}))
+    assert _resolve_build_contract(tmp_path) is None
+    assert json.loads(plan_file.read_text()) == {
+        "status": "in_progress",
+        "contractHold": "contract held (held by server); normal build",
+    }
+
+    # (c) plan carrying an old note, ENV=contract_digest(C) -> contract returned, contractHold gone
+    monkeypatch.setenv(ENV, contract_digest(C))
+    assert _resolve_build_contract(tmp_path) == C
+    assert json.loads(plan_file.read_text()) == {"status": "in_progress"}

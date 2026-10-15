@@ -88,9 +88,8 @@ add `record_hold(spec_dir, msg.removeprefix("[trusted-contract] "))` before
 Tests:
 - `tests/test_contract_trust.py`: import `_resolve_build_contract` from
   `cli.build_commands`; write a contract with
-  `{"migration": {...}}` as `is_migration` needs (check
-  `core/migration_mapper.is_migration`) plus a plan
-  `{"status": "in_progress", "reviewReason": None-free}`:
+  `"change_mode": "migration"` (what `core/migration_mapper.is_migration`
+  checks) plus a plan `{"status": "in_progress"}`:
   (a) ENV=`hold`, migration contract → `SystemExit(1)` and the plan has
   `contractHold == "migration contract held (held by server); build stopped"`,
   `status` unchanged, no `reviewReason` added;

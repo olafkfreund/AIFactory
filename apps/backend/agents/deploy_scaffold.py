@@ -21,7 +21,7 @@ import shutil
 from collections.abc import Mapping
 from pathlib import Path
 
-from core.contract_trust import reason_label, trusted_contract
+from core.contract_trust import reason_label, record_hold, trusted_contract
 from ui import print_status
 
 logger = logging.getLogger(__name__)
@@ -92,6 +92,7 @@ def scaffold_deploy_for_spec(spec_dir: Path) -> list[str]:
             msg = f"[trusted-contract] deploy scaffold withheld: {reason_label(why)}"
             logger.warning(msg)
             print_status(msg, "warning")
+            record_hold(spec_dir, msg.removeprefix("[trusted-contract] "))
             return []
         return scaffold_deploy(
             data.get("deployment") if data else None, _worktree_root(spec_dir)
