@@ -8,7 +8,7 @@ Discovers relevant files and context for the task.
 import json
 import subprocess
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -102,7 +102,7 @@ def create_minimal_context(
         "scoped_services": services,
         "files_to_modify": [],
         "files_to_reference": [],
-        "created_at": datetime.now().isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
     }
 
     with open(context_file, "w") as f:

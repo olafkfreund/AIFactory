@@ -132,7 +132,7 @@ def debug(module: str, message: str, level: int = 1, **kwargs) -> None:
     if _get_debug_level() < level:
         return
 
-    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]  # noqa: DTZ005 - local wall-clock console time
 
     # Build the log line
     parts = [
@@ -174,7 +174,7 @@ def debug_success(module: str, message: str, **kwargs) -> None:
     if not _get_debug_enabled():
         return
 
-    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]  # noqa: DTZ005 - local wall-clock console time
     log_line = f"{Colors.TIMESTAMP}[{timestamp}]{Colors.RESET} {Colors.SUCCESS}[OK]{Colors.RESET} {Colors.MODULE}[{module}]{Colors.RESET} {message}"
 
     if kwargs:
@@ -189,7 +189,7 @@ def debug_info(module: str, message: str, **kwargs) -> None:
     if not _get_debug_enabled():
         return
 
-    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]  # noqa: DTZ005 - local wall-clock console time
     log_line = f"{Colors.TIMESTAMP}[{timestamp}]{Colors.RESET} {Colors.DEBUG}[INFO]{Colors.RESET} {Colors.MODULE}[{module}]{Colors.RESET} {message}"
 
     if kwargs:
@@ -204,7 +204,7 @@ def debug_error(module: str, message: str, **kwargs) -> None:
     if not _get_debug_enabled():
         return
 
-    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]  # noqa: DTZ005 - local wall-clock console time
     log_line = f"{Colors.TIMESTAMP}[{timestamp}]{Colors.RESET} {Colors.ERROR}[ERROR]{Colors.RESET} {Colors.MODULE}[{module}]{Colors.RESET} {Colors.ERROR}{message}{Colors.RESET}"
 
     if kwargs:
@@ -219,7 +219,7 @@ def debug_warning(module: str, message: str, **kwargs) -> None:
     if not _get_debug_enabled():
         return
 
-    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]  # noqa: DTZ005 - local wall-clock console time
     log_line = f"{Colors.TIMESTAMP}[{timestamp}]{Colors.RESET} {Colors.WARNING}[WARN]{Colors.RESET} {Colors.MODULE}[{module}]{Colors.RESET} {Colors.WARNING}{message}{Colors.RESET}"
 
     if kwargs:
@@ -234,7 +234,7 @@ def debug_section(module: str, title: str) -> None:
     if not _get_debug_enabled():
         return
 
-    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]  # noqa: DTZ005 - local wall-clock console time
     separator = "─" * 60
     log_line = f"\n{Colors.TIMESTAMP}[{timestamp}]{Colors.RESET} {Colors.DEBUG}{Colors.BOLD}┌{separator}┐{Colors.RESET}"
     log_line += f"\n{Colors.TIMESTAMP}         {Colors.RESET} {Colors.DEBUG}{Colors.BOLD}│ {module}: {title}{' ' * (58 - len(module) - len(title) - 2)}│{Colors.RESET}"

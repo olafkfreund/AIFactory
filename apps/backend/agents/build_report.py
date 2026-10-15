@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -134,7 +134,7 @@ def build_report(
     spec_dir = Path(spec_dir)
     waves = _wave_summary(_read_json(spec_dir / PARALLEL_REPORT_FILENAME))
     cost = _cost_summary(_read_json(spec_dir / USAGE_FILENAME))
-    stamp = now() if callable(now) else datetime.now().isoformat()
+    stamp = now() if callable(now) else datetime.now(UTC).isoformat()
 
     report: dict[str, Any] = {
         "spec": spec_dir.name,
