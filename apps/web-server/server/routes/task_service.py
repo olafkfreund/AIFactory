@@ -1268,6 +1268,7 @@ def task_to_dict(task: Task) -> dict:
     archive_metadata = {}
     specs_path = None
     corr_key = None
+    hold_note = None
     if task.spec_id:
         # Try to find spec dir for this task
         projects = load_projects()
@@ -1294,6 +1295,10 @@ def task_to_dict(task: Task) -> dict:
                             archive_metadata["archivedInVersion"] = plan[
                                 "archivedInVersion"
                             ]
+                        if isinstance(plan, dict) and isinstance(
+                            plan.get("contractHold"), str
+                        ):
+                            hold_note = plan["contractHold"]
 
     result = {
         "id": task.id,
@@ -1339,6 +1344,9 @@ def task_to_dict(task: Task) -> dict:
         "reviewReason": task.review_reason,
         "specsPath": specs_path,  # Path to spec directory for Files tab
     }
+
+    if hold_note:
+        result["contractHold"] = hold_note
 
     if execution_progress:
         result["executionProgress"] = execution_progress
