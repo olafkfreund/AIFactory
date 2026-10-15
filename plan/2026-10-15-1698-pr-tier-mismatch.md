@@ -154,7 +154,9 @@ Traps: `merge_disposition` behaviour must be byte-for-byte the same; tests
 Tests:
 - `apps/web-server/tests/test_merger.py:286`: change to
   `assert "Review tier: medium (not checked against a signed contract)" in body`.
-  Add one assertion in a `None` tier test: `"Review tier: none (not checked" in body`.
+  Add one assertion in a `None` tier test:
+  `"Review tier: none (decided as low) (not checked" in body` (review nit: a
+  blank tier is labelled with the back-compat rule `merge_disposition` applies).
 - New test in `test_trusted_contract_merge.py`: run `run_pr_endgame` with
   `background=False`, `auto_merge=False`, `reviewer="copilot"`,
   monkeypatched `create_pr` capturing `body`, `request_copilot_review`,

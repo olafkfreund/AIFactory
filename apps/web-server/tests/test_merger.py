@@ -219,7 +219,7 @@ def test_honest_body_states_no_gate_evidence_and_qa_not_run(tmp_path):
     assert "review surface, not a certificate" in body
     assert "no verification gates recorded" in body
     assert "QA sign-off: not run" in body
-    assert "Review tier: none (not checked" in body
+    assert "Review tier: none (decided as low) (not checked" in body
 
 
 def test_honest_body_reports_gate_evidence_without_a_worktree(tmp_path, monkeypatch):

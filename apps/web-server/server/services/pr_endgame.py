@@ -529,7 +529,9 @@ def review_tier_note(spec_dir: Path, tier: str | None, *, trusted: object) -> st
             return note
     except Exception:  # noqa: BLE001 - a body line must never break the endgame
         logger.debug("[pr-endgame] review tier note fell back", exc_info=True)
-    label = _describe_tier(tier if tier is not None and str(tier).strip() else None)
+    # A blank tier is decided as low (merge_disposition's back-compat rule).
+    blank = tier is None or not str(tier).strip()
+    label = "none (decided as low)" if blank else _describe_tier(tier)
     return f"Review tier: {label} (not checked against a signed contract)."
 
 
