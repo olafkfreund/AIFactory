@@ -108,7 +108,10 @@ delete the file and lift the HOLD.
    - `tests/test_trusted_contract_store.py` style: assert the table exists at
      Alembic head on SQLite (add to that file or a new `tests/test_handback_receipt_store.py`).
    → verify: the pytest commands under Tests.
-   Traps: prove the regression test fails on unfixed code (scratch worktree at
+   Traps: the conftest stub also reaches root `tests/` in a combined run, so
+   `tests/test_handback_receipt_store.py` restores the real `on_record` captured
+   at import (deviation found while implementing).
+   Also: prove the regression test fails on unfixed code (scratch worktree at
    `origin/dev` with only the test file copied in).
 
 ## Tests
