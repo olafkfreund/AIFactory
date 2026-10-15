@@ -26,7 +26,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -43,7 +43,7 @@ def _default_clock() -> float:
 
 
 def _default_now() -> str:
-    return datetime.now().isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 class WaveRecorder:

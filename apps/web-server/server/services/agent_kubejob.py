@@ -791,6 +791,9 @@ class KubejobMixin:
                 terminal = await backend.reconcile_by_poll(job_id)
             except Exception:  # noqa: BLE001
                 _log.exception("[AgentService] kubejob reconcile failed for %s", job_id)
+                # #1693: unknown this tick → keep last tick's answer.
+                if job_id in self._active_kubejob_task_ids:
+                    live.add(job_id)
                 continue
             if terminal is not None:
                 out[job_id] = terminal

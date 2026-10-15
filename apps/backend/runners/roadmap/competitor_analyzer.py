@@ -3,7 +3,7 @@ Competitor analysis functionality for roadmap generation.
 """
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -160,7 +160,7 @@ Output your findings to competitor_analysis.json.
                         "differentiator_opportunities": [],
                         "market_trends": [],
                     },
-                    "created_at": datetime.now().isoformat(),
+                    "created_at": datetime.now(UTC).isoformat(),
                 },
                 f,
                 indent=2,
@@ -178,7 +178,7 @@ Output your findings to competitor_analysis.json.
                 "differentiator_opportunities": [],
                 "market_trends": [],
             },
-            "created_at": datetime.now().isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
         }
         if errors:
             data["errors"] = errors
