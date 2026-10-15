@@ -1,8 +1,8 @@
 """Act on a task contract only if the web server verified it (#1673).
 
 The server passes its verdict to ``run.py`` as ``AIFACTORY_TRUSTED_CONTRACT``:
-the sha256 of the verified contract, ``hold``, or unset (legacy). The pod gets a
-digest, never the signing key.
+the sha256 of the verified contract, ``hold``, or ``legacy``; unset means no
+server. The pod gets a digest, never the signing key.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 ENV = "AIFACTORY_TRUSTED_CONTRACT"
+LEGACY = "legacy"
 
 
 # Logs show only these constants: CodeQL's name heuristic treats anything read
@@ -24,6 +25,7 @@ _REASON_LABELS = {
         "no contract",
         "digest mismatch",
         "held by server",
+        "server saw no signed contract",
         "server verified",
         "trusted trace without a server verdict",
         "no server verdict",
@@ -75,11 +77,13 @@ def trusted_contract(spec_dir: Path) -> tuple[str, dict[str, Any] | None, str]: 
         present = ENV in os.environ
         value = os.environ.get(ENV)
         if contract is None:
-            if not present or value == "hold":
+            if not present or value in ("hold", LEGACY):
                 return "legacy", None, "no contract"
             return "hold", None, "digest mismatch"
         if value == "hold":
             return "hold", contract, "held by server"
+        if value == LEGACY:
+            return "hold", contract, "server saw no signed contract"
         if present:
             if value == contract_digest(contract):
                 return "verified", contract, "server verified"

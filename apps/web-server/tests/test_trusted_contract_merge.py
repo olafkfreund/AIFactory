@@ -531,13 +531,13 @@ async def test_spawn_env_holds(
     assert await spawn_env(spec) == {ENV: "hold"}
 
 
-async def test_spawn_env_legacy_is_empty(
+async def test_spawn_env_legacy_is_explicit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     spec = tmp_path / ".aifactory" / "specs" / "001-x"
     spec.mkdir(parents=True)
     _lookup(monkeypatch, None)
-    assert await spawn_env(spec) == {}
+    assert await spawn_env(spec) == {ENV: "legacy"}
 
 
 async def test_cross_side_digest_matches_pod_verdict(
