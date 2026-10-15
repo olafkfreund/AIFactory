@@ -503,7 +503,8 @@
     "noProjectSelected": {
       "title": "Aucun projet sélectionné",
       "description": "Sélectionnez un projet dans la barre latérale pour configurer ses paramètres."
-    }
+    },
+    "legacySettingsFile": "Les paramètres ont été importés depuis .aifactory/{{file}}. Ce fichier contient encore des copies en clair des jetons ; supprimez-le."
   },
   "connection": {
     "successTitle": "Connexion réussie",

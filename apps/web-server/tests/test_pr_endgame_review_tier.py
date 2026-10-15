@@ -37,6 +37,10 @@ def _isolated_host(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "kubejob")
     # kubejob counts as isolated only with the durable store (#1667).
     monkeypatch.setattr("server.services.job_state_store.store_enabled", lambda: True)
+    # #1795: the project's settings are loaded, as on a running server.
+    monkeypatch.setattr(
+        "server.services.project_settings_store.is_loaded", lambda _p: True
+    )
 
 
 # ---------------------------------------------------------------------------
