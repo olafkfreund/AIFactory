@@ -602,14 +602,16 @@ def _thread_issue(
     splits from the build's (#1775). A PFactory contract's own key wins.
     """
     issue_no = _issue_from_requirements(req)
-    if issue_no is None:
-        return contract
-    contract = dict(contract or {})
-    prov = dict(contract.get("provenance") or {})
-    prov.setdefault("github_issue", issue_no)
-    contract["provenance"] = prov
+    if issue_no is not None:
+        contract = dict(contract or {})
+        prov = dict(contract.get("provenance") or {})
+        prov.setdefault("github_issue", issue_no)
+        contract["provenance"] = prov
+    # Not gated on issue_no: the event readers also accept metadata.githubIssueNumber
+    # and string numbers, and the key must follow the events, not the #964 block.
     key = _event_correlation_key(req)
     if key:
+        contract = dict(contract or {})
         contract.setdefault("correlation_key", key)
     return contract
 

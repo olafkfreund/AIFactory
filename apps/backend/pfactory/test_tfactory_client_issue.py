@@ -115,3 +115,22 @@ def test_handoff_keeps_a_pfactory_contract_key(
     )
     payload = tc.build_ingest_payload(spec_dir, "048-feat", contract=None)
     assert payload["contract"]["correlation_key"] == "o/r#7"
+
+
+@pytest.mark.parametrize(
+    "req",
+    [
+        {"metadata": {"githubIssueNumber": 382}, "provenance": {"repo": "o/r"}},
+        {"githubIssue": {"number": "382", "repo": "o/r"}},
+    ],
+)
+def test_handoff_key_follows_the_event_readers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, req: dict[str, Any]
+) -> None:
+    # #1775: tasks.py / auto-fix write metadata.githubIssueNumber, and a number can
+    # be a string; the #964 provenance backfill misses both, the key must not.
+    _stub_git(monkeypatch)
+    payload = tc.build_ingest_payload(
+        _spec_dir(tmp_path, req), "048-feat", contract=None
+    )
+    assert payload["contract"]["correlation_key"] == "o/r#382"
