@@ -66,7 +66,7 @@ through. Agents can write that file.
      - `AgentService.start_spec_creation` (`server/services/agent_spec_creation.py:66`): same stubs.
    - Build the service objects the way `tests/test_agent_service_admission.py` does.
    - Verify: run the file. The three tests FAIL now (refused keys present). Record that.
-   - Traps: never spawn a real process. If a site cannot be reached without heavy mocking, patch `load_project_env` usage is not available yet, so instead stub more helpers. Do not change production code in this step.
+   - Traps: never spawn a real process. If a site cannot be reached without heavy mocking, stub more helpers (the shared loader is not wired yet, so patching it proves nothing). Do not change production code in this step.
 
 3. **Wire the three sites to the shared loader.**
    - `pr_review_service.py:275-276`: replace `_load_env_file(project_path / ".aifactory" / ".env", env)` with `load_project_env(project_path, env)`, and add the import.
