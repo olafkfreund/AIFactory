@@ -681,3 +681,8 @@ class TestGitDirWriteGuard:
             agent_type=agent_type, model="claude-haiku-4-5"
         )
         assert seen["options"].tools == AGENT_CONFIGS[agent_type]["tools"]
+        tools = seen["options"].tools
+        if agent_type in ("commit_message", "merge_resolver", "spec_compaction"):
+            assert tools == []
+        else:  # read helpers see untrusted text: never Read plus web egress
+            assert tools and not {"WebFetch", "WebSearch"} & set(tools)
