@@ -365,29 +365,30 @@ names the step: `feat(settings): step N ... (#1795)`.
      (it is out of scope).
 
 7. **Frontend notice and docs.**
-   - `apps/frontend-web/src/components/EnvConfigModal.tsx`: when the
-     loaded config has `legacySettingsFile`, show one notice line, using
-     the modal's existing alert or notice style: "Settings were imported
-     from `.aifactory/<name>`. It still holds plain-text copies of any
-     tokens; delete it."
+   (Deviation: `EnvConfigModal.tsx` is the global Claude-token modal and never
+   loads the project env, so the notice goes on the project settings screen.)
+   - `apps/frontend-web/src/components/settings/ProjectSettingsContent.tsx`
+     (`ProjectSettingsContentInner`, next to the error banner): when
+     `envConfig.legacySettingsFile` is set, show one warning line with the
+     i18n key `settings:projectSettings.legacySettingsFile`, which takes the
+     interpolation `{{file}}`. Add the key to the `en`, `fr` and `pt-BR`
+     `settings.json` files.
    - `apps/frontend-web/src/shared/types/project.ts`: add
-     `legacySettingsFile?: string` to the env config type, and change the
-     comment at `:384` from `.aifactory/.env` to "project settings".
-   - `docs/docs/configuration-reference.md:15,131` and
-     `docs/docs/concepts/mcp-servers.md:76,85,115`: say that settings
-     live in the web-server DB. Cover the one-time import and the
-     `.env.migrated-*` file. Say that `.aifactory/.env` is read only by
-     the backend CLI in local mode (single user, trusted).
+     `legacySettingsFile?: string` to `ProjectEnvConfig`, and point the
+     `AGENT_MCP_*` comment at the project settings.
+   - `docs/docs/configuration-reference.md` and
+     `docs/docs/concepts/mcp-servers.md`: say that settings live in the
+     web-server DB. Cover the one-time import, the `.env.migrated-*` file,
+     and that a git-tracked file is not imported. Say that
+     `.aifactory/.env` is read only by the backend CLI in local mode
+     (single user, trusted). The MCP editor is the portal's **MCP** view
+     (`AgentTools.tsx`).
 
    → Verify:
    ```
-   cd apps/frontend-web && npx tsc --noEmit -p .
+   cd apps/frontend-web && npm run typecheck
    ```
-   (Or the repo's typecheck script.)
-
-   Traps:
-   - i18n: if the modal uses translation keys, add the string in the
-     same way, in every locale file it uses.
+   Runs in CI; the worktree has no `node_modules`.
 
 ## Who does what
 
