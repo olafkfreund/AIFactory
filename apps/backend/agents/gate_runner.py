@@ -487,12 +487,10 @@ def _nix_kube_runner(image: str) -> Callable[[list[str], Path], tuple[int | None
     # whenever the two PVs stranded on different nodes (the live factory cluster:
     # aifactory-data on the server, aifactory-nix-store on the agent). See
     # nix_in_image for why the image is a sufficient /nix source.
-    # Both gate paths (packed and co-mount) drop the PVC when nix_in_image() is
-    # true; the build path drops it on its packed path only
-    # (_packed_nix_in_image in build_backend.py). Inside the build Job neither
-    # variable is forwarded (_PASSTHROUGH_BUILD_ENV, build_backend.py:259), so
-    # the guard is inert there today. The two must be forwarded together (#1736): forwarding
-    # only the PVC brings back the #253 node pin.
+    # Both gate paths drop the PVC when nix_in_image() is true. The build Job
+    # forwards both variables (_PASSTHROUGH_BUILD_ENV, #1736), so this guard
+    # sees the same values here as on the control plane; the build Job itself
+    # mounts no store.
     nix_store_pvc = (
         None
         if nix_in_image()
