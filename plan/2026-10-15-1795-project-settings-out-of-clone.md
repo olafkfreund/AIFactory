@@ -108,7 +108,7 @@ names the step: `feat(settings): step N ... (#1795)`.
      python -m alembic upgrade head
    ```
    (Use a scratch path for the DB.)
-   Add one line to `database/alembic/README.md`'s migration table.
+   (Deviation: the README migration table stops at its third entry and no later migration updates it, so it is left alone.)
 
    Traps:
    - check the head first with `python -m alembic heads`. If another

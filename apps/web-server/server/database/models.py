@@ -1249,3 +1249,31 @@ class TrustedContract(Base):
 
     def __repr__(self) -> str:
         return f"<TrustedContract spec_id={self.spec_id!r}>"
+
+
+class ProjectSettings(Base):
+    """Per-project settings, kept outside the agent-writable clone (#1795).
+
+    ``settings`` is ``secret_field.seal(json.dumps(dict[str, str]))``; see
+    ``services/project_settings_store.py``. ``project_key`` is the sha256 hex
+    of the project's absolute path.
+    """
+
+    __tablename__ = "project_settings"
+
+    project_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    settings: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ProjectSettings project_key={self.project_key!r}>"
