@@ -291,3 +291,46 @@ def test_headless_pref_returns_api_key_when_both_enabled(monkeypatch):
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "oat-tok")
     assert auth.get_auth_token() == "sk-ant-xxx"
     assert auth.get_auth_token_source() == "ANTHROPIC_API_KEY (headless preference)"
+
+
+@pytest.mark.parametrize(
+    "probe,env",
+    [
+        (ap.probe_google, {"GEMINI_API_KEY": "gemini-secret"}),
+        (ap.probe_anthropic, {"ANTHROPIC_API_KEY": "sk-ant-xxx"}),
+    ],
+)
+def test_bad_status_line_is_inconclusive(monkeypatch, probe, env):
+    # A broken proxy response must not crash a build in warn mode.
+    def bad(req, timeout):
+        raise http.client.BadStatusLine("garbage")
+
+    monkeypatch.setattr(ap.urllib.request, "urlopen", bad)
+    assert probe(env).status == "inconclusive"
+
+
+def test_rotated_key_is_probed_fresh(monkeypatch):
+    seen = []
+
+    def fake(url, headers, **_):
+        seen.append(headers["x-goog-api-key"])
+        if headers["x-goog-api-key"] == "key-a":
+            return 400, _KEY_INVALID
+        return 200, ""
+
+    monkeypatch.setattr(ap, "_http_get", fake)
+    assert ap.probe_google({"GEMINI_API_KEY": "key-a"}).status == "auth_failed"
+    assert ap.probe_google({"GEMINI_API_KEY": "key-b"}).status == "ok"
+    assert seen == ["key-a", "key-b"]
+
+
+def test_anthropic_probe_does_not_read_body(monkeypatch):
+    calls = []
+
+    def fake(url, headers, timeout, *, read_body=True):
+        calls.append(read_body)
+        return 200, ""
+
+    monkeypatch.setattr(ap, "_http_get", fake)
+    assert ap.probe_anthropic({"ANTHROPIC_API_KEY": "sk-ant-xxx"}).status == "ok"
+    assert calls == [False]

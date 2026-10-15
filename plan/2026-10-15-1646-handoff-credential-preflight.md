@@ -146,3 +146,8 @@ Traps: the existing test mocks of `_http_status`, `_http_get` and
 `run_auth_preflight` must accept the new `timeout` keyword.
 Note: `_http_status` calls `_http_get(..., read_body=False)` instead of
 building its own `Request`; a second `Request` call trips the S310 ratchet.
+Re-review: both classifiers also catch `http.client.HTTPException` from
+urlopen (BadStatusLine, LineTooLong) as `inconclusive`, since the build path
+has no try around the preflight. Tests: BadStatusLine is inconclusive for both
+probes; a rotated key (A auth_failed, then B) is probed fresh; anthropic calls
+`_http_get` with `read_body=False`.

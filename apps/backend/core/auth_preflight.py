@@ -173,7 +173,12 @@ def _classify_anthropic(
         return PreflightResult(
             "anthropic", "inconclusive", "credential is not a valid header", kind
         )
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+    except (
+        urllib.error.URLError,
+        TimeoutError,
+        OSError,
+        http.client.HTTPException,
+    ) as exc:
         return PreflightResult(
             "anthropic", "inconclusive", f"probe transport error: {exc}", kind
         )
@@ -238,7 +243,12 @@ def _classify_google(key: str, timeout: float) -> PreflightResult:
         return PreflightResult(
             "google", "inconclusive", "credential is not a valid header", "api_key"
         )
-    except (urllib.error.URLError, TimeoutError, OSError):
+    except (
+        urllib.error.URLError,
+        TimeoutError,
+        OSError,
+        http.client.HTTPException,
+    ):
         return PreflightResult(
             "google", "inconclusive", "probe transport error", "api_key"
         )
