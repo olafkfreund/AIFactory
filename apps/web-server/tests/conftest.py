@@ -37,3 +37,19 @@ TESTS_DIR = Path(__file__).resolve().parent
 
 if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _no_handback_receipt(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No DB handback receipt (#1696) unless a test sets one.
+
+    Many tests patch ``store_enabled`` to True; without this the merge gate
+    would read the developer's default database.
+    """
+
+    async def _none(_spec_dir: object) -> bool:
+        return False
+
+    monkeypatch.setattr("server.services.handback_receipt_store.on_record", _none)
