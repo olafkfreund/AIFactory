@@ -114,3 +114,35 @@ All pass; the new enforce-handoff test fails on unfixed dev.
 
 Revert the two implementation commits. Operators can also set
 `AIFACTORY_AUTH_PREFLIGHT=off` to disable every probe without a deploy of code.
+
+## Step 3 (added after PR review, deviation recorded in spec/)
+
+`apps/backend/core/auth_preflight.py`, `apps/backend/pfactory/tfactory_client.py`
+and both test files:
+
+- `_google_key_invalid(body)` parses the JSON; `_classify_google` returns
+  `auth_failed` only for 400 + `API_KEY_INVALID` in `error.details[].reason`.
+- `probe_google` reads `GEMINI_API_KEY` only; `skipped` when
+  `GOOGLE_GENAI_USE_VERTEXAI` or `GOOGLE_APPLICATION_CREDENTIALS` is set.
+- `_http_status` no longer reads the body (`read_body=False`); `_http_get` reads it through
+  `_read_body`, which returns `""` on `OSError` / `http.client.HTTPException`.
+- `_cached(provider, secret, probe)`: module dict, key
+  `(provider, sha256(secret))`, TTL 300 s, stores `ok`/`auth_failed` only.
+- Probes and `run_auth_preflight` take `timeout` (default 10 s);
+  `_handoff_preflight_block` passes `_HANDOFF_PREFLIGHT_TIMEOUT_S = 3`.
+- Both probes catch `ValueError` → `inconclusive`, detail
+  "credential is not a valid header"; `send_handoff` logs
+  `type(exc).__name__` only.
+- Tests: 403 `SERVICE_DISABLED` is inconclusive (so `enforce` does not block);
+  `GOOGLE_API_KEY`-only, Vertex and ADC are skipped; `IncompleteRead` on the
+  body gives `(400, "")`; CR/LF keys are inconclusive and not echoed; ok is
+  cached and inconclusive is not; the handoff passes `timeout=3`. An autouse
+  fixture clears the cache between tests.
+→ verify: pytest on `tests/test_auth_preflight.py`,
+`tests/test_pfactory_tfactory_client.py`, `tests/test_tfactory_auto_handoff.py`,
+`tests/test_pfactory_routing.py`, `tests/audit/test_task_action_audit.py`;
+ruff check / format; ruff + mypy ratchets (pre-commit).
+Traps: the existing test mocks of `_http_status`, `_http_get` and
+`run_auth_preflight` must accept the new `timeout` keyword.
+Note: `_http_status` calls `_http_get(..., read_body=False)` instead of
+building its own `Request`; a second `Request` call trips the S310 ratchet.

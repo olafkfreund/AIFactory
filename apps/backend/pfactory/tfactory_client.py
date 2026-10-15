@@ -740,6 +740,10 @@ async def _httpx_poster(url: str, payload: dict, headers: dict) -> dict:
         }
 
 
+# Short: a handoff must not wait on a slow probe (results are cached 5 min).
+_HANDOFF_PREFLIGHT_TIMEOUT_S = 3
+
+
 def _handoff_preflight_block(payload: dict[str, Any]) -> dict[str, Any] | None:
     mode = auth_preflight.preflight_mode()
     if mode == "off":
@@ -756,7 +760,9 @@ def _handoff_preflight_block(payload: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
     blocked: dict[str, Any] | None = None
-    for result in auth_preflight.run_auth_preflight(models):
+    for result in auth_preflight.run_auth_preflight(
+        models, timeout=_HANDOFF_PREFLIGHT_TIMEOUT_S
+    ):
         if result.status not in ("ok", "skipped"):
             _log.warning(
                 "TFactory handoff auth preflight %s: %s", result.provider, result.detail
@@ -791,7 +797,7 @@ async def send_handoff(
     try:
         blocked = await asyncio.to_thread(_handoff_preflight_block, payload)
     except Exception as exc:  # noqa: BLE001 — a preflight bug must not stop a handoff
-        _log.warning("TFactory handoff auth preflight failed: %s", exc)
+        _log.warning("TFactory handoff auth preflight failed: %s", type(exc).__name__)
         blocked = None
     if blocked:
         return blocked

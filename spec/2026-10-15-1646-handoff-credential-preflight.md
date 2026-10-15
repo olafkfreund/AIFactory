@@ -89,3 +89,31 @@ to `tfactory_handoff.json`, so the named reason is visible with no caller change
   not called; `warn` + `auth_failed` posts; `enforce` + `inconclusive` posts.
 - The `enforce` handoff test fails on unfixed dev (the poster is called).
 - `ruff check`, `ruff format --check` on touched files.
+
+## Deviation after PR review (#1793)
+
+Recorded under the user's standing approval for this run. These replace the
+matching points above.
+
+1. **Google rejection rule.** Only a 400 whose parsed JSON has
+   `error.details[].reason == "API_KEY_INVALID"` is `auth_failed`. 401, 403 and
+   everything else are `inconclusive`: a Google 403 also means
+   `SERVICE_DISABLED`, `API_KEY_SERVICE_BLOCKED` or `API_KEY_IP_ADDRESS_BLOCKED`
+   on a valid key.
+2. **Which credential.** Probe `GEMINI_API_KEY` only. `GOOGLE_API_KEY` is
+   dropped: the graphiti embedder uses it, so it can be present when the CLI
+   does not use it. `skipped` when `GOOGLE_GENAI_USE_VERTEXAI` or
+   `GOOGLE_APPLICATION_CREDENTIALS` is set (the CLI is on Vertex/ADC).
+3. **Body read.** `_http_get` returns `""` when reading the body raises
+   `OSError` or `http.client.HTTPException` (e.g. `IncompleteRead`), so warn
+   mode cannot crash a build. `_http_status` (anthropic) is back to not reading
+   the body at all.
+4. **Latency.** A module-level cache keyed by
+   `(provider, sha256(credential))` with a 5-minute TTL holds `ok` and
+   `auth_failed` results only; `inconclusive` is never cached. Probes take a
+   `timeout`; the handoff passes 3 s, the build path keeps 10 s. Claude models
+   in `phase_models` are probed on handoffs too.
+5. **Header injection.** A credential with CR/LF makes urllib raise
+   `ValueError("Invalid header value ...")` containing the value. Both probes
+   catch `ValueError` and return `inconclusive` with a fixed detail, and
+   `send_handoff` logs only `type(exc).__name__` for a preflight exception.

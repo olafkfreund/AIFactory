@@ -156,8 +156,9 @@ async def test_send_transport_exception_is_caught():
 async def test_send_enforce_blocks_failed_auth(monkeypatch):
     monkeypatch.setenv("AIFACTORY_AUTH_PREFLIGHT", "enforce")
 
-    def failed_auth(models):
+    def failed_auth(models, **kw):
         assert models == ["gemini"]
+        assert kw["timeout"] == 3  # handoffs must not wait on the 10 s build timeout
         return [auth_preflight.PreflightResult("google", "auth_failed", "invalid key")]
 
     monkeypatch.setattr(
@@ -190,7 +191,7 @@ async def test_send_warn_posts_after_failed_auth(monkeypatch):
     monkeypatch.setattr(
         auth_preflight,
         "run_auth_preflight",
-        lambda models: [
+        lambda models, **_: [
             auth_preflight.PreflightResult("google", "auth_failed", "invalid key")
         ],
     )
@@ -214,7 +215,7 @@ async def test_send_enforce_posts_after_inconclusive_auth(monkeypatch):
     monkeypatch.setattr(
         auth_preflight,
         "run_auth_preflight",
-        lambda models: [
+        lambda models, **_: [
             auth_preflight.PreflightResult("google", "inconclusive", "timeout")
         ],
     )
@@ -237,7 +238,7 @@ async def test_send_off_skips_auth_preflight(monkeypatch):
     monkeypatch.setenv("AIFACTORY_AUTH_PREFLIGHT", "off")
     probed = False
 
-    def unexpected_probe(models):
+    def unexpected_probe(models, **_):
         nonlocal probed
         probed = True
         return []
@@ -258,7 +259,7 @@ async def test_send_off_skips_auth_preflight(monkeypatch):
 async def test_send_posts_when_auth_preflight_raises(monkeypatch):
     monkeypatch.setenv("AIFACTORY_AUTH_PREFLIGHT", "enforce")
 
-    def broken_probe(models):
+    def broken_probe(models, **_):
         raise RuntimeError("probe broke")
 
     monkeypatch.setattr(auth_preflight, "run_auth_preflight", broken_probe)
