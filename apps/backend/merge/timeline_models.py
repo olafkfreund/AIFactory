@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ class MainBranchEvent:
     def from_dict(cls, data: dict) -> MainBranchEvent:
         return cls(
             commit_hash=data["commit_hash"],
-            timestamp=datetime.fromisoformat(data["timestamp"]),
+            timestamp=datetime.fromisoformat(data["timestamp"]).astimezone(UTC),
             content=data["content"],
             source=data["source"],
             merged_from_task=data.get("merged_from_task"),
@@ -94,7 +94,7 @@ class BranchPoint:
         return cls(
             commit_hash=data["commit_hash"],
             content=data["content"],
-            timestamp=datetime.fromisoformat(data["timestamp"]),
+            timestamp=datetime.fromisoformat(data["timestamp"]).astimezone(UTC),
         )
 
 
@@ -115,7 +115,7 @@ class WorktreeState:
     def from_dict(cls, data: dict) -> WorktreeState:
         return cls(
             content=data["content"],
-            last_modified=datetime.fromisoformat(data["last_modified"]),
+            last_modified=datetime.fromisoformat(data["last_modified"]).astimezone(UTC),
         )
 
 
@@ -217,7 +217,7 @@ class TaskFileView:
             else TaskIntent("", ""),
             commits_behind_main=data.get("commits_behind_main", 0),
             status=status,
-            merged_at=datetime.fromisoformat(data["merged_at"])
+            merged_at=datetime.fromisoformat(data["merged_at"]).astimezone(UTC)
             if data.get("merged_at")
             else None,
         )
@@ -241,13 +241,13 @@ class FileTimeline:
     task_views: dict[str, TaskFileView] = field(default_factory=dict)
 
     # Metadata
-    created_at: datetime = field(default_factory=datetime.now)
-    last_updated: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    last_updated: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def add_main_event(self, event: MainBranchEvent) -> None:
         """Add a main branch event and increment drift for all active tasks."""
         self.main_branch_history.append(event)
-        self.last_updated = datetime.now()
+        self.last_updated = datetime.now(UTC)
 
         # Update commits_behind_main for all active tasks
         for task_view in self.task_views.values():
@@ -257,7 +257,7 @@ class FileTimeline:
     def add_task_view(self, task_view: TaskFileView) -> None:
         """Add or update a task's view of this file."""
         self.task_views[task_view.task_id] = task_view
-        self.last_updated = datetime.now()
+        self.last_updated = datetime.now(UTC)
 
     def get_task_view(self, task_id: str) -> TaskFileView | None:
         """Get a task's view of this file."""
@@ -297,8 +297,8 @@ class FileTimeline:
     def from_dict(cls, data: dict) -> FileTimeline:
         timeline = cls(
             file_path=data["file_path"],
-            created_at=datetime.fromisoformat(data["created_at"]),
-            last_updated=datetime.fromisoformat(data["last_updated"]),
+            created_at=datetime.fromisoformat(data["created_at"]).astimezone(UTC),
+            last_updated=datetime.fromisoformat(data["last_updated"]).astimezone(UTC),
         )
         timeline.main_branch_history = [
             MainBranchEvent.from_dict(e) for e in data.get("main_branch_history", [])

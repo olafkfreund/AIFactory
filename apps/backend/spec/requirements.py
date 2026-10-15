@@ -10,7 +10,7 @@ import os
 import shlex
 import subprocess
 import tempfile
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -150,7 +150,7 @@ def gather_requirements_interactively(ui_module) -> dict:
         "workflow_type": workflow_type,
         "services_involved": [],  # AI will discover this during planning and context fetching
         "additional_context": additional_context if additional_context else None,
-        "created_at": datetime.now().isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
     }
 
 
@@ -160,7 +160,7 @@ def create_requirements_from_task(task_description: str) -> dict:
         "task_description": task_description,
         "workflow_type": "feature",  # Default, agent will refine
         "services_involved": [],  # AI will discover during planning and context fetching
-        "created_at": datetime.now().isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
     }
 
 
