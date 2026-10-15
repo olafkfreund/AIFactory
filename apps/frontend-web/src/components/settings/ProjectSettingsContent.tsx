@@ -97,6 +97,7 @@ function ProjectSettingsContentInner({
     handleInitialize,
     error
   } = hook;
+  const { t } = useTranslation('settings');
 
   // Expose hook to parent for save coordination - only once when dialog opens
   // We use hookRef to avoid infinite loops (hook object is recreated each render)
@@ -132,6 +133,12 @@ function ProjectSettingsContentInner({
         isCheckingGitHub={isCheckingGitHub}
         handleInitialize={handleInitialize}
       />
+
+      {envConfig?.legacySettingsFile && (
+        <div className="mt-4 rounded-lg bg-warning/10 border border-warning/30 p-3 text-sm text-warning">
+          {t('projectSettings.legacySettingsFile', { file: envConfig.legacySettingsFile })}
+        </div>
+      )}
 
       {(error || envError) && (
         <div className="mt-4 rounded-lg bg-destructive/10 border border-destructive/30 p-3 text-sm text-destructive">

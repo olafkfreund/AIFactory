@@ -12,8 +12,9 @@ core pipeline works with none of them set.
 Flags are read in two places:
 
 - **Web server environment** (`apps/web-server/.env` or pod env) — host-wide.
-- **Per-project settings** (`.aifactory/.env` in the target repo) — override the
-  host for one project. The PR-endgame and deploy flags are read here.
+- **Per-project settings** (stored by the web server, see
+  [Per-project settings](#per-project-settings-portal-ui)) — override the host
+  for one project. The PR-endgame and deploy flags are read here.
 
 ## PARR endgame — deploy, PR, merge
 
@@ -128,8 +129,21 @@ How the coder loop (`run.py`) is executed, and what it takes for a build to sche
 
 ## Per-project settings (portal UI)
 
-These map to keys in the project's `.aifactory/.env` and can be set from
-**Settings → General** in the portal:
+These are stored in the web server's database, outside the project clone, so
+no task agent can change them. Set them from **Settings → General** in the
+portal.
+
+**Moving from `.aifactory/.env`.** Older releases kept these settings in
+`<project>/.aifactory/.env`. The first time the web server reads a project's
+settings, it imports the allowed keys from that file and renames the file to
+`.aifactory/.env.migrated-<date>`. It does not import a file that git tracks.
+After the import the stored settings always win, and a new `.aifactory/.env`
+is ignored with a warning. The renamed file still holds plain-text copies of any
+tokens: delete it once you have checked the settings. Secrets in the database
+are encrypted with the configured KMS key (`KMS_FERNET_KEY` or a cloud KMS).
+
+The backend CLI, run without the web server, still reads `.aifactory/.env` for
+MCP settings. That is local mode: one trusted user on their own machine.
 
 | Setting | Key | Default |
 |---------|-----|---------|

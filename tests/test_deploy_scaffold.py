@@ -114,6 +114,8 @@ def test_scaffold_for_spec_withheld(
 ) -> None:
     contract = {**_GCP, "approval": {"sig": "x"}} if case == "trace" else _GCP
     spec = _spec(tmp_path, contract)
+    plan_file = spec / "implementation_plan.json"
+    plan_file.write_text(json.dumps({"phases": []}))
     if case == "hold":
         monkeypatch.setenv(ENV, "hold")
     elif case == "other-digest":
@@ -122,6 +124,8 @@ def test_scaffold_for_spec_withheld(
         assert deploy_scaffold.scaffold_deploy_for_spec(spec) == []
     assert not (tmp_path / "infra").exists()
     assert "[trusted-contract] deploy scaffold withheld" in caplog.text
+    plan = json.loads(plan_file.read_text())
+    assert plan["contractHold"].startswith("deploy scaffold withheld: ")
 
 
 def test_scaffold_for_spec_never_raises(

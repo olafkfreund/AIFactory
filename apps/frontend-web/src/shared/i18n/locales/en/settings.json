@@ -503,7 +503,8 @@
     "noProjectSelected": {
       "title": "No Project Selected",
       "description": "Select a project from the sidebar to configure its settings."
-    }
+    },
+    "legacySettingsFile": "Settings were imported from .aifactory/{{file}}. That file still holds plain-text copies of any tokens; delete it."
   },
   "connection": {
     "successTitle": "Connection successful",
