@@ -443,10 +443,41 @@ def _skip_timeout_opts(tokens: list[str], j: int) -> int | None:
     return j + 1  # DURATION
 
 
+_TIME_VALUE_OPTS = frozenset({"-f", "-o", "--format", "--output"})
+_TIME_FLAG_OPTS = frozenset(
+    {
+        "-p",
+        "-a",
+        "-v",
+        "-q",
+        "--portability",
+        "--append",
+        "--verbose",
+        "--quiet",
+    }
+)
+
+
+def _skip_time_opts(tokens: list[str], j: int) -> int | None:
+    """``time [opts] CMD`` — GNU/POSIX ``time`` options."""
+    while j < len(tokens) and tokens[j].startswith("-"):
+        tok = tokens[j]
+        if tok == "--":
+            return j + 1
+        if tok in _TIME_VALUE_OPTS:
+            j += 2
+        elif tok in _TIME_FLAG_OPTS or tok.startswith(("--format=", "--output=")):
+            j += 1
+        else:
+            raise UnparseableCommand(f"time option {tok} cannot be validated")
+    return j
+
+
 _PREFIX_OPT_SKIPPERS: dict[str, Callable[[list[str], int], int | None]] = {
     "command": _skip_command_opts,
     "exec": _skip_exec_opts,
     "timeout": _skip_timeout_opts,
+    "time": _skip_time_opts,
 }
 
 
@@ -458,7 +489,7 @@ def _unwrap_prefix(
     *,
     dynamic_args: bool,
 ) -> None:
-    """``command``/``exec``/``timeout`` run the command that follows their options."""
+    """``command``/``exec``/``timeout``/``time`` run the command after their options."""
     tokens = [w.word for w in words]
     opts_end = next(
         (k for k in range(idx + 1, len(tokens)) if not _is_opt(tokens[k])),
@@ -475,12 +506,124 @@ def _unwrap_prefix(
     _emit(words, j, depth + 1, acc, dynamic_args=dynamic_args)
 
 
+def _unwrap_source(
+    words: list[Any],
+    idx: int,
+    depth: int,
+    acc: list[tuple[str, str, bool]],
+    *,
+    dynamic_args: bool,
+) -> None:
+    """``source``/``.`` ``<script> [args]`` — the script path must be a static file."""
+    del depth, acc, dynamic_args
+    if idx + 1 < len(words):
+        _require_literal(words, idx + 1, idx + 2)
+        script = words[idx + 1].word
+        if script.startswith("-") or _STDIN_SCRIPT.fullmatch(script):
+            raise UnparseableCommand(f"source operand {script} cannot be validated")
+
+
+_RUNNER_FLAGS = frozenset(
+    {
+        "-y",
+        "--yes",
+        "--no",
+        "-q",
+        "--quiet",
+        "--ignore-existing",
+        "--no-install",
+        "--include-workspace-root",
+        "--workspaces",
+        "-ws",
+    }
+)
+_RUNNER_VALUE_OPTS = frozenset({"-p", "--package", "-w", "--workspace"})
+
+
+def _check_package_runner(words: list[Any], start: int) -> None:
+    """Validate options and package operand for ``npx``/``pnpx``/``npm exec``."""
+    j = start
+    while j < len(words):
+        tok = words[j].word
+        if tok == "--":
+            j += 1
+            break
+        if not tok.startswith("-"):
+            break
+        name = tok.split("=", 1)[0]
+        if name in _RUNNER_VALUE_OPTS:
+            nxt = j + 1 if "=" in tok else j + 2
+        elif tok in _RUNNER_FLAGS:
+            nxt = j + 1
+        elif name in ("-c", "--call", "--shell-mode"):
+            raise UnparseableCommand(
+                f"package runner option {tok} runs a shell command string"
+            )
+        else:
+            raise UnparseableCommand(f"package runner option {tok} cannot be validated")
+        _require_literal(words, j, nxt)
+        j = nxt
+    if j < len(words):
+        _require_literal(words, j, j + 1)
+
+
+def _unwrap_npx(
+    words: list[Any],
+    idx: int,
+    depth: int,
+    acc: list[tuple[str, str, bool]],
+    *,
+    dynamic_args: bool,
+) -> None:
+    """``npx``/``pnpx`` ``[opts] <pkg> [args]``."""
+    del depth, acc, dynamic_args
+    _check_package_runner(words, idx + 1)
+
+
+def _unwrap_npm(
+    words: list[Any],
+    idx: int,
+    depth: int,
+    acc: list[tuple[str, str, bool]],
+    *,
+    dynamic_args: bool,
+) -> None:
+    """``npm exec`` / ``npm x`` runs a package binary like ``npx``."""
+    del depth, acc, dynamic_args
+    for k in range(idx + 1, len(words)):
+        if words[k].word in ("exec", "x"):
+            _check_package_runner(words, k + 1)
+            return
+
+
+def _unwrap_cargo(
+    words: list[Any],
+    idx: int,
+    depth: int,
+    acc: list[tuple[str, str, bool]],
+    *,
+    dynamic_args: bool,
+) -> None:
+    """Refuse ``cargo watch`` (runs shell commands via ``-s``)."""
+    del depth, acc, dynamic_args
+    if any(w.word == "watch" for w in words[idx + 1 :]):
+        raise UnparseableCommand(
+            "cargo watch runs shell commands from a long-running watcher; not permitted"
+        )
+
+
 _UNWRAPPERS: dict[str, Callable[..., None]] = {
     **dict.fromkeys(_SHELL_INTERPRETERS, _unwrap_dash_c),
     "env": _unwrap_env,
     "xargs": _unwrap_xargs,
     "find": _unwrap_find_exec,
     **dict.fromkeys(_PREFIX_OPT_SKIPPERS, _unwrap_prefix),
+    "source": _unwrap_source,
+    ".": _unwrap_source,
+    "npx": _unwrap_npx,
+    "pnpx": _unwrap_npx,
+    "npm": _unwrap_npm,
+    "cargo": _unwrap_cargo,
 }
 
 
