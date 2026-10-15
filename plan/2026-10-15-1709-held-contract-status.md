@@ -56,10 +56,8 @@ def record_hold(spec_dir: Path, note: str | None) -> None:
         plan.pop(HOLD_KEY)
     else:
         plan[HOLD_KEY] = note
-    try:
+    with contextlib.suppress(OSError):  # strict-ruff SIM105
         plan_file.write_text(json.dumps(plan, indent=2), encoding="utf-8")
-    except OSError:
-        pass
 ```
 
 Tests in `tests/test_contract_trust.py` (append): sets the key and keeps other

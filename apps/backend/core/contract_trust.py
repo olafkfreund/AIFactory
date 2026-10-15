@@ -7,6 +7,7 @@ server. The pod gets a digest, never the signing key.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -15,6 +16,7 @@ from typing import Any
 
 ENV = "AIFACTORY_TRUSTED_CONTRACT"
 LEGACY = "legacy"
+HOLD_KEY = "contractHold"
 
 
 # Logs show only these constants: CodeQL's name heuristic treats anything read
@@ -50,6 +52,23 @@ def _read_json(path: Path) -> Any:
         return json.loads(path.read_text())
     except (OSError, ValueError):
         return None
+
+
+def record_hold(spec_dir: Path, note: str | None) -> None:
+    """Put a hold note on the task's plan for the task status (#1709); None clears it.
+
+    Never creates a plan, never raises: the note is display-only.
+    """
+    plan_file = Path(spec_dir) / "implementation_plan.json"
+    plan = _read_json(plan_file)
+    if not isinstance(plan, dict) or plan.get(HOLD_KEY) == note:
+        return
+    if note is None:
+        plan.pop(HOLD_KEY)
+    else:
+        plan[HOLD_KEY] = note
+    with contextlib.suppress(OSError):
+        plan_file.write_text(json.dumps(plan, indent=2), encoding="utf-8")
 
 
 def has_trusted_trace(spec_dir: Path) -> bool:

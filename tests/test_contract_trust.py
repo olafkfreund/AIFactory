@@ -161,3 +161,30 @@ def test_reason_label_logs_only_constants() -> None:
     assert ct.reason_label("digest mismatch") == "digest mismatch"
     assert ct.reason_label("error: ValueError") == "error"
     assert ct.reason_label("sha256:deadbeef") == "error"
+
+
+def test_record_hold_sets_and_clears_without_touching_status(tmp_path: Path) -> None:
+    plan_file = tmp_path / "implementation_plan.json"
+    plan_file.write_text(json.dumps({"status": "in_progress", "reviewReason": "x"}))
+    ct.record_hold(tmp_path, "contract held (held by server); normal build")
+    assert json.loads(plan_file.read_text()) == {
+        "status": "in_progress",
+        "reviewReason": "x",
+        "contractHold": "contract held (held by server); normal build",
+    }
+    ct.record_hold(tmp_path, "contract held (held by server); normal build")
+    ct.record_hold(tmp_path, None)
+    assert json.loads(plan_file.read_text()) == {
+        "status": "in_progress",
+        "reviewReason": "x",
+    }
+    ct.record_hold(tmp_path, None)
+
+
+def test_record_hold_ignores_missing_or_non_dict_plan(tmp_path: Path) -> None:
+    ct.record_hold(tmp_path, "note")
+    plan_file = tmp_path / "implementation_plan.json"
+    assert not plan_file.exists()
+    plan_file.write_text("[]")
+    ct.record_hold(tmp_path, "note")
+    assert plan_file.read_text() == "[]"
