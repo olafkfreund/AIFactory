@@ -49,6 +49,11 @@ class _TerminalBackend:
         return "completed"
 
 
+class _RaisingBackend:
+    async def reconcile_by_poll(self, _job_id: str) -> str | None:
+        raise RuntimeError("poll failed")
+
+
 def _service(
     monkeypatch: pytest.MonkeyPatch, rows: list[str], backend: Any
 ) -> AgentService:
@@ -157,6 +162,28 @@ async def test_store_failure_leaves_the_previous_answer_standing(
     await service.reconcile_kubejob_builds()
 
     assert service.is_running(TASK) is True
+
+
+@pytest.mark.asyncio
+async def test_poll_error_keeps_last_ticks_membership(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service = _service(monkeypatch, [TASK], _StillRunningBackend())
+    await service.reconcile_kubejob_builds()
+    assert service.is_running(TASK) is True
+
+    monkeypatch.setattr(service, "_build_backend", lambda: _RaisingBackend())
+    await service.reconcile_kubejob_builds()
+    assert service.is_running(TASK) is True
+
+
+@pytest.mark.asyncio
+async def test_poll_error_does_not_invent_membership(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service = _service(monkeypatch, [TASK], _RaisingBackend())
+    await service.reconcile_kubejob_builds()
+    assert service.is_running(TASK) is False
 
 
 @pytest.mark.asyncio
