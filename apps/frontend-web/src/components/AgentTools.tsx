@@ -218,7 +218,7 @@ const AGENT_CONFIGS: Record<string, AgentConfig> = {
     label: 'Chat',
     description: 'Chat about your codebase',
     category: 'utility',
-    tools: ['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch'],
+    tools: ['Read', 'Glob', 'Grep'],
     mcp_servers: [],
     settingsSource: { type: 'feature', feature: 'insights' },
   },
@@ -235,7 +235,7 @@ const AGENT_CONFIGS: Record<string, AgentConfig> = {
     label: 'Batch Analysis',
     description: 'Batch processing of issues or items',
     category: 'utility',
-    tools: ['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch'],
+    tools: ['Read', 'Glob', 'Grep'],
     mcp_servers: [],
     // Batch uses same as GitHub Issues
     settingsSource: { type: 'feature', feature: 'githubIssues' },
