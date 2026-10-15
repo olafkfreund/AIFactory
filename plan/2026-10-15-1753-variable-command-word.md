@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1753
 spec: spec/2026-10-15-1753-variable-command-word.md
 ---
