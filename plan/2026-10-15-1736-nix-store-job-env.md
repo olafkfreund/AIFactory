@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1736
 spec: spec/2026-10-15-1736-nix-store-job-env.md
 ---
