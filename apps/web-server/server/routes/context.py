@@ -6,6 +6,7 @@ Handles project context, memory infrastructure, and Graphiti integration.
 
 import logging
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path as FilePath
 
 from factory_common.logsafe import sanitize_log
@@ -204,7 +205,7 @@ async def refresh_project_index(projectId: str = Path(...)):
             "files": len(files),
             "languages": {},
             "frameworks": [],
-            "lastRefreshed": __import__("datetime").datetime.now().isoformat(),
+            "lastRefreshed": datetime.now(UTC).isoformat(),
         }
 
         # Count files by extension
