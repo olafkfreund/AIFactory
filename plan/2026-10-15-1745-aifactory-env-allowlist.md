@@ -49,7 +49,7 @@ through. Agents can write that file.
      - (c) `AGENT_MCP_coder_ADD` and `AGENT_MCP_qa_reviewer_REMOVE` are allowed; `AGENT_MCP_`, `AGENT_MCP_coder` and `AGENT_MCP_coder_ADDX` are not;
      - (d) an existing env key is not overridden, and quotes are stripped;
      - (e) the `caplog` warning names `LD_PRELOAD` and does not contain the value (use a distinctive value such as `sentinel-value-1745`);
-     - (f) writer coverage: for `server.routes.projects.update_project_settings` and `server.routes.context.update_project_env`, take `inspect.getsource(...)` and pull every `"[A-Z][A-Z0-9_]{2,}"` string literal; each one must pass `is_project_env_key` (unwrap a decorator with `inspect.unwrap` if needed);
+     - (f) writer coverage: for `server.routes.projects.update_project_settings` and `server.routes.context.update_project_env` and `server.routes.github._persist_cli_token_to_project` (added in review), take `inspect.getsource(...)` and pull every `"[A-Z][A-Z0-9_]{2,}"` string literal; each one must pass `is_project_env_key` (unwrap a decorator with `inspect.unwrap` if needed);
      - (g) a missing file is a no-op.
    - Verify: `cd apps/web-server && ../backend/.venv/bin/python -m pytest tests/test_project_env.py -q`.
    - Traps: the decorators `@honest_status`/router may wrap the functions. If (f) collects a literal that is not an env key (e.g. a log string), filter it to literals used as mapping values or `existing[...]` subscripts rather than widening the allowlist. Do not add to the allowlist anything outside the decision list without updating this plan.

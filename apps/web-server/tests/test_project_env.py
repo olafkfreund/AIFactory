@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from server.routes import context as context_routes
+from server.routes import github as github_routes
 from server.routes import projects as projects_routes
 from server.services import project_env
 from server.services.project_env import (
@@ -104,6 +105,7 @@ def test_skipped_warning_logs_key_not_value(
     [
         projects_routes.update_project_settings,
         context_routes.update_project_env,
+        github_routes._persist_cli_token_to_project,
     ],
 )
 def test_writer_coverage(writer: object) -> None:
