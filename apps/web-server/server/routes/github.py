@@ -492,7 +492,7 @@ async def auto_detect_github(projectId: str | None = Query(None)):
     """Auto-detect GitHub CLI authentication and username in one call.
 
     If projectId is provided, the CLI token is persisted directly to the
-    project's .aifactory/.env file (server-side). The raw token is never
+    project's settings store (server-side, #1795). The raw token is never
     included in the response.
     """
     # Check gh CLI is installed
