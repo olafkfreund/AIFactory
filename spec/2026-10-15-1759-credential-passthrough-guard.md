@@ -21,6 +21,7 @@ over the five named lists from the intent.
   "credential" means "a name the scrub would otherwise remove". (`_STRIP_VARS`
   added in review of PR #1778: without it `ANTHROPIC_API_KEY_FILE` could join
   a list unnoticed.)
+  Revised 2026-10-15 after review; approved by the user.
 - `EXEMPT: dict[str, frozenset[str]]` in the test file pins, per list, the
   credential-shaped names it carries today, each group with a one-line why
   (the reader that needs it, the issue that decided it):
