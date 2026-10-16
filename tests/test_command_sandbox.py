@@ -209,7 +209,30 @@ MUST_PARSE = {
     'ls > "$LOG"': ["ls"],
     "git status > $(echo f)": ["git", "echo"],
     "f() { git status; }": ["git"],
+    "for f in a b; do echo $f; done": ["echo"],
+    "set -euo pipefail": ["set"],
+    "mapfile -t lines": ["mapfile"],
+    "LANG=C git status": ["git"],
 }
+
+# Refused by the parser itself, not only by the allowlist (#1754 review).
+ENV_KEY_PARSER_REFUSED = [
+    "for GIT_CONFIG_COUNT in 1; do git status; done",
+    "for EDITOR in vim; do git commit; done",
+    "let x=1",
+    "let GIT_CONFIG_COUNT=1",
+    "GIT_CONFIG_KEY_0[0]=core.fsmonitor git status",
+    "export GIT_CONFIG_KEY_0[0]=x; git status",
+    "set -a",
+    "set -ea",
+    "set -o allexport",
+    "mapfile -C cb lines",
+    "readarray -tC cb lines",
+    "LD_PRELOAD=/tmp/x.so git status",
+    "env LD_LIBRARY_PATH=/tmp git status",
+    "export LD_AUDIT=/tmp/a.so",
+    "read EDITOR; git commit",
+]
 
 # `git -c …` config injection / transport-exec hijack — must be blocked even
 # though the binary (`git`) is allowlisted (#321 C4).
@@ -482,6 +505,11 @@ class TestAstExtractorUnit:
     @pytest.mark.parametrize(("command", "names"), MUST_PARSE.items())
     def test_must_parse(self, command, names):
         assert extract_commands_ast(command) == names
+
+    @pytest.mark.parametrize("command", ENV_KEY_PARSER_REFUSED)
+    def test_env_key_parser_refused(self, command):
+        with pytest.raises(UnparseableCommand):
+            extract_commands_ast(command)
 
 
 def _hook(command: str, cwd: Path) -> dict[str, Any]:
