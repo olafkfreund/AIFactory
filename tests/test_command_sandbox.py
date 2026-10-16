@@ -214,6 +214,8 @@ MUST_PARSE = {
     'set -- "$@"': ["set"],
     "mapfile -t lines": ["mapfile"],
     "LANG=C git status": ["git"],
+    "echo ${FOO:=bar} ${GIT_DIR:-x}": ["echo"],
+    "declare -r x=1": ["declare"],
 }
 
 # Refused by the parser itself, not only by the allowlist (#1754 review).
@@ -234,6 +236,15 @@ ENV_KEY_PARSER_REFUSED = [
     "env LD_LIBRARY_PATH=/tmp git status",
     "export LD_AUDIT=/tmp/a.so",
     "read EDITOR; git commit",
+    "echo ${GIT_DIR:=/tmp/x}",
+    "echo ${GIT_DIR=/tmp/x}",
+    'echo "a${LD_PRELOAD:=/tmp/x.so}b"',
+    "echo ${X:-${GIT_CONFIG_COUNT:=1}}",
+    "cat <<EOF\n${GIT_DIR:=/tmp/x}\nEOF",
+    "declare -i x=GIT_CONFIG_COUNT=0",
+    "declare -ix x=1",
+    "typeset -i x",
+    "local -ri x=1",
 ]
 
 # `git -c …` config injection / transport-exec hijack — must be blocked even

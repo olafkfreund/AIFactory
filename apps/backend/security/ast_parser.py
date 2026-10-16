@@ -109,6 +109,9 @@ _VAR_SETTERS = frozenset(
 _NAMEREF_SETTERS = frozenset({"declare", "typeset", "local"})
 _UNKNOWN_VALUE_SETTERS = frozenset({"read", "mapfile", "readarray", "getopts"})
 _NAME_ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
+# ``${NAME:=v}`` / ``${NAME=v}`` assign NAME; scanned on the raw string so
+# quoted words and heredoc bodies are covered too.
+_DEFAULT_ASSIGN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*):?=")
 
 
 def _env_key_refusal(assignment: str) -> None:
@@ -206,6 +209,14 @@ def _check_var_setter(words: list[Any], idx: int) -> None:
                 and "n" in w.word[1:]
             ):
                 raise UnparseableCommand("nameref is not permitted")
+            # An integer variable's value is evaluated as arithmetic, which
+            # can assign any variable: ``declare -i x=GIT_CONFIG_COUNT=0``.
+            if (
+                setter in _NAMEREF_SETTERS
+                and not w.word.startswith("--")
+                and "i" in w.word[1:]
+            ):
+                raise UnparseableCommand("integer attribute is not permitted")
             if setter in ("mapfile", "readarray") and "C" in w.word[1:]:
                 raise UnparseableCommand("mapfile callback is not permitted")
         else:
@@ -276,6 +287,9 @@ def _extract(
     except (bashlex.errors.ParsingError, NotImplementedError, Exception) as exc:
         # Fail closed: anything we cannot parse is treated as a block.
         raise UnparseableCommand(f"could not parse command: {exc}") from exc
+
+    for m in _DEFAULT_ASSIGN.finditer(command_string):
+        _env_key_refusal(f"{m.group(1)}=?")
 
     cmd_nodes: list = []
     for tree in trees:
