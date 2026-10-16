@@ -9,6 +9,10 @@
   is refused and `cargo-watch` leaves the Rust allowlist.
   `npm` options before the subcommand must be known ones, so `npm -w x exec -c …`
   is checked as `npm exec`, and `cargo --config` accepts only a `.toml` file path.
+  Every npm option before `--` must be on a list of common options, so
+  `--script-shell`, `--node-options` and `-c` after the subcommand or package
+  are refused; `-p`/`--package` is refused. `source` and shell script operands
+  under `/dev` or `/proc` are refused after path normalisation.
 - **Commands inside redirect targets are now checked (#1783).**
   The Bash command parser skipped redirect targets, so `ls > $(nc …)`,
   `cat < <(nc …)` and `cat <<< $(nc …)` checked only the outer command. It

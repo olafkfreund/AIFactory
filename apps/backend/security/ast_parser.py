@@ -214,7 +214,11 @@ _SHELL_FLAGS = frozenset("eulxv")
 _DASH_C_SHELLS = frozenset({"bash", "sh", "dash"})
 # Cheap refusals only. A script operand is trusted file content (like
 # ``source``, ``BASH_ENV`` and ``-l`` profiles), not a parser boundary.
-_STDIN_SCRIPT = re.compile(r"-|/dev/stdin|/dev/fd/.*|/proc/[^/]+/fd/.*")
+_STDIN_SCRIPT = re.compile(r"-|/dev/.*|/proc/.*")
+
+
+def _is_stdin_path(tok: str) -> bool:
+    return bool(_STDIN_SCRIPT.fullmatch(re.sub(r"^/+", "/", os.path.normpath(tok))))
 
 
 def _unwrap_dash_c(
@@ -255,7 +259,7 @@ def _unwrap_dash_c(
         if _basename(tokens[idx]) not in _DASH_C_SHELLS:
             raise UnparseableCommand(f"{tokens[idx]} -c cannot be validated")
         _extract(tokens[j], depth + 1, acc, dynamic_args=dynamic_args)
-    elif _STDIN_SCRIPT.fullmatch(tokens[j]):
+    elif _is_stdin_path(tokens[j]):
         raise UnparseableCommand(f"shell operand {tokens[j]} cannot be validated")
 
 
@@ -519,7 +523,7 @@ def _unwrap_source(
     if idx + 1 < len(words):
         _require_literal(words, idx + 1, idx + 2)
         script = words[idx + 1].word
-        if script.startswith("-") or _STDIN_SCRIPT.fullmatch(script):
+        if script.startswith("-") or _is_stdin_path(script):
             raise UnparseableCommand(f"source operand {script} cannot be validated")
 
 
@@ -537,7 +541,7 @@ _RUNNER_FLAGS = frozenset(
         "-ws",
     }
 )
-_RUNNER_VALUE_OPTS = frozenset({"-p", "--package", "-w", "--workspace"})
+_RUNNER_VALUE_OPTS = frozenset({"-w", "--workspace"})
 _NPM_GLOBAL_FLAGS = frozenset(
     {
         "-g",
@@ -561,6 +565,48 @@ _NPM_GLOBAL_FLAGS = frozenset(
 )
 _NPM_GLOBAL_VALUE_OPTS = frozenset(
     {"-w", "--workspace", "--prefix", "--loglevel", "--registry"}
+)
+_NPM_SUBCOMMAND_OPTS = frozenset(
+    {
+        "--save",
+        "-S",
+        "--save-dev",
+        "-D",
+        "--save-exact",
+        "-E",
+        "--save-optional",
+        "-O",
+        "--save-peer",
+        "--no-save",
+        "--omit",
+        "--include",
+        "--production",
+        "--only",
+        "--legacy-peer-deps",
+        "--strict-peer-deps",
+        "--ignore-scripts",
+        "--no-audit",
+        "--no-fund",
+        "--force",
+        "-f",
+        "--dry-run",
+        "--json",
+        "--parseable",
+        "--depth",
+        "--all",
+        "-a",
+        "--audit-level",
+        "--if-present",
+        "--long",
+        "-l",
+        "--prefer-offline",
+        "--prefer-online",
+        "--offline",
+        "--no-package-lock",
+        "--package-lock-only",
+        "--frozen-lockfile",
+        "--no-git-tag-version",
+    }
 )
 
 
@@ -633,8 +679,22 @@ def _unwrap_npm(
         k = nxt
     if k < len(words):
         _require_literal(words, k, k + 1)
-        if words[k].word in ("exec", "x"):
+        is_exec = words[k].word in ("exec", "x")
+        if is_exec:
             _check_package_runner(words, k + 1)
+        allowed = (
+            _NPM_GLOBAL_FLAGS
+            | _NPM_GLOBAL_VALUE_OPTS
+            | _NPM_SUBCOMMAND_OPTS
+            | (_RUNNER_FLAGS | _RUNNER_VALUE_OPTS if is_exec else frozenset())
+        )
+        for m in range(k + 1, len(words)):
+            tok = words[m].word
+            if tok == "--":
+                break
+            _require_literal(words, m, m + 1)
+            if tok.startswith("-") and tok.split("=", 1)[0] not in allowed:
+                raise UnparseableCommand(f"npm option {tok} cannot be validated")
 
 
 def _unwrap_cargo(

