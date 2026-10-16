@@ -85,8 +85,9 @@ def push_with_lfs(
 ) -> CmdResult:
     """Gate LFS upload on attributes, then run ``push_argv`` (#1690, #1721).
 
-    Hooks are off (#1680) so git-lfs's pre-push no longer uploads. A failed
-    upload (or a refusal) is returned instead of pushing the ref.
+    Hooks are off (#1680) so git-lfs's pre-push no longer uploads. The upload
+    is best-effort: a failure is logged and the push goes ahead. Only the
+    safety-net refusal (no supported endpoint) is returned without pushing.
     """
 
     def run(argv: list[str], timeout: int) -> tuple[int, str, str]:
