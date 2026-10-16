@@ -6,10 +6,12 @@
   `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n`, `GIT_SSH_COMMAND`, `GIT_EXEC_PATH`,
   `GIT_DIR` and every other `GIT_*` key outside a short safe list (author and
   committer identity, prompt, locks) are refused wherever a command sets them:
-  as a prefix, through `env`, `export`, `read`, `printf -v` or `let`.
+  as a prefix, through `env`, `export`, `read`, `printf -v` or a `for` loop
+  variable. `LD_*` keys and array-subscript names are refused too.
   `GIT_PAGER`, `GIT_EDITOR`, `PAGER`, `EDITOR` and `VISUAL` accept only
   `cat`, `true` or `:`. Clearing the environment (`env -i`, `env -`,
-  `exec -c`) or unsetting the git safety pins is refused.
+  `exec -c`) or unsetting the git safety pins is refused, as are `let`,
+  `set -a`/`set -o allexport` and `mapfile -C`.
 - **Commands inside redirect targets are now checked (#1783).**
   The Bash command parser skipped redirect targets, so `ls > $(nc …)`,
   `cat < <(nc …)` and `cat <<< $(nc …)` checked only the outer command. It
