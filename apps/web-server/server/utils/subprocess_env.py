@@ -32,6 +32,7 @@ from core.git_credentials import (  # noqa: E402
 
 GITHUB_KEEP = _core.GITHUB_KEEP
 lfs_push_argv = _core.lfs_push_argv
+pin_git_config = _core.pin_git_config
 
 __all__ = [
     "GITHUB_KEEP",
@@ -41,6 +42,7 @@ __all__ = [
     "github_token",
     "lfs_push_argv",
     "make_subprocess_env",
+    "pin_git_config",
     "sweep_github_dirs",
 ]
 
