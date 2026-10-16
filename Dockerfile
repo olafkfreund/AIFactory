@@ -190,8 +190,8 @@ RUN apk add --no-cache \
 
 # The Wolfi package writes system-wide filter.lfs.* (smudge on, required=true),
 # which would turn every repo's LFS files into pointers we may have no endpoint
-# to upload to. Remove them: only repos with an https github.com origin get the
-# clean filter, locally, when their worktree is created (#1721).
+# to upload to. Remove them: the image only needs the binary for the explicit
+# `git lfs push` of pointers a ref already holds (#1721).
 RUN git lfs uninstall --system
 
 # Node must come only from the node-runtime COPY above, never from apk: an apk

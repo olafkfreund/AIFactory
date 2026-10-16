@@ -708,17 +708,9 @@ def _real_but_push(seen: list[list[str]], upload_ok: bool = False) -> Any:
 def test_gitlab_lfs_repo_commits_raw_blobs_and_pushes(
     lfs_repo: Path, origin: str
 ) -> None:
-    # As on dev (#1721): non-GitHub or ssh origin gets no filter, commits raw
-    # blobs, and pushes after get-url without running the gate.
+    # As on dev (#1721): non-GitHub or ssh origin commits raw blobs and pushes
+    # after get-url without running the gate.
     _g(lfs_repo, "remote", "set-url", "origin", origin)
-    assert child_env.enable_lfs_clean_filter(lfs_repo) is False
-    filt = subprocess.run(
-        ["git", "config", "--local", "--get", "filter.lfs.clean"],
-        cwd=lfs_repo,
-        capture_output=True,
-        text=True,
-    )
-    assert filt.returncode != 0
     assert _commit_bin(lfs_repo) == "x" * 100
     seen: list[list[str]] = []
     assert _push_with_lfs(_PUSH, "HEAD", str(lfs_repo), _real_but_push(seen)).ok
@@ -726,11 +718,18 @@ def test_gitlab_lfs_repo_commits_raw_blobs_and_pushes(
 
 
 @_needs_lfs
-def test_github_https_repo_gets_local_filter_and_uploads(lfs_repo: Path) -> None:
-    assert child_env.enable_lfs_clean_filter(lfs_repo) is True
-    assert "--skip" in _g(lfs_repo, "config", "--local", "filter.lfs.smudge")
-    assert not list((lfs_repo / ".git" / "hooks").glob("pre-push"))
-    assert _commit_bin(lfs_repo).startswith("version https://git-lfs")
+def test_github_https_repo_uploads_pointer_objects(lfs_repo: Path) -> None:
+    # A pointer made by the repo's own LFS setup (here a per-command filter):
+    # its object is uploaded before the push.
+    (lfs_repo / ".gitattributes").write_text(
+        "*.bin filter=lfs diff=lfs merge=lfs -text\n"
+    )
+    (lfs_repo / "a.bin").write_bytes(b"x" * 100)
+    _g(lfs_repo, "-c", "filter.lfs.clean=git-lfs clean -- %f", "add", ".")
+    _g(lfs_repo, "commit", "-m", "bin")
+    assert _g(lfs_repo, "cat-file", "-p", "HEAD:a.bin").startswith(
+        "version https://git-lfs"
+    )
     seen: list[list[str]] = []
     rec = _real_but_push(seen, upload_ok=True)
     assert _push_with_lfs(_PUSH, "HEAD", str(lfs_repo), rec).ok

@@ -141,24 +141,28 @@ class TestWorktreeCreation:
         assert info.is_active is True
         assert (info.path / "README.md").exists()
 
-    def test_create_worktree_enables_lfs_filter_first(
-        self, temp_git_repo: Path, monkeypatch
-    ):
-        """#1721: the local LFS clean filter is set before the checkout."""
-        import core.worktree as cw
-
-        seen: list[tuple[Path, bool]] = []
-        wt = temp_git_repo / ".aifactory" / "worktrees" / "tasks" / "lfs-spec"
-        monkeypatch.setattr(
-            cw,
-            "enable_lfs_clean_filter",
-            lambda repo: seen.append((repo, wt.exists())) or False,
+    def test_create_worktree_writes_no_lfs_config(self, temp_git_repo: Path):
+        """#1721: worktree setup never writes filter.lfs.* into the shared config."""
+        origin = temp_git_repo.parent / f"{temp_git_repo.name}-origin.git"
+        subprocess.run(
+            ["git", "clone", "-q", "--bare", str(temp_git_repo), str(origin)],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "remote", "add", "origin", str(origin)],
+            cwd=temp_git_repo,
+            check=True,
         )
         manager = WorktreeManager(temp_git_repo)
         manager.setup()
-        info = manager.create_worktree("lfs-spec")
-        assert seen == [(temp_git_repo, False)]
-        assert info.path == wt
+        manager.create_worktree("lfs-spec")
+        cfg = subprocess.run(
+            ["git", "config", "--local", "--get-regexp", r"^filter\.lfs"],
+            cwd=temp_git_repo,
+            capture_output=True,
+            text=True,
+        )
+        assert cfg.returncode == 1, cfg.stdout
 
     def test_create_worktree_with_spec_name(self, temp_git_repo: Path):
         """Worktree branch is derived from spec name."""

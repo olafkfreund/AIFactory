@@ -12,7 +12,6 @@ import re
 import shutil
 import subprocess
 from collections.abc import Callable, Iterable, Mapping
-from pathlib import Path
 
 from core.auth import is_denied_env_key
 
@@ -206,38 +205,3 @@ def lfs_upload(
     if err:
         logger.warning("LFS upload failed; pushing without it: %s", err[:200])
     return None
-
-
-def enable_lfs_clean_filter(repo: Path) -> bool:
-    """Turn on git-lfs's clean filter (smudge skipped) in ``repo`` (#1721).
-
-    Only for an https github.com origin, which ``lfs_upload`` can upload to:
-    other repos keep committing raw blobs, so their pushes need no LFS step.
-    ``--skip-repo`` writes no hook files (hooks are off, #1680). Best-effort.
-    """
-    if shutil.which("git-lfs") is None:
-        return False
-    env = child_env()
-
-    def git(*args: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(  # noqa: S603
-            ["git", *args],  # noqa: S607
-            cwd=repo,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=False,
-        )
-
-    try:
-        url = git("remote", "get-url", "--push", "--all", "origin")
-        if url.returncode != 0 or not _GITHUB_ORIGIN.fullmatch(url.stdout.strip()):
-            return False
-        ok = git("lfs", "install", "--local", "--skip-smudge", "--skip-repo")
-    except (OSError, subprocess.SubprocessError) as exc:
-        logger.warning("git lfs install --local failed: %s", exc)
-        return False
-    if ok.returncode != 0:
-        logger.warning("git lfs install --local failed: %s", ok.stderr.strip()[:200])
-    return ok.returncode == 0
