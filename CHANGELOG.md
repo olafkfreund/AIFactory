@@ -2,6 +2,16 @@
 
 ### Security
 
+- **Server git and the web terminal pin the remaining agent-writable git config keys (#1745).**
+  `child_env()` now also pins `core.askPass` (empty), `credential.helper`
+  (reset, then `!gh auth git-credential` for github.com) and
+  `sequence.editor`, and defaults `GIT_PAGER` to `cat`, which overrides
+  `pager.<cmd>`. A `.git/config` an agent writes can no longer make the
+  server run a program through any of them. The web terminal gets the same
+  pins and keeps the user's `EDITOR`/`PAGER`. A host credential helper other
+  than gh (`store`, libsecret) no longer applies to factory git. Use
+  `GITHUB_TOKEN` or `gh auth login`. Not covered: `filter.*` and merge
+  drivers (#1761).
 - **Commands inside redirect targets are now checked (#1783).**
   The Bash command parser skipped redirect targets, so `ls > $(nc …)`,
   `cat < <(nc …)` and `cat <<< $(nc …)` checked only the outer command. It
