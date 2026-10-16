@@ -17,6 +17,34 @@ import logging
 import subprocess
 from pathlib import Path
 
+# Defined HERE rather than in git_utils on purpose: this module is allowlisted
+# as stdlib-only (#1089) and is exec'd off disk without a package context, so
+# any intra-package import raises ImportError at load time.
+
+# `git show <ref>:<path>` exits 128 both when the path is legitimately absent
+# at that ref AND when the read genuinely failed (bad ref, corrupt object,
+# lock contention, I/O error, ...). Both cases raise the same
+# CalledProcessError, so the exit code alone can't tell them apart -- only
+# the stderr text does. Confirmed against a real repo:
+#   - missing path, valid ref:   "fatal: path '<p>' does not exist in '<ref>'"
+#   - path on disk, uncommitted: "fatal: path '<p>' exists on disk, but not in '<ref>'"
+#   - bad/unknown ref:           "fatal: invalid object name '<ref>'."
+_MISSING_PATH_MARKERS = ("does not exist in", "exists on disk, but not in")
+
+
+def is_missing_path_error(stderr: str) -> bool:
+    """True only for git's "the path is absent at this ref" messages."""
+    return any(marker in stderr for marker in _MISSING_PATH_MARKERS)
+
+
+class GitReadError(Exception):
+    """Raised when `git show` fails for a reason other than a missing path.
+
+    Never treat this the same as "file doesn't exist" -- callers must not
+    fall back to an empty/new-file baseline on this error.
+    """
+
+
 logger = logging.getLogger(__name__)
 
 # Import debug utilities
@@ -78,7 +106,15 @@ class TimelineGitHelper:
             commit_hash: Git commit hash
 
         Returns:
-            File content as string, or None if file doesn't exist at that commit
+            File content as string, or None if the file doesn't exist at
+            that commit
+
+        Raises:
+            GitReadError: `git show` failed for a reason other than the
+                file being absent at that commit (bad/unresolvable commit,
+                corrupt repo, lock contention, I/O error, ...). Callers
+                must not treat this the same as "file doesn't exist" --
+                doing so silently invents an empty baseline.
         """
         try:
             result = subprocess.run(
@@ -87,11 +123,29 @@ class TimelineGitHelper:
                 capture_output=True,
                 text=True,
             )
-            if result.returncode == 0:
-                return result.stdout
+        except OSError as e:
+            logger.error(
+                "git show %s:%s could not be run: %s", commit_hash, file_path, e
+            )
+            raise GitReadError(
+                f"git show {commit_hash}:{file_path} could not be run: {e}"
+            ) from e
+
+        if result.returncode == 0:
+            return result.stdout
+        if is_missing_path_error(result.stderr):
             return None
-        except Exception:
-            return None
+        logger.error(
+            "git show %s:%s failed (exit %d): %s",
+            commit_hash,
+            file_path,
+            result.returncode,
+            result.stderr.strip(),
+        )
+        raise GitReadError(
+            f"git show {commit_hash}:{file_path} failed (exit {result.returncode}): "
+            f"{result.stderr.strip()}"
+        )
 
     def get_files_changed_in_commit(self, commit_hash: str) -> list[str]:
         """
