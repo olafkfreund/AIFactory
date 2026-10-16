@@ -360,6 +360,20 @@ def test_build_job_env_forwards_both_nix_store_vars(
     assert env["AIFACTORY_NIX_STORE_PVC"] == "aifactory-nix-store"
 
 
+def test_build_job_env_forwards_gate_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#1796: gates in the build Job read the timeout and sandbox network. The
+    data root is not forwarded: the Job does not mount the data PVC there."""
+    for var in bb._PASSTHROUGH_BUILD_ENV:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("AIFACTORY_GATE_TIMEOUT_SECONDS", "900")
+    monkeypatch.setenv("AIFACTORY_SANDBOX_NETWORK", "bridge")
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", "/data")
+    env = bb.build_job_env("t")
+    assert env["AIFACTORY_GATE_TIMEOUT_SECONDS"] == "900"
+    assert env["AIFACTORY_SANDBOX_NETWORK"] == "bridge"
+    assert "AIFACTORY_DATA_ROOT" not in env
+
+
 def test_build_job_env_propagates_non_claude_provider_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
