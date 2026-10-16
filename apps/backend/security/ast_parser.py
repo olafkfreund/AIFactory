@@ -118,7 +118,10 @@ def _env_key_refusal(assignment: str) -> None:
     """Refuse setting or unsetting env keys that change git config or what git runs."""
     raw_name, eq, value = assignment.partition("=")
     name = raw_name.removesuffix("+")
-    if "[" in name or name.startswith("LD_"):
+    if "[" in name:
+        # Bash evaluates a subscript as arithmetic, which runs any ``$(…)``.
+        raise UnparseableCommand(f"array subscript in {name} is not permitted")
+    if name.startswith("LD_"):
         allowed = False
     elif name in _PROGRAM_KEYS:
         allowed = not eq or value in _NOOP_PROGRAMS
@@ -310,6 +313,32 @@ def _extract(
         _emit(words, 0, depth, acc, dynamic_args=dynamic_args)
 
 
+def _check_builtin(words: list[Any], idx: int, name: str) -> None:
+    """Refuse builtins that set variables or evaluate arithmetic unsafely."""
+    tokens = [w.word for w in words]
+    if name == "let":
+        raise UnparseableCommand("let arithmetic cannot be validated")
+    if name in ("test", "["):
+        # ``-v NAME`` evaluates a subscript in NAME as arithmetic.
+        for k in range(idx + 1, len(words) - 1):
+            if tokens[k] == "-v":
+                _check_var_word(words[k + 1])
+    if name == "set":
+        # A dynamic word could expand to ``-a``; after ``--`` words are positional.
+        for k in range(idx + 1, len(words)):
+            if tokens[k] == "--":
+                break
+            _require_literal(words, k, k + 1)
+            if tokens[k] == "allexport" or (
+                tokens[k].startswith("-") and "a" in tokens[k][1:]
+            ):
+                raise UnparseableCommand("set allexport is not permitted")
+    if name in _VAR_SETTERS:
+        _check_var_setter(words, idx)
+    elif name == "printf":
+        _check_printf(words, idx)
+
+
 def _emit(
     words: list[Any],
     idx: int,
@@ -329,22 +358,7 @@ def _emit(
     tokens = [w.word for w in words]
     name = _basename(tokens[idx])
     acc.append((name, shlex.join(tokens[idx:]), dynamic_args))
-    if name == "let":
-        raise UnparseableCommand("let arithmetic cannot be validated")
-    if name == "set":
-        # A dynamic word could expand to ``-a``; after ``--`` words are positional.
-        for k in range(idx + 1, len(words)):
-            if tokens[k] == "--":
-                break
-            _require_literal(words, k, k + 1)
-            if tokens[k] == "allexport" or (
-                tokens[k].startswith("-") and "a" in tokens[k][1:]
-            ):
-                raise UnparseableCommand("set allexport is not permitted")
-    if name in _VAR_SETTERS:
-        _check_var_setter(words, idx)
-    elif name == "printf":
-        _check_printf(words, idx)
+    _check_builtin(words, idx, name)
     unwrap = _UNWRAPPERS.get(name)
     if unwrap is not None:
         unwrap(words, idx, depth, acc, dynamic_args=dynamic_args)

