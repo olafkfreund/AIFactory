@@ -96,7 +96,6 @@ _VAR_SETTERS = frozenset(
     {
         "export",
         "read",
-        "let",
         "unset",
         "declare",
         "typeset",
@@ -108,6 +107,7 @@ _VAR_SETTERS = frozenset(
     }
 )
 _NAMEREF_SETTERS = frozenset({"declare", "typeset", "local"})
+_UNKNOWN_VALUE_SETTERS = frozenset({"read", "mapfile", "readarray", "getopts"})
 _NAME_ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
 
 
@@ -115,7 +115,9 @@ def _env_key_refusal(assignment: str) -> None:
     """Refuse setting or unsetting env keys that change git config or what git runs."""
     raw_name, eq, value = assignment.partition("=")
     name = raw_name.removesuffix("+")
-    if name in _PROGRAM_KEYS:
+    if "[" in name or name.startswith("LD_"):
+        allowed = False
+    elif name in _PROGRAM_KEYS:
         allowed = not eq or value in _NOOP_PROGRAMS
     else:
         allowed = name not in _REFUSED_KEYS and (
@@ -182,13 +184,13 @@ def _require_literal(words: list[Any], start: int, stop: int) -> None:
         )
 
 
-def _check_var_word(w: Any) -> None:
+def _check_var_word(w: Any, *, unknown_value: bool = False) -> None:
     """Require a static variable name/assignment word and check its key."""
     if not (_static_shape(w.raw) or _NAME_ASSIGN.match(w.raw)):
         raise UnparseableCommand(
             "variable name is not a static literal; cannot validate"
         )
-    _env_key_refusal(w.word)
+    _env_key_refusal(f"{w.word}=?" if unknown_value and "=" not in w.word else w.word)
 
 
 def _check_var_setter(words: list[Any], idx: int) -> None:
@@ -204,8 +206,10 @@ def _check_var_setter(words: list[Any], idx: int) -> None:
                 and "n" in w.word[1:]
             ):
                 raise UnparseableCommand("nameref is not permitted")
+            if setter in ("mapfile", "readarray") and "C" in w.word[1:]:
+                raise UnparseableCommand("mapfile callback is not permitted")
         else:
-            _check_var_word(w)
+            _check_var_word(w, unknown_value=setter in _UNKNOWN_VALUE_SETTERS)
 
 
 def _check_printf(words: list[Any], idx: int) -> None:
@@ -241,6 +245,8 @@ def _collect_command_nodes(
     if id(node) in visited:
         return
     visited.add(id(node))
+    if getattr(node, "kind", None) == "for":
+        _env_key_refusal(f"{node.parts[1].word}=?")
     if getattr(node, "kind", None) == "command":
         out.append(node)
     for val in vars(node).values():
@@ -309,6 +315,18 @@ def _emit(
     tokens = [w.word for w in words]
     name = _basename(tokens[idx])
     acc.append((name, shlex.join(tokens[idx:]), dynamic_args))
+    if name == "let":
+        raise UnparseableCommand("let arithmetic cannot be validated")
+    if name == "set":
+        # A dynamic word could expand to ``-a``; after ``--`` words are positional.
+        for k in range(idx + 1, len(words)):
+            if tokens[k] == "--":
+                break
+            _require_literal(words, k, k + 1)
+            if tokens[k] == "allexport" or (
+                tokens[k].startswith("-") and "a" in tokens[k][1:]
+            ):
+                raise UnparseableCommand("set allexport is not permitted")
     if name in _VAR_SETTERS:
         _check_var_setter(words, idx)
     elif name == "printf":

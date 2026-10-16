@@ -143,7 +143,6 @@ BASE_COMMANDS: set[str] = {
     "mktemp",
     "bc",
     "expr",
-    "let",
     "seq",
     "yes",
     "jq",

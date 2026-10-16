@@ -211,6 +211,7 @@ MUST_PARSE = {
     "f() { git status; }": ["git"],
     "for f in a b; do echo $f; done": ["echo"],
     "set -euo pipefail": ["set"],
+    'set -- "$@"': ["set"],
     "mapfile -t lines": ["mapfile"],
     "LANG=C git status": ["git"],
 }
@@ -226,6 +227,7 @@ ENV_KEY_PARSER_REFUSED = [
     "set -a",
     "set -ea",
     "set -o allexport",
+    "set $OPTS",
     "mapfile -C cb lines",
     "readarray -tC cb lines",
     "LD_PRELOAD=/tmp/x.so git status",
