@@ -78,7 +78,7 @@ def test_runners_fail_closed(
     from providers import factory
 
     monkeypatch.setattr(process_hardening, "make_non_dumpable", lambda: False)
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit, match="prctl"):
         if runner == "create_client":
             client.create_client(tmp_path, tmp_path, "claude-sonnet-4-5")
         elif runner == "create_simple_client":
