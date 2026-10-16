@@ -101,7 +101,8 @@ def test_extract_npx_first_token():
         "required_commands": [],
         "services": [{"test_command": "npx playwright test"}],
     }
-    assert extract_command_names(plan) == {"npx"}
+    # The npx target is a command the hook checks too (#1784).
+    assert extract_command_names(plan) == {"npx", "playwright"}
 
 
 # ---- sanitization ---------------------------------------------------------

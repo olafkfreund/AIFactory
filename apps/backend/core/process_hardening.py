@@ -19,3 +19,9 @@ def make_non_dumpable() -> bool:
         return True
     libc = ctypes.CDLL(None, use_errno=True)
     return bool(libc.prctl(_PR_SET_DUMPABLE, 0, 0, 0, 0) == 0)
+
+
+def require_non_dumpable() -> None:
+    """Fail closed: a process that cannot hide its secrets must not run."""
+    if not make_non_dumpable():
+        raise SystemExit("prctl(PR_SET_DUMPABLE, 0) failed")

@@ -55,7 +55,8 @@ def child_env(
         k: v
         for k, v in os.environ.items()
         if not is_denied_env_key(k)
-        and k not in _STRIP_VARS
+        # Linux env names are case-sensitive: a lowercase copy is its own variable.
+        and k.upper() not in _STRIP_VARS
         and (runner or not _CREDENTIAL_NAME.search(k))
     }
     env.update({k: os.environ[k] for k in keep if k in os.environ})
