@@ -141,6 +141,29 @@ class TestWorktreeCreation:
         assert info.is_active is True
         assert (info.path / "README.md").exists()
 
+    def test_create_worktree_writes_no_lfs_config(self, temp_git_repo: Path):
+        """#1721: worktree setup never writes filter.lfs.* into the shared config."""
+        origin = temp_git_repo.parent / f"{temp_git_repo.name}-origin.git"
+        subprocess.run(
+            ["git", "clone", "-q", "--bare", str(temp_git_repo), str(origin)],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "remote", "add", "origin", str(origin)],
+            cwd=temp_git_repo,
+            check=True,
+        )
+        manager = WorktreeManager(temp_git_repo)
+        manager.setup()
+        manager.create_worktree("lfs-spec")
+        cfg = subprocess.run(
+            ["git", "config", "--local", "--get-regexp", r"^filter\.lfs"],
+            cwd=temp_git_repo,
+            capture_output=True,
+            text=True,
+        )
+        assert cfg.returncode == 1, cfg.stdout
+
     def test_create_worktree_with_spec_name(self, temp_git_repo: Path):
         """Worktree branch is derived from spec name."""
         manager = WorktreeManager(temp_git_repo)

@@ -4,6 +4,7 @@ Task execution routes.
 Handles starting, stopping, and monitoring task execution.
 """
 
+import asyncio
 import json
 import logging
 import sys
@@ -938,7 +939,9 @@ async def handoff_to_tfactory(
 
     from pfactory.tfactory_client import build_ingest_payload, send_handoff
 
-    payload = build_ingest_payload(
+    # Off the event loop: it pushes the build branch (LFS upload up to 600 s).
+    payload = await asyncio.to_thread(
+        build_ingest_payload,
         spec_dir,
         spec_id,
         contract=handoff_contract(spec_dir, await lookup(spec_dir)),

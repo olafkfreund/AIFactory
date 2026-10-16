@@ -64,6 +64,7 @@ async def test_conflict_resolved_then_remerges_after_rereview():
             ],
             "rebase --continue": [_OK],
             "git push --force-with-lease": [_OK],
+            "git grep": [_FAIL],  # no filter=lfs: no LFS step (#1721)
         }
     )
     fixed = []
@@ -86,11 +87,12 @@ async def test_conflict_resolved_then_remerges_after_rereview():
 
 
 @pytest.mark.asyncio
-async def test_conflict_push_lfs_failure_is_unresolved(
+async def test_conflict_push_lfs_failure_warns_and_merges(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    # #1690: the resolve push uploads LFS objects first; a failed upload means the
-    # ref is not pushed and the loop ends as merge_conflict_unresolved.
+    # #1721: the resolve push uploads LFS objects best-effort; a failed upload
+    # logs a warning and still pushes the resolved branch so the PR can merge.
     real_which = shutil.which
     monkeypatch.setattr(
         "core.child_env.shutil.which",
@@ -105,27 +107,30 @@ async def test_conflict_push_lfs_failure_is_unresolved(
                 CmdResult(0, "app.py", "")
             ],
             "rebase --continue": [_OK],
+            "git grep": [_OK],
             "get-url": [CmdResult(0, "https://github.com/o/r", "")],
             "--get-regexp": [CmdResult(1, "", "")],
             "lfs push": [_FAIL],
         }
     )
-    out = await watch_and_finish(
-        owner="o",
-        repo="r",
-        pr=7,
-        auto_merge=True,
-        review_fn=_approved,
-        conflict_fixer=lambda files, wt: True,
-        worktree="/wt",
-        base_branch="main",
-        runner=runner,
-        poll_interval=0,
-        max_minutes=1,
-    )
-    assert out["reason"] == "merge_conflict_unresolved"
+    with caplog.at_level("WARNING", logger="core.child_env"):
+        out = await watch_and_finish(
+            owner="o",
+            repo="r",
+            pr=7,
+            auto_merge=True,
+            review_fn=_approved,
+            conflict_fixer=lambda files, wt: True,
+            worktree="/wt",
+            base_branch="main",
+            runner=runner,
+            poll_interval=0,
+            max_minutes=1,
+        )
+    assert out["merged"] is True
+    assert "boom" in caplog.text
     assert runner.ran("lfs push")
-    assert not runner.ran("git push --force-with-lease")
+    assert runner.ran("git push --force-with-lease")
 
 
 @pytest.mark.asyncio

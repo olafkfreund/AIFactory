@@ -32,7 +32,7 @@ from typing import Any
 from urllib.parse import quote, urlparse
 
 from core import auth_preflight
-from core.child_env import child_env
+from core.child_env import child_env, lfs_upload
 from core.git_credentials import authed_push_url
 
 _log = logging.getLogger(__name__)
@@ -380,6 +380,27 @@ def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | 
         # credential env are yielded together, so the token is only ever offered
         # to an https github.com remote.
         with authed_push_url(url) as (push_url, git_env):
+
+            def run(argv: list[str], t: int) -> tuple[int, str, str]:
+                p = subprocess.run(  # noqa: S603
+                    argv,
+                    cwd=str(repo),
+                    env=git_env,
+                    capture_output=True,
+                    text=True,
+                    timeout=t,
+                    check=False,
+                )
+                return p.returncode, p.stdout, p.stderr
+
+            err = lfs_upload(run, sha)
+            if err:
+                _log.warning(
+                    "[handoff] LFS refused for %s; not pushing: %s",
+                    build_branch,
+                    err[:200],
+                )
+                return url, None
             subprocess.run(
                 [
                     "git",
@@ -970,7 +991,10 @@ async def maybe_auto_handoff_tfactory(
     if build_commit_count(spec_dir, spec_id) == 0:
         return {"sent": False, "reason": "empty_build"}
     try:
-        payload = build_ingest_payload(spec_dir, spec_id, contract=contract)
+        # Off the event loop: it pushes the build branch (LFS upload up to 600 s).
+        payload = await asyncio.to_thread(
+            build_ingest_payload, spec_dir, spec_id, contract=contract
+        )
         result = await send_handoff(payload)
     except Exception as exc:  # noqa: BLE001 — must never break task completion
         return {"sent": False, "reason": "error", "error": str(exc)[:300]}
