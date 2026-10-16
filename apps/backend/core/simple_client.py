@@ -75,8 +75,7 @@ def create_simple_client(
     Raises:
         ValueError: If agent_type is not found in AGENT_CONFIGS
     """
-    if not process_hardening.make_non_dumpable():
-        logger.warning("could not make the process non-dumpable; env stays readable")
+    process_hardening.require_non_dumpable()
     # Get authentication
     oauth_token = require_auth_token()
     import os

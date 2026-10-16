@@ -319,8 +319,7 @@ def get_provider(provider_name: str, phase: str, **kwargs: Any) -> BaseLLMProvid
     """
     # #1680: a non-Claude runner never reaches create_client, so harden here
     # too, before the provider spawns its agent.
-    if not process_hardening.make_non_dumpable():
-        logger.warning("could not make the process non-dumpable; env stays readable")
+    process_hardening.require_non_dumpable()
     canonical = _resolve_canonical(provider_name)
 
     # A canonical that names a DESTINATION rather than a class (github-models,
