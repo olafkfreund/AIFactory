@@ -175,4 +175,18 @@ Revert the step commits. The pins are env-only and nothing is persisted.
 
 ## Deviations
 
-(none yet)
+- Steps 1-2 (D1 changed): the `remote.origin.uploadpack` / `receivepack` pins
+  are dropped. Any `remote.origin.*` key in command-scope config makes git
+  report a phantom `origin` remote: `git remote` prints `origin` and
+  `git remote -v` prints `origin<TAB>`, in a repo with no origin (git 2.55.0).
+  That breaks `core/worktree.py:375` (local-only repos) and the
+  "No git remote configured" check at `routes/git.py:1006`. Exec through a
+  planted uploadpack also needs the agent to point origin at a local path,
+  which is the same class as #1761. So `child_env()` gets 4 new pins
+  (count 10, not 12), and step 2's indices and counts shift to match
+  (13→11 with an existing entry, 12→10 without; `test_github_env` helper
+  entries at 11/12, count 13). agy proposed changing `worktree.py` instead;
+  rejected because it only fixes one of the callers.
+- Step 2 was finished by the lane agent. agy's handoff returned an empty JSON
+  response, so it counts as a failed handoff, and its diff was reviewed and
+  reworked by hand.

@@ -44,8 +44,6 @@ _GIT_PINS: tuple[tuple[str, str | None], ...] = (
     ("credential.helper", ""),  # empty resets every inherited helper
     ("credential.https://github.com.helper", "!gh auth git-credential"),
     ("sequence.editor", None),
-    ("remote.origin.uploadpack", "git-upload-pack"),
-    ("remote.origin.receivepack", "git-receive-pack"),
 )
 
 
@@ -81,8 +79,8 @@ def child_env(
     exec-bearing config keys via ``pin_git_config``: hooks, fsmonitor, the
     ``ext::`` transport, ssh command (``ssh``), pager (``cat``, plus
     ``GIT_PAGER`` default), editor and sequence editor (``true``), askPass
-    (empty), credential helpers (reset, then ``!gh auth git-credential`` for
-    github.com), and ``remote.origin.uploadpack``/``receivepack``.
+    (empty) and credential helpers (reset, then ``!gh auth git-credential``
+    for github.com).
     ``GIT_SSH_COMMAND``, ``GIT_PAGER`` or ``GIT_EDITOR`` in the server env
     overrides the corresponding setting. The pins are appended last (an
     existing ``GIT_CONFIG_*`` entry keeps its lower index).
