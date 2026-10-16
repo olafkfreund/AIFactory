@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1745
 spec: spec/2026-10-16-1745-git-config-pins.md
 ---
