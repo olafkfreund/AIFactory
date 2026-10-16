@@ -233,13 +233,15 @@ def _record_git(
     check_rc: int | None = 1,
     upload: Callable[[], subprocess.CompletedProcess[str]],
 ) -> list[list[str]]:
-    """Fake get-url / config check / lfs push; pass everything else through."""
+    """Fake the LFS gate / get-url / config check / upload."""
     real = subprocess.run
     calls: list[list[str]] = []
 
     def rec(argv: Any, *a: Any, **kw: Any) -> Any:
         if isinstance(argv, list):
             calls.append(argv)
+            if argv[:2] == ["git", "grep"]:
+                return subprocess.CompletedProcess(argv, 0, "", "")
             if argv[:3] == ["git", "remote", "get-url"]:
                 return subprocess.CompletedProcess(
                     argv, 0, "https://github.com/acme/proj\n", ""
@@ -263,10 +265,11 @@ def _is_upload(c: list[str]) -> bool:
 
 
 @pytest.mark.asyncio
-async def test_lfs_upload_failure_fails_create_pr(
+async def test_lfs_upload_failure_warns_and_creates_pr(
     packed_path_repos: dict[str, Path],
     fake_gh: Path,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     _patch_route(monkeypatch, packed_path_repos["projects_file"])
     _lfs_present(monkeypatch)
@@ -275,18 +278,21 @@ async def test_lfs_upload_failure_fails_create_pr(
         upload=lambda: subprocess.CompletedProcess([], 2, "", "boom"),
     )
 
-    _status, body = await _call_create_pr()
+    with caplog.at_level("WARNING", logger="core.child_env"):
+        status, body = await _call_create_pr()
 
-    assert body["success"] is False
-    assert "Failed to push LFS objects" in body["error"]
-    assert not any(_is_push(c) for c in calls)
+    assert status == 200, body.get("error")
+    assert body["success"] is True
+    assert "boom" in caplog.text
+    assert any(_is_push(c) for c in calls)
 
 
 @pytest.mark.asyncio
-async def test_lfs_customtransfer_refuses_create_pr(
+async def test_lfs_customtransfer_warns_and_creates_pr(
     packed_path_repos: dict[str, Path],
     fake_gh: Path,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     _patch_route(monkeypatch, packed_path_repos["projects_file"])
     _lfs_present(monkeypatch)
@@ -296,11 +302,14 @@ async def test_lfs_customtransfer_refuses_create_pr(
         upload=lambda: subprocess.CompletedProcess([], 0, "", ""),
     )
 
-    _status, body = await _call_create_pr()
+    with caplog.at_level("WARNING", logger="core.child_env"):
+        status, body = await _call_create_pr()
 
-    assert "LFS step refused" in body["error"]
+    assert status == 200, body.get("error")
+    assert body["success"] is True
+    assert "LFS step refused" in caplog.text
     assert not any(_is_upload(c) for c in calls)
-    assert not any(_is_push(c) for c in calls)
+    assert any(_is_push(c) for c in calls)
 
 
 @pytest.mark.asyncio
@@ -325,10 +334,11 @@ async def test_lfs_runs_before_push(
 
 
 @pytest.mark.asyncio
-async def test_lfs_timeout_maps_to_push_timed_out(
+async def test_lfs_timeout_warns_and_creates_pr(
     packed_path_repos: dict[str, Path],
     fake_gh: Path,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     _patch_route(monkeypatch, packed_path_repos["projects_file"])
     _lfs_present(monkeypatch)
@@ -338,22 +348,26 @@ async def test_lfs_timeout_maps_to_push_timed_out(
 
     calls = _record_git(monkeypatch, upload=_timeout)
 
-    _status, body = await _call_create_pr()
+    with caplog.at_level("WARNING", logger="core.child_env"):
+        status, body = await _call_create_pr()
 
-    assert body["error"] == "Push timed out"
-    assert not any(_is_push(c) for c in calls)
+    assert status == 200, body.get("error")
+    assert body["success"] is True
+    assert "timed out" in caplog.text
+    assert any(_is_push(c) for c in calls)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("key", ["insteadOf", "pushInsteadOf"])
-async def test_lfs_url_rewrite_refuses_create_pr(
+async def test_lfs_url_rewrite_warns_and_creates_pr(
     key: str,
     packed_path_repos: dict[str, Path],
     fake_gh: Path,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     # git-lfs applies url.*.insteadOf to the pinned lfs.url; the REAL config check
-    # (not faked here) must refuse before any upload.
+    # (not faked here) must refuse the upload before any upload, warn, and push.
     _git(
         packed_path_repos["worktree"],
         "config",
@@ -368,8 +382,11 @@ async def test_lfs_url_rewrite_refuses_create_pr(
         upload=lambda: subprocess.CompletedProcess([], 0, "", ""),
     )
 
-    _status, body = await _call_create_pr()
+    with caplog.at_level("WARNING", logger="core.child_env"):
+        status, body = await _call_create_pr()
 
-    assert "LFS step refused" in body["error"]
+    assert status == 200, body.get("error")
+    assert body["success"] is True
+    assert "LFS step refused" in caplog.text
     assert not any(_is_upload(c) for c in calls)
-    assert not any(_is_push(c) for c in calls)
+    assert any(_is_push(c) for c in calls)

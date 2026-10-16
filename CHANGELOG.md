@@ -14,6 +14,16 @@
   repo config still does not run. On the server, a host credential helper
   other than gh no longer applies to factory git. Use `GITHUB_TOKEN` or
   `gh auth login` there. Not covered: `filter.*` and merge drivers (#1761).
+- **Git config and exec settings can no longer be smuggled in through the environment (#1754).**
+  `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n`, `GIT_SSH_COMMAND`, `GIT_EXEC_PATH`,
+  `GIT_DIR` and every other `GIT_*` key outside a short safe list (author and
+  committer identity, prompt, locks) are refused wherever a command sets them:
+  as a prefix, through `env`, `export`, `read`, `printf -v` or a `for` loop
+  variable. `LD_*` keys and array-subscript names are refused too.
+  `GIT_PAGER`, `GIT_EDITOR`, `PAGER`, `EDITOR` and `VISUAL` accept only
+  `cat`, `true` or `:`. Clearing the environment (`env -i`, `env -`,
+  `exec -c`) or unsetting the git safety pins is refused, as are `let`,
+  `set -a`/`set -o allexport` and `mapfile -C`.
 - **`time`, `source`, `npx` and `cargo watch` no longer hide the program they run (#1784).**
   `/usr/bin/time CMD` now checks `CMD`. `source` and `.` take only a literal
   file. `npx`, `pnpx` and `npm exec` accept a fixed set of options and refuse

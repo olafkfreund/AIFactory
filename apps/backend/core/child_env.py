@@ -10,7 +10,8 @@ import logging
 import os
 import re
 import shutil
-from collections.abc import Iterable, Mapping
+import subprocess
+from collections.abc import Callable, Iterable, Mapping
 
 from core.auth import is_denied_env_key
 
@@ -148,3 +149,82 @@ def lfs_push_argv(push_url_output: str, ref: str) -> list[str] | None:
         "origin",
         ref,
     ]
+
+
+LFS_UPLOAD_TIMEOUT = 600
+
+
+def lfs_upload(
+    run: Callable[[list[str], int], tuple[int, str, str]],
+    ref: str,
+) -> str | None:
+    """Upload ``ref``'s LFS objects before a push; None = done or not needed (#1721).
+
+    Blocking for up to ``LFS_UPLOAD_TIMEOUT``: async callers use a thread.
+
+    ``run(argv, timeout)`` runs git in the repo with the push's env and returns
+    ``(rc, stdout, stderr)``. Without ``git-lfs`` on PATH, for non-GitHub or ssh
+    origins, or when ``.gitattributes`` at ``ref`` has no ``filter=lfs``, it
+    returns None. The upload gets ``LFS_UPLOAD_TIMEOUT``. Best-effort, because no
+    image before #1721 shipped git-lfs, so no push ever failed on it: an upload
+    failure, a timeout or the ``url.*``/customtransfer refusal logs a warning and
+    returns None. Only the safety-net refusal (a local ``filter.lfs.clean`` with
+    no supported endpoint) is returned, and the caller skips the push.
+    """
+    if shutil.which("git-lfs") is None:
+        return None
+    url_rc, out, _ = run(["git", "remote", "get-url", "--push", "--all", "origin"], 60)
+    url = out.strip()
+    if url_rc != 0 or not url.startswith("https://github.com/"):
+        return None
+    gate, _, _ = run(
+        [
+            "git",
+            "grep",
+            "-q",
+            "-F",
+            "-e",
+            "filter=lfs",
+            ref,
+            "--",
+            ":(glob)**/.gitattributes",
+        ],
+        60,
+    )
+    if gate != 0:
+        return None
+    argv = lfs_push_argv(url, ref)
+    if argv is None:
+        # Safety net: only a repo with the clean filter on can hold new pointers;
+        # without it commits are raw blobs and the push goes ahead as before.
+        filt, _, _ = run(["git", "config", "--local", "--get", "filter.lfs.clean"], 60)
+        return (
+            None
+            if filt != 0
+            else (
+                "LFS repo but no supported LFS endpoint for this origin; "
+                "refusing to push pointers without objects"
+            )
+        )
+    check_rc, _, _ = run(
+        [
+            "git",
+            "config",
+            "--name-only",
+            "--get-regexp",
+            r"^(lfs\.customtransfer\.|url\.)",
+        ],
+        60,
+    )
+    if check_rc != 1:
+        err: str | None = "LFS step refused (lfs.customtransfer.* or url.* defined)"
+    else:
+        try:
+            upload_rc, _, stderr = run(argv, LFS_UPLOAD_TIMEOUT)
+        except subprocess.TimeoutExpired as exc:
+            err = f"git lfs push timed out after {exc.timeout} s"
+        else:
+            err = None if upload_rc == 0 else (stderr.strip() or "git lfs push failed")
+    if err:
+        logger.warning("LFS upload failed; pushing without it: %s", err[:200])
+    return None

