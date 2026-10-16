@@ -22,7 +22,7 @@ from pydantic import BaseModel
 
 from server.background import spawn
 from server.error_ref import client_error
-from server.services import github_app
+from server.services import github_app, project_settings_store
 from server.services.gh import run_gh_command  # re-exported: see services/gh.py
 from server.services.git_base_url import safe_git_base_url  # #1360
 from server.services.http_verdict import honest_status
@@ -97,11 +97,11 @@ class CreateReleaseRequest(BaseModel):
 # ============================================
 
 
-def _persist_cli_token_to_project(project_id: str) -> bool:
-    """Persist the gh CLI token to a project's .aifactory/.env file.
+async def _persist_cli_token_to_project(project_id: str) -> bool:
+    """Persist the gh CLI token to a project's settings store.
 
     Reads the current token from `gh auth token`, then inserts/updates
-    GITHUB_TOKEN in the project env file with secure 0o600 permissions.
+    GITHUB_TOKEN in the project settings store.
     Returns True on success.
     """
     from server.project_registry import load_projects
@@ -117,23 +117,11 @@ def _persist_cli_token_to_project(project_id: str) -> bool:
         return False
 
     project_path = FilePath(projects[project_id]["path"])
-    env_path = project_path / ".aifactory" / ".env"
 
     try:
-        existing = {}
-        if env_path.exists():
-            for line in env_path.read_text().split("\n"):
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, value = line.split("=", 1)
-                    existing[key.strip()] = value.strip()
-
+        existing = await project_settings_store.get_settings(project_path)
         existing["GITHUB_TOKEN"] = token
-
-        env_path.parent.mkdir(parents=True, exist_ok=True)
-        content = "\n".join(f"{k}={v}" for k, v in existing.items())
-        env_path.write_text(content)
-        env_path.chmod(0o600)
+        await project_settings_store.put_settings(project_path, existing)
         return True
     except Exception:
         return False
@@ -504,7 +492,7 @@ async def auto_detect_github(projectId: str | None = Query(None)):
     """Auto-detect GitHub CLI authentication and username in one call.
 
     If projectId is provided, the CLI token is persisted directly to the
-    project's .aifactory/.env file (server-side). The raw token is never
+    project's settings store (server-side, #1795). The raw token is never
     included in the response.
     """
     # Check gh CLI is installed
@@ -532,7 +520,7 @@ async def auto_detect_github(projectId: str | None = Query(None)):
     # Persist token server-side if projectId provided
     token_persisted = False
     if projectId:
-        token_persisted = _persist_cli_token_to_project(projectId)
+        token_persisted = await _persist_cli_token_to_project(projectId)
 
     return {
         "success": True,
@@ -757,11 +745,11 @@ async def get_github_token():
 @router.post("/persist-token")
 @honest_status
 async def persist_github_token(request: PersistTokenRequest):
-    """Persist the gh CLI token to a project's .aifactory/.env file.
+    """Persist the gh CLI token to a project's settings store.
 
     The raw token never appears in the response.
     """
-    persisted = _persist_cli_token_to_project(request.projectId)
+    persisted = await _persist_cli_token_to_project(request.projectId)
     if persisted:
         return {"success": True, "data": {"tokenPersisted": True}}
     return {"success": False, "error": "Failed to persist token"}

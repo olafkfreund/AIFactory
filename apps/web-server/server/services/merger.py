@@ -38,6 +38,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import server.services.project_settings_store as pss
 from server.project_registry import load_projects, resolve_project_path
 from server.routes.task_service import get_spec_dirs
 from server.services import pr_endgame as pe
@@ -277,7 +278,7 @@ def honest_pr_title_and_body(
         "no verification gates recorded for this build"
     )
     qa_status = _qa_status_for(spec_dir)
-    tier_line = f"\n- Review tier: {review_tier}" if review_tier else ""
+    tier_line = f"\n- {pe.review_tier_note(spec_dir, review_tier, trusted=None)}"
     issue = _issue_number(spec_dir)
     fixes_line = f"\n\nFixes #{issue}" if issue is not None else ""
     body = (
@@ -657,6 +658,12 @@ async def merger_loop(*, stop: asyncio.Event | None = None) -> None:
     interval = interval_s()
     while not stop.is_set():
         try:
+            try:
+                await pss.refresh_all()
+            except Exception:  # noqa: BLE001 - never block merger sweep on settings refresh
+                logger.warning(
+                    "project-settings refresh failed before merger sweep", exc_info=True
+                )
             # Shells out to git/gh per spec: blocking, so off the event loop.
             await asyncio.to_thread(sweep_once)
         except Exception:

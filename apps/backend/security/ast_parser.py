@@ -128,21 +128,21 @@ def _require_literal(words: list[Any], start: int, stop: int) -> None:
         )
 
 
-def _collect_command_nodes(node, out: list) -> None:
-    """Walk the bashlex AST collecting every ``command`` node (recursing into
-    pipelines, lists, compound commands and command substitutions)."""
-    kind = getattr(node, "kind", None)
-    if kind == "command":
+def _collect_command_nodes(
+    node: Any, out: list[Any], seen: set[int] | None = None
+) -> None:
+    """Walk every child node of the bashlex AST collecting ``command`` nodes,
+    so redirect targets and any other attribute are covered (#1783)."""
+    visited = seen if seen is not None else set()
+    if id(node) in visited:
+        return
+    visited.add(id(node))
+    if getattr(node, "kind", None) == "command":
         out.append(node)
-    # Recurse structural children. bashlex nests substitutions inside word
-    # ``parts``; pipelines/lists/compounds carry children under these attrs.
-    for attr in ("parts", "list", "command", "body", "pipe"):
-        child = getattr(node, attr, None)
-        if child is None:
-            continue
-        for c in child if isinstance(child, list) else [child]:
+    for val in vars(node).values():
+        for c in val if isinstance(val, list) else (val,):
             if hasattr(c, "kind"):
-                _collect_command_nodes(c, out)
+                _collect_command_nodes(c, out, visited)
 
 
 def _command_words(node) -> list:

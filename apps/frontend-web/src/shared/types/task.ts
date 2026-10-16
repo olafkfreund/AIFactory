@@ -303,6 +303,7 @@ export interface Task {
   description: string;
   status: TaskStatus;
   reviewReason?: ReviewReason;  // Why task needs human review (only set when status is 'human_review')
+  contractHold?: string;  // Why the task contract was held (#1709); display only
   subtasks: Subtask[];
   qaReport?: QAReport;
   logs: string[];
