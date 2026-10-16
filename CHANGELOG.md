@@ -16,6 +16,13 @@
   The program `npx`, `pnpx`, `npm exec` and `npm x` run is now checked
   against the allowlist like any command, and `-y`/`--yes` (install without
   asking) is refused for them.
+- **Command substitution inside `${…}` and heredoc bodies is refused (#1797).**
+  The Bash command parser does not parse the inside of `${…}` or a heredoc
+  body, so `echo ${X:-$(cmd)}` and a heredoc containing `$(cmd)` checked only
+  the outer command. A `$(` or backtick in either now blocks the command;
+  plain `${X:-default}` and `$VAR` in heredocs still work. Also refused: `${…}` forms that evaluate
+  text as code: the `@P`, `@E` and `@A` operators, `${!x}` indirection, and an
+  offset, length or array subscript that is not a plain integer.
 - **Commands inside redirect targets are now checked (#1783).**
   The Bash command parser skipped redirect targets, so `ls > $(nc …)`,
   `cat < <(nc …)` and `cat <<< $(nc …)` checked only the outer command. It

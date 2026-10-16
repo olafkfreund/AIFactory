@@ -791,10 +791,9 @@ def _make_non_dumpable() -> None:
     backend = str(Path(__file__).resolve().parents[2] / "backend")
     if backend not in sys.path:
         sys.path.insert(0, backend)
-    from core.process_hardening import make_non_dumpable  # noqa: PLC0415
+    from core.process_hardening import require_non_dumpable  # noqa: PLC0415
 
-    if not make_non_dumpable():
-        raise SystemExit("prctl(PR_SET_DUMPABLE, 0) failed")
+    require_non_dumpable()
 
 
 if __name__ == "__main__":
