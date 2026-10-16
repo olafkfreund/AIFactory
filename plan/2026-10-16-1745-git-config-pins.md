@@ -1,0 +1,178 @@
+---
+status: draft
+issue: 1745
+spec: spec/2026-10-16-1745-git-config-pins.md
+---
+
+# Plan: pin the remaining agent-writable git config keys
+
+Worktree `<lane scratchpad>/AIFactory-1745b`, branch `fix/1745-git-config-pins`
+off `origin/dev` fb97ccd6. All paths are repo-relative. Line numbers come from
+fb97ccd6. Test env: `PATH=<main clone>/apps/backend/.venv/bin:$PATH`.
+
+## Approved decisions (carried from the spec)
+
+- D1: `child_env()` appends six more pins after the existing six:
+  `core.askPass=` (empty), `credential.helper=` (empty, a reset),
+  `credential.https://github.com.helper=!gh auth git-credential`,
+  `sequence.editor=true`, `remote.origin.uploadpack=git-upload-pack`,
+  `remote.origin.receivepack=git-receive-pack`. It also sets
+  `env.setdefault("GIT_PAGER", "cat")`. The pins move into a module tuple and
+  `pin_git_config(env, *, editor="true", pager="cat")`, which sets both
+  editor keys and the pager key plus the `GIT_PAGER` default.
+- D2: no change for `uploadpack.packObjectsHook` (git ignores it in repo
+  config), `filter.*` / `merge.*.driver` (#1761), `diff.*` (#1718), or
+  `url.*.insteadOf` (accepted).
+- D3: `PTYSession.start()` applies `pin_git_config` last. The editor is
+  `VISUAL`, else `EDITOR`, else `vi`. The pager is `PAGER`, else `less`. The
+  terminal does not go through `child_env()`.
+- D4: matrix section `B2. Child-process git config pins` with derived id
+  `sandbox.git_config_pins`, a TOML control entry, a `--check` floor and the
+  regenerated outputs.
+
+## Steps
+
+### Step 1: `pin_git_config` in `apps/backend/core/child_env.py`
+
+- Above `def child_env` (line 35), add:
+  ```python
+  # (key, value) pins; None means the editor/pager argument (#1689, #1717, #1745).
+  _GIT_PINS: tuple[tuple[str, str | None], ...] = (
+      ("core.hooksPath", "/dev/null"),
+      ("core.fsmonitor", "false"),
+      ("protocol.ext.allow", "never"),
+      ("core.sshCommand", "ssh"),
+      ("core.pager", None),
+      ("core.editor", None),
+      ("core.askPass", ""),
+      ("credential.helper", ""),  # empty resets every inherited helper
+      ("credential.https://github.com.helper", "!gh auth git-credential"),
+      ("sequence.editor", None),
+      ("remote.origin.uploadpack", "git-upload-pack"),
+      ("remote.origin.receivepack", "git-receive-pack"),
+  )
+  ```
+  and `def pin_git_config(env: dict[str, str], *, editor: str = "true",
+  pager: str = "cat") -> dict[str, str]`. It reads `n` from
+  `GIT_CONFIG_COUNT`, using the same try/except as lines 63-66. It writes
+  `GIT_CONFIG_KEY_{n+i}` / `VALUE` for each pin, using `pager` for
+  `core.pager` and `editor` for the two editor keys. It sets
+  `GIT_CONFIG_COUNT` and `env.setdefault("GIT_PAGER", pager)`, and returns
+  `env` (mutated in place).
+- Replace lines 63-79 with `return pin_git_config(env)`. Update the docstring
+  (lines 41-52) to name the new pins and `GIT_PAGER`.
+- `apps/web-server/server/utils/subprocess_env.py`: add
+  `pin_git_config = _core.pin_git_config` next to `lfs_push_argv`, and add it
+  to `__all__`.
+- Trap: the order must keep the existing six at indices n..n+5, because tests
+  and `github_env` rely on it. `github_env` appends after, reading the new
+  count.
+- Check: `python -c "import sys; sys.path.insert(0,'apps/backend'); from core.child_env import child_env; e=child_env(); print(e['GIT_CONFIG_COUNT'], e['GIT_PAGER'])"`
+  prints `12 cat` (with no `GIT_CONFIG_COUNT`/`GIT_PAGER` in the shell).
+
+### Step 2: tests for the server pins
+
+- `tests/test_child_process_env.py`:
+  - `:74` `"7"`→`"13"`; `:93` `"6"`→`"12"`; `:316` `"7"`→`"13"`. Add
+    assertions for indices 6-11 (or 7-12 with an existing entry) in the two
+    index tests at `:67-106`.
+  - New `test_real_git_repo_exec_keys_pinned(secret_env, tmp_path)`. It runs
+    `git init` on a temp repo and writes the config with `git config`:
+    `core.askPass=<tmp>/A`, `credential.helper=<tmp>/C`,
+    `sequence.editor=<tmp>/Q`, `remote.origin.uploadpack=<tmp>/U`,
+    `remote.origin.receivepack=<tmp>/R`. Then it uses `env=child_env()` and
+    asserts:
+    - `git config --get core.askPass` → `""`
+    - `--get-all credential.helper` last line `""`
+    - `--get-all credential.https://github.com.helper` last line
+      `!gh auth git-credential`
+    - `--get sequence.editor` → `true`
+    - `remote.origin.uploadpack` → `git-upload-pack`, `receivepack` →
+      `git-receive-pack`
+    - `env["GIT_PAGER"] == "cat"`
+
+    It runs no planted program.
+  - The fixture `secret_env` also does `monkeypatch.delenv("GIT_PAGER",
+    raising=False)`.
+- `tests/test_github_env.py:107-121`: indices 7 and 8 → 13 and 14, count
+  `"9"`→`"15"`. Add asserts for keys 7-12.
+- `git grep -n 'GIT_CONFIG_COUNT\|GIT_CONFIG_KEY_' -- tests apps/*/tests`:
+  fix any other hard-coded index or count.
+- Prove the regression: run the new test against the fb97ccd6
+  `child_env.py`, copied in temporarily, and see it fail. Then restore.
+- Check: `pytest -q tests/test_child_process_env.py tests/test_github_env.py tests/test_lfs_push.py tests/test_worktree_concurrent_lock.py tests/test_worktree_fresh_base.py tests/test_agent_cli_env.py tests/test_tool_executor_env.py`
+
+### Step 3: web terminal
+
+- `apps/web-server/server/pty/session.py`: add the import
+  `from ..utils.subprocess_env import pin_git_config`. After lines 61-62
+  (`if self.env: env.update(self.env)`), add:
+  ```python
+  # Agent worktrees share .git/config; pin git's exec keys, keep the user's editor/pager (#1745).
+  pin_git_config(
+      env,
+      editor=env.get("VISUAL") or env.get("EDITOR") or "vi",
+      pager=env.get("PAGER") or "less",
+  )
+  ```
+- New `apps/web-server/tests/test_pty_git_pins.py`. It skips if
+  `ptyprocess` is missing and monkeypatches
+  `session.PtyProcessUnicode.spawn` to capture `env`. It sets `EDITOR=nano`
+  and unsets `VISUAL`/`PAGER`/`GIT_PAGER`/`GIT_CONFIG_COUNT`. It starts
+  `PTYSession(env={"CLAUDE_CODE_OAUTH_TOKEN": "t"})` and asserts:
+  - `core.editor` and `sequence.editor` are `nano`
+  - `core.pager` is `less` and `GIT_PAGER` is `less`
+  - `core.hooksPath=/dev/null` and `credential.helper=""` are present
+  - `CLAUDE_CODE_OAUTH_TOKEN == "t"`
+- Trap: the import path. `session.py` is in the `server.pty` package, and
+  `subprocess_env` inserts `apps/backend` on `sys.path` itself.
+- Check: `cd apps/web-server && pytest -q tests/test_pty_git_pins.py`
+
+### Step 4: autonomy matrix row
+
+- `scripts/gen_autonomy_matrix.py`:
+  - Add `_section_git_pins(tabs)` after `_section_wiring`. It imports
+    `core.child_env as ce` (lazily, like `_section_wiring`). Under
+    `_env(GIT_CONFIG_COUNT=None, GIT_PAGER=None)` it calls `ce.child_env()`
+    and builds rows `[f"`{key}`", f"`{value}`"]` for i in
+    range(count). It appends a row ``["`GIT_PAGER` (env default)", "`cat`"]``.
+    The header is `["key", "pinned value"]` and the title
+    `"## B2. Child-process git config pins"`. It returns `(lines, len(rows))`.
+  - `_SECTIONS` (line ~857): add `("git_pins", _section_git_pins)` after
+    `("wiring", ...)`.
+  - `_derived_ids` (line 792): add `ids += ["sandbox.git_config_pins"]`.
+  - `check()` floors (line ~933): add
+    `"git_pins": (c["git_pins"] == len(ce._GIT_PINS) + 1)`. Use a
+    module-level import of `core.child_env` guarded like the others, or import
+    inside `check`. Add `git_pins={c['git_pins']}` to the ok print.
+- `docs/compliance/control-objectives.toml`: add a `[controls."sandbox.git_config_pins"]`
+  entry. Objective: "Every child process the server spawns, and the web
+  terminal, runs git with command-scope pins that override the repo config
+  keys an agent could use to run a program (hooks, fsmonitor, ext transport,
+  ssh, pager, editor, askpass, credential helper, sequence editor, upload/receive
+  pack)." Evidence: `apps/backend/core/child_env.py`. Frameworks:
+  `["ISO 27001:2022 A.8.28", "SOC 2 CC6.8", "NIST 800-53 SI"]`.
+- Run `python scripts/gen_autonomy_matrix.py`, then `--check`.
+- Trap: `_env` must clear `GIT_PAGER` too, or a host `GIT_PAGER` changes the
+  output.
+- Check: `python scripts/gen_autonomy_matrix.py --check && pytest -q tests/test_gen_autonomy_matrix.py`
+
+### Step 5: CHANGELOG
+
+- Add a `### Security` bullet under `[Unreleased]`: the new pins and the
+  terminal change. It notes the risk that host non-gh credential helpers no
+  longer apply.
+
+## Tests
+
+The step 2 regression test (real git, temp repo) and the step 3 terminal env
+test. The matrix `--check` also covers the pins. Ruff check and format on
+every touched Python file.
+
+## Rollback
+
+Revert the step commits. The pins are env-only and nothing is persisted.
+
+## Deviations
+
+(none yet)
