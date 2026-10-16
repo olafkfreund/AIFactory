@@ -126,9 +126,10 @@ def test_default_runner_hands_gh_a_config_dir_not_the_token(
 
 def test_create_pr_upload_failure_still_opens_pr(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    # #1690: a failed LFS upload skips the ref push, but create_pr still warns
-    # and goes on to `gh pr create`.
+    # #1721: a failed LFS upload logs a warning and still pushes the ref and
+    # goes on to `gh pr create`.
     real_which = shutil.which
     monkeypatch.setattr(
         "core.child_env.shutil.which",
@@ -143,12 +144,19 @@ def test_create_pr_upload_failure_still_opens_pr(
             "pr create": CmdResult(0, "https://github.com/o/r/pull/11", ""),
         }
     )
-    pr = pe.create_pr(
-        worktree=Path("/wt"), branch="b", base="main", title="t", body="b", runner=r
-    )
+    with caplog.at_level("WARNING", logger="core.child_env"):
+        pr = pe.create_pr(
+            worktree=Path("/wt"),
+            branch="b",
+            base="main",
+            title="t",
+            body="b",
+            runner=r,
+        )
     assert pr == 11
+    assert "boom" in caplog.text
     assert r.saw("lfs push")
-    assert not any(c[:2] == ["git", "push"] for c in r.calls)
+    assert any(c[:2] == ["git", "push"] for c in r.calls)
 
 
 def test_create_pr_fetches_branch_from_origin_before_push():

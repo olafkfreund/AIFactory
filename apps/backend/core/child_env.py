@@ -135,8 +135,6 @@ LFS_UPLOAD_TIMEOUT = 600
 def lfs_upload(
     run: Callable[[list[str], int], tuple[int, str, str]],
     ref: str,
-    *,
-    best_effort: bool = False,
 ) -> str | None:
     """Upload ``ref``'s LFS objects before a push; None = done or not needed (#1721).
 
@@ -145,11 +143,11 @@ def lfs_upload(
     ``run(argv, timeout)`` runs git in the repo with the push's env and returns
     ``(rc, stdout, stderr)``. Without ``git-lfs`` on PATH, for non-GitHub or ssh
     origins, or when ``.gitattributes`` at ``ref`` has no ``filter=lfs``, it
-    returns None. The upload gets ``LFS_UPLOAD_TIMEOUT``; its timeout raises unless
-    ``best_effort``. With ``best_effort=True``, upload failures, timeouts and the
-    ``url.*``/customtransfer refusal log a warning and return None; the safety-net
-    refusal when a local ``filter.lfs.clean`` is set without a supported endpoint
-    is never softened.
+    returns None. The upload gets ``LFS_UPLOAD_TIMEOUT``. Best-effort, because no
+    image before #1721 shipped git-lfs, so no push ever failed on it: an upload
+    failure, a timeout or the ``url.*``/customtransfer refusal logs a warning and
+    returns None. Only the safety-net refusal (a local ``filter.lfs.clean`` with
+    no supported endpoint) is returned, and the caller skips the push.
     """
     if shutil.which("git-lfs") is None:
         return None
@@ -202,15 +200,12 @@ def lfs_upload(
         try:
             upload_rc, _, stderr = run(argv, LFS_UPLOAD_TIMEOUT)
         except subprocess.TimeoutExpired as exc:
-            if not best_effort:
-                raise  # the web-server sites report it as a push timeout, as on dev
             err = f"git lfs push timed out after {exc.timeout} s"
         else:
             err = None if upload_rc == 0 else (stderr.strip() or "git lfs push failed")
-    if err and best_effort:
+    if err:
         logger.warning("LFS upload failed; pushing without it: %s", err[:200])
-        return None
-    return err
+    return None
 
 
 def enable_lfs_clean_filter(repo: Path) -> bool:

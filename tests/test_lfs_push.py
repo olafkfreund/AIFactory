@@ -195,7 +195,9 @@ def test_lfs_upload_order_and_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     assert [timeout for _, timeout in calls] == [60, 60, 60, 600]
 
 
-def test_lfs_upload_refuses_config(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_lfs_upload_config_refusal_warns_and_skips_upload(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     _which_lfs(True, monkeypatch)
     calls: list[list[str]] = []
     results = iter([(0, _GITHUB, ""), (0, "", ""), (0, "url.evil.insteadOf", "")])
@@ -204,9 +206,9 @@ def test_lfs_upload_refuses_config(monkeypatch: pytest.MonkeyPatch) -> None:
         calls.append(argv)
         return next(results)
 
-    assert child_env.lfs_upload(run, "HEAD") == (
-        "LFS step refused (lfs.customtransfer.* or url.* defined)"
-    )
+    with caplog.at_level(logging.WARNING, logger="core.child_env"):
+        assert child_env.lfs_upload(run, "HEAD") is None
+    assert "LFS step refused (lfs.customtransfer.* or url.* defined)" in caplog.text
     assert [argv[:2] for argv in calls] == [
         ["git", "remote"],
         ["git", "grep"],
@@ -214,14 +216,18 @@ def test_lfs_upload_refuses_config(monkeypatch: pytest.MonkeyPatch) -> None:
     ]
 
 
-def test_lfs_upload_returns_upload_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_lfs_upload_logs_upload_stderr(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     _which_lfs(True, monkeypatch)
     results = iter([(0, _GITHUB, ""), (0, "", ""), (1, "", ""), (2, "", " boom \n")])
 
     def run(argv: list[str], timeout: int) -> tuple[int, str, str]:
         return next(results)
 
-    assert child_env.lfs_upload(run, "HEAD") == "boom"
+    with caplog.at_level(logging.WARNING, logger="core.child_env"):
+        assert child_env.lfs_upload(run, "HEAD") is None
+    assert "boom" in caplog.text
 
 
 @pytest.mark.parametrize(
@@ -243,27 +249,17 @@ def test_lfs_upload_best_effort_softens_errors(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     _which_lfs(True, monkeypatch)
+    steps = iter([(0, _GITHUB, ""), (0, "", ""), *tail])
 
-    def make_run() -> Callable[[list[str], int], tuple[int, str, str]]:
-        steps = iter([(0, _GITHUB, ""), (0, "", ""), *tail])
+    def run(argv: list[str], timeout: int) -> tuple[int, str, str]:
+        nxt = next(steps)
+        if nxt == "timeout":
+            raise subprocess.TimeoutExpired(argv, timeout)
+        assert isinstance(nxt, tuple)
+        return nxt
 
-        def run(argv: list[str], timeout: int) -> tuple[int, str, str]:
-            nxt = next(steps)
-            if nxt == "timeout":
-                raise subprocess.TimeoutExpired(argv, timeout)
-            assert isinstance(nxt, tuple)
-            return nxt
-
-        return run
-
-    if "timeout" in tail:  # without best_effort the timeout propagates, as on dev
-        with pytest.raises(subprocess.TimeoutExpired):
-            child_env.lfs_upload(make_run(), "HEAD")
-    else:
-        assert child_env.lfs_upload(make_run(), "HEAD") == want
-    caplog.clear()
     with caplog.at_level(logging.WARNING, logger="core.child_env"):
-        assert child_env.lfs_upload(make_run(), "HEAD", best_effort=True) is None
+        assert child_env.lfs_upload(run, "HEAD") is None
     assert want in caplog.text
 
 
@@ -282,7 +278,7 @@ def test_lfs_upload_best_effort_keeps_safety_net_refusal(
     def run(argv: list[str], timeout: int) -> tuple[int, str, str]:
         return next(results)
 
-    assert child_env.lfs_upload(run, "HEAD", best_effort=True) == _NO_ENDPOINT
+    assert child_env.lfs_upload(run, "HEAD") == _NO_ENDPOINT
 
 
 def test_lfs_upload_real_git_without_attributes(
@@ -368,22 +364,30 @@ class Rec:
         return [self.kind(c) for c in self.calls]
 
 
-def test_upload_failure_skips_push(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_upload_failure_warns_and_pushes(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     _which_lfs(True, monkeypatch)
-    boom = CmdResult(2, "", "boom")
-    rec = Rec(upload=boom)
-    out = _push_with_lfs(_PUSH, "HEAD", "/wt", rec)
-    assert out == CmdResult(1, "", "boom")
-    assert "push" not in rec.kinds()
+    pushed = CmdResult(0, "pushed", "")
+    rec = Rec(upload=CmdResult(2, "", "boom"), push=pushed)
+    with caplog.at_level(logging.WARNING, logger="core.child_env"):
+        out = _push_with_lfs(_PUSH, "HEAD", "/wt", rec)
+    assert out is pushed
+    assert "boom" in caplog.text
+    assert rec.kinds() == ["geturl", "gate", "check", "upload", "push"]
 
 
 @pytest.mark.parametrize("rc", [0, 128], ids=["defined", "check-error"])
-def test_customtransfer_refuses(rc: int, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_customtransfer_warns_and_pushes(
+    rc: int, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     _which_lfs(True, monkeypatch)
     rec = Rec(check=CmdResult(rc, "lfs.customtransfer.x.path" if rc == 0 else "", ""))
-    out = _push_with_lfs(_PUSH, "HEAD", "/wt", rec)
-    assert not out.ok
-    assert rec.kinds() == ["geturl", "gate", "check"]
+    with caplog.at_level(logging.WARNING, logger="core.child_env"):
+        out = _push_with_lfs(_PUSH, "HEAD", "/wt", rec)
+    assert out.ok
+    assert "LFS step refused" in caplog.text
+    assert rec.kinds() == ["geturl", "gate", "check", "push"]
 
 
 def test_all_ok_order_and_push_argv_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -567,6 +571,25 @@ def test_pins_override_lfsconfig_and_git_config(lfs_repo: Path) -> None:
 
 
 @_needs_lfs
+def test_committed_lfsconfig_remote_lfspushurl_does_not_redirect(
+    lfs_repo: Path,
+) -> None:
+    (lfs_repo / ".lfsconfig").write_text(
+        "[lfs]\n\turl = https://evil.invalid/a\n"
+        '[remote "origin"]\n\tlfspushurl = https://evil.invalid/push\n'
+    )
+    _g(lfs_repo, "add", ".lfsconfig")
+    _g(lfs_repo, "commit", "-m", "lfsconfig lfspushurl")
+    argv = _pinned_argv(lfs_repo)
+    assert argv == _pinned()
+    base = argv[: argv.index("lfs")]
+    run = pr_endgame._default_runner
+    env = run([*base, "lfs", "env"], str(lfs_repo))
+    assert f"Endpoint={E} (" in env.out
+    assert run([*base, "config", "--get", "lfs.pushurl"], str(lfs_repo)).out == E
+
+
+@_needs_lfs
 def test_no_object_push_is_offline_and_credential_free(lfs_repo: Path) -> None:
     # The proxy is dead: any network call would make this rc 2.
     assert pr_endgame._default_runner(_pinned_argv(lfs_repo), str(lfs_repo)).rc == 0
@@ -589,7 +612,9 @@ def _evil_setup(repo: Path) -> Path:
 
 
 @_needs_lfs
-def test_evil_standalone_agent_is_refused(lfs_repo: Path) -> None:
+def test_evil_standalone_agent_is_refused(
+    lfs_repo: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     pwned = _evil_setup(lfs_repo)
     seen: list[list[str]] = []
 
@@ -599,12 +624,14 @@ def test_evil_standalone_agent_is_refused(lfs_repo: Path) -> None:
             return CmdResult(0, "", "")
         return pr_endgame._default_runner(argv, cwd)
 
-    out = _push_with_lfs(_PUSH, "HEAD", str(lfs_repo), rec)
-    assert not out.ok
+    with caplog.at_level(logging.WARNING, logger="core.child_env"):
+        out = _push_with_lfs(_PUSH, "HEAD", str(lfs_repo), rec)
+    assert out.ok
+    assert "LFS step refused" in caplog.text
     assert not pwned.exists()
     kinds = [Rec.kind(a) for a in seen]
     assert "upload" not in kinds
-    assert "push" not in kinds
+    assert "push" in kinds
 
 
 @_needs_lfs
@@ -617,7 +644,9 @@ def test_pins_alone_do_not_stop_the_agent(lfs_repo: Path) -> None:
 
 @_needs_lfs
 @pytest.mark.parametrize("key", ["insteadOf", "pushInsteadOf"])
-def test_url_rewrite_is_refused_and_never_attempted(lfs_repo: Path, key: str) -> None:
+def test_url_rewrite_is_refused_and_never_attempted(
+    lfs_repo: Path, key: str, caplog: pytest.LogCaptureFixture
+) -> None:
     # git-lfs applies url.*.insteadOf to the pinned lfs.url, so a repo could send
     # the upload to a host (or ssh command) of its choosing.
     pwned = lfs_repo.parent / "PWNED"
@@ -639,12 +668,14 @@ def test_url_rewrite_is_refused_and_never_attempted(lfs_repo: Path, key: str) ->
             return CmdResult(0, "", "")
         return pr_endgame._default_runner(argv, cwd)
 
-    out = _push_with_lfs(_PUSH, "HEAD", str(lfs_repo), rec)
-    assert not out.ok
+    with caplog.at_level(logging.WARNING, logger="core.child_env"):
+        out = _push_with_lfs(_PUSH, "HEAD", str(lfs_repo), rec)
+    assert out.ok
+    assert "LFS step refused" in caplog.text
     assert not pwned.exists()
     kinds = [Rec.kind(a) for a in seen]
     assert "upload" not in kinds
-    assert "push" not in kinds
+    assert "push" in kinds
 
 
 def _commit_bin(repo: Path) -> str:

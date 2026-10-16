@@ -393,7 +393,7 @@ def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | 
                 )
                 return p.returncode, p.stdout, p.stderr
 
-            err = lfs_upload(run, sha, best_effort=True)
+            err = lfs_upload(run, sha)
             if err:
                 _log.warning(
                     "[handoff] LFS upload for %s failed; not pushing: %s",

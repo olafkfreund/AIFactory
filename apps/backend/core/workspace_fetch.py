@@ -152,7 +152,7 @@ def maybe_push_workspace_branch(
                 return p.returncode, p.stdout, p.stderr
 
             # Best-effort upload; only the safety-net refusal skips the push.
-            err = lfs_upload(run, "HEAD", best_effort=True)
+            err = lfs_upload(run, "HEAD")
             if err:
                 err = f"LFS upload: {err}"
             else:
