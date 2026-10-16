@@ -192,6 +192,8 @@ def test_workspace_fetch_push_keeps_the_token_out_of_argv(monkeypatch, tmp_path)
         }.get(argv[1] if len(argv) > 1 else "", "")
         if argv[1:3] == ["remote", "get-url"]:
             out = "https://github.com/o/r.git"
+        if argv[1] == "grep":  # no filter=lfs: no LFS step (#1721)
+            return MagicMock(returncode=1, stdout="", stderr="")
         return MagicMock(returncode=0, stdout=out, stderr="")
 
     with patch.object(subprocess, "run", side_effect=_fake_run):
@@ -229,6 +231,8 @@ def test_tfactory_handoff_push_keeps_the_token_out_of_argv(monkeypatch, tmp_path
             return MagicMock(returncode=0, stdout=f"{sha}\n")
         if argv[1] == "ls-remote":
             return MagicMock(returncode=0, stdout=f"{sha}\trefs/heads/x\n")
+        if argv[1] == "grep":  # no filter=lfs: no LFS step (#1721)
+            return MagicMock(returncode=1, stdout="", stderr="")
         return MagicMock(returncode=0, stdout="")
 
     with patch.object(subprocess, "run", side_effect=_fake_run):
