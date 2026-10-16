@@ -35,7 +35,12 @@ SECRETS = (
 
 @pytest.fixture
 def secret_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for k in ("GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"):
+    for k in (
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_KEY_0",
+        "GIT_CONFIG_VALUE_0",
+        "GIT_PAGER",
+    ):
         monkeypatch.delenv(k, raising=False)
     for k in SECRETS:
         monkeypatch.setenv(k, "s3cret")
@@ -77,7 +82,7 @@ def test_hooks_path_appended_after_existing_entry(
     monkeypatch.setenv("GIT_CONFIG_KEY_0", "credential.https://github.com.helper")
     monkeypatch.setenv("GIT_CONFIG_VALUE_0", "!gh auth git-credential")
     env = child_env()
-    assert env["GIT_CONFIG_COUNT"] == "7"
+    assert env["GIT_CONFIG_COUNT"] == "11"
     assert env["GIT_CONFIG_KEY_0"] == "credential.https://github.com.helper"
     assert env["GIT_CONFIG_VALUE_0"] == "!gh auth git-credential"
     assert env["GIT_CONFIG_KEY_1"] == "core.hooksPath"
@@ -92,11 +97,19 @@ def test_hooks_path_appended_after_existing_entry(
     assert env["GIT_CONFIG_VALUE_5"] == "cat"
     assert env["GIT_CONFIG_KEY_6"] == "core.editor"
     assert env["GIT_CONFIG_VALUE_6"] == "true"
+    assert env["GIT_CONFIG_KEY_7"] == "core.askPass"
+    assert env["GIT_CONFIG_VALUE_7"] == ""
+    assert env["GIT_CONFIG_KEY_8"] == "credential.helper"
+    assert env["GIT_CONFIG_VALUE_8"] == ""
+    assert env["GIT_CONFIG_KEY_9"] == "credential.https://github.com.helper"
+    assert env["GIT_CONFIG_VALUE_9"] == "!gh auth git-credential"
+    assert env["GIT_CONFIG_KEY_10"] == "sequence.editor"
+    assert env["GIT_CONFIG_VALUE_10"] == "true"
 
 
 def test_hooks_path_is_entry_zero_without_count(secret_env: None) -> None:
     env = child_env()
-    assert env["GIT_CONFIG_COUNT"] == "6"
+    assert env["GIT_CONFIG_COUNT"] == "10"
     assert env["GIT_CONFIG_KEY_0"] == "core.hooksPath"
     assert env["GIT_CONFIG_VALUE_0"] == "/dev/null"
     assert env["GIT_CONFIG_KEY_1"] == "core.fsmonitor"
@@ -109,6 +122,14 @@ def test_hooks_path_is_entry_zero_without_count(secret_env: None) -> None:
     assert env["GIT_CONFIG_VALUE_4"] == "cat"
     assert env["GIT_CONFIG_KEY_5"] == "core.editor"
     assert env["GIT_CONFIG_VALUE_5"] == "true"
+    assert env["GIT_CONFIG_KEY_6"] == "core.askPass"
+    assert env["GIT_CONFIG_VALUE_6"] == ""
+    assert env["GIT_CONFIG_KEY_7"] == "credential.helper"
+    assert env["GIT_CONFIG_VALUE_7"] == ""
+    assert env["GIT_CONFIG_KEY_8"] == "credential.https://github.com.helper"
+    assert env["GIT_CONFIG_VALUE_8"] == "!gh auth git-credential"
+    assert env["GIT_CONFIG_KEY_9"] == "sequence.editor"
+    assert env["GIT_CONFIG_VALUE_9"] == "true"
 
 
 def test_real_git_fsmonitor_disabled_by_child_env(
@@ -278,6 +299,129 @@ def test_real_git_ssh_pager_editor_pinned(
     assert git("var", "GIT_EDITOR", env=op) == "vi"
 
 
+def test_real_git_repo_exec_keys_pinned(secret_env: None, tmp_path: Path) -> None:
+    """An agent-written .git/config cannot pick askPass, credential.helper, or sequence.editor (#1745)."""
+    iso = {"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"}
+    base = {
+        k: v
+        for k, v in {**os.environ, **iso}.items()
+        if k
+        not in (
+            "GIT_DIR",
+            "GIT_INDEX_FILE",
+            "GIT_WORK_TREE",
+            "GIT_COMMON_DIR",
+            "GIT_OBJECT_DIRECTORY",
+        )
+    }
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, env=base)
+    for key, val in (
+        ("core.askPass", f"{tmp_path}/A"),
+        ("credential.helper", f"{tmp_path}/C"),
+        ("sequence.editor", f"{tmp_path}/Q"),
+    ):
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "config", key, val],
+            check=True,
+            env=base,
+        )
+    env = child_env()
+    run_env = {
+        k: v
+        for k, v in {**env, **iso}.items()
+        if k
+        not in (
+            "GIT_DIR",
+            "GIT_INDEX_FILE",
+            "GIT_WORK_TREE",
+            "GIT_COMMON_DIR",
+            "GIT_OBJECT_DIRECTORY",
+        )
+    }
+
+    def cfg(*args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(tmp_path), "config", *args],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=run_env,
+        ).stdout
+
+    assert cfg("--get", "core.askPass").strip() == ""
+    assert cfg("--get-all", "credential.helper").splitlines()[-1] == ""
+    assert (
+        cfg("--get-all", "credential.https://github.com.helper").splitlines()[-1]
+        == "!gh auth git-credential"
+    )
+    assert cfg("--get", "sequence.editor").strip() == "true"
+    assert env["GIT_PAGER"] == "cat"  # beats pager.<cmd> on a tty
+
+
+def _credential_fill(tmp_path: Path, env: dict[str, str]) -> None:
+    """Run ``git credential fill`` for a fake host with no gh on PATH, no network."""
+    import shutil
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for tool in ("git", "touch"):
+        found = shutil.which(tool)
+        assert found
+        (bin_dir / tool).symlink_to(found)
+    run_env = {
+        **env,
+        "PATH": str(bin_dir),
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_TERMINAL_PROMPT": "0",
+    }
+    for k in ("GIT_ASKPASS", "SSH_ASKPASS", "GIT_DIR", "GIT_WORK_TREE"):
+        run_env.pop(k, None)
+    subprocess.run(
+        ["git", "-C", str(tmp_path / "repo"), "credential", "fill"],
+        input="protocol=https\nhost=example.invalid\n\n",
+        capture_output=True,
+        text=True,
+        env=run_env,
+        timeout=30,
+    )
+
+
+def test_real_git_planted_helper_and_askpass_do_not_run(
+    secret_env: None, tmp_path: Path
+) -> None:
+    """A repo-planted credential.helper and core.askPass never run (#1745)."""
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    ask = tmp_path / "ask.sh"
+    ask.write_text(f"#!/bin/sh\ntouch {tmp_path}/asked\n")
+    ask.chmod(0o700)
+    for key, val in (
+        ("credential.helper", f"!touch {tmp_path}/ran"),
+        ("core.askPass", str(ask)),
+    ):
+        subprocess.run(["git", "-C", str(repo), "config", key, val], check=True)
+    _credential_fill(tmp_path, child_env())
+    assert not (tmp_path / "ran").exists()
+    assert not (tmp_path / "asked").exists()
+
+
+def test_reset_wipes_a_callers_earlier_credential_helper(
+    secret_env: None, tmp_path: Path
+) -> None:
+    """A helper passed in ``extra`` before the pins is reset by them (#1745)."""
+    subprocess.run(["git", "init", "-q", str(tmp_path / "repo")], check=True)
+    env = child_env(
+        extra={
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "credential.helper",
+            "GIT_CONFIG_VALUE_0": f"!touch {tmp_path}/caller",
+        }
+    )
+    _credential_fill(tmp_path, env)
+    assert not (tmp_path / "caller").exists()
+
+
 # --- backend in-process helpers (#1680 review fix) ---------------------------
 
 
@@ -319,7 +463,7 @@ def test_core_child_env_extra_count_appends_hooks_entry(
             "GIT_CONFIG_VALUE_0": "x",
         }
     )
-    assert env["GIT_CONFIG_COUNT"] == "7"
+    assert env["GIT_CONFIG_COUNT"] == "11"
     assert env["GIT_CONFIG_KEY_0"] == "credential.helper"
     assert env["GIT_CONFIG_KEY_1"] == "core.hooksPath"
     assert env["GIT_CONFIG_KEY_2"] == "core.fsmonitor"

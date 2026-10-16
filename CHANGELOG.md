@@ -2,6 +2,18 @@
 
 ### Security
 
+- **Server git and the web terminal pin the remaining agent-writable git config keys (#1745).**
+  `child_env()` now also pins `core.askPass` (empty), `credential.helper`
+  (reset, then `!gh auth git-credential` for github.com) and
+  `sequence.editor`, and defaults `GIT_PAGER` to `cat`, which overrides
+  `pager.<cmd>`. A `.git/config` an agent writes can no longer make the
+  server run a program through any of them. The web terminal gets the same
+  pins and keeps the user's `EDITOR`/`PAGER`. After the reset it re-adds the
+  user's own system and global credential helpers (`store`, libsecret, glab),
+  so HTTPS pushes from the terminal keep working, and a helper planted in the
+  repo config still does not run. On the server, a host credential helper
+  other than gh no longer applies to factory git. Use `GITHUB_TOKEN` or
+  `gh auth login` there. Not covered: `filter.*` and merge drivers (#1761).
 - **Git config and exec settings can no longer be smuggled in through the environment (#1754).**
   `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n`, `GIT_SSH_COMMAND`, `GIT_EXEC_PATH`,
   `GIT_DIR` and every other `GIT_*` key outside a short safe list (author and

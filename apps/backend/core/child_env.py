@@ -33,6 +33,39 @@ GITHUB_KEEP: tuple[str, ...] = ("GITHUB_TOKEN", "GH_TOKEN")
 _CREDENTIAL_NAME = re.compile(r"(_KEY|_TOKEN)$", re.IGNORECASE)
 
 
+# (key, value) pins; None means the editor/pager argument (#1689, #1717, #1745).
+_GIT_PINS: tuple[tuple[str, str | None], ...] = (
+    ("core.hooksPath", "/dev/null"),
+    ("core.fsmonitor", "false"),
+    ("protocol.ext.allow", "never"),
+    ("core.sshCommand", "ssh"),
+    ("core.pager", None),
+    ("core.editor", None),
+    ("core.askPass", ""),
+    ("credential.helper", ""),  # empty resets every inherited helper
+    ("credential.https://github.com.helper", "!gh auth git-credential"),
+    ("sequence.editor", None),
+)
+
+
+def pin_git_config(
+    env: dict[str, str], *, editor: str = "true", pager: str = "cat"
+) -> dict[str, str]:
+    """Append git command-scope pins and default ``GIT_PAGER`` onto ``env``."""
+    try:
+        n = max(int(env.get("GIT_CONFIG_COUNT", "0")), 0)
+    except ValueError:
+        n = 0
+    for i, (key, val) in enumerate(_GIT_PINS):
+        env[f"GIT_CONFIG_KEY_{n + i}"] = key
+        env[f"GIT_CONFIG_VALUE_{n + i}"] = (
+            pager if key == "core.pager" else editor if val is None else val
+        )
+    env["GIT_CONFIG_COUNT"] = str(n + len(_GIT_PINS))
+    env.setdefault("GIT_PAGER", pager)
+    return env
+
+
 def child_env(
     keep: Iterable[str] = (),
     extra: Mapping[str, str] | None = None,
@@ -43,12 +76,18 @@ def child_env(
 
     Drops every host secret ``is_denied_env_key`` matches plus ``_STRIP_VARS``,
     and, unless ``runner``, every ``*_KEY``/``*_TOKEN`` name;
-    restores the ``keep`` names that are set, applies ``extra``, and disables
-    git hooks, fsmonitor and the ext:: transport via git env config. The pins
-    also set the ssh command (``ssh``), pager (``cat``) and editor (``true``);
+    restores the ``keep`` names that are set, applies ``extra``, and pins git
+    exec-bearing config keys via ``pin_git_config``: hooks, fsmonitor, the
+    ``ext::`` transport, ssh command (``ssh``), pager (``cat``, plus
+    ``GIT_PAGER`` default), editor and sequence editor (``true``), askPass
+    (empty) and credential helpers (reset, then ``!gh auth git-credential``
+    for github.com).
     ``GIT_SSH_COMMAND``, ``GIT_PAGER`` or ``GIT_EDITOR`` in the server env
-    overrides them. The pins are appended last (an existing ``GIT_CONFIG_*``
-    entry keeps its lower index).
+    overrides the corresponding setting. The pins are appended last, after any
+    ``GIT_CONFIG_*`` entry already in the env or ``extra``, so they win. For
+    ``credential.helper`` that means the reset also wipes every helper such an
+    entry added; a caller that needs one appends it after this call (as
+    ``github_env`` does).
     Build it per call: ``os.environ`` changes at runtime.
     """
     env = {
@@ -62,24 +101,7 @@ def child_env(
     env.update({k: os.environ[k] for k in keep if k in os.environ})
     if extra:
         env.update(extra)
-    try:
-        n = max(int(env.get("GIT_CONFIG_COUNT", "0")), 0)
-    except ValueError:
-        n = 0
-    env[f"GIT_CONFIG_KEY_{n}"] = "core.hooksPath"
-    env[f"GIT_CONFIG_VALUE_{n}"] = "/dev/null"
-    env[f"GIT_CONFIG_KEY_{n + 1}"] = "core.fsmonitor"
-    env[f"GIT_CONFIG_VALUE_{n + 1}"] = "false"
-    env[f"GIT_CONFIG_KEY_{n + 2}"] = "protocol.ext.allow"
-    env[f"GIT_CONFIG_VALUE_{n + 2}"] = "never"
-    env[f"GIT_CONFIG_KEY_{n + 3}"] = "core.sshCommand"
-    env[f"GIT_CONFIG_VALUE_{n + 3}"] = "ssh"
-    env[f"GIT_CONFIG_KEY_{n + 4}"] = "core.pager"
-    env[f"GIT_CONFIG_VALUE_{n + 4}"] = "cat"
-    env[f"GIT_CONFIG_KEY_{n + 5}"] = "core.editor"
-    env[f"GIT_CONFIG_VALUE_{n + 5}"] = "true"
-    env["GIT_CONFIG_COUNT"] = str(n + 6)
-    return env
+    return pin_git_config(env)
 
 
 _GITHUB_ORIGIN = re.compile(
