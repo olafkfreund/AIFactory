@@ -12,6 +12,27 @@
   than gh (`store`, libsecret) no longer applies to factory git. Use
   `GITHUB_TOKEN` or `gh auth login`. Not covered: `filter.*` and merge
   drivers (#1761).
+- **`time`, `source`, `npx` and `cargo watch` no longer hide the program they run (#1784).**
+  `/usr/bin/time CMD` now checks `CMD`. `source` and `.` take only a literal
+  file. `npx`, `pnpx` and `npm exec` accept a fixed set of options and refuse
+  `-c`/`--call`/`--shell-mode`, which run a shell command string. `cargo watch`
+  is refused and `cargo-watch` leaves the Rust allowlist.
+  `npm` options before the subcommand must be known ones, so `npm -w x exec -c …`
+  is checked as `npm exec`, and `cargo --config` accepts only a `.toml` file path.
+  Every npm option before `--` must be on a list of common options, so
+  `--script-shell`, `--node-options` and `-c` after the subcommand or package
+  are refused; `-p`/`--package` is refused. `source` and shell script operands
+  under `/dev` or `/proc` are refused after path normalisation.
+  The program `npx`, `pnpx`, `npm exec` and `npm x` run is now checked
+  against the allowlist like any command, and `-y`/`--yes` (install without
+  asking) is refused for them.
+- **Command substitution inside `${…}` and heredoc bodies is refused (#1797).**
+  The Bash command parser does not parse the inside of `${…}` or a heredoc
+  body, so `echo ${X:-$(cmd)}` and a heredoc containing `$(cmd)` checked only
+  the outer command. A `$(` or backtick in either now blocks the command;
+  plain `${X:-default}` and `$VAR` in heredocs still work. Also refused: `${…}` forms that evaluate
+  text as code: the `@P`, `@E` and `@A` operators, `${!x}` indirection, and an
+  offset, length or array subscript that is not a plain integer.
 - **Commands inside redirect targets are now checked (#1783).**
   The Bash command parser skipped redirect targets, so `ls > $(nc …)`,
   `cat < <(nc …)` and `cat <<< $(nc …)` checked only the outer command. It

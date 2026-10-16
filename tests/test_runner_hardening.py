@@ -66,3 +66,24 @@ def test_get_provider_hardens(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(process_hardening, "make_non_dumpable", _boom)
     with pytest.raises(_Hardened):
         factory.get_provider("codex", "coding")
+
+
+@pytest.mark.parametrize(
+    "runner", ["create_client", "create_simple_client", "get_provider"]
+)
+def test_runners_fail_closed(
+    runner: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from core import client, process_hardening, simple_client
+    from providers import factory
+
+    monkeypatch.setattr(process_hardening, "make_non_dumpable", lambda: False)
+    with pytest.raises(SystemExit, match="prctl"):
+        if runner == "create_client":
+            client.create_client(tmp_path, tmp_path, "claude-sonnet-4-5")
+        elif runner == "create_simple_client":
+            simple_client.create_simple_client(
+                agent_type="commit_message", model="claude-haiku-4-5", cwd=tmp_path
+            )
+        else:
+            factory.get_provider("codex", "coding")
