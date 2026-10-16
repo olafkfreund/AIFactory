@@ -133,7 +133,7 @@ def _require_literal(words: list[Any], start: int, stop: int) -> None:
 _RUNS_COMMAND = re.compile(r"\$\(|`|\$\[")
 _PARAM_RE = re.compile(
     r"([#!]?)([A-Za-z_][A-Za-z0-9_]*|[0-9]+|[@*#?$!-])"
-    r"(?:\[(-?[0-9]+|[@*])\])?(?:$|(?=[-*@#%/^,:?+=]))(.*)",
+    r"(?:\[(-?[0-9]+|[@*])\])?(?:\Z|(?=[-*@#%/^,:?+=]))(.*)",
     re.DOTALL,
 )
 _OFFSET_RE = re.compile(r":\s*-?[0-9]+(?::\s*-?[0-9]+)?")
