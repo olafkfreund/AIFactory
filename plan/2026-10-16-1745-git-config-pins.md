@@ -190,3 +190,7 @@ Revert the step commits. The pins are env-only and nothing is persisted.
 - Step 2 was finished by the lane agent. agy's handoff returned an empty JSON
   response, so it counts as a failed handoff, and its diff was reviewed and
   reworked by hand.
+- Step 4 was finished by the lane agent: agy's JSON response was empty again
+  (a failed handoff). Its diff was kept. One addition: an empty pin value
+  renders as `(empty)` (`_code`) instead of an empty backtick pair, which is
+  not valid markdown or MDX.
