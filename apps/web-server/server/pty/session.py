@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Optional
 from uuid import uuid4
 
+from ..utils.subprocess_env import pin_git_config
+
 # Import ptyprocess for PTY handling (cross-platform)
 try:
     from ptyprocess import PtyProcess, PtyProcessUnicode
@@ -60,6 +62,12 @@ class PTYSession:
         env.pop("CLAUDECODE", None)
         if self.env:
             env.update(self.env)
+        # Agent worktrees share .git/config; pin git's exec keys, keep the user's editor/pager (#1745).
+        pin_git_config(
+            env,
+            editor=env.get("VISUAL") or env.get("EDITOR") or "vi",
+            pager=env.get("PAGER") or "less",
+        )
 
         # Start the PTY process
         self._pty = PtyProcessUnicode.spawn(
