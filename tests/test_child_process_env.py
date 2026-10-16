@@ -52,6 +52,12 @@ def test_child_env_drops_secrets(secret_env: None) -> None:
         assert k not in env, f"leaked {k}"
 
 
+def test_strip_vars_case_insensitive(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("anthropic_api_key_file", "x")
+    assert "anthropic_api_key_file" not in child_env()
+    assert "anthropic_api_key_file" not in child_env(runner=True)
+
+
 def test_child_env_keeps_path_and_home(secret_env: None) -> None:
     env = child_env()
     assert env["PATH"] == os.environ["PATH"]
