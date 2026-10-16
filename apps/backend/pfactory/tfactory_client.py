@@ -393,10 +393,7 @@ def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | 
                 )
                 return p.returncode, p.stdout, p.stderr
 
-            try:
-                err = lfs_upload(run, sha)
-            except subprocess.TimeoutExpired as exc:
-                err = f"timed out after {exc.timeout} s"
+            err = lfs_upload(run, sha, best_effort=True)
             if err:
                 _log.warning(
                     "[handoff] LFS upload for %s failed; not pushing: %s",

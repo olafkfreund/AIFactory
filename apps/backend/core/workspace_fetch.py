@@ -151,8 +151,8 @@ def maybe_push_workspace_branch(
                 )
                 return p.returncode, p.stdout, p.stderr
 
-            # A failed LFS upload skips the push; logged below like a push failure.
-            err = lfs_upload(run, "HEAD")
+            # Best-effort upload; only the safety-net refusal skips the push.
+            err = lfs_upload(run, "HEAD", best_effort=True)
             if err:
                 err = f"LFS upload: {err}"
             else:
