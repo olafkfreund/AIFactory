@@ -198,6 +198,12 @@
 
 ### Changed
 
+- PR bodies now state the review tier the merge gate decides on (#1698). For
+  a verified trusted task the body says `Effective review tier: <tier> (signed
+  floor <tier>)`, and when the agent-writable `reviewTier` is below the signed
+  tier it adds a "Possible tampering" warning naming both. The merge decision
+  is unchanged. The merger's PR body no longer echoes the raw on-disk tier; it
+  shows a constant label marked "not checked against a signed contract".
 - A held task contract now shows on the task (#1709). The hold reason
   (e.g. `contract held (digest mismatch); normal build`) is written to the
   task plan as `contractHold`, returned on the task row and shown as a neutral
