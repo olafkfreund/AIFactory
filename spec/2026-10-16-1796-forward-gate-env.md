@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1796
 intent: intent/2026-10-16-1796-forward-gate-env.md
 ---
