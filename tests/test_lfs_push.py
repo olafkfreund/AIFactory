@@ -144,15 +144,20 @@ def test_helper_accepts_real_names(monkeypatch: pytest.MonkeyPatch) -> None:
 # ── shared upload ──────────────────────────────────────────────────────────
 
 
-def test_lfs_upload_gate_skips_everything_else() -> None:
+def test_lfs_upload_gate_skips_everything_else(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _which_lfs(True, monkeypatch)
     calls: list[tuple[list[str], int]] = []
+    results = iter([(0, _GITHUB, ""), (1, "", "")])
 
     def run(argv: list[str], timeout: int) -> tuple[int, str, str]:
         calls.append((argv, timeout))
-        return 1, "", ""
+        return next(results)
 
     assert child_env.lfs_upload(run, "HEAD") is None
     assert calls == [
+        (["git", "remote", "get-url", "--push", "--all", "origin"], 60),
         (
             [
                 "git",
@@ -166,14 +171,14 @@ def test_lfs_upload_gate_skips_everything_else() -> None:
                 ":(glob)**/.gitattributes",
             ],
             60,
-        )
+        ),
     ]
 
 
 def test_lfs_upload_order_and_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     _which_lfs(True, monkeypatch)
     calls: list[tuple[list[str], int]] = []
-    results = iter([(0, "", ""), (0, _GITHUB, ""), (1, "", ""), (0, "", "")])
+    results = iter([(0, _GITHUB, ""), (0, "", ""), (1, "", ""), (0, "", "")])
 
     def run(argv: list[str], timeout: int) -> tuple[int, str, str]:
         calls.append((argv, timeout))
@@ -181,8 +186,8 @@ def test_lfs_upload_order_and_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert child_env.lfs_upload(run, "HEAD") is None
     assert [argv[:2] for argv, _ in calls] == [
-        ["git", "grep"],
         ["git", "remote"],
+        ["git", "grep"],
         ["git", "config"],
         ["git", "-c"],
     ]
@@ -193,7 +198,7 @@ def test_lfs_upload_order_and_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_lfs_upload_refuses_config(monkeypatch: pytest.MonkeyPatch) -> None:
     _which_lfs(True, monkeypatch)
     calls: list[list[str]] = []
-    results = iter([(0, "", ""), (0, _GITHUB, ""), (0, "url.evil.insteadOf", "")])
+    results = iter([(0, _GITHUB, ""), (0, "", ""), (0, "url.evil.insteadOf", "")])
 
     def run(argv: list[str], timeout: int) -> tuple[int, str, str]:
         calls.append(argv)
@@ -203,15 +208,15 @@ def test_lfs_upload_refuses_config(monkeypatch: pytest.MonkeyPatch) -> None:
         "LFS step refused (lfs.customtransfer.* or url.* defined)"
     )
     assert [argv[:2] for argv in calls] == [
-        ["git", "grep"],
         ["git", "remote"],
+        ["git", "grep"],
         ["git", "config"],
     ]
 
 
 def test_lfs_upload_returns_upload_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
     _which_lfs(True, monkeypatch)
-    results = iter([(0, "", ""), (0, _GITHUB, ""), (1, "", ""), (2, "", " boom \n")])
+    results = iter([(0, _GITHUB, ""), (0, "", ""), (1, "", ""), (2, "", " boom \n")])
 
     def run(argv: list[str], timeout: int) -> tuple[int, str, str]:
         return next(results)
@@ -219,8 +224,73 @@ def test_lfs_upload_returns_upload_stderr(monkeypatch: pytest.MonkeyPatch) -> No
     assert child_env.lfs_upload(run, "HEAD") == "boom"
 
 
-def test_lfs_upload_real_git_without_attributes(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("tail", "want"),
+    [
+        ([(1, "", ""), (2, "", " boom \n")], "boom"),
+        ([(1, "", ""), "timeout"], "git lfs push timed out after 600 s"),
+        (
+            [(0, "url.evil.insteadOf", "")],
+            "LFS step refused (lfs.customtransfer.* or url.* defined)",
+        ),
+    ],
+    ids=["upload-fails", "timeout", "config-refusal"],
+)
+def test_lfs_upload_best_effort_softens_errors(
+    tail: list[Any],
+    want: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _which_lfs(True, monkeypatch)
+
+    def make_run() -> Callable[[list[str], int], tuple[int, str, str]]:
+        steps = iter([(0, _GITHUB, ""), (0, "", ""), *tail])
+
+        def run(argv: list[str], timeout: int) -> tuple[int, str, str]:
+            nxt = next(steps)
+            if nxt == "timeout":
+                raise subprocess.TimeoutExpired(argv, timeout)
+            assert isinstance(nxt, tuple)
+            return nxt
+
+        return run
+
+    if "timeout" in tail:  # without best_effort the timeout propagates, as on dev
+        with pytest.raises(subprocess.TimeoutExpired):
+            child_env.lfs_upload(make_run(), "HEAD")
+    else:
+        assert child_env.lfs_upload(make_run(), "HEAD") == want
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="core.child_env"):
+        assert child_env.lfs_upload(make_run(), "HEAD", best_effort=True) is None
+    assert want in caplog.text
+
+
+def test_lfs_upload_best_effort_keeps_safety_net_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _which_lfs(True, monkeypatch)
+    results = iter(
+        [
+            (0, "https://github.com/o/r/x", ""),
+            (0, "", ""),
+            (0, "git-lfs clean -- %f", ""),
+        ]
+    )
+
+    def run(argv: list[str], timeout: int) -> tuple[int, str, str]:
+        return next(results)
+
+    assert child_env.lfs_upload(run, "HEAD", best_effort=True) == _NO_ENDPOINT
+
+
+def test_lfs_upload_real_git_without_attributes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _which_lfs(True, monkeypatch)
     _g(tmp_path, "init")
+    _g(tmp_path, "remote", "add", "origin", _GITHUB)
     (tmp_path / "plain.txt").write_text("plain\n")
     _g(tmp_path, "add", "plain.txt")
     _g(tmp_path, "commit", "-m", "plain")
@@ -235,6 +305,7 @@ def test_lfs_upload_real_git_without_attributes(tmp_path: Path) -> None:
 
     assert child_env.lfs_upload(run, "HEAD") is None
     assert calls == [
+        ["git", "remote", "get-url", "--push", "--all", "origin"],
         [
             "git",
             "grep",
@@ -245,7 +316,7 @@ def test_lfs_upload_real_git_without_attributes(tmp_path: Path) -> None:
             "HEAD",
             "--",
             ":(glob)**/.gitattributes",
-        ]
+        ],
     ]
 
 
@@ -312,7 +383,7 @@ def test_customtransfer_refuses(rc: int, monkeypatch: pytest.MonkeyPatch) -> Non
     rec = Rec(check=CmdResult(rc, "lfs.customtransfer.x.path" if rc == 0 else "", ""))
     out = _push_with_lfs(_PUSH, "HEAD", "/wt", rec)
     assert not out.ok
-    assert rec.kinds() == ["gate", "geturl", "check"]
+    assert rec.kinds() == ["geturl", "gate", "check"]
 
 
 def test_all_ok_order_and_push_argv_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -320,7 +391,7 @@ def test_all_ok_order_and_push_argv_unchanged(monkeypatch: pytest.MonkeyPatch) -
     pushed = CmdResult(0, "pushed", "")
     rec = Rec(push=pushed)
     out = _push_with_lfs(_PUSH, "HEAD", "/wt", rec)
-    assert rec.kinds() == ["gate", "geturl", "check", "upload", "push"]
+    assert rec.kinds() == ["geturl", "gate", "check", "upload", "push"]
     assert rec.calls[-1] == _PUSH
     assert set(rec.cwds) == {"/wt"}
     assert out is pushed
@@ -332,7 +403,7 @@ _NO_ENDPOINT = (
 )
 
 
-_NO_ENDPOINT_ORIGINS = pytest.mark.parametrize(
+_NON_GITHUB_ORIGINS = pytest.mark.parametrize(
     "geturl",
     [
         CmdResult(2, _GITHUB, "err"),
@@ -345,6 +416,32 @@ _NO_ENDPOINT_ORIGINS = pytest.mark.parametrize(
     ids=["get-url-fails", "file", "gitlab", "azure-devops", "scp-ssh", "ssh-url"],
 )
 
+_NO_ENDPOINT_ORIGINS = pytest.mark.parametrize(
+    "geturl",
+    [
+        CmdResult(0, "https://github.com/o/r/x", ""),
+        CmdResult(0, "https://github.com/o/r\nhttps://github.com/o/s", ""),
+    ],
+    ids=["extra-path", "two-push-urls"],
+)
+
+
+# Non-GitHub and ssh origins push as on dev without running the gate (#1721).
+@_NON_GITHUB_ORIGINS
+@pytest.mark.parametrize("filter_rc", [1, 0], ids=["no-filter", "with-filter"])
+def test_non_github_origin_pushes_after_geturl(
+    geturl: CmdResult, filter_rc: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _which_lfs(True, monkeypatch)
+    rec = Rec(
+        geturl=geturl,
+        filter=CmdResult(
+            filter_rc, "git-lfs clean -- %f" if filter_rc == 0 else "", ""
+        ),
+    )
+    assert _push_with_lfs(_PUSH, "HEAD", "/wt", rec).ok
+    assert rec.kinds() == ["geturl", "push"]
+
 
 # No local clean filter: commits are raw blobs, so the push runs as on dev (#1721).
 @_NO_ENDPOINT_ORIGINS
@@ -354,7 +451,7 @@ def test_lfs_repo_without_endpoint_or_filter_pushes(
     _which_lfs(True, monkeypatch)
     rec = Rec(geturl=geturl)
     assert _push_with_lfs(_PUSH, "HEAD", "/wt", rec).ok
-    assert rec.kinds() == ["gate", "geturl", "filter", "push"]
+    assert rec.kinds() == ["geturl", "gate", "filter", "push"]
 
 
 # Safety net: a local clean filter may have made pointers we cannot upload.
@@ -367,7 +464,7 @@ def test_lfs_filter_without_endpoint_refuses_push(
     out = _push_with_lfs(_PUSH, "HEAD", "/wt", rec)
     assert not out.ok
     assert out.err == _NO_ENDPOINT
-    assert rec.kinds() == ["gate", "geturl", "filter"]
+    assert rec.kinds() == ["geturl", "gate", "filter"]
 
 
 def test_lfs_repo_without_git_lfs_pushes(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -375,10 +472,13 @@ def test_lfs_repo_without_git_lfs_pushes(monkeypatch: pytest.MonkeyPatch) -> Non
     _which_lfs(False, monkeypatch)
     rec = Rec()
     assert _push_with_lfs(_PUSH, "HEAD", "/wt", rec).ok
-    assert rec.kinds() == ["gate", "push"]
+    assert rec.kinds() == ["push"]
 
 
-def test_no_lfs_gate_skips_url_refusal_and_upload() -> None:
+def test_no_lfs_gate_skips_url_refusal_and_upload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _which_lfs(True, monkeypatch)
     pushed = CmdResult(0, "pushed", "")
     rec = Rec(
         gate=CmdResult(1, "", ""),
@@ -386,7 +486,7 @@ def test_no_lfs_gate_skips_url_refusal_and_upload() -> None:
         push=pushed,
     )
     assert _push_with_lfs(_PUSH, "HEAD", "/wt", rec) is pushed
-    assert rec.kinds() == ["gate", "push"]
+    assert rec.kinds() == ["geturl", "gate", "push"]
 
 
 # ── integration (real git + git-lfs, no network) ────────────────────────────
@@ -566,14 +666,32 @@ def _real_but_push(seen: list[list[str]], upload_ok: bool = False) -> Any:
 
 
 @_needs_lfs
-def test_gitlab_lfs_repo_commits_raw_blobs_and_pushes(lfs_repo: Path) -> None:
-    # As on dev (#1721): no endpoint, so no filter, raw blobs, plain push.
-    _g(lfs_repo, "remote", "set-url", "origin", "https://gitlab.com/o/r.git")
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "https://gitlab.com/o/r.git",
+        "git@github.com:o/r.git",
+        "ssh://git@github.com/o/r",
+    ],
+)
+def test_gitlab_lfs_repo_commits_raw_blobs_and_pushes(
+    lfs_repo: Path, origin: str
+) -> None:
+    # As on dev (#1721): non-GitHub or ssh origin gets no filter, commits raw
+    # blobs, and pushes after get-url without running the gate.
+    _g(lfs_repo, "remote", "set-url", "origin", origin)
     assert child_env.enable_lfs_clean_filter(lfs_repo) is False
+    filt = subprocess.run(
+        ["git", "config", "--local", "--get", "filter.lfs.clean"],
+        cwd=lfs_repo,
+        capture_output=True,
+        text=True,
+    )
+    assert filt.returncode != 0
     assert _commit_bin(lfs_repo) == "x" * 100
     seen: list[list[str]] = []
     assert _push_with_lfs(_PUSH, "HEAD", str(lfs_repo), _real_but_push(seen)).ok
-    assert [Rec.kind(a) for a in seen] == ["gate", "geturl", "filter", "push"]
+    assert [Rec.kind(a) for a in seen] == ["geturl", "push"]
 
 
 @_needs_lfs

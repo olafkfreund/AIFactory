@@ -133,18 +133,30 @@ LFS_UPLOAD_TIMEOUT = 600
 
 
 def lfs_upload(
-    run: Callable[[list[str], int], tuple[int, str, str]], ref: str
+    run: Callable[[list[str], int], tuple[int, str, str]],
+    ref: str,
+    *,
+    best_effort: bool = False,
 ) -> str | None:
     """Upload ``ref``'s LFS objects before a push; None = done or not needed (#1721).
 
     Blocking for up to ``LFS_UPLOAD_TIMEOUT``: async callers use a thread.
 
     ``run(argv, timeout)`` runs git in the repo with the push's env and returns
-    ``(rc, stdout, stderr)``. A repo whose ``.gitattributes`` at ``ref`` has no
-    ``filter=lfs`` runs nothing else, so it sees no refusal and no upload. The
-    upload gets ``LFS_UPLOAD_TIMEOUT``: large objects outlast 60-180 s push
-    timeouts. Otherwise returns the refusal or upload error.
+    ``(rc, stdout, stderr)``. Without ``git-lfs`` on PATH, for non-GitHub or ssh
+    origins, or when ``.gitattributes`` at ``ref`` has no ``filter=lfs``, it
+    returns None. The upload gets ``LFS_UPLOAD_TIMEOUT``; its timeout raises unless
+    ``best_effort``. With ``best_effort=True``, upload failures, timeouts and the
+    ``url.*``/customtransfer refusal log a warning and return None; the safety-net
+    refusal when a local ``filter.lfs.clean`` is set without a supported endpoint
+    is never softened.
     """
+    if shutil.which("git-lfs") is None:
+        return None
+    url_rc, out, _ = run(["git", "remote", "get-url", "--push", "--all", "origin"], 60)
+    url = out.strip()
+    if url_rc != 0 or not url.startswith("https://github.com/"):
+        return None
     gate, _, _ = run(
         [
             "git",
@@ -159,11 +171,9 @@ def lfs_upload(
         ],
         60,
     )
-    # No git-lfs binary: no clean filter ran here, so no new pointers either.
-    if gate != 0 or shutil.which("git-lfs") is None:
+    if gate != 0:
         return None
-    url_rc, url, _ = run(["git", "remote", "get-url", "--push", "--all", "origin"], 60)
-    argv = lfs_push_argv(url.strip(), ref) if url_rc == 0 else None
+    argv = lfs_push_argv(url, ref)
     if argv is None:
         # Safety net: only a repo with the clean filter on can hold new pointers;
         # without it commits are raw blobs and the push goes ahead as before.
@@ -187,9 +197,20 @@ def lfs_upload(
         60,
     )
     if check_rc != 1:
-        return "LFS step refused (lfs.customtransfer.* or url.* defined)"
-    upload_rc, _, err = run(argv, LFS_UPLOAD_TIMEOUT)
-    return None if upload_rc == 0 else (err.strip() or "git lfs push failed")
+        err: str | None = "LFS step refused (lfs.customtransfer.* or url.* defined)"
+    else:
+        try:
+            upload_rc, _, stderr = run(argv, LFS_UPLOAD_TIMEOUT)
+        except subprocess.TimeoutExpired as exc:
+            if not best_effort:
+                raise  # the web-server sites report it as a push timeout, as on dev
+            err = f"git lfs push timed out after {exc.timeout} s"
+        else:
+            err = None if upload_rc == 0 else (stderr.strip() or "git lfs push failed")
+    if err and best_effort:
+        logger.warning("LFS upload failed; pushing without it: %s", err[:200])
+        return None
+    return err
 
 
 def enable_lfs_clean_filter(repo: Path) -> bool:
