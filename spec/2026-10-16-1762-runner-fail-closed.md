@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1762
 intent: intent/2026-10-16-1762-runner-fail-closed.md
 ---
