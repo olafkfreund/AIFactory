@@ -529,8 +529,6 @@ def _unwrap_source(
 
 _RUNNER_FLAGS = frozenset(
     {
-        "-y",
-        "--yes",
         "--no",
         "-q",
         "--quiet",
@@ -610,8 +608,8 @@ _NPM_SUBCOMMAND_OPTS = frozenset(
 )
 
 
-def _check_package_runner(words: list[Any], start: int) -> None:
-    """Validate options and package operand for ``npx``/``pnpx``/``npm exec``."""
+def _check_package_runner(words: list[Any], start: int) -> int:
+    """Validate options and return the package operand index for ``npx``/``pnpx``/``npm exec``."""
     j = start
     while j < len(words):
         tok = words[j].word
@@ -635,6 +633,7 @@ def _check_package_runner(words: list[Any], start: int) -> None:
         j = nxt
     if j < len(words):
         _require_literal(words, j, j + 1)
+    return j
 
 
 def _unwrap_npx(
@@ -646,8 +645,9 @@ def _unwrap_npx(
     dynamic_args: bool,
 ) -> None:
     """``npx``/``pnpx`` ``[opts] <pkg> [args]``."""
-    del depth, acc, dynamic_args
-    _check_package_runner(words, idx + 1)
+    j = _check_package_runner(words, idx + 1)
+    if j < len(words):
+        _emit(words, j, depth + 1, acc, dynamic_args=dynamic_args)
 
 
 def _unwrap_npm(
@@ -659,7 +659,6 @@ def _unwrap_npm(
     dynamic_args: bool,
 ) -> None:
     """``npm [global-opts] exec|x`` runs a package binary like ``npx``."""
-    del depth, acc, dynamic_args
     k = idx + 1
     while k < len(words):
         tok = words[k].word
@@ -680,21 +679,23 @@ def _unwrap_npm(
     if k < len(words):
         _require_literal(words, k, k + 1)
         is_exec = words[k].word in ("exec", "x")
-        if is_exec:
-            _check_package_runner(words, k + 1)
         allowed = (
-            _NPM_GLOBAL_FLAGS
+            (_NPM_GLOBAL_FLAGS - {"-y", "--yes"} if is_exec else _NPM_GLOBAL_FLAGS)
             | _NPM_GLOBAL_VALUE_OPTS
             | _NPM_SUBCOMMAND_OPTS
             | (_RUNNER_FLAGS | _RUNNER_VALUE_OPTS if is_exec else frozenset())
         )
-        for m in range(k + 1, len(words)):
+        for m in range(idx + 1 if is_exec else k + 1, len(words)):
             tok = words[m].word
             if tok == "--":
                 break
             _require_literal(words, m, m + 1)
             if tok.startswith("-") and tok.split("=", 1)[0] not in allowed:
                 raise UnparseableCommand(f"npm option {tok} cannot be validated")
+        if is_exec:
+            j = _check_package_runner(words, k + 1)
+            if j < len(words):
+                _emit(words, j, depth + 1, acc, dynamic_args=dynamic_args)
 
 
 def _unwrap_cargo(

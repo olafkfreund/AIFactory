@@ -13,6 +13,9 @@
   `--script-shell`, `--node-options` and `-c` after the subcommand or package
   are refused; `-p`/`--package` is refused. `source` and shell script operands
   under `/dev` or `/proc` are refused after path normalisation.
+  The program `npx`, `pnpx`, `npm exec` and `npm x` run is now checked
+  against the allowlist like any command, and `-y`/`--yes` (install without
+  asking) is refused for them.
 - **Commands inside redirect targets are now checked (#1783).**
   The Bash command parser skipped redirect targets, so `ls > $(nc …)`,
   `cat < <(nc …)` and `cat <<< $(nc …)` checked only the outer command. It
