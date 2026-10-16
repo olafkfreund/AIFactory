@@ -437,7 +437,11 @@ _SHELL_FLAGS = frozenset("eulxv")
 _DASH_C_SHELLS = frozenset({"bash", "sh", "dash"})
 # Cheap refusals only. A script operand is trusted file content (like
 # ``source``, ``BASH_ENV`` and ``-l`` profiles), not a parser boundary.
-_STDIN_SCRIPT = re.compile(r"-|/dev/stdin|/dev/fd/.*|/proc/[^/]+/fd/.*")
+_STDIN_SCRIPT = re.compile(r"-|/dev/.*|/proc/.*")
+
+
+def _is_stdin_path(tok: str) -> bool:
+    return bool(_STDIN_SCRIPT.fullmatch(re.sub(r"^/+", "/", os.path.normpath(tok))))
 
 
 def _unwrap_dash_c(
@@ -478,7 +482,7 @@ def _unwrap_dash_c(
         if _basename(tokens[idx]) not in _DASH_C_SHELLS:
             raise UnparseableCommand(f"{tokens[idx]} -c cannot be validated")
         _extract(tokens[j], depth + 1, acc, dynamic_args=dynamic_args)
-    elif _STDIN_SCRIPT.fullmatch(tokens[j]):
+    elif _is_stdin_path(tokens[j]):
         raise UnparseableCommand(f"shell operand {tokens[j]} cannot be validated")
 
 
@@ -695,10 +699,41 @@ def _skip_timeout_opts(tokens: list[str], j: int) -> int | None:
     return j + 1  # DURATION
 
 
+_TIME_VALUE_OPTS = frozenset({"-f", "-o", "--format", "--output"})
+_TIME_FLAG_OPTS = frozenset(
+    {
+        "-p",
+        "-a",
+        "-v",
+        "-q",
+        "--portability",
+        "--append",
+        "--verbose",
+        "--quiet",
+    }
+)
+
+
+def _skip_time_opts(tokens: list[str], j: int) -> int | None:
+    """``time [opts] CMD`` — GNU/POSIX ``time`` options."""
+    while j < len(tokens) and tokens[j].startswith("-"):
+        tok = tokens[j]
+        if tok == "--":
+            return j + 1
+        if tok in _TIME_VALUE_OPTS:
+            j += 2
+        elif tok in _TIME_FLAG_OPTS or tok.startswith(("--format=", "--output=")):
+            j += 1
+        else:
+            raise UnparseableCommand(f"time option {tok} cannot be validated")
+    return j
+
+
 _PREFIX_OPT_SKIPPERS: dict[str, Callable[[list[str], int], int | None]] = {
     "command": _skip_command_opts,
     "exec": _skip_exec_opts,
     "timeout": _skip_timeout_opts,
+    "time": _skip_time_opts,
 }
 
 
@@ -710,7 +745,7 @@ def _unwrap_prefix(
     *,
     dynamic_args: bool,
 ) -> None:
-    """``command``/``exec``/``timeout`` run the command that follows their options."""
+    """``command``/``exec``/``timeout``/``time`` run the command after their options."""
     tokens = [w.word for w in words]
     opts_end = next(
         (k for k in range(idx + 1, len(tokens)) if not _is_opt(tokens[k])),
@@ -727,12 +762,236 @@ def _unwrap_prefix(
     _emit(words, j, depth + 1, acc, dynamic_args=dynamic_args)
 
 
+def _unwrap_source(
+    words: list[Any],
+    idx: int,
+    depth: int,
+    acc: list[tuple[str, str, bool]],
+    *,
+    dynamic_args: bool,
+) -> None:
+    """``source``/``.`` ``<script> [args]`` — the script path must be a static file."""
+    del depth, acc, dynamic_args
+    if idx + 1 < len(words):
+        _require_literal(words, idx + 1, idx + 2)
+        script = words[idx + 1].word
+        if script.startswith("-") or _is_stdin_path(script):
+            raise UnparseableCommand(f"source operand {script} cannot be validated")
+
+
+_RUNNER_FLAGS = frozenset(
+    {
+        "--no",
+        "-q",
+        "--quiet",
+        "--ignore-existing",
+        "--no-install",
+        "--include-workspace-root",
+        "--workspaces",
+        "-ws",
+    }
+)
+_RUNNER_VALUE_OPTS = frozenset({"-w", "--workspace"})
+_NPM_GLOBAL_FLAGS = frozenset(
+    {
+        "-g",
+        "--global",
+        "-s",
+        "--silent",
+        "-q",
+        "--quiet",
+        "-d",
+        "--verbose",
+        "-y",
+        "--yes",
+        "-ws",
+        "--workspaces",
+        "--include-workspace-root",
+        "-v",
+        "--version",
+        "-h",
+        "--help",
+    }
+)
+_NPM_GLOBAL_VALUE_OPTS = frozenset(
+    {"-w", "--workspace", "--prefix", "--loglevel", "--registry"}
+)
+_NPM_SUBCOMMAND_OPTS = frozenset(
+    {
+        "--save",
+        "-S",
+        "--save-dev",
+        "-D",
+        "--save-exact",
+        "-E",
+        "--save-optional",
+        "-O",
+        "--save-peer",
+        "--no-save",
+        "--omit",
+        "--include",
+        "--production",
+        "--only",
+        "--legacy-peer-deps",
+        "--strict-peer-deps",
+        "--ignore-scripts",
+        "--no-audit",
+        "--no-fund",
+        "--force",
+        "-f",
+        "--dry-run",
+        "--json",
+        "--parseable",
+        "--depth",
+        "--all",
+        "-a",
+        "--audit-level",
+        "--if-present",
+        "--long",
+        "-l",
+        "--prefer-offline",
+        "--prefer-online",
+        "--offline",
+        "--no-package-lock",
+        "--package-lock-only",
+        "--frozen-lockfile",
+        "--no-git-tag-version",
+    }
+)
+
+
+def _check_package_runner(words: list[Any], start: int) -> int:
+    """Validate options and return the package operand index for ``npx``/``pnpx``/``npm exec``."""
+    j = start
+    while j < len(words):
+        tok = words[j].word
+        if tok == "--":
+            j += 1
+            break
+        if not tok.startswith("-"):
+            break
+        name = tok.split("=", 1)[0]
+        if name in _RUNNER_VALUE_OPTS:
+            nxt = j + 1 if "=" in tok else j + 2
+        elif tok in _RUNNER_FLAGS:
+            nxt = j + 1
+        elif name in ("-c", "--call", "--shell-mode"):
+            raise UnparseableCommand(
+                f"package runner option {tok} runs a shell command string"
+            )
+        else:
+            raise UnparseableCommand(f"package runner option {tok} cannot be validated")
+        _require_literal(words, j, nxt)
+        j = nxt
+    if j < len(words):
+        _require_literal(words, j, j + 1)
+    return j
+
+
+def _unwrap_npx(
+    words: list[Any],
+    idx: int,
+    depth: int,
+    acc: list[tuple[str, str, bool]],
+    *,
+    dynamic_args: bool,
+) -> None:
+    """``npx``/``pnpx`` ``[opts] <pkg> [args]``."""
+    j = _check_package_runner(words, idx + 1)
+    if j < len(words):
+        _emit(words, j, depth + 1, acc, dynamic_args=dynamic_args)
+
+
+def _unwrap_npm(
+    words: list[Any],
+    idx: int,
+    depth: int,
+    acc: list[tuple[str, str, bool]],
+    *,
+    dynamic_args: bool,
+) -> None:
+    """``npm [global-opts] exec|x`` runs a package binary like ``npx``."""
+    k = idx + 1
+    while k < len(words):
+        tok = words[k].word
+        if tok == "--":
+            k += 1
+            break
+        if not tok.startswith("-"):
+            break
+        name = tok.split("=", 1)[0]
+        if name in _NPM_GLOBAL_VALUE_OPTS:
+            nxt = k + 1 if "=" in tok else k + 2
+        elif tok in _NPM_GLOBAL_FLAGS:
+            nxt = k + 1
+        else:
+            raise UnparseableCommand(f"npm option {tok} cannot be validated")
+        _require_literal(words, k, nxt)
+        k = nxt
+    if k < len(words):
+        _require_literal(words, k, k + 1)
+        is_exec = words[k].word in ("exec", "x")
+        allowed = (
+            (_NPM_GLOBAL_FLAGS - {"-y", "--yes"} if is_exec else _NPM_GLOBAL_FLAGS)
+            | _NPM_GLOBAL_VALUE_OPTS
+            | _NPM_SUBCOMMAND_OPTS
+            | (_RUNNER_FLAGS | _RUNNER_VALUE_OPTS if is_exec else frozenset())
+        )
+        for m in range(idx + 1 if is_exec else k + 1, len(words)):
+            tok = words[m].word
+            if tok == "--":
+                break
+            _require_literal(words, m, m + 1)
+            if tok.startswith("-") and tok.split("=", 1)[0] not in allowed:
+                raise UnparseableCommand(f"npm option {tok} cannot be validated")
+        if is_exec:
+            j = _check_package_runner(words, k + 1)
+            if j < len(words):
+                _emit(words, j, depth + 1, acc, dynamic_args=dynamic_args)
+
+
+def _unwrap_cargo(
+    words: list[Any],
+    idx: int,
+    depth: int,
+    acc: list[tuple[str, str, bool]],
+    *,
+    dynamic_args: bool,
+) -> None:
+    """Refuse ``cargo watch`` and inline ``--config KEY=VALUE`` overrides."""
+    del depth, acc, dynamic_args
+    for k in range(idx + 1, len(words)):
+        tok = words[k].word
+        if tok == "watch":
+            raise UnparseableCommand(
+                "cargo watch runs shell commands from a long-running watcher; not permitted"
+            )
+        if tok == "--config" or tok.startswith("--config="):
+            has_eq = "=" in tok
+            if not has_eq and k + 1 >= len(words):
+                raise UnparseableCommand(
+                    "cargo --config without value cannot be validated"
+                )
+            _require_literal(words, k, k + (1 if has_eq else 2))
+            val = tok.split("=", 1)[1] if has_eq else words[k + 1].word
+            if not re.fullmatch(r"[\w./-]+\.toml", val):
+                raise UnparseableCommand(
+                    f"cargo --config {val} is not a .toml file path"
+                )
+
+
 _UNWRAPPERS: dict[str, Callable[..., None]] = {
     **dict.fromkeys(_SHELL_INTERPRETERS, _unwrap_dash_c),
     "env": _unwrap_env,
     "xargs": _unwrap_xargs,
     "find": _unwrap_find_exec,
     **dict.fromkeys(_PREFIX_OPT_SKIPPERS, _unwrap_prefix),
+    "source": _unwrap_source,
+    ".": _unwrap_source,
+    "npx": _unwrap_npx,
+    "pnpx": _unwrap_npx,
+    "npm": _unwrap_npm,
+    "cargo": _unwrap_cargo,
 }
 
 
