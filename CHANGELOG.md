@@ -7,6 +7,8 @@
   file. `npx`, `pnpx` and `npm exec` accept a fixed set of options and refuse
   `-c`/`--call`/`--shell-mode`, which run a shell command string. `cargo watch`
   is refused and `cargo-watch` leaves the Rust allowlist.
+  `npm` options before the subcommand must be known ones, so `npm -w x exec -c …`
+  is checked as `npm exec`, and `cargo --config` accepts only a `.toml` file path.
 - **Commands inside redirect targets are now checked (#1783).**
   The Bash command parser skipped redirect targets, so `ls > $(nc …)`,
   `cat < <(nc …)` and `cat <<< $(nc …)` checked only the outer command. It

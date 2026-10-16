@@ -538,6 +538,30 @@ _RUNNER_FLAGS = frozenset(
     }
 )
 _RUNNER_VALUE_OPTS = frozenset({"-p", "--package", "-w", "--workspace"})
+_NPM_GLOBAL_FLAGS = frozenset(
+    {
+        "-g",
+        "--global",
+        "-s",
+        "--silent",
+        "-q",
+        "--quiet",
+        "-d",
+        "--verbose",
+        "-y",
+        "--yes",
+        "-ws",
+        "--workspaces",
+        "--include-workspace-root",
+        "-v",
+        "--version",
+        "-h",
+        "--help",
+    }
+)
+_NPM_GLOBAL_VALUE_OPTS = frozenset(
+    {"-w", "--workspace", "--prefix", "--loglevel", "--registry"}
+)
 
 
 def _check_package_runner(words: list[Any], start: int) -> None:
@@ -588,12 +612,29 @@ def _unwrap_npm(
     *,
     dynamic_args: bool,
 ) -> None:
-    """``npm exec`` / ``npm x`` runs a package binary like ``npx``."""
+    """``npm [global-opts] exec|x`` runs a package binary like ``npx``."""
     del depth, acc, dynamic_args
-    for k in range(idx + 1, len(words)):
+    k = idx + 1
+    while k < len(words):
+        tok = words[k].word
+        if tok == "--":
+            k += 1
+            break
+        if not tok.startswith("-"):
+            break
+        name = tok.split("=", 1)[0]
+        if name in _NPM_GLOBAL_VALUE_OPTS:
+            nxt = k + 1 if "=" in tok else k + 2
+        elif tok in _NPM_GLOBAL_FLAGS:
+            nxt = k + 1
+        else:
+            raise UnparseableCommand(f"npm option {tok} cannot be validated")
+        _require_literal(words, k, nxt)
+        k = nxt
+    if k < len(words):
+        _require_literal(words, k, k + 1)
         if words[k].word in ("exec", "x"):
             _check_package_runner(words, k + 1)
-            return
 
 
 def _unwrap_cargo(
@@ -604,12 +645,26 @@ def _unwrap_cargo(
     *,
     dynamic_args: bool,
 ) -> None:
-    """Refuse ``cargo watch`` (runs shell commands via ``-s``)."""
+    """Refuse ``cargo watch`` and inline ``--config KEY=VALUE`` overrides."""
     del depth, acc, dynamic_args
-    if any(w.word == "watch" for w in words[idx + 1 :]):
-        raise UnparseableCommand(
-            "cargo watch runs shell commands from a long-running watcher; not permitted"
-        )
+    for k in range(idx + 1, len(words)):
+        tok = words[k].word
+        if tok == "watch":
+            raise UnparseableCommand(
+                "cargo watch runs shell commands from a long-running watcher; not permitted"
+            )
+        if tok == "--config" or tok.startswith("--config="):
+            has_eq = "=" in tok
+            if not has_eq and k + 1 >= len(words):
+                raise UnparseableCommand(
+                    "cargo --config without value cannot be validated"
+                )
+            _require_literal(words, k, k + (1 if has_eq else 2))
+            val = tok.split("=", 1)[1] if has_eq else words[k + 1].word
+            if not re.fullmatch(r"[\w./-]+\.toml", val):
+                raise UnparseableCommand(
+                    f"cargo --config {val} is not a .toml file path"
+                )
 
 
 _UNWRAPPERS: dict[str, Callable[..., None]] = {

