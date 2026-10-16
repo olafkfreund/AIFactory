@@ -358,6 +358,70 @@ def test_real_git_repo_exec_keys_pinned(secret_env: None, tmp_path: Path) -> Non
     assert env["GIT_PAGER"] == "cat"  # beats pager.<cmd> on a tty
 
 
+def _credential_fill(tmp_path: Path, env: dict[str, str]) -> None:
+    """Run ``git credential fill`` for a fake host with no gh on PATH, no network."""
+    import shutil
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for tool in ("git", "touch"):
+        found = shutil.which(tool)
+        assert found
+        (bin_dir / tool).symlink_to(found)
+    run_env = {
+        **env,
+        "PATH": str(bin_dir),
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_TERMINAL_PROMPT": "0",
+    }
+    for k in ("GIT_ASKPASS", "SSH_ASKPASS", "GIT_DIR", "GIT_WORK_TREE"):
+        run_env.pop(k, None)
+    subprocess.run(
+        ["git", "-C", str(tmp_path / "repo"), "credential", "fill"],
+        input="protocol=https\nhost=example.invalid\n\n",
+        capture_output=True,
+        text=True,
+        env=run_env,
+        timeout=30,
+    )
+
+
+def test_real_git_planted_helper_and_askpass_do_not_run(
+    secret_env: None, tmp_path: Path
+) -> None:
+    """A repo-planted credential.helper and core.askPass never run (#1745)."""
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    ask = tmp_path / "ask.sh"
+    ask.write_text(f"#!/bin/sh\ntouch {tmp_path}/asked\n")
+    ask.chmod(0o700)
+    for key, val in (
+        ("credential.helper", f"!touch {tmp_path}/ran"),
+        ("core.askPass", str(ask)),
+    ):
+        subprocess.run(["git", "-C", str(repo), "config", key, val], check=True)
+    _credential_fill(tmp_path, child_env())
+    assert not (tmp_path / "ran").exists()
+    assert not (tmp_path / "asked").exists()
+
+
+def test_reset_wipes_a_callers_earlier_credential_helper(
+    secret_env: None, tmp_path: Path
+) -> None:
+    """A helper passed in ``extra`` before the pins is reset by them (#1745)."""
+    subprocess.run(["git", "init", "-q", str(tmp_path / "repo")], check=True)
+    env = child_env(
+        extra={
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "credential.helper",
+            "GIT_CONFIG_VALUE_0": f"!touch {tmp_path}/caller",
+        }
+    )
+    _credential_fill(tmp_path, env)
+    assert not (tmp_path / "caller").exists()
+
+
 # --- backend in-process helpers (#1680 review fix) ---------------------------
 
 

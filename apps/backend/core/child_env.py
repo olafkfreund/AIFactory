@@ -82,8 +82,11 @@ def child_env(
     (empty) and credential helpers (reset, then ``!gh auth git-credential``
     for github.com).
     ``GIT_SSH_COMMAND``, ``GIT_PAGER`` or ``GIT_EDITOR`` in the server env
-    overrides the corresponding setting. The pins are appended last (an
-    existing ``GIT_CONFIG_*`` entry keeps its lower index).
+    overrides the corresponding setting. The pins are appended last, after any
+    ``GIT_CONFIG_*`` entry already in the env or ``extra``, so they win. For
+    ``credential.helper`` that means the reset also wipes every helper such an
+    entry added; a caller that needs one appends it after this call (as
+    ``github_env`` does).
     Build it per call: ``os.environ`` changes at runtime.
     """
     env = {

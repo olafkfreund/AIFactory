@@ -8,10 +8,12 @@
   `sequence.editor`, and defaults `GIT_PAGER` to `cat`, which overrides
   `pager.<cmd>`. A `.git/config` an agent writes can no longer make the
   server run a program through any of them. The web terminal gets the same
-  pins and keeps the user's `EDITOR`/`PAGER`. A host credential helper other
-  than gh (`store`, libsecret) no longer applies to factory git. Use
-  `GITHUB_TOKEN` or `gh auth login`. Not covered: `filter.*` and merge
-  drivers (#1761).
+  pins and keeps the user's `EDITOR`/`PAGER`. After the reset it re-adds the
+  user's own system and global credential helpers (`store`, libsecret, glab),
+  so HTTPS pushes from the terminal keep working, and a helper planted in the
+  repo config still does not run. On the server, a host credential helper
+  other than gh no longer applies to factory git. Use `GITHUB_TOKEN` or
+  `gh auth login` there. Not covered: `filter.*` and merge drivers (#1761).
 - **`time`, `source`, `npx` and `cargo watch` no longer hide the program they run (#1784).**
   `/usr/bin/time CMD` now checks `CMD`. `source` and `.` take only a literal
   file. `npx`, `pnpx` and `npm exec` accept a fixed set of options and refuse

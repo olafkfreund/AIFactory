@@ -194,3 +194,21 @@ Revert the step commits. The pins are env-only and nothing is persisted.
   (a failed handoff). Its diff was kept. One addition: an empty pin value
   renders as `(empty)` (`_code`) instead of an empty backtick pair, which is
   not valid markdown or MDX.
+- Review changes (lead review of #1811):
+  - D3 changed: `PTYSession.start()` re-adds the user's own credential
+    helpers after the reset. `_user_credential_helpers` reads
+    `git config --system|--global --get-regexp '^credential\.(.+\.)?helper$'`
+    (5 s timeout; a failure counts as none). That covers URL-scoped helpers
+    like `glab auth setup-git`. Repo config is never read, so planted helpers
+    stay reset. The spec's terminal credential risk no longer applies.
+  - `session.py` uses an absolute import, and the comment is wrapped to 100
+    columns. `tests/test_pty_git_pins.py` is ruff-clean against
+    `standards/ruff.toml`. `session.py` is back at its 4 baseline findings.
+  - The `child_env()` docstring now says the `credential.helper` reset wipes a
+    helper a caller put in `GIT_CONFIG_*`/`extra` earlier.
+    `test_reset_wipes_a_callers_earlier_credential_helper` pins that.
+  - New `test_real_git_planted_helper_and_askpass_do_not_run`: real
+    `git credential fill` for a fake host, PATH holding only git and touch
+    (no gh), no network. Neither marker appears. Both new tests fail on the dev
+    `child_env.py`.
+  - New `test_pty_session_restores_the_users_global_credential_helpers`.
