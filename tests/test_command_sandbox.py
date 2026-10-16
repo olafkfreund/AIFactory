@@ -188,6 +188,8 @@ DYNAMIC_COMMAND_WORD = [
     "echo ${!x}",
     "echo ${x:-${y:x}}",
     "cat <<EOF\n${y:x}\nEOF",
+    'echo "${a[GIT_CONFIG_COUNT=0]}"; git status',
+    "echo ${X:GIT_CONFIG_COUNT=0}",
 ]
 
 # Must stay allowed by the parser after the #1753 hardening.
@@ -228,6 +230,8 @@ MUST_PARSE = {
     "echo ${a[1]}": ["echo"],
     "echo ${x/a/b}": ["echo"],
     "echo ${x@Q}": ["echo"],
+    "echo ${x:+alt}": ["echo"],
+    "echo ${x#p}": ["echo"],
 }
 
 # `git -c …` config injection / transport-exec hijack — must be blocked even

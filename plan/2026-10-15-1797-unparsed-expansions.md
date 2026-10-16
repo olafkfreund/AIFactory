@@ -97,7 +97,9 @@ Tests (`tests/test_command_sandbox.py`): add to `DYNAMIC_COMMAND_WORD` the
 two review bypasses, the same with `@E`/`@A`, `${y:1:x}`, `${a[x]}`,
 `${!x}`, `${x:-${y:x}}`, and `cat <<EOF\n${y:x}\nEOF`; add to `MUST_PARSE`
 `${x#pat}`, `${#x}`, `${x:1:2}`, `${x: -1}`, `${a[1]}`, `${x/a/b}`,
-`${x@Q}`.
+`${x@Q}`, `${x:+alt}`, `${x#p}`. From the #1800 review, also refuse
+`echo "${a[GIT_CONFIG_COUNT=0]}"; git status` and `echo ${X:GIT_CONFIG_COUNT=0}`
+(assignment hidden in a subscript or offset).
 
 Check: `pytest tests/test_command_sandbox.py tests/test_plan_commands.py -q`;
 `ruff check`, `ruff format --check`.
