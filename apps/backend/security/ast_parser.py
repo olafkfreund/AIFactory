@@ -128,9 +128,67 @@ def _require_literal(words: list[Any], start: int, stop: int) -> None:
         )
 
 
-# Inside ``${…}`` and heredoc bodies (text bashlex leaves unparsed) only
-# ``$(…)`` and backticks run a command (#1797).
-_RUNS_COMMAND = re.compile(r"\$\(|`")
+# Inside ``${…}`` and heredoc bodies (text bashlex leaves unparsed), refuse
+# command/arithmetic substitution and ``${…}`` forms that evaluate text (#1797).
+_RUNS_COMMAND = re.compile(r"\$\(|`|\$\[")
+_PARAM_RE = re.compile(
+    r"([#!]?)([A-Za-z_][A-Za-z0-9_]*|[0-9]+|[@*#?$!-])"
+    r"(?:\[(-?[0-9]+|[@*])\])?(?:$|(?=[-*@#%/^,:?+=]))(.*)",
+    re.DOTALL,
+)
+_OFFSET_RE = re.compile(r":\s*-?[0-9]+(?::\s*-?[0-9]+)?")
+
+
+def _check_parameter(value: str, *, heredoc: bool = False) -> None:
+    if _RUNS_COMMAND.search(value):
+        raise UnparseableCommand(
+            "command substitution inside ${…} or a heredoc body cannot be validated"
+        )
+    if not heredoc:
+        m = _PARAM_RE.fullmatch(value)
+        if not m:
+            raise UnparseableCommand(
+                f"parameter expansion ${{{value}}} cannot be validated"
+            )
+        prefix, name, sub, rest = m.groups()
+        if (
+            (
+                prefix == "!"
+                and (
+                    not name.isidentifier()
+                    or (sub, rest)
+                    not in ((None, "*"), (None, "@"), ("@", ""), ("*", ""))
+                )
+            )
+            or (prefix != "!" and rest.startswith("*"))
+            or rest.startswith(("@P", "@E", "@A"))
+            or (
+                rest.startswith(":")
+                and rest[:2] not in (":-", ":=", ":?", ":+")
+                and not _OFFSET_RE.fullmatch(rest)
+            )
+        ):
+            raise UnparseableCommand(
+                f"parameter expansion ${{{value}}} cannot be validated"
+            )
+        value = rest
+    i = value.find("${")
+    while i >= 0:
+        depth = 1
+        j = i + 2
+        while j < len(value) and depth:
+            if value[j] == "\\":
+                j += 2
+                continue
+            if value[j] == "{":
+                depth += 1
+            elif value[j] == "}":
+                depth -= 1
+            j += 1
+        if depth:
+            raise UnparseableCommand("unclosed ${ in parameter or heredoc")
+        _check_parameter(value[i + 2 : j - 1])
+        i = value.find("${", j)
 
 
 def _collect_command_nodes(
@@ -143,12 +201,8 @@ def _collect_command_nodes(
         return
     visited.add(id(node))
     kind = getattr(node, "kind", None)
-    if kind in ("parameter", "heredoc") and _RUNS_COMMAND.search(
-        getattr(node, "value", "")
-    ):
-        raise UnparseableCommand(
-            "command substitution inside ${…} or a heredoc body cannot be validated"
-        )
+    if kind in ("parameter", "heredoc"):
+        _check_parameter(getattr(node, "value", ""), heredoc=(kind == "heredoc"))
     if kind == "command":
         out.append(node)
     for val in vars(node).values():

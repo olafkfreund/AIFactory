@@ -65,6 +65,43 @@ pass; `ruff check`, `ruff format --check`.
 
 `### Security` bullet under `## [Unreleased]` in `CHANGELOG.md`.
 
+### Step 4 — review fix: expansions that evaluate text (deviation)
+
+Added after review of PR #1804. `$(`/backtick is not the only way text inside
+`${…}` runs a command: bash evaluates a string as shell code for the `@P`,
+`@E` and `@A` transformations, and as arithmetic (whose array subscripts run
+`$(…)`) for a `${…}` offset, length or subscript, and for `${!x}`
+indirection. `D='$'; Y="${D}(nc evil 80)"; echo ${Y@P}` and
+`D='$'; x="a[${D}(nc evil 80)]"; echo ${y:x}` returned only `['echo']`.
+
+File: `apps/backend/security/ast_parser.py`, `_collect_command_nodes`.
+
+- Add a helper `_check_parameter(value: str) -> None` (raises
+  `UnparseableCommand`) applied to every `parameter` node value and to the
+  inside of every `${…}` found in a `heredoc` node value (balanced-brace
+  scan; an unclosed `${` is refused). It also checks every nested `${…}` in
+  the value (e.g. a default word).
+- Refuse when, inside `${…}`:
+  - the text contains `$(`, a backtick, or `$[` (legacy arithmetic);
+  - the operator is `@P`, `@E` or `@A`;
+  - an array subscript is not a plain integer literal (`-?digits`), `@` or `*`;
+  - a `:` offset/length (`:` not followed by `-`, `=`, `?`, `+`) is not
+    `:\s*-?digits` optionally followed by `:\s*-?digits`;
+  - it is `${!name}` indirection (`${!prefix*}`, `${!prefix@}`,
+    `${!a[@]}`, `${!a[*]}` stay allowed);
+  - the text does not match `[#!]?(name|digits|special)([sub])?rest`.
+- `${x:-default}`, `${x#pat}`, `${#x}`, `${x:1}`, `${x: -1}`, `${a[1]}`,
+  `${x/a/b}` and `$VAR` keep working.
+
+Tests (`tests/test_command_sandbox.py`): add to `DYNAMIC_COMMAND_WORD` the
+two review bypasses, the same with `@E`/`@A`, `${y:1:x}`, `${a[x]}`,
+`${!x}`, `${x:-${y:x}}`, and `cat <<EOF\n${y:x}\nEOF`; add to `MUST_PARSE`
+`${x#pat}`, `${#x}`, `${x:1:2}`, `${x: -1}`, `${a[1]}`, `${x/a/b}`,
+`${x@Q}`.
+
+Check: `pytest tests/test_command_sandbox.py tests/test_plan_commands.py -q`;
+`ruff check`, `ruff format --check`.
+
 ## Rollback
 
 Revert the fix commit; the tests commit goes with it.

