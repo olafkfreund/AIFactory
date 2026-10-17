@@ -346,7 +346,7 @@ def test_build_subprocess_env_prewarms_from_home_cache(tmp_path, monkeypatch):
     p = OpenCodeAgenticProvider(
         model="opencode:anthropic/claude-sonnet-4-5", working_dir=tmp_path
     )
-    env = p._build_subprocess_env()
+    env = p._build_subprocess_env({"XDG_CACHE_HOME": str(target_cache)})
 
     target = target_cache / "opencode" / "models.json"
     assert env["XDG_CACHE_HOME"] == str(target_cache)
@@ -378,7 +378,7 @@ def test_build_subprocess_env_copies_version_sentinel(tmp_path, monkeypatch):
     p = OpenCodeAgenticProvider(
         model="opencode:anthropic/claude-sonnet-4-5", working_dir=tmp_path
     )
-    p._build_subprocess_env()
+    p._build_subprocess_env({"XDG_CACHE_HOME": str(target_cache)})
 
     target_version = target_cache / "opencode" / "version"
     assert target_version.is_file()
@@ -405,7 +405,7 @@ def test_build_subprocess_env_does_not_clobber_real_user_cache(tmp_path, monkeyp
         model="opencode:anthropic/claude-sonnet-4-5", working_dir=tmp_path
     )
     # Should early-return (source == target) without raising or rewriting.
-    env = p._build_subprocess_env()
+    env = p._build_subprocess_env({"XDG_CACHE_HOME": str(cache)})
     assert cat.read_text(encoding="utf-8") == _BIG_CATALOGUE
     assert env["XDG_CACHE_HOME"] == str(cache)
 
@@ -424,7 +424,9 @@ def test_build_subprocess_env_no_warm_cache_is_best_effort(tmp_path, monkeypatch
     p = OpenCodeAgenticProvider(
         model="opencode:anthropic/claude-sonnet-4-5", working_dir=tmp_path
     )
-    env = p._build_subprocess_env()  # must not raise
+    env = p._build_subprocess_env(
+        {"XDG_CACHE_HOME": str(target_cache)}
+    )  # must not raise
     # No catalogue was created (nothing to copy from).
     assert not (target_cache / "opencode" / "models.json").exists()
     assert "XDG_CACHE_HOME" in env
