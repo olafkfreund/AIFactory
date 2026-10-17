@@ -113,8 +113,8 @@ High-risk patterns: `auth`, `login`, `session`, `password`, `secret`, `credentia
 |---|---|
 | `achieved_val` | `0` |
 | `ci_parity` | `True` |
-| `host_ci_green` | `True` |
-| `tfactory_verdict` | `'pass'` |
+| `host_ci_green` | `False` |
+| `tfactory_verdict` | `None` |
 | `val_floor` | `None` |
 
 ### B3. Flags
@@ -196,4 +196,4 @@ Declared, unverified (cross-repo, not probed):
 | `wiring.auto_merge_flag` | Auto-merge is off by default and is enabled only by an explicit per-project or per-deployment setting. | ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 CM | `apps/web-server/server/services/pr_endgame.py` | - |
 | `wiring.blank_tier` | A task with no recorded review tier is decided as low, so the live merge path treats a blank tier exactly as the policy treats low. | ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 CM | `apps/web-server/server/services/pr_endgame.py` | - |
 | `wiring.live_overlay` | On the live merge path a high risk or production deployment holds the merge for a human regardless of the path-floor flag; a required human-approval gate clears only on a GitHub approval of the head commit by someone other than the PR author or a bot; an unreadable contract holds it too. The PR author is the GitHub App bot and no PAT is in the server pod. | ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 CM | `apps/web-server/server/services/pr_endgame.py` | Accepted residual risks (#1671): non-Claude runners and the GitHub MCP server still receive the App token; PAT copies in project .env files and the UI settings token are not removed by this change; stored per-project clone PATs are unchanged (follow-up). |
-| `wiring.path_floor_flag` | The path-derived risk floor is advisory by default and changes the merge tier only when enforcement is explicitly switched on. | ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 CM | `apps/web-server/server/services/pr_endgame.py` | - |
+| `wiring.path_floor_flag` | The path-derived risk floor is advisory by default for tasks with a signed contract and changes their merge tier only when enforcement is explicitly switched on; for tasks without a signed contract (legacy and from-issue) it always decides the merge tier. | ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 CM | `apps/web-server/server/services/pr_endgame.py` | - |

@@ -108,3 +108,10 @@ Revert the PR. No data, schema or config change.
   would now wait on the gate until the watcher times out.
 - Step 2 was done by the lane agent: the codex run sat waiting on stdin with
   no output for 20 minutes and was stopped.
+- The generated autonomy matrix (`scripts/gen_autonomy_matrix.py --check`,
+  blocking in CI) reflects the policy: B2 now shows unmeasured signals as
+  `host_ci_green False` / `tfactory_verdict None`. B1 ("all-green signals")
+  now passes a green `fetch_signals`, so it still shows what its heading
+  says. The `wiring.path_floor_flag` objective in
+  `docs/compliance/control-objectives.toml` now says the floor always
+  applies to legacy tasks. Matrix `.md`/`.json` regenerated.
