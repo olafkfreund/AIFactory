@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1730
 intent: intent/2026-10-17-1730-optin-api-backstage.md
 ---
