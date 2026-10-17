@@ -1,13 +1,37 @@
 ---
-status: draft
+status: approved
 issue: 1704
 intent: intent/2026-10-17-1704-kubejob-build-ownership.md
 ---
 
 # Spec: one owner per build, visible from every replica
 
-Covers #1704, #1705, #1714. Three options follow; **Option A is recommended**.
+Covers #1704, #1705, #1714. Three options were offered; **the user chose Option A**
+(see "Decisions" below). Options B and C are kept for the record, marked not chosen.
 Line numbers are against `origin/dev` at `08e22641`.
+
+## Decisions (user, 2026-10-17)
+
+**Option A is chosen.** The `job_states` row is the only owner of a build;
+Kubernetes is evidence only, never an order.
+
+- **#1704:** Start and plan approval return 409 while `is_running_anywhere` is
+  true, and also when the store read fails. They never call `stop_task` on a
+  build; they may still stop a local spec-creation process.
+- **#1705:** `worker_ref` records `{kind: subprocess, pod: HOSTNAME, boot: <boot id>}`.
+  `reconcile_on_startup` fails rows from this pod's earlier boot. The reaper
+  fails another pod's row only when `read_namespaced_pod` returns 404.
+- **#1714:** the label-based Job sweep with the 10-minute grace, deleting one Job
+  at a time and never with `delete_collection`. It ships in **dry-run by
+  default** (report only) behind an env switch that follows `stale_reaper`'s
+  `REAPER_DRY_RUN` (anything but an explicit `false` reports). Forward the
+  switch into build Jobs only if it is needed there.
+- **Credential:** dispatch catches `BaseException` and releases the credential
+  only when no Job can exist.
+
+Answers to the intent's open questions: (1) 409 instead of restarting; (2) the
+pod-404 rule is allowed; (3) dry-run first. No migration and no new RBAC. If
+list or read RBAC is missing, report it rather than adding it.
 
 ## Facts every option builds on
 
@@ -31,7 +55,7 @@ Line numbers are against `origin/dev` at `08e22641`.
   falls back to sharing when every credential is busy (`:116-128`), so a held
   credential lowers distinctness but never blocks a build.
 
-## Option A (recommended): the row is the owner; Kubernetes is evidence, never an order
+## Option A (CHOSEN): the row is the owner; Kubernetes is evidence, never an order
 
 Smallest change that closes all three holes, no migration, no new RBAC.
 
@@ -109,7 +133,7 @@ Test plan (`apps/web-server/tests/`, existing fakes for the store and batch API)
   released after the Job 404s; `CancelledError` mid-dispatch → credential
   released when no Job was created.
 
-## Option B: Kubernetes objects as the source of truth
+## Option B (not chosen): Kubernetes objects as the source of truth
 
 Label every Job with `factory.io/owner-pod`, and answer "running anywhere" by
 listing Jobs (and, for in-pod builds, by listing the owning pods). Drop the
@@ -126,7 +150,7 @@ test needs a fake API server.
 Rejected as the main design. Its useful part, listing Jobs by label to find
 orphans, is A3.
 
-## Option C: DB leases with heartbeats for every row
+## Option C (not chosen): DB leases with heartbeats for every row
 
 Add `owner` and `lease_expires_at` columns (Alembic migration). Each replica
 renews the lease of every build it owns every 15 s; a row whose lease expired
@@ -148,7 +172,7 @@ than one replica (A2's pod check has no meaning there).
 
 ## Options at a glance
 
-| | A: row owner + k8s evidence | B: k8s as truth | C: DB leases |
+| | A: row owner + k8s evidence (chosen) | B: k8s as truth (not chosen) | C: DB leases (not chosen) |
 |---|---|---|---|
 | Closes #1704 / #1705 / #1714 | yes / yes (stamped rows) / yes | yes / partly / yes | yes / yes / needs A3 |
 | Migration | none | relabel Jobs | Alembic + backfill |
