@@ -11,7 +11,14 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from http import HTTPStatus
 from pathlib import Path
+
+_MAX_MESSAGE = 300
+
+
+def _say(*args: object, file: object = None) -> None:
+    print(*args, file=file)  # type: ignore[call-overload]  # noqa: T201 - CLI output
 
 
 def load_manifest(workflows: bool, name: str | None) -> dict:
@@ -62,7 +69,7 @@ def write_private(path: str | Path, text: str) -> None:
 
 
 def copilot_listed(status: int, body: dict) -> bool:
-    return 200 <= status < 300 and any(
+    return HTTPStatus.OK <= status < HTTPStatus.MULTIPLE_CHOICES and any(
         "copilot" in reviewer.get("login", "").lower()
         for reviewer in (body.get("requested_reviewers") or [])
         if isinstance(reviewer, dict) and isinstance(reviewer.get("login"), str)
@@ -71,7 +78,7 @@ def copilot_listed(status: int, body: dict) -> bool:
 
 def convert(code: str, output: str) -> int:
     if not re.fullmatch(r"[A-Za-z0-9_-]+", code):
-        print("invalid code", file=sys.stderr)
+        _say("invalid code", file=sys.stderr)
         return 1
     request = urllib.request.Request(
         f"https://api.github.com/app-manifests/{code}/conversions",
@@ -82,10 +89,10 @@ def convert(code: str, output: str) -> int:
         with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 - fixed https URL
             body = json.load(response)
     except urllib.error.HTTPError as error:
-        print(f"HTTP {error.code}", file=sys.stderr)
+        _say(f"HTTP {error.code}", file=sys.stderr)
         return 1
     except (urllib.error.URLError, OSError, ValueError):
-        print("conversion failed", file=sys.stderr)
+        _say("conversion failed", file=sys.stderr)
         return 1
     if (
         not isinstance(body, dict)
@@ -95,17 +102,17 @@ def convert(code: str, output: str) -> int:
         or not isinstance(body.get("html_url"), str)
         or not body["html_url"]
     ):
-        print("invalid conversion response", file=sys.stderr)
+        _say("invalid conversion response", file=sys.stderr)
         return 1
     try:
         write_private(output, secret_yaml(body["pem"]))
     except FileExistsError:
-        print("output file already exists", file=sys.stderr)
+        _say("output file already exists", file=sys.stderr)
         return 1
-    print(f"app id: {body['id']}")
-    print(f"slug: {body.get('slug', '')}")
-    print(f"install URL: {body['html_url']}/installations/new")
-    print(
+    _say(f"app id: {body['id']}")
+    _say(f"slug: {body.get('slug', '')}")
+    _say(f"install URL: {body['html_url']}/installations/new")
+    _say(
         "after install, the installation id is the number at the end of the settings URL; "
         "apply the file with kubectl yourself"
     )
@@ -118,7 +125,7 @@ def probe_copilot(
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo) or not all(
         value.isascii() and value.isdecimal() for value in (pr, app_id, installation_id)
     ):
-        print("invalid repo, PR, or id", file=sys.stderr)
+        _say("invalid repo, PR, or id", file=sys.stderr)
         return 1
 
     import httpx  # noqa: PLC0415 - only needed for the live probe
@@ -149,21 +156,21 @@ def probe_copilot(
         )
         body = response.json()
     except (OSError, ValueError, KeyError, httpx.HTTPError):
-        print("probe failed", file=sys.stderr)
+        _say("probe failed", file=sys.stderr)
         return 1
 
     listed = copilot_listed(
         response.status_code, body if isinstance(body, dict) else {}
     )
-    print(f"HTTP {response.status_code}; copilot_listed: {listed}")
+    _say(f"HTTP {response.status_code}; copilot_listed: {listed}")
     if listed:
         return 0
-    print(
+    _say(
         "the App token cannot request Copilot; configure a ruleset that requests "
         "Copilot review (docs/docs/concepts/github-app.md)"
     )
     message = body.get("message", "") if isinstance(body, dict) else ""
-    print(str(message)[:300])
+    _say(str(message)[:_MAX_MESSAGE])
     return 1
 
 
@@ -200,9 +207,9 @@ def main(argv: list[str] | None = None) -> int:
             form_html(load_manifest(args.workflows, args.name), args.org)
         )
     except ValueError as error:
-        print(error, file=sys.stderr)
+        _say(error, file=sys.stderr)
         return 1
-    print(
+    _say(
         f"open {args.out}, create the App, then copy code= from the redirect URL "
         "(valid one hour) and run: convert CODE --out secret.yaml"
     )
