@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1761
 spec: https://github.com/olafkfreund/AIFactory/blob/docs/1746-git-metadata-write-guards/spec/2026-10-17-1746-git-metadata-write-guards.md
 intent: https://github.com/olafkfreund/AIFactory/blob/docs/1746-git-metadata-write-guards/intent/2026-10-17-1746-git-metadata-write-guards.md
