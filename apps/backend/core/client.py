@@ -16,6 +16,7 @@ import copy
 import json
 import logging
 import os
+import re
 import threading
 import time
 import weakref
@@ -208,7 +209,12 @@ from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from claude_agent_sdk.types import HookMatcher
 from core import process_hardening  # noqa: E402
 from core.agent_home import AgentHome  # noqa: E402
-from core.auth import get_agent_env_blanks, get_sdk_env_vars, require_auth_token
+from core.auth import (
+    get_agent_env_blanks,
+    get_sdk_env_vars,
+    is_denied_env_key,
+    require_auth_token,
+)
 from prompts_pkg.project_context import (
     detect_infra_markers,
     detect_project_capabilities,
@@ -360,6 +366,15 @@ def _validate_custom_mcp_server(server: dict) -> bool:
     if "description" in server and not isinstance(server.get("description"), str):
         return False
 
+    if "env_keys" in server and (
+        not isinstance(server["env_keys"], list)
+        or not all(
+            isinstance(name, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name)
+            for name in server["env_keys"]
+        )
+    ):
+        return False
+
     # Reject any unexpected fields that could be exploited
     allowed_fields = {
         "id",
@@ -370,6 +385,7 @@ def _validate_custom_mcp_server(server: dict) -> bool:
         "url",
         "headers",
         "description",
+        "env_keys",
     }
     unexpected_fields = set(server.keys()) - allowed_fields
     if unexpected_fields:
@@ -394,6 +410,15 @@ def _externalize_secret_env(cfg: dict, sink: dict) -> dict:
     if isinstance(secret_env, dict) and secret_env:
         sink.update({k: str(v) for k, v in secret_env.items()})
     return cfg
+
+
+def _custom_server_env(custom: dict[str, Any], sdk_env: dict[str, str]) -> None:
+    """Pass named host values to the CLI env, never its MCP config argv."""
+    for name in custom.get("env_keys", []):
+        if is_denied_env_key(name):
+            logger.warning("Custom MCP server env key denied: %s", name)
+        elif name in os.environ:
+            sdk_env[name] = os.environ[name]
 
 
 _MCP_KEYS = {
@@ -954,6 +979,7 @@ def create_client(
                 "command": custom.get("command", "npx"),
                 "args": custom.get("args", []),
             }
+            _custom_server_env(custom, sdk_env)
         elif server_type == "http":
             server_config = {
                 "type": "http",
