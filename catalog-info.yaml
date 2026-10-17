@@ -13,7 +13,7 @@
 #   Component  aifactory         -> provides web-api, web-api-optin, mcp, completion-event
 #   Component  aifactory-portal  -> consumes web-api
 #   API        aifactory-web-api          (openapi 3.1, default deployment)
-#   API        aifactory-web-api-optin    (openapi 3.1, opt-in SAML/SCIM/rmux)
+#   API        aifactory-web-api-optin    (openapi 3.1, opt-in SAML/SCIM/mcp-remote/rmux)
 #   API        aifactory-mcp              (mcp / json-rpc, stdio + remote HTTP+SSE)
 #   API        aifactory-completion-event (asyncapi, RFC-0001 emitter)
 ---
@@ -119,9 +119,9 @@ metadata:
   description: >-
     Web-server routes that exist only when an opt-in flag is on, so they are
     absent from aifactory-web-api: SAML login (SAML_ENABLED), SCIM 2.0
-    provisioning (SCIM_ENABLED) and the rmux live agent console
-    (AIFACTORY_RMUX_ENABLED / APP_RMUX_ENABLED). The remote MCP transport
-    (AIFACTORY_MCP_REMOTE_ENABLED) is described in aifactory-mcp.
+    provisioning (SCIM_ENABLED), the remote MCP transport's HTTP routes
+    (AIFACTORY_MCP_REMOTE_ENABLED; its protocol is in aifactory-mcp) and the
+    rmux live agent console (AIFACTORY_RMUX_ENABLED / APP_RMUX_ENABLED).
   annotations:
     backstage.io/source-location: url:https://github.com/olafkfreund/AIFactory/tree/main/apps/web-server/
   tags:
