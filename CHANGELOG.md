@@ -50,6 +50,12 @@
   plain `${X:-default}` and `$VAR` in heredocs still work. Also refused: `${…}` forms that evaluate
   text as code: the `@P`, `@E` and `@A` operators, `${!x}` indirection, and an
   offset, length or array subscript that is not a plain integer.
+- **Quoted heredocs and the `time` keyword no longer block a command (#1809).**
+  `cat <<'EOF'`, `<<"EOF"`, `<<\EOF` and `<<-'EOF'` now parse, so the usual
+  `git commit -m "$(cat <<'EOF' … EOF)"` form works. bash never expands a
+  quoted heredoc body, so it is treated as text. `time CMD` checks `CMD`
+  the same way `/usr/bin/time` does. Unquoted heredoc bodies keep the
+  #1797 check, and any other command the parser cannot read is still refused.
 - **Commands inside redirect targets are now checked (#1783).**
   The Bash command parser skipped redirect targets, so `ls > $(nc …)`,
   `cat < <(nc …)` and `cat <<< $(nc …)` checked only the outer command. It

@@ -112,6 +112,54 @@ _NAME_ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
 # ``${NAME:=v}`` / ``${NAME=v}`` assign NAME; scanned on the raw string so
 # quoted words and heredoc bodies are covered too.
 _DEFAULT_ASSIGN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*):?=")
+# bashlex rejects the ``time`` keyword; ``\time`` is the plain word, which
+# ``_unwrap_prefix`` already checks (#1809).
+_TIME_KEYWORD = re.compile(r"(^|[;&|({!\n])([ \t]*)time(?=[ \t\n;&|)]|\Z)")
+# bashlex matches heredoc lines against the delimiter with its quotes (#1809).
+_QUOTED_HEREDOC = re.compile(
+    r"(?<!<)(<<-?)(?!<)([ \t]*)"
+    r"((?:[A-Za-z0-9_.-]|'[A-Za-z0-9_.-]*'|\"[A-Za-z0-9_.-]*\"|\\[A-Za-z0-9_.-])+)"
+    r"(?=[\s;&|<>()]|\Z)"
+)
+
+
+def _unquote_heredocs(text: str) -> tuple[str, set[int]]:
+    """Unquote heredoc delimiters; return the text and each delimiter's offset."""
+    out: list[str] = []
+    offsets: set[int] = set()
+    last = 0
+    for m in _QUOTED_HEREDOC.finditer(text):
+        word = m.group(3)
+        if not any(c in word for c in "'\"\\"):
+            continue
+        out.append(text[last : m.start()] + m.group(1) + m.group(2))
+        offsets.add(sum(map(len, out)))
+        out.append(re.sub(r"['\"\\]", "", word))
+        last = m.end()
+    out.append(text[last:])
+    return "".join(out), offsets
+
+
+def _blank_quoted_bodies(node: Any, offsets: set[int], found: set[int]) -> None:
+    """A quoted heredoc body is never expanded, so it is data: drop it."""
+    if getattr(node, "kind", None) == "redirect" and node.type in ("<<", "<<-"):
+        start = getattr(getattr(node, "output", None), "pos", (None,))[0]
+        if start in offsets and getattr(node, "heredoc", None) is not None:
+            found.add(start)
+            node.heredoc.value = ""
+    for val in vars(node).values():
+        for c in val if isinstance(val, list) else (val,):
+            if hasattr(c, "kind"):
+                _blank_quoted_bodies(c, offsets, found)
+
+
+def _parse(text: str) -> list[Any]:
+    try:
+        trees: list[Any] = bashlex.parse(text)
+    except (bashlex.errors.ParsingError, NotImplementedError, Exception) as exc:
+        # Fail closed: anything we cannot parse is treated as a block.
+        raise UnparseableCommand(f"could not parse command: {exc}") from exc
+    return trees
 
 
 def _env_key_refusal(assignment: str) -> None:
@@ -351,11 +399,20 @@ def _extract(
     *,
     dynamic_args: bool = False,
 ) -> None:
+    timed = _TIME_KEYWORD.sub(r"\1\2\\time", command_string)
+    text, offsets = _unquote_heredocs(timed)
     try:
-        trees = bashlex.parse(command_string)
-    except (bashlex.errors.ParsingError, NotImplementedError, Exception) as exc:
-        # Fail closed: anything we cannot parse is treated as a block.
-        raise UnparseableCommand(f"could not parse command: {exc}") from exc
+        trees = _parse(text)
+        found: set[int] = set()
+        for tree in trees:
+            _blank_quoted_bodies(tree, offsets, found)
+        if found != offsets:  # a rewritten ``<<`` was not a real heredoc
+            raise UnparseableCommand("heredoc rewrite not confirmed")
+    except UnparseableCommand:
+        if not offsets:
+            raise
+        text, trees = timed, _parse(timed)
+    command_string = text  # node positions refer to the parsed text
 
     for m in _DEFAULT_ASSIGN.finditer(command_string):
         _env_key_refusal(f"{m.group(1)}=?")
