@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1812
 spec: spec/2026-10-17-1812-implicit-runner-bins.md
 ---
