@@ -849,6 +849,13 @@ _RUNNER_FLAGS = frozenset(
     }
 )
 _RUNNER_VALUE_OPTS = frozenset({"-w", "--workspace"})
+_RUNNER_SUBCOMMANDS: dict[str, tuple[tuple[str, ...], ...]] = {
+    "pnpm": (("exec",), ("dlx",)),
+    "yarn": (("exec",), ("dlx",)),
+    "bun": (("x",),),
+    "uv": (("tool", "run"),),
+    "pipx": (("run",),),
+}
 _NPM_GLOBAL_FLAGS = frozenset(
     {
         "-g",
@@ -917,8 +924,12 @@ _NPM_SUBCOMMAND_OPTS = frozenset(
 )
 
 
-def _check_package_runner(words: list[Any], start: int) -> int:
-    """Validate options and return the package operand index for ``npx``/``pnpx``/``npm exec``."""
+def _check_package_runner(
+    words: list[Any], start: int, *, npm_opts: bool = True
+) -> int:
+    """Validate runner options and return the package operand index."""
+    value_opts = _RUNNER_VALUE_OPTS if npm_opts else frozenset()
+    flags = _RUNNER_FLAGS if npm_opts else frozenset()
     j = start
     while j < len(words):
         tok = words[j].word
@@ -928,9 +939,9 @@ def _check_package_runner(words: list[Any], start: int) -> int:
         if not tok.startswith("-"):
             break
         name = tok.split("=", 1)[0]
-        if name in _RUNNER_VALUE_OPTS:
+        if name in value_opts:
             nxt = j + 1 if "=" in tok else j + 2
-        elif tok in _RUNNER_FLAGS:
+        elif tok in flags:
             nxt = j + 1
         elif name in ("-c", "--call", "--shell-mode"):
             raise UnparseableCommand(
@@ -953,10 +964,48 @@ def _unwrap_npx(
     *,
     dynamic_args: bool,
 ) -> None:
-    """``npx``/``pnpx`` ``[opts] <pkg> [args]``."""
-    j = _check_package_runner(words, idx + 1)
+    """Validate a direct package runner and expose its target command."""
+    j = _check_package_runner(
+        words, idx + 1, npm_opts=_basename(words[idx].word) == "npx"
+    )
     if j < len(words):
         _emit(words, j, depth + 1, acc, dynamic_args=dynamic_args)
+
+
+def _unwrap_subcommand_runner(
+    words: list[Any],
+    idx: int,
+    depth: int,
+    acc: list[tuple[str, str, bool]],
+    *,
+    dynamic_args: bool,
+) -> None:
+    """Expose targets of known package runner subcommands."""
+    if idx + 1 >= len(words):
+        return
+    subcommands = _RUNNER_SUBCOMMANDS[_basename(words[idx].word)]
+    if words[idx + 1].word.startswith("-"):
+        _require_literal(words, idx + 1, len(words))
+        if any(word.word == sub[0] for word in words[idx + 1 :] for sub in subcommands):
+            raise UnparseableCommand(
+                "package runner subcommand after global option cannot be validated"
+            )
+        return
+    _require_literal(words, idx + 1, idx + 2)
+    for sub in subcommands:
+        if words[idx + 1].word == sub[0]:
+            _require_literal(words, idx + 1, idx + 1 + len(sub))
+            got = tuple(word.word for word in words[idx + 1 : idx + 1 + len(sub)])
+            if got == sub:
+                j = _check_package_runner(words, idx + 1 + len(sub), npm_opts=False)
+                if j < len(words):
+                    _emit(words, j, depth + 1, acc, dynamic_args=dynamic_args)
+                return
+            # A global option between subcommand words hides the rest (`uv tool -q run`).
+            if any(word.startswith("-") for word in got[1:]):
+                raise UnparseableCommand(
+                    "package runner option inside a subcommand cannot be validated"
+                )
 
 
 def _unwrap_npm(
@@ -1047,7 +1096,10 @@ _UNWRAPPERS: dict[str, Callable[..., None]] = {
     ".": _unwrap_source,
     "npx": _unwrap_npx,
     "pnpx": _unwrap_npx,
+    "bunx": _unwrap_npx,
+    "uvx": _unwrap_npx,
     "npm": _unwrap_npm,
+    **dict.fromkeys(_RUNNER_SUBCOMMANDS, _unwrap_subcommand_runner),
     "cargo": _unwrap_cargo,
 }
 

@@ -38,6 +38,11 @@
   The program `npx`, `pnpx`, `npm exec` and `npm x` run is now checked
   against the allowlist like any command, and `-y`/`--yes` (install without
   asking) is refused for them.
+- **`pnpm exec`/`dlx`, `yarn exec`/`dlx`, `bunx`, `bun x`, `uvx`, `uv tool run` and `pipx run` no longer hide the program they run (#1807).**
+  The program they run is checked against the allowlist like any command, and
+  a dynamic program or subcommand is refused. Options before the program are
+  refused for them (and now for `pnpx` too), as is a global option before the
+  runner subcommand (e.g. `pnpm --filter x exec`).
 - **Command substitution inside `${…}` and heredoc bodies is refused (#1797).**
   The Bash command parser does not parse the inside of `${…}` or a heredoc
   body, so `echo ${X:-$(cmd)}` and a heredoc containing `$(cmd)` checked only
