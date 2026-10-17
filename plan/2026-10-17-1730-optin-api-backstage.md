@@ -100,6 +100,20 @@ Check: `$PY -c "import yaml; yaml.safe_load(open('.github/workflows/techdocs.yml
 `grep -c openapi-optin .github/workflows/techdocs.yml` (expect 6).
 Trap: do not change step 5 or any other job.
 
+## Deviations (made during implementation)
+
+- **mcp-remote left out of the opt-in run** (D1). CI installs the locked
+  `mcp==2.0.0` (`requirements.lock:1629`), on which
+  `server/mcp_remote/server.py:56` raises `AttributeError: 'Server' object has
+  no attribute 'list_tools'` at import, so the opt-in run cannot import the app
+  with `AIFACTORY_MCP_REMOTE_ENABLED=true`. Fixing it is a runtime change, out
+  of scope; filed as #1820. The generator now forces that flag off in both
+  runs (one line, comment cites #1820), so `openapi-optin.yaml` has 11 paths
+  (SAML 5, SCIM 4, rmux 2). The transport stays described in `aifactory-mcp`.
+  Catalog description and `docs/api.md` say so.
+- The empty-spec guard uses `raise SystemExit(msg)` instead of a stderr
+  `print` + `return 1` (the strict ruff ratchet counts T201).
+
 ## Tests
 
 - The CI TechDocs job reruns both generator modes and fails on drift of
