@@ -752,6 +752,14 @@ class TestCiLinters:
         assert acd.ci_linters(tmp_path) == []
 
     @requires_yaml
+    def test_too_many_workflow_files_refused(self, tmp_path):
+        _wf(tmp_path, f"name: CI\n{_KTLINT_WF}")
+        assert acd.ci_linters(tmp_path) == ["ktlint"]
+        for i in range(64):
+            _wf(tmp_path, f"name: x{i}\n", name=f"x{i}.yml")
+        assert acd.ci_linters(tmp_path) == []
+
+    @requires_yaml
     def test_anchor_refused(self, tmp_path):
         _wf(
             tmp_path,
