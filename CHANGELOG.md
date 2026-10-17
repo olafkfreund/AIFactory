@@ -12,6 +12,16 @@
 
 ### Security
 
+- **Legacy and from-issue tasks need a real verified green to auto-merge (#1697).**
+  Tasks without a signed contract (including MODE 0 from-issue tasks) now
+  go through the same merge-time gate as signed ones: auto-merge needs a
+  TFactory pass and green host CI on the head commit. A missing verdict or
+  missing CI now counts as not passed, and `task_metadata.json` can only
+  tighten these signals, never loosen them. The path risk floor is always
+  enforced for these tasks, whatever `AIFACTORY_PATH_RISK_FLOOR_ENFORCE`
+  says. **Breaking for projects without TFactory or without CI:** their
+  legacy and from-issue tasks no longer auto-merge. The PR stays open and
+  the watcher times out to a human stop.
 - **Server git and the web terminal pin the remaining agent-writable git config keys (#1745).**
   `child_env()` now also pins `core.askPass` (empty), `credential.helper`
   (reset, then `!gh auth git-credential` for github.com) and
