@@ -59,7 +59,7 @@ read from config at each call.
 3. The two `merge-tree` calls with no `env=` also get `env=child_env()`.
 4. Real user merge drivers no longer run on server merges either (user's
    choice; preview and merge show a conflict on files such a driver would
-   resolve). Part A2 lets drivers present in its baseline run again.
+   resolve). Part A2 keeps them blanked too (its plan decision 5).
 5. Out of scope: `git stash pop` after an aborted merge
    (`core/worktree.py:1110,1146`) and in `routes/pr.py` (merge machinery, but
    not listed by the spec; A2's baseline check covers them). Dynamic argv the
