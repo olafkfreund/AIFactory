@@ -18,13 +18,13 @@ with request/response schemas in Swagger UI.
 
 ## Opt-in surfaces
 
-Routes that exist only when a feature flag is on (SAML, SCIM and the rmux
-live agent console) are not in `aifactory-web-api`.
+Routes that exist only when a feature flag is on (SAML, SCIM, the remote
+MCP transport and the rmux live agent console) are not in `aifactory-web-api`.
 They are published as the separate **`aifactory-web-api-optin`** API entity,
 from [`apps/web-server/openapi-optin.yaml`](https://github.com/olafkfreund/AIFactory/blob/dev/apps/web-server/openapi-optin.yaml),
 which `scripts/generate-openapi-spec.py --opt-in` writes after the default run.
-The remote MCP transport is described in the `aifactory-mcp` entity; it is left
-out of this spec until it imports on the locked `mcp` 2.x (#1820).
+The remote MCP transport's JSON-RPC protocol is described in the
+`aifactory-mcp` entity; this spec lists only its two HTTP routes.
 
 ## How it stays current
 
