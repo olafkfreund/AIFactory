@@ -80,6 +80,44 @@ def clean_env(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
 
 
+def test_blanks_keep_git_config_pins(clean_env, tmp_path):
+    """The SDK env keeps the server's git pins, so repo hooks stay off (#1757)."""
+    import shutil
+    import subprocess
+
+    from core.child_env import pin_git_config
+
+    if not shutil.which("git"):
+        pytest.skip("git not installed")
+    pins = pin_git_config({})
+    for k, v in pins.items():
+        os.environ[k] = v  # clean_env's monkeypatch restores os.environ
+    blanks = get_agent_env_blanks()
+    assert not set(pins) & set(blanks), sorted(set(pins) & set(blanks))
+
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    hook = repo / ".git" / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\necho HOOK-RAN >&2\nexit 1\n")
+    hook.chmod(0o755)
+    env = {
+        **os.environ,
+        **blanks,
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@x",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@x",
+    }
+    r = subprocess.run(
+        ["git", "commit", "-q", "--allow-empty", "-m", "x"],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0 and "HOOK-RAN" not in r.stderr, r.stderr
+
+
 def test_all_secrets_are_blanked(clean_env):
     blanks = get_agent_env_blanks()
     for key in SECRETS:

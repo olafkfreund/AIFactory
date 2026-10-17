@@ -413,6 +413,13 @@ or `/nix`; widen once that changes. Docstring of
 codex and gemini spawn tests showed they reached the CLIs before and are
 configuration, not credentials. The tool-loop grep keeps no `HOME`.
 
+**Deviation (review fix).** `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_n`,
+`GIT_CONFIG_VALUE_n` and `GIT_PAGER` joined the allowlist. The server env
+carries the `pin_git_config()` pins (hooksPath=/dev/null, fsmonitor off,
+editors `true`, credential.helper reset); blanking them in the Claude SDK
+env (`get_agent_env_blanks()`) let repo hooks run again. Regression test:
+`tests/test_agent_env_scrub.py::test_blanks_keep_git_config_pins`.
+
 ## Rollback
 
 Each step is its own commit; revert in reverse order. Steps 3 and 4 depend
