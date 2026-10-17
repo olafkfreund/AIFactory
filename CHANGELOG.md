@@ -1,5 +1,41 @@
 ## [Unreleased]
 
+## 3.10.3 - 2026-10-17
+
+### Added
+
+- **Opt-in repo lint gate (#1742).** With `AIFACTORY_REPO_LINT_GATE=1`, the
+  trailing gates run the target repo's CI linters that AIFactory has a
+  curated command for (`ruff check .`, `flake8`, `ktlint`), never the CI
+  step text. A lint that fails goes to `GATE_FAILURES.md` and the QA fix
+  loop; a missing tool reads `skipped`. The planner prompt also names the
+  linters CI runs. Off by default, because it can fail builds that pass
+  today. `ci_linters` now refuses a repo with more than 64 workflow files.
+
+### Security
+
+- **Legacy and from-issue tasks need a real verified green to auto-merge (#1697).**
+  Tasks without a signed contract (including MODE 0 from-issue tasks) now
+  go through the same merge-time gate as signed ones: auto-merge needs a
+  TFactory pass and green host CI on the head commit. A missing verdict or
+  missing CI now counts as not passed, and `task_metadata.json` can only
+  tighten these signals, never loosen them. The path risk floor is always
+  enforced for these tasks, whatever `AIFACTORY_PATH_RISK_FLOOR_ENFORCE`
+  says. **Breaking for projects without TFactory or without CI:** their
+  legacy and from-issue tasks no longer auto-merge. The PR stays open and
+  the watcher times out to a human stop.
+- **Agent children can no longer read the parent's secrets through `/proc` or `$HOME` (#1762).**
+  Each agent CLI spawn (Claude SDK paths, codex, copilot, gemini/antigravity,
+  opencode and the tool-loop Bash) gets a private 0700 HOME that holds only
+  that CLI's login file and a `.gitconfig` with `user.*` and `safe.directory`.
+  A refreshed login is written back only if the real file is unchanged. If
+  the private HOME cannot be built the spawn fails; nothing falls back to the
+  real HOME. Agent children also get an env allowlist (#1757), so
+  `SSH_AUTH_SOCK` and other inherited names are dropped. Breaking for
+  operators: agents lose `~/.ssh` and home-folder tool configs; add needed
+  env names with `AIFACTORY_AGENT_ENV_EXTRA`, and name an MCP server's host
+  vars with `env_keys`. On local runners the `/proc` window stays open (#1724).
+
 ## 3.10.2 - 2026-10-17
 
 ### Security
@@ -69,6 +105,22 @@
   only `echo` checked. Any non-literal command word now fails closed and the
   command is blocked, including a bare `` `cmd` `` or `$(cmd)` used as the
   command.
+- **Project settings moved out of the agent-reachable project clone (#1795).**
+  Per-project settings now live in the web-server database (`project_settings`
+  table, sealed with the same KMS key material as the other stores) instead of
+  `<project>/.aifactory/.env`, which agents can write. On the first read an
+  untracked `.aifactory/.env` is imported once (allowed keys only) and renamed
+  to `.env.migrated-<date>`; after that the database wins and a reappearing
+  file is ignored. The web-server passes MCP config to every launcher and the
+  build Job as `AIFACTORY_PROJECT_MCP_CONFIG`, so an agent that writes the file
+  can no longer change MCP commands (#1791), tokens or the auto-PR and
+  auto-merge flags.
+- **The QA Fixer can no longer delete the handback receipt that holds a merge (#1696).**
+  A confirmed TFactory handback is now also recorded in the `handback_receipts`
+  table, and auto-merge is withheld when a row exists, both in
+  `run_pr_endgame` and at merge time. A failed read holds the merge. The
+  existing `handback_received.json` check stays, so a receipt from before the
+  upgrade still holds.
 
 ### Changed
 
@@ -84,6 +136,27 @@
   "Contract held" badge in the task header. It never changes the task's status
   or review reason, so a hold is not counted as a build failure. A held
   migration still stops the build with exit 1, as before.
+- Gemini credentials and the TFactory handoff are now checked before a phase
+  is spent (#1646). A new `probe_google` checks `GEMINI_API_KEY` with one
+  generation-free request (key in a header, never the URL or logs), and
+  `gemini*` models use it on the build path. `send_handoff` probes the
+  providers in the contract's `phase_models` before posting (3 s timeout).
+  `AIFACTORY_AUTH_PREFLIGHT=warn` (default) only logs, `enforce` refuses a
+  definite rejection, `off` skips the probe. An inconclusive result never
+  blocks.
+
+### Fixed
+
+- **Pushes now upload Git LFS objects at every push site, and the image ships git-lfs (#1721).**
+  One shared routine uploads the LFS objects the pushed ref points to before
+  the push, at the web-server and backend push sites. It runs only for an
+  `https://github.com/` origin in a repo that uses LFS, so other repos push as
+  before. An upload failure is logged and the push goes ahead. Nothing writes
+  git config; new large files are not converted to LFS pointers.
+- **Gates inside the build Job now use the operator's gate timeout and sandbox network (#1796).**
+  The build Job now forwards `AIFACTORY_GATE_TIMEOUT_SECONDS` and
+  `AIFACTORY_SANDBOX_NETWORK`. `AIFACTORY_DATA_ROOT` is not forwarded: the Job
+  does not mount the data volume at that path.
 
 ## 3.10.1 - 2026-10-15
 
