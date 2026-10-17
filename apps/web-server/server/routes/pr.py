@@ -37,7 +37,12 @@ from server.services.build_backend import task_repo_dir
 from server.services.http_verdict import honest_status
 from server.services.task_branch import resolve_task_branch_fetching
 from server.specpath import safe_spec_component
-from server.utils.subprocess_env import child_env, github_env, lfs_upload
+from server.utils.subprocess_env import (
+    child_env,
+    github_env,
+    lfs_upload,
+    merge_driver_pins,
+)
 
 from .project_authz import require_task_access
 
@@ -269,8 +274,9 @@ async def create_pr_from_task(
     # Rebase onto latest base branch to minimize conflicts (best-effort)
     rebase_failed = False
     try:
+        pins = merge_driver_pins(worktree_path)
         result = subprocess.run(
-            ["git", "rebase", f"origin/{base_branch}"],
+            ["git", *pins, "rebase", f"origin/{base_branch}"],
             cwd=worktree_path,
             capture_output=True,
             text=True,
@@ -298,7 +304,7 @@ async def create_pr_from_task(
             env=child_env(),
         )
         rebase_failed = True
-    except Exception:
+    except Exception:  # includes merge_driver_pins' RuntimeError: rebase not started
         rebase_failed = True
 
     # Restore stashed changes

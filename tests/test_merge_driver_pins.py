@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 from core.child_env import merge_driver_pins
+
+_WS = str(Path(__file__).resolve().parent.parent / "apps" / "web-server")
+if _WS not in sys.path:
+    sys.path.insert(0, _WS)
+
+from server.services import pr_endgame  # noqa: E402
 
 
 def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -126,3 +133,49 @@ def test_backend_merge_tree_previews_pin_drivers_and_fail_closed(
 
     monkeypatch.setattr(wc_mod, "merge_driver_pins", _boom)
     assert wc_mod._check_git_merge_conflicts(repo, "t")["has_conflicts"] is True
+
+
+def test_resolve_pr_conflicts_pins_merge_drivers(
+    evil_repo: tuple[Path, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, marker = evil_repo
+    clone = tmp_path / "clone"
+    _git(tmp_path, "clone", "-q", str(repo), str(clone))
+    _git(clone, "config", "user.email", "t@example.com")
+    _git(clone, "config", "user.name", "Test")
+    _git(clone, "checkout", "-q", "aifactory/t")
+    _git(clone, "config", "merge.evil.driver", f"touch {marker}; exit 0")
+    info_attrs = clone / ".git" / "info" / "attributes"
+    info_attrs.parent.mkdir(parents=True, exist_ok=True)
+    info_attrs.write_text("* merge=evil\n")
+
+    seen: list[list[str]] = []
+
+    def fixer(files: list[str], _wt: str) -> bool:
+        seen.append(files)
+        return False
+
+    res = pr_endgame.resolve_pr_conflicts(
+        str(clone),
+        "main",
+        fixer=fixer,
+        runner=pr_endgame._default_runner,
+    )
+    assert res.resolved is False
+    assert not marker.exists()
+    assert seen == [["f"]]
+
+    def _boom(_cwd: str, **_kw: object) -> list[str]:
+        raise RuntimeError("broken config")
+
+    monkeypatch.setattr(pr_endgame, "merge_driver_pins", _boom)
+    refused = pr_endgame.resolve_pr_conflicts(
+        str(clone),
+        "main",
+        fixer=fixer,
+        runner=pr_endgame._default_runner,
+    )
+    assert refused.resolved is False
+    assert "rebase refused" in refused.reason
