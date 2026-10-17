@@ -133,6 +133,22 @@ def test_agent_and_benign_vars_are_kept(clean_env):
         assert key not in blanks, f"wrongly scrubbed a needed var: {key}"
 
 
+def test_devshell_browser_vars_are_kept(clean_env, monkeypatch):
+    """#1757 review: a nix devShell's Playwright wiring must reach the agent."""
+    for key in (
+        "PLAYWRIGHT_BROWSERS_PATH",
+        "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD",
+        "PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS",
+        "FONTCONFIG_FILE",
+    ):
+        monkeypatch.setenv(key, "x")
+    monkeypatch.setenv("PLAYWRIGHT_SERVICE_ACCESS_TOKEN", "x")
+    blanks = get_agent_env_blanks()
+    assert not {k for k in blanks if k.startswith(("PLAYWRIGHT_SKIP", "FONTCONFIG"))}
+    assert "PLAYWRIGHT_BROWSERS_PATH" not in blanks
+    assert "PLAYWRIGHT_SERVICE_ACCESS_TOKEN" in blanks
+
+
 def test_allowlist_blanks_unknown_names_and_honors_safe_extra(clean_env, monkeypatch):
     for name in ("SSH_AUTH_SOCK", "FOO_SECRETISH", "PWD", "NODE_ENV", "MY_TOOL_DIR"):
         monkeypatch.setenv(name, "x")

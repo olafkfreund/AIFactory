@@ -66,6 +66,64 @@ def pin_git_config(
     return env
 
 
+_MERGE_DRIVER_KEYS = (
+    "git",
+    "config",
+    "-z",
+    "--includes",
+    "--name-only",
+    "--list",
+)
+
+
+def merge_driver_pins(
+    cwd: str | os.PathLike[str],
+    run: Callable[[list[str]], tuple[int, str]] | None = None,
+    env: Mapping[str, str] | None = None,
+) -> list[str]:
+    """Return ``-c merge.<name>.driver=`` pins for every driver in git config (#1761).
+
+    An agent can define ``merge.<name>.driver`` in ``.git/config`` and bind it in
+    ``.git/info/attributes``; overriding each key with an empty value makes git
+    report a conflict instead of running the program. Callers fail closed on
+    ``RuntimeError``. Keys are filtered in Python, not by ``--get-regexp``:
+    under a UTF-8 locale git's regex skips a non-UTF-8 subsection. ``run``
+    must decode with ``surrogateescape`` so such a key round-trips to argv.
+    """
+    argv = list(_MERGE_DRIVER_KEYS)
+    try:
+        if run is not None:
+            rc, out = run(argv)
+        else:
+            proc = subprocess.run(  # noqa: S603 - fixed argv
+                argv,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                errors="surrogateescape",
+                env=dict(env) if env is not None else child_env(),
+                timeout=60,
+                check=False,
+            )
+            rc, out = proc.returncode, proc.stdout
+    except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
+        raise RuntimeError(f"git config failed: {exc}") from exc
+    if rc != 0:
+        raise RuntimeError(f"git config exited {rc}")
+    pins: list[str] = []
+    for key in out.split("\0"):
+        if not (
+            key.startswith("merge.")
+            and key.endswith(".driver")
+            and len(key) >= len("merge..driver")
+        ):
+            continue
+        if "=" in key:
+            raise RuntimeError(f"merge driver key contains '=': {key!r}")
+        pins.extend(("-c", f"{key}="))
+    return pins
+
+
 def child_env(
     keep: Iterable[str] = (),
     extra: Mapping[str, str] | None = None,

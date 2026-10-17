@@ -213,7 +213,8 @@ def test_a_github_tenant_still_gets_its_auto_pr():
             base="main",
             repo="o/r",
             provider="github",
-            auto_merge=True,
+            # The claim is the auto-PR; a merge would wait on the #1697 gate.
+            auto_merge=False,
             review_fn=lambda: pe.ReviewState("approved"),
             runner=runner,
             background=False,

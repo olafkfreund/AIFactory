@@ -44,6 +44,7 @@ for _p in (str(_WS), str(_BACKEND)):
         sys.path.insert(0, _p)
 
 from merge import merge_policy  # noqa: E402
+from pfactory import tfactory_client as tc  # noqa: E402
 from server.services import pr_endgame as pe  # noqa: E402
 from server.services.pr_endgame import CmdResult, ReviewState  # noqa: E402
 
@@ -119,6 +120,11 @@ async def _drive(
         ),
     )
 
+    # #1697: the merge-time gate needs a real TFactory pass and green CI.
+    monkeypatch.setattr(pe, "host_ci_green", lambda *_a, **_k: True)
+    monkeypatch.setattr(pe, "required_checks_green", lambda *_a, **_k: True)
+    monkeypatch.setattr(tc, "tfactory_verdict", lambda *_a, **_k: "pass")
+
     # watch_and_finish polls on a 30s interval; nothing here waits on wall time.
     async def _no_sleep(_seconds: float) -> None:
         return None
@@ -182,4 +188,5 @@ async def test_the_same_run_merges_when_the_matrix_says_auto_merge(
     merges. Without this, 'no merge happened' would also pass for a run that
     never got near one."""
     log = await _drive(tmp_path, monkeypatch, decision=merge_policy.AUTO_MERGE)
-    assert log == [_DECIDE, _MERGE]
+    # Once at PR-open, once in the merge-time gate on the head (#1697).
+    assert log == [_DECIDE, _DECIDE, _MERGE]

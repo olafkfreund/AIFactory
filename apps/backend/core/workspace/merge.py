@@ -24,6 +24,7 @@ Public API is re-exported from __init__.py.
 import subprocess
 from pathlib import Path
 
+from core.child_env import child_env, merge_driver_pins
 from ui import (
     Icons,
     bold,
@@ -614,9 +615,17 @@ def _check_git_conflicts(project_dir: Path, spec_name: str) -> dict:
 
         # Use git merge-tree to check for conflicts WITHOUT touching working directory
         # Note: --write-tree mode only accepts 2 branches (it auto-finds the merge base)
+        try:
+            pins = merge_driver_pins(project_dir)
+        except RuntimeError as exc:
+            debug_warning(MODULE, f"Cannot read merge drivers: {exc}")
+            result["has_conflicts"] = True
+            return result
+
         merge_tree_result = subprocess.run(
             [
                 "git",
+                *pins,
                 "merge-tree",
                 "--write-tree",
                 "--no-messages",
@@ -626,6 +635,7 @@ def _check_git_conflicts(project_dir: Path, spec_name: str) -> dict:
             cwd=project_dir,
             capture_output=True,
             text=True,
+            env=child_env(),
         )
 
         # merge-tree returns exit code 1 if there are conflicts

@@ -27,6 +27,9 @@ def fake_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "XDG_CACHE_HOME",
         "XDG_STATE_HOME",
         "GIT_CONFIG_GLOBAL",
+        "NPM_CONFIG_PREFIX",
+        "npm_config_prefix",
+        "PLAYWRIGHT_BROWSERS_PATH",
     ):
         monkeypatch.delenv(name, raising=False)
     return real
@@ -175,3 +178,33 @@ def test_gitconfig_copies_only_identity(fake_home: Path) -> None:
 def test_unknown_cli_rejected(fake_home: Path) -> None:
     with pytest.raises(ValueError):
         AgentHome("unknown")
+
+
+def test_prebaked_npm_globals_and_browsers_stay_visible(fake_home: Path) -> None:
+    """#1757 review: npx must find the image's global MCP servers, Playwright its browsers."""
+    (fake_home / ".npmrc").write_text(
+        "//registry.npmjs.org/:_authToken=secret\nprefix=/home/nonroot/.npm-global\n"
+    )
+    browsers = fake_home / ".cache" / "ms-playwright"
+    browsers.mkdir(parents=True)
+    with AgentHome("claude") as h:
+        assert h.env["NPM_CONFIG_PREFIX"] == "/home/nonroot/.npm-global"
+        assert h.env["PLAYWRIGHT_BROWSERS_PATH"] == str(browsers)
+        assert not (Path(h.env["HOME"]) / ".npmrc").exists()
+
+
+def test_existing_browsers_path_and_prefix_win(
+    fake_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (fake_home / ".cache" / "ms-playwright").mkdir(parents=True)
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", "/nix/store/x-browsers")
+    monkeypatch.setenv("npm_config_prefix", "/opt/npm")
+    with AgentHome("bash") as h:
+        assert "PLAYWRIGHT_BROWSERS_PATH" not in h.env
+        assert h.env["NPM_CONFIG_PREFIX"] == "/opt/npm"
+
+
+def test_no_prefix_or_browsers_when_absent(fake_home: Path) -> None:
+    with AgentHome("bash") as h:
+        assert "NPM_CONFIG_PREFIX" not in h.env
+        assert "PLAYWRIGHT_BROWSERS_PATH" not in h.env

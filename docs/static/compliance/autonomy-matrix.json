@@ -141,7 +141,7 @@
         "SOC 2 CC8.1",
         "NIST 800-53 CM"
       ],
-      "objective": "The path-derived risk floor is advisory by default and changes the merge tier only when enforcement is explicitly switched on."
+      "objective": "The path-derived risk floor is advisory by default for tasks with a signed contract and changes their merge tier only when enforcement is explicitly switched on; for tasks without a signed contract (legacy and from-issue) it always decides the merge tier."
     }
   },
   "gates": [
@@ -571,11 +571,11 @@
             ],
             [
               "`host_ci_green`",
-              "`True`"
+              "`False`"
             ],
             [
               "`tfactory_verdict`",
-              "`'pass'`"
+              "`None`"
             ],
             [
               "`val_floor`",
@@ -761,7 +761,7 @@
             ],
             [
               "`server.services.pr_review_service`",
-              "model-assisted (dynamic import: core.auth:362 (+2 more))",
+              "model-assisted (dynamic import: core.auth:364 (+2 more))",
               "`anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
               "yes (15): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
               "276",
@@ -769,7 +769,7 @@
             ],
             [
               "`server.services.pr_endgame`",
-              "model-assisted (dynamic import: core.auth:362 (+3 more))",
+              "model-assisted (dynamic import: core.auth:364 (+3 more))",
               "`anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
               "yes (21): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
               "373",
@@ -901,7 +901,7 @@
             ],
             [
               "`wiring.path_floor_flag`",
-              "The path-derived risk floor is advisory by default and changes the merge tier only when enforcement is explicitly switched on.",
+              "The path-derived risk floor is advisory by default for tasks with a signed contract and changes their merge tier only when enforcement is explicitly switched on; for tasks without a signed contract (legacy and from-issue) it always decides the merge tier.",
               "ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 CM",
               "`apps/web-server/server/services/pr_endgame.py`",
               "-"

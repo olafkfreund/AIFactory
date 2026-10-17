@@ -28,7 +28,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Literal
 
-from core.child_env import child_env
+from core.child_env import child_env, merge_driver_pins
 from core.git_credentials import github_env
 
 fcntl: ModuleType | None
@@ -1058,6 +1058,14 @@ class WorktreeManager:
         self, spec_name: str, info: WorktreeInfo, no_commit: bool
     ) -> bool:
         """Perform the base-repo mutating merge. Caller MUST hold the git lock."""
+        try:
+            # Not _run_git: errors="replace" would mangle a non-UTF-8 driver name.
+            pins = merge_driver_pins(self.project_dir, env=_git_env())
+        except RuntimeError as exc:
+            print(f"Error: merge refused: {exc}")  # noqa: T201
+            logger.error("Merge refused for '%s': cannot read merge drivers", spec_name)
+            return False
+
         # Clean up internal auto-generated files that can block merge/checkout.
         # These are untracked files created by agents that would collide with
         # the same untracked files coming from the worktree branch.
@@ -1118,7 +1126,7 @@ class WorktreeManager:
             return False
 
         # Merge the spec branch
-        merge_args = ["merge", "--no-ff", info.branch]
+        merge_args = [*pins, "merge", "--no-ff", info.branch]
         if no_commit:
             # --no-commit stages the merge but doesn't create the commit
             merge_args.append("--no-commit")
