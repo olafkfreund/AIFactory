@@ -108,7 +108,9 @@ async def approve_plan(
     from review import ReviewState
 
     if request.auto_restart:
-        from ..services.agent_service import get_agent_service
+        from ..services.agent_service import (  # noqa: TID252, PLC0415
+            get_agent_service,
+        )
 
         agent_service = get_agent_service()
         await agent_service.stop_stale_spec_creation(task_id)

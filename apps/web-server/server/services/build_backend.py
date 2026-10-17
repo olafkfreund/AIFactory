@@ -1590,7 +1590,7 @@ class KubeJobBuildBackend:
         self, *, now: float | None = None, batch: Any = None
     ) -> list[str]:
         """Report or delete old build Jobs with no active owner row (#1714)."""
-        import time as _time
+        import time as _time  # noqa: PLC0415
 
         try:
             rows = await self._store.get_active_kubejobs()
@@ -1644,7 +1644,7 @@ class KubeJobBuildBackend:
                         name, namespace, propagation_policy="Background"
                     )
                 except Exception as exc:  # noqa: BLE001 - continue with other Jobs
-                    if getattr(exc, "status", None) != 404:
+                    if getattr(exc, "status", None) != 404:  # noqa: PLR2004 - HTTP Not Found
                         _log.warning(
                             "[build_backend] #1714 could not delete orphan Job %s/%s: %s",
                             namespace,

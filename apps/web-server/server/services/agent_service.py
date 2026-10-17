@@ -27,7 +27,7 @@ from server.specpath import spec_dir_for
 
 from ..config import get_settings
 from ..utils.subprocess_env import make_subprocess_env
-from . import project_settings_store, task_control
+from . import job_state_store, project_settings_store, task_control
 from .agent_credential import CredentialMixin
 from .agent_emit import (
     EmitMixin,
@@ -46,6 +46,7 @@ from core.auth import is_denied_env_key
 # Module-level logger for the admission-control paths (RFC-0016 #668). The rest
 # of this (legacy) module still uses local ``import logging`` inside methods.
 _log = logging.getLogger(__name__)
+_HTTP_NOT_FOUND = 404
 _SA_NAMESPACE_FILE = Path("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
 
 
@@ -54,6 +55,47 @@ def _own_namespace() -> str | None:
         return _SA_NAMESPACE_FILE.read_text().strip() or None
     except OSError:
         return None
+
+
+def _incluster_core_api() -> tuple[Any, Any]:
+    """(CoreV1Api, ApiClient) for this pod's own cluster, or (None, None) (#1705).
+
+    No kubeconfig fallback: a dev kubeconfig points at some other cluster.
+    """
+    if _own_namespace() is None:
+        return None, None
+    try:
+        from kubernetes_asyncio import (  # noqa: PLC0415 - optional dependency
+            client,
+            config,
+        )
+
+        config.load_incluster_config()
+        api_client = client.ApiClient()
+        return client.CoreV1Api(api_client), api_client
+    except Exception:  # noqa: BLE001 - no client means no pod is proven gone
+        _log.warning("[AgentService] no in-cluster client (#1705)", exc_info=True)
+        return None, None
+
+
+async def _pod_gone(core: Any, pod: str) -> bool:
+    """True only when the API answers 404 for ``pod`` (#1705); anything else is alive."""
+    ns = _own_namespace()
+    if ns is None:
+        return False
+    try:
+        await core.read_namespaced_pod(pod, ns)
+    except Exception as exc:  # noqa: BLE001 - any doubt reads as alive
+        status = getattr(exc, "status", None)
+        if status == _HTTP_NOT_FOUND:
+            return True
+        _log.warning(
+            "[AgentService] pod read failed for %s (status=%s; 403 means missing "
+            "Pods get RBAC); leaving subprocess row live (#1705)",
+            sanitize_log(pod),
+            status,
+        )
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -1365,7 +1407,7 @@ class AgentService(
             return
         try:
             await self.stop_task(task_id)
-        except Exception:
+        except Exception:  # noqa: BLE001 - same fallback the routes had
             _log.warning(
                 "[AgentService] failed to stop stale spec creation for %s",
                 sanitize_log(task_id),
@@ -1584,81 +1626,62 @@ class AgentService(
         await self._drain_queue()
         return {"running": running, "queued": queued}
 
+    async def _fail_orphan_row(
+        self, job_id: str, pod: str, boot: str, reason: str
+    ) -> bool:
+        try:
+            return bool(
+                await self._store().fail_subprocess_row(job_id, pod, boot, reason)
+            )
+        except Exception:  # noqa: BLE001 - retried on the next tick
+            _log.warning(
+                "[AgentService] subprocess row fail failed for %s (#1705)",
+                sanitize_log(job_id),
+                exc_info=True,
+            )
+            return False
+
     async def reap_orphaned_subprocess_rows(self, *, core: Any = None) -> list[str]:
         """Fail only subprocess claims whose stamped owner is confirmed gone (#1705)."""
         if not self._store_enabled:
             return []
-        from . import job_state_store
-
         try:
             rows = await self._store().get_running_subprocess_rows()
-        except Exception:
+        except Exception:  # noqa: BLE001 - unknown owners stay live
             _log.warning(
                 "[AgentService] subprocess row read failed (#1705)", exc_info=True
             )
             return []
 
-        reaped: list[str] = []
+        here, boot_now = job_state_store.POD_NAME, job_state_store.BOOT_ID
+        rows = [
+            r
+            for r in rows
+            if r["pod"] and r["boot"] and (r["pod"], r["boot"]) != (here, boot_now)
+        ]
         api_client = None
-        client_unavailable = False
+        if core is None and any(r["pod"] != here for r in rows):
+            core, api_client = _incluster_core_api()
+        reaped: list[str] = []
         try:
             for row in rows:
                 job_id, pod, boot = row["job_id"], row["pod"], row["boot"]
-                if not pod or not boot:
-                    continue
-                if pod == job_state_store.POD_NAME:
-                    if boot == job_state_store.BOOT_ID:
-                        continue
+                if pod == here:
                     reason = "control plane restarted under the build (#1705)"
-                else:
-                    ns = _own_namespace()
-                    if ns is None or client_unavailable:
-                        continue
-                    try:
-                        if core is None:
-                            from kubernetes_asyncio import client, config
-
-                            config.load_incluster_config()
-                            api_client = client.ApiClient()
-                            core = client.CoreV1Api(api_client)
-                        await core.read_namespaced_pod(pod, ns)
-                    except Exception as exc:
-                        if getattr(exc, "status", None) != 404:
-                            if core is None:
-                                client_unavailable = True
-                            _log.warning(
-                                "[AgentService] pod read failed for %s (status=%s); "
-                                "leaving subprocess row live (#1705)",
-                                pod,
-                                getattr(exc, "status", None),
-                            )
-                            continue
-                    else:
-                        continue
+                elif core is not None and await _pod_gone(core, pod):
                     reason = f"owning pod {pod} no longer exists (#1705)"
-                try:
-                    if await self._store().fail_subprocess_row(
-                        job_id, pod, boot, reason
-                    ):
-                        reaped.append(job_id)
-                except Exception:
-                    _log.warning(
-                        "[AgentService] subprocess row fail failed for %s (#1705)",
-                        sanitize_log(job_id),
-                        exc_info=True,
-                    )
+                else:
+                    continue
+                if await self._fail_orphan_row(job_id, pod, boot, reason):
+                    reaped.append(job_id)
         finally:
             if api_client is not None:
-                try:
+                with contextlib.suppress(Exception):
                     await api_client.close()
-                except Exception:
-                    _log.warning(
-                        "[AgentService] Kubernetes client close failed", exc_info=True
-                    )
         if reaped:
             try:
                 await self._drain_queue()
-            except Exception:
+            except Exception:  # noqa: BLE001 - the next tick drains again
                 _log.warning(
                     "[AgentService] subprocess reaper drain failed", exc_info=True
                 )

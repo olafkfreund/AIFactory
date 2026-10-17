@@ -503,7 +503,7 @@ class JobStateStore:
 
     async def get_running_subprocess_rows(self) -> list[dict[str, Any]]:
         """Return running subprocess claims, including legacy unstamped owners."""
-        from ..database.models import JobState
+        from ..database.models import JobState  # noqa: TID252, PLC0415
 
         out: list[dict[str, Any]] = []
         async with self._session_factory() as session:
@@ -535,24 +535,23 @@ class JobStateStore:
         self, job_id: str, pod: str, boot: str, error: str
     ) -> bool:
         """Fail a subprocess claim only while its exact owner still holds it."""
-        from ..database.models import JobState
+        from ..database.models import JobState  # noqa: TID252, PLC0415
 
-        async with self._session_factory() as session:
-            async with session.begin():
-                row = await session.get(JobState, job_id, with_for_update=True)
-                if row is None or row.lifecycle_state != "running":
-                    return False
-                ref = row.worker_ref or {}
-                if (
-                    ref.get("kind") != "subprocess"
-                    or ref.get("pod") != pod
-                    or ref.get("boot") != boot
-                ):
-                    return False
-                row.lifecycle_state = "failed"
-                row.error = error
-                row.ended_at = _now()
-                return True
+        async with self._session_factory() as session, session.begin():
+            row = await session.get(JobState, job_id, with_for_update=True)
+            if row is None or row.lifecycle_state != "running":
+                return False
+            ref = row.worker_ref or {}
+            if (
+                ref.get("kind") != "subprocess"
+                or ref.get("pod") != pod
+                or ref.get("boot") != boot
+            ):
+                return False
+            row.lifecycle_state = "failed"
+            row.error = error
+            row.ended_at = _now()
+            return True
 
     async def increment_attempt(self, job_id: str) -> None:
         """Bump the RFC-0008 failover/restart attempt counter."""
