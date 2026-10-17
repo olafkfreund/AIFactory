@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from datetime import UTC, datetime, timedelta
@@ -472,3 +473,83 @@ async def test_reap_kubejob_builds_sweeps_even_without_reaped_rows(
 
     assert await service.reap_kubejob_builds() == []
     sweep.assert_awaited_once_with()
+
+
+async def test_dispatch_cancelled_holds_credential_and_propagates(
+    tmp_path, monkeypatch
+):
+    service = agent_service.AgentService()
+    monkeypatch.setattr(service, "_write_skill_context", lambda _path: None)
+    monkeypatch.setattr(
+        service, "_resolve_claude_token_pooled", lambda _task: ("token", "id", "name")
+    )
+    released = []
+    monkeypatch.setattr(service, "_release_task_credential", released.append)
+    monkeypatch.setattr(
+        service,
+        "_build_backend",
+        lambda: SimpleNamespace(dispatch=AsyncMock(side_effect=asyncio.CancelledError)),
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await service._dispatch_build_job(
+            task_id=TASK,
+            project_path=tmp_path,
+            spec_id="022-some-spec",
+            correlation_key=None,
+        )
+    assert service._held_credentials == {TASK}
+    assert released == []
+
+    # A later dispatch that succeeds owns the credential: the hold is dropped
+    # so a tick before its Job exists cannot free the live build's token.
+    service._build_backend = lambda: SimpleNamespace(dispatch=AsyncMock())
+    await service._dispatch_build_job(
+        task_id=TASK,
+        project_path=tmp_path,
+        spec_id="022-some-spec",
+        correlation_key=None,
+    )
+    assert service._held_credentials == set()
+    assert released == []
+
+
+@pytest.mark.parametrize("outcome", [True, False, RuntimeError("api")])
+async def test_held_credential_waits_for_job_404(monkeypatch, outcome):
+    monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "kubejob")
+    service = agent_service.AgentService()
+    service._store_enabled = True
+    service._held_credentials.add(TASK)
+    released = []
+    monkeypatch.setattr(service, "_release_task_credential", released.append)
+    gone = AsyncMock(
+        side_effect=outcome if isinstance(outcome, Exception) else None,
+        return_value=outcome,
+    )
+    backend = SimpleNamespace(
+        reap_vanished_jobs=AsyncMock(return_value=[]),
+        job_gone=gone,
+        sweep_orphan_jobs=AsyncMock(),
+    )
+    monkeypatch.setattr(service, "_build_backend", lambda: backend)
+
+    await service.reap_kubejob_builds()
+    assert service._held_credentials == (set() if outcome is True else {TASK})
+    assert released == ([TASK] if outcome is True else [])
+    if outcome is True:
+        await service.reap_kubejob_builds()
+        assert released == [TASK]
+        gone.assert_awaited_once_with(TASK)
+
+
+@pytest.mark.parametrize("status,expected", [(404, True), (200, False), (500, False)])
+async def test_job_gone_only_on_404(status, expected):
+    class Batch:
+        async def read_namespaced_job(self, name, namespace):
+            assert (name, namespace) == build_backend._reconstructed_ref(TASK)
+            if status != 200:
+                raise _PodError(status)
+            return SimpleNamespace(status=SimpleNamespace())
+
+    backend = build_backend.KubeJobBuildBackend(SimpleNamespace())
+    assert await backend.job_gone(TASK, batch=Batch()) is expected

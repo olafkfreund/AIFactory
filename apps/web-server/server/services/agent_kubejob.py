@@ -116,6 +116,7 @@ class KubejobMixin:
         # declared here so mypy can resolve the self.* references in a mixin.
         _kubejob_log_streamers: dict[str, Any]
         _active_kubejob_task_ids: set[str]
+        _held_credentials: set[str]
         _kubejob_dispatched_this_tick: set[str]
         _task_current_phases: dict[str, Any]
         _task_log_writers: dict[str, Any]
@@ -457,16 +458,17 @@ class KubejobMixin:
                 base_branch=base_branch,
                 mode=mode,
             )
-        except Exception:
-            # Dispatch failed → the Job will never run, so return the credential
-            # now rather than leaking it until a reaper that never fires.
-            self._release_task_credential(task_id)
+        except BaseException:
+            # A dispatch raise does not prove no Job exists; wait for its 404.
+            self._held_credentials.add(task_id)
             raise
         # #1662: the build is live from here, not from the next reconcile
         # tick (≤15s later). Without this, is_running() said False for that
         # window and recovery reset a live Job despite the #1619 guard.
         # After the except block on purpose: a failed dispatch never marks.
         self._active_kubejob_task_ids.add(task_id)
+        # #1714: this Job now owns the credential; an earlier hold must not free it.
+        self._held_credentials.discard(task_id)
         self._kubejob_dispatched_this_tick.add(task_id)
         # RFC-0017 #680: feed the cockpit log stream + rmux Live Console from the
         # Job pod's logs, exactly as the in-pod subprocess path does — the
@@ -923,6 +925,16 @@ class KubejobMixin:
             for job_id in reaped:
                 self._release_task_credential(job_id)
             await self._drain_queue()
+        for task_id in list(self._held_credentials):
+            try:
+                if await self._build_backend().job_gone(task_id):
+                    self._release_task_credential(task_id)
+                    self._held_credentials.discard(task_id)
+            except Exception:  # noqa: BLE001 - retry on the next tick
+                _log.exception(
+                    "[AgentService] could not verify Job for held credential %s",
+                    sanitize_log(task_id),
+                )
         try:
             await self._build_backend().sweep_orphan_jobs()
         except Exception:  # noqa: BLE001 - sweep must never crash the loop

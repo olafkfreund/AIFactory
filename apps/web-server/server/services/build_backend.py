@@ -1350,6 +1350,20 @@ class KubeJobBuildBackend:
                 if api is not None:
                     await api.close()
 
+    async def job_gone(self, job_id: str, batch: Any = None) -> bool:
+        """Return true only when the reconstructed Job lookup returns 404."""
+        job_name, namespace = _reconstructed_ref(job_id)
+        owns_client = batch is None
+        if owns_client:
+            batch = await self._batch_api()
+        try:
+            return await self._job_outcome(batch, namespace, job_name) == "gone"
+        finally:
+            if owns_client:
+                api = getattr(batch, "api_client", None)
+                if api is not None:
+                    await api.close()
+
     # -- reconcile-by-poll --------------------------------------------------
 
     async def reconcile_by_poll(self, job_id: str) -> str | None:

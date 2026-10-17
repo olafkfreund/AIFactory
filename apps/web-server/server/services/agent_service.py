@@ -114,6 +114,8 @@ class AgentService(
         # the rows it just polled, so ``is_running`` can answer for both
         # backends without a Kubernetes call or a DB round-trip per request.
         self._active_kubejob_task_ids: set[str] = set()
+        # #1714 task ids whose dispatch raised; released when their Job 404s.
+        self._held_credentials: set[str] = set()
         # #1704: spec-creation process per task, so Start/approve stop only that.
         self._spec_creation_procs: dict[str, Any] = {}
         # #1662: ids dispatched since the current reconcile tick began

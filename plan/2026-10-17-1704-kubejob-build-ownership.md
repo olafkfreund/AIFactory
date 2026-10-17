@@ -309,6 +309,12 @@ Run tests from the repo root with
 - Check: `pytest tests/test_kubejob_build_ownership.py tests/test_agent_service_kubejob_backend.py tests/test_build_backend_kubejob.py -q`
 - Traps: `CancelledError` must still propagate (re-raise). The pool is per pod
   and in memory; nothing is persisted.
+- Deviation (implementation): after a successful dispatch,
+  `self._held_credentials.discard(task_id)`. The pool's checkout is idempotent
+  per task id, so a retried dispatch reuses the held credential; without the
+  discard a tick between that checkout and the new Job's create would read 404
+  and free the live build's credential. Tested in
+  `test_dispatch_cancelled_holds_credential_and_propagates`.
 
 ## Tests
 
