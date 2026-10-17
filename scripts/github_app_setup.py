@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import importlib
 import json
 import os
 import re
@@ -131,7 +132,9 @@ def probe_copilot(
         return 1
 
     import httpx  # noqa: PLC0415 - only needed for the live probe
-    from jose import jwt  # type: ignore[import-untyped]  # noqa: PLC0415 - only needed for the live probe
+
+    # jose has no stubs; imported here so manifest/convert need only the stdlib.
+    jwt = importlib.import_module("jose.jwt")
 
     try:
         now = int(time.time())
