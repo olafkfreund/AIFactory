@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1746
 issues: [1746, 1747]
 spec: spec/2026-10-17-1746-git-metadata-write-guards.md
