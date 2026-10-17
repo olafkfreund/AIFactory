@@ -236,3 +236,79 @@ def test_resolve_pr_conflicts_pins_merge_drivers(
     )
     assert refused.resolved is False
     assert "rebase refused" in refused.reason
+
+
+def _two_commit_clone(tmp_path: Path) -> Path:
+    """Clone on aifactory/t whose rebase onto main conflicts on c1 (f) and
+    then three-way merges g when it replays c2."""
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _git(origin, "init", "-q", "-b", "main")
+    _git(origin, "config", "user.email", "t@example.com")
+    _git(origin, "config", "user.name", "Test")
+    g_lines = [f"g{i}\n" for i in range(1, 10)]
+    (origin / "f").write_text("base\n")
+    (origin / "g").write_text("".join(g_lines))
+    _git(origin, "add", "f", "g")
+    _git(origin, "commit", "-q", "-m", "base")
+
+    _git(origin, "checkout", "-q", "-b", "aifactory/t")
+    (origin / "f").write_text("theirs\n")
+    _git(origin, "commit", "-q", "-am", "c1")
+    (origin / "g").write_text("".join(["G1\n", *g_lines[1:]]))
+    _git(origin, "commit", "-q", "-am", "c2")
+
+    _git(origin, "checkout", "-q", "main")
+    (origin / "f").write_text("ours\n")
+    (origin / "g").write_text("".join([*g_lines[:6], "G7\n", *g_lines[7:]]))
+    _git(origin, "commit", "-q", "-am", "main")
+
+    clone = tmp_path / "clone"
+    _git(tmp_path, "clone", "-q", str(origin), str(clone))
+    _git(clone, "config", "user.email", "t@example.com")
+    _git(clone, "config", "user.name", "Test")
+    _git(clone, "checkout", "-q", "aifactory/t")
+    return clone
+
+
+def test_resolve_pr_conflicts_repins_after_fixer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A driver the fixer plants mid-rebase must not run on --continue."""
+    clone = _two_commit_clone(tmp_path)
+    marker = tmp_path / "late"
+
+    def planting_fixer(_files: list[str], wt: str) -> bool:
+        (Path(wt) / "f").write_text("fixed\n")
+        _git(Path(wt), "config", "merge.late.driver", f"touch {marker}; exit 0")
+        (Path(wt) / ".git" / "info").mkdir(exist_ok=True)
+        (Path(wt) / ".git" / "info" / "attributes").write_text("* merge=late\n")
+        return True
+
+    res = pr_endgame.resolve_pr_conflicts(
+        str(clone), "main", fixer=planting_fixer, runner=pr_endgame._default_runner
+    )
+    assert not marker.exists()
+    # The pinned (empty) driver fails the g merge closed: rebase aborted.
+    assert res.resolved is False
+    assert not (clone / ".git" / "rebase-merge").exists()
+
+    # A config the fixer breaks between the two scans aborts the rebase.
+    (tmp_path / "second").mkdir()
+    clone2 = _two_commit_clone(tmp_path / "second")
+    real = pr_endgame.merge_driver_pins
+    calls: list[str] = []
+
+    def _second_boom(cwd: str, **kw: object) -> list[str]:
+        calls.append(cwd)
+        if len(calls) > 1:
+            raise RuntimeError("broken config")
+        return real(cwd, **kw)
+
+    monkeypatch.setattr(pr_endgame, "merge_driver_pins", _second_boom)
+    refused = pr_endgame.resolve_pr_conflicts(
+        str(clone2), "main", fixer=planting_fixer, runner=pr_endgame._default_runner
+    )
+    assert refused.resolved is False
+    assert "rebase refused" in refused.reason
+    assert not (clone2 / ".git" / "rebase-merge").exists()

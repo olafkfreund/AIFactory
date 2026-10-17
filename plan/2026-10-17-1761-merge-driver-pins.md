@@ -202,11 +202,22 @@ than reorder the code.
    `["git", *pins, "-c", "core.editor=true", "rebase", "--continue"]`
    (`--continue` replays further commits, so it merges too). Import from
    `server.utils.subprocess_env` (`:36`).
+   Deviation (review of 0e8b54a1): the fixer (QA-fixer agent) runs in the
+   worktree between the rebase and `--continue` and can plant a new
+   `merge.<name>.driver` plus `info/attributes`. Recompute `pins` after the
+   fixer returns True and before `git add -A`/`--continue`; on `RuntimeError`
+   run `git rebase --abort` and return `rebase refused`. Do not reuse the
+   first `pins` for `--continue`.
 
 Tests (append): `resolve_pr_conflicts` with the real `_default_runner` on a
 clone of `evil_repo` (`git clone`, then check out `aifactory/t`, plant the
 driver config and `info/attributes` in the clone) and a fixer that records
 its call and returns False: the marker is absent and the fixer saw `["f"]`.
+Plus `test_resolve_pr_conflicts_repins_after_fixer`: a two-commit branch
+(c1 conflicts on `f`, c2 three-way merges `g`) and a fixer that resolves `f`
+and plants `merge.late.driver` + `* merge=late`; the marker is absent and the
+rebase ends aborted. A second scan that raises returns `rebase refused` with
+no rebase in progress.
 The `FakeRunner` tests in `tests/test_pr_conflict_resolution.py` must still
 pass unchanged (an unscripted `git config` returns rc 0 and empty out → no
 pins).
