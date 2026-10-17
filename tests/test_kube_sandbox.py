@@ -344,13 +344,20 @@ class _FakeBatchApi:
 
 
 class _FakeCoreApi:
+    def __init__(self, items=()):
+        self._items = list(items)
+
     async def list_namespaced_pod(self, namespace, label_selector=None):
         from types import SimpleNamespace
 
-        return SimpleNamespace(items=[])  # no pod -> loop flags decide the result
+        # default: no pod -> loop flags decide the result
+        return SimpleNamespace(items=self._items)
+
+    async def read_namespaced_pod_log(self, name, namespace):
+        raise RuntimeError("container waiting to start")
 
 
-async def _run_seeded(monkeypatch, statuses, *, timeout=3):
+async def _run_seeded(monkeypatch, statuses, *, timeout=3, pods=()):
     """Drive `KubeJobSandbox._run_async` with a scripted sequence of Job
     statuses, one per `read_namespaced_job` call, and a stubbed k8s client."""
     import kubernetes_asyncio.client as k8s_client
@@ -365,7 +372,7 @@ async def _run_seeded(monkeypatch, statuses, *, timeout=3):
             return None
 
     fake_batch = _FakeBatchApi(statuses)
-    fake_core = _FakeCoreApi()
+    fake_core = _FakeCoreApi(pods)
 
     monkeypatch.setattr(
         k8s_config,
@@ -409,6 +416,55 @@ async def test_a_job_that_succeeds_before_the_deadline_is_unaffected(monkeypatch
 
     assert result.ok is True
     assert "[job" not in result.output
+    assert "no pod found" not in result.output
+
+
+def _stuck_pod():
+    """A gate pod still pulling its image when the Job's deadline hits."""
+    init = SimpleNamespace(
+        name="unpack-workspace",
+        state=SimpleNamespace(
+            waiting=None, terminated=SimpleNamespace(reason="Completed", message=None)
+        ),
+    )
+    main = SimpleNamespace(
+        name="runner",
+        state=SimpleNamespace(
+            waiting=SimpleNamespace(reason="ErrImagePull", message="pull timed out"),
+            terminated=None,
+        ),
+    )
+    return SimpleNamespace(
+        metadata=SimpleNamespace(name="fsbx-1-abc"),
+        status=SimpleNamespace(
+            phase="Pending", init_container_statuses=[init], container_statuses=[main]
+        ),
+    )
+
+
+def test_pod_state_summary_names_phase_and_container_reasons():
+    from core.kube_sandbox import _pod_state_summary
+
+    out = _pod_state_summary(_stuck_pod())
+    assert "Pending" in out
+    assert "unpack-workspace: terminated Completed" in out
+    assert "runner: waiting ErrImagePull (pull timed out)" in out
+    assert _pod_state_summary(SimpleNamespace()) == ""  # broken object: no raise
+
+
+async def test_a_timed_out_job_names_the_pod_phase_it_died_in(monkeypatch):
+    """#1737: the Job is deleted in `finally`, so the pod state must be read
+    into the output before that, or the next timeout has no evidence."""
+    failed = _FakeJobStatus(
+        succeeded=None,
+        failed=1,
+        conditions=[SimpleNamespace(type="Failed", reason="DeadlineExceeded")],
+    )
+    result = await _run_seeded(monkeypatch, [failed], timeout=3, pods=[_stuck_pod()])
+
+    assert result.ok is False
+    assert "[job DeadlineExceeded]" in result.output
+    assert "ErrImagePull" in result.output
 
 
 def test_gate_pod_declares_an_ephemeral_storage_limit():

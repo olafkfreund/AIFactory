@@ -250,6 +250,7 @@ _GREEN_META = {
     "ciParity": True,
     "hostCiGreen": True,
 }
+_GREEN_FETCH = {"tfactory_verdict": "pass", "host_ci_green": True}
 
 
 # The matrix documents legacy tasks (no signed record) on an isolated host, so
@@ -387,7 +388,10 @@ def _section_wiring(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
         (green / "task_metadata.json").write_text(json.dumps(_GREEN_META))
         with _env(**_ISOLATED_HOST):
             disp = {
-                t: pe.merge_disposition(green, t, trusted=None)
+                # #1697: an unmeasured verdict is not a pass, so supply the greens.
+                t: pe.merge_disposition(
+                    green, t, trusted=None, fetch_signals=lambda: _GREEN_FETCH
+                )
                 for t in (None, "", "low")
             }
         same = disp[None] == disp[""] == disp["low"]
