@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1757
 spec: spec/2026-10-17-1757-agent-child-isolation.md
 ---
