@@ -50,6 +50,7 @@ from collections.abc import AsyncGenerator, AsyncIterator
 from pathlib import Path
 from typing import Any
 
+from core.agent_home import AgentHome
 from core.child_env import child_env
 from providers import BaseLLMProvider
 from providers.types import AssistantMessage, TextBlock
@@ -184,13 +185,16 @@ class CodexCLIProvider(BaseLLMProvider):
 
         proc: asyncio.subprocess.Process | None = None
         try:
+            home = AgentHome("codex")
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
-                env=child_env(keep=("OPENAI_API_KEY", "CODEX_API_KEY")),
+                env=child_env(
+                    keep=("OPENAI_API_KEY", "CODEX_API_KEY"), extra=home.env, agent=True
+                ),
             )
 
             prompt_bytes = self._pending_prompt.encode("utf-8")

@@ -37,6 +37,7 @@ from collections.abc import AsyncGenerator, AsyncIterator
 from pathlib import Path
 from typing import Any
 
+from core.agent_home import AgentHome
 from core.child_env import child_env
 from providers import BaseLLMProvider
 from providers.types import AssistantMessage, TextBlock
@@ -161,6 +162,7 @@ class CodexAgenticProvider(BaseLLMProvider):
         self._extra_args: list[str] = extra_args or []
         self._pending_prompt: str | None = None
         self._proc: asyncio.subprocess.Process | None = None
+        self._home: AgentHome | None = None
         self._request_id: int = 0
         self._thread_id: str | None = None
 
@@ -238,12 +240,17 @@ class CodexAgenticProvider(BaseLLMProvider):
         cmd = [resolved_path, "mcp-server"]
         logger.info("CodexAgenticProvider: starting MCP server: %s", " ".join(cmd))
 
+        self._home = AgentHome("codex")
         self._proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=child_env(keep=("OPENAI_API_KEY", "CODEX_API_KEY")),
+            env=child_env(
+                keep=("OPENAI_API_KEY", "CODEX_API_KEY"),
+                extra=self._home.env,
+                agent=True,
+            ),
         )
 
         # Drain stderr concurrently. The response read loop only consumes
@@ -314,6 +321,9 @@ class CodexAgenticProvider(BaseLLMProvider):
             finally:
                 self._proc = None
                 logger.debug("CodexAgenticProvider: MCP server stopped")
+        if self._home:
+            self._home.close()
+            self._home = None
 
     async def query(self, prompt: str) -> None:
         """Store the prompt for execution when ``receive_response()`` is called."""

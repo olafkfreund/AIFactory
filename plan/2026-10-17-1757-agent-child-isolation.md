@@ -172,6 +172,7 @@ tests `tests/test_agent_env_scrub.py`, `tests/test_child_process_env.py`.
       r"|PYTHONUNBUFFERED|PYTHONIOENCODING|TRACEPARENT"
       r"|SSL_CERT_FILE|SSL_CERT_DIR|NODE_EXTRA_CA_CERTS|REQUESTS_CA_BUNDLE"
       r"|GIT_(?:AUTHOR|COMMITTER)_(?:NAME|EMAIL)"
+      r"|OPENAI_BASE_URL|GOOGLE_CLOUD_PROJECT|GOOGLE_CLOUD_LOCATION|GOOGLE_GENAI_USE_VERTEXAI"
       r"|LC_\w+|CLAUDE_CODE_\w+|NIX_\w+|(?i:(?:HTTPS?|NO|ALL)_PROXY)"
   )
   def is_agent_env_allowed(name: str) -> bool:
@@ -405,6 +406,12 @@ or `/nix`; widen once that changes. Docstring of
 **Check:** `cd apps/web-server && pytest tests/test_trusted_contract_merge.py -q`.
 
 **Traps.** Comment and docstring only; no behaviour change.
+
+**Deviation (step 4).** The provider endpoint/project names
+`OPENAI_BASE_URL`, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION` and
+`GOOGLE_GENAI_USE_VERTEXAI` joined the allowlist in `core/auth.py`: the
+codex and gemini spawn tests showed they reached the CLIs before and are
+configuration, not credentials. The tool-loop grep keeps no `HOME`.
 
 ## Rollback
 

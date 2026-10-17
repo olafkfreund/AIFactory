@@ -174,6 +174,8 @@ _AGENT_ENV_ALLOW = re.compile(
     r"|PYTHONUNBUFFERED|PYTHONIOENCODING|TRACEPARENT"
     r"|SSL_CERT_FILE|SSL_CERT_DIR|NODE_EXTRA_CA_CERTS|REQUESTS_CA_BUNDLE"
     r"|GIT_(?:AUTHOR|COMMITTER)_(?:NAME|EMAIL)"
+    # Provider endpoint/project config the CLIs read (not credentials).
+    r"|OPENAI_BASE_URL|GOOGLE_CLOUD_PROJECT|GOOGLE_CLOUD_LOCATION|GOOGLE_GENAI_USE_VERTEXAI"
     r"|LC_\w+|CLAUDE_CODE_\w+|NIX_\w+|(?i:(?:HTTPS?|NO|ALL)_PROXY)"
 )
 _logged_dropped_env_names: set[str] = set()
