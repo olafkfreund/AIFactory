@@ -1331,3 +1331,9 @@ except ImportError:
         "endpoint_integration_helper",
     ):
         globals()[_name] = _make_skip_fixture(_name)
+
+
+@pytest.fixture(autouse=True)
+def _git_baseline_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Isolate git metadata baselines (#1746) from the developer's home dir."""
+    monkeypatch.setenv("AIFACTORY_GIT_BASELINE_DIR", str(tmp_path / "git-baselines"))

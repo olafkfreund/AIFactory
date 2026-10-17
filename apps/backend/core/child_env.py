@@ -89,7 +89,11 @@ def merge_driver_pins(
     ``RuntimeError``. Keys are filtered in Python, not by ``--get-regexp``:
     under a UTF-8 locale git's regex skips a non-UTF-8 subsection. ``run``
     must decode with ``surrogateescape`` so such a key round-trips to argv.
+    Raises RuntimeError when git metadata changed since the baseline (#1746).
     """
+    from core.git_metadata import check_git_metadata  # noqa: PLC0415 - import cycle
+
+    check_git_metadata(cwd, run)
     argv = list(_MERGE_DRIVER_KEYS)
     try:
         if run is not None:

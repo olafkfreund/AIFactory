@@ -139,24 +139,30 @@ def test_worktree_merge_pins_non_utf8_driver(
 
 
 def test_merge_driver_pins_injected_run(tmp_path: Path) -> None:
-    assert merge_driver_pins(tmp_path, run=lambda _a: (0, "")) == []
+    def _script(driver_res: tuple[int, str]) -> object:
+        # Answer the #1746 baseline git calls; script only the driver listing.
+        return lambda a: driver_res if "--name-only" in a else (0, "")
+
+    assert merge_driver_pins(tmp_path, run=_script((0, ""))) == []
 
     assert merge_driver_pins(
         tmp_path,
-        run=lambda _a: (
-            0,
-            "core.bare\0merge.a.driver\0merge.B c.driver\0merge.a.name\0",
+        run=_script(
+            (
+                0,
+                "core.bare\0merge.a.driver\0merge.B c.driver\0merge.a.name\0",
+            )
         ),
     ) == ["-c", "merge.a.driver=", "-c", "merge.B c.driver="]
 
     with pytest.raises(RuntimeError):
-        merge_driver_pins(tmp_path, run=lambda _a: (1, ""))
+        merge_driver_pins(tmp_path, run=_script((1, "")))
 
     with pytest.raises(RuntimeError):
-        merge_driver_pins(tmp_path, run=lambda _a: (128, ""))
+        merge_driver_pins(tmp_path, run=_script((128, "")))
 
     with pytest.raises(RuntimeError):
-        merge_driver_pins(tmp_path, run=lambda _a: (0, "merge.a=b.driver\0"))
+        merge_driver_pins(tmp_path, run=_script((0, "merge.a=b.driver\0")))
 
     def _raise_oserror(_a: list[str]) -> tuple[int, str]:
         raise OSError("boom")
