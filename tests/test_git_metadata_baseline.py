@@ -162,6 +162,8 @@ def test_create_worktree_records_baseline_without_overwriting(repo: Path) -> Non
     mgr = WorktreeManager(repo)
     mgr.setup()
     mgr.create_worktree("t")
+    # check_git_metadata would take a late baseline, so assert create_worktree wrote it.
+    assert _baseline_path(str(snapshot(repo)["repo"])).exists()
     check_git_metadata(repo)
 
     with open(repo / ".git" / "config", "a", encoding="utf-8") as fh:
