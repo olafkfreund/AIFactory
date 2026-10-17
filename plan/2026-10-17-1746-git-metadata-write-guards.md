@@ -208,6 +208,17 @@ drives `run_autonomous_agent` with all subtasks complete and asserts the
 final state is ERROR, replacing the coder half of the source regex test.
 Second review fix: the coder re-raises instead of returning, and the same test
 asserts `RuntimeError` propagates and a FAILED phase is emitted.
+Third review fix (parallel): `session_ok = False` alone let a tampered
+`--parallel` build exit 0. The failed child is never merged and stays
+IN_PROGRESS, so serial never reruns it and the loop pauses. Now
+`run_parallel_coding_phase` records each child check failure and, after the
+phase, raises `GitMetadataChangedError` (a `RuntimeError` subclass in
+`core.git_metadata`). `_maybe_run_parallel_phase` re-raises it ahead of its
+broad `except Exception`, and `run_autonomous_agent` handles it like the
+serial site (shared `_fail_on_git_metadata`: ERROR, FAILED, re-raise).
+`test_parallel_child_metadata_change_raises_after_phase` and
+`test_coder_parallel_metadata_change_ends_build_in_error` replace the parallel
+source regex test.
 
 ### Step 4 (review fix): persist baselines with the workspaces PVC
 

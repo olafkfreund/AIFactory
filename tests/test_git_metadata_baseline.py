@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import importlib
 import json
 import os
 import re
@@ -369,14 +370,166 @@ async def test_coder_metadata_change_in_final_session_ends_in_error(
     assert emit.call_args.args[0] == ExecutionPhase.FAILED
 
 
-def test_parallel_checks_git_metadata_after_session() -> None:
-    parallel_src = (_BACKEND_DIR / "agents" / "parallel_integration.py").read_text(
-        encoding="utf-8"
+@pytest.mark.asyncio
+async def test_parallel_child_metadata_change_raises_after_phase(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed child stays IN_PROGRESS and serial never reruns it, so the phase
+    itself must raise, or a tampered --parallel build exits 0."""
+    from unittest.mock import AsyncMock, MagicMock  # noqa: PLC0415
+
+    import agents.parallel_integration as wave  # noqa: PLC0415
+    from agents.parallel_runner import PhaseRunResult  # noqa: PLC0415
+    from core.git_metadata import GitMetadataChangedError  # noqa: PLC0415
+    from implementation_plan.plan import ImplementationPlan  # noqa: PLC0415
+
+    importlib.import_module("core.worktree")
+    spec_dir = tmp_path / "001-spec"
+    spec_dir.mkdir()
+    plan_path = spec_dir / "implementation_plan.json"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "feature": "f",
+                "phases": [
+                    {
+                        "phase": 1,
+                        "name": "P",
+                        "parallel_safe": True,
+                        "subtasks": [
+                            {"id": "A", "description": "a", "status": "pending"},
+                            {"id": "B", "description": "b", "status": "pending"},
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
     )
-    assert re.search(
-        r"await run_session_guarded\([\s\S]{0,300}?"
-        r"await asyncio\.to_thread\(check_git_metadata,\s*child_path\)"
-        r"[\s\S]{0,200}?except RuntimeError as exc:"
-        r"[\s\S]{0,200}?session_ok\s*=\s*False",
-        parallel_src,
+    child = tmp_path / "child"
+    (child / ".aifactory" / "specs" / spec_dir.name).mkdir(parents=True)
+    wt = MagicMock()
+    wt.create_worktree.return_value = MagicMock(path=child)
+    # sys.modules, not ``import core.worktree``: other tests re-import core.*,
+    # leaving the package attribute stale while the local import reads sys.modules.
+    monkeypatch.setattr(
+        sys.modules["core.worktree"], "WorktreeManager", MagicMock(return_value=wt)
     )
+    for name, repl in {
+        "_task_branch": MagicMock(return_value="main"),
+        "get_phase_model": MagicMock(return_value="claude-sonnet-4-5"),
+        "get_phase_thinking_budget": MagicMock(return_value=None),
+        "create_client": MagicMock(),
+        "generate_subtask_prompt": MagicMock(return_value="p"),
+        "load_subtask_context": MagicMock(return_value={}),
+        "get_graphiti_context": AsyncMock(return_value=""),
+        "_head_commit": MagicMock(return_value="abc"),
+        "run_session_guarded": AsyncMock(return_value=("complete", "", {})),
+        "check_git_metadata": MagicMock(
+            side_effect=lambda p: (_ for _ in ()).throw(RuntimeError("merge.evil"))
+        ),
+        "read_test_evidence": MagicMock(return_value={}),
+        "_capture_memory": AsyncMock(),
+        "record_subtask_started": MagicMock(),
+    }.items():
+        monkeypatch.setattr(wave, name, repl)
+
+    async def _phase(subtasks, *, run_subtask, **_kw):  # noqa: ANN001, ANN202
+        res = await run_subtask(subtasks[0], index=0)
+        assert res.success is False
+        # B merged and completed; A failed its check and is left IN_PROGRESS.
+        return PhaseRunResult(completed_ids=["B"], failed_ids=["A"])
+
+    monkeypatch.setattr(wave, "run_parallel_phase", _phase)
+    plan = ImplementationPlan.load(plan_path)
+    with pytest.raises(GitMetadataChangedError, match="A: merge.evil"):
+        await wave.run_parallel_coding_phase(
+            plan=plan,
+            phase=plan.phases[0],
+            project_dir=tmp_path,
+            spec_dir=spec_dir,
+            model="claude-sonnet-4-5",
+            workers=2,
+        )
+
+
+@pytest.mark.asyncio
+async def test_coder_parallel_metadata_change_ends_build_in_error(
+    tmp_path: Path,
+) -> None:
+    """The parallel raise must not be swallowed into a serial fallback."""
+    from unittest.mock import AsyncMock, MagicMock, patch  # noqa: PLC0415
+
+    import agents.coder as coder  # noqa: PLC0415
+    import agents.parallel_integration as wave  # noqa: PLC0415
+    from core.git_metadata import GitMetadataChangedError  # noqa: PLC0415
+    from phase_event import ExecutionPhase  # noqa: PLC0415
+    from ui import BuildState  # noqa: PLC0415
+
+    spec_dir = tmp_path / "001-spec"
+    spec_dir.mkdir()
+    (spec_dir / "spec.md").write_text("# Feature\n", encoding="utf-8")
+    (spec_dir / "implementation_plan.json").write_text(
+        json.dumps(
+            {
+                "feature": "f",
+                "phases": [
+                    {
+                        "phase": 1,
+                        "name": "P",
+                        "parallel_safe": True,
+                        "subtasks": [
+                            {"id": "A", "description": "a", "status": "pending"},
+                            {"id": "B", "description": "b", "status": "pending"},
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    status_cls = MagicMock()
+    emit = MagicMock()
+    session = AsyncMock(return_value=("continue", "", {}))
+    patchers = {
+        "run_session_guarded": session,
+        "emit_phase": emit,
+        "get_graphiti_context": AsyncMock(return_value=""),
+        "RecoveryManager": MagicMock(),
+        "StatusManager": status_cls,
+        "get_task_logger": MagicMock(return_value=None),
+        "debug_memory_system_status": MagicMock(),
+        "is_build_complete": MagicMock(return_value=False),
+        "print_progress_summary": MagicMock(),
+        "print_session_header": MagicMock(),
+        "count_subtasks": MagicMock(return_value=(0, 2)),
+        "get_next_subtask": MagicMock(return_value={"id": "A", "status": "pending"}),
+        "get_latest_commit": MagicMock(return_value="abc"),
+        "get_commit_count": MagicMock(return_value=0),
+    }
+    with contextlib.ExitStack() as stack:
+        for name, repl in patchers.items():
+            stack.enter_context(patch.object(coder, name, repl))
+        stack.enter_context(
+            patch.object(
+                wave,
+                "run_parallel_coding_phase",
+                AsyncMock(side_effect=GitMetadataChangedError("A: merge.evil")),
+            )
+        )
+        with pytest.raises(GitMetadataChangedError, match="merge.evil"):
+            await coder.run_autonomous_agent(
+                project_dir=tmp_path,
+                spec_dir=spec_dir,
+                model="claude-sonnet-4-5",
+                max_iterations=1,
+                parallel=True,
+                workers=2,
+            )
+
+    session.assert_not_called()
+    states = [
+        c.kwargs.get("state") for c in status_cls.return_value.update.call_args_list
+    ]
+    assert states[-1] == BuildState.ERROR
+    assert emit.call_args.args[0] == ExecutionPhase.FAILED

@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from core.client import create_client
-from core.git_metadata import check_git_metadata
+from core.git_metadata import GitMetadataChangedError, check_git_metadata
 from implementation_plan.plan import ImplementationPlan
 from phase_config import (
     get_phase_model,
@@ -470,6 +470,9 @@ async def run_parallel_coding_phase(
     # once per subtask id from its own coroutine, read in the sequential
     # post-wave step, so there is no shared-key race.
     child_evidence: dict[str, dict[str, Any]] = {}
+    # Child git-metadata check failures. A failed child is never merged and stays
+    # IN_PROGRESS, so serial never reruns it: raise after the phase instead.
+    metadata_errors: list[str] = []
 
     def _make_client(child_path: Path, child_spec_dir: Path, sub_model: str):
         # Per-subtask model override (#376 right-sizing): a subtask may declare
@@ -599,6 +602,7 @@ async def run_parallel_coding_phase(
                 await asyncio.to_thread(check_git_metadata, child_path)
             except RuntimeError as exc:
                 logger.error("[parallel] %s: %s", subtask.id, exc)
+                metadata_errors.append(f"{subtask.id}: {exc}")
                 session_ok = False
 
             # Capture this child's own test-run evidence NOW: the merge deletes
@@ -831,4 +835,6 @@ async def run_parallel_coding_phase(
         on_wave=_on_wave,
     )
     recorder.finish(result)
+    if metadata_errors:
+        raise GitMetadataChangedError("; ".join(metadata_errors))
     return result

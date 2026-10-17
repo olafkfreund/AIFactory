@@ -36,6 +36,10 @@ _TRACKED_SCOPES = frozenset({"local", "worktree"})
 _TRACKED_PREFIXES = ("merge.", "filter.", "diff.")
 
 
+class GitMetadataChangedError(RuntimeError):
+    """A parallel child's metadata check failed; the build must end (#1746)."""
+
+
 def _run_git(
     cwd: str | os.PathLike[str],
     argv: list[str],

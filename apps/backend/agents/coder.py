@@ -17,7 +17,7 @@ from core.error_utils import (
     decide_rate_limit_resume,
     extract_rate_limit_cooldown,
 )
-from core.git_metadata import check_git_metadata
+from core.git_metadata import GitMetadataChangedError, check_git_metadata
 from phase_config import (
     get_phase_model,
     get_phase_thinking_budget,
@@ -647,19 +647,23 @@ async def run_autonomous_agent(
             # phase, or a stalled wave, falls through to the serial path below —
             # so this is always safe.
             if parallel:
-                handled = await _maybe_run_parallel_phase(
-                    spec_dir=spec_dir,
-                    project_dir=project_dir,
-                    subtask_id=subtask_id,
-                    model=model,
-                    parallel_workers=parallel_workers,
-                    verbose=verbose,
-                    source_spec_dir=source_spec_dir,
-                    remote_control_session=remote_control_session,
-                    status_manager=status_manager,
-                    disabled_phases=parallel_disabled_phases,
-                    recovery_manager=recovery_manager,
-                )
+                try:
+                    handled = await _maybe_run_parallel_phase(
+                        spec_dir=spec_dir,
+                        project_dir=project_dir,
+                        subtask_id=subtask_id,
+                        model=model,
+                        parallel_workers=parallel_workers,
+                        verbose=verbose,
+                        source_spec_dir=source_spec_dir,
+                        remote_control_session=remote_control_session,
+                        status_manager=status_manager,
+                        disabled_phases=parallel_disabled_phases,
+                        recovery_manager=recovery_manager,
+                    )
+                except GitMetadataChangedError as exc:
+                    _fail_on_git_metadata(exc, status_manager)
+                    raise
                 if handled:
                     # Progress was made in parallel; re-evaluate from the top.
                     print_progress_summary(spec_dir)
@@ -772,10 +776,7 @@ async def run_autonomous_agent(
         try:
             await asyncio.to_thread(check_git_metadata, project_dir)
         except RuntimeError as exc:
-            print_status(str(exc), "error")
-            status_manager.update(state=BuildState.ERROR)
-            logger.error("%s", exc)
-            emit_phase(ExecutionPhase.FAILED, f"Git metadata changed: {exc}")
+            _fail_on_git_metadata(exc, status_manager)
             # raise, not return/break: the post-loop path would mark COMPLETE and
             # the caller would go on to QA; build_commands exits 1 on it (#1747).
             raise
@@ -1435,6 +1436,13 @@ async def _run_trailing_gates_if_build_complete(
         logger.debug("Trailing gate run skipped: %s", exc)
 
 
+def _fail_on_git_metadata(exc: RuntimeError, status_manager: StatusManager) -> None:
+    print_status(str(exc), "error")
+    status_manager.update(state=BuildState.ERROR)
+    logger.error("%s", exc)
+    emit_phase(ExecutionPhase.FAILED, f"Git metadata changed: {exc}")
+
+
 async def _maybe_run_parallel_phase(
     *,
     spec_dir: Path,
@@ -1511,6 +1519,8 @@ async def _maybe_run_parallel_phase(
 
         # "Made progress" => at least one subtask completed; caller continues.
         return bool(result.completed_ids)
+    except GitMetadataChangedError:
+        raise  # not best-effort: a tampered child ends the build (#1746)
     except Exception as exc:  # noqa: BLE001 - parallel is best-effort; serial is the safety net
         logger.warning(
             "Parallel phase execution failed (%s); falling back to serial", exc
