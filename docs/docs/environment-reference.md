@@ -382,6 +382,7 @@ Read in `apps/web-server/server/services/sandbox.py`,
 | `AIFACTORY_SANDBOX_IMAGE` | `""` | no | Image for sandboxed gate runs. |
 | `AIFACTORY_SANDBOX_NETWORK` | `none` | no | Network mode for the sandbox. |
 | `AIFACTORY_SANDBOX_REPO_PVC` | `aifactory-data` | no | Repo PVC for sandboxed gate runs. |
+| `AIFACTORY_REPO_LINT_GATE` | off | no | Run the target repo's CI linters (ruff, flake8, ktlint) as blocking trailing gates and name them in the planner prompt (#1742). |
 | `AIFACTORY_EXTRA_ALLOWED_COMMANDS` | `""` | no | Extend the dynamic command allowlist (`project/models.py`). |
 | `AIFACTORY_EGRESS_POLICY` | `off` | no | Agent egress policy mode (`security/egress.py`). |
 | `AIFACTORY_EGRESS_ALLOWED_HOSTS` | `""` | no | Allowed egress hosts when the egress policy is on. |
