@@ -87,6 +87,33 @@
   only `echo` checked. Any non-literal command word now fails closed and the
   command is blocked, including a bare `` `cmd` `` or `$(cmd)` used as the
   command.
+- **Agent children can no longer read the parent's secrets through `/proc` or `$HOME` (#1762).**
+  Each agent CLI spawn (Claude SDK paths, codex, copilot, gemini/antigravity,
+  opencode and the tool-loop Bash) gets a private 0700 HOME that holds only
+  that CLI's login file and a `.gitconfig` with `user.*` and `safe.directory`.
+  A refreshed login is written back only if the real file is unchanged. If
+  the private HOME cannot be built the spawn fails; nothing falls back to the
+  real HOME. Agent children also get an env allowlist (#1757), so
+  `SSH_AUTH_SOCK` and other inherited names are dropped. Breaking for
+  operators: agents lose `~/.ssh` and home-folder tool configs; add needed
+  env names with `AIFACTORY_AGENT_ENV_EXTRA`, and name an MCP server's host
+  vars with `env_keys`. On local runners the `/proc` window stays open (#1724).
+- **Project settings moved out of the agent-reachable project clone (#1795).**
+  Per-project settings now live in the web-server database (`project_settings`
+  table, sealed with the same KMS key material as the other stores) instead of
+  `<project>/.aifactory/.env`, which agents can write. On the first read an
+  untracked `.aifactory/.env` is imported once (allowed keys only) and renamed
+  to `.env.migrated-<date>`; after that the database wins and a reappearing
+  file is ignored. The web-server passes MCP config to every launcher and the
+  build Job as `AIFACTORY_PROJECT_MCP_CONFIG`, so an agent that writes the file
+  can no longer change MCP commands (#1791), tokens or the auto-PR and
+  auto-merge flags.
+- **The QA Fixer can no longer delete the handback receipt that holds a merge (#1696).**
+  A confirmed TFactory handback is now also recorded in the `handback_receipts`
+  table, and auto-merge is withheld when a row exists, both in
+  `run_pr_endgame` and at merge time. A failed read holds the merge. The
+  existing `handback_received.json` check stays, so a receipt from before the
+  upgrade still holds.
 - **Tool-loop Bash and Grep commands no longer inherit host secrets in their environment (#1713).**
   The Ollama, Ollama Cloud, OpenAI-compatible and GitHub Models runtimes now
   spawn model-written commands with `child_env()`: every denied secret and
@@ -279,6 +306,14 @@
   "Contract held" badge in the task header. It never changes the task's status
   or review reason, so a hold is not counted as a build failure. A held
   migration still stops the build with exit 1, as before.
+- Gemini credentials and the TFactory handoff are now checked before a phase
+  is spent (#1646). A new `probe_google` checks `GEMINI_API_KEY` with one
+  generation-free request (key in a header, never the URL or logs), and
+  `gemini*` models use it on the build path. `send_handoff` probes the
+  providers in the contract's `phase_models` before posting (3 s timeout).
+  `AIFACTORY_AUTH_PREFLIGHT=warn` (default) only logs, `enforce` refuses a
+  definite rejection, `off` skips the probe. An inconclusive result never
+  blocks.
 - Trailing gates now record CI linters that no gate ran (e.g. `ktlint: skipped`)
   instead of omitting them; reporting only, never blocks (#1627).
 
@@ -313,6 +348,18 @@
   that needs Opus to code can say so (RFC-0014 precedence, #1397).
 
 ### Fixed
+
+- **Pushes now upload Git LFS objects at every push site, and the image ships git-lfs (#1721).**
+  One shared routine uploads the LFS objects the pushed ref points to before
+  the push, at the web-server and backend push sites. It runs only for an
+  `https://github.com/` origin in a repo that uses LFS, so other repos push as
+  before. An upload failure is logged and the push goes ahead. Nothing writes
+  git config; new large files are not converted to LFS pointers.
+
+- **Gates inside the build Job now use the operator's gate timeout and sandbox network (#1796).**
+  The build Job now forwards `AIFACTORY_GATE_TIMEOUT_SECONDS` and
+  `AIFACTORY_SANDBOX_NETWORK`. `AIFACTORY_DATA_ROOT` is not forwarded: the Job
+  does not mount the data volume at that path.
 
 - **The stale sweep is no longer skewed by the host's UTC offset (#1624).**
   Web-server timestamps are now aware UTC (`datetime.now(UTC)`), matching the
