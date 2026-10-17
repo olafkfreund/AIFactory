@@ -51,7 +51,7 @@ _current_key: contextvars.ContextVar = contextvars.ContextVar(
 )
 
 
-async def _list_tools(ctx: Any, params: Any) -> ListToolsResult:
+async def _list_tools(_ctx: Any, _params: Any) -> ListToolsResult:
     """Return the static tool catalog. No auth check — discovery is open."""
     return ListToolsResult(
         tools=[
@@ -65,7 +65,7 @@ async def _list_tools(ctx: Any, params: Any) -> ListToolsResult:
     )
 
 
-async def _call_tool(ctx: Any, params: CallToolRequestParams) -> CallToolResult:
+async def _call_tool(_ctx: Any, params: CallToolRequestParams) -> CallToolResult:
     """Dispatch a tool call — auth + scope check + result envelope."""
     key = _current_key.get()
     if key is None:

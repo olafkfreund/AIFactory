@@ -2,6 +2,8 @@
 
 import pytest
 from mcp.types import CallToolRequestParams
+from server.mcp_remote import server as srv
+from server.mcp_remote.tools import get_tool_definitions
 
 
 def test_flag_on_mounts_mcp_remote(monkeypatch):
@@ -15,9 +17,6 @@ def test_flag_on_mounts_mcp_remote(monkeypatch):
 
 
 async def test_handlers_list_catalog_and_refuse_without_key():
-    from server.mcp_remote import server as srv
-    from server.mcp_remote.tools import get_tool_definitions
-
     listed = await srv._list_tools(None, None)
     assert [t.name for t in listed.tools] == [d["name"] for d in get_tool_definitions()]
 
