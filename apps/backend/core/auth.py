@@ -179,6 +179,8 @@ _AGENT_ENV_ALLOW = re.compile(
     # Provider endpoint/project config the CLIs read (not credentials).
     r"|OPENAI_BASE_URL|GOOGLE_CLOUD_PROJECT|GOOGLE_CLOUD_LOCATION|GOOGLE_GENAI_USE_VERTEXAI"
     r"|LC_\w+|CLAUDE_CODE_\w+|NIX_\w+|(?i:(?:HTTPS?|NO|ALL)_PROXY)"
+    # devShell browser wiring (nix_provisioner); not credentials.
+    r"|PLAYWRIGHT_BROWSERS_PATH|PLAYWRIGHT_SKIP_\w+|FONTCONFIG_FILE"
 )
 _logged_dropped_env_names: set[str] = set()
 
