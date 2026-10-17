@@ -775,8 +775,10 @@ async def run_autonomous_agent(
             print_status(str(exc), "error")
             status_manager.update(state=BuildState.ERROR)
             logger.error("%s", exc)
-            # return, not break: the post-loop path would mark COMPLETE (#1747).
-            return
+            emit_phase(ExecutionPhase.FAILED, f"Git metadata changed: {exc}")
+            # raise, not return/break: the post-loop path would mark COMPLETE and
+            # the caller would go on to QA; build_commands exits 1 on it (#1747).
+            raise
 
         # === PER-CATEGORY TOKEN ATTRIBUTION (#262) ===
         # Attribute the session's real SDK usage across source categories and

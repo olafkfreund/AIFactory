@@ -76,10 +76,13 @@ server merges; nothing notices the other keys or tells a human.
 4. **End of each session.** After each agent session returns:
    - serial coder `agents/coder.py:767` (`run_session_guarded`): call
      `check_git_metadata(project_dir)`; on `RuntimeError` print the message as
-     an error, `status_manager.update(state=BuildState.ERROR)`, log it, and
-     `return` from `run_autonomous_agent` (no retry: every retry would fail
-     the same way; not `break`, because the post-loop code runs the trailing
-     gates and sets COMPLETE when every subtask is done);
+     an error, `status_manager.update(state=BuildState.ERROR)`, log it,
+     `emit_phase(ExecutionPhase.FAILED, ...)`, and re-raise the `RuntimeError`
+     out of `run_autonomous_agent` (no retry: every retry would fail the same
+     way; not `break`, because the post-loop code runs the trailing gates and
+     sets COMPLETE when every subtask is done; not `return`, because
+     `cli/build_commands.py` cannot see it and goes on to QA and exit 0 — the
+     raise reaches its `except Exception` and exits 1);
    - parallel `agents/parallel_integration.py:591`: `check_git_metadata(child_path)`;
      on `RuntimeError` log it and set `session_ok = False`;
    - follow-up planner `agents/planner.py:133`: on `RuntimeError` set
@@ -203,6 +206,8 @@ Deviation (review fix): the serial coder returns instead of breaking (see
 decision 4), and `test_coder_metadata_change_in_final_session_ends_in_error`
 drives `run_autonomous_agent` with all subtasks complete and asserts the
 final state is ERROR, replacing the coder half of the source regex test.
+Second review fix: the coder re-raises instead of returning, and the same test
+asserts `RuntimeError` propagates and a FAILED phase is emitted.
 
 ### Step 4 (review fix): persist baselines with the workspaces PVC
 

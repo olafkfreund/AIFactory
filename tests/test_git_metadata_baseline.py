@@ -309,6 +309,7 @@ async def test_coder_metadata_change_in_final_session_ends_in_error(
     client.__aexit__ = AsyncMock(return_value=False)
     status_cls = MagicMock()
     gates = AsyncMock()
+    emit = MagicMock()
     scaffold = MagicMock(return_value=[])
     patchers = {
         "create_client": MagicMock(return_value=client),
@@ -316,6 +317,7 @@ async def test_coder_metadata_change_in_final_session_ends_in_error(
         "check_git_metadata": MagicMock(side_effect=RuntimeError("merge.evil")),
         "_run_trailing_gates_if_build_complete": gates,
         "scaffold_deploy_for_spec": scaffold,
+        "emit_phase": emit,
         "get_graphiti_context": AsyncMock(return_value=""),
         "RecoveryManager": MagicMock(),
         "StatusManager": status_cls,
@@ -344,12 +346,15 @@ async def test_coder_metadata_change_in_final_session_ends_in_error(
     with contextlib.ExitStack() as stack:
         for name, repl in patchers.items():
             stack.enter_context(patch.object(coder, name, repl))
-        await coder.run_autonomous_agent(
-            project_dir=tmp_path,
-            spec_dir=spec_dir,
-            model="claude-sonnet-4-5",
-            max_iterations=1,
-        )
+        # The caller (cli/build_commands.py) must see the tamper, or it runs QA
+        # in the tampered worktree and exits 0.
+        with pytest.raises(RuntimeError, match="merge.evil"):
+            await coder.run_autonomous_agent(
+                project_dir=tmp_path,
+                spec_dir=spec_dir,
+                model="claude-sonnet-4-5",
+                max_iterations=1,
+            )
 
     states = [
         c.kwargs.get("state") for c in status_cls.return_value.update.call_args_list
@@ -359,6 +364,9 @@ async def test_coder_metadata_change_in_final_session_ends_in_error(
     assert states[-1] == BuildState.ERROR
     gates.assert_not_called()
     scaffold.assert_not_called()
+    from phase_event import ExecutionPhase  # noqa: PLC0415
+
+    assert emit.call_args.args[0] == ExecutionPhase.FAILED
 
 
 def test_parallel_checks_git_metadata_after_session() -> None:
