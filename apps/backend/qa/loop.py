@@ -9,7 +9,9 @@ approval or max iterations.
 import time as time_module
 from pathlib import Path
 
+from agents.coder import _fail_on_git_metadata
 from core.client import create_client
+from core.git_metadata import check_git_metadata
 from core.provider_failover import DeadlineBudget, next_provider, should_failover
 from debug import debug, debug_error, debug_section, debug_success, debug_warning
 from phase_config import (
@@ -25,6 +27,7 @@ from task_logger import (
     LogPhase,
     get_task_logger,
 )
+from ui import StatusManager
 
 from .criteria import (
     MAX_QA_ITERATIONS,
@@ -377,6 +380,13 @@ async def run_qa_validation_loop(
                 verbose,
                 previous_error=last_error_context,  # Pass error context for self-correction
             )
+        # Before any verdict: a reviewer or an earlier fixer session may have
+        # written .git/config; COMPLETE must never follow a tamper (#1746).
+        try:
+            check_git_metadata(project_dir)
+        except RuntimeError as exc:
+            _fail_on_git_metadata(exc, StatusManager(project_dir))
+            raise
 
         iteration_duration = time_module.time() - iteration_start
         debug(

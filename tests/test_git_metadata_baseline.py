@@ -540,3 +540,94 @@ async def test_coder_parallel_metadata_change_ends_build_in_error(
     ]
     assert states[-1] == BuildState.ERROR
     assert emit.call_args.args[0] == ExecutionPhase.FAILED
+
+
+def test_qa_fixer_metadata_change_fails_build_nonzero(
+    repo: Path, tmp_path: Path
+) -> None:
+    from unittest.mock import AsyncMock, MagicMock, patch  # noqa: PLC0415
+
+    import qa_loop  # noqa: PLC0415
+    from cli import build_commands  # noqa: PLC0415
+    from phase_event import ExecutionPhase  # noqa: PLC0415
+
+    # Patch the globals of the loop build_commands will call: other test files
+    # evict and re-import qa.loop at collection time.
+    loop_globals = qa_loop.run_qa_validation_loop.__globals__
+
+    record_baseline(repo)
+    spec_dir = tmp_path / "001-spec"
+    spec_dir.mkdir()
+    (spec_dir / "spec.md").write_text("# Feature\n", encoding="utf-8")
+    # Human feedback makes the loop run the fixer before the reviewer.
+    (spec_dir / "QA_FIX_REQUEST.md").write_text("fix it\n", encoding="utf-8")
+
+    async def fixer(*_a, **_k):
+        _git(repo, "config", "core.fsmonitor", "/tmp/evil")
+        return "fixed", ""
+
+    client = MagicMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    emit = MagicMock()
+    review_state = MagicMock()
+    review_state.is_approval_valid.return_value = True
+    patches = [
+        patch("agent.run_autonomous_agent", new=AsyncMock(return_value=None)),
+        patch("agent.sync_plan_to_source", MagicMock(return_value=False)),
+        patch("qa_loop.should_run_qa", MagicMock(return_value=True)),
+        patch("cli.utils.validate_environment", MagicMock(return_value=True)),
+        patch("cli.utils.print_banner", MagicMock()),
+        patch.object(
+            build_commands,
+            "choose_workspace",
+            MagicMock(return_value=build_commands.WorkspaceMode.DIRECT),
+        ),
+        patch.object(
+            build_commands, "get_existing_build_worktree", MagicMock(return_value=None)
+        ),
+        patch.object(
+            build_commands, "build_is_silent_noop", MagicMock(return_value=False)
+        ),
+        patch.object(
+            build_commands,
+            "ReviewState",
+            MagicMock(load=MagicMock(return_value=review_state)),
+        ),
+        patch("phase_event.emit_phase", emit),
+        patch("agents.coder.emit_phase", emit),
+        patch.dict(
+            loop_globals,
+            {
+                "emit_phase": emit,
+                "is_build_complete": MagicMock(return_value=True),
+                "is_no_test_project": MagicMock(return_value=False),
+                "get_task_logger": MagicMock(return_value=None),
+                "create_client": MagicMock(return_value=client),
+                "run_qa_fixer_session": fixer,
+                "_create_qa_reviewer_provider": MagicMock(return_value=client),
+                "run_qa_agent_session": AsyncMock(return_value=("approved", "ok")),
+            },
+        ),
+    ]
+    with contextlib.ExitStack() as stack:
+        for p in patches:
+            stack.enter_context(p)
+        with pytest.raises(SystemExit) as exc:
+            build_commands.handle_build_command(
+                project_dir=repo,
+                spec_dir=spec_dir,
+                model="claude-sonnet-4-5",
+                max_iterations=1,
+                verbose=False,
+                force_isolated=False,
+                force_direct=True,
+                auto_continue=True,
+                skip_qa=False,
+                force_bypass_approval=False,
+            )
+
+    assert exc.value.code == 1
+    phases = [c.args[0] for c in emit.call_args_list]
+    assert ExecutionPhase.FAILED in phases
+    assert ExecutionPhase.COMPLETE not in phases

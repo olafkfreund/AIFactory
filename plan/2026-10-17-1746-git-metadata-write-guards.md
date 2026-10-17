@@ -88,6 +88,13 @@ server merges; nothing notices the other keys or tells a human.
    - follow-up planner `agents/planner.py:133`: on `RuntimeError` set
      `status = "error"` (its existing path sets `BuildState.ERROR` and returns
      False).
+   - QA (review fix): `qa/loop.py` `run_qa_validation_loop`, right after each
+     `run_qa_agent_session` and before any verdict, so a reviewer or an
+     earlier fixer change fails before COMPLETE "QA validation passed"; and
+     `cli/build_commands.py` `_check_qa_git_metadata(working_dir)` after
+     `run_qa_validation_loop` returns (a final fixer session) and at the top
+     of the pre-approved branch. All use the coder's `_fail_on_git_metadata`
+     and re-raise, so the build exits 1.
 5. Out of scope: an agent-side Bash write guard (user answer 3, Option B not
    built). A1's pins stay as they are: drivers present in the baseline are
    still blanked (user answer 1 accepts the preview/merge conflicts for now).
@@ -219,6 +226,13 @@ serial site (shared `_fail_on_git_metadata`: ERROR, FAILED, re-raise).
 `test_parallel_child_metadata_change_raises_after_phase` and
 `test_coder_parallel_metadata_change_ends_build_in_error` replace the parallel
 source regex test.
+Fourth review fix (QA): QA reviewer and fixer sessions were never checked,
+so a tampered build could end "QA validation passed" with exit 0. Added the QA
+call sites of decision 4 (`qa/loop.py` after the reviewer session;
+`cli/build_commands.py` after the loop returns and before the pre-approved
+emits). `test_qa_fixer_metadata_change_fails_build_nonzero` drives
+`handle_build_command` with the real loop: a fixer writes `.git/config`, the
+build emits FAILED, never COMPLETE, and exits 1.
 
 ### Step 4 (review fix): persist baselines with the workspaces PVC
 
