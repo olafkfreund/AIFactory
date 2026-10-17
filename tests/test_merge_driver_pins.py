@@ -99,3 +99,30 @@ def test_merge_driver_pins_injected_run(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError):
         merge_driver_pins(tmp_path, run=_raise_oserror)
+
+
+def test_backend_merge_tree_previews_pin_drivers_and_fail_closed(
+    evil_repo: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import cli.workspace_commands as wc_mod
+    import core.workspace.merge as merge_mod
+
+    repo, marker = evil_repo
+
+    res1 = merge_mod._check_git_conflicts(repo, "t")
+    assert res1["has_conflicts"] is True
+    assert not marker.exists()
+
+    res2 = wc_mod._check_git_merge_conflicts(repo, "t")
+    assert res2["has_conflicts"] is True
+    assert not marker.exists()
+
+    def _boom(_cwd: Path) -> list[str]:
+        raise RuntimeError("broken config")
+
+    monkeypatch.setattr(merge_mod, "merge_driver_pins", _boom)
+    assert merge_mod._check_git_conflicts(repo, "t")["has_conflicts"] is True
+
+    monkeypatch.setattr(wc_mod, "merge_driver_pins", _boom)
+    assert wc_mod._check_git_merge_conflicts(repo, "t")["has_conflicts"] is True
