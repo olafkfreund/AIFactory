@@ -87,13 +87,70 @@ def test_merge_driver_pins_blocks_merge_tree_driver(
     assert not marker.exists()
 
 
+@pytest.fixture
+def non_utf8_repo(
+    evil_repo: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, Path]:
+    """evil_repo with the bound driver renamed to the invalid-UTF-8 byte 0xff."""
+    repo, marker = evil_repo
+    monkeypatch.setenv("LC_ALL", "C.UTF-8")  # git's regex skips 0xff here
+    with (repo / ".git" / "config").open("ab") as fh:
+        fh.write(b'[merge "\xff"]\n\tdriver = touch ' + bytes(marker) + b"; exit 0\n")
+    (repo / ".git" / "info" / "attributes").write_bytes(b"* merge=\xff\n")
+    control = subprocess.run(
+        ["git", "merge-tree", "--write-tree", "main", "aifactory/t"],
+        cwd=repo,
+        capture_output=True,
+    )
+    if not marker.exists():
+        pytest.skip(f"git did not run the 0xff driver (rc={control.returncode})")
+    marker.unlink()
+    return repo, marker
+
+
+def test_merge_driver_pins_non_utf8_subsection(
+    non_utf8_repo: tuple[Path, Path],
+) -> None:
+    repo, marker = non_utf8_repo
+    pins = merge_driver_pins(repo)
+    assert "merge.\udcff.driver=" in pins
+
+    pinned = subprocess.run(
+        ["git", *pins, "merge-tree", "--write-tree", "main", "aifactory/t"],
+        cwd=repo,
+        capture_output=True,
+    )
+    assert pinned.returncode == 1
+    assert not marker.exists()
+
+
+def test_worktree_merge_pins_non_utf8_driver(
+    non_utf8_repo: tuple[Path, Path],
+) -> None:
+    from core.worktree import WorktreeInfo, WorktreeManager
+
+    repo, marker = non_utf8_repo
+    mgr = WorktreeManager(repo, base_branch="main")
+    info = WorktreeInfo(
+        path=repo, branch="aifactory/t", spec_name="t", base_branch="main"
+    )
+    assert mgr._do_merge_locked("t", info, no_commit=False) is False
+    assert not marker.exists()
+
+
 def test_merge_driver_pins_injected_run(tmp_path: Path) -> None:
-    assert merge_driver_pins(tmp_path, run=lambda _a: (1, "")) == []
+    assert merge_driver_pins(tmp_path, run=lambda _a: (0, "")) == []
 
     assert merge_driver_pins(
         tmp_path,
-        run=lambda _a: (0, "merge.a.driver\0merge.B c.driver\0"),
+        run=lambda _a: (
+            0,
+            "core.bare\0merge.a.driver\0merge.B c.driver\0merge.a.name\0",
+        ),
     ) == ["-c", "merge.a.driver=", "-c", "merge.B c.driver="]
+
+    with pytest.raises(RuntimeError):
+        merge_driver_pins(tmp_path, run=lambda _a: (1, ""))
 
     with pytest.raises(RuntimeError):
         merge_driver_pins(tmp_path, run=lambda _a: (128, ""))
