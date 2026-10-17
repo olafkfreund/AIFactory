@@ -677,11 +677,12 @@ def _gate(
 
     monkeypatch.setattr(pe, "host_ci_green", fake_ci)
     monkeypatch.setattr(pe, "required_checks_green", fake_req)
-    monkeypatch.setattr(
-        tc,
-        "tfactory_verdict",
-        lambda _d, _s, **k: (heads.append(f"verdict@{k.get('head')}"), verdict)[1],
-    )
+
+    def fake_verdict(_d: object, _s: object, **k: object) -> str | None:
+        heads.append(f"verdict@{k.get('head')}")
+        return verdict
+
+    monkeypatch.setattr(tc, "tfactory_verdict", fake_verdict)
     gate = pe._build_merge_gate(
         spec,
         "001-x",
