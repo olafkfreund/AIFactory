@@ -8,6 +8,7 @@ Main entry point for the web server that provides:
 """
 
 import logging
+import os
 import sys
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
@@ -73,7 +74,7 @@ from .routes import (
 from .routes import (
     settings as settings_routes,
 )
-from .services import github_app
+from .services import github_app, project_settings_store
 from .services.skills_service import init_skills_service
 from .websockets import (
     events as events_ws,
@@ -133,6 +134,9 @@ async def lifespan(app: FastAPI):
             app_settings.autoBuildPath = str(backend_path)
             save_app_settings(app_settings)
             logger.info(f"Auto-configured autoBuildPath: {backend_path}")
+
+    # #1795: children never fall back to .aifactory/.env
+    os.environ.setdefault(project_settings_store.ENV, "{}")
 
     # Initialize database (creates tables if needed)
     await init_db()
@@ -787,10 +791,9 @@ def _make_non_dumpable() -> None:
     backend = str(Path(__file__).resolve().parents[2] / "backend")
     if backend not in sys.path:
         sys.path.insert(0, backend)
-    from core.process_hardening import make_non_dumpable  # noqa: PLC0415
+    from core.process_hardening import require_non_dumpable  # noqa: PLC0415
 
-    if not make_non_dumpable():
-        raise SystemExit("prctl(PR_SET_DUMPABLE, 0) failed")
+    require_non_dumpable()
 
 
 if __name__ == "__main__":

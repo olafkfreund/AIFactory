@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: AIFactory Web API
   description: Web API for AIFactory — self-hosted AI task management + agent orchestration
-  version: 3.10.1
+  version: 3.10.2
 paths:
   /api/auth/register:
     post:
@@ -2874,7 +2874,7 @@ paths:
       description: 'Update project environment configuration.
 
 
-        Updates the .aifactory/.env file with environment variables for:
+        Updates the project settings store with environment variables for:
 
         - GitHub integration (GITHUB_TOKEN)
 
@@ -2884,10 +2884,10 @@ paths:
 
         - Claude authentication (CLAUDE_CODE_OAUTH_TOKEN)
 
+        - MCP configuration (CONTEXT7_ENABLED, PLAYWRIGHT_MCP_ENABLED, AGENT_MCP_*, CUSTOM_MCP_SERVERS)
 
-        Only updates fields that are provided (partial updates supported).
 
-        Sets secure file permissions (0o600) to protect sensitive tokens.'
+        Only updates fields that are provided (partial updates supported).'
       operationId: update_project_env_api_projects__projectId__env_patch
       parameters:
       - name: projectId
@@ -7939,7 +7939,7 @@ paths:
 
         If projectId is provided, the CLI token is persisted directly to the
 
-        project''s .aifactory/.env file (server-side). The raw token is never
+        project''s settings store (server-side, #1795). The raw token is never
 
         included in the response.'
       operationId: auto_detect_github_api_github_auto_detect_get
@@ -8021,7 +8021,7 @@ paths:
       tags:
       - GitHub
       summary: Persist Github Token
-      description: 'Persist the gh CLI token to a project''s .aifactory/.env file.
+      description: 'Persist the gh CLI token to a project''s settings store.
 
 
         The raw token never appears in the response.'
@@ -12723,6 +12723,24 @@ components:
             type: object
           - type: 'null'
           title: Graphitiproviderconfig
+        mcpServers:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Mcpservers
+        agentMcpOverrides:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Agentmcpoverrides
+        customMcpServers:
+          anyOf:
+          - items: {}
+            type: array
+          - type: 'null'
+          title: Custommcpservers
       type: object
       title: ProjectEnvUpdate
       description: Model for updating project environment configuration.

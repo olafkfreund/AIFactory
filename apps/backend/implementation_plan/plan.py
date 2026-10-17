@@ -69,6 +69,7 @@ class ImplementationPlan:
     planStatus: str | None = None
     reviewReason: str | None = None
     recoveryNote: str | None = None
+    contractHold: str | None = None  # noqa: N815 - JSON key (#1709)
     qa_signoff: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -94,6 +95,8 @@ class ImplementationPlan:
             result["reviewReason"] = self.reviewReason
         if self.recoveryNote:
             result["recoveryNote"] = self.recoveryNote
+        if self.contractHold:
+            result["contractHold"] = self.contractHold
         if self.qa_signoff:
             result["qa_signoff"] = self.qa_signoff
         return result
@@ -132,6 +135,7 @@ class ImplementationPlan:
             planStatus=data.get("planStatus"),
             reviewReason=data.get("reviewReason"),
             recoveryNote=data.get("recoveryNote"),
+            contractHold=data.get("contractHold"),
             qa_signoff=data.get("qa_signoff"),
         )
 

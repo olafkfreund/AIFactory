@@ -114,11 +114,15 @@ def test_helper_entries_follow_hooks_path_and_existing_entry(
         assert env["GIT_CONFIG_KEY_4"] == "core.sshCommand"  # #1717 pins
         assert env["GIT_CONFIG_KEY_5"] == "core.pager"
         assert env["GIT_CONFIG_KEY_6"] == "core.editor"
-        assert env["GIT_CONFIG_KEY_7"] == HELPER_KEY
-        assert env["GIT_CONFIG_KEY_8"] == HELPER_KEY
-        assert env["GIT_CONFIG_VALUE_7"] == ""
-        assert env["GIT_CONFIG_VALUE_8"] == HELPER_VALUE
-        assert env["GIT_CONFIG_COUNT"] == "9"
+        assert env["GIT_CONFIG_KEY_7"] == "core.askPass"  # #1745 pins
+        assert env["GIT_CONFIG_KEY_8"] == "credential.helper"
+        assert env["GIT_CONFIG_KEY_9"] == HELPER_KEY
+        assert env["GIT_CONFIG_KEY_10"] == "sequence.editor"
+        assert env["GIT_CONFIG_KEY_11"] == HELPER_KEY
+        assert env["GIT_CONFIG_KEY_12"] == HELPER_KEY
+        assert env["GIT_CONFIG_VALUE_11"] == ""
+        assert env["GIT_CONFIG_VALUE_12"] == HELPER_VALUE
+        assert env["GIT_CONFIG_COUNT"] == "13"
 
 
 def test_malformed_config_count_does_not_raise() -> None:

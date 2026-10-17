@@ -447,6 +447,26 @@ def _section_wiring(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
     return lines, n
 
 
+def _code(v: str) -> str:
+    return f"`{v}`" if v else "(empty)"
+
+
+def _section_git_pins(tabs: list[dict[str, object]]) -> tuple[list[str], int]:
+    import core.child_env as ce  # noqa: PLC0415
+
+    with _env(GIT_CONFIG_COUNT=None, GIT_PAGER=None):
+        env = ce.child_env()
+    count = int(env["GIT_CONFIG_COUNT"])
+    rows = [
+        [f"`{env[f'GIT_CONFIG_KEY_{i}']}`", _code(env[f"GIT_CONFIG_VALUE_{i}"])]
+        for i in range(count)
+    ]
+    rows.append(["`GIT_PAGER` (env default)", f"`{env['GIT_PAGER']}`"])
+    lines = ["## B2. Child-process git config pins", ""]
+    lines += _table(tabs, ["key", "pinned value"], rows)
+    return lines, len(rows)
+
+
 # ---- Section C: gate determinism (ast import closure) ----------------------
 _ROOTS = (_REPO_ROOT / "apps" / "backend", _REPO_ROOT / "apps" / "web-server")
 
@@ -794,6 +814,7 @@ def _derived_ids() -> list[str]:
     ids = [f"policy.tier.{b}" for b in sorted(set(mp._TIER_ALIASES.values()))]
     ids += ["policy.overlay", "policy.val_floor", "policy.path_floor"]
     ids += ["wiring.blank_tier", "wiring.live_overlay", *(f[0] for f in _FLAGS)]
+    ids += ["sandbox.git_config_pins"]
     ids += [f"gate.{e}" for e in _ENTRY_POINTS]
     return sorted(ids)
 
@@ -863,6 +884,7 @@ _SECTIONS = (
     ("val", _section_val),
     ("paths", _section_paths),
     ("wiring", _section_wiring),
+    ("git_pins", _section_git_pins),
     ("gates", _section_gates),
 )
 
@@ -925,6 +947,8 @@ def check(
     json_path: Path = _OUT_JSON,
     controls_path: Path = _CONTROLS_TOML,
 ) -> int:
+    import core.child_env as ce  # noqa: PLC0415
+
     try:
         md, js, c = build(controls_path)
     except ControlsError as e:
@@ -935,6 +959,7 @@ def check(
         "overlay": (c["overlay"] >= _MIN_OVERLAY_ROWS),
         "val": (c["val"] == _VAL_ROWS),
         "paths": (c["paths"] >= len(review_tier.HIGH_RISK_PATTERNS) + 2),
+        "git_pins": (c["git_pins"] == len(ce._GIT_PINS) + 1),
         "gates": (c["gates"] == _GATE_ROWS),
         "controls": (c["controls"] == len(_derived_ids())),
     }
@@ -949,7 +974,8 @@ def check(
             return 1
     print(  # noqa: T201
         f"ok: tiers={c['tiers']} overlay={c['overlay']} val={c['val']} "
-        f"paths={c['paths']} gates={c['gates']} controls={c['controls']}"
+        f"paths={c['paths']} git_pins={c['git_pins']} gates={c['gates']} "
+        f"controls={c['controls']}"
     )
     return 0
 

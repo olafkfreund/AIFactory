@@ -264,8 +264,16 @@ def test_apply_correction_audits_only_a_confirmed_success(
         return dict(result)
 
     monkeypatch.setattr(execution, "apply_correction", _apply)
+    receipts: list[Path] = []
+
+    async def _receipt(spec_dir: Path) -> None:
+        receipts.append(spec_dir)
+
+    monkeypatch.setattr(execution, "record_handback_receipt", _receipt)
     req = execution.ApplyCorrectionRequest(
         fix_request_md="# fix", source="tfactory", confirm=result["confirm"]
     )
     _run(execution.apply_task_correction("p:001", req, _access=USER))
     assert [r["action"] for r in rows] == ["task.apply_correction"] * expected
+    # #1696: only a confirmed handback is recorded in the DB.
+    assert receipts == [tmp_path] * expected

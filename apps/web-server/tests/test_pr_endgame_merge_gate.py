@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 _WS = Path(__file__).resolve().parents[1]
 _BACKEND = _WS.parents[0] / "backend"
@@ -30,8 +31,13 @@ for _p in (str(_WS), str(_BACKEND)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+import server.services.handback_receipt_store as hrs  # noqa: E402
 from merge import merge_policy  # noqa: E402
+from server.database.models import Base  # noqa: E402
 from server.services import pr_endgame as pe  # noqa: E402
+
+# Captured before conftest's autouse stub replaces it (#1696).
+_REAL_ON_RECORD = hrs.on_record
 
 
 @pytest.fixture(autouse=True)
@@ -40,6 +46,10 @@ def _isolated_host(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "kubejob")
     # kubejob counts as isolated only with the durable store (#1667).
     monkeypatch.setattr("server.services.job_state_store.store_enabled", lambda: True)
+    # #1795: the project's settings are loaded, as on a running server.
+    monkeypatch.setattr(
+        "server.services.project_settings_store.is_loaded", lambda _p: True
+    )
 
 
 def _spec(tmp_path: Path, **meta: object) -> Path:
@@ -597,3 +607,59 @@ def test_1695_no_fetch_is_todays_dict(tmp_path: Path) -> None:
         "val_floor": None,
         "ci_parity": True,
     }
+
+
+# --------------------------------------------------------------------------- #
+# #1696: the DB receipt holds after the QA Fixer deletes the file
+# --------------------------------------------------------------------------- #
+
+
+async def _receipt_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'r.db'}")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    monkeypatch.setattr(
+        "server.database.engine.async_session_factory",
+        async_sessionmaker(engine, expire_on_commit=False),
+    )
+    monkeypatch.setattr(hrs, "on_record", _REAL_ON_RECORD)
+    return engine
+
+
+async def test_1696_deleted_receipt_file_still_holds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = await _receipt_db(tmp_path, monkeypatch)
+    try:
+        spec = _spec(tmp_path)
+        receipt = spec / pe._HANDBACK_RECEIPT
+        receipt.write_text("{}")
+        await hrs.record(spec)
+        receipt.unlink()  # what a QA Fixer on the control-plane spec dir can do
+        assert await _endgame_auto_merge(spec, "auto", monkeypatch) is False
+    finally:
+        await engine.dispose()
+
+
+async def test_1696_no_receipt_row_still_merges(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = await _receipt_db(tmp_path, monkeypatch)
+    try:
+        assert await _endgame_auto_merge(_spec(tmp_path), "auto", monkeypatch) is True
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.parametrize(("held", "expected"), [(True, False), (False, True)])
+async def test_1696_merge_time_gate_checks_the_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, held: bool, expected: bool
+) -> None:
+    async def _on_record(_spec_dir: object) -> bool:
+        return held
+
+    monkeypatch.setattr(hrs, "on_record", _on_record)
+    gate = pe._with_receipt_veto(
+        lambda _h: True, _spec(tmp_path), asyncio.get_running_loop()
+    )
+    assert await asyncio.to_thread(gate, "deadbeef") is expected

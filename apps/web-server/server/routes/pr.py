@@ -19,8 +19,10 @@ historically lived in ``routes/tasks.py`` and are re-exported there for backward
 compatibility (``mcp_stdio/router.py`` imports them from ``..routes.tasks``).
 """
 
+import asyncio
 import json
 import logging
+import subprocess
 from contextlib import suppress
 from pathlib import Path
 
@@ -35,13 +37,47 @@ from server.services.build_backend import task_repo_dir
 from server.services.http_verdict import honest_status
 from server.services.task_branch import resolve_task_branch_fetching
 from server.specpath import safe_spec_component
-from server.utils.subprocess_env import child_env, github_env, lfs_push_argv
+from server.utils.subprocess_env import child_env, github_env, lfs_upload
 
 from .project_authz import require_task_access
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _upload_and_push(
+    worktree_path: str, branch: str, push_cmd: list[str]
+) -> subprocess.CompletedProcess[str] | str:
+    """Upload LFS objects, then push: the push result, or a client-safe LFS error.
+
+    Blocking (the upload may take ``LFS_UPLOAD_TIMEOUT``): run it in a thread.
+    Hooks are off (#1680), so the upload is explicit (#1690, #1721).
+    """
+    with github_env(child_env()) as env:
+
+        def run(argv: list[str], timeout: int) -> tuple[int, str, str]:
+            p = subprocess.run(  # noqa: S603, PLW1510
+                argv,
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=env,
+            )
+            return p.returncode, p.stdout, p.stderr
+
+        err = lfs_upload(run, branch)
+        if err:
+            return client_error(logger, "Failed to push LFS objects", err)
+        return subprocess.run(  # noqa: S603, PLW1510
+            push_cmd,
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=env,
+        )
 
 
 class CreatePRFromTaskOptions(BaseModel):
@@ -68,7 +104,6 @@ async def create_pr_from_task(
     (``existing: true``) without pushing, so calling this again is safe and
     works after the worktree was cleaned up (CFactory#457).
     """
-    import subprocess
 
     if options is None:
         options = CreatePRFromTaskOptions()
@@ -320,61 +355,12 @@ async def create_pr_from_task(
             worktree_branch,
         ]
     try:
-        with github_env(child_env()) as env:
-            # #1690: hooks are off, so upload LFS objects explicitly before the push.
-            url = subprocess.run(  # noqa: ASYNC221, PLW1510
-                ["git", "remote", "get-url", "--push", "--all", "origin"],  # noqa: S607
-                cwd=worktree_path,
-                capture_output=True,
-                text=True,
-                timeout=60,
-                env=env,
-            )
-            lfs_argv = (
-                lfs_push_argv(url.stdout.strip(), worktree_branch)
-                if url.returncode == 0
-                else None
-            )
-            if lfs_argv:
-                # Refuse a repo transfer program or url.* rewrite (rc 1 = none set).
-                chk_cmd = ["git", "config", "--name-only", "--get-regexp"]
-                chk = subprocess.run(  # noqa: S603, ASYNC221, PLW1510
-                    [*chk_cmd, r"^(lfs\.customtransfer\.|url\.)"],
-                    cwd=worktree_path,
-                    capture_output=True,
-                    text=True,
-                    timeout=60,
-                    env=env,
-                )
-                if chk.returncode != 1:
-                    return {
-                        "success": False,
-                        "error": (
-                            "Failed to push branch: LFS step refused "
-                            "(lfs.customtransfer.* or url.* defined)"
-                        ),
-                    }
-                up = subprocess.run(  # noqa: S603, ASYNC221, PLW1510
-                    lfs_argv,
-                    cwd=worktree_path,
-                    capture_output=True,
-                    text=True,
-                    timeout=60,
-                    env=env,
-                )
-                if up.returncode != 0:
-                    return {
-                        "success": False,
-                        "error": f"Failed to push LFS objects: {up.stderr.strip()}",
-                    }
-            result = subprocess.run(
-                push_cmd,
-                cwd=worktree_path,
-                capture_output=True,
-                text=True,
-                timeout=60,
-                env=env,
-            )
+        pushed = await asyncio.to_thread(
+            _upload_and_push, str(worktree_path), worktree_branch, push_cmd
+        )
+        if isinstance(pushed, str):
+            return {"success": False, "error": pushed}
+        result = pushed
         if result.returncode != 0:
             return {
                 "success": False,

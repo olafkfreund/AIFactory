@@ -144,6 +144,22 @@ High-risk patterns: `auth`, `login`, `session`, `password`, `secret`, `credentia
 
 Defaults shown; per-project settings and per-deployment env override them.
 
+## B2. Child-process git config pins
+
+| key | pinned value |
+|---|---|
+| `core.hooksPath` | `/dev/null` |
+| `core.fsmonitor` | `false` |
+| `protocol.ext.allow` | `never` |
+| `core.sshCommand` | `ssh` |
+| `core.pager` | `cat` |
+| `core.editor` | `true` |
+| `core.askPass` | (empty) |
+| `credential.helper` | (empty) |
+| `credential.https://github.com.helper` | `!gh auth git-credential` |
+| `sequence.editor` | `true` |
+| `GIT_PAGER` (env default) | `cat` |
+
 ## C. Gate determinism (static import closure)
 
 label = the gate module's own transitive imports; package `__init__` side effects are reported separately in the next column.
@@ -151,8 +167,8 @@ label = the gate module's own transitive imports; package `__init__` side effect
 | gate | label | model clients imported | package __init__ reaches a model client | local modules | via spawn |
 |---|---|---|---|---|---|
 | `merge.merge_policy` | deterministic | - | yes (1): `apps/backend/merge/__init__.py`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | 2 | - |
-| `server.services.pr_review_service` | model-assisted (dynamic import: core.auth:326 (+2 more)) | `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | yes (15): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | 270 | `runners/github/runner.py` |
-| `server.services.pr_endgame` | model-assisted (dynamic import: core.auth:326 (+3 more)) | `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | yes (21): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | 365 | - |
+| `server.services.pr_review_service` | model-assisted (dynamic import: core.auth:326 (+2 more)) | `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | yes (15): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | 275 | `runners/github/runner.py` |
+| `server.services.pr_endgame` | model-assisted (dynamic import: core.auth:326 (+3 more)) | `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | yes (21): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | 372 | - |
 
 Declared, unverified (cross-repo, not probed):
 
@@ -176,6 +192,7 @@ Declared, unverified (cross-repo, not probed):
 | `policy.tier.low` | A low-tier change auto-merges only when host CI is green, TFactory passed, the achieved VAL meets the floor and CI parity holds; otherwise it is held for async review. | ISO 27001:2022 A.8.32; SOC 2 CC8.1; SOX ITGC change management; NIST 800-53 CM | `apps/backend/merge/merge_policy.py` | Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943). |
 | `policy.tier.medium` | A medium-tier change is never auto-merged; it is always held for asynchronous human review. | ISO 27001:2022 A.8.32; SOC 2 CC8.1; SOX ITGC change management; NIST 800-53 CM | `apps/backend/merge/merge_policy.py` | Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943). |
 | `policy.val_floor` | A change whose achieved Verification Assurance Level is missing or below its declared floor is not auto-merged, and an unreadable floor fails closed. | ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 CM | `apps/backend/merge/merge_policy.py` | - |
+| `sandbox.git_config_pins` | Every child process the server spawns, and the web terminal, runs git with command-scope pins that override the repo config keys an agent could use to run a program (hooks, fsmonitor, ext transport, ssh, pager, editor, askpass, credential helper, sequence editor). | ISO 27001:2022 A.8.28; SOC 2 CC6.8; NIST 800-53 SI | `apps/backend/core/child_env.py` | - |
 | `wiring.auto_merge_flag` | Auto-merge is off by default and is enabled only by an explicit per-project or per-deployment setting. | ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 CM | `apps/web-server/server/services/pr_endgame.py` | - |
 | `wiring.blank_tier` | A task with no recorded review tier is decided as low, so the live merge path treats a blank tier exactly as the policy treats low. | ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 CM | `apps/web-server/server/services/pr_endgame.py` | - |
 | `wiring.live_overlay` | On the live merge path a high risk or production deployment holds the merge for a human regardless of the path-floor flag; a required human-approval gate clears only on a GitHub approval of the head commit by someone other than the PR author or a bot; an unreadable contract holds it too. The PR author is the GitHub App bot and no PAT is in the server pod. | ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 CM | `apps/web-server/server/services/pr_endgame.py` | Accepted residual risks (#1671): non-Claude runners and the GitHub MCP server still receive the App token; PAT copies in project .env files and the UI settings token are not removed by this change; stored per-project clone PATs are unchanged (follow-up). |

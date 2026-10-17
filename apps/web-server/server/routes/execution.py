@@ -4,6 +4,7 @@ Task execution routes.
 Handles starting, stopping, and monitoring task execution.
 """
 
+import asyncio
 import json
 import logging
 import sys
@@ -29,6 +30,7 @@ from server.services.audit_service import (
     audit_task_action,
     audit_task_route,
 )
+from server.services.handback_receipt_store import record as record_handback_receipt
 from server.services.trusted_contract import handoff_contract, resolve_contract
 from server.services.trusted_contract_store import (
     TrustedContractStore,
@@ -937,7 +939,9 @@ async def handoff_to_tfactory(
 
     from pfactory.tfactory_client import build_ingest_payload, send_handoff
 
-    payload = build_ingest_payload(
+    # Off the event loop: it pushes the build branch (LFS upload up to 600 s).
+    payload = await asyncio.to_thread(
+        build_ingest_payload,
         spec_dir,
         spec_id,
         contract=handoff_contract(spec_dir, await lookup(spec_dir)),
@@ -1580,6 +1584,8 @@ async def apply_task_correction(
     )
     # A confirm=False preview and a rejected triage write nothing: not an action.
     if result.get("success") and result.get("confirm"):
+        # The QA Fixer can delete the spec-dir receipt; this copy holds the merge.
+        await record_handback_receipt(spec_dir)
         await audit_task_action(
             _access,
             ACTION_TASK_APPLY_CORRECTION,

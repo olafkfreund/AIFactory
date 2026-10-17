@@ -30,10 +30,10 @@ from typing import Any
 
 from factory_common.logsafe import sanitize_log
 
-from server.services import github_app
+from server.services import github_app, project_settings_store
 from server.services.build_backend import task_repo_dir
 from server.services.task_branch import resolve_task_branch
-from server.utils.subprocess_env import child_env, github_env, lfs_push_argv
+from server.utils.subprocess_env import child_env, github_env, lfs_upload
 
 logger = logging.getLogger(__name__)
 
@@ -65,14 +65,16 @@ class CmdResult:
 Runner = Callable[[list[str], "str | None"], CmdResult]
 
 
-def _default_runner(argv: list[str], cwd: str | None = None) -> CmdResult:
+def _default_runner(
+    argv: list[str], cwd: str | None = None, timeout: int = 120
+) -> CmdResult:
     with github_env(child_env()) as env:
         p = subprocess.run(
             argv,
             cwd=cwd,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=timeout,
             env=env,
         )
     return CmdResult(p.returncode, p.stdout.strip(), p.stderr.strip())
@@ -81,33 +83,24 @@ def _default_runner(argv: list[str], cwd: str | None = None) -> CmdResult:
 def push_with_lfs(
     push_argv: list[str], ref: str, cwd: str, runner: Runner = _default_runner
 ) -> CmdResult:
-    """Upload LFS objects, then run ``push_argv`` (#1690).
+    """Gate LFS upload on attributes, then run ``push_argv`` (#1690, #1721).
 
-    Hooks are off (#1680) so git-lfs's pre-push no longer uploads. A failed
-    upload (or a refusal) is returned instead of pushing the ref.
+    Hooks are off (#1680) so git-lfs's pre-push no longer uploads. The upload
+    is best-effort: a failure is logged and the push goes ahead. Only the
+    safety-net refusal (no supported endpoint) is returned without pushing.
     """
-    url = runner(["git", "remote", "get-url", "--push", "--all", "origin"], cwd)
-    argv = lfs_push_argv(url.out.strip(), ref) if url.ok else None
-    if argv:
-        # A repo-defined transfer program, or a url.*.insteadOf that git-lfs applies to
-        # the pinned endpoint, would redirect the upload; refuse (rc 1 = none).
-        chk = runner(
-            [
-                "git",
-                "config",
-                "--name-only",
-                "--get-regexp",
-                r"^(lfs\.customtransfer\.|url\.)",
-            ],
-            cwd,
+
+    def run(argv: list[str], timeout: int) -> tuple[int, str, str]:
+        r = (
+            _default_runner(argv, cwd, timeout)
+            if runner is _default_runner
+            else runner(argv, cwd)
         )
-        if chk.rc != 1:
-            return CmdResult(
-                1, "", "LFS step refused (lfs.customtransfer.* or url.* defined)"
-            )
-        up = runner(argv, cwd)
-        if not up.ok:
-            return up
+        return r.rc, r.out, r.err
+
+    err = lfs_upload(run, ref)
+    if err:
+        return CmdResult(1, "", err)
     return runner(push_argv, cwd)
 
 
@@ -119,23 +112,16 @@ _TRUTHY = {"1", "true", "yes", "on"}
 
 
 def _project_env(project_path: Path | None, key: str) -> str | None:
-    """Read ``key`` from a project's ``.aifactory/.env`` (the per-project settings
-    store the Settings UI writes via PATCH /api/projects/{id}/settings). Returns
-    None when unset/unreadable so the caller can fall back to the global env.
+    """Read ``key`` from a project's in-process settings snapshot (#1795).
+
+    Async entry points populate ``project_settings_store._SNAPSHOT`` from the
+    ``project_settings`` database table before invoking ``pr_endgame``. Returns
+    ``None`` when ``project_path`` is ``None`` or the key is unset, so the
+    caller can fall back to the global env.
     """
     if project_path is None:
         return None
-    env_path = Path(project_path) / ".aifactory" / ".env"
-    try:
-        for line in env_path.read_text().splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                if k.strip() == key:
-                    return v.strip()
-    except OSError:
-        return None
-    return None
+    return project_settings_store.cached_setting(project_path, key)
 
 
 def _flag(key: str, project_path: Path | None) -> bool:
@@ -152,6 +138,9 @@ def is_auto_pr_enabled(project_path: Path | None = None) -> bool:
 
 
 def is_auto_merge_enabled(project_path: Path | None = None) -> bool:
+    # #1795: settings never loaded (DB down since start) -> hold, don't use defaults
+    if project_path is not None and not project_settings_store.is_loaded(project_path):
+        return False
     return _flag("AIFACTORY_AUTO_MERGE", project_path)
 
 
@@ -488,6 +477,57 @@ def _contract_unreadable(spec_dir: Path) -> bool:
         return True
 
 
+def _raise_to_signed(tier: str | None, signed: str) -> tuple[str, bool]:
+    """``(tier decided on, metadata tier below signed)``; signed is the floor (#1672)."""
+    from merge.merge_policy import raise_review_tier  # noqa: PLC0415
+
+    blank = tier is None or not str(tier).strip()
+    effective = "low" if blank else str(tier)
+    below = not blank and raise_review_tier(tier, signed) != tier
+    if _describe_tier(effective) != "unrecognised":
+        effective = raise_review_tier(signed, effective) or effective
+    return effective, below
+
+
+def review_tier_note(spec_dir: Path, tier: str | None, *, trusted: object) -> str:
+    """The PR-body line for the review tier the merge gate uses (#1698).
+
+    Labels only (``_describe_tier``): the metadata tier is agent-writable.
+    Never raises.
+    """
+    try:
+        from server.services.trusted_contract import (  # noqa: PLC0415
+            resolve_contract,
+        )
+
+        state, contract = resolve_contract(spec_dir, trusted)
+        execution = contract.get("execution") if state == "verified" else None
+        signed = execution.get("review_tier") if isinstance(execution, dict) else None
+        if isinstance(signed, str) and _describe_tier(signed) not in (
+            "none",
+            "unrecognised",
+        ):
+            effective, below = _raise_to_signed(tier, signed)
+            note = (
+                f"Effective review tier: {_describe_tier(effective)} "
+                f"(signed floor {_describe_tier(signed)})."
+            )
+            if below:
+                note += (
+                    f"\n\n> **Possible tampering:** task metadata reviewTier "
+                    f"{_describe_tier(tier)} is below the signed tier "
+                    f"{_describe_tier(signed)}; the merge gate decides on "
+                    f"{_describe_tier(effective)}."
+                )
+            return note
+    except Exception:  # noqa: BLE001 - a body line must never break the endgame
+        logger.debug("[pr-endgame] review tier note fell back", exc_info=True)
+    # A blank tier is decided as low (merge_disposition's back-compat rule).
+    blank = tier is None or not str(tier).strip()
+    label = "none (decided as low)" if blank else _describe_tier(tier)
+    return f"Review tier: {label} (not checked against a signed contract)."
+
+
 def merge_disposition(
     spec_dir: Path,
     tier: str | None,
@@ -528,7 +568,7 @@ def merge_disposition(
     verdict and host-CI feed ``merge_gate_signals``, and a raise holds.
     """
     try:
-        from merge.merge_policy import decide_merge, raise_review_tier  # noqa: PLC0415
+        from merge.merge_policy import decide_merge  # noqa: PLC0415
 
         from server.services.trusted_contract import (  # noqa: PLC0415
             host_isolated,
@@ -566,25 +606,23 @@ def merge_disposition(
             signed = (
                 execution.get("review_tier") if isinstance(execution, dict) else None
             )
-            if _describe_tier(signed) in ("none", "unrecognised"):
+            if not isinstance(signed, str) or _describe_tier(signed) in (
+                "none",
+                "unrecognised",
+            ):
                 logger.warning(
                     "[pr-endgame] verified contract has no signed review_tier; "
                     "auto-merge withheld"
                 )
                 return HOLD_BLOCKING_DISPOSITION
-            if (
-                tier is not None
-                and str(tier).strip()
-                and raise_review_tier(tier, signed) != tier
-            ):
+            effective, below = _raise_to_signed(tier, signed)
+            if below:
                 logger.warning(
                     "[pr-endgame] reviewTier %s below signed %s; "
                     "deciding on the stricter tier",
                     sanitize_log(_describe_tier(tier)),
                     sanitize_log(_describe_tier(signed)),
                 )
-            if _describe_tier(effective) != "unrecognised":
-                effective = raise_review_tier(signed, effective)
             if fetch_signals is not None:
                 fetched = fetch_signals()
     except Exception:  # noqa: BLE001 - e.g. RecursionError, UnicodeDecodeError
@@ -1581,6 +1619,39 @@ def gather_pr_context(
     }
 
 
+async def _handback_on_record(spec_dir: Path, spec_id: str) -> bool:
+    """A TFactory handback is recorded in the DB (#1696); the QA Fixer can
+    delete ``handback_received.json`` but not this row."""
+    from .handback_receipt_store import on_record  # noqa: PLC0415
+
+    if not await on_record(spec_dir):
+        return False
+    logger.info(
+        "[pr-endgame] %s: TFactory handback on record; auto-merge withheld",
+        sanitize_log(spec_id),
+    )
+    return True
+
+
+def _with_receipt_veto(
+    gate: Callable[[str], bool] | None,
+    spec_dir: Path,
+    loop: asyncio.AbstractEventLoop,
+) -> Callable[[str], bool] | None:
+    if gate is None:
+        return None
+
+    def check(head: str) -> bool:
+        from .handback_receipt_store import on_record  # noqa: PLC0415
+
+        # Runs in a worker thread: _gated_head uses asyncio.to_thread.
+        if asyncio.run_coroutine_threadsafe(on_record(spec_dir), loop).result():
+            return False
+        return gate(head)
+
+    return check
+
+
 def _build_merge_gate(  # noqa: PLR0913 - one-shot builder for run_pr_endgame
     spec_dir: Path,
     spec_id: str,
@@ -1703,6 +1774,7 @@ async def run_pr_endgame(
     # `gather_pr_context` (which already parses task_metadata.json for the base
     # branch) and passed in, so this feature adds no second filesystem path
     # built from a request-supplied spec id.
+    auto_merge = auto_merge and not await _handback_on_record(spec_dir, spec_id)
     human_approval_required = False
     if auto_merge:
         disposition = merge_disposition(spec_dir, review_tier, trusted=trusted)
@@ -1748,8 +1820,10 @@ async def run_pr_endgame(
         if auto_merge
         else None
     )
+    merge_gate = _with_receipt_veto(merge_gate, spec_dir, asyncio.get_running_loop())
 
     title, body = _pr_title_body(spec_dir, spec_id)
+    body = f"{body}\n\n{review_tier_note(spec_dir, review_tier, trusted=trusted)}"
     if review_tier_floor:
         # Advisory rollout (#1456): tell the human reviewer what the paths say,
         # even while the floor is not yet allowed to withhold the merge. Both

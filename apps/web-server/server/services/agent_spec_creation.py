@@ -23,8 +23,8 @@ from server.background import spawn
 from server.specpath import spec_dir_for
 
 from ..utils.subprocess_env import make_subprocess_env
+from . import project_settings_store
 from .agent_task_models import TaskProgress
-from .project_env import load_project_env
 from .task_phase import TaskPhase
 
 if TYPE_CHECKING:
@@ -238,8 +238,8 @@ class SpecCreationMixin:
             except Exception as e:
                 logger.warning(f"[AgentService] Failed to load backend .env: {e}")
 
-        # Project .aifactory/.env: allowlisted project settings only (#1745)
-        load_project_env(project_path, env)
+        # Project settings store: allowlisted project settings only (#1745, #1795)
+        await project_settings_store.load_project_env(project_path, env)
 
         # Get OAuth token from the pool (#670) so concurrent builds draw DISTINCT
         # credentials; returned to the pool when this build ends.
@@ -264,6 +264,8 @@ class SpecCreationMixin:
                 "attempt": 1,
                 "model": spec_phase_model or "sonnet",
             }
+
+        env.update(await project_settings_store.mcp_spawn_env(project_path))
 
         # Start subprocess with a pseudo-TTY to prevent "Stream closed" errors
         # Claude Code CLI expects a TTY for permission handling

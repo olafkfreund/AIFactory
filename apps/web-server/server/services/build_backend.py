@@ -273,6 +273,10 @@ _PASSTHROUGH_BUILD_ENV: tuple[str, ...] = (
     # Forward them together: the PVC alone brings back the #253 node pin.
     "AIFACTORY_PACKED_NIX_IN_IMAGE",
     "AIFACTORY_NIX_STORE_PVC",
+    # #1796: gates in this Job read these (gate_runner.py). Not
+    # AIFACTORY_DATA_ROOT: the Job does not mount the data PVC there.
+    "AIFACTORY_GATE_TIMEOUT_SECONDS",
+    "AIFACTORY_SANDBOX_NETWORK",
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_MODEL",
@@ -1236,9 +1240,11 @@ class KubeJobBuildBackend:
         await stamp_spawn(spec_dir_for(project_path, spec_id), "kubejob")
 
         extra_env = build_job_env(oauth_token)
+        from . import project_settings_store  # noqa: PLC0415
         from .trusted_contract import spawn_env  # noqa: PLC0415
 
         extra_env.update(await spawn_env(spec_dir_for(project_path, spec_id)))
+        extra_env.update(await project_settings_store.mcp_spawn_env(project_path))
 
         manifest = build_run_py_job_manifest(
             task_id=task_id,

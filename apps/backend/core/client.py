@@ -394,9 +394,44 @@ def _externalize_secret_env(cfg: dict, sink: dict) -> dict:
     return cfg
 
 
+_MCP_KEYS = {
+    "CONTEXT7_ENABLED",
+    "PLAYWRIGHT_MCP_ENABLED",
+    "PUPPETEER_MCP_ENABLED",  # backward compat: mapped to PLAYWRIGHT_MCP_ENABLED
+}
+
+
+def _apply_mcp_setting(config: dict, key: str, value: str) -> None:
+    # Include global MCP toggles
+    if key in _MCP_KEYS or key.startswith("AGENT_MCP_"):
+        config[key] = value
+    # Include custom MCP servers (parse JSON with schema validation)
+    elif key == "CUSTOM_MCP_SERVERS":
+        try:
+            parsed = json.loads(value)
+            if not isinstance(parsed, list):
+                logger.warning("CUSTOM_MCP_SERVERS must be a JSON array")
+                config["CUSTOM_MCP_SERVERS"] = []
+            else:
+                # Validate each server and filter out invalid ones
+                valid_servers = []
+                for i, server in enumerate(parsed):
+                    if _validate_custom_mcp_server(server):
+                        valid_servers.append(server)
+                    else:
+                        logger.warning(
+                            f"Skipping invalid custom MCP server at index {i}"
+                        )
+                config["CUSTOM_MCP_SERVERS"] = valid_servers
+        except json.JSONDecodeError:
+            logger.warning("Failed to parse CUSTOM_MCP_SERVERS JSON")
+            config["CUSTOM_MCP_SERVERS"] = []
+
+
 def load_project_mcp_config(project_dir: Path) -> dict:
     """
-    Load MCP configuration from project's .aifactory/.env file.
+    Load project MCP configuration from ``AIFACTORY_PROJECT_MCP_CONFIG`` when
+    set by the web-server; the ``.aifactory/.env`` file is read only by the CLI.
 
     Returns a dict of MCP-related env vars:
     - CONTEXT7_ENABLED (default: true)
@@ -411,17 +446,27 @@ def load_project_mcp_config(project_dir: Path) -> dict:
     Returns:
         Dict of MCP configuration values (string values, except CUSTOM_MCP_SERVERS which is parsed JSON)
     """
+    raw = os.environ.get("AIFACTORY_PROJECT_MCP_CONFIG")
+    if raw is not None:
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.warning("Failed to parse AIFACTORY_PROJECT_MCP_CONFIG JSON")
+            return {}
+        if not isinstance(data, dict):
+            logger.warning("AIFACTORY_PROJECT_MCP_CONFIG must be a JSON object")
+            return {}
+        config: dict = {}
+        for k, v in data.items():
+            if isinstance(k, str) and isinstance(v, str):
+                _apply_mcp_setting(config, k, v)
+        return config
+
     env_path = project_dir / ".aifactory" / ".env"
     if not env_path.exists():
         return {}
 
     config = {}
-    mcp_keys = {
-        "CONTEXT7_ENABLED",
-        "PLAYWRIGHT_MCP_ENABLED",
-        "PUPPETEER_MCP_ENABLED",  # backward compat: mapped to PLAYWRIGHT_MCP_ENABLED
-    }
-
     try:
         with open(env_path, encoding="utf-8") as f:
             for line in f:
@@ -432,34 +477,7 @@ def load_project_mcp_config(project_dir: Path) -> dict:
                     key, value = line.split("=", 1)
                     key = key.strip()
                     value = value.strip().strip("\"'")
-                    # Include global MCP toggles
-                    if key in mcp_keys or key.startswith("AGENT_MCP_"):
-                        config[key] = value
-                    # Include custom MCP servers (parse JSON with schema validation)
-                    elif key == "CUSTOM_MCP_SERVERS":
-                        try:
-                            parsed = json.loads(value)
-                            if not isinstance(parsed, list):
-                                logger.warning(
-                                    "CUSTOM_MCP_SERVERS must be a JSON array"
-                                )
-                                config["CUSTOM_MCP_SERVERS"] = []
-                            else:
-                                # Validate each server and filter out invalid ones
-                                valid_servers = []
-                                for i, server in enumerate(parsed):
-                                    if _validate_custom_mcp_server(server):
-                                        valid_servers.append(server)
-                                    else:
-                                        logger.warning(
-                                            f"Skipping invalid custom MCP server at index {i}"
-                                        )
-                                config["CUSTOM_MCP_SERVERS"] = valid_servers
-                        except json.JSONDecodeError:
-                            logger.warning(
-                                f"Failed to parse CUSTOM_MCP_SERVERS JSON: {value}"
-                            )
-                            config["CUSTOM_MCP_SERVERS"] = []
+                    _apply_mcp_setting(config, key, value)
     except Exception as e:
         logger.debug(f"Failed to load project MCP config from {env_path}: {e}")
 
@@ -598,8 +616,7 @@ def create_client(
        (see security.py for ALLOWED_COMMANDS)
     4. Tool filtering - Each agent type only sees relevant tools (prevents misuse)
     """
-    if not process_hardening.make_non_dumpable():
-        logger.warning("could not make the process non-dumpable; env stays readable")
+    process_hardening.require_non_dumpable()
     oauth_token = require_auth_token()
     # Ensure SDK can access it via its expected env var
     os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token

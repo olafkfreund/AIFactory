@@ -73,7 +73,7 @@ All three must pass. Any one of them fails → the server is silently skipped fo
 
 AIFactory probes credentials in this order (first hit wins):
 
-1. **Per-project override** — `.aifactory/.env` in the project root. `AGENT_MCP_<agent>_REMOVE=aws` force-disables an otherwise-eligible server; `AGENT_MCP_<agent>_ADD=aws` force-enables it.
+1. **Per-project override** — the project's MCP settings (portal **MCP** view; the backend CLI in local mode reads `.aifactory/.env`). `AGENT_MCP_<agent>_REMOVE=aws` force-disables an otherwise-eligible server; `AGENT_MCP_<agent>_ADD=aws` force-enables it.
 2. **Operator config** — `~/.aifactory/mcp-credentials.json`. Points at named env vars or alternate files. Refuses to load with looser-than-0600 perms.
 3. **Native CLI discovery** — the files and env vars each cloud's official CLI reads. `~/.aws/credentials`, `~/.kube/config`, `KUBECONFIG`, `AZURE_*` env triplet, `GITHUB_TOKEN`, etc.
 4. **K8s in-cluster identity** — service account token at `/var/run/secrets/kubernetes.io/serviceaccount/token`, IRSA (`AWS_ROLE_ARN` + `AWS_WEB_IDENTITY_TOKEN_FILE`), Workload Identity Federation, Managed Identity.
@@ -82,7 +82,7 @@ The probes are **cheap** — file existence + env var presence. AIFactory doesn'
 
 ## Per-project override
 
-Operators can force-enable or force-disable a catalog server with one line in `.aifactory/.env`:
+Operators can force-enable or force-disable a catalog server per agent from the portal **MCP** view. The settings are stored as these keys; the backend CLI in local mode reads the same keys from `.aifactory/.env`:
 
 ```bash
 # Force-enable Kubernetes for this project even if no charts/ dir exists
@@ -112,7 +112,7 @@ The credential probes accept whatever the CLI native discovery finds. **What the
 
 ## Adding custom MCP servers
 
-The catalog is for first-party defaults. If you need a custom server (your internal Splunk MCP, a homegrown SBOM tool, an MCP wrapper around your monitoring stack), AIFactory's existing `CUSTOM_MCP_SERVERS` mechanism handles it. Put the JSON in `.aifactory/.env`:
+The catalog is for first-party defaults. If you need a custom server (your internal Splunk MCP, a homegrown SBOM tool, an MCP wrapper around your monitoring stack), AIFactory's existing `CUSTOM_MCP_SERVERS` mechanism handles it. Add the server in the portal **MCP** view; it is stored as this key (the backend CLI in local mode reads it from `.aifactory/.env`):
 
 ```bash
 CUSTOM_MCP_SERVERS=[

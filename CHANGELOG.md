@@ -1,5 +1,90 @@
 ## [Unreleased]
 
+## 3.10.2 - 2026-10-17
+
+### Security
+
+- **Server git and the web terminal pin the remaining agent-writable git config keys (#1745).**
+  `child_env()` now also pins `core.askPass` (empty), `credential.helper`
+  (reset, then `!gh auth git-credential` for github.com) and
+  `sequence.editor`, and defaults `GIT_PAGER` to `cat`, which overrides
+  `pager.<cmd>`. A `.git/config` an agent writes can no longer make the
+  server run a program through any of them. The web terminal gets the same
+  pins and keeps the user's `EDITOR`/`PAGER`. After the reset it re-adds the
+  user's own system and global credential helpers (`store`, libsecret, glab),
+  so HTTPS pushes from the terminal keep working, and a helper planted in the
+  repo config still does not run. On the server, a host credential helper
+  other than gh no longer applies to factory git. Use `GITHUB_TOKEN` or
+  `gh auth login` there. Not covered: `filter.*` and merge drivers (#1761).
+- **Git config and exec settings can no longer be smuggled in through the environment (#1754).**
+  `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n`, `GIT_SSH_COMMAND`, `GIT_EXEC_PATH`,
+  `GIT_DIR` and every other `GIT_*` key outside a short safe list (author and
+  committer identity, prompt, locks) are refused wherever a command sets them:
+  as a prefix, through `env`, `export`, `read`, `printf -v` or a `for` loop
+  variable. `LD_*` keys and array-subscript names are refused too.
+  `GIT_PAGER`, `GIT_EDITOR`, `PAGER`, `EDITOR` and `VISUAL` accept only
+  `cat`, `true` or `:`. Clearing the environment (`env -i`, `env -`,
+  `exec -c`) or unsetting the git safety pins is refused, as are `let`,
+  `set -a`/`set -o allexport` and `mapfile -C`.
+- **`time`, `source`, `npx` and `cargo watch` no longer hide the program they run (#1784).**
+  `/usr/bin/time CMD` now checks `CMD`. `source` and `.` take only a literal
+  file. `npx`, `pnpx` and `npm exec` accept a fixed set of options and refuse
+  `-c`/`--call`/`--shell-mode`, which run a shell command string. `cargo watch`
+  is refused and `cargo-watch` leaves the Rust allowlist.
+  `npm` options before the subcommand must be known ones, so `npm -w x exec -c …`
+  is checked as `npm exec`, and `cargo --config` accepts only a `.toml` file path.
+  Every npm option before `--` must be on a list of common options, so
+  `--script-shell`, `--node-options` and `-c` after the subcommand or package
+  are refused; `-p`/`--package` is refused. `source` and shell script operands
+  under `/dev` or `/proc` are refused after path normalisation.
+  The program `npx`, `pnpx`, `npm exec` and `npm x` run is now checked
+  against the allowlist like any command, and `-y`/`--yes` (install without
+  asking) is refused for them.
+- **`pnpm exec`/`dlx`, `yarn exec`/`dlx`, `bunx`, `bun x`, `uvx`, `uv tool run` and `pipx run` no longer hide the program they run (#1807).**
+  The program they run is checked against the allowlist like any command, and
+  a dynamic program or subcommand is refused. Options before the program are
+  refused for them (and now for `pnpx` too), as is a global option before the
+  runner subcommand (e.g. `pnpm --filter x exec`).
+- **Command substitution inside `${…}` and heredoc bodies is refused (#1797).**
+  The Bash command parser does not parse the inside of `${…}` or a heredoc
+  body, so `echo ${X:-$(cmd)}` and a heredoc containing `$(cmd)` checked only
+  the outer command. A `$(` or backtick in either now blocks the command;
+  plain `${X:-default}` and `$VAR` in heredocs still work. Also refused: `${…}` forms that evaluate
+  text as code: the `@P`, `@E` and `@A` operators, `${!x}` indirection, and an
+  offset, length or array subscript that is not a plain integer.
+- **Quoted heredocs and the `time` keyword no longer block a command (#1809).**
+  `cat <<'EOF'`, `<<"EOF"`, `<<\EOF` and `<<-'EOF'` now parse, so the usual
+  `git commit -m "$(cat <<'EOF' … EOF)"` form works. bash never expands a
+  quoted heredoc body, so it is treated as text. `time CMD` checks `CMD`
+  the same way `/usr/bin/time` does. Unquoted heredoc bodies keep the
+  #1797 check, and any other command the parser cannot read is still refused.
+- **Commands inside redirect targets are now checked (#1783).**
+  The Bash command parser skipped redirect targets, so `ls > $(nc …)`,
+  `cat < <(nc …)` and `cat <<< $(nc …)` checked only the outer command. It
+  now walks every node of the parsed command, so no part of it can hide a
+  command.
+- **A variable as the Bash command word no longer bypasses the allowlist (#1753).**
+  The command parser skipped a command whose first word was `$X`, `"$X"`,
+  `${X}`, `$(...)` or a backtick, so `echo hi; $X status` was allowed with
+  only `echo` checked. Any non-literal command word now fails closed and the
+  command is blocked, including a bare `` `cmd` `` or `$(cmd)` used as the
+  command.
+
+### Changed
+
+- PR bodies now state the review tier the merge gate decides on (#1698). For
+  a verified trusted task the body says `Effective review tier: <tier> (signed
+  floor <tier>)`, and when the agent-writable `reviewTier` is below the signed
+  tier it adds a "Possible tampering" warning naming both. The merge decision
+  is unchanged. The merger's PR body no longer echoes the raw on-disk tier; it
+  shows a constant label marked "not checked against a signed contract".
+- A held task contract now shows on the task (#1709). The hold reason
+  (e.g. `contract held (digest mismatch); normal build`) is written to the
+  task plan as `contractHold`, returned on the task row and shown as a neutral
+  "Contract held" badge in the task header. It never changes the task's status
+  or review reason, so a hold is not counted as a build failure. A held
+  migration still stops the build with exit 1, as before.
+
 ## 3.10.1 - 2026-10-15
 
 ### Security

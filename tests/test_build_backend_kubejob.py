@@ -39,6 +39,17 @@ from server.services.job_state_store import (  # noqa: E402
     SpawnArgs,
 )
 
+
+@pytest.fixture(autouse=True)
+def _empty_project_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No DB here: the project has no stored settings (#1795)."""
+
+    async def _empty(*_args: Any, **_kwargs: Any) -> dict[str, str]:
+        return {}
+
+    monkeypatch.setattr("server.services.project_settings_store.get_settings", _empty)
+
+
 _DATA_ROOT = "/home/nonroot/.aifactory"
 
 
@@ -347,6 +358,20 @@ def test_build_job_env_forwards_both_nix_store_vars(
     env = bb.build_job_env("t")
     assert env["AIFACTORY_PACKED_NIX_IN_IMAGE"] == "1"
     assert env["AIFACTORY_NIX_STORE_PVC"] == "aifactory-nix-store"
+
+
+def test_build_job_env_forwards_gate_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#1796: gates in the build Job read the timeout and sandbox network. The
+    data root is not forwarded: the Job does not mount the data PVC there."""
+    for var in bb._PASSTHROUGH_BUILD_ENV:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("AIFACTORY_GATE_TIMEOUT_SECONDS", "900")
+    monkeypatch.setenv("AIFACTORY_SANDBOX_NETWORK", "bridge")
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", "/data")
+    env = bb.build_job_env("t")
+    assert env["AIFACTORY_GATE_TIMEOUT_SECONDS"] == "900"
+    assert env["AIFACTORY_SANDBOX_NETWORK"] == "bridge"
+    assert "AIFACTORY_DATA_ROOT" not in env
 
 
 def test_build_job_env_propagates_non_claude_provider_env(
