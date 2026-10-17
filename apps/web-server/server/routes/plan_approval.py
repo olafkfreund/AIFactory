@@ -107,6 +107,19 @@ async def approve_plan(
 
     from review import ReviewState
 
+    if request.auto_restart:
+        from ..services.agent_service import (  # noqa: TID252, PLC0415
+            get_agent_service,
+        )
+
+        agent_service = get_agent_service()
+        await agent_service.stop_stale_spec_creation(task_id)
+        if await agent_service.is_running_anywhere(task_id):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Task is already running (possibly on another replica)",
+            )
+
     # Approve the plan
     review_state = ReviewState.load(spec_dir)
     review_state.approve(spec_dir, approved_by="web_user")
@@ -163,24 +176,6 @@ async def approve_plan(
             from ..services.agent_service import get_agent_service
 
             agent_service = get_agent_service()
-
-            # Clean up stale spec creation process if still tracked as running.
-            # The spec_runner process may have exited but the monitor may not have
-            # cleaned up running_tasks (e.g., if the process hung or monitor failed).
-            if agent_service.is_running(task_id):
-                logger = logging.getLogger(__name__)
-                logger.info(
-                    "[ApprovePlan] Cleaning up stale spec creation process for %s",
-                    sanitize_log(task_id),
-                )
-                try:
-                    await agent_service.stop_task(task_id)
-                except Exception as stop_err:
-                    logger.warning(
-                        f"[ApprovePlan] Failed to stop stale process: {stop_err}"
-                    )
-                    # Force-remove from running_tasks as fallback
-                    agent_service.running_tasks.pop(task_id, None)
 
             # Read mode from task_metadata.json
             task_metadata_file = spec_dir / "task_metadata.json"

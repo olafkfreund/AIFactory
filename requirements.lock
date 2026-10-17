@@ -1630,6 +1630,7 @@ mcp==2.0.0 \
     --hash=sha256:0f440e735c13ece8bb19bc62cf0b86f4313448432fbb77d35e14034f4e050728 \
     --hash=sha256:1cb4c75d2d2c7b8c1d756355e5d82a39f2822cc7f13e22a2051d7ca3592349d6
     # via
+    #   -r apps/web-server/requirements.txt
     #   claude-agent-sdk
     #   graphifyy
 mcp-types==2.0.0 \

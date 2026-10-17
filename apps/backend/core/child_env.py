@@ -13,7 +13,7 @@ import shutil
 import subprocess
 from collections.abc import Callable, Iterable, Mapping
 
-from core.auth import is_denied_env_key
+from core.auth import _log_dropped, is_agent_env_allowed, is_denied_env_key
 
 logger = logging.getLogger(__name__)
 
@@ -66,17 +66,81 @@ def pin_git_config(
     return env
 
 
+_MERGE_DRIVER_KEYS = (
+    "git",
+    "config",
+    "-z",
+    "--includes",
+    "--name-only",
+    "--list",
+)
+
+
+def merge_driver_pins(
+    cwd: str | os.PathLike[str],
+    run: Callable[[list[str]], tuple[int, str]] | None = None,
+    env: Mapping[str, str] | None = None,
+) -> list[str]:
+    """Return ``-c merge.<name>.driver=`` pins for every driver in git config (#1761).
+
+    An agent can define ``merge.<name>.driver`` in ``.git/config`` and bind it in
+    ``.git/info/attributes``; overriding each key with an empty value makes git
+    report a conflict instead of running the program. Callers fail closed on
+    ``RuntimeError``. Keys are filtered in Python, not by ``--get-regexp``:
+    under a UTF-8 locale git's regex skips a non-UTF-8 subsection. ``run``
+    must decode with ``surrogateescape`` so such a key round-trips to argv.
+    Raises RuntimeError when git metadata changed since the baseline (#1746).
+    """
+    from core.git_metadata import check_git_metadata  # noqa: PLC0415 - import cycle
+
+    check_git_metadata(cwd, run)
+    argv = list(_MERGE_DRIVER_KEYS)
+    try:
+        if run is not None:
+            rc, out = run(argv)
+        else:
+            proc = subprocess.run(  # noqa: S603 - fixed argv
+                argv,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                errors="surrogateescape",
+                env=dict(env) if env is not None else child_env(),
+                timeout=60,
+                check=False,
+            )
+            rc, out = proc.returncode, proc.stdout
+    except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
+        raise RuntimeError(f"git config failed: {exc}") from exc
+    if rc != 0:
+        raise RuntimeError(f"git config exited {rc}")
+    pins: list[str] = []
+    for key in out.split("\0"):
+        if not (
+            key.startswith("merge.")
+            and key.endswith(".driver")
+            and len(key) >= len("merge..driver")
+        ):
+            continue
+        if "=" in key:
+            raise RuntimeError(f"merge driver key contains '=': {key!r}")
+        pins.extend(("-c", f"{key}="))
+    return pins
+
+
 def child_env(
     keep: Iterable[str] = (),
     extra: Mapping[str, str] | None = None,
     *,
     runner: bool = False,
+    agent: bool = False,
 ) -> dict[str, str]:
     """Return a scrubbed copy of ``os.environ`` for a child process.
 
     Drops every host secret ``is_denied_env_key`` matches plus ``_STRIP_VARS``,
-    and, unless ``runner``, every ``*_KEY``/``*_TOKEN`` name;
-    restores the ``keep`` names that are set, applies ``extra``, and pins git
+    and, unless ``runner``, every ``*_KEY``/``*_TOKEN`` name.
+    ``agent`` also drops names outside the agent allowlist. Then it restores
+    the ``keep`` names that are set, applies ``extra``, and pins git
     exec-bearing config keys via ``pin_git_config``: hooks, fsmonitor, the
     ``ext::`` transport, ssh command (``ssh``), pager (``cat``, plus
     ``GIT_PAGER`` default), editor and sequence editor (``true``), askPass
@@ -97,7 +161,10 @@ def child_env(
         # Linux env names are case-sensitive: a lowercase copy is its own variable.
         and k.upper() not in _STRIP_VARS
         and (runner or not _CREDENTIAL_NAME.search(k))
+        and (not agent or is_agent_env_allowed(k))
     }
+    if agent:
+        _log_dropped(k for k in os.environ if not is_agent_env_allowed(k))
     env.update({k: os.environ[k] for k in keep if k in os.environ})
     if extra:
         env.update(extra)

@@ -268,6 +268,8 @@ async def _run_one_turn(spec_dir: Path, project_dir: Path):
         "get_solo_prompt": solo_p,
         "generate_planner_prompt": plan_p,
         "run_session_guarded": AsyncMock(return_value=("complete", "", {})),
+        # tmp_path is not a git repo; the metadata check fails closed there.
+        "check_git_metadata": MagicMock(),
         "get_graphiti_context": AsyncMock(return_value=""),
         "RecoveryManager": MagicMock(),
         "StatusManager": MagicMock(),

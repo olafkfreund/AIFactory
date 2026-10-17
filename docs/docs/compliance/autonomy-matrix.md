@@ -113,8 +113,8 @@ High-risk patterns: `auth`, `login`, `session`, `password`, `secret`, `credentia
 |---|---|
 | `achieved_val` | `0` |
 | `ci_parity` | `True` |
-| `host_ci_green` | `True` |
-| `tfactory_verdict` | `'pass'` |
+| `host_ci_green` | `False` |
+| `tfactory_verdict` | `None` |
 | `val_floor` | `None` |
 
 ### B3. Flags
@@ -167,8 +167,8 @@ label = the gate module's own transitive imports; package `__init__` side effect
 | gate | label | model clients imported | package __init__ reaches a model client | local modules | via spawn |
 |---|---|---|---|---|---|
 | `merge.merge_policy` | deterministic | - | yes (1): `apps/backend/merge/__init__.py`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | 2 | - |
-| `server.services.pr_review_service` | model-assisted (dynamic import: core.auth:326 (+2 more)) | `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | yes (15): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | 275 | `runners/github/runner.py` |
-| `server.services.pr_endgame` | model-assisted (dynamic import: core.auth:326 (+3 more)) | `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | yes (21): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | 372 | - |
+| `server.services.pr_review_service` | model-assisted (dynamic import: core.auth:364 (+2 more)) | `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | yes (15): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | 277 | `runners/github/runner.py` |
+| `server.services.pr_endgame` | model-assisted (dynamic import: core.auth:364 (+3 more)) | `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | yes (21): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | 374 | - |
 
 Declared, unverified (cross-repo, not probed):
 
@@ -195,5 +195,5 @@ Declared, unverified (cross-repo, not probed):
 | `sandbox.git_config_pins` | Every child process the server spawns, and the web terminal, runs git with command-scope pins that override the repo config keys an agent could use to run a program (hooks, fsmonitor, ext transport, ssh, pager, editor, askpass, credential helper, sequence editor). | ISO 27001:2022 A.8.28; SOC 2 CC6.8; NIST 800-53 SI | `apps/backend/core/child_env.py` | - |
 | `wiring.auto_merge_flag` | Auto-merge is off by default and is enabled only by an explicit per-project or per-deployment setting. | ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 CM | `apps/web-server/server/services/pr_endgame.py` | - |
 | `wiring.blank_tier` | A task with no recorded review tier is decided as low, so the live merge path treats a blank tier exactly as the policy treats low. | ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 CM | `apps/web-server/server/services/pr_endgame.py` | - |
-| `wiring.live_overlay` | On the live merge path a high risk or production deployment holds the merge for a human regardless of the path-floor flag; a required human-approval gate clears only on a GitHub approval of the head commit by someone other than the PR author or a bot; an unreadable contract holds it too. The PR author is the GitHub App bot and no PAT is in the server pod. | ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 CM | `apps/web-server/server/services/pr_endgame.py` | Accepted residual risks (#1671): non-Claude runners and the GitHub MCP server still receive the App token; PAT copies in project .env files and the UI settings token are not removed by this change; stored per-project clone PATs are unchanged (follow-up). |
-| `wiring.path_floor_flag` | The path-derived risk floor is advisory by default and changes the merge tier only when enforcement is explicitly switched on. | ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 CM | `apps/web-server/server/services/pr_endgame.py` | - |
+| `wiring.live_overlay` | On the live merge path a high risk or production deployment holds the merge for a human regardless of the path-floor flag; a required human-approval gate clears only on a GitHub approval of the head commit by someone other than the PR author or a bot; an unreadable contract holds it too. The PR author is the GitHub App bot and no PAT is in the server pod. | ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 CM | `apps/web-server/server/services/pr_endgame.py` | Accepted residual risks (#1671): non-Claude runners and the GitHub MCP server still receive the App token; PAT copies in project .env files and the UI settings token are not removed by this change; a stored per-project clone PAT is accepted (#1703): it is read only at project add for the clone, through GIT_ASKPASS, never pushes and stays encrypted at rest; projects added without one clone with the App token, and App-token clones for stored credentials are #1700. |
+| `wiring.path_floor_flag` | The path-derived risk floor is advisory by default for tasks with a signed contract and changes their merge tier only when enforcement is explicitly switched on; for tasks without a signed contract (legacy and from-issue) it always decides the merge tier. | ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 CM | `apps/web-server/server/services/pr_endgame.py` | - |

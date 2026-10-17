@@ -53,3 +53,9 @@ def _no_handback_receipt(monkeypatch: pytest.MonkeyPatch) -> None:
         return False
 
     monkeypatch.setattr("server.services.handback_receipt_store.on_record", _none)
+
+
+@pytest.fixture(autouse=True)
+def _git_baseline_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Isolate git metadata baselines (#1746) from the developer's home dir."""
+    monkeypatch.setenv("AIFACTORY_GIT_BASELINE_DIR", str(tmp_path / "git-baselines"))

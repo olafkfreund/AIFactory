@@ -7,9 +7,11 @@ it whenever routes/schemas change so the published API docs stay accurate.
 
 Usage:
     APP_DISABLE_AUTH=true apps/web-server/.venv/bin/python scripts/generate-openapi-spec.py
+    APP_DISABLE_AUTH=true apps/web-server/.venv/bin/python scripts/generate-openapi-spec.py --opt-in
 
-Output is pinned to all feature flags off (independent of .env, exported flags and cwd)
-and does not depend on apps/web-server/static/ (#1731).
+The opt-in run writes only new paths to apps/web-server/openapi-optin.yaml.
+Default output is pinned to all feature flags off (independent of .env, exported flags
+and cwd) and does not depend on apps/web-server/static/ (#1731).
 """
 
 from __future__ import annotations
@@ -20,7 +22,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 WEB_SERVER = REPO / "apps" / "web-server"
-OUT = WEB_SERVER / "openapi.yaml"
+OPT_IN = "--opt-in" in sys.argv[1:]
+BASE = WEB_SERVER / "openapi.yaml"
+OUT = WEB_SERVER / ("openapi-optin.yaml" if OPT_IN else "openapi.yaml")
 
 sys.path.insert(0, str(WEB_SERVER))
 
@@ -28,7 +32,7 @@ sys.path.insert(0, str(WEB_SERVER))
 def main() -> int:
     import yaml
 
-    # Pin every env-gated router OFF so the spec is the default deployment's API,
+    # Pin every env-gated router off for the base run and on for the opt-in run,
     # independent of .env, the shell, or the cwd (#1632). Direct assignment beats
     # server/env_bootstrap.py:27's setdefault, and pydantic ranks process env above
     # env_file (server/config.py:246-250). Gates: main.py:541/545 (SAML/SCIM),
@@ -44,12 +48,28 @@ def main() -> int:
                 "AIFACTORY_RMUX_ENABLED",
                 "APP_RMUX_ENABLED",
             ),
-            "false",
+            "true" if OPT_IN else "false",
         )
     )
     from server.main import app  # noqa: E402 — needs sys.path above
 
     spec = app.openapi()
+    if OPT_IN:
+        base_paths = yaml.safe_load(BASE.read_text(encoding="utf-8"))["paths"]
+        spec["paths"] = {
+            path: item for path, item in spec["paths"].items() if path not in base_paths
+        }
+        if not spec["paths"]:
+            raise SystemExit("No opt-in paths found; refusing to write an empty spec.")
+        spec["info"].update(
+            title="AIFactory Web API (opt-in surfaces)",
+            description=(
+                "Routes enabled by SAML_ENABLED, SCIM_ENABLED, AIFACTORY_MCP_REMOTE_ENABLED, "
+                "AIFACTORY_RMUX_ENABLED and APP_RMUX_ENABLED."
+            ),
+            version="opt-in",
+        )
+        # shortcut: keeps unused component schemas; prune if the spec gets too large.
     with OUT.open("w", encoding="utf-8") as f:
         yaml.safe_dump(spec, f, sort_keys=False, allow_unicode=True, width=100)
     print(

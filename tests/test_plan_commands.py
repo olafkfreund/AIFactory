@@ -52,8 +52,8 @@ def test_extract_from_verification_command_strings():
             }
         ]
     }
-    # First-token basenames only.
-    assert extract_command_names(plan) == {"uv", "ruff"}
+    # Runner targets are surfaced too (`uv run pytest` runs pytest, #1812).
+    assert extract_command_names(plan) == {"uv", "pytest", "ruff"}
 
 
 def test_extract_from_service_commands():

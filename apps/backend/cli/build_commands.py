@@ -95,6 +95,18 @@ def _gate_outcomes(evidence: str) -> list[str]:
     return result
 
 
+def _check_qa_git_metadata(work_dir: Path) -> None:
+    """QA reviewer/fixer sessions ran in work_dir: fail the build on drift (#1746)."""
+    from agents.coder import _fail_on_git_metadata  # noqa: PLC0415
+    from core.git_metadata import check_git_metadata  # noqa: PLC0415
+
+    try:
+        check_git_metadata(work_dir)
+    except RuntimeError as exc:
+        _fail_on_git_metadata(exc, StatusManager(work_dir))
+        raise  # the outer handler exits 1
+
+
 def _contract_gap_in_existing_code(spec_dir: Path, work_dir: Path | None) -> list[str]:
     """Names the spec enumerates that the checkout does not define (#1430).
 
@@ -597,6 +609,7 @@ def handle_build_command(
                         verbose=verbose,
                     )
                 )
+                _check_qa_git_metadata(working_dir)
 
                 if qa_approved:
                     print("\n" + "=" * 70)
@@ -635,6 +648,7 @@ def handle_build_command(
             # never found, no gate ran at all, and the run still completed as
             # "QA validation passed (pre-approved)" — indistinguishable, to
             # anyone reading the result, from a suite that ran and was green.
+            _check_qa_git_metadata(working_dir)
             gate_evidence = _trailing_gate_evidence(spec_dir, working_dir)
             emit_phase(
                 ExecutionPhase.QA_REVIEW, "QA pre-approved by coder agent", progress=100

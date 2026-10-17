@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -26,7 +27,6 @@ if str(_WS) not in sys.path:
 import server.services.project_settings_store as pss  # noqa: E402
 from server.services import pr_endgame as pe  # noqa: E402
 from server.services.pr_endgame import CmdResult  # noqa: E402
-from server.services.project_settings_store import project_key  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -35,6 +35,17 @@ def _isolated_host(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "kubejob")
     # kubejob counts as isolated only with the durable store (#1667).
     monkeypatch.setattr("server.services.job_state_store.store_enabled", lambda: True)
+
+
+@pytest.fixture(autouse=True)
+def _verified_green(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests drive the review/merge flow, not the #1695 gate (its own
+    tests are in test_trusted_contract_merge.py). Since #1697 every auto-merge
+    task gets that gate, so stand in a green one."""
+    monkeypatch.setattr(pe, "_build_merge_gate", lambda *_a, **_k: lambda _h: True)
+    real_head = pe._pr_head
+    # A FakeRunner without a head route still yields a head to gate on.
+    monkeypatch.setattr(pe, "_pr_head", lambda *a: real_head(*a) or "deadbeef")
 
 
 class FakeRunner:
@@ -338,6 +349,30 @@ def test_bound_merge_never_updates_the_branch() -> None:
     assert not r.saw("update-branch")
 
 
+def test_1766_watcher_stops_at_the_wall_clock_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Each poll "takes" 10 minutes (a hung gh/TFactory); 20 min = 40 polls
+    # by count, but the deadline must end it after about two.
+    clock = iter(range(0, 10**6, 600))
+    # Patch only pr_endgame's view of time: asyncio itself reads time.monotonic.
+    monkeypatch.setattr(pe, "time", SimpleNamespace(monotonic=lambda: next(clock)))
+    r = FakeRunner({"reviews": _reviews()})
+    res = asyncio.run(
+        pe.watch_and_finish(
+            owner="o",
+            repo="r",
+            pr=5,
+            auto_merge=False,
+            runner=r,
+            poll_interval=0,
+            max_minutes=20,
+        )
+    )
+    assert "review_timeout" in res["reason"]
+    assert 0 < sum("reviews" in " ".join(c) for c in r.calls) < 5
+
+
 # ── watch_and_finish (Copilot-gated) ─────────────────────────────────────────
 
 
@@ -462,7 +497,7 @@ def test_require_copilot_false_allows_human_approval():
 
 def test_flags_read_project_env_over_global(tmp_path, monkeypatch):
     monkeypatch.setenv("AIFACTORY_AUTO_PR", "false")  # global default off
-    pss._SNAPSHOT[project_key(tmp_path)] = {
+    pss._SNAPSHOT[pss.project_key(tmp_path)] = {
         "AIFACTORY_AUTO_PR": "true",
         "AIFACTORY_AUTO_MERGE": "false",
     }
@@ -475,7 +510,7 @@ def test_flags_read_project_env_over_global(tmp_path, monkeypatch):
 
 def test_agent_written_env_file_is_ignored(tmp_path, monkeypatch):
     monkeypatch.delenv("AIFACTORY_AUTO_MERGE", raising=False)
-    pss._SNAPSHOT[project_key(tmp_path)] = {}
+    pss._SNAPSHOT[pss.project_key(tmp_path)] = {}
     env_dir = tmp_path / ".aifactory"
     env_dir.mkdir()
     (env_dir / ".env").write_text("AIFACTORY_AUTO_MERGE=true\n")
@@ -485,9 +520,9 @@ def test_agent_written_env_file_is_ignored(tmp_path, monkeypatch):
 def test_auto_merge_held_when_settings_never_loaded(tmp_path, monkeypatch):
     """#1795: no loaded settings (DB down since start) holds auto-merge."""
     monkeypatch.setenv("AIFACTORY_AUTO_MERGE", "true")  # global default on
-    pss._SNAPSHOT.pop(project_key(tmp_path), None)
+    pss._SNAPSHOT.pop(pss.project_key(tmp_path), None)
     assert pe.is_auto_merge_enabled(tmp_path) is False
-    pss._SNAPSHOT[project_key(tmp_path)] = {}
+    pss._SNAPSHOT[pss.project_key(tmp_path)] = {}
     assert pe.is_auto_merge_enabled(tmp_path) is True
 
 
@@ -730,7 +765,7 @@ def test_resolve_pr_reviewer(tmp_path, monkeypatch):
     monkeypatch.setenv("AIFACTORY_PR_REVIEWER", "bogus")
     assert pe.resolve_pr_reviewer(None) == "aifactory"  # invalid → default
     # project setting wins
-    pss._SNAPSHOT[project_key(tmp_path)] = {"AIFACTORY_PR_REVIEWER": "any"}
+    pss._SNAPSHOT[pss.project_key(tmp_path)] = {"AIFACTORY_PR_REVIEWER": "any"}
     assert pe.resolve_pr_reviewer(tmp_path) == "any"
 
 
@@ -1128,3 +1163,80 @@ def test_1695_host_ci_green_waits_for_unfinished_suites(
     suites: list[str], want: bool | None
 ) -> None:
     assert pe.host_ci_green("o", "r", "abc", runner=_suite_runner(suites)) is want
+
+
+def _req_runner(
+    *,
+    protection: str = '{"required_status_checks":{"contexts":[]}}',
+    prot_rc: int = 0,
+    rules: str = "",
+    runs: tuple[str, ...] = (),
+    statuses: tuple[str, ...] = (),
+) -> FakeRunner:
+    return FakeRunner(
+        {
+            "rules/branches": CmdResult(0, rules, ""),
+            "branches/": CmdResult(prot_rc, protection, ""),
+            "check-runs": CmdResult(0, "\n".join(runs), ""),
+            "/status": CmdResult(0, "\n".join(statuses), ""),
+        }
+    )
+
+
+_RUN_OK = '{"name":"ci/run","status":"completed","conclusion":"success"}'
+_RUN_RED = '{"name":"ci/run","status":"completed","conclusion":"failure"}'
+_RUN_PEND = '{"name":"ci/run","status":"in_progress","conclusion":null}'
+_ST_OK = '{"context":"ci/st","state":"success"}'
+
+
+@pytest.mark.parametrize(
+    ("kw", "want"),
+    [
+        ({}, True),
+        (
+            {
+                "protection": '{"required_status_checks":{"contexts":["ci/run"]}}',
+                "rules": "ci/st",
+                "runs": (_RUN_OK,),
+                "statuses": (_ST_OK,),
+            },
+            True,
+        ),
+        (
+            {
+                "protection": '{"required_status_checks":{"contexts":["ci/run"]}}',
+                "runs": (_RUN_RED,),
+            },
+            False,
+        ),
+        (
+            {
+                "protection": '{"required_status_checks":{"contexts":["ci/run","ci/missing"]}}',
+                "runs": (_RUN_OK,),
+            },
+            None,
+        ),
+        (
+            {
+                "protection": '{"required_status_checks":{"contexts":["ci/run"]}}',
+                "runs": (_RUN_PEND,),
+            },
+            None,
+        ),
+        ({"prot_rc": 1}, None),
+        ({"protection": "null"}, None),
+        (
+            {
+                "protection": '{"required_status_checks":null}',
+                "rules": "ci/rule",
+                "runs": (_RUN_OK,),
+            },
+            None,
+        ),
+    ],
+)
+def test_1766_required_checks_green(kw: dict[str, Any], want: bool | None) -> None:
+    assert (
+        pe.required_checks_green("o", "r", "main", "abc", runner=_req_runner(**kw))
+        is want
+    )
