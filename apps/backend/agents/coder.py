@@ -17,6 +17,7 @@ from core.error_utils import (
     decide_rate_limit_resume,
     extract_rate_limit_cooldown,
 )
+from core.git_metadata import check_git_metadata
 from phase_config import (
     get_phase_model,
     get_phase_thinking_budget,
@@ -768,6 +769,13 @@ async def run_autonomous_agent(
             client, prompt, spec_dir, verbose, phase=current_log_phase
         )
         _turn_duration_ms = int((time.monotonic() - _turn_start) * 1000)
+        try:
+            await asyncio.to_thread(check_git_metadata, project_dir)
+        except RuntimeError as exc:
+            print_status(str(exc), "error")
+            status_manager.update(state=BuildState.ERROR)
+            logger.error("%s", exc)
+            break
 
         # === PER-CATEGORY TOKEN ATTRIBUTION (#262) ===
         # Attribute the session's real SDK usage across source categories and

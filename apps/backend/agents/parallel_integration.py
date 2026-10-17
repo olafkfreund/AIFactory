@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from core.client import create_client
+from core.git_metadata import check_git_metadata
 from implementation_plan.plan import ImplementationPlan
 from phase_config import (
     get_phase_model,
@@ -594,6 +595,11 @@ async def run_parallel_coding_phase(
             _t_end = time.monotonic()
 
             session_ok = status != "error"
+            try:
+                await asyncio.to_thread(check_git_metadata, child_path)
+            except RuntimeError as exc:
+                logger.error("[parallel] %s: %s", subtask.id, exc)
+                session_ok = False
 
             # Capture this child's own test-run evidence NOW: the merge deletes
             # its worktree, and with it the evidence the #851 gate reads (#1177).

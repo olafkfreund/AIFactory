@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
+import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -228,3 +231,82 @@ def test_merge_driver_pins_fake_runner_zero_empty_succeeds(tmp_path: Path) -> No
 
     assert merge_driver_pins(tmp_path, run=lambda _argv: (0, "")) == []
     assert merge_driver_pins(tmp_path, run=lambda _argv: (0, "")) == []
+
+
+@pytest.mark.asyncio
+async def test_followup_planner_fails_on_git_metadata_change(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import agents.planner as planner_mod  # noqa: PLC0415
+    import prompts as prompts_mod  # noqa: PLC0415
+
+    record_baseline(repo)
+    spec_dir = repo / ".aifactory" / "specs" / "001-test"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "implementation_plan.json").write_text(
+        json.dumps(
+            {
+                "feature": "test",
+                "workflow_type": "feature",
+                "phases": [
+                    {
+                        "phase": 1,
+                        "name": "Phase 1",
+                        "type": "implementation",
+                        "subtasks": [
+                            {
+                                "id": "subtask-1-1",
+                                "description": "do work",
+                                "status": "pending",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        planner_mod, "create_client", lambda *_a, **_kw: contextlib.AsyncExitStack()
+    )
+    monkeypatch.setattr(prompts_mod, "get_followup_planner_prompt", lambda _s: "prompt")
+
+    async def _planted_session(
+        *_a: object, **_kw: object
+    ) -> tuple[str, str, dict[str, object]]:
+        cfg = repo / ".git" / "config"
+        cfg.write_text(
+            cfg.read_text(encoding="utf-8") + '[merge "evil"]\n\tdriver = touch x\n',
+            encoding="utf-8",
+        )
+        return ("complete", "", {})
+
+    monkeypatch.setattr(planner_mod, "run_agent_session", _planted_session)
+
+    ok = await planner_mod.run_followup_planner(
+        repo, spec_dir, model="claude-sonnet-4-5-20250929"
+    )
+    assert ok is False
+
+
+def test_coder_and_parallel_check_git_metadata_after_session() -> None:
+    coder_src = (_BACKEND_DIR / "agents" / "coder.py").read_text(encoding="utf-8")
+    assert re.search(
+        r"await run_session_guarded\([\s\S]{0,300}?"
+        r"await asyncio\.to_thread\(check_git_metadata,\s*project_dir\)"
+        r"[\s\S]{0,250}?except RuntimeError as exc:"
+        r"[\s\S]{0,250}?BuildState\.ERROR[\s\S]{0,150}?\bbreak\b",
+        coder_src,
+    )
+
+    parallel_src = (_BACKEND_DIR / "agents" / "parallel_integration.py").read_text(
+        encoding="utf-8"
+    )
+    assert re.search(
+        r"await run_session_guarded\([\s\S]{0,300}?"
+        r"await asyncio\.to_thread\(check_git_metadata,\s*child_path\)"
+        r"[\s\S]{0,200}?except RuntimeError as exc:"
+        r"[\s\S]{0,200}?session_ok\s*=\s*False",
+        parallel_src,
+    )
