@@ -651,6 +651,19 @@ def test_1697_legacy_path_floor_is_enforced(
     assert out == pe.HOLD_BLOCKING_DISPOSITION
 
 
+def test_1697_legacy_unrecognised_tier_still_holds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Review: an unrecognised tier ranks below auto, so the floor must not
+    # "raise" it into a mergeable tier.
+    monkeypatch.delenv(pe.PATH_RISK_FLOOR_ENV, raising=False)
+    spec = _legacy_spec(tmp_path)
+    out = pe.merge_disposition(
+        spec, "blocker", trusted=None, fetch_signals=lambda: _FETCH_PASS, floor="auto"
+    )
+    assert out == pe.HOLD_BLOCKING_DISPOSITION
+
+
 def test_1695_human_approval_cannot_clear_a_red_fetch(tmp_path: Path) -> None:
     spec, signed = _spec(tmp_path, tier="low")
     red = lambda: {"tfactory_verdict": "fail", "host_ci_green": True}  # noqa: E731

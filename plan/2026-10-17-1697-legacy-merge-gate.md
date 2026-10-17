@@ -115,3 +115,9 @@ Revert the PR. No data, schema or config change.
   says. The `wiring.path_floor_flag` objective in
   `docs/compliance/control-objectives.toml` now says the floor always
   applies to legacy tasks. Matrix `.md`/`.json` regenerated.
+- Review fix (step 1b): the legacy floor is applied only when the effective
+  tier is recognised. `raise_review_tier` ranks an unrecognised tier below
+  `auto`, so `floor="auto"` (a clean diff in advisory mode) would have turned
+  it into `auto` and merged it; it is now passed through and `decide_merge`
+  holds it, as the docstring says. Test:
+  `test_1697_legacy_unrecognised_tier_still_holds`.

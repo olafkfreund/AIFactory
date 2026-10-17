@@ -616,7 +616,8 @@ def merge_disposition(  # noqa: PLR0913 - floor is the legacy path floor (#1697)
                     sanitize_log(_describe_tier(tier)),
                     sanitize_log(_describe_tier(signed)),
                 )
-        elif state == "legacy":
+        elif state == "legacy" and _describe_tier(effective) != "unrecognised":
+            # An unrecognised tier ranks below auto; raising it would un-hold it.
             effective = raise_review_tier(effective, floor)
         if not unreadable and fetch_signals is not None:
             fetched = fetch_signals()
