@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1704
 spec: spec/2026-10-17-1704-kubejob-build-ownership.md
 ---
