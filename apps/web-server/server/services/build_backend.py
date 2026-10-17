@@ -154,6 +154,16 @@ _ENV_DATA_ROOT = "AIFACTORY_DATA_ROOT"
 _ENV_NAMESPACE = "AIFACTORY_SANDBOX_NAMESPACE"
 _ENV_SERVICE_ACCOUNT = "AIFACTORY_BUILD_SA"
 _ENV_DEADLINE = "AIFACTORY_BUILD_DEADLINE_SECONDS"
+_ENV_SWEEP_DRY_RUN = "AIFACTORY_JOB_SWEEP_DRY_RUN"
+_SWEEP_GRACE_SECONDS = 600
+_SWEEP_SELECTOR = "app=aifactory,factory.io/kind=task"
+
+
+def sweep_dry_run() -> bool:
+    # Fail closed on a typo, like stale_reaper.dry_run.
+    return os.environ.get(_ENV_SWEEP_DRY_RUN, "true").strip().lower() != "false"
+
+
 # Where run.py lives inside the build image. This is the SAME var the in-pod
 # path resolves (config.Settings.BACKEND_PATH is bound to APP_BACKEND_PATH), so
 # the Job entrypoint references the identical run.py the in-pod subprocess does
@@ -1559,6 +1569,80 @@ class KubeJobBuildBackend:
                 if api is not None:
                     await api.close()
         return reaped
+
+    async def sweep_orphan_jobs(
+        self, *, now: float | None = None, batch: Any = None
+    ) -> list[str]:
+        """Report or delete old build Jobs with no active owner row (#1714)."""
+        import time as _time
+
+        try:
+            rows = await self._store.get_active_kubejobs()
+        except Exception:  # noqa: BLE001 - uncertain ownership leaves Jobs alone
+            _log.exception("[build_backend] #1714 could not read Job owners")
+            return []
+        owned = {
+            row["job_name"] or _reconstructed_ref(row["job_id"])[0] for row in rows
+        }
+        namespace = _dispatch_namespace()
+        owns_client = batch is None
+        if owns_client:
+            batch = await self._batch_api()
+        try:
+            try:
+                listing = await batch.list_namespaced_job(
+                    namespace, label_selector=_SWEEP_SELECTOR
+                )
+            except Exception as exc:  # noqa: BLE001 - uncertain list leaves Jobs alone
+                _log.warning(
+                    "[build_backend] #1714 could not list build Jobs in %s "
+                    "(status=%s; 403 means missing Jobs list RBAC): %s",
+                    namespace,
+                    getattr(exc, "status", None),
+                    exc,
+                )
+                return []
+
+            clock = now if now is not None else _time.time()
+            swept: list[str] = []
+            for job in listing.items or []:
+                name = job.metadata.name
+                created = _to_epoch(job.metadata.creation_timestamp)
+                if (
+                    not name
+                    or name in owned
+                    or created is None
+                    or clock - created < _SWEEP_GRACE_SECONDS
+                ):
+                    continue
+                if sweep_dry_run():
+                    _log.warning(
+                        "[build_backend] #1714 dry-run: would delete orphan Job %s/%s",
+                        namespace,
+                        name,
+                    )
+                    swept.append(name)
+                    continue
+                try:
+                    await batch.delete_namespaced_job(
+                        name, namespace, propagation_policy="Background"
+                    )
+                except Exception as exc:  # noqa: BLE001 - continue with other Jobs
+                    if getattr(exc, "status", None) != 404:
+                        _log.warning(
+                            "[build_backend] #1714 could not delete orphan Job %s/%s: %s",
+                            namespace,
+                            name,
+                            exc,
+                        )
+                        continue
+                swept.append(name)
+            return swept
+        finally:
+            if owns_client:
+                api = getattr(batch, "api_client", None)
+                if api is not None:
+                    await api.close()
 
     async def _done(self, job_id: str) -> None:
         """Mark a build done from the Job's own success (#857).

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -19,7 +20,12 @@ for _path in (_ROOT / "apps" / "web-server", _ROOT / "apps" / "backend"):
 
 from server.database.models import Base, JobState  # noqa: E402
 from server.routes import execution, plan_approval  # noqa: E402
-from server.services import agent_service, audit_service, job_state_store  # noqa: E402
+from server.services import (  # noqa: E402
+    agent_service,
+    audit_service,
+    build_backend,
+    job_state_store,
+)
 
 TASK = "proj-uuid:022-some-spec"
 
@@ -339,3 +345,130 @@ async def test_reaper_does_not_fail_reclaimed_row(replicas, monkeypatch):
     state = await a._job_store.get_state(TASK)
     assert state["lifecycle_state"] == "running"
     assert state["worker_ref"]["boot"] == "new-boot"
+
+
+class _FakeBatch:
+    def __init__(self, jobs=(), *, list_error=None, delete_error=None):
+        self.jobs = jobs
+        self.list_error = list_error
+        self.delete_error = delete_error
+        self.listed = []
+        self.deleted = []
+
+    async def list_namespaced_job(self, namespace, *, label_selector):
+        self.listed.append((namespace, label_selector))
+        if self.list_error:
+            raise self.list_error
+        return SimpleNamespace(items=self.jobs)
+
+    async def delete_namespaced_job(self, name, namespace, *, propagation_policy):
+        self.deleted.append((name, namespace, propagation_policy))
+        if self.delete_error:
+            raise self.delete_error
+
+
+def _job(name, created):
+    return SimpleNamespace(
+        metadata=SimpleNamespace(name=name, creation_timestamp=created)
+    )
+
+
+@pytest.mark.parametrize("setting", ["false", None, "flase"])
+async def test_sweep_dry_run_and_single_delete(monkeypatch, setting):
+    if setting is None:
+        monkeypatch.delenv("AIFACTORY_JOB_SWEEP_DRY_RUN", raising=False)
+    else:
+        monkeypatch.setenv("AIFACTORY_JOB_SWEEP_DRY_RUN", setting)
+    now = datetime.now(UTC)
+    batch = _FakeBatch([_job("orphan", now - timedelta(seconds=601))])
+
+    store = SimpleNamespace(get_active_kubejobs=AsyncMock(return_value=[]))
+    assert await build_backend.KubeJobBuildBackend(store).sweep_orphan_jobs(
+        now=now.timestamp(), batch=batch
+    ) == ["orphan"]
+    assert batch.listed == [("factory", "app=aifactory,factory.io/kind=task")]
+    assert batch.deleted == (
+        [("orphan", "factory", "Background")] if setting == "false" else []
+    )
+    assert not hasattr(batch, "delete_collection_namespaced_job")
+
+
+async def test_sweep_keeps_young_and_owned_jobs(monkeypatch):
+    monkeypatch.setenv("AIFACTORY_JOB_SWEEP_DRY_RUN", "false")
+    pending_id = "proj-uuid:023-pending"
+    store = SimpleNamespace(
+        get_active_kubejobs=AsyncMock(
+            return_value=[
+                {"job_id": TASK, "job_name": "j"},
+                {"job_id": pending_id, "job_name": None},
+            ]
+        )
+    )
+    pending_name = build_backend._reconstructed_ref(pending_id)[0]
+    now = datetime.now(UTC)
+    old = now - timedelta(seconds=601)
+    batch = _FakeBatch(
+        [
+            _job("young", now - timedelta(seconds=599)),
+            _job("j", old),
+            _job(pending_name, old),
+            _job("orphan", old),
+        ]
+    )
+
+    assert await build_backend.KubeJobBuildBackend(store).sweep_orphan_jobs(
+        now=now.timestamp(), batch=batch
+    ) == ["orphan"]
+    assert batch.deleted == [("orphan", "factory", "Background")]
+
+
+async def test_sweep_store_or_list_failure_deletes_nothing(monkeypatch):
+    monkeypatch.setenv("AIFACTORY_JOB_SWEEP_DRY_RUN", "false")
+    old = datetime.now(UTC) - timedelta(seconds=601)
+    batch = _FakeBatch([_job("orphan", old)])
+    store = SimpleNamespace(
+        get_active_kubejobs=AsyncMock(side_effect=RuntimeError("db"))
+    )
+    backend = build_backend.KubeJobBuildBackend(store)
+    assert await backend.sweep_orphan_jobs(batch=batch) == []
+    assert batch.listed == batch.deleted == []
+
+    store.get_active_kubejobs = AsyncMock(return_value=[])
+    batch.list_error = RuntimeError("api")
+    assert await backend.sweep_orphan_jobs(batch=batch) == []
+    assert batch.deleted == []
+
+
+async def test_sweep_404_counts_as_deleted_but_other_delete_errors_do_not(
+    monkeypatch,
+):
+    monkeypatch.setenv("AIFACTORY_JOB_SWEEP_DRY_RUN", "false")
+    old = datetime.now(UTC) - timedelta(seconds=601)
+    store = SimpleNamespace(get_active_kubejobs=AsyncMock(return_value=[]))
+    backend = build_backend.KubeJobBuildBackend(store)
+
+    for status, expected in [(404, ["orphan"]), (403, [])]:
+        batch = _FakeBatch([_job("orphan", old)], delete_error=_PodError(status))
+        assert await backend.sweep_orphan_jobs(batch=batch) == expected
+        assert batch.deleted == [("orphan", "factory", "Background")]
+
+
+@pytest.mark.parametrize("reaper_error", [False, True])
+async def test_reap_kubejob_builds_sweeps_even_without_reaped_rows(
+    monkeypatch, reaper_error
+):
+    service = agent_service.AgentService()
+    monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "kubejob")
+    service._store_enabled = True
+    reap = AsyncMock(
+        side_effect=RuntimeError("reap") if reaper_error else None, return_value=[]
+    )
+    sweep = AsyncMock()
+    monkeypatch.setattr(
+        service,
+        "_build_backend",
+        lambda: SimpleNamespace(reap_vanished_jobs=reap, sweep_orphan_jobs=sweep),
+    )
+
+    assert await service.reap_kubejob_builds() == []
+    sweep.assert_awaited_once_with()

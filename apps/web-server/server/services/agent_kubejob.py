@@ -917,12 +917,16 @@ class KubejobMixin:
             )
         except Exception:  # noqa: BLE001 - reaper must never crash the loop
             _log.exception("[AgentService] kubejob reaper failed")
-            return []
+            reaped = []
         if reaped:
             # #671 OAuth-env: return each reaped build's pooled credential.
             for job_id in reaped:
                 self._release_task_credential(job_id)
             await self._drain_queue()
+        try:
+            await self._build_backend().sweep_orphan_jobs()
+        except Exception:  # noqa: BLE001 - sweep must never crash the loop
+            _log.exception("[AgentService] kubejob orphan sweep failed")
         return reaped
 
     # Frontend statuses that claim a live build. A task at one of these with no
