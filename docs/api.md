@@ -16,6 +16,14 @@ with request/response schemas in Swagger UI.
   `http://<host>:3101/redoc` (ReDoc) — enabled when `APP_DEBUG=true`.
 - **Raw spec (running portal):** `http://<host>:3101/openapi.json`
 
+## Opt-in surfaces
+
+Routes that exist only when a feature flag is on (SAML, SCIM, the remote MCP
+transport and the rmux live agent console) are not in `aifactory-web-api`.
+They are published as the separate **`aifactory-web-api-optin`** API entity,
+from [`apps/web-server/openapi-optin.yaml`](https://github.com/olafkfreund/AIFactory/blob/dev/apps/web-server/openapi-optin.yaml),
+which `scripts/generate-openapi-spec.py --opt-in` writes after the default run.
+
 ## How it stays current
 
 The committed spec is regenerated from the live FastAPI app by
