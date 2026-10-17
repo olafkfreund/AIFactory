@@ -678,6 +678,7 @@ Analyze this follow-up review context and provide your structured response.
             # Use Claude Agent SDK query() with structured outputs
             # Reference: https://platform.claude.com/docs/en/agent-sdk/structured-outputs
             from claude_agent_sdk import ClaudeAgentOptions, query
+            from core.agent_home import AgentHome
             from core.auth import get_agent_env_blanks
             from phase_config import get_thinking_budget
 
@@ -694,6 +695,7 @@ Analyze this follow-up review context and provide your structured response.
 
             # Iterate through messages from the query
             # Note: max_turns=2 because structured output uses a tool call + response
+            home = AgentHome("claude")
             async for message in query(
                 prompt=user_message,
                 options=ClaudeAgentOptions(
@@ -702,7 +704,7 @@ Analyze this follow-up review context and provide your structured response.
                     allowed_tools=[],
                     max_turns=2,  # Need 2 turns for structured output tool call
                     max_thinking_tokens=thinking_budget,
-                    env=get_agent_env_blanks(),  # no GitHub token for the CLI (#1723)
+                    env={**get_agent_env_blanks(), **home.env},
                     output_format={
                         "type": "json_schema",
                         "schema": schema,

@@ -61,8 +61,12 @@ async def test_spawn_env_is_scrubbed(
     assert captured, "spawn was not reached"
     for key in _SECRETS:
         assert not captured.get(key), key
-    for key in ("HOME", "PATH", "OLLAMA_BASE_URL"):
-        assert captured.get(key), key
+    assert captured.get("PATH")
+    assert "OLLAMA_BASE_URL" not in captured
+    if name == "Bash":
+        assert captured["HOME"] != str(tmp_path)
+    else:
+        assert "HOME" not in captured
     assert any(
         k.startswith("GIT_CONFIG_KEY_") and v == "core.hooksPath"
         for k, v in captured.items()
