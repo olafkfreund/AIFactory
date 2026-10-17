@@ -852,9 +852,200 @@ _RUNNER_VALUE_OPTS = frozenset({"-w", "--workspace"})
 _RUNNER_SUBCOMMANDS: dict[str, tuple[tuple[str, ...], ...]] = {
     "pnpm": (("exec",), ("dlx",)),
     "yarn": (("exec",), ("dlx",)),
-    "bun": (("x",),),
-    "uv": (("tool", "run"),),
+    "bun": (("x",), ("run",)),
+    "uv": (("tool", "run"), ("run",)),
     "pipx": (("run",),),
+}
+_RUNNER_GLOBALS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
+    "pnpm": (
+        frozenset(
+            [
+                "-r",
+                "--recursive",
+                "-w",
+                "--workspace-root",
+                "-s",
+                "--silent",
+                "--parallel",
+                "--stream",
+            ]
+        ),
+        frozenset(["--filter", "-F", "-C", "--dir"]),
+    ),
+    "yarn": (frozenset(["-s", "--silent"]), frozenset({"--cwd"})),
+    "bun": (frozenset(["--bun", "--silent"]), frozenset({"--cwd"})),
+}
+_YARN_FOREACH_OPTS = (
+    frozenset(
+        [
+            "-A",
+            "--all",
+            "-R",
+            "--recursive",
+            "-W",
+            "--worktree",
+            "-p",
+            "--parallel",
+            "-i",
+            "--interlaced",
+            "-t",
+            "--topological",
+            "--topological-dev",
+            "-v",
+            "--verbose",
+        ]
+    ),
+    frozenset(["--include", "--exclude", "--from", "-j", "--jobs"]),
+)
+_RUNNER_BUILTINS: dict[str, frozenset[str]] = {
+    "pnpm": frozenset(
+        [
+            "add",
+            "approve-builds",
+            "audit",
+            "bin",
+            "c",
+            "cache",
+            "cat-file",
+            "cat-index",
+            "config",
+            "create",
+            "dedupe",
+            "deploy",
+            "doctor",
+            "env",
+            "fetch",
+            "find-hash",
+            "help",
+            "i",
+            "ignored-builds",
+            "import",
+            "init",
+            "install",
+            "install-test",
+            "it",
+            "la",
+            "licenses",
+            "link",
+            "list",
+            "ll",
+            "ln",
+            "ls",
+            "outdated",
+            "pack",
+            "patch",
+            "patch-commit",
+            "patch-remove",
+            "prune",
+            "publish",
+            "rb",
+            "rebuild",
+            "remove",
+            "rm",
+            "root",
+            "run",
+            "run-script",
+            "self-update",
+            "server",
+            "setup",
+            "start",
+            "store",
+            "t",
+            "test",
+            "tst",
+            "un",
+            "uninstall",
+            "unlink",
+            "up",
+            "update",
+            "upgrade",
+            "why",
+        ]
+    ),
+    "yarn": frozenset(
+        [
+            "add",
+            "audit",
+            "autoclean",
+            "bin",
+            "cache",
+            "check",
+            "config",
+            "constraints",
+            "create",
+            "dedupe",
+            "explain",
+            "generate-lock-entry",
+            "global",
+            "help",
+            "import",
+            "info",
+            "init",
+            "install",
+            "licenses",
+            "link",
+            "list",
+            "login",
+            "logout",
+            "npm",
+            "outdated",
+            "owner",
+            "pack",
+            "patch",
+            "patch-commit",
+            "plugin",
+            "policies",
+            "publish",
+            "rebuild",
+            "remove",
+            "run",
+            "search",
+            "set",
+            "stage",
+            "tag",
+            "team",
+            "test",
+            "unlink",
+            "unplug",
+            "up",
+            "upgrade",
+            "upgrade-interactive",
+            "version",
+            "versions",
+            "why",
+            "workspaces",
+        ]
+    ),
+    "bun": frozenset(
+        [
+            "a",
+            "add",
+            "audit",
+            "build",
+            "c",
+            "completions",
+            "create",
+            "help",
+            "i",
+            "info",
+            "init",
+            "install",
+            "link",
+            "outdated",
+            "patch",
+            "patch-commit",
+            "pm",
+            "publish",
+            "remove",
+            "repl",
+            "rm",
+            "test",
+            "unlink",
+            "update",
+            "upgrade",
+            "why",
+        ]
+    ),
 }
 _NPM_GLOBAL_FLAGS = frozenset(
     {
@@ -925,11 +1116,22 @@ _NPM_SUBCOMMAND_OPTS = frozenset(
 
 
 def _check_package_runner(
-    words: list[Any], start: int, *, npm_opts: bool = True
+    words: list[Any],
+    start: int,
+    *,
+    npm_opts: bool = True,
+    flags: frozenset[str] | None = None,
+    value_opts: frozenset[str] | None = None,
 ) -> int:
     """Validate runner options and return the package operand index."""
-    value_opts = _RUNNER_VALUE_OPTS if npm_opts else frozenset()
-    flags = _RUNNER_FLAGS if npm_opts else frozenset()
+    value_opts = (
+        value_opts
+        if value_opts is not None
+        else _RUNNER_VALUE_OPTS
+        if npm_opts
+        else frozenset()
+    )
+    flags = flags if flags is not None else _RUNNER_FLAGS if npm_opts else frozenset()
     j = start
     while j < len(words):
         tok = words[j].word
@@ -972,6 +1174,42 @@ def _unwrap_npx(
         _emit(words, j, depth + 1, acc, dynamic_args=dynamic_args)
 
 
+def _skip_runner_prefix(words: list[Any], k: int, tool: str) -> int | None:
+    """Return the index after a where-to-run prefix at ``k``, or None."""
+    w = words[k].word
+    if tool == "pnpm" and w in {"recursive", "multi", "m"}:
+        return _check_package_runner(words, k + 1, npm_opts=False)
+    if tool == "yarn" and w == "workspace":
+        _require_literal(words, k + 1, k + 2)
+        return _check_package_runner(words, k + 2, npm_opts=False)
+    if tool == "yarn" and w == "workspaces" and words[k + 1 : k + 2]:
+        _require_literal(words, k + 1, k + 2)
+        if words[k + 1].word == "foreach":
+            flags, value_opts = _YARN_FOREACH_OPTS
+            return _check_package_runner(
+                words, k + 2, flags=flags, value_opts=value_opts
+            )
+    return None
+
+
+def _subcommand_target(
+    words: list[Any], k: int, subcommands: tuple[tuple[str, ...], ...]
+) -> int | None:
+    """Index of the target of a runner subcommand at ``k``, or None if none matched."""
+    for sub in subcommands:
+        if words[k].word == sub[0]:
+            _require_literal(words, k, k + len(sub))
+            got = tuple(word.word for word in words[k : k + len(sub)])
+            if got == sub:
+                return _check_package_runner(words, k + len(sub), npm_opts=False)
+            # A global option between subcommand words hides the rest (`uv tool -q run`).
+            if any(word.startswith("-") for word in got[1:]):
+                raise UnparseableCommand(
+                    "package runner option inside a subcommand cannot be validated"
+                )
+    return None
+
+
 def _unwrap_subcommand_runner(
     words: list[Any],
     idx: int,
@@ -983,29 +1221,44 @@ def _unwrap_subcommand_runner(
     """Expose targets of known package runner subcommands."""
     if idx + 1 >= len(words):
         return
-    subcommands = _RUNNER_SUBCOMMANDS[_basename(words[idx].word)]
-    if words[idx + 1].word.startswith("-"):
+    tool = _basename(words[idx].word)
+    subcommands = _RUNNER_SUBCOMMANDS[tool]
+    k = idx + 1
+    if tool in _RUNNER_GLOBALS:
+        k = _check_package_runner(
+            words,
+            k,
+            flags=_RUNNER_GLOBALS[tool][0],
+            value_opts=_RUNNER_GLOBALS[tool][1],
+        )
+    elif words[k].word.startswith("-"):
         _require_literal(words, idx + 1, len(words))
         if any(word.word == sub[0] for word in words[idx + 1 :] for sub in subcommands):
             raise UnparseableCommand(
                 "package runner subcommand after global option cannot be validated"
             )
         return
-    _require_literal(words, idx + 1, idx + 2)
-    for sub in subcommands:
-        if words[idx + 1].word == sub[0]:
-            _require_literal(words, idx + 1, idx + 1 + len(sub))
-            got = tuple(word.word for word in words[idx + 1 : idx + 1 + len(sub)])
-            if got == sub:
-                j = _check_package_runner(words, idx + 1 + len(sub), npm_opts=False)
-                if j < len(words):
-                    _emit(words, j, depth + 1, acc, dynamic_args=dynamic_args)
-                return
-            # A global option between subcommand words hides the rest (`uv tool -q run`).
-            if any(word.startswith("-") for word in got[1:]):
-                raise UnparseableCommand(
-                    "package runner option inside a subcommand cannot be validated"
-                )
+    while k < len(words):
+        w = words[k].word
+        nxt = _skip_runner_prefix(words, k, tool)
+        if nxt is not None:
+            k = nxt
+            continue
+        if tool == "bun" and w == "exec":
+            if k + 2 != len(words):
+                raise UnparseableCommand("bun exec requires one shell command string")
+            _require_literal(words, k + 1, k + 2)
+            _extract(words[k + 1].word, depth + 1, acc, dynamic_args=dynamic_args)
+            return
+        _require_literal(words, k, k + 1)
+        j = _subcommand_target(words, k, subcommands)
+        if j is not None:
+            if j < len(words):
+                _emit(words, j, depth + 1, acc, dynamic_args=dynamic_args)
+            return
+        if tool in _RUNNER_BUILTINS and w not in _RUNNER_BUILTINS[tool]:
+            _emit(words, k, depth + 1, acc, dynamic_args=dynamic_args)
+        return
 
 
 def _unwrap_npm(

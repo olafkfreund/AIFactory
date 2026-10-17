@@ -23,10 +23,15 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import JSONResponse
-from mcp.server.lowlevel import NotificationOptions, Server
-from mcp.server.models import InitializationOptions
+from mcp.server.lowlevel import Server
 from mcp.server.sse import SseServerTransport
-from mcp.types import TextContent, Tool
+from mcp.types import (
+    CallToolRequestParams,
+    CallToolResult,
+    ListToolsResult,
+    TextContent,
+    Tool,
+)
 
 from server.error_ref import client_error
 
@@ -34,13 +39,6 @@ from .auth import MCPAuthError, authenticate
 from .tools import dispatch_tool_call, get_tool_definitions
 
 logger = logging.getLogger(__name__)
-
-
-# The MCP SDK's ``Server`` instance is process-singleton. Tools / handlers
-# are registered once at module import time; per-request state (the
-# AuthenticatedKey) is threaded through via contextvars set inside the
-# request handlers below.
-_mcp_server: Server = Server("aifactory-remote", version="1.0.0")
 
 
 # ContextVar for the current request's authenticated key. The tool
@@ -53,34 +51,47 @@ _current_key: contextvars.ContextVar = contextvars.ContextVar(
 )
 
 
-@_mcp_server.list_tools()
-async def _list_tools() -> list[Tool]:
+async def _list_tools(_ctx: Any, _params: Any) -> ListToolsResult:
     """Return the static tool catalog. No auth check — discovery is open."""
-    defs = get_tool_definitions()
-    return [
-        Tool(
-            name=d["name"],
-            description=d["description"],
-            inputSchema=d["inputSchema"],
-        )
-        for d in defs
-    ]
+    return ListToolsResult(
+        tools=[
+            Tool(
+                name=d["name"],
+                description=d["description"],
+                inputSchema=d["inputSchema"],
+            )
+            for d in get_tool_definitions()
+        ]
+    )
 
 
-@_mcp_server.call_tool()
-async def _call_tool(name: str, arguments: dict[str, Any] | None) -> list[TextContent]:
+async def _call_tool(_ctx: Any, params: CallToolRequestParams) -> CallToolResult:
     """Dispatch a tool call — auth + scope check + result envelope."""
     key = _current_key.get()
     if key is None:
         # Shouldn't happen — the route handler sets it before delegating.
         # If it does, treat as unauthenticated so we never accidentally
         # serve a tool without a key.
-        return [TextContent(type="text", text="Error: missing auth context")]
-    result = await dispatch_tool_call(name, arguments, key)
-    # Translate our ``{content: [...]}`` envelope back into the SDK's
-    # TextContent list shape that ``call_tool`` expects.
-    blocks = result.get("content", [])
-    return [TextContent(type="text", text=b.get("text", "")) for b in blocks]
+        return CallToolResult(
+            content=[TextContent(type="text", text="Error: missing auth context")],
+            is_error=True,
+        )
+    result = await dispatch_tool_call(params.name, params.arguments, key)
+    return CallToolResult(
+        content=[
+            TextContent(type="text", text=b.get("text", ""))
+            for b in result.get("content", [])
+        ],
+        is_error=bool(result.get("isError")),
+    )
+
+
+_mcp_server: Server = Server(
+    "aifactory-remote",
+    version="1.0.0",
+    on_list_tools=_list_tools,
+    on_call_tool=_call_tool,
+)
 
 
 # SSE transport instance — endpoint is the path where the client posts
@@ -121,16 +132,7 @@ async def sse_endpoint(request: Request):
             request.scope, request.receive, request._send
         ) as (read_stream, write_stream):
             await _mcp_server.run(
-                read_stream,
-                write_stream,
-                InitializationOptions(
-                    server_name="aifactory-remote",
-                    server_version="1.0.0",
-                    capabilities=_mcp_server.get_capabilities(
-                        notification_options=NotificationOptions(),
-                        experimental_capabilities={},
-                    ),
-                ),
+                read_stream, write_stream, _mcp_server.create_initialization_options()
             )
     finally:
         _current_key.reset(token)

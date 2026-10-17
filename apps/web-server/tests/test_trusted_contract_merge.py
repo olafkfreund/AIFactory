@@ -226,14 +226,24 @@ def test_15_legacy_task_on_non_isolated_host_holds(
 def test_16_untouched_record_low_tier_auto_merges(tmp_path: Path) -> None:
     spec, signed = _spec(tmp_path)
 
-    assert pe.merge_disposition(spec, "low", trusted=_rec(signed)) == "auto-merge"
+    out = pe.merge_disposition(
+        spec, "low", trusted=_rec(signed), fetch_signals=lambda: _FETCH_PASS
+    )
+    assert out == "auto-merge"
 
 
-def test_17a_legacy_without_contract_unchanged(tmp_path: Path) -> None:
+def test_17a_legacy_without_contract_merges_only_on_a_fetched_pass(
+    tmp_path: Path,
+) -> None:
     spec = tmp_path / ".aifactory" / "specs" / "001-x"
     spec.mkdir(parents=True)
 
-    assert pe.merge_disposition(spec, "low", trusted=None) == "auto-merge"
+    # #1697: nothing measured is not a pass.
+    assert pe.merge_disposition(spec, "low", trusted=None) != "auto-merge"
+    out = pe.merge_disposition(
+        spec, "low", trusted=None, fetch_signals=lambda: _FETCH_PASS
+    )
+    assert out == "auto-merge"
 
 
 def test_17b_legacy_unparseable_contract_holds(tmp_path: Path) -> None:
@@ -376,7 +386,7 @@ def test_spec_key_ignores_a_symlinked_spec_dir(tmp_path: Path) -> None:
 def test_pid_namespaced_sandbox_host_is_not_isolated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """D4 narrowed: run.py in the sandbox carries the server env (#1680)."""
+    """D4 stays narrow (#1760): run.py and the agent share uid and pidns there."""
     monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "subprocess")
     monkeypatch.setenv("AIFACTORY_AGENT_SANDBOX", "strict")
     monkeypatch.setenv("AIFACTORY_AGENT_SANDBOX_PIDNS", "1")
@@ -461,7 +471,10 @@ def test_27_blank_tier_takes_signed_auto(
     _warn(caplog)
     spec, signed = _spec(tmp_path, review_tier="auto")
 
-    assert pe.merge_disposition(spec, tier, trusted=_rec(signed)) == "auto-merge"
+    out = pe.merge_disposition(
+        spec, tier, trusted=_rec(signed), fetch_signals=lambda: _FETCH_PASS
+    )
+    assert out == "auto-merge"
     assert "below signed" not in caplog.text
 
 
@@ -600,11 +613,55 @@ def test_1695_verified_raising_fetch_holds(tmp_path: Path) -> None:
     assert out == pe.HOLD_BLOCKING_DISPOSITION
 
 
-def test_1695_legacy_never_calls_the_fetch(tmp_path: Path) -> None:
+def _legacy_spec(tmp_path: Path) -> Path:
     spec = tmp_path / ".aifactory" / "specs" / "001-x"
     spec.mkdir(parents=True)
-    plain = pe.merge_disposition(spec, "low", trusted=None)
-    assert pe.merge_disposition(spec, "low", trusted=None, fetch_signals=_boom) == plain
+    return spec
+
+
+def test_1697_legacy_calls_the_fetch(tmp_path: Path) -> None:
+    spec = _legacy_spec(tmp_path)
+    out = pe.merge_disposition(spec, "low", trusted=None, fetch_signals=_boom)
+    assert out == pe.HOLD_BLOCKING_DISPOSITION
+
+
+@pytest.mark.parametrize(
+    "fetched",
+    [
+        {"tfactory_verdict": None, "host_ci_green": True},
+        {"tfactory_verdict": "pass", "host_ci_green": None},
+    ],
+)
+def test_1697_legacy_unknown_signal_does_not_merge(
+    tmp_path: Path, fetched: dict[str, object]
+) -> None:
+    spec = _legacy_spec(tmp_path)
+    out = pe.merge_disposition(spec, "low", trusted=None, fetch_signals=lambda: fetched)
+    assert out != pe.AUTO_MERGE_DISPOSITION
+
+
+def test_1697_legacy_path_floor_is_enforced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(pe.PATH_RISK_FLOOR_ENV, raising=False)
+    spec = _legacy_spec(tmp_path)
+    out = pe.merge_disposition(
+        spec, "low", trusted=None, fetch_signals=lambda: _FETCH_PASS, floor="blocking"
+    )
+    assert out == pe.HOLD_BLOCKING_DISPOSITION
+
+
+def test_1697_legacy_unrecognised_tier_still_holds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Review: an unrecognised tier ranks below auto, so the floor must not
+    # "raise" it into a mergeable tier.
+    monkeypatch.delenv(pe.PATH_RISK_FLOOR_ENV, raising=False)
+    spec = _legacy_spec(tmp_path)
+    out = pe.merge_disposition(
+        spec, "blocker", trusted=None, fetch_signals=lambda: _FETCH_PASS, floor="auto"
+    )
+    assert out == pe.HOLD_BLOCKING_DISPOSITION
 
 
 def test_1695_human_approval_cannot_clear_a_red_fetch(tmp_path: Path) -> None:
@@ -617,7 +674,7 @@ def test_1695_human_approval_cannot_clear_a_red_fetch(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("verified", [True, False])
-def test_1695_endgame_arms_the_gate_only_for_non_legacy(
+def test_1697_endgame_arms_the_gate_for_legacy_too(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verified: bool
 ) -> None:
     spec, signed = _spec(tmp_path, tier="low")
@@ -631,8 +688,8 @@ def test_1695_endgame_arms_the_gate_only_for_non_legacy(
     monkeypatch.setattr(pe, "create_pr", lambda **_k: 42)
     monkeypatch.setattr(pe, "request_copilot_review", lambda *_a, **_k: True)
     monkeypatch.setattr(pe, "_pr_title_body", lambda _d, _s: ("t", "b"))
-    if not verified:  # legacy: no contract at all
-        _contract_file(spec).unlink()
+    if not verified:  # legacy: no contract, no trusted-plan provenance
+        spec = _legacy_spec(tmp_path / "legacy")
     asyncio.run(
         pe.run_pr_endgame(
             spec_dir=spec,
@@ -648,7 +705,7 @@ def test_1695_endgame_arms_the_gate_only_for_non_legacy(
             trusted=_rec(signed) if verified else None,
         )
     )
-    assert callable(captured["gate"]) if verified else captured["gate"] is None
+    assert callable(captured["gate"])
 
 
 # --- #1695 review: the gate built by _build_merge_gate is exercised ---------- #
@@ -689,6 +746,7 @@ def _gate(
         ("o", "r"),
         _rec(signed),
         "low",
+        None,
         human,
         lambda *_a, **_k: None,
         "main",
@@ -743,11 +801,34 @@ def test_1695_gate_is_set_when_resolve_contract_raises(
         ("o", "r"),
         _rec(signed),
         "low",
+        None,
         False,
         lambda *_a, **_k: None,
         "main",
     )
     assert gate is not None
+
+
+@pytest.mark.parametrize(("verdict", "merges"), [("pass", True), (None, False)])
+def test_1697_legacy_gate_needs_a_real_verdict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verdict: str | None, merges: bool
+) -> None:
+    spec = _legacy_spec(tmp_path)
+    monkeypatch.setattr(pe, "host_ci_green", lambda *_a, **_k: True)
+    monkeypatch.setattr(pe, "required_checks_green", lambda *_a, **_k: True)
+    monkeypatch.setattr(tc, "tfactory_verdict", lambda _d, _s, **_k: verdict)
+    gate = pe._build_merge_gate(
+        spec,
+        "001-x",
+        ("o", "r"),
+        None,
+        "low",
+        None,
+        False,
+        lambda *_a, **_k: None,
+        "main",
+    )
+    assert gate("deadbeef") is merges
 
 
 # --- #1698: the PR body states the tier the gate decides on ---------------- #

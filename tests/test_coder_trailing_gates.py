@@ -266,3 +266,112 @@ async def test_marker_written_when_detection_raises(tmp_path, monkeypatch):
 
     assert (spec_dir / ".trailing_gates_done").exists()
     assert _evidence(spec_dir) == "go-test: passed"
+
+
+@requires_yaml
+@pytest.mark.asyncio
+async def test_lint_gate_runs_when_enabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("AIFACTORY_REPO_LINT_GATE", "1")
+    project_dir, spec_dir, worktree = _setup(
+        tmp_path, go_in_worktree=True, go_in_root=False
+    )
+    _ci(worktree, "ktlint")
+    monkeypatch.setattr(
+        ipp.ImplementationPlan, "load", staticmethod(lambda _p: _FakePlan())
+    )
+    seen = {}
+
+    async def fake_run_gates(cwd, gates, **kw):
+        seen["gates"] = [g.name for g in gates]
+        return [
+            gate_runner.GateResult(name="go-test", passed=True),
+            gate_runner.GateResult(name="ktlint", passed=True),
+        ]
+
+    monkeypatch.setattr(gate_runner, "run_gates", fake_run_gates)
+
+    await _run_trailing_gates_if_build_complete(spec_dir, project_dir)
+
+    assert "ktlint" in seen["gates"]
+    assert _evidence(spec_dir) == "go-test: passed, ktlint: passed"
+
+
+@requires_yaml
+@pytest.mark.asyncio
+async def test_failed_lint_gate_writes_gate_failures(tmp_path, monkeypatch):
+    monkeypatch.setenv("AIFACTORY_REPO_LINT_GATE", "1")
+    project_dir, spec_dir, worktree = _setup(
+        tmp_path, go_in_worktree=True, go_in_root=False
+    )
+    _ci(worktree, "ktlint")
+    monkeypatch.setattr(
+        ipp.ImplementationPlan, "load", staticmethod(lambda _p: _FakePlan())
+    )
+
+    async def fake_run_gates(cwd, gates, **kw):
+        return [
+            gate_runner.GateResult(name="go-test", passed=True),
+            gate_runner.GateResult(
+                name="ktlint",
+                passed=False,
+                exit_code=1,
+                output_tail="Foo.kt:1:1 x",
+            ),
+        ]
+
+    monkeypatch.setattr(gate_runner, "run_gates", fake_run_gates)
+
+    await _run_trailing_gates_if_build_complete(spec_dir, project_dir)
+
+    failures_file = spec_dir / "GATE_FAILURES.md"
+    assert failures_file.exists()
+    assert "## ktlint (exit 1)" in failures_file.read_text()
+
+
+@requires_yaml
+@pytest.mark.asyncio
+async def test_skipped_lint_gate_listed_once(tmp_path, monkeypatch):
+    monkeypatch.setenv("AIFACTORY_REPO_LINT_GATE", "1")
+    project_dir, spec_dir, worktree = _setup(
+        tmp_path, go_in_worktree=True, go_in_root=False
+    )
+    _ci(worktree, "ktlint")
+    monkeypatch.setattr(
+        ipp.ImplementationPlan, "load", staticmethod(lambda _p: _FakePlan())
+    )
+
+    async def fake_run_gates(cwd, gates, **kw):
+        return [
+            gate_runner.GateResult(name="go-test", passed=True),
+            gate_runner.GateResult(name="ktlint", passed=True, skipped=True),
+        ]
+
+    monkeypatch.setattr(gate_runner, "run_gates", fake_run_gates)
+
+    await _run_trailing_gates_if_build_complete(spec_dir, project_dir)
+
+    assert _evidence(spec_dir) == "go-test: passed, ktlint: skipped"
+
+
+@requires_yaml
+@pytest.mark.asyncio
+async def test_lint_gate_off_by_default(tmp_path, monkeypatch):
+    monkeypatch.delenv("AIFACTORY_REPO_LINT_GATE", raising=False)
+    project_dir, spec_dir, worktree = _setup(
+        tmp_path, go_in_worktree=True, go_in_root=False
+    )
+    _ci(worktree, "ktlint")
+    monkeypatch.setattr(
+        ipp.ImplementationPlan, "load", staticmethod(lambda _p: _FakePlan())
+    )
+    seen = {}
+
+    async def fake_run_gates(cwd, gates, **kw):
+        seen["gates"] = [g.name for g in gates]
+        return [gate_runner.GateResult(name="go-test", passed=True)]
+
+    monkeypatch.setattr(gate_runner, "run_gates", fake_run_gates)
+
+    await _run_trailing_gates_if_build_complete(spec_dir, project_dir)
+
+    assert "ktlint" not in seen["gates"]

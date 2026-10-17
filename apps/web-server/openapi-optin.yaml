@@ -1,7 +1,8 @@
 openapi: 3.1.0
 info:
   title: AIFactory Web API (opt-in surfaces)
-  description: Routes enabled by SAML_ENABLED, SCIM_ENABLED, AIFACTORY_RMUX_ENABLED and APP_RMUX_ENABLED.
+  description: Routes enabled by SAML_ENABLED, SCIM_ENABLED, AIFACTORY_MCP_REMOTE_ENABLED, AIFACTORY_RMUX_ENABLED
+    and APP_RMUX_ENABLED.
   version: opt-in
 paths:
   /api/auth/saml/login:
@@ -646,6 +647,50 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp-remote/sse:
+    get:
+      tags:
+      - MCP-Remote
+      summary: Sse Endpoint
+      description: 'SSE connection endpoint — long-lived event stream for one MCP client.
+
+
+        The client sends an ``Authorization: Bearer acw_<key>`` header. We
+
+        validate it via our adapter (NOT the legacy middleware), set the
+
+        ContextVar, then hand off to ``SseServerTransport.connect_sse``
+
+        which holds the connection open and dispatches incoming messages.'
+      operationId: sse_endpoint_api_mcp_remote_sse_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /api/mcp-remote/messages/:
+    post:
+      tags:
+      - MCP-Remote
+      summary: Messages Endpoint
+      description: 'Inbound JSON-RPC message endpoint for the SSE transport.
+
+
+        SseServerTransport''s ``handle_post_message`` does the body parsing
+
+        and delivery into the active SSE session. We authenticate per-call
+
+        here too because the SSE session''s auth context is per-connection
+
+        but message posts come on separate HTTP requests.'
+      operationId: messages_endpoint_api_mcp_remote_messages__post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
   /api/tasks/{spec_id}/agent-console/attach:
     post:
       tags:
