@@ -10,9 +10,10 @@
 # `factory-maintainers`), both declared in olafkfreund/Factory/catalog-info.yaml.
 #
 # Entity model:
-#   Component  aifactory         -> provides web-api, mcp, completion-event
+#   Component  aifactory         -> provides web-api, web-api-optin, mcp, completion-event
 #   Component  aifactory-portal  -> consumes web-api
-#   API        aifactory-web-api          (openapi 3.1, 279 paths)
+#   API        aifactory-web-api          (openapi 3.1, default deployment)
+#   API        aifactory-web-api-optin    (openapi 3.1, opt-in SAML/SCIM/rmux)
 #   API        aifactory-mcp              (mcp / json-rpc, stdio + remote HTTP+SSE)
 #   API        aifactory-completion-event (asyncapi, RFC-0001 emitter)
 ---
@@ -48,6 +49,7 @@ spec:
   system: factory-suite
   providesApis:
     - aifactory-web-api
+    - aifactory-web-api-optin
     - aifactory-mcp
     - aifactory-completion-event
   consumesApis:
@@ -103,12 +105,40 @@ spec:
   lifecycle: experimental
   owner: group:default/factory-maintainers
   system: factory-suite
-  # OpenAPI 3.1 spec generated from the FastAPI app. Regenerate with:
-  #   cd apps/web-server && APP_DISABLE_AUTH=true .venv/bin/python -c \
-  #     "import yaml; from server.main import app; \
-  #      yaml.safe_dump(app.openapi(), open('openapi.yaml','w'), sort_keys=False, allow_unicode=True)"
+  # OpenAPI 3.1 spec generated from the FastAPI app with every opt-in flag off.
+  # Regenerate with:
+  #   APP_DISABLE_AUTH=true apps/web-server/.venv/bin/python scripts/generate-openapi-spec.py
   definition:
     $text: ./apps/web-server/openapi.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: aifactory-web-api-optin
+  title: AIFactory Web API (opt-in surfaces)
+  description: >-
+    Web-server routes that exist only when an opt-in flag is on, so they are
+    absent from aifactory-web-api: SAML login (SAML_ENABLED), SCIM 2.0
+    provisioning (SCIM_ENABLED) and the rmux live agent console
+    (AIFACTORY_RMUX_ENABLED / APP_RMUX_ENABLED). The remote MCP transport
+    (AIFACTORY_MCP_REMOTE_ENABLED) is described in aifactory-mcp.
+  annotations:
+    backstage.io/source-location: url:https://github.com/olafkfreund/AIFactory/tree/main/apps/web-server/
+  tags:
+    - rest
+    - openapi
+    - fastapi
+    - saml
+    - scim
+spec:
+  type: openapi
+  lifecycle: experimental
+  owner: group:default/factory-maintainers
+  system: factory-suite
+  # Only the paths the flags add to openapi.yaml (#1730). Regenerate after it with:
+  #   APP_DISABLE_AUTH=true apps/web-server/.venv/bin/python scripts/generate-openapi-spec.py --opt-in
+  definition:
+    $text: ./apps/web-server/openapi-optin.yaml
 ---
 apiVersion: backstage.io/v1alpha1
 kind: API
