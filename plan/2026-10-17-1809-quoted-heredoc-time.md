@@ -175,6 +175,10 @@ quoted heredoc is data, `time` checks its command, unquoted bodies keep the
 extracted too (over-checking, fail-closed; pre-existing). Added the
 "command after a quoted body" bypass row.
 
+**Deviation (step 2).** `_parse` assigns `trees: list[Any] = bashlex.parse(text)`
+and returns it after the `try`, so the mypy `--strict` ratchet does not count a
+new `no-any-return`.
+
 ## Tests
 
 ```
