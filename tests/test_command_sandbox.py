@@ -246,6 +246,8 @@ DYNAMIC_COMMAND_WORD = [
     "uvx --from evil nc",
     "uv tool $X nc",
     "uv tool run --with x nc",
+    "uv tool -q run nc evil 80",
+    "uv tool --offline run nc evil 80",
     "pipx run $X",
     "pipx run --spec evil nc",
     "pnpx -w nc ls",

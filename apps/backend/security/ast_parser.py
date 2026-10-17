@@ -938,11 +938,17 @@ def _unwrap_subcommand_runner(
     for sub in subcommands:
         if words[idx + 1].word == sub[0]:
             _require_literal(words, idx + 1, idx + 1 + len(sub))
-            if tuple(word.word for word in words[idx + 1 : idx + 1 + len(sub)]) == sub:
+            got = tuple(word.word for word in words[idx + 1 : idx + 1 + len(sub)])
+            if got == sub:
                 j = _check_package_runner(words, idx + 1 + len(sub), npm_opts=False)
                 if j < len(words):
                     _emit(words, j, depth + 1, acc, dynamic_args=dynamic_args)
                 return
+            # A global option between subcommand words hides the rest (`uv tool -q run`).
+            if any(word.startswith("-") for word in got[1:]):
+                raise UnparseableCommand(
+                    "package runner option inside a subcommand cannot be validated"
+                )
 
 
 def _unwrap_npm(

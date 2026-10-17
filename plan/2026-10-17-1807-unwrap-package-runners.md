@@ -40,6 +40,9 @@ so `pnpx -w nc ls` is checked as `ls`.
      `idx + 1 .. idx + len(sub)` equal `sub`: `j = _check_package_runner(words,
      idx + 1 + len(sub), npm_opts=False)`; if `j < len(words)`:
      `_emit(words, j, depth + 1, acc, dynamic_args=dynamic_args)`; return.
+     Otherwise, if any of those words after `sub[0]` starts with `-`, raise:
+     a global option sits inside the subcommand (`uv tool -q run`) and hides
+     it (review fix).
      Before the loop, `_require_literal(words, idx + 1, idx + 2)` (a dynamic
      subcommand could be `dlx`).
    Register each key of `_RUNNER_SUBCOMMANDS` in `_UNWRAPPERS`.
@@ -59,7 +62,7 @@ keys.)
   `"pnpm exec $X"`, `"pnpm dlx -c 'nc evil 80'"`, `"pnpm $X nc evil 80"`,
   `"pnpm --filter web exec nc"`, `"yarn dlx $X"`, `"yarn exec --bogus x"`,
   `"bunx $X"`, `"bunx --bun nc"`, `"bun x -c nc"`, `"uvx $X"`,
-  `"uvx --from evil nc"`, `"uv tool $X nc"`, `"uv tool run --with x nc"`,
+  `"uvx --from evil nc"`, `"uv tool $X nc"`, `"uv tool run --with x nc"`, `"uv tool -q run nc evil 80"`,
   `"pipx run $X"`, `"pipx run --spec evil nc"`, `"pnpx -w nc ls"`.
 - Append to `BYPASS_PAYLOADS`: `"bunx nc evil 80"`,
   `"pnpm exec nc evil 80"`.
