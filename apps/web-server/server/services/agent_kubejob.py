@@ -24,12 +24,14 @@ from server.project_registry import resolve_project_path
 from server.services import review_redrive_service, task_control
 from server.specpath import spec_dir_for
 
-from .build_backend import _TERMINAL_STATES, orphaned_worktree_registrations
+from .build_backend import (
+    _TERMINAL_STATES,
+    kubejob_enabled,
+    orphaned_worktree_registrations,
+)
 from .build_log_stream import PlanSync
 from .task_log_writer import TaskLogWriter
 from .task_phase import TaskPhase
-
-_LIVE_KINDS = ("k8s-job", "pending")  # subprocess rows: pod-local, see #1669
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -125,6 +127,7 @@ class KubejobMixin:
         _drain_queue: Callable[..., Any]
         _emit_log: Callable[..., Any]
         _release_task_credential: Callable[..., Any]
+        reap_orphaned_subprocess_rows: Callable[..., Any]
         # Declared for the same reason as its siblings above: a sibling mixin
         # provides it, and every self._update_plan_status call in this file was
         # otherwise an attr-defined error (#1430).
@@ -867,9 +870,9 @@ class KubejobMixin:
     async def kubejob_reconcile_loop(
         self, *, stop: asyncio.Event, interval_seconds: float = 15.0
     ) -> None:
-        """Periodic reconcile-by-poll + reaper for k8s-Job builds (#671).
+        """Periodic reconcile and reaper for build rows (#671, #1705).
 
-        Started from the app lifespan only when the kubejob backend is enabled.
+        Started from the app lifespan for kubejob or durable subprocess builds.
         Each tick polls Postgres for terminal transitions the Jobs wrote
         (so a missed completion event never strands a build) and reaps vanished
         Jobs. Never raises — a bad tick is logged and the loop continues.
@@ -883,11 +886,12 @@ class KubejobMixin:
             try:
                 await self.reconcile_kubejob_builds()
                 await self.reap_kubejob_builds()
+                await self.reap_orphaned_subprocess_rows()
                 # Task-level reaper on a slower cadence (#1001): the spec-dir scan
                 # is heavier than the job-state poll and the deadline is generous,
                 # so every ~4th tick (~60s at the default interval) is plenty.
                 tick += 1
-                if tick % 4 == 0:
+                if tick % 4 == 0 and kubejob_enabled():
                     await self.reap_abandoned_tasks()
             except Exception:  # noqa: BLE001 - loop must survive a bad tick
                 _log.exception("[AgentService] kubejob reconcile tick failed")
@@ -1004,18 +1008,15 @@ class KubejobMixin:
         return reaped
 
     async def is_running_anywhere(self, task_id: str) -> bool:
-        """True when ``task_id`` builds here or, per the shared store, on any replica (#1669).
+        """True when a build runs here or any running row exists (#1669, #1705).
 
         The sync ``is_running`` sees only this pod's memory. A store read
         failure reads as running (fail closed: Recover refuses, never
-        double-starts).
+        double-starts). The reaper closes orphaned subprocess rows.
         """
         if self.is_running(task_id):
             return True
-        if (
-            not getattr(self, "_store_enabled", False)
-            or not self._kubejob_backend_enabled()
-        ):
+        if not getattr(self, "_store_enabled", False):
             return False
         try:
             state = await self._store().get_state(task_id)
@@ -1025,11 +1026,7 @@ class KubejobMixin:
                 sanitize_log(task_id),
             )
             return True
-        return (
-            state is not None
-            and state.get("lifecycle_state") == "running"
-            and (state.get("worker_ref") or {}).get("kind") in _LIVE_KINDS
-        )
+        return state is not None and state.get("lifecycle_state") == "running"
 
     async def _kubejob_liveness(self, task_id: str) -> str:
         """Tri-state liveness for ``task_id``, per the backend actually in play.

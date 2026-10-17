@@ -42,6 +42,15 @@ from .agent_worktree_sync import WorktreeSyncMixin
 # Module-level logger for the admission-control paths (RFC-0016 #668). The rest
 # of this (legacy) module still uses local ``import logging`` inside methods.
 _log = logging.getLogger(__name__)
+_SA_NAMESPACE_FILE = Path("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
+
+
+def _own_namespace() -> str | None:
+    try:
+        return _SA_NAMESPACE_FILE.read_text().strip() or None
+    except OSError:
+        return None
+
 
 # ---------------------------------------------------------------------------
 # Re-exports from the god-file decomposition. Every name below moved out of this
@@ -1549,6 +1558,7 @@ class AgentService(
         """
         if not self._store_enabled:
             return {"running": 0, "queued": 0}
+        await self.reap_orphaned_subprocess_rows()
         try:
             state = await self._store().reconstruct()
         except Exception:  # noqa: BLE001 - startup must not crash on a store hiccup
@@ -1565,6 +1575,86 @@ class AgentService(
         # Fill any slots freed by a dead replica's running builds.
         await self._drain_queue()
         return {"running": running, "queued": queued}
+
+    async def reap_orphaned_subprocess_rows(self, *, core: Any = None) -> list[str]:
+        """Fail only subprocess claims whose stamped owner is confirmed gone (#1705)."""
+        if not self._store_enabled:
+            return []
+        from . import job_state_store
+
+        try:
+            rows = await self._store().get_running_subprocess_rows()
+        except Exception:
+            _log.warning(
+                "[AgentService] subprocess row read failed (#1705)", exc_info=True
+            )
+            return []
+
+        reaped: list[str] = []
+        api_client = None
+        client_unavailable = False
+        try:
+            for row in rows:
+                job_id, pod, boot = row["job_id"], row["pod"], row["boot"]
+                if not pod or not boot:
+                    continue
+                if pod == job_state_store.POD_NAME:
+                    if boot == job_state_store.BOOT_ID:
+                        continue
+                    reason = "control plane restarted under the build (#1705)"
+                else:
+                    ns = _own_namespace()
+                    if ns is None or client_unavailable:
+                        continue
+                    try:
+                        if core is None:
+                            from kubernetes_asyncio import client, config
+
+                            config.load_incluster_config()
+                            api_client = client.ApiClient()
+                            core = client.CoreV1Api(api_client)
+                        await core.read_namespaced_pod(pod, ns)
+                    except Exception as exc:
+                        if getattr(exc, "status", None) != 404:
+                            if core is None:
+                                client_unavailable = True
+                            _log.warning(
+                                "[AgentService] pod read failed for %s (status=%s); "
+                                "leaving subprocess row live (#1705)",
+                                pod,
+                                getattr(exc, "status", None),
+                            )
+                            continue
+                    else:
+                        continue
+                    reason = f"owning pod {pod} no longer exists (#1705)"
+                try:
+                    if await self._store().fail_subprocess_row(
+                        job_id, pod, boot, reason
+                    ):
+                        reaped.append(job_id)
+                except Exception:
+                    _log.warning(
+                        "[AgentService] subprocess row fail failed for %s (#1705)",
+                        sanitize_log(job_id),
+                        exc_info=True,
+                    )
+        finally:
+            if api_client is not None:
+                try:
+                    await api_client.close()
+                except Exception:
+                    _log.warning(
+                        "[AgentService] Kubernetes client close failed", exc_info=True
+                    )
+        if reaped:
+            try:
+                await self._drain_queue()
+            except Exception:
+                _log.warning(
+                    "[AgentService] subprocess reaper drain failed", exc_info=True
+                )
+        return reaped
 
     def is_running(self, task_id: str) -> bool:
         """Check if a task is currently running, on either build backend.

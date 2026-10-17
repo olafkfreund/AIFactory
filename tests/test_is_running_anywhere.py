@@ -113,11 +113,11 @@ async def test_pending_row_is_running(pair):
     assert await b.is_running_anywhere(TASK) is True
 
 
-async def test_subprocess_row_is_pod_local(pair):
+async def test_subprocess_row_is_running(pair):
     a, b = pair
     await _row(a, "running", "subprocess")
     assert b.is_running(TASK) is False
-    assert await b.is_running_anywhere(TASK) is False
+    assert await b.is_running_anywhere(TASK) is True
 
 
 async def test_queued_row_is_not_running(pair):
@@ -162,13 +162,11 @@ async def test_no_store_short_circuits(pair, caplog):
     assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
 
 
-async def test_subprocess_backend_short_circuits(pair, monkeypatch):
+async def test_subprocess_backend_reads_store(pair, monkeypatch):
     a, b = pair
-    await _row(a, "running", "k8s-job")
+    await _row(a, "running", "subprocess")
     monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "subprocess")
-    store = b._job_store = _CountingStore()
-    assert await b.is_running_anywhere(TASK) is False
-    assert store.calls == []
+    assert await b.is_running_anywhere(TASK) is True
 
 
 async def test_local_is_running_short_circuits(pair):

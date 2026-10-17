@@ -1,4 +1,4 @@
-"""#1704: Start and approval preserve builds owned by any replica."""
+"""#1704/#1705: Build ownership is shared and orphaned claims are reaped."""
 
 from __future__ import annotations
 
@@ -256,3 +256,86 @@ async def test_subprocess_claim_precedes_spawn_and_is_skipped_without_store(
         == "process"
     )
     assert calls == [("spawn", TASK)]
+
+
+async def _subprocess_row(service, *, pod, boot):
+    store = service._job_store
+    await store.admit(TASK, job_state_store.SpawnArgs("/tmp/p", "022-some-spec"), cap=0)
+    await store.set_worker_ref(TASK, {"kind": "subprocess", "pod": pod, "boot": boot})
+
+
+async def test_startup_reaps_previous_boot_before_counting(replicas, monkeypatch):
+    a, b, _ = replicas
+    monkeypatch.setattr(agent_service, "_own_namespace", lambda: None)
+    await _subprocess_row(a, pod=job_state_store.POD_NAME, boot="old-boot")
+
+    assert await b.reconcile_on_startup() == {"running": 0, "queued": 0}
+    state = await a._job_store.get_state(TASK)
+    assert state["lifecycle_state"] == "failed"
+    assert state["error"] == "control plane restarted under the build (#1705)"
+
+
+@pytest.mark.parametrize("boot", [job_state_store.BOOT_ID, None])
+async def test_startup_leaves_current_or_unstamped_row(replicas, monkeypatch, boot):
+    a, b, _ = replicas
+    monkeypatch.setattr(agent_service, "_own_namespace", lambda: None)
+    await _subprocess_row(a, pod=job_state_store.POD_NAME if boot else None, boot=boot)
+
+    assert await b.reconcile_on_startup() == {"running": 1, "queued": 0}
+    assert (await a._job_store.get_state(TASK))["lifecycle_state"] == "running"
+
+
+class _PodError(Exception):
+    def __init__(self, status):
+        self.status = status
+
+
+@pytest.mark.parametrize(
+    "error", [_PodError(404), _PodError(403), _PodError(500), TimeoutError()]
+)
+async def test_other_pod_is_reaped_only_on_404(replicas, monkeypatch, error, caplog):
+    a, b, _ = replicas
+    monkeypatch.setattr(agent_service, "_own_namespace", lambda: "factory")
+    await _subprocess_row(a, pod="gone-pod", boot="old-boot")
+    core = SimpleNamespace(read_namespaced_pod=AsyncMock(side_effect=error))
+
+    reaped = await b.reap_orphaned_subprocess_rows(core=core)
+    assert reaped == ([TASK] if getattr(error, "status", None) == 404 else [])
+    state = await a._job_store.get_state(TASK)
+    assert state["lifecycle_state"] == ("failed" if reaped else "running")
+    if reaped:
+        assert state["error"] == "owning pod gone-pod no longer exists (#1705)"
+    else:
+        assert f"status={getattr(error, 'status', None)}" in caplog.text
+    core.read_namespaced_pod.assert_awaited_once_with("gone-pod", "factory")
+
+
+async def test_no_namespace_never_reads_other_pod(replicas, monkeypatch):
+    a, b, _ = replicas
+    monkeypatch.setattr(agent_service, "_own_namespace", lambda: None)
+    await _subprocess_row(a, pod="other-pod", boot="old-boot")
+    core = SimpleNamespace(read_namespaced_pod=AsyncMock())
+
+    assert await b.reap_orphaned_subprocess_rows(core=core) == []
+    core.read_namespaced_pod.assert_not_awaited()
+    assert (await a._job_store.get_state(TASK))["lifecycle_state"] == "running"
+
+
+async def test_reaper_does_not_fail_reclaimed_row(replicas, monkeypatch):
+    a, b, _ = replicas
+    monkeypatch.setattr(agent_service, "_own_namespace", lambda: None)
+    await _subprocess_row(a, pod=job_state_store.POD_NAME, boot="old-boot")
+    fail = b._job_store.fail_subprocess_row
+
+    async def restamp_then_fail(job_id, pod, boot, reason):
+        assert (pod, boot) == (job_state_store.POD_NAME, "old-boot")
+        await a._job_store.set_worker_ref(
+            job_id, {"kind": "subprocess", "pod": pod, "boot": "new-boot"}
+        )
+        return await fail(job_id, pod, boot, reason)
+
+    monkeypatch.setattr(b._job_store, "fail_subprocess_row", restamp_then_fail)
+    assert await b.reap_orphaned_subprocess_rows() == []
+    state = await a._job_store.get_state(TASK)
+    assert state["lifecycle_state"] == "running"
+    assert state["worker_ref"]["boot"] == "new-boot"
