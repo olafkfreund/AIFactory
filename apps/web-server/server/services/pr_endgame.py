@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import subprocess
+import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1028,6 +1029,115 @@ def host_ci_green(
         return None
 
 
+def required_checks_green(
+    owner: str,
+    repo: str,
+    base: str,
+    sha: str,
+    *,
+    runner: Runner = _default_runner,
+) -> bool | None:
+    """Required status checks for ``base`` on commit ``sha`` (#1766).
+
+    Reads both classic branch protection and branch rulesets. Returns None (and
+    logs one warning) when protection cannot be read, True when no checks are
+    required or all required checks are green, False when any required check is
+    red, and None when any required check is missing or pending.
+    """
+    try:
+        br_res = runner(
+            [
+                "gh",
+                "api",
+                f"repos/{owner}/{repo}/branches/{base}",
+                "--jq",
+                ".protection",
+            ],
+            None,
+        )
+        rules_res = runner(
+            [
+                "gh",
+                "api",
+                "--paginate",
+                f"repos/{owner}/{repo}/rules/branches/{base}",
+                "--jq",
+                '.[] | select(.type == "required_status_checks")'
+                " | .parameters.required_status_checks[].context",
+            ],
+            None,
+        )
+        try:
+            protection = (
+                json.loads(br_res.out) if (br_res.ok and rules_res.ok) else None
+            )
+        except ValueError:
+            protection = None
+        if not isinstance(protection, dict):
+            logger.warning(
+                "[pr-endgame] cannot read the required checks of %s; "
+                "holding the merge (#1766)",
+                sanitize_log(base),
+            )
+            return None
+        rsc = protection.get("required_status_checks")
+        classic = (rsc.get("contexts") or []) if isinstance(rsc, dict) else []
+        ruleset = [ln.strip() for ln in rules_res.out.splitlines() if ln.strip()]
+        required = {c for c in [*classic, *ruleset] if isinstance(c, str) and c}
+        if not required:
+            return True
+        runs_res = runner(
+            [
+                "gh",
+                "api",
+                "--paginate",
+                f"repos/{owner}/{repo}/commits/{sha}/check-runs",
+                "--jq",
+                ".check_runs[] | {name, status, conclusion}",
+            ],
+            None,
+        )
+        st_res = runner(
+            [
+                "gh",
+                "api",
+                f"repos/{owner}/{repo}/commits/{sha}/status",
+                "--jq",
+                ".statuses[] | {context, state}",
+            ],
+            None,
+        )
+        if not (runs_res.ok and st_res.ok):
+            return None
+        runs = [json.loads(ln) for ln in runs_res.out.splitlines() if ln.strip()]
+        statuses = [json.loads(ln) for ln in st_res.out.splitlines() if ln.strip()]
+        if any(
+            r["name"] in required
+            and r["status"] == "completed"
+            and r["conclusion"] not in _GREEN_CONCLUSIONS
+            for r in runs
+        ) or any(
+            s["context"] in required and s["state"] in ("failure", "error")
+            for s in statuses
+        ):
+            return False
+        green = {
+            r["name"]
+            for r in runs
+            if r["status"] == "completed" and r["conclusion"] in _GREEN_CONCLUSIONS
+        } | {s["context"] for s in statuses if s["state"] == "success"}
+        pending = (
+            not required.issubset(green)
+            or any(r["name"] in required and r["status"] != "completed" for r in runs)
+            or any(
+                s["context"] in required and s["state"] != "success" for s in statuses
+            )
+        )
+        return None if pending else True
+    except Exception:  # noqa: BLE001 - unknown is not green
+        return None
+
+
 def _clears_with_human_approval(
     spec_dir: Path,
     tier: str | None,
@@ -1289,7 +1399,11 @@ async def watch_and_finish(  # noqa: PLR0911, PLR0915 - merge-gate human-stop (#
     conflict_cycles = 0
     gate_held = False
     polls = max(1, (max_minutes * 60) // max(1, poll_interval))
+    # #1766: a slow gate or GitHub must not stretch the stop past max_minutes.
+    deadline = time.monotonic() + max_minutes * 60
     for _ in range(polls):
+        if time.monotonic() >= deadline:
+            break
         await asyncio.sleep(poll_interval)
         if review_fn is not None:
             rs = await asyncio.to_thread(review_fn)
@@ -1659,6 +1773,7 @@ def _build_merge_gate(  # noqa: PLR0913 - one-shot builder for run_pr_endgame
     review_tier_floor: str | None,
     human_approval_required: bool,
     runner: Runner,
+    base: str,
 ) -> Callable[[str], bool]:
     """The merge-time gate for every auto-merge task."""
     owner, name = repo_parts
@@ -1670,12 +1785,15 @@ def _build_merge_gate(  # noqa: PLR0913 - one-shot builder for run_pr_endgame
                     tfactory_verdict,
                 )
 
-                verdict = tfactory_verdict(spec_dir, spec_id)
+                verdict = tfactory_verdict(spec_dir, spec_id, head=head)
             except ImportError:
                 verdict = None
+            ci = host_ci_green(owner, name, head, runner=runner)
+            if ci is True:
+                ci = required_checks_green(owner, name, base, head, runner=runner)
             return {
                 "tfactory_verdict": verdict,
-                "host_ci_green": host_ci_green(owner, name, head, runner=runner),
+                "host_ci_green": ci,
             }
 
         if human_approval_required:
@@ -1825,6 +1943,7 @@ async def run_pr_endgame(
             review_tier_floor,
             human_approval_required,
             runner,
+            base,
         )
         if auto_merge
         else None

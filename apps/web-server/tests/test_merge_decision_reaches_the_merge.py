@@ -122,6 +122,7 @@ async def _drive(
 
     # #1697: the merge-time gate needs a real TFactory pass and green CI.
     monkeypatch.setattr(pe, "host_ci_green", lambda *_a, **_k: True)
+    monkeypatch.setattr(pe, "required_checks_green", lambda *_a, **_k: True)
     monkeypatch.setattr(tc, "tfactory_verdict", lambda *_a, **_k: "pass")
 
     # watch_and_finish polls on a 30s interval; nothing here waits on wall time.
