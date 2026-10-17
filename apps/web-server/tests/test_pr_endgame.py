@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -346,6 +347,30 @@ def test_bound_merge_never_updates_the_branch() -> None:
     )
     _gated_watch(r)
     assert not r.saw("update-branch")
+
+
+def test_1766_watcher_stops_at_the_wall_clock_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Each poll "takes" 10 minutes (a hung gh/TFactory); 20 min = 40 polls
+    # by count, but the deadline must end it after about two.
+    clock = iter(range(0, 10**6, 600))
+    # Patch only pr_endgame's view of time: asyncio itself reads time.monotonic.
+    monkeypatch.setattr(pe, "time", SimpleNamespace(monotonic=lambda: next(clock)))
+    r = FakeRunner({"reviews": _reviews()})
+    res = asyncio.run(
+        pe.watch_and_finish(
+            owner="o",
+            repo="r",
+            pr=5,
+            auto_merge=False,
+            runner=r,
+            poll_interval=0,
+            max_minutes=20,
+        )
+    )
+    assert "review_timeout" in res["reason"]
+    assert 0 < sum("reviews" in " ".join(c) for c in r.calls) < 5
 
 
 # ── watch_and_finish (Copilot-gated) ─────────────────────────────────────────
@@ -1138,3 +1163,80 @@ def test_1695_host_ci_green_waits_for_unfinished_suites(
     suites: list[str], want: bool | None
 ) -> None:
     assert pe.host_ci_green("o", "r", "abc", runner=_suite_runner(suites)) is want
+
+
+def _req_runner(
+    *,
+    protection: str = '{"required_status_checks":{"contexts":[]}}',
+    prot_rc: int = 0,
+    rules: str = "",
+    runs: tuple[str, ...] = (),
+    statuses: tuple[str, ...] = (),
+) -> FakeRunner:
+    return FakeRunner(
+        {
+            "rules/branches": CmdResult(0, rules, ""),
+            "branches/": CmdResult(prot_rc, protection, ""),
+            "check-runs": CmdResult(0, "\n".join(runs), ""),
+            "/status": CmdResult(0, "\n".join(statuses), ""),
+        }
+    )
+
+
+_RUN_OK = '{"name":"ci/run","status":"completed","conclusion":"success"}'
+_RUN_RED = '{"name":"ci/run","status":"completed","conclusion":"failure"}'
+_RUN_PEND = '{"name":"ci/run","status":"in_progress","conclusion":null}'
+_ST_OK = '{"context":"ci/st","state":"success"}'
+
+
+@pytest.mark.parametrize(
+    ("kw", "want"),
+    [
+        ({}, True),
+        (
+            {
+                "protection": '{"required_status_checks":{"contexts":["ci/run"]}}',
+                "rules": "ci/st",
+                "runs": (_RUN_OK,),
+                "statuses": (_ST_OK,),
+            },
+            True,
+        ),
+        (
+            {
+                "protection": '{"required_status_checks":{"contexts":["ci/run"]}}',
+                "runs": (_RUN_RED,),
+            },
+            False,
+        ),
+        (
+            {
+                "protection": '{"required_status_checks":{"contexts":["ci/run","ci/missing"]}}',
+                "runs": (_RUN_OK,),
+            },
+            None,
+        ),
+        (
+            {
+                "protection": '{"required_status_checks":{"contexts":["ci/run"]}}',
+                "runs": (_RUN_PEND,),
+            },
+            None,
+        ),
+        ({"prot_rc": 1}, None),
+        ({"protection": "null"}, None),
+        (
+            {
+                "protection": '{"required_status_checks":null}',
+                "rules": "ci/rule",
+                "runs": (_RUN_OK,),
+            },
+            None,
+        ),
+    ],
+)
+def test_1766_required_checks_green(kw: dict[str, Any], want: bool | None) -> None:
+    assert (
+        pe.required_checks_green("o", "r", "main", "abc", runner=_req_runner(**kw))
+        is want
+    )
