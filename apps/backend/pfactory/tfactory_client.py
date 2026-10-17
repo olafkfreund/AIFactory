@@ -899,13 +899,14 @@ def _httpx_get(url: str, headers: dict[str, str]) -> tuple[int, object]:
 
 
 def tfactory_verdict(
-    spec_dir: Path, spec_id: str, *, getter: Getter | None = None
+    spec_dir: Path, spec_id: str, *, head: str, getter: Getter | None = None
 ) -> str | None:
-    """The verdict TFactory itself recorded for this spec (#1695).
+    """The verdict TFactory itself recorded for this spec at ``head`` (#1695, #1766).
 
     ``"pass"``, ``"fail"`` or ``None`` (no trusted result: unconfigured,
-    unreachable, wrong project, not triaged, no or unknown verdicts). Only a ``reject``
-    fails; ``flag`` does not block. Never raises; logs nothing it fetched.
+    unreachable, wrong project, mismatched or missing ``source_sha``, not triaged,
+    no or unknown verdicts). Only a ``reject`` fails; ``flag`` does not block.
+    Never raises; logs nothing it fetched.
     """
     try:
         config = tfactory_config()
@@ -928,6 +929,8 @@ def tfactory_verdict(
             _HTTP_OK <= code < _HTTP_REDIRECT
             and isinstance(task, dict)
             and task.get("project_id") == project_id
+            and bool(head)
+            and task.get("source_sha") == head
             and isinstance(status_json, dict)
             and status_json.get("status") == "triaged"
         ):

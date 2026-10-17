@@ -2,7 +2,7 @@
 
 Settings live outside the agent-writable project clone. On the first read for
 a project with no database row, an untracked ``<project>/.aifactory/.env`` is
-imported once (keeping only ``STORE_KEYS``) and renamed to
+imported once (keeping only keys ``is_store_key`` accepts) and renamed to
 ``.env.migrated-<UTC YYYY-MM-DD>``. After that, the database row always wins.
 """
 
@@ -25,14 +25,12 @@ from sqlalchemy.exc import IntegrityError
 
 from server.crypto import secret_field
 from server.database.models import ProjectSettings
-from server.services.project_env import PROJECT_ENV_KEYS, is_project_env_key
+from server.services.project_env import is_project_env_key
 from server.utils.subprocess_env import child_env
 
 logger = logging.getLogger(__name__)
 
 ENV = "AIFACTORY_PROJECT_MCP_CONFIG"
-
-STORE_KEYS: frozenset[str] = PROJECT_ENV_KEYS | {"CUSTOM_MCP_SERVERS"}
 
 _MCP_FIXED_KEYS: frozenset[str] = frozenset(
     {
@@ -80,7 +78,7 @@ def _unavailable(
 
 
 def _parse_env_file(path: Path) -> tuple[dict[str, str], list[str]]:
-    """Parse ``path`` using #1790's line rules, keeping only ``STORE_KEYS``.
+    """Parse ``path`` using #1790's line rules, keeping only keys ``is_store_key`` accepts.
 
     Returns ``(accepted_dict, skipped_key_names)``. Raises
     ``ProjectSettingsUnavailableError`` when the file can't be read, so nothing

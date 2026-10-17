@@ -51,8 +51,6 @@ def main() -> int:
             "true" if OPT_IN else "false",
         )
     )
-    # mcp-remote does not import on the locked mcp 2.x (#1820): off in both runs until fixed.
-    os.environ["AIFACTORY_MCP_REMOTE_ENABLED"] = "false"
     from server.main import app  # noqa: E402 — needs sys.path above
 
     spec = app.openapi()
@@ -66,7 +64,7 @@ def main() -> int:
         spec["info"].update(
             title="AIFactory Web API (opt-in surfaces)",
             description=(
-                "Routes enabled by SAML_ENABLED, SCIM_ENABLED, "
+                "Routes enabled by SAML_ENABLED, SCIM_ENABLED, AIFACTORY_MCP_REMOTE_ENABLED, "
                 "AIFACTORY_RMUX_ENABLED and APP_RMUX_ENABLED."
             ),
             version="opt-in",

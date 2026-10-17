@@ -67,7 +67,7 @@ evidence = "apps/web-server/server/services/pr_endgame.py"
 frameworks = ["ISO 27001:2022 A.8.32", "SOC 2 CC8.1", "NIST 800-53 CM"]
 
 [controls."wiring.path_floor_flag"]
-objective = "The path-derived risk floor is advisory by default and changes the merge tier only when enforcement is explicitly switched on."
+objective = "The path-derived risk floor is advisory by default for tasks with a signed contract and changes their merge tier only when enforcement is explicitly switched on; for tasks without a signed contract (legacy and from-issue) it always decides the merge tier."
 evidence = "apps/web-server/server/services/pr_endgame.py"
 frameworks = ["ISO 27001:2022 A.8.32", "SOC 2 CC8.1", "NIST 800-53 CM"]
 
@@ -75,7 +75,7 @@ frameworks = ["ISO 27001:2022 A.8.32", "SOC 2 CC8.1", "NIST 800-53 CM"]
 objective = "On the live merge path a high risk or production deployment holds the merge for a human regardless of the path-floor flag; a required human-approval gate clears only on a GitHub approval of the head commit by someone other than the PR author or a bot; an unreadable contract holds it too. The PR author is the GitHub App bot and no PAT is in the server pod."
 evidence = "apps/web-server/server/services/pr_endgame.py"
 frameworks = ["ISO 27001:2022 A.8.32", "SOC 2 CC8.1", "NIST 800-53 CM"]
-claim = "Accepted residual risks (#1671): non-Claude runners and the GitHub MCP server still receive the App token; PAT copies in project .env files and the UI settings token are not removed by this change; stored per-project clone PATs are unchanged (follow-up)."
+claim = "Accepted residual risks (#1671): non-Claude runners and the GitHub MCP server still receive the App token; PAT copies in project .env files and the UI settings token are not removed by this change; a stored per-project clone PAT is accepted (#1703): it is read only at project add for the clone, through GIT_ASKPASS, never pushes and stays encrypted at rest; projects added without one clone with the App token, and App-token clones for stored credentials are #1700."
 
 [controls."gate.merge.merge_policy"]
 objective = "The merge decision itself is deterministic: its own import closure reaches no model client."
