@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1697
 spec: spec/2026-10-17-1697-legacy-merge-gate.md
 ---
