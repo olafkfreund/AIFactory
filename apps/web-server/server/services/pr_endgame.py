@@ -1304,6 +1304,15 @@ def resolve_pr_conflicts(  # noqa: PLR0911
             False, conflicted, "fixer did not resolve the conflicts"
         )
 
+    # Re-pin: the fixer ran in this worktree and may have added a driver (#1761).
+    try:
+        pins = merge_driver_pins(
+            worktree, run=lambda a: ((r := runner(a, worktree)).rc, r.out)
+        )
+    except RuntimeError as exc:
+        runner(["git", "rebase", "--abort"], worktree)
+        return ConflictResolution(False, conflicted, f"rebase refused: {exc}"[:200])
+
     runner(["git", "add", "-A"], worktree)
     # core.editor=true: non-interactive `rebase --continue` (no $EDITOR prompt).
     cont = runner(

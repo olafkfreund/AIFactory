@@ -27,7 +27,7 @@ from server.specpath import spec_dir_for
 
 from ..config import get_settings
 from ..utils.subprocess_env import make_subprocess_env
-from . import project_settings_store, task_control
+from . import job_state_store, project_settings_store, task_control
 from .agent_credential import CredentialMixin
 from .agent_emit import (
     EmitMixin,
@@ -46,6 +46,57 @@ from core.auth import is_denied_env_key
 # Module-level logger for the admission-control paths (RFC-0016 #668). The rest
 # of this (legacy) module still uses local ``import logging`` inside methods.
 _log = logging.getLogger(__name__)
+_HTTP_NOT_FOUND = 404
+_SA_NAMESPACE_FILE = Path("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
+
+
+def _own_namespace() -> str | None:
+    try:
+        return _SA_NAMESPACE_FILE.read_text().strip() or None
+    except OSError:
+        return None
+
+
+def _incluster_core_api() -> tuple[Any, Any]:
+    """(CoreV1Api, ApiClient) for this pod's own cluster, or (None, None) (#1705).
+
+    No kubeconfig fallback: a dev kubeconfig points at some other cluster.
+    """
+    if _own_namespace() is None:
+        return None, None
+    try:
+        from kubernetes_asyncio import (  # noqa: PLC0415 - optional dependency
+            client,
+            config,
+        )
+
+        config.load_incluster_config()  # type: ignore[no-untyped-call]
+        api_client = client.ApiClient()
+        return client.CoreV1Api(api_client), api_client
+    except Exception:  # noqa: BLE001 - no client means no pod is proven gone
+        _log.warning("[AgentService] no in-cluster client (#1705)", exc_info=True)
+        return None, None
+
+
+async def _pod_gone(core: Any, pod: str) -> bool:
+    """True only when the API answers 404 for ``pod`` (#1705); anything else is alive."""
+    ns = _own_namespace()
+    if ns is None:
+        return False
+    try:
+        await core.read_namespaced_pod(pod, ns)
+    except Exception as exc:  # noqa: BLE001 - any doubt reads as alive
+        status = getattr(exc, "status", None)
+        if status == _HTTP_NOT_FOUND:
+            return True
+        _log.warning(
+            "[AgentService] pod read failed for %s (status=%s; 403 means missing "
+            "Pods get RBAC); leaving subprocess row live (#1705)",
+            sanitize_log(pod),
+            status,
+        )
+    return False
+
 
 # ---------------------------------------------------------------------------
 # Re-exports from the god-file decomposition. Every name below moved out of this
@@ -120,6 +171,10 @@ class AgentService(
         # the rows it just polled, so ``is_running`` can answer for both
         # backends without a Kubernetes call or a DB round-trip per request.
         self._active_kubejob_task_ids: set[str] = set()
+        # #1714 task ids whose dispatch raised; released when their Job 404s.
+        self._held_credentials: set[str] = set()
+        # #1704: spec-creation process per task, so Start/approve stop only that.
+        self._spec_creation_procs: dict[str, Any] = {}
         # #1662: ids dispatched since the current reconcile tick began
         # its store read; that tick unions them in so it cannot drop a
         # build whose row it read too early. Reset every tick.
@@ -1346,6 +1401,31 @@ class AgentService(
         with contextlib.suppress(ProcessLookupError, OSError):
             proc.send_signal(sig)
 
+    async def stop_stale_spec_creation(self, task_id: str) -> None:
+        proc = self.running_tasks.get(task_id)
+        if proc is None or proc is not self._spec_creation_procs.get(task_id):
+            return
+        # Spec creation never owns a running row, so a running row (or an
+        # unreadable one) is another build: stop_task would fail it. Leave
+        # both alone and let the caller's 409 check refuse (#1704).
+        if self._store_enabled:
+            try:
+                state = await self._store().get_state(task_id)
+            except Exception:  # noqa: BLE001 - doubt reads as live
+                return
+            if state is not None and state.get("lifecycle_state") == "running":
+                return
+        try:
+            await self.stop_task(task_id)
+        except Exception:  # noqa: BLE001 - same fallback the routes had
+            _log.warning(
+                "[AgentService] failed to stop stale spec creation for %s",
+                sanitize_log(task_id),
+                exc_info=True,
+            )
+            self.running_tasks.pop(task_id, None)
+        self._spec_creation_procs.pop(task_id, None)
+
     async def stop_task(self, task_id: str) -> bool:
         """Stop a running task."""
 
@@ -1538,6 +1618,7 @@ class AgentService(
         """
         if not self._store_enabled:
             return {"running": 0, "queued": 0}
+        await self.reap_orphaned_subprocess_rows()
         try:
             state = await self._store().reconstruct()
         except Exception:  # noqa: BLE001 - startup must not crash on a store hiccup
@@ -1554,6 +1635,67 @@ class AgentService(
         # Fill any slots freed by a dead replica's running builds.
         await self._drain_queue()
         return {"running": running, "queued": queued}
+
+    async def _fail_orphan_row(
+        self, job_id: str, pod: str, boot: str, reason: str
+    ) -> bool:
+        try:
+            return bool(
+                await self._store().fail_subprocess_row(job_id, pod, boot, reason)
+            )
+        except Exception:  # noqa: BLE001 - retried on the next tick
+            _log.warning(
+                "[AgentService] subprocess row fail failed for %s (#1705)",
+                sanitize_log(job_id),
+                exc_info=True,
+            )
+            return False
+
+    async def reap_orphaned_subprocess_rows(self, *, core: Any = None) -> list[str]:
+        """Fail only subprocess claims whose stamped owner is confirmed gone (#1705)."""
+        if not self._store_enabled:
+            return []
+        try:
+            rows = await self._store().get_running_subprocess_rows()
+        except Exception:  # noqa: BLE001 - unknown owners stay live
+            _log.warning(
+                "[AgentService] subprocess row read failed (#1705)", exc_info=True
+            )
+            return []
+
+        here, boot_now = job_state_store.POD_NAME, job_state_store.BOOT_ID
+        rows = [
+            r
+            for r in rows
+            if r["pod"] and r["boot"] and (r["pod"], r["boot"]) != (here, boot_now)
+        ]
+        api_client = None
+        if core is None and any(r["pod"] != here for r in rows):
+            core, api_client = _incluster_core_api()
+        reaped: list[str] = []
+        try:
+            for row in rows:
+                job_id, pod, boot = row["job_id"], row["pod"], row["boot"]
+                if pod == here:
+                    reason = "control plane restarted under the build (#1705)"
+                elif core is not None and await _pod_gone(core, pod):
+                    reason = f"owning pod {pod} no longer exists (#1705)"
+                else:
+                    continue
+                if await self._fail_orphan_row(job_id, pod, boot, reason):
+                    reaped.append(job_id)
+        finally:
+            if api_client is not None:
+                with contextlib.suppress(Exception):
+                    await api_client.close()
+        if reaped:
+            try:
+                await self._drain_queue()
+            except Exception:  # noqa: BLE001 - the next tick drains again
+                _log.warning(
+                    "[AgentService] subprocess reaper drain failed", exc_info=True
+                )
+        return reaped
 
     def is_running(self, task_id: str) -> bool:
         """Check if a task is currently running, on either build backend.

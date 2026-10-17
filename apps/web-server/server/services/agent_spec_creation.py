@@ -53,6 +53,7 @@ class SpecCreationMixin:
         # sibling mixins; declared so mypy resolves the self.* refs (#703 pattern).
         backend_path: Any
         running_tasks: dict[str, Any]
+        _spec_creation_procs: dict[str, Any]
         _spec_dirs: dict[str, Any]
         _task_profiles: dict[str, Any]
         _task_sequence_numbers: dict[str, Any]
@@ -297,6 +298,7 @@ class SpecCreationMixin:
         os.close(slave_fd)
 
         self.running_tasks[task_id] = proc
+        self._spec_creation_procs[task_id] = proc
 
         # Initialize tracking for sequence numbers and start time
         self._task_sequence_numbers[task_id] = 0

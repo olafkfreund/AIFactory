@@ -1070,10 +1070,8 @@ class WorktreeManager:
     ) -> bool:
         """Perform the base-repo mutating merge. Caller MUST hold the git lock."""
         try:
-            pins = merge_driver_pins(
-                self.project_dir,
-                run=lambda a: ((r := self._run_git(a[1:])).returncode, r.stdout),
-            )
+            # Not _run_git: errors="replace" would mangle a non-UTF-8 driver name.
+            pins = merge_driver_pins(self.project_dir, env=_git_env())
         except RuntimeError as exc:
             print(f"Error: merge refused: {exc}")  # noqa: T201
             logger.error("Merge refused for '%s': cannot read merge drivers", spec_name)

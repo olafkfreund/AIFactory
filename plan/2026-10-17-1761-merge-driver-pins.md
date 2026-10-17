@@ -27,13 +27,13 @@ read from config at each call.
 
    ```python
    _MERGE_DRIVER_KEYS = (
-       "git", "config", "-z", "--includes", "--name-only",
-       "--get-regexp", r"^merge\..*\.driver$",
+       "git", "config", "-z", "--includes", "--name-only", "--list",
    )
 
    def merge_driver_pins(
        cwd: str | os.PathLike[str],
        run: Callable[[list[str]], tuple[int, str]] | None = None,
+       env: Mapping[str, str] | None = None,
    ) -> list[str]:
    ```
 
@@ -41,11 +41,18 @@ read from config at each call.
    config seen from `cwd` defines, to be placed right after `"git"` in an argv.
    `run(argv) -> (rc, stdout)` replaces the subprocess for callers with an
    injected runner; by default it runs `subprocess.run(argv, cwd=cwd,
-   capture_output=True, text=True, errors="surrogateescape", env=child_env(),
-   timeout=60, check=False)`. `rc == 1` (no match) returns `[]`. Any other
-   non-zero rc, `OSError`/`subprocess.SubprocessError` from the run, or a key
-   containing `=` (cannot be expressed with `-c`) raises `RuntimeError`.
-   Keys are split on `"\0"`, empty pieces skipped. Re-export it from
+   capture_output=True, text=True, errors="surrogateescape", env=env or child_env(),
+   timeout=60, check=False)`. Any non-zero rc,
+   `OSError`/`subprocess.SubprocessError`/`UnicodeError` from the run, or a
+   driver key containing `=` (cannot be expressed with `-c`) raises
+   `RuntimeError`. Keys are split on `"\0"` and kept only when they start with
+   `merge.` and end with `.driver`.
+   (Review fix: the first version used `--get-regexp '^merge\..*\.driver$'`
+   and read rc 1 as "none". Under a UTF-8 locale git's `.` does not match an
+   invalid byte, so a `[merge "\xff"]` driver was missed and ran. `--list`
+   plus a Python filter has no regex, and rc 1 now fails closed. A custom
+   `run` must decode with `surrogateescape` so such a key round-trips into
+   argv.) Re-export it from
    `apps/web-server/server/utils/subprocess_env.py` like `pin_git_config`
    (alias line plus `__all__`).
    (Deviation from the spec text: the spec sketched `GIT_CONFIG_KEY_n` env
@@ -89,8 +96,12 @@ Tests (new file, fixture `evil_repo(tmp_path)` reused by later steps):
 - `merge_driver_pins(repo)` == `["-c", "merge.evil.driver="]`;
   `git *pins merge-tree --write-tree main aifactory/t` exits 1 and the marker
   is absent.
-- injected `run`: `(1, "")` → `[]`; `(0, "merge.a.driver\0merge.B c.driver\0")`
-  → both pinned in order; `(128, "")` raises `RuntimeError`;
+- the same repo with the bound driver named by the byte `0xff` (appended raw
+  to `.git/config`, `* merge=\xff` in `info/attributes`, `LC_ALL=C.UTF-8`):
+  the key `merge.\udcff.driver=` is pinned and merge-tree runs nothing; and
+  `WorktreeManager._do_merge_locked` returns False with no marker.
+- injected `run`: `(0, "")` → `[]`; `(0, "core.bare\0merge.a.driver\0merge.B c.driver\0merge.a.name\0")`
+  → the two drivers pinned in order; `(1, "")` and `(128, "")` raise `RuntimeError`;
   `(0, "merge.a=b.driver\0")` raises; a `run` that raises `OSError` →
   `RuntimeError`.
 
@@ -162,18 +173,16 @@ than reorder the code.
    the method, before the stash (`:1083`):
    ```python
    try:
-       pins = merge_driver_pins(
-           self.project_dir,
-           run=lambda a: ((r := self._run_git(a[1:])).returncode, r.stdout),
-       )
+       pins = merge_driver_pins(self.project_dir, env=_git_env())
    except RuntimeError as exc:
        print(f"Error: merge refused: {exc}")
        logger.error("Merge refused for '%s': cannot read merge drivers", spec_name)
        return False
    ```
    and `merge_args = [*pins, "merge", "--no-ff", info.branch]` (`:1121`).
-   `_run_git` already prepends `git -c core.bare=false` and uses `_git_env()`
-   (ambient `GIT_DIR` dropped), hence `a[1:]`.
+   Not `_run_git`: it decodes with `errors="replace"`, which turns a
+   non-UTF-8 driver name into U+FFFD so the pin misses (review fix).
+   `env=_git_env()` keeps ambient `GIT_DIR` dropped.
 4. `apps/web-server/server/routes/pr.py:270-298` (`create_pr_from_task`,
    best-effort rebase): inside the `try`, `pins = merge_driver_pins(worktree_path)`
    then `["git", *pins, "rebase", f"origin/{base_branch}"]`. Add
@@ -193,11 +202,22 @@ than reorder the code.
    `["git", *pins, "-c", "core.editor=true", "rebase", "--continue"]`
    (`--continue` replays further commits, so it merges too). Import from
    `server.utils.subprocess_env` (`:36`).
+   Deviation (review of 0e8b54a1): the fixer (QA-fixer agent) runs in the
+   worktree between the rebase and `--continue` and can plant a new
+   `merge.<name>.driver` plus `info/attributes`. Recompute `pins` after the
+   fixer returns True and before `git add -A`/`--continue`; on `RuntimeError`
+   run `git rebase --abort` and return `rebase refused`. Do not reuse the
+   first `pins` for `--continue`.
 
 Tests (append): `resolve_pr_conflicts` with the real `_default_runner` on a
 clone of `evil_repo` (`git clone`, then check out `aifactory/t`, plant the
 driver config and `info/attributes` in the clone) and a fixer that records
 its call and returns False: the marker is absent and the fixer saw `["f"]`.
+Plus `test_resolve_pr_conflicts_repins_after_fixer`: a two-commit branch
+(c1 conflicts on `f`, c2 three-way merges `g`) and a fixer that resolves `f`
+and plants `merge.late.driver` + `* merge=late`; the marker is absent and the
+rebase ends aborted. A second scan that raises returns `rebase refused` with
+no rebase in progress.
 The `FakeRunner` tests in `tests/test_pr_conflict_resolution.py` must still
 pass unchanged (an unscripted `git config` returns rc 0 and empty out → no
 pins).
