@@ -62,6 +62,24 @@ verdict gates the merge:
   a blind merge, and never a merge on a *human-only* approval when
   `require_copilot` is set. A human approval alone does not satisfy the gate.
 
+### Merge gate: head-bound verdict, deadline, required checks (#1766)
+
+For a non-legacy task, the merge-time gate also requires:
+- **TFactory tested this exact head.** TFactory's task API returns the commit it
+  tested (`source_sha`). The verdict counts only when that equals the PR head.
+  A missing `source_sha` (older TFactory) or any later push holds the merge
+  until TFactory re-tests.
+- **The base branch's required checks are green on the head.** The gate reads
+  them from branch protection and rulesets. A required check that has not
+  posted yet keeps it waiting. If the token cannot read them, the merge holds
+  and the log says `cannot read the required checks of <base>`.
+- **A wall-clock limit.** The watcher stops at `max_minutes` (about 20) however
+  slow GitHub or TFactory are.
+
+Recommended: list the CI checks (and TFactory's check, where it posts one) as
+required status checks in branch protection or a ruleset, so GitHub enforces the
+same rule for every merge, not only the endgame's.
+
 ## Flow
 
 ```
