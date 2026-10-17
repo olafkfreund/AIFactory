@@ -1,5 +1,15 @@
 ## [Unreleased]
 
+### Added
+
+- **Opt-in repo lint gate (#1742).** With `AIFACTORY_REPO_LINT_GATE=1`, the
+  trailing gates run the target repo's CI linters that AIFactory has a
+  curated command for (`ruff check .`, `flake8`, `ktlint`), never the CI
+  step text. A lint that fails goes to `GATE_FAILURES.md` and the QA fix
+  loop; a missing tool reads `skipped`. The planner prompt also names the
+  linters CI runs. Off by default, because it can fail builds that pass
+  today. `ci_linters` now refuses a repo with more than 64 workflow files.
+
 ### Security
 
 - **Legacy and from-issue tasks need a real verified green to auto-merge (#1697).**

@@ -68,11 +68,14 @@ def test_seeded_commands_pass_real_enforcement(tmp_path):
     reset_profile_cache()
     project_dir = tmp_path / "proj"
     project_dir.mkdir()
-    plan_path = _write_plan(project_dir / "spec", ["uv"], verify_cmd="ruff check .")
+    plan_path = _write_plan(
+        project_dir / "spec", ["uv", "pytest"], verify_cmd="ruff check ."
+    )
 
     seed_profile_with_plan_commands(project_dir, plan_path)
     reset_profile_cache()  # force reload from the freshly-written file
 
+    # `uv run` targets are checked too (#1812), so pytest must be granted.
     ok_uv, _ = validate_command("uv run pytest", project_dir)
     ok_ruff, _ = validate_command("ruff check .", project_dir)
     assert ok_uv is True

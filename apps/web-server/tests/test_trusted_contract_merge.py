@@ -386,7 +386,7 @@ def test_spec_key_ignores_a_symlinked_spec_dir(tmp_path: Path) -> None:
 def test_pid_namespaced_sandbox_host_is_not_isolated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """D4 narrowed: run.py in the sandbox carries the server env (#1680)."""
+    """D4 stays narrow (#1760): run.py and the agent share uid and pidns there."""
     monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "subprocess")
     monkeypatch.setenv("AIFACTORY_AGENT_SANDBOX", "strict")
     monkeypatch.setenv("AIFACTORY_AGENT_SANDBOX_PIDNS", "1")
