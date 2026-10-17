@@ -16,6 +16,28 @@ human approval.
 
 ## 1. Register the App
 
+### Register with the manifest (recommended)
+
+Run `python scripts/github_app_setup.py manifest --out app.html` from the
+repository root. Add `--org ORG` for an organization-owned App. Add
+`--workflows` only if PRs touch `.github/workflows`. App names are unique on
+GitHub; pass `--name NAME` if "AIFactory" is taken. `manifest` and `convert`
+need only the Python standard library, and neither touches the cluster.
+
+Open `app.html` and create the App. Copy the `code` value from the redirect URL
+within one hour, then run:
+
+```bash
+python scripts/github_app_setup.py convert CODE --out secret.yaml
+```
+
+The command prints the App ID and install URL. Install the App on the repo,
+then read the installation ID from the number at the end of its settings URL.
+The operator applies the Secret with `kubectl apply -f secret.yaml`, then
+deletes the local file. Keep the App's private key secure.
+
+### Register manually
+
 On GitHub, create an App with these repository permissions and no others:
 
 - Contents: read and write
@@ -65,6 +87,35 @@ render with the MCP GitHub PAT:
 - Remove PAT copies from project `.env` files and the UI settings token. The
   server does not clear these.
 
+## Copilot review
+
+AIFactory's engine reviews PRs by default. Copilot gates a PR only when
+`AIFACTORY_PR_REVIEWER=copilot`. A missing Copilot review times out to a human
+stop.
+
+To check whether the App can request Copilot review, run this probe on a test
+PR opened by the App. Use the App's PEM private key file. The probe needs
+`python-jose` and `httpx` (the backend virtualenv has both) and never prints
+the token or key; it exits 0 only when GitHub lists Copilot as a reviewer:
+
+```bash
+python scripts/github_app_setup.py probe-copilot --repo OWNER/NAME --pr N --app-id ID --installation-id ID --key-file private-key.pem
+```
+
+Record the result on #1701. If the request is refused, add a branch ruleset
+with "Automatically request Copilot code review".
+
+## Clone credentials
+
+Stored per-project clone PATs are an accepted risk. A PAT is read at project
+add for the clone through `GIT_ASKPASS`, stays encrypted at rest, and never
+pushes.
+
+To move a project off its PAT, install the App on its repo and add the project
+with no stored credential. Then delete the stored PAT through the UI or
+`DELETE /api/git-credentials/{id}`, and revoke it on GitHub. Keep a PAT only
+where the App cannot be installed.
+
 ## Limits
 
 - GitHub Models is not supported with the App.
@@ -73,7 +124,7 @@ render with the MCP GitHub PAT:
   build can fail its final push. Per-call tokens (#1688) remove this.
 - Claude agents never see the token. Non-Claude runners and the GitHub MCP
   server do.
-- Stored per-project clone PATs are unchanged.
+- Stored per-project clone PATs are an accepted risk; see Clone credentials.
 
 ## Rollback
 
