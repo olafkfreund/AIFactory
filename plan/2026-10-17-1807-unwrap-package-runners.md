@@ -43,7 +43,7 @@ so `pnpx -w nc ls` is checked as `ls`.
      Before the loop, `_require_literal(words, idx + 1, idx + 2)` (a dynamic
      subcommand could be `dlx`).
    Register each key of `_RUNNER_SUBCOMMANDS` in `_UNWRAPPERS`.
-4. Out of scope (follow-up issue): implicit binary runs `pnpm <bin>`,
+4. Out of scope (follow-up #1812): implicit binary runs `pnpm <bin>`,
    `yarn <bin>`, `uv run`, `bun run`. Accepted limits from #1806 stay.
 
 ## Steps
