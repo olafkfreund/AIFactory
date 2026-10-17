@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1809
 intent: intent/2026-10-17-1809-quoted-heredoc-time.md
 ---
