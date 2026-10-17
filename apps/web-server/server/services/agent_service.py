@@ -39,6 +39,10 @@ from .agent_skill_context import SkillContextMixin
 from .agent_spec_creation import SpecCreationMixin
 from .agent_worktree_sync import WorktreeSyncMixin
 
+# subprocess_env adds apps/backend to sys.path before this import.
+# isort: split
+from core.auth import is_denied_env_key
+
 # Module-level logger for the admission-control paths (RFC-0016 #668). The rest
 # of this (legacy) module still uses local ``import logging`` inside methods.
 _log = logging.getLogger(__name__)
@@ -92,6 +96,17 @@ from .tenant_target import TenantTarget, resolve_tenant_target  # noqa: E402,F40
 # go. "human_review" is deliberately absent -- it is a checkpoint, and a task
 # reaching it has a plan by definition.
 _TERMINAL_PLAN_STATUSES = frozenset({"completed", "failed"})
+
+
+def _load_backend_env(path: Path, env: dict[str, str]) -> None:
+    with path.open() as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                key = key.strip()
+                if key not in env and not is_denied_env_key(key):
+                    env[key] = value.strip()
 
 
 class AgentService(
@@ -1061,16 +1076,7 @@ class AgentService(
         backend_env_file = self.backend_path / ".env"
         if backend_env_file.exists():
             try:
-                with open(backend_env_file) as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith("#") and "=" in line:
-                            key, value = line.split("=", 1)
-                            key = key.strip()
-                            value = value.strip()
-                            # Don't override existing env vars
-                            if key not in env:
-                                env[key] = value
+                _load_backend_env(backend_env_file, env)
                 logger.info(
                     f"[AgentService] Loaded backend .env from {backend_env_file}"
                 )

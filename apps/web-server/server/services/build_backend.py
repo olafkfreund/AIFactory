@@ -287,6 +287,8 @@ _PASSTHROUGH_BUILD_ENV: tuple[str, ...] = (
     # AIFACTORY_DATA_ROOT: the Job does not mount the data PVC there.
     "AIFACTORY_GATE_TIMEOUT_SECONDS",
     "AIFACTORY_SANDBOX_NETWORK",
+    # #1742: opt-in repo lint gates run in this Job's trailing gate.
+    "AIFACTORY_REPO_LINT_GATE",
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_MODEL",

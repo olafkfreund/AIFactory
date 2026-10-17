@@ -31,6 +31,7 @@ except ImportError:
     ClaudeAgentOptions = None
     ClaudeSDKClient = None
 
+from core.agent_home import AgentHome  # noqa: E402
 from core.auth import (
     ensure_claude_code_oauth_token,
     get_agent_env_blanks,
@@ -183,6 +184,7 @@ Current question: {message}"""
 
     try:
         # Create Claude SDK client with appropriate settings for insights
+        home = AgentHome("claude")
         client = ClaudeSDKClient(
             options=ClaudeAgentOptions(
                 model=resolve_model_id(model),  # Resolve via API Profile if configured
@@ -194,7 +196,7 @@ Current question: {message}"""
                 ],
                 max_turns=30,  # Allow sufficient turns for codebase exploration
                 cwd=str(project_path),
-                env=get_agent_env_blanks(),  # no GitHub token for the CLI (#1723)
+                env={**get_agent_env_blanks(), **home.env},
                 permission_mode="bypassPermissions",  # Bypass prompts for headless execution
             )
         )

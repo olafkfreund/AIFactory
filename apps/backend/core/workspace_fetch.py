@@ -21,6 +21,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from core import process_hardening
 from core.child_env import child_env, lfs_upload
 from core.git_credentials import authed_push_url
 
@@ -92,7 +93,7 @@ def maybe_unpack_workspace(project_dir: str | os.PathLike[str]) -> bool:
     return True
 
 
-def maybe_push_workspace_branch(
+def maybe_push_workspace_branch(  # noqa: PLR0911 - one early return per refusal
     project_dir: str | os.PathLike[str], spec_id: str
 ) -> bool:
     """Push the built worktree branch to origin on the packed path (RFC-0017 #190).
@@ -115,6 +116,12 @@ def maybe_push_workspace_branch(
     wt = Path(project_dir) / ".aifactory" / "worktrees" / "tasks" / spec_id
     if not wt.is_dir():
         _log.warning("[workspace_fetch] no worktree at %s; nothing to push", wt)
+        return False
+    if (
+        process_hardening.in_build_job()
+        and not process_hardening.kill_stray_processes()
+    ):
+        _log.error("agent-started processes survived; refusing to push (#1724)")
         return False
 
     def _git(*args: str) -> str:
