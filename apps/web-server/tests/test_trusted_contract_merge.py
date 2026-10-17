@@ -660,7 +660,6 @@ def _gate(
     *,
     verdict: str | None,
     ci: bool | None,
-    required: bool | None = True,
     human: bool = False,
 ) -> tuple[Any, list[str]]:
     spec, signed = _spec(tmp_path, tier="low")
@@ -674,7 +673,7 @@ def _gate(
         owner: str, repo: str, base: str, sha: str, **_k: object
     ) -> bool | None:
         heads.append(f"{owner}/{repo}:{base}@{sha}")
-        return required
+        return True
 
     monkeypatch.setattr(pe, "host_ci_green", fake_ci)
     monkeypatch.setattr(pe, "required_checks_green", fake_req)
@@ -723,7 +722,8 @@ def test_1695_gate_red_or_unknown_is_false(
 def test_1766_gate_required_checks_none_is_false(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    gate, _ = _gate(tmp_path, monkeypatch, verdict="pass", ci=True, required=None)
+    gate, _ = _gate(tmp_path, monkeypatch, verdict="pass", ci=True)
+    monkeypatch.setattr(pe, "required_checks_green", lambda *_a, **_k: None)
     assert gate("deadbeef") is False
 
 
