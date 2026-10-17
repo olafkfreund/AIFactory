@@ -86,8 +86,12 @@ def merge_driver_pins(
     An agent can define ``merge.<name>.driver`` in ``.git/config`` and bind it in
     ``.git/info/attributes``; overriding each key with an empty value makes git
     report a conflict instead of running the program. Callers fail closed on
-    ``RuntimeError``.
+    ``RuntimeError``. Raises RuntimeError when git metadata changed since the
+    baseline (#1746).
     """
+    from core.git_metadata import check_git_metadata  # noqa: PLC0415 - import cycle
+
+    check_git_metadata(cwd, run)
     argv = list(_MERGE_DRIVER_KEYS)
     try:
         if run is not None:

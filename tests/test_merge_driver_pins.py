@@ -88,18 +88,23 @@ def test_merge_driver_pins_blocks_merge_tree_driver(
 
 
 def test_merge_driver_pins_injected_run(tmp_path: Path) -> None:
-    assert merge_driver_pins(tmp_path, run=lambda _a: (1, "")) == []
+    def _script(
+        driver_res: tuple[int, str],
+    ) -> object:
+        return lambda a: driver_res if "--get-regexp" in a else (0, "")
+
+    assert merge_driver_pins(tmp_path, run=_script((1, ""))) == []
 
     assert merge_driver_pins(
         tmp_path,
-        run=lambda _a: (0, "merge.a.driver\0merge.B c.driver\0"),
+        run=_script((0, "merge.a.driver\0merge.B c.driver\0")),
     ) == ["-c", "merge.a.driver=", "-c", "merge.B c.driver="]
 
     with pytest.raises(RuntimeError):
-        merge_driver_pins(tmp_path, run=lambda _a: (128, ""))
+        merge_driver_pins(tmp_path, run=_script((128, "")))
 
     with pytest.raises(RuntimeError):
-        merge_driver_pins(tmp_path, run=lambda _a: (0, "merge.a=b.driver\0"))
+        merge_driver_pins(tmp_path, run=_script((0, "merge.a=b.driver\0")))
 
     def _raise_oserror(_a: list[str]) -> tuple[int, str]:
         raise OSError("boom")

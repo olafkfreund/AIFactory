@@ -30,6 +30,7 @@ from typing import Literal
 
 from core.child_env import child_env, merge_driver_pins
 from core.git_credentials import github_env
+from core.git_metadata import record_baseline
 
 fcntl: ModuleType | None
 try:  # pragma: no cover - platform dependent
@@ -864,6 +865,16 @@ class WorktreeManager:
             raise WorktreeError(
                 f"Failed to create worktree for {spec_name}: {result.stderr}"
             )
+
+        try:
+            record_baseline(
+                self.project_dir,
+                run=lambda a: ((r := self._run_git(a[1:])).returncode, r.stdout),
+            )
+        except RuntimeError as exc:
+            raise WorktreeError(
+                f"could not record the git metadata baseline: {exc}"
+            ) from exc
 
         print(f"Created worktree: {worktree_path.name} on branch {branch_name}")
         logger.info(

@@ -165,6 +165,11 @@ Traps: `create_worktree` tests elsewhere may mock `_run_git`; the extra
 `stdout`, the snapshot fails closed and raises `WorktreeError`: script the
 mock rather than catching broadly.
 
+Deviation (implemented): `test_merge_driver_pins_injected_run` in
+`tests/test_merge_driver_pins.py` scripts its stub to answer `(0, "")` for the
+baseline's `rev-parse`/`config --list` calls, since the check now runs first.
+The local import in `merge_driver_pins` carries `# noqa: PLC0415` (cycle).
+
 ### Step 3: check at the end of each session
 
 Files: `apps/backend/agents/coder.py` (after `:767-769`),

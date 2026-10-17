@@ -151,3 +151,80 @@ def test_linked_worktree_shares_baseline(repo: Path, tmp_path: Path) -> None:
         check_git_metadata(repo)
     with pytest.raises(RuntimeError, match=r"merge\.wt\.driver"):
         check_git_metadata(wt)
+
+
+def test_create_worktree_records_baseline_without_overwriting(repo: Path) -> None:
+    from core.worktree import WorktreeManager
+
+    mgr = WorktreeManager(repo)
+    mgr.setup()
+    mgr.create_worktree("t")
+    check_git_metadata(repo)
+
+    with open(repo / ".git" / "config", "a", encoding="utf-8") as fh:
+        fh.write('[merge "evil"]\n\tdriver = touch x\n')
+
+    mgr.create_worktree("u")
+    with pytest.raises(RuntimeError, match=r"merge\.evil\.driver"):
+        check_git_metadata(repo)
+
+
+def test_planted_driver_and_attributes_refused_by_merge_paths(
+    repo: Path, tmp_path: Path
+) -> None:
+    import core.workspace.merge as merge_mod
+    from core.child_env import merge_driver_pins
+    from core.worktree import WorktreeManager
+
+    ws = str(Path(__file__).resolve().parent.parent / "apps" / "web-server")
+    if ws not in sys.path:
+        sys.path.insert(0, ws)
+    from server.services import pr_endgame
+
+    marker = tmp_path / "pwned"
+    mgr = WorktreeManager(repo)
+    mgr.setup()
+    wt = mgr.create_worktree("t")
+
+    (wt.path / "f").write_text("theirs\n", encoding="utf-8")
+    _git(wt.path, "commit", "-q", "-am", "theirs")
+    (repo / "f").write_text("ours\n", encoding="utf-8")
+    _git(repo, "commit", "-q", "-am", "ours")
+
+    clone = tmp_path / "clone"
+    _git(tmp_path, "clone", "-q", str(repo), str(clone))
+    _git(clone, "config", "user.email", "t@example.com")
+    _git(clone, "config", "user.name", "Test")
+    _git(clone, "checkout", "-q", "aifactory/t")
+    record_baseline(clone)
+
+    for target in (repo, clone):
+        with open(target / ".git" / "config", "a", encoding="utf-8") as fh:
+            fh.write(f'[merge "evil"]\n\tdriver = touch {marker}; exit 0\n')
+        attrs = target / ".git" / "info" / "attributes"
+        attrs.parent.mkdir(parents=True, exist_ok=True)
+        attrs.write_text("* merge=evil\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match=r"merge\.evil\.driver"):
+        merge_driver_pins(repo)
+
+    conflict_res = merge_mod._check_git_conflicts(repo, "t")
+    assert conflict_res["has_conflicts"] is True
+    assert not marker.exists()
+
+    pr_res = pr_endgame.resolve_pr_conflicts(
+        str(clone),
+        "main",
+        fixer=lambda _files, _wt: False,
+        runner=pr_endgame._default_runner,
+    )
+    assert pr_res.resolved is False
+    assert "refused" in pr_res.reason
+    assert not marker.exists()
+
+
+def test_merge_driver_pins_fake_runner_zero_empty_succeeds(tmp_path: Path) -> None:
+    from core.child_env import merge_driver_pins
+
+    assert merge_driver_pins(tmp_path, run=lambda _argv: (0, "")) == []
+    assert merge_driver_pins(tmp_path, run=lambda _argv: (0, "")) == []
