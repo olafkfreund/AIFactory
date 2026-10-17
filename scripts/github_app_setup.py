@@ -13,17 +13,19 @@ import urllib.error
 import urllib.request
 from http import HTTPStatus
 from pathlib import Path
+from typing import Any, TextIO, cast
 
 _MAX_MESSAGE = 300
 
 
-def _say(*args: object, file: object = None) -> None:
-    print(*args, file=file)  # type: ignore[call-overload]  # noqa: T201 - CLI output
+def _say(*args: object, file: TextIO | None = None) -> None:
+    print(*args, file=file or sys.stdout)
 
 
-def load_manifest(workflows: bool, name: str | None) -> dict:
-    manifest = json.loads(
-        Path(__file__).with_name("github-app-manifest.json").read_text()
+def load_manifest(workflows: bool, name: str | None) -> dict[str, Any]:
+    manifest = cast(
+        dict[str, Any],
+        json.loads(Path(__file__).with_name("github-app-manifest.json").read_text()),
     )
     if workflows:
         manifest["default_permissions"]["workflows"] = "write"
@@ -32,7 +34,7 @@ def load_manifest(workflows: bool, name: str | None) -> dict:
     return manifest
 
 
-def form_html(manifest: dict, org: str | None) -> str:
+def form_html(manifest: dict[str, Any], org: str | None) -> str:
     if org is not None and not re.fullmatch(r"[A-Za-z0-9-]+", org):
         raise ValueError("invalid organization name")
     url = (
@@ -68,7 +70,7 @@ def write_private(path: str | Path, text: str) -> None:
         output.write(text)
 
 
-def copilot_listed(status: int, body: dict) -> bool:
+def copilot_listed(status: int, body: dict[str, Any]) -> bool:
     return HTTPStatus.OK <= status < HTTPStatus.MULTIPLE_CHOICES and any(
         "copilot" in reviewer.get("login", "").lower()
         for reviewer in (body.get("requested_reviewers") or [])
@@ -129,7 +131,7 @@ def probe_copilot(
         return 1
 
     import httpx  # noqa: PLC0415 - only needed for the live probe
-    from jose import jwt  # noqa: PLC0415 - only needed for the live probe
+    from jose import jwt  # type: ignore[import-untyped]  # noqa: PLC0415 - only needed for the live probe
 
     try:
         now = int(time.time())
