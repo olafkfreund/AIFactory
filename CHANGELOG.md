@@ -1,51 +1,6 @@
 ## [Unreleased]
 
-## 3.10.1 - 2026-10-15
-
-### Security
-
-- **Only allowlisted keys from `.aifactory/.env` reach subprocess environments (#1745).**
-  The review, task and spec-creation launchers now load the project `.env`
-  through one shared loader that copies only the keys the factory writes or
-  reads. Loader, shell and exec variables (`LD_*`, `NODE_OPTIONS`, `PYTHON*`,
-  `PATH`, most `GIT_*` and others) and the operator-only `AIFACTORY_*` security
-  knobs are always refused. Skipped keys are logged by name only. The
-  git-config parts of #1745 remain open.
-- **Simple-client helpers get only their own tool set (#1741).** Helpers run
-  under `bypassPermissions`, so `allowed_tools` restricted nothing and the CLI
-  offered its default tools. Each helper's list is now passed as the SDK base
-  tool set. `insights` and `batch_analysis`, which read untrusted text, lose
-  WebSearch and WebFetch.
-- **A pod can tell a server `legacy` verdict from no server (#1711, #1710).**
-  The server now sends `AIFACTORY_TRUSTED_CONTRACT=legacy`. A pod that gets
-  `legacy` but finds a contract file holds the task, which closes the #1673
-  residual gap. A kubejob test now checks that each verdict reaches the build pod.
-
-### Fixed
-
-- **Completion events use a repo-scoped correlation key, `<repo>#<n>` (#1775).**
-  The repo is read from the spec's provenance or GitHub issue. Needs CFactory
-  with CFactory#487, which accepts both key formats.
-- **A kubejob build stays running when one status poll fails (#1693).** A
-  per-row poll error keeps the row if it was live on the previous tick, so the
-  log streamer, cockpit badge and `/recover` guard keep their answer.
-- **The build Job sees the same nix-store settings as the control plane (#1736).**
-  `AIFACTORY_PACKED_NIX_IN_IMAGE` and `AIFACTORY_NIX_STORE_PVC` are forwarded
-  together, and the build Job no longer mounts the unseeded `/nix/store` PVC.
-- **`apps/backend` writes timezone-aware UTC timestamps (#1740).** Stored naive
-  values are read as host local time, so mixing old and new snapshots no longer
-  raises `TypeError`.
-- **The dev placeholder `GET /` is no longer in the OpenAPI spec (#1731).**
-- **`bump-version.js` also updates `package-lock.json` (#1727, #1631).**
-
-### CI
-
-- TechDocs fails when turning on a feature flag would change the OpenAPI spec (#1729).
-- CI runs the `scripts/` node tests (#1727).
-- New tests pin agent-env blanks before the MCP env merge (#1758) and guard
-  credential names on env passthrough lists (#1759).
-
-## 3.10.0 - 2026-10-15
+## 3.10.2 - 2026-10-17
 
 ### Security
 
@@ -114,6 +69,71 @@
   only `echo` checked. Any non-literal command word now fails closed and the
   command is blocked, including a bare `` `cmd` `` or `$(cmd)` used as the
   command.
+
+### Changed
+
+- PR bodies now state the review tier the merge gate decides on (#1698). For
+  a verified trusted task the body says `Effective review tier: <tier> (signed
+  floor <tier>)`, and when the agent-writable `reviewTier` is below the signed
+  tier it adds a "Possible tampering" warning naming both. The merge decision
+  is unchanged. The merger's PR body no longer echoes the raw on-disk tier; it
+  shows a constant label marked "not checked against a signed contract".
+- A held task contract now shows on the task (#1709). The hold reason
+  (e.g. `contract held (digest mismatch); normal build`) is written to the
+  task plan as `contractHold`, returned on the task row and shown as a neutral
+  "Contract held" badge in the task header. It never changes the task's status
+  or review reason, so a hold is not counted as a build failure. A held
+  migration still stops the build with exit 1, as before.
+
+## 3.10.1 - 2026-10-15
+
+### Security
+
+- **Only allowlisted keys from `.aifactory/.env` reach subprocess environments (#1745).**
+  The review, task and spec-creation launchers now load the project `.env`
+  through one shared loader that copies only the keys the factory writes or
+  reads. Loader, shell and exec variables (`LD_*`, `NODE_OPTIONS`, `PYTHON*`,
+  `PATH`, most `GIT_*` and others) and the operator-only `AIFACTORY_*` security
+  knobs are always refused. Skipped keys are logged by name only. The
+  git-config parts of #1745 remain open.
+- **Simple-client helpers get only their own tool set (#1741).** Helpers run
+  under `bypassPermissions`, so `allowed_tools` restricted nothing and the CLI
+  offered its default tools. Each helper's list is now passed as the SDK base
+  tool set. `insights` and `batch_analysis`, which read untrusted text, lose
+  WebSearch and WebFetch.
+- **A pod can tell a server `legacy` verdict from no server (#1711, #1710).**
+  The server now sends `AIFACTORY_TRUSTED_CONTRACT=legacy`. A pod that gets
+  `legacy` but finds a contract file holds the task, which closes the #1673
+  residual gap. A kubejob test now checks that each verdict reaches the build pod.
+
+### Fixed
+
+- **Completion events use a repo-scoped correlation key, `<repo>#<n>` (#1775).**
+  The repo is read from the spec's provenance or GitHub issue. Needs CFactory
+  with CFactory#487, which accepts both key formats.
+- **A kubejob build stays running when one status poll fails (#1693).** A
+  per-row poll error keeps the row if it was live on the previous tick, so the
+  log streamer, cockpit badge and `/recover` guard keep their answer.
+- **The build Job sees the same nix-store settings as the control plane (#1736).**
+  `AIFACTORY_PACKED_NIX_IN_IMAGE` and `AIFACTORY_NIX_STORE_PVC` are forwarded
+  together, and the build Job no longer mounts the unseeded `/nix/store` PVC.
+- **`apps/backend` writes timezone-aware UTC timestamps (#1740).** Stored naive
+  values are read as host local time, so mixing old and new snapshots no longer
+  raises `TypeError`.
+- **The dev placeholder `GET /` is no longer in the OpenAPI spec (#1731).**
+- **`bump-version.js` also updates `package-lock.json` (#1727, #1631).**
+
+### CI
+
+- TechDocs fails when turning on a feature flag would change the OpenAPI spec (#1729).
+- CI runs the `scripts/` node tests (#1727).
+- New tests pin agent-env blanks before the MCP env merge (#1758) and guard
+  credential names on env passthrough lists (#1759).
+
+## 3.10.0 - 2026-10-15
+
+### Security
+
 - **Tool-loop Bash and Grep commands no longer inherit host secrets in their environment (#1713).**
   The Ollama, Ollama Cloud, OpenAI-compatible and GitHub Models runtimes now
   spawn model-written commands with `child_env()`: every denied secret and
@@ -270,18 +290,6 @@
 
 ### Changed
 
-- PR bodies now state the review tier the merge gate decides on (#1698). For
-  a verified trusted task the body says `Effective review tier: <tier> (signed
-  floor <tier>)`, and when the agent-writable `reviewTier` is below the signed
-  tier it adds a "Possible tampering" warning naming both. The merge decision
-  is unchanged. The merger's PR body no longer echoes the raw on-disk tier; it
-  shows a constant label marked "not checked against a signed contract".
-- A held task contract now shows on the task (#1709). The hold reason
-  (e.g. `contract held (digest mismatch); normal build`) is written to the
-  task plan as `contractHold`, returned on the task row and shown as a neutral
-  "Contract held" badge in the task header. It never changes the task's status
-  or review reason, so a hold is not counted as a build failure. A held
-  migration still stops the build with exit 1, as before.
 - Trailing gates now record CI linters that no gate ran (e.g. `ktlint: skipped`)
   instead of omitting them; reporting only, never blocks (#1627).
 
