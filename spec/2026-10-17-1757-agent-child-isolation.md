@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1757
 intent: intent/2026-10-17-1757-agent-child-isolation.md
 ---
@@ -8,6 +8,22 @@ intent: intent/2026-10-17-1757-agent-child-isolation.md
 
 Issues: #1757, #1732, #1762 (b), #1724, #1760. Verified open on `origin/dev`
 at `4638e87d`; none is fixed there. #1810 closed #1762 (a) and (c) only.
+
+## Decisions (user, 2026-10-17)
+
+1. **Option A is chosen.** A private 0700 `HOME` per agent CLI spawn holding
+   only that CLI's own login file; a refreshed login is written back under a
+   lock; if the directory cannot be built the spawn fails closed. Agent
+   children get their env from an allowlist instead of the deny list, so
+   `SSH_AUTH_SOCK` is dropped. Operator MCP credentials pass through an
+   explicit `env_keys` field. The backend `.env` load is scrubbed. In build
+   Jobs, other processes of the same uid are killed before the push.
+   Options B and C are not chosen (kept below for the record only).
+2. Losing `SSH_AUTH_SOCK`, `~/.ssh` and home-folder tool configs for agents
+   is acceptable.
+3. #1760: `host_isolated()` stays narrow for now; its comment and the test
+   docstring are updated to give the reason. The PR refers to #1760 (Refs)
+   as "won't widen yet" and does not close it.
 
 ## Facts the options rest on
 
@@ -45,7 +61,7 @@ at `4638e87d`; none is fixed there. #1810 closed #1762 (a) and (c) only.
 
 ## Options
 
-### Option A (recommended): per-CLI private HOME + env allowlist + quiesce before push
+### Option A (CHOSEN): per-CLI private HOME + env allowlist + quiesce before push
 
 Smallest change that closes all four holes on every backend without new
 privilege.
@@ -108,8 +124,8 @@ sandbox-pidns host run.py still loads the backend `.env` unscrubbed until A2
 lands, the token holder and the agent share uid and the same pidns inside the
 sandbox, and the bwrap layout cannot run the backend from `/home` or `/nix`.
 Update the comment on `trusted_contract.py:35-39` and the test docstring
-`test_pid_namespaced_sandbox_host_is_not_isolated` to say why, and close
-#1760 as "decided: not now". Widening becomes a follow-up once A2 and A3 are
+`test_pid_namespaced_sandbox_host_is_not_isolated` to say why; #1760 is
+referenced as "won't widen yet", not closed. Widening becomes a follow-up once A2 and A3 are
 in and a sandbox layout that runs the backend exists.
 
 **What breaks.** Agents lose `~/.ssh` and the SSH agent (ssh git remotes,
@@ -142,7 +158,7 @@ list (names only), for one release, so operators can find what to add;
 - Live: one claude, one codex and one opencode build on the local runner and
   one kubejob build, with a codex token refresh across two builds.
 
-### Option B: env allowlist only, keep HOME, drop SSH_AUTH_SOCK
+### Option B (not chosen): env allowlist only, keep HOME, drop SSH_AUTH_SOCK
 
 A2 alone plus `SSH_AUTH_SOCK` on the strip list.
 - Closes #1757 and the SSH-agent half of #1732.
@@ -152,7 +168,7 @@ A2 alone plus `SSH_AUTH_SOCK` on the strip list.
 - **Migration:** as A2. **Tests:** the A2 tests.
 Smaller and safer, but does not close the holes the issues are about.
 
-### Option C: separate uid for the agent
+### Option C (not chosen): separate uid for the agent
 
 Run the agent CLI (and its children) as a second uid; run.py, git push and
 the token stay with the first uid. Closes all four issues fully, including
@@ -222,4 +238,5 @@ Done when, on `dev` after the plan is implemented:
   `echo $SSH_AUTH_SOCK` run by the agent return nothing;
 - a kubejob build succeeds and its agent cannot read
   `~/.codex/auth.json` when routed to claude;
-- #1760 is closed with the decision, #1724 notes the local-runner limit.
+- #1760 records the decision (stays open, "won't widen yet"), #1724 notes
+  the local-runner limit.
