@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1807
 spec: spec/2026-10-17-1807-unwrap-package-runners.md
 ---
