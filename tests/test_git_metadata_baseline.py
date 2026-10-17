@@ -491,7 +491,14 @@ async def test_coder_parallel_metadata_change_ends_build_in_error(
     status_cls = MagicMock()
     emit = MagicMock()
     session = AsyncMock(return_value=("continue", "", {}))
+    client = MagicMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
     patchers = {
+        "create_client": MagicMock(return_value=client),
+        "infer_provider_from_model": MagicMock(return_value="claude"),
+        "get_phase_model": MagicMock(return_value="claude-sonnet-4-5"),
+        "get_phase_thinking_budget": MagicMock(return_value=None),
         "run_session_guarded": session,
         "emit_phase": emit,
         "get_graphiti_context": AsyncMock(return_value=""),
