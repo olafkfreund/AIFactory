@@ -1405,6 +1405,16 @@ class AgentService(
         proc = self.running_tasks.get(task_id)
         if proc is None or proc is not self._spec_creation_procs.get(task_id):
             return
+        # Spec creation never owns a running row, so a running row (or an
+        # unreadable one) is another build: stop_task would fail it. Leave
+        # both alone and let the caller's 409 check refuse (#1704).
+        if self._store_enabled:
+            try:
+                state = await self._store().get_state(task_id)
+            except Exception:  # noqa: BLE001 - doubt reads as live
+                return
+            if state is not None and state.get("lifecycle_state") == "running":
+                return
         try:
             await self.stop_task(task_id)
         except Exception:  # noqa: BLE001 - same fallback the routes had

@@ -134,6 +134,30 @@ async def test_start_stops_only_registered_spec_process(replicas, monkeypatch):
     assert TASK not in b._spec_creation_procs
 
 
+async def test_start_keeps_other_replica_build_over_local_spec_process(
+    replicas, monkeypatch
+):
+    a, b, _ = replicas
+    await _running_row(a)
+    proc = SimpleNamespace(pid=999999, wait=AsyncMock(return_value=0))
+    b.running_tasks[TASK] = b._spec_creation_procs[TASK] = proc
+    monkeypatch.setattr(b, "_signal_process_tree", lambda *_: None)
+    for name in (
+        "_update_plan_status",
+        "_safe_emit_task_status",
+        "_emit_progress",
+        "start_task_execution",
+    ):
+        monkeypatch.setattr(b, name, AsyncMock())
+
+    with pytest.raises(HTTPException) as caught:
+        await _start()
+    assert caught.value.status_code == 409
+    b.start_task_execution.assert_not_awaited()
+    state = await a._job_store.get_state(TASK)
+    assert state["lifecycle_state"] == "running"
+
+
 async def test_start_refuses_when_store_read_fails(replicas, monkeypatch):
     _, b, _ = replicas
     stop = AsyncMock()

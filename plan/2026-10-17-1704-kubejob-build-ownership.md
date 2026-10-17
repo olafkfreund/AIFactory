@@ -92,10 +92,15 @@ Run tests from the repo root with
 - `services/agent_service.py`, new method right before `stop_task` (`:1343`):
   `async def stop_stale_spec_creation(self, task_id: str) -> None` - if
   `self.running_tasks.get(task_id)` is not None and `is` the object in
-  `self._spec_creation_procs.get(task_id)`, call `await self.stop_task(task_id)`
+  `self._spec_creation_procs.get(task_id)`, and (store enabled) the store row is
+  not `running` and reads without error, call `await self.stop_task(task_id)`
   (on any `Exception`, log a warning and `self.running_tasks.pop(task_id, None)`,
   the fallback both routes have today), then pop `_spec_creation_procs[task_id]`.
-  Otherwise do nothing. Never touches the store or a Job.
+  Otherwise do nothing. Reads the store row but never writes it or touches a
+  Job. Deviation (review of 96a461ce): spec creation never owns a running row,
+  so a running or unreadable row means another replica's build; `stop_task`
+  would mark that row failed and let the 409 check pass. Return and let the
+  caller refuse.
 - `routes/execution.py:699-715`: replace the block with
   ```python
   if force_execution:
@@ -127,7 +132,9 @@ Run tests from the repo root with
   task in `_active_kubejob_task_ids`: 409, no `stop_task`. (c) A local spec
   process (fake proc registered in both `running_tasks` and
   `_spec_creation_procs`, no row): `stop_task` is called once and the request
-  is not 409 (patch `start_task_execution` to a no-op). (d) Store read raises:
+  is not 409 (patch `start_task_execution` to a no-op). (c2) The same spec
+  process on replica B while replica A holds a running `k8s-job` row, with the
+  real `stop_task`: 409, and A's row is still `running`. (d) Store read raises:
   409. (e) `approve_plan` with `auto_restart=True` over a running `k8s-job`
   row: 409 and `review_state.json` still not approved.
 - Check: `pytest tests/test_kubejob_build_ownership.py tests/test_is_running_anywhere.py -q`
