@@ -1153,3 +1153,80 @@ def test_1695_host_ci_green_waits_for_unfinished_suites(
     suites: list[str], want: bool | None
 ) -> None:
     assert pe.host_ci_green("o", "r", "abc", runner=_suite_runner(suites)) is want
+
+
+def _req_runner(
+    *,
+    protection: str = '{"required_status_checks":{"contexts":[]}}',
+    prot_rc: int = 0,
+    rules: str = "",
+    runs: tuple[str, ...] = (),
+    statuses: tuple[str, ...] = (),
+) -> FakeRunner:
+    return FakeRunner(
+        {
+            "rules/branches": CmdResult(0, rules, ""),
+            "branches/": CmdResult(prot_rc, protection, ""),
+            "check-runs": CmdResult(0, "\n".join(runs), ""),
+            "/status": CmdResult(0, "\n".join(statuses), ""),
+        }
+    )
+
+
+_RUN_OK = '{"name":"ci/run","status":"completed","conclusion":"success"}'
+_RUN_RED = '{"name":"ci/run","status":"completed","conclusion":"failure"}'
+_RUN_PEND = '{"name":"ci/run","status":"in_progress","conclusion":null}'
+_ST_OK = '{"context":"ci/st","state":"success"}'
+
+
+@pytest.mark.parametrize(
+    ("kw", "want"),
+    [
+        ({}, True),
+        (
+            {
+                "protection": '{"required_status_checks":{"contexts":["ci/run"]}}',
+                "rules": "ci/st",
+                "runs": (_RUN_OK,),
+                "statuses": (_ST_OK,),
+            },
+            True,
+        ),
+        (
+            {
+                "protection": '{"required_status_checks":{"contexts":["ci/run"]}}',
+                "runs": (_RUN_RED,),
+            },
+            False,
+        ),
+        (
+            {
+                "protection": '{"required_status_checks":{"contexts":["ci/run","ci/missing"]}}',
+                "runs": (_RUN_OK,),
+            },
+            None,
+        ),
+        (
+            {
+                "protection": '{"required_status_checks":{"contexts":["ci/run"]}}',
+                "runs": (_RUN_PEND,),
+            },
+            None,
+        ),
+        ({"prot_rc": 1}, None),
+        ({"protection": "null"}, None),
+        (
+            {
+                "protection": '{"required_status_checks":null}',
+                "rules": "ci/rule",
+                "runs": (_RUN_OK,),
+            },
+            None,
+        ),
+    ],
+)
+def test_1766_required_checks_green(kw: dict[str, Any], want: bool | None) -> None:
+    assert (
+        pe.required_checks_green("o", "r", "main", "abc", runner=_req_runner(**kw))
+        is want
+    )
