@@ -69,6 +69,35 @@ def test_child_env_keeps_path_and_home(secret_env: None) -> None:
     assert env["HOME"] == os.environ["HOME"]
 
 
+def test_agent_child_env_allowlist(
+    secret_env: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from core.child_env import child_env as core_child_env
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    for name in ("FOO_SECRETISH", "FOO_MISC", "SSH_AUTH_SOCK", "MY_TOOL_DIR"):
+        monkeypatch.setenv(name, "x")
+
+    agent_env = core_child_env(
+        agent=True,
+        keep=("MY_TOOL_DIR",),
+        extra={"AGENT_EXTRA": "set"},
+    )
+    assert "FOO_SECRETISH" not in agent_env
+    assert "FOO_MISC" not in agent_env
+    assert "SSH_AUTH_SOCK" not in agent_env
+    assert agent_env["PATH"] == os.environ["PATH"]
+    assert agent_env["MY_TOOL_DIR"] == "x"
+    assert agent_env["AGENT_EXTRA"] == "set"
+    assert agent_env["GIT_CONFIG_KEY_0"] == "core.hooksPath"
+    assert agent_env["GIT_CONFIG_VALUE_0"] == "/dev/null"
+
+    default_env = core_child_env()
+    assert "FOO_SECRETISH" not in default_env  # Existing deny pattern matches SECRET.
+    assert default_env["FOO_MISC"] == "x"
+    assert default_env["SSH_AUTH_SOCK"] == "x"
+
+
 def test_keep_restores_only_named(secret_env: None) -> None:
     env = child_env(keep=GITHUB_KEEP)
     assert env["GITHUB_TOKEN"] == "s3cret"

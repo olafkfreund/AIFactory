@@ -1242,6 +1242,7 @@ async def _run_trailing_gates_if_build_complete(
             detect_gates,
             failing_gates,
             gate_dir_for,
+            lint_gates,
             run_gates,
             summarize_gates,
             trailing_gate_marker_is_current,
@@ -1338,6 +1339,12 @@ async def _run_trailing_gates_if_build_complete(
         if route_gate is not None:
             gates.append(route_gate)
 
+        from analysis.ci_discovery import ci_linters  # noqa: PLC0415
+
+        linters = ci_linters(gate_dir)
+        gates.extend(lint_gates(linters))  # opt-in repo lint (#1742)
+
+        # Lint gates (#1742, opt-in) count here: a lint-only repo still runs.
         if not gates:
             # A skipped gate must be VISIBLE, never silently treated as green. (#597)
             write_trailing_gate_marker(
@@ -1350,13 +1357,12 @@ async def _run_trailing_gates_if_build_complete(
             "info",
         )
         results = await run_gates(gate_dir, gates)
-        from analysis.ci_discovery import ci_linters  # noqa: PLC0415
-
-        # A CI linter no gate ran is recorded `skipped`, never silently absent (#1627).
-        ran = {r.name for r in results if not r.skipped}
+        # A CI linter no gate covered is recorded `skipped`, never silently absent (#1627).
+        # Covered = any result with that name, so a lint gate that was skipped is not listed twice.
+        ran = {r.name for r in results}
         results += [
             GateResult(name=tool, passed=True, skipped=True)
-            for tool in ci_linters(gate_dir)
+            for tool in linters
             if ("lint" if tool == "eslint" else tool) not in ran
         ]
         summary = summarize_gates(results)
