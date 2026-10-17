@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1746
 issues: [1746, 1747, 1761]
 intent: intent/2026-10-17-1746-git-metadata-write-guards.md
@@ -7,8 +7,34 @@ intent: intent/2026-10-17-1746-git-metadata-write-guards.md
 
 # Spec: git metadata write guards (#1746, #1747, #1761)
 
-This is a design for the user to choose. It lists three options and
-recommends one. Nothing is implemented on this branch.
+The user chose Option A on 2026-10-17. Options B and C are kept below for
+the record, marked not chosen.
+
+## Decisions (user, 2026-10-17)
+
+- **Option A, in two ordered PRs.**
+- **A1 first**, its own small PR on `fix/1761-merge-driver-pins` from
+  `origin/dev`, with its own plan
+  (`plan/2026-10-17-1761-merge-driver-pins.md`), sharing this intent and spec.
+  It adds `merge_driver_pins(cwd)` next to `pin_git_config` in
+  `core/child_env.py`, which pins every `merge.*.driver` to an empty value. It
+  applies the pins to the three `merge-tree` previews **and to the real server
+  merge and rebase sites listed under A2** (wider than A1 below, which left real
+  merges alone). It adds `child_env()` to the two `merge-tree` calls with no
+  `env=`. If the helper fails, a preview reports conflicts and a real
+  merge/rebase is refused (fail closed). It widens the #1718 scan. Closes #1761.
+- **A2 second**, on this branch: record the baseline of exec-bearing git config
+  keys and a hash of `info/attributes` when the worktree is created; check it
+  before every server merge, rebase or preview and at the end of each session;
+  on any change refuse the operation until a human re-baselines. Closes #1746
+  and #1747.
+- Answer 1: for now it is acceptable that previews (and, with A1 as chosen,
+  real merges) in repos with real merge drivers show conflicts a driver would
+  resolve. A2 lets drivers present in the baseline run again.
+- Answer 2: refuse the merge until a human re-baselines (no blanking and
+  continuing).
+- Answer 3: no agent-side Bash write guard; #1746 and #1747 close with A2.
+  Option B is not built.
 
 ## Facts the options rest on
 
@@ -31,7 +57,7 @@ Textconv: `git show <commit>` and `git blame <file>` run `diff.<x>.textconv`
 by default; `git show <ref>:<path>`, `git show --no-patch` and
 `git format-patch` do not.
 
-## Option A (recommended): server-side, in two independent steps
+## Option A (chosen): server-side, in two independent steps
 
 **A1. Merge previews never run merge drivers (#1761 item 1).** Ship first; no
 dependency on anything else.
@@ -111,7 +137,7 @@ Test plan:
   real merge. Assert `rm .git/index.lock` between baseline and check does not
   trip it.
 
-## Option B: agent-side guards (the issues as written)
+## Option B (not chosen): agent-side guards (the issues as written)
 
 - #1746: extend `_collect_command_nodes` (`security/ast_parser.py:364`) to
   collect redirect targets, and refuse a `.git` component (via
@@ -129,7 +155,7 @@ external CLIs still write `.git`. It is a denylist on a parser the accepted
 limits already say has holes. It could ship later as early feedback to the
 agent, on top of A.
 
-## Option C: OS-level read-only git metadata
+## Option C (not chosen): OS-level read-only git metadata
 
 Bind `<commondir>/config`, `<commondir>/info/` and `<commondir>/hooks/`
 read-only into every agent process: bwrap `--ro-bind` for local runs, a
