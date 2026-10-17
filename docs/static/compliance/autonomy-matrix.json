@@ -141,7 +141,7 @@
         "SOC 2 CC8.1",
         "NIST 800-53 CM"
       ],
-      "objective": "The path-derived risk floor is advisory by default and changes the merge tier only when enforcement is explicitly switched on."
+      "objective": "The path-derived risk floor is advisory by default for tasks with a signed contract and changes their merge tier only when enforcement is explicitly switched on; for tasks without a signed contract (legacy and from-issue) it always decides the merge tier."
     }
   },
   "gates": [
@@ -571,11 +571,11 @@
             ],
             [
               "`host_ci_green`",
-              "`True`"
+              "`False`"
             ],
             [
               "`tfactory_verdict`",
-              "`'pass'`"
+              "`None`"
             ],
             [
               "`val_floor`",
@@ -901,7 +901,7 @@
             ],
             [
               "`wiring.path_floor_flag`",
-              "The path-derived risk floor is advisory by default and changes the merge tier only when enforcement is explicitly switched on.",
+              "The path-derived risk floor is advisory by default for tasks with a signed contract and changes their merge tier only when enforcement is explicitly switched on; for tasks without a signed contract (legacy and from-issue) it always decides the merge tier.",
               "ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 CM",
               "`apps/web-server/server/services/pr_endgame.py`",
               "-"

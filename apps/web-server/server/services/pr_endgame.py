@@ -405,20 +405,18 @@ def merge_gate_signals(
       whole point: the merge is refused.
     * NOT MEASURED -- AIFactory records no host-CI roll-up at PR-open time (the
       checks have not run yet) and no VAL/parity roll-up at all today. An
-      unmeasured signal takes the value that leaves the decision where it was
-      before this gate existed, because withholding every merge on evidence
-      nobody has produced yet would just switch the feature off.
+      unmeasured verdict or host CI means not passed.
 
-    So this NARROWS: it can refuse a merge on recorded evidence of failure, and
-    it never invents a green. That is strictly more than the tier ceiling it
-    replaces, which read only ``reviewTier`` and ignored the verdict entirely.
+    This refuses a merge without a measured pass and never invents a green.
 
-    With ``fetched`` (verified tasks, #1695) the verdict and host-CI start from
-    those trusted values and recorded metadata can only tighten them.
+    With ``fetched`` the verdict and host-CI start from those trusted values;
+    recorded metadata can only tighten them.
     """
+    from merge.merge_policy import _verdict_pass  # noqa: PLC0415
+
     signals: dict[str, object] = {
-        "host_ci_green": True,
-        "tfactory_verdict": "pass",
+        "host_ci_green": False,
+        "tfactory_verdict": None,
         # 0, not None: `decide_merge` fails a MISSING achieved level closed, and
         # rightly so. VAL-0 is "nothing verified", which satisfies only the
         # "no floor declared" case -- so a task that records a `valFloor` and no
@@ -428,8 +426,6 @@ def merge_gate_signals(
         "ci_parity": True,
     }
     if fetched is not None:
-        from merge.merge_policy import _verdict_pass  # noqa: PLC0415
-
         signals["tfactory_verdict"] = fetched.get("tfactory_verdict")
         signals["host_ci_green"] = fetched.get("host_ci_green") is True
     spec_dir = Path(spec_dir)
@@ -445,18 +441,14 @@ def merge_gate_signals(
         recorded = _meta_signal(meta, key)
         if recorded is None:
             continue
-        if (
-            fetched is not None
-            and key == "tfactory_verdict"
-            and _verdict_pass(recorded)
-        ):
-            continue  # metadata can only tighten a fetched verdict
+        if key == "tfactory_verdict" and _verdict_pass(recorded):
+            continue  # metadata can only tighten a verdict
         signals[key] = recorded
     for key in ("ci_parity", "host_ci_green"):
         recorded = _meta_signal(meta, key)
         if not isinstance(recorded, bool):
             continue
-        if fetched is not None and key == "host_ci_green" and recorded:
+        if key == "host_ci_green" and recorded:
             continue
         signals[key] = recorded
     # A recorded handback is never overwritten by a stale metadata verdict.
@@ -533,13 +525,14 @@ def review_tier_note(spec_dir: Path, tier: str | None, *, trusted: object) -> st
     return f"Review tier: {label} (not checked against a signed contract)."
 
 
-def merge_disposition(
+def merge_disposition(  # noqa: PLR0913 - floor is the legacy path floor (#1697)
     spec_dir: Path,
     tier: str | None,
     *,
     trusted: object,
     satisfied_gates: Iterable[str] = (),
     fetch_signals: Callable[[], Mapping[str, object]] | None = None,
+    floor: str | None = None,
 ) -> str:
     """The RFC-0011/RFC-0013 merge disposition for this task (#637).
 
@@ -560,8 +553,8 @@ def merge_disposition(
     spelling, so a task that never carried a tier still behaves as it did. An
     UNRECOGNISED tier is passed straight through and ``decide_merge`` holds it.
     For a verified trusted task the signed ``execution.review_tier`` is the
-    floor; metadata and the path floor can only raise it, and a verified
-    contract without one holds.
+    floor; metadata can only raise it, and a verified contract without one
+    holds. Legacy tasks also enforce the path floor.
 
     The RFC-0013 deployment overlay is enforced here, independent of the
     path-floor flag (#1658): a production or high-risk deployment holds, and
@@ -569,11 +562,11 @@ def merge_disposition(
     comes only from the caller (a GitHub review, #1663), never from the contract
     or task_metadata.
 
-    ``fetch_signals`` (#1695) is called only for a verified task; its trusted
-    verdict and host-CI feed ``merge_gate_signals``, and a raise holds.
+    ``fetch_signals`` supplies the verdict and host-CI for any readable,
+    non-hold task; a raise holds.
     """
     try:
-        from merge.merge_policy import decide_merge  # noqa: PLC0415
+        from merge.merge_policy import decide_merge, raise_review_tier  # noqa: PLC0415
 
         from server.services.trusted_contract import (  # noqa: PLC0415
             host_isolated,
@@ -628,8 +621,11 @@ def merge_disposition(
                     sanitize_log(_describe_tier(tier)),
                     sanitize_log(_describe_tier(signed)),
                 )
-            if fetch_signals is not None:
-                fetched = fetch_signals()
+        elif state == "legacy" and _describe_tier(effective) != "unrecognised":
+            # An unrecognised tier ranks below auto; raising it would un-hold it.
+            effective = raise_review_tier(effective, floor)
+        if not unreadable and fetch_signals is not None:
+            fetched = fetch_signals()
     except Exception:  # noqa: BLE001 - e.g. RecursionError, UnicodeDecodeError
         # Hold, never raise: an exception here would abort the endgame before
         # the PR is opened, and "we could not read it" is not "not production".
@@ -1043,6 +1039,7 @@ def _clears_with_human_approval(
     trusted: object,
     *,
     fetch_signals: Callable[[], Mapping[str, object]] | None = None,
+    floor: str | None = None,
 ) -> bool:
     """Would the tier auto-merge if only the human-only gates were satisfied?"""
     try:
@@ -1056,6 +1053,7 @@ def _clears_with_human_approval(
             trusted=trusted,
             satisfied_gates=HUMAN_ONLY_GATES,
             fetch_signals=fetch_signals,
+            floor=floor,
         )
         == AUTO_MERGE_DISPOSITION
     )
@@ -1672,23 +1670,11 @@ def _build_merge_gate(  # noqa: PLR0913 - one-shot builder for run_pr_endgame
     repo_parts: tuple[str, str],
     trusted: object,
     review_tier: str | None,
+    review_tier_floor: str | None,
     human_approval_required: bool,
     runner: Runner,
-) -> Callable[[str], bool] | None:
-    """The merge-time gate for a non-legacy task, None for a legacy one (#1695, C1).
-
-    An unreadable contract counts as non-legacy, so the merge holds.
-    """
-    try:
-        from server.services.trusted_contract import (  # noqa: PLC0415
-            resolve_contract,
-        )
-
-        state = resolve_contract(spec_dir, trusted)[0]
-    except Exception:  # noqa: BLE001 - unknown is not legacy: fail closed
-        state = "hold"
-    if state == "legacy":
-        return None
+) -> Callable[[str], bool]:
+    """The merge-time gate for every auto-merge task."""
     owner, name = repo_parts
 
     def gate(head: str) -> bool:
@@ -1708,11 +1694,19 @@ def _build_merge_gate(  # noqa: PLR0913 - one-shot builder for run_pr_endgame
 
         if human_approval_required:
             return _clears_with_human_approval(
-                spec_dir, review_tier, trusted, fetch_signals=fetch
+                spec_dir,
+                review_tier,
+                trusted,
+                fetch_signals=fetch,
+                floor=review_tier_floor,
             )
         return (
             merge_disposition(
-                spec_dir, review_tier, trusted=trusted, fetch_signals=fetch
+                spec_dir,
+                review_tier,
+                trusted=trusted,
+                fetch_signals=fetch,
+                floor=review_tier_floor,
             )
             == AUTO_MERGE_DISPOSITION
         )
@@ -1791,9 +1785,23 @@ async def run_pr_endgame(
     auto_merge = auto_merge and not await _handback_on_record(spec_dir, spec_id)
     human_approval_required = False
     if auto_merge:
-        disposition = merge_disposition(spec_dir, review_tier, trusted=trusted)
+        # PR-open policy needs prospective green; the merge gate checks real evidence.
+        def _prospective() -> dict[str, object]:
+            return {"tfactory_verdict": "pass", "host_ci_green": True}
+
+        disposition = merge_disposition(
+            spec_dir,
+            review_tier,
+            trusted=trusted,
+            fetch_signals=_prospective,
+            floor=review_tier_floor,
+        )
         if disposition != AUTO_MERGE_DISPOSITION and _clears_with_human_approval(
-            spec_dir, review_tier, trusted
+            spec_dir,
+            review_tier,
+            trusted,
+            fetch_signals=_prospective,
+            floor=review_tier_floor,
         ):
             logger.info(
                 "[pr-endgame] %s: auto-merge waits for a human GitHub approval "
@@ -1828,6 +1836,7 @@ async def run_pr_endgame(
             (owner, name),
             trusted,
             review_tier,
+            review_tier_floor,
             human_approval_required,
             runner,
         )

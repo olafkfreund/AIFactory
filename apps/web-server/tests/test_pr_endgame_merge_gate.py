@@ -345,7 +345,11 @@ def test_a_satisfied_system_gate_clears_only_its_own_hold(
     cleared = _contracted(tmp_path / "b", monkeypatch, dep)
     assert (
         pe.merge_disposition(
-            cleared, "low", trusted=None, satisfied_gates=["human-approval"]
+            cleared,
+            "low",
+            trusted=None,
+            satisfied_gates=["human-approval"],
+            fetch_signals=lambda: _PASS,
         )
         == pe.AUTO_MERGE_DISPOSITION
     )
@@ -388,7 +392,11 @@ def test_merge_disposition_takes_explicit_evidence(
     )
     assert (
         pe.merge_disposition(
-            spec, "low", trusted=None, satisfied_gates=["human-approval"]
+            spec,
+            "low",
+            trusted=None,
+            satisfied_gates=["human-approval"],
+            fetch_signals=lambda: _PASS,
         )
         == pe.AUTO_MERGE_DISPOSITION
     )
@@ -599,10 +607,16 @@ def test_1695_recorded_host_ci_true_cannot_clear_an_unknown(tmp_path: Path) -> N
     assert pe.merge_gate_signals(spec, fetched=fetched)["host_ci_green"] is False
 
 
-def test_1695_no_fetch_is_todays_dict(tmp_path: Path) -> None:
+def test_1697_metadata_greens_do_not_loosen(tmp_path: Path) -> None:
+    out = pe.merge_gate_signals(_spec(tmp_path, **_GREEN))
+    assert out["tfactory_verdict"] is None
+    assert out["host_ci_green"] is False
+
+
+def test_1697_no_fetch_is_not_passed(tmp_path: Path) -> None:
     assert pe.merge_gate_signals(_spec(tmp_path)) == {
-        "host_ci_green": True,
-        "tfactory_verdict": "pass",
+        "host_ci_green": False,
+        "tfactory_verdict": None,
         "achieved_val": 0,
         "val_floor": None,
         "ci_parity": True,
