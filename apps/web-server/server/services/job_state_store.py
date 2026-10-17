@@ -23,6 +23,8 @@ store is never constructed in that mode (see ``store_enabled``).
 from __future__ import annotations
 
 import os
+import socket
+import uuid
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -31,6 +33,9 @@ from sqlalchemy import func, select, text
 
 SERVICE = "aifactory"
 KIND = "build"
+# #1705: on Kubernetes HOSTNAME is the pod name; BOOT_ID changes on every container restart.
+POD_NAME = os.environ.get("HOSTNAME", "").strip() or socket.gethostname()
+BOOT_ID = uuid.uuid4().hex
 
 # Canonical lifecycle states (subset AIFactory uses) from status-taxonomy.json.
 # #1606: the worker_ref ``kind`` a granted-but-unclaimed slot carries. ``admit``
@@ -281,7 +286,7 @@ class JobStateStore:
                 return "started" if grant else "queued"
 
     async def mark_running(self, job_id: str) -> None:
-        """Mark a granted slot as actually running (worker_ref=subprocess).
+        """Claim a still-running slot for this pod's subprocess build.
 
         Deliberately the one place that stamps ``subprocess``: this is the
         subprocess path declaring itself, which is what distinguishes it from a
@@ -291,12 +296,16 @@ class JobStateStore:
 
         async with self._session_factory() as session:
             async with session.begin():
-                row = await session.get(JobState, job_id)
-                if row is None:
+                row = await session.get(JobState, job_id, with_for_update=True)
+                if row is None or row.lifecycle_state != "running":
                     return
                 row.lifecycle_state = "running"
                 row.phase = "coding"
-                row.worker_ref = {"kind": "subprocess"}
+                row.worker_ref = {
+                    "kind": "subprocess",
+                    "pod": POD_NAME,
+                    "boot": BOOT_ID,
+                }
                 adm = dict(row.admission or {})
                 adm.setdefault("started_at", _iso(_now()))
                 row.admission = adm
@@ -491,6 +500,58 @@ class JobStateStore:
                     }
                 )
         return out
+
+    async def get_running_subprocess_rows(self) -> list[dict[str, Any]]:
+        """Return running subprocess claims, including legacy unstamped owners."""
+        from ..database.models import JobState  # noqa: TID252, PLC0415
+
+        out: list[dict[str, Any]] = []
+        async with self._session_factory() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(JobState).where(
+                            JobState.service == SERVICE,
+                            JobState.lifecycle_state == "running",
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for row in rows:
+                ref = row.worker_ref or {}
+                if ref.get("kind") == "subprocess":
+                    out.append(
+                        {
+                            "job_id": row.job_id,
+                            "pod": ref.get("pod"),
+                            "boot": ref.get("boot"),
+                        }
+                    )
+        return out
+
+    async def fail_subprocess_row(
+        self, job_id: str, pod: str, boot: str, error: str
+    ) -> bool:
+        """Fail a subprocess claim only while its exact owner still holds it."""
+        from ..database.models import JobState  # noqa: TID252, PLC0415
+
+        async with self._session_factory() as session, session.begin():
+            row = await session.get(JobState, job_id, with_for_update=True)
+            if row is None or row.lifecycle_state != "running":
+                return False
+            ref = row.worker_ref or {}
+            if (
+                ref.get("kind") != "subprocess"
+                or ref.get("pod") != pod
+                or ref.get("boot") != boot
+            ):
+                return False
+            row.lifecycle_state = "failed"
+            row.error = error
+            row.ended_at = _now()
+            return True
 
     async def increment_attempt(self, job_id: str) -> None:
         """Bump the RFC-0008 failover/restart attempt counter."""
