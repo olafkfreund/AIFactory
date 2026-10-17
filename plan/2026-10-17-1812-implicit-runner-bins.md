@@ -133,6 +133,27 @@ Traps: `_extract` is defined at `:395`, above, so no import change; keep
 green); `bun exec` must not accept `-c`-style options; a prefix with nothing
 after it (`pnpm recursive`, `yarn workspace web`) just returns.
 
+## Deviations
+
+- Step 2 also updates `tests/test_plan_commands.py`
+  (`test_extract_from_verification_command_strings`): `extract_command_names`
+  uses the AST extractor, so `uv run pytest -v` now yields `pytest` as well
+  as `uv`. That is the intended effect (the plan's verification command
+  needs `pytest` allowed to pass the validator). Expectation updated to
+  `{"uv", "pytest", "ruff"}`.
+- Step 2 also updates `tests/test_plan_seed.py`
+  (`test_seeded_commands_pass_real_enforcement`): it seeds only `uv` into an
+  empty project and then runs `uv run pytest`, which now needs `pytest`
+  allowed. The fixture now seeds `["uv", "pytest"]`. Real Python stacks
+  allow both (`project/command_registry/languages.py`).
+- To stay under the cq ratchet (PLR0912 branches, PLR0913 arguments) the
+  decision-4 logic is split into two small helpers next to
+  `_unwrap_subcommand_runner`: `_skip_runner_prefix` (pnpm
+  recursive/multi/m, yarn workspace, yarn workspaces foreach) and
+  `_subcommand_target` (the #1813 subcommand match, now returning the
+  target index). Table literals use lists instead of `str.split()` (SIM905).
+  Behaviour is as decided.
+
 ## Rollback
 
 Revert the commits; the parser returns to #1813 behaviour.
