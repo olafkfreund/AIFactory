@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -336,6 +337,30 @@ def test_bound_merge_never_updates_the_branch() -> None:
     )
     _gated_watch(r)
     assert not r.saw("update-branch")
+
+
+def test_1766_watcher_stops_at_the_wall_clock_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Each poll "takes" 10 minutes (a hung gh/TFactory); 20 min = 40 polls
+    # by count, but the deadline must end it after about two.
+    clock = iter(range(0, 10**6, 600))
+    # Patch only pr_endgame's view of time: asyncio itself reads time.monotonic.
+    monkeypatch.setattr(pe, "time", SimpleNamespace(monotonic=lambda: next(clock)))
+    r = FakeRunner({"reviews": _reviews()})
+    res = asyncio.run(
+        pe.watch_and_finish(
+            owner="o",
+            repo="r",
+            pr=5,
+            auto_merge=False,
+            runner=r,
+            poll_interval=0,
+            max_minutes=20,
+        )
+    )
+    assert "review_timeout" in res["reason"]
+    assert 0 < sum("reviews" in " ".join(c) for c in r.calls) < 5
 
 
 # ── watch_and_finish (Copilot-gated) ─────────────────────────────────────────

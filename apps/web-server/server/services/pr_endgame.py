@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import subprocess
+import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1291,7 +1292,11 @@ async def watch_and_finish(  # noqa: PLR0911, PLR0915 - merge-gate human-stop (#
     conflict_cycles = 0
     gate_held = False
     polls = max(1, (max_minutes * 60) // max(1, poll_interval))
+    # #1766: a slow gate or GitHub must not stretch the stop past max_minutes.
+    deadline = time.monotonic() + max_minutes * 60
     for _ in range(polls):
+        if time.monotonic() >= deadline:
+            break
         await asyncio.sleep(poll_interval)
         if review_fn is not None:
             rs = await asyncio.to_thread(review_fn)
