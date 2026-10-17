@@ -520,7 +520,7 @@ def review_tier_note(spec_dir: Path, tier: str | None, *, trusted: object) -> st
     return f"Review tier: {label} (not checked against a signed contract)."
 
 
-def merge_disposition(
+def merge_disposition(  # noqa: PLR0913 - floor is the legacy path floor (#1697)
     spec_dir: Path,
     tier: str | None,
     *,
