@@ -34,7 +34,12 @@ from factory_common.logsafe import sanitize_log
 from server.services import github_app, project_settings_store
 from server.services.build_backend import task_repo_dir
 from server.services.task_branch import resolve_task_branch
-from server.utils.subprocess_env import child_env, github_env, lfs_upload
+from server.utils.subprocess_env import (
+    child_env,
+    github_env,
+    lfs_upload,
+    merge_driver_pins,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1241,7 +1246,7 @@ class ConflictResolution:
 ConflictFixer = Callable[["list[str]", str], bool]
 
 
-def resolve_pr_conflicts(
+def resolve_pr_conflicts(  # noqa: PLR0911
     worktree: str,
     base_branch: str,
     *,
@@ -1263,7 +1268,14 @@ def resolve_pr_conflicts(
         return ConflictResolution(False, [], f"fetch failed: {fetch.err[:200]}")
 
     base_ref = f"origin/{base_branch}"
-    reb = runner(["git", "rebase", base_ref], worktree)
+    try:
+        pins = merge_driver_pins(
+            worktree, run=lambda a: ((r := runner(a, worktree)).rc, r.out)
+        )
+    except RuntimeError as exc:
+        return ConflictResolution(False, [], f"rebase refused: {exc}"[:200])
+
+    reb = runner(["git", *pins, "rebase", base_ref], worktree)
     if reb.ok:
         return ConflictResolution(True, [], "rebase clean (no conflict)")
 
@@ -1292,9 +1304,20 @@ def resolve_pr_conflicts(
             False, conflicted, "fixer did not resolve the conflicts"
         )
 
+    # Re-pin: the fixer ran in this worktree and may have added a driver (#1761).
+    try:
+        pins = merge_driver_pins(
+            worktree, run=lambda a: ((r := runner(a, worktree)).rc, r.out)
+        )
+    except RuntimeError as exc:
+        runner(["git", "rebase", "--abort"], worktree)
+        return ConflictResolution(False, conflicted, f"rebase refused: {exc}"[:200])
+
     runner(["git", "add", "-A"], worktree)
     # core.editor=true: non-interactive `rebase --continue` (no $EDITOR prompt).
-    cont = runner(["git", "-c", "core.editor=true", "rebase", "--continue"], worktree)
+    cont = runner(
+        ["git", *pins, "-c", "core.editor=true", "rebase", "--continue"], worktree
+    )
     if not cont.ok:
         runner(["git", "rebase", "--abort"], worktree)
         return ConflictResolution(

@@ -52,7 +52,7 @@ from server.services.task_branch import (
     resolve_work_ref,
 )
 from server.specpath import safe_spec_component
-from server.utils.subprocess_env import child_env
+from server.utils.subprocess_env import child_env, merge_driver_pins
 
 from ..paths import get_data_dir
 from .project_authz import require_task_access
@@ -219,9 +219,10 @@ async def get_worktree_merge_preview(
     has_conflicts = False
     conflicting_files = []
     try:
+        pins = merge_driver_pins(project_path)
         # Use --write-tree explicitly for git 2.38+ behavior
         result = subprocess.run(
-            ["git", "merge-tree", "--write-tree", base_branch, work_ref],
+            ["git", *pins, "merge-tree", "--write-tree", base_branch, work_ref],
             cwd=project_path,
             capture_output=True,
             text=True,
@@ -251,6 +252,9 @@ async def get_worktree_merge_preview(
         # Legacy fallback: Check for conflict markers (older git versions < 2.38)
         elif "<<<<<<" in result.stdout:
             has_conflicts = True
+    except RuntimeError:
+        logger.warning("merge preview refused: cannot read merge drivers")
+        has_conflicts = True
     except subprocess.CalledProcessError as e:
         # Command failed - check output for conflict indicators
         output = (e.stdout or "") + (e.stderr or "")
@@ -646,6 +650,13 @@ async def resolve_worktree_conflicts(
             f"Merge already in progress for {sanitize_log(task_id)}, resolving existing conflicts"
         )
     else:
+        try:
+            pins = merge_driver_pins(project_path)
+        except RuntimeError:
+            return {
+                "success": False,
+                "error": "Merge refused: cannot read merge drivers (#1761)",
+            }
         # Start the git merge (allow conflicts)
         logger.info(
             "Starting git merge of %s into current branch for task %s",
@@ -653,7 +664,7 @@ async def resolve_worktree_conflicts(
             sanitize_log(task_id),
         )
         merge_result = subprocess.run(
-            ["git", "merge", work_ref, "--no-commit", "--no-ff"],
+            ["git", *pins, "merge", work_ref, "--no-commit", "--no-ff"],
             cwd=project_path,
             capture_output=True,
             text=True,
@@ -1945,7 +1956,14 @@ async def merge_worktree(
         return {"success": False, "error": "No worktree found for this task"}
 
     try:
-        merge_cmd = ["git", "merge", worktree_branch]
+        try:
+            pins = merge_driver_pins(project_path)
+        except RuntimeError:
+            return {
+                "success": False,
+                "error": "Merge refused: cannot read merge drivers (#1761)",
+            }
+        merge_cmd = ["git", *pins, "merge", worktree_branch]
         if options.noCommit:
             merge_cmd.append("--no-commit")
 
