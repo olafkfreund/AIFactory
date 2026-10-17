@@ -521,6 +521,10 @@ class KubejobMixin:
                 mode=mode,
             )
             return None
+        # #1705: claim before spawn so a crash between them leaves this pod's row;
+        # a claim error is a spawn failure and callers free the slot.
+        if getattr(self, "_store_enabled", False):
+            await self._store().mark_running(task_id)
         return await self._spawn_task_execution(
             task_id=task_id,
             project_path=project_path,

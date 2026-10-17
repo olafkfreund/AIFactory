@@ -17,7 +17,7 @@ for _path in (_ROOT / "apps" / "web-server", _ROOT / "apps" / "backend"):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
-from server.database.models import Base  # noqa: E402
+from server.database.models import Base, JobState  # noqa: E402
 from server.routes import execution, plan_approval  # noqa: E402
 from server.services import agent_service, audit_service, job_state_store  # noqa: E402
 
@@ -157,3 +157,102 @@ async def test_approval_refuses_build_before_writing_approval(replicas, monkeypa
     assert caught.value.status_code == 409
     assert json.loads((spec_dir / "review_state.json").read_text())["approved"] is False
     stop.assert_not_awaited()
+
+
+async def test_subprocess_claim_stamps_owner_and_does_not_resurrect_failed_row(
+    replicas,
+):
+    a, _, _ = replicas
+    store = a._job_store
+    await store.admit(TASK, job_state_store.SpawnArgs("/tmp/p", "022-some-spec"), cap=0)
+    await store.mark_running(TASK)
+    state = await store.get_state(TASK)
+    assert state["worker_ref"] == {
+        "kind": "subprocess",
+        "pod": job_state_store.POD_NAME,
+        "boot": job_state_store.BOOT_ID,
+    }
+
+    await store.mark_terminal(TASK, "failed", error="stopped")
+    await store.mark_running(TASK)
+    state = await store.get_state(TASK)
+    assert state["lifecycle_state"] == "failed"
+    assert state["worker_ref"]["boot"] == job_state_store.BOOT_ID
+    assert state["error"] == "stopped"
+
+
+async def test_running_subprocess_rows_skip_other_workers_and_pending(replicas):
+    a, _, _ = replicas
+    store = a._job_store
+    args = job_state_store.SpawnArgs("/tmp/p", "022-some-spec")
+    for job_id in ("subprocess", "legacy", "k8s", "pending"):
+        await store.admit(job_id, args, cap=0)
+    await store.mark_running("subprocess")
+    await store.set_worker_ref("legacy", {"kind": "subprocess"})
+    await store.set_worker_ref("k8s", {"kind": "k8s-job", "job_name": "j"})
+
+    rows = await store.get_running_subprocess_rows()
+    assert sorted(rows, key=lambda row: row["job_id"]) == [
+        {"job_id": "legacy", "pod": None, "boot": None},
+        {
+            "job_id": "subprocess",
+            "pod": job_state_store.POD_NAME,
+            "boot": job_state_store.BOOT_ID,
+        },
+    ]
+
+
+async def test_fail_subprocess_row_checks_exact_owner_and_running_state(replicas):
+    a, _, _ = replicas
+    store = a._job_store
+    await store.admit(TASK, job_state_store.SpawnArgs("/tmp/p", "022-some-spec"), cap=0)
+    await store.mark_running(TASK)
+    pod, boot = job_state_store.POD_NAME, job_state_store.BOOT_ID
+
+    assert not await store.fail_subprocess_row(TASK, pod, "other-boot", "orphan")
+    assert not await store.fail_subprocess_row(TASK, "other-pod", boot, "orphan")
+    assert (await store.get_state(TASK))["lifecycle_state"] == "running"
+    assert await store.fail_subprocess_row(TASK, pod, boot, "orphan")
+    assert not await store.fail_subprocess_row(TASK, pod, boot, "again")
+    state = await store.get_state(TASK)
+    assert state["lifecycle_state"] == "failed"
+    assert state["error"] == "orphan"
+    async with store._session_factory() as session:
+        row = await session.get(JobState, TASK)
+        assert row.ended_at is not None
+
+
+async def test_subprocess_claim_precedes_spawn_and_is_skipped_without_store(
+    monkeypatch,
+):
+    service = agent_service.AgentService()
+    service._store_enabled = True
+    monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "subprocess")
+    calls = []
+
+    async def mark_running(job_id):
+        calls.append(("claim", job_id))
+
+    async def spawn(**kwargs):
+        calls.append(("spawn", kwargs["task_id"]))
+        return "process"
+
+    service._job_store = SimpleNamespace(mark_running=mark_running)
+    monkeypatch.setattr(service, "_spawn_task_execution", spawn)
+    assert (
+        await service._start_build_unit(
+            task_id=TASK, project_path=Path("/tmp/p"), spec_id="022-some-spec"
+        )
+        == "process"
+    )
+    assert calls == [("claim", TASK), ("spawn", TASK)]
+
+    service._store_enabled = False
+    calls.clear()
+    assert (
+        await service._start_build_unit(
+            task_id=TASK, project_path=Path("/tmp/p"), spec_id="022-some-spec"
+        )
+        == "process"
+    )
+    assert calls == [("spawn", TASK)]
