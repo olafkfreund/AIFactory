@@ -14,6 +14,7 @@ from agents.gate_runner import (
     GateResult,
     detect_gates,
     failing_gates,
+    lint_gates,
     run_gates,
     summarize_gates,
 )
@@ -153,6 +154,23 @@ class TestEvidenceFailsClosedOnAnUnknownOutcome:
         assert evidence_shows_an_executed_gate("pytest: passed") is True
         assert evidence_shows_an_executed_gate("pytest: failed") is True
         assert evidence_shows_an_executed_gate("pytest: skipped") is False
+
+
+class TestLintGates:
+    def test_unset_returns_empty(self, monkeypatch):
+        monkeypatch.delenv("AIFACTORY_REPO_LINT_GATE", raising=False)
+        assert lint_gates(["detekt", "ktlint", "ruff"]) == []
+
+    def test_enabled_builds_curated_gates(self, monkeypatch):
+        monkeypatch.setenv("AIFACTORY_REPO_LINT_GATE", "true")
+        gates = lint_gates(["detekt", "ktlint", "ruff"])
+        assert [g.name for g in gates] == ["ktlint", "ruff"]
+        assert gates[1].command == ["ruff", "check", "."]
+        assert all(g.skip_code == 127 for g in gates)
+
+    def test_zero_returns_empty(self, monkeypatch):
+        monkeypatch.setenv("AIFACTORY_REPO_LINT_GATE", "0")
+        assert lint_gates(["ktlint", "ruff"]) == []
 
 
 if __name__ == "__main__":
