@@ -30,7 +30,8 @@ the record, marked not chosen.
   and #1747.
 - Answer 1: for now it is acceptable that previews (and, with A1 as chosen,
   real merges) in repos with real merge drivers show conflicts a driver would
-  resolve. A2 lets drivers present in the baseline run again.
+  resolve. A2 keeps blanking them (plan decision 5): letting baselined drivers run is
+  left for a follow-up.
 - Answer 2: refuse the merge until a human re-baselines (no blanking and
   continuing).
 - Answer 3: no agent-side Bash write guard; #1746 and #1747 close with A2.
