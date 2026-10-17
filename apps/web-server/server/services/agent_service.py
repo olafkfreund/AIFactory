@@ -70,7 +70,7 @@ def _incluster_core_api() -> tuple[Any, Any]:
             config,
         )
 
-        config.load_incluster_config()
+        config.load_incluster_config()  # type: ignore[no-untyped-call]
         api_client = client.ApiClient()
         return client.CoreV1Api(api_client), api_client
     except Exception:  # noqa: BLE001 - no client means no pod is proven gone
