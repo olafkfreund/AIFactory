@@ -13,6 +13,8 @@ auth vars.
 
 from __future__ import annotations
 
+import logging
+import os
 import sys
 from pathlib import Path
 
@@ -64,20 +66,18 @@ KEEP = {
     "ANTHROPIC_BASE_URL": "https://x",
     "ANTHROPIC_MODEL": "claude",
     "PATH": "/usr/bin",
-    "HOME": "/home/x",
     "LANG": "en_US",
-    "PWD": "/work",
-    "NODE_ENV": "production",
 }
 
 
 @pytest.fixture
-def clean_env(monkeypatch):
+def clean_env(monkeypatch, tmp_path):
     # Start from a controlled environment.
-    for k in list(__import__("os").environ):
+    for k in list(os.environ):
         monkeypatch.delenv(k, raising=False)
     for k, v in {**SECRETS, **KEEP}.items():
         monkeypatch.setenv(k, v)
+    monkeypatch.setenv("HOME", str(tmp_path))
 
 
 def test_all_secrets_are_blanked(clean_env):
@@ -93,6 +93,54 @@ def test_agent_and_benign_vars_are_kept(clean_env):
         assert key not in blanks, f"wrongly scrubbed a needed var: {key}"
 
 
+def test_allowlist_blanks_unknown_names_and_honors_safe_extra(clean_env, monkeypatch):
+    for name in ("SSH_AUTH_SOCK", "FOO_SECRETISH", "PWD", "NODE_ENV", "MY_TOOL_DIR"):
+        monkeypatch.setenv(name, "x")
+    for name in ("LC_ALL", "NIX_PATH", "https_proxy"):
+        monkeypatch.setenv(name, "x")
+    monkeypatch.setenv("AIFACTORY_AGENT_ENV_EXTRA", "MY_TOOL_DIR,JWT_SECRET")
+
+    blanks = get_agent_env_blanks()
+    for name in (
+        "SSH_AUTH_SOCK",
+        "FOO_SECRETISH",
+        "HOME",
+        "PWD",
+        "NODE_ENV",
+        "JWT_SECRET",
+    ):
+        assert blanks[name] == ""
+    for name in (
+        "PATH",
+        "LANG",
+        "LC_ALL",
+        "NIX_PATH",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "https_proxy",
+        "MY_TOOL_DIR",
+    ):
+        assert name not in blanks
+
+
+def test_dropped_names_logged_once_without_values(clean_env, monkeypatch, caplog):
+    from core import auth
+    from core.child_env import child_env
+
+    monkeypatch.setattr(auth, "_logged_dropped_env_names", set())
+    monkeypatch.setenv("FOO_MISC", "private-marker")
+    monkeypatch.setenv("FOO_SECRETISH", "private-marker")
+    with caplog.at_level(logging.INFO, logger="core.auth"):
+        get_agent_env_blanks()
+        get_agent_env_blanks()
+        child_env(agent=True)
+
+    messages = [r.message for r in caplog.records if "#1757" in r.message]
+    assert len(messages) == 1
+    assert "FOO_MISC" in messages[0]
+    assert "FOO_SECRETISH" not in messages[0]
+    assert "private-marker" not in messages[0]
+
+
 def test_oauth_token_never_blanked(clean_env, monkeypatch):
     # Even though it ends in _TOKEN, the agent's own auth must survive.
     blanks = get_agent_env_blanks()
@@ -101,7 +149,7 @@ def test_oauth_token_never_blanked(clean_env, monkeypatch):
 
 
 def test_empty_when_no_secrets(monkeypatch):
-    for k in list(__import__("os").environ):
+    for k in list(os.environ):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("PATH", "/usr/bin")
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok")
