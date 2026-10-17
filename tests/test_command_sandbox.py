@@ -1079,9 +1079,12 @@ class TestGitDirWriteGuard:
 
         seen = {}
 
+        class _Client:
+            pass
+
         def _capture(**kw):
             seen["options"] = kw["options"]
-            return object()
+            return _Client()
 
         monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok")
         monkeypatch.setattr(simple_client, "require_auth_token", lambda: "tok")
@@ -1098,9 +1101,12 @@ class TestGitDirWriteGuard:
 
         seen = {}
 
+        class _Client:
+            pass
+
         def _capture(**kw):
             seen["options"] = kw["options"]
-            return object()
+            return _Client()
 
         monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok")
         monkeypatch.setattr(simple_client, "require_auth_token", lambda: "tok")

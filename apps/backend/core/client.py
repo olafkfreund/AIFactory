@@ -18,6 +18,7 @@ import logging
 import os
 import threading
 import time
+import weakref
 from pathlib import Path
 from typing import Any
 
@@ -206,6 +207,7 @@ from agents.tools_pkg import (
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from claude_agent_sdk.types import HookMatcher
 from core import process_hardening  # noqa: E402
+from core.agent_home import AgentHome  # noqa: E402
 from core.auth import get_agent_env_blanks, get_sdk_env_vars, require_auth_token
 from prompts_pkg.project_context import (
     detect_infra_markers,
@@ -654,6 +656,10 @@ def create_client(
         )
     else:
         logger.info("[Fast Mode] inactive — not requested for this client")
+
+    # #1732: copy settings after fast mode updates them.
+    home = AgentHome("claude")
+    sdk_env.update(home.env)
 
     # Check if custom aifactory tools are available
     aifactory_tools_enabled = is_tools_available()
@@ -1168,6 +1174,7 @@ def create_client(
     enforcement.enforce_allowlist()
 
     bare_client = ClaudeSDKClient(options=ClaudeAgentOptions(**options_kwargs))
+    weakref.finalize(bare_client, home.close)
 
     # #1128 outbound PII scrub. The provider adapters get this from
     # BaseLLMProvider, but agents/coder.py and agents/planner.py call

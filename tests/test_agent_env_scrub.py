@@ -176,15 +176,21 @@ def test_simple_client_env_is_scrubbed(clean_env, monkeypatch, tmp_path):
 
     seen = {}
 
+    class _Client:
+        pass
+
     def _capture(**kw):
         seen["env"] = kw["options"].env
-        return object()
+        return _Client()
 
     monkeypatch.setattr(simple_client, "require_auth_token", lambda: "tok")
     monkeypatch.setattr(simple_client, "ClaudeSDKClient", _capture)
     monkeypatch.setattr(simple_client, "wrap_client_outbound_scrub", lambda c: c)
-    simple_client.create_simple_client(
+    client = simple_client.create_simple_client(
         agent_type="commit_message", model="claude-haiku-4-5", cwd=tmp_path
     )
+    assert Path(seen["env"]["HOME"]).name.startswith("aif-home-")
+    assert Path(seen["env"]["HOME"]).is_dir()
     for key in SECRETS:
         assert seen["env"].get(key) == "", f"simple client inherits {key}"
+    del client

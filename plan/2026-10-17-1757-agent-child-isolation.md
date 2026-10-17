@@ -244,7 +244,9 @@ allowlist and the extra list, but not over `_AGENT_ENV_KEEP`.
   (set it first). The followup AST test accepts `env=` being a dict
   display whose `**` items include a `get_agent_env_blanks()` call.
 - `tests/test_agent_env_scrub.py::test_simple_client_env_is_scrubbed`: the
-  capture returns `types.SimpleNamespace()` (must be weak-referenceable)
+  capture returns an instance of a plain local class (must be
+  weak-referenceable; `SimpleNamespace` is not, so `tests/test_command_sandbox.py`
+  doubles change the same way)
   and asserts `env["HOME"]` is a private `aif-home-` dir that exists while
   the client is alive.
 
