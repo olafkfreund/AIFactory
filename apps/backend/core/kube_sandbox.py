@@ -349,6 +349,31 @@ def _exit_code_from_pod(pod: object, *, job_succeeded: bool) -> tuple[bool, int]
     return job_succeeded, (0 if job_succeeded else 1)
 
 
+def _pod_state_summary(pod: Any) -> str:
+    """Pod phase + each container's waiting/terminated reason, or "" (#1737).
+
+    Read before the Job is deleted so a timeout names the phase it died in
+    (image pull, init, run). Diagnostics only: never raises.
+    """
+    try:
+        parts = [f"pod {pod.status.phase}"] if pod.status.phase is not None else []
+        statuses = (pod.status.init_container_statuses or []) + (
+            pod.status.container_statuses or []
+        )
+        for cs in statuses:
+            state = cs.state.waiting or cs.state.terminated
+            if state and state.reason:
+                kind = "waiting" if cs.state.waiting else "terminated"
+                detail = f"{cs.name}: {kind} {state.reason}"
+                if state.message:
+                    detail += f" ({state.message[:200]})"
+                parts.append(detail)
+        return "; ".join(parts)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[kube-sandbox] pod state unavailable: %s", exc)
+        return ""
+
+
 class KubeJobSandbox:
     def __init__(
         self,
@@ -443,6 +468,7 @@ class KubeJobSandbox:
             )
             output = ""
             succeeded, exit_code = succeeded, (0 if succeeded else 1)
+            diag = "no pod found"
             if pods.items:
                 pod = pods.items[0]
                 try:
@@ -455,6 +481,7 @@ class KubeJobSandbox:
                 # succeeded/failed flag (RFC-0005): the flag collapses every
                 # non-zero to "failed" and loses the actual status.
                 succeeded, exit_code = _exit_code_from_pod(pod, job_succeeded=succeeded)
+                diag = _pod_state_summary(pod)
             text = (output or "").strip()
             if failure_reason:
                 # A Job killed by its deadline never finished the command, so its
@@ -463,6 +490,8 @@ class KubeJobSandbox:
                 # reason, or "the toolchain download did not finish" reads as
                 # "your tests failed" (AIFactory#1491 family).
                 text = f"[job {failure_reason}] {text}"
+            if not succeeded and diag:
+                text = f"{text} [{diag}]"
             return RunResult(succeeded, exit_code, text, [])
         finally:
             try:

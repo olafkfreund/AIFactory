@@ -21,7 +21,9 @@ change `succeeded`/`exit_code`; any error is logged and skipped. PR uses
 ## Steps
 
 1. `apps/backend/core/kube_sandbox.py`, after `_exit_code_from_pod` (`:349`):
-   add `_pod_state_summary(pod: object) -> str`.
+   add `_pod_state_summary(pod: Any) -> str`.
+   (Deviation: `Any`, not `object`, so mypy accepts the attribute reads;
+   `Any` is already imported.)
    - `parts = [f"pod {pod.status.phase}"]` (skip when phase is None).
    - For each status in `(pod.status.init_container_statuses or []) +
      (pod.status.container_statuses or [])`: take `state.waiting` else
