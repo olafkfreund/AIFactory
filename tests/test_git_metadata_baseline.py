@@ -290,16 +290,76 @@ async def test_followup_planner_fails_on_git_metadata_change(
     assert ok is False
 
 
-def test_coder_and_parallel_check_git_metadata_after_session() -> None:
-    coder_src = (_BACKEND_DIR / "agents" / "coder.py").read_text(encoding="utf-8")
-    assert re.search(
-        r"await run_session_guarded\([\s\S]{0,300}?"
-        r"await asyncio\.to_thread\(check_git_metadata,\s*project_dir\)"
-        r"[\s\S]{0,250}?except RuntimeError as exc:"
-        r"[\s\S]{0,250}?BuildState\.ERROR[\s\S]{0,150}?\bbreak\b",
-        coder_src,
-    )
+@pytest.mark.asyncio
+async def test_coder_metadata_change_in_final_session_ends_in_error(
+    tmp_path: Path,
+) -> None:
+    from unittest.mock import AsyncMock, MagicMock, patch  # noqa: PLC0415
 
+    import agents.coder as coder  # noqa: PLC0415
+    from ui import BuildState  # noqa: PLC0415
+
+    spec_dir = tmp_path / "001-spec"
+    spec_dir.mkdir()
+    (spec_dir / "spec.md").write_text("# Feature\n", encoding="utf-8")
+    client = MagicMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    status_cls = MagicMock()
+    gates = AsyncMock()
+    scaffold = MagicMock(return_value=[])
+    patchers = {
+        "create_client": MagicMock(return_value=client),
+        "run_session_guarded": AsyncMock(return_value=("continue", "", {})),
+        "check_git_metadata": MagicMock(side_effect=RuntimeError("merge.evil")),
+        "_run_trailing_gates_if_build_complete": gates,
+        "scaffold_deploy_for_spec": scaffold,
+        "get_graphiti_context": AsyncMock(return_value=""),
+        "RecoveryManager": MagicMock(),
+        "StatusManager": status_cls,
+        "get_task_logger": MagicMock(return_value=None),
+        "debug_memory_system_status": MagicMock(),
+        "record_turn": MagicMock(),
+        "CompactionDetector": MagicMock(),
+        "build_operational_context": MagicMock(return_value=""),
+        "drain_inbox": MagicMock(return_value=[]),
+        "is_build_complete": MagicMock(return_value=True),
+        "print_build_complete_banner": MagicMock(),
+        "print_progress_summary": MagicMock(),
+        "print_session_header": MagicMock(),
+        "count_subtasks": MagicMock(return_value=(3, 3)),
+        "count_subtasks_detailed": MagicMock(
+            return_value={"completed": 3, "total": 3, "in_progress": 0}
+        ),
+        "get_current_phase": MagicMock(return_value=None),
+        "get_next_subtask": MagicMock(return_value=None),
+        "get_latest_commit": MagicMock(return_value="abc"),
+        "get_commit_count": MagicMock(return_value=0),
+        "infer_provider_from_model": MagicMock(return_value="claude"),
+        "get_phase_model": MagicMock(return_value="claude-sonnet-4-5"),
+        "get_phase_thinking_budget": MagicMock(return_value=None),
+    }
+    with contextlib.ExitStack() as stack:
+        for name, repl in patchers.items():
+            stack.enter_context(patch.object(coder, name, repl))
+        await coder.run_autonomous_agent(
+            project_dir=tmp_path,
+            spec_dir=spec_dir,
+            model="claude-sonnet-4-5",
+            max_iterations=1,
+        )
+
+    states = [
+        c.kwargs.get("state") for c in status_cls.return_value.update.call_args_list
+    ]
+    assert BuildState.ERROR in states
+    assert BuildState.COMPLETE not in states
+    assert states[-1] == BuildState.ERROR
+    gates.assert_not_called()
+    scaffold.assert_not_called()
+
+
+def test_parallel_checks_git_metadata_after_session() -> None:
     parallel_src = (_BACKEND_DIR / "agents" / "parallel_integration.py").read_text(
         encoding="utf-8"
     )

@@ -775,7 +775,8 @@ async def run_autonomous_agent(
             print_status(str(exc), "error")
             status_manager.update(state=BuildState.ERROR)
             logger.error("%s", exc)
-            break
+            # return, not break: the post-loop path would mark COMPLETE (#1747).
+            return
 
         # === PER-CATEGORY TOKEN ATTRIBUTION (#262) ===
         # Attribute the session's real SDK usage across source categories and

@@ -77,8 +77,9 @@ server merges; nothing notices the other keys or tells a human.
    - serial coder `agents/coder.py:767` (`run_session_guarded`): call
      `check_git_metadata(project_dir)`; on `RuntimeError` print the message as
      an error, `status_manager.update(state=BuildState.ERROR)`, log it, and
-     `break` out of the session loop (no retry: every retry would fail the
-     same way);
+     `return` from `run_autonomous_agent` (no retry: every retry would fail
+     the same way; not `break`, because the post-loop code runs the trailing
+     gates and sets COMPLETE when every subtask is done);
    - parallel `agents/parallel_integration.py:591`: `check_git_metadata(child_path)`;
      on `RuntimeError` log it and set `session_ok = False`;
    - follow-up planner `agents/planner.py:133`: on `RuntimeError` set
@@ -197,6 +198,24 @@ Traps: existing coder/parallel tests run sessions in tmp dirs that may not be
 git repos: `check_git_metadata` then raises and the loop stops. If that
 breaks them, patch `check_git_metadata` in those tests' fixtures rather than
 making the check tolerant (fail closed).
+
+Deviation (review fix): the serial coder returns instead of breaking (see
+decision 4), and `test_coder_metadata_change_in_final_session_ends_in_error`
+drives `run_autonomous_agent` with all subtasks complete and asserts the
+final state is ERROR, replacing the coder half of the source regex test.
+
+### Step 4 (review fix): persist baselines with the workspaces PVC
+
+File: `charts/aifactory/templates/deployment.yaml`, inside the
+`workspaces.enabled` env block after `PROJECT_WORKSPACE_ROOT`. Change: set
+`AIFACTORY_GIT_BASELINE_DIR` to `<workspaces.mountPath>/.git-baselines`.
+Why: `~/.aifactory` is the `aifactory-data` emptyDir, so a pod restart
+deleted every baseline while the clones survived on the PVC, and the next
+check re-baselined a possibly tampered repo. Job pods mount only worktree
+subPaths, so the sibling directory stays out of their reach. Without
+workspaces the clones live in the same emptyDir, so both go together and no
+env is needed. Check: `pytest tests/helm/test_git_baseline_dir.py -m helm`.
+Trap: `mountPath` may end in `/`; the template trims it.
 
 ## Verification
 
