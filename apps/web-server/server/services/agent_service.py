@@ -105,6 +105,8 @@ class AgentService(
         # the rows it just polled, so ``is_running`` can answer for both
         # backends without a Kubernetes call or a DB round-trip per request.
         self._active_kubejob_task_ids: set[str] = set()
+        # #1704: spec-creation process per task, so Start/approve stop only that.
+        self._spec_creation_procs: dict[str, Any] = {}
         # #1662: ids dispatched since the current reconcile tick began
         # its store read; that tick unions them in so it cannot drop a
         # build whose row it read too early. Reset every tick.
@@ -1339,6 +1341,21 @@ class AgentService(
         # Fall back to signalling just the process (e.g. non-POSIX, or no pgrp).
         with contextlib.suppress(ProcessLookupError, OSError):
             proc.send_signal(sig)
+
+    async def stop_stale_spec_creation(self, task_id: str) -> None:
+        proc = self.running_tasks.get(task_id)
+        if proc is None or proc is not self._spec_creation_procs.get(task_id):
+            return
+        try:
+            await self.stop_task(task_id)
+        except Exception:
+            _log.warning(
+                "[AgentService] failed to stop stale spec creation for %s",
+                sanitize_log(task_id),
+                exc_info=True,
+            )
+            self.running_tasks.pop(task_id, None)
+        self._spec_creation_procs.pop(task_id, None)
 
     async def stop_task(self, task_id: str) -> bool:
         """Stop a running task."""

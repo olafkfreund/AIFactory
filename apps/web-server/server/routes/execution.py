@@ -696,23 +696,13 @@ async def start_task(
                 sanitize_log(e),
             )
 
-    if agent_service.is_running(task_id):
-        if force_execution:
-            # Plan was approved — clean up stale spec creation process before starting execution
-            logger.info(
-                "[StartTask] Cleaning up stale spec creation process for approved task %s",
-                sanitize_log(task_id),
-            )
-            try:
-                await agent_service.stop_task(task_id)
-            except Exception as stop_err:
-                logger.warning(f"[StartTask] Failed to stop stale process: {stop_err}")
-                agent_service.running_tasks.pop(task_id, None)
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Task is already running",
-            )
+    if force_execution:
+        await agent_service.stop_stale_spec_creation(task_id)
+    if await agent_service.is_running_anywhere(task_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Task is already running",
+        )
 
     # If review is required but not yet approved, set human_review status
     # and return early WITHOUT starting the subprocess (which would just exit)
