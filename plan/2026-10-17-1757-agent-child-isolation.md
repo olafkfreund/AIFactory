@@ -420,6 +420,20 @@ editors `true`, credential.helper reset); blanking them in the Claude SDK
 env (`get_agent_env_blanks()`) let repo hooks run again. Regression test:
 `tests/test_agent_env_scrub.py::test_blanks_keep_git_config_pins`.
 
+**Deviation (post-merge review fix).** D7 accepts losing home-folder tool
+configs, not pre-installed tools. The private HOME hid the build image's
+npm global prefix (set only in `~/.npmrc`, so `npx` re-fetched the
+pre-baked MCP servers, #816) and its Playwright browsers under
+`~/.cache/ms-playwright`. `AgentHome.env` now carries `NPM_CONFIG_PREFIX`
+(from the env or the `prefix=` line of the real `~/.npmrc`; the file itself
+is not copied, it can hold tokens) and, unless already set,
+`PLAYWRIGHT_BROWSERS_PATH` pointing at the real cache dir when it exists.
+`PLAYWRIGHT_BROWSERS_PATH`, `PLAYWRIGHT_SKIP_*` and `FONTCONFIG_FILE`
+joined the allowlist for devShell-launched runners. Regression tests:
+`tests/test_agent_home.py::test_prebaked_npm_globals_and_browsers_stay_visible`,
+`::test_existing_browsers_path_and_prefix_win`,
+`tests/test_agent_env_scrub.py::test_devshell_browser_vars_are_kept`.
+
 ## Rollback
 
 Each step is its own commit; revert in reverse order. Steps 3 and 4 depend

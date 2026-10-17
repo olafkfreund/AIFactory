@@ -82,6 +82,23 @@ def _git_identity(home: Path) -> None:
             file.writelines(lines)
 
 
+def _npm_prefix() -> str | None:
+    """The real npm global prefix: ``~/.npmrc`` is not copied (it can hold tokens)."""
+    env = os.environ
+    # npm reads both spellings; lowercase is what npm itself exports.
+    if prefix := env.get("NPM_CONFIG_PREFIX") or env.get("npm_config_prefix"):
+        return prefix
+    try:
+        lines = (Path.home() / ".npmrc").read_text().splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+    for line in lines:
+        key, sep, value = line.partition("=")
+        if sep and key.strip() == "prefix" and value.strip().startswith("/"):
+            return value.strip()
+    return None
+
+
 def _cleanup(home: Path, entries: list[tuple[Path, Path, bytes, bool]]) -> None:
     try:
         for private, real, original, writeback in entries:
@@ -153,6 +170,16 @@ class AgentHome:
             "TMPDIR": str(home / "tmp"),
             **{var: str(home / rel) for var, rel in _BASES.items()},
         }
+        # Keep the image's pre-baked npm globals (MCP servers, #816) and
+        # Playwright browsers, which the private HOME would otherwise hide.
+        if prefix := _npm_prefix():
+            self.env["NPM_CONFIG_PREFIX"] = prefix
+        browsers = (
+            Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
+            / "ms-playwright"
+        )
+        if "PLAYWRIGHT_BROWSERS_PATH" not in os.environ and browsers.is_dir():
+            self.env["PLAYWRIGHT_BROWSERS_PATH"] = str(browsers)
         self._finalizer = weakref.finalize(self, _cleanup, home, entries)
 
     def close(self) -> None:
