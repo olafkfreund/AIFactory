@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -23,6 +24,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "apps" / "backend"))
 
 from core.auth import get_agent_env_blanks  # noqa: E402
+
+_GIT = shutil.which("git")  # resolved before clean_env narrows PATH
 
 SECRETS = {
     "API_TOKEN": "x",
@@ -82,12 +85,11 @@ def clean_env(monkeypatch, tmp_path):
 
 def test_blanks_keep_git_config_pins(clean_env, monkeypatch, tmp_path):
     """The SDK env keeps the server's git pins, so repo hooks stay off (#1757)."""
-    import shutil
     import subprocess
 
     from core.child_env import pin_git_config
 
-    if not shutil.which("git"):
+    if not _GIT:
         pytest.skip("git not installed")
     pins = pin_git_config({})
     for k, v in pins.items():
@@ -96,7 +98,7 @@ def test_blanks_keep_git_config_pins(clean_env, monkeypatch, tmp_path):
     assert not set(pins) & set(blanks), sorted(set(pins) & set(blanks))
 
     repo = tmp_path / "repo"
-    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run([_GIT, "init", "-q", str(repo)], check=True)
     hook = repo / ".git" / "hooks" / "pre-commit"
     hook.write_text("#!/bin/sh\necho HOOK-RAN >&2\nexit 1\n")
     hook.chmod(0o755)
@@ -109,7 +111,7 @@ def test_blanks_keep_git_config_pins(clean_env, monkeypatch, tmp_path):
         "GIT_COMMITTER_EMAIL": "t@x",
     }
     r = subprocess.run(
-        ["git", "commit", "-q", "--allow-empty", "-m", "x"],
+        [_GIT, "commit", "-q", "--allow-empty", "-m", "x"],
         cwd=repo,
         env=env,
         capture_output=True,
