@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1737
 spec: spec/2026-10-17-1737-gate-pod-diagnostics.md
 ---
