@@ -89,3 +89,22 @@ Regression tests proven failing against origin/dev's PE.
 ## Rollback
 
 Revert the PR. No data, schema or config change.
+
+## Deviations (implementation)
+
+- Step 2 also had to touch two more test files, because legacy auto-merge
+  runs now wait on the merge-time gate:
+  `apps/web-server/tests/test_merge_decision_reaches_the_merge.py` (stub a
+  TFactory pass and green host CI; the merge path now consults
+  `decide_merge` twice, at PR-open and in the gate) and
+  `apps/web-server/tests/test_pr_endgame.py` (an autouse fixture stands in a
+  green `_build_merge_gate` and a head for the review/merge-flow tests; the
+  gate itself is tested in `test_trusted_contract_merge.py`).
+- `test_1697_endgame_arms_the_gate_for_legacy_too` uses a fresh legacy spec:
+  the old test's "legacy" spec still carried trusted-plan provenance, which
+  resolves to `hold`, not `legacy`.
+- `test_fleet_provider_propagation.py::test_a_github_tenant_still_gets_its_auto_pr`
+  runs with `auto_merge=False`: it asserts the auto-PR, and a legacy merge
+  would now wait on the gate until the watcher times out.
+- Step 2 was done by the lane agent: the codex run sat waiting on stdin with
+  no output for 20 minutes and was stopped.

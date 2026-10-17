@@ -37,6 +37,17 @@ def _isolated_host(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("server.services.job_state_store.store_enabled", lambda: True)
 
 
+@pytest.fixture(autouse=True)
+def _verified_green(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests drive the review/merge flow, not the #1695 gate (its own
+    tests are in test_trusted_contract_merge.py). Since #1697 every auto-merge
+    task gets that gate, so stand in a green one."""
+    monkeypatch.setattr(pe, "_build_merge_gate", lambda *_a, **_k: lambda _h: True)
+    real_head = pe._pr_head
+    # A FakeRunner without a head route still yields a head to gate on.
+    monkeypatch.setattr(pe, "_pr_head", lambda *a: real_head(*a) or "deadbeef")
+
+
 class FakeRunner:
     """Routes argv → CmdResult by matching substrings; records calls."""
 
