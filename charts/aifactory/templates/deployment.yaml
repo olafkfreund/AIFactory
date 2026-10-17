@@ -579,6 +579,12 @@ spec:
             # repos to durable storage instead of the pod's tmpfs root.
             - name: PROJECT_WORKSPACE_ROOT
               value: {{ .Values.workspaces.mountPath | quote }}
+            # Git metadata baselines (#1746) must outlive the pod: the
+            # aifactory-data emptyDir does not, and a lost baseline is
+            # re-taken from the possibly tampered repo. Job pods only mount
+            # worktree subPaths, so this sibling of the clones stays out of reach.
+            - name: AIFACTORY_GIT_BASELINE_DIR
+              value: {{ printf "%s/.git-baselines" (trimSuffix "/" .Values.workspaces.mountPath) | quote }}
             {{- end }}
             {{- if .Values.mcpCredentials.enabled }}
             # MCP credentials — env-var-only providers.  File-based
