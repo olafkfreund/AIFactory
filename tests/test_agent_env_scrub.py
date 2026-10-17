@@ -80,7 +80,7 @@ def clean_env(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
 
 
-def test_blanks_keep_git_config_pins(clean_env, tmp_path):
+def test_blanks_keep_git_config_pins(clean_env, monkeypatch, tmp_path):
     """The SDK env keeps the server's git pins, so repo hooks stay off (#1757)."""
     import shutil
     import subprocess
@@ -91,7 +91,7 @@ def test_blanks_keep_git_config_pins(clean_env, tmp_path):
         pytest.skip("git not installed")
     pins = pin_git_config({})
     for k, v in pins.items():
-        os.environ[k] = v  # clean_env's monkeypatch restores os.environ
+        monkeypatch.setenv(k, v)  # undone after the test; raw os.environ leaks
     blanks = get_agent_env_blanks()
     assert not set(pins) & set(blanks), sorted(set(pins) & set(blanks))
 
