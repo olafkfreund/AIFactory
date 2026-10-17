@@ -44,6 +44,7 @@ from collections.abc import AsyncGenerator, AsyncIterator
 from pathlib import Path
 from typing import Any
 
+from core.agent_home import AgentHome
 from core.child_env import child_env
 from providers import BaseLLMProvider
 from providers._antigravity_cli import get_antigravity_binary
@@ -194,8 +195,11 @@ class AntigravityAgenticProvider(BaseLLMProvider):
             # can actually edit files. See the CLI's trusted-folders guidance.
             # (Env var name is GEMINI_CLI_TRUST_WORKSPACE — the binary kept the
             # legacy name across the gemini-cli -> antigravity-cli rename.)
+            home = AgentHome("gemini")
             env = child_env(
-                keep=_GEMINI_KEEP, extra={"GEMINI_CLI_TRUST_WORKSPACE": "true"}
+                keep=_GEMINI_KEEP,
+                extra={**home.env, "GEMINI_CLI_TRUST_WORKSPACE": "true"},
+                agent=True,
             )
             proc = await asyncio.create_subprocess_exec(
                 *cmd,

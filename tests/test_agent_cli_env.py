@@ -114,7 +114,14 @@ async def test_agent_cli_env(
 
     monkeypatch.setattr(shutil, "which", lambda *_a, **_k: "/fake/bin")
     monkeypatch.setattr(site.mod.asyncio, "create_subprocess_exec", _fake)
-    for var in ("XDG_CACHE_HOME", "GIT_CONFIG_COUNT", "OPENCODE_DEFAULT_MODEL"):
+    for var in (
+        "XDG_CACHE_HOME",
+        "XDG_DATA_HOME",
+        "XDG_CONFIG_HOME",
+        "CODEX_HOME",
+        "GIT_CONFIG_COUNT",
+        "OPENCODE_DEFAULT_MODEL",
+    ):
         monkeypatch.delenv(var, raising=False)
     provider = site.make()
     # Set after construction: proves the env is built at spawn time.

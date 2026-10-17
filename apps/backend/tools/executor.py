@@ -31,6 +31,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from core.agent_home import AgentHome
 from core.child_env import child_env
 from providers.types import ToolResultBlock
 from security.filesystem_validators import git_metadata_write_refusal
@@ -314,12 +315,13 @@ class ToolExecutor:
             )
 
         try:
+            home = AgentHome("bash")
             proc = await asyncio.create_subprocess_shell(
                 command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(self._working_dir),
-                env=child_env(),
+                env=child_env(extra=home.env, agent=True),
             )
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=float(timeout)
@@ -425,7 +427,7 @@ class ToolExecutor:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(self._working_dir),
-                env=child_env(),
+                env=child_env(agent=True),
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30.0)
         except TimeoutError:
