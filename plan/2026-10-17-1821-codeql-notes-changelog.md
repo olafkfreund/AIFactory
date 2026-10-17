@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1821
 spec: spec/2026-10-17-1821-codeql-notes-changelog.md
 ---
