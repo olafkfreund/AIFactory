@@ -23,6 +23,7 @@ from server.background import spawn
 from server.specpath import spec_dir_for
 
 from ..utils.subprocess_env import make_subprocess_env
+from . import project_settings_store
 from .agent_task_models import TaskProgress
 from .task_phase import TaskPhase
 
@@ -52,6 +53,7 @@ class SpecCreationMixin:
         # sibling mixins; declared so mypy resolves the self.* refs (#703 pattern).
         backend_path: Any
         running_tasks: dict[str, Any]
+        _spec_creation_procs: dict[str, Any]
         _spec_dirs: dict[str, Any]
         _task_profiles: dict[str, Any]
         _task_sequence_numbers: dict[str, Any]
@@ -237,22 +239,8 @@ class SpecCreationMixin:
             except Exception as e:
                 logger.warning(f"[AgentService] Failed to load backend .env: {e}")
 
-        # Load project .aifactory/.env for project-level settings (USE_CLAUDE_MD, etc.)
-        project_env_file = project_path / ".aifactory" / ".env"
-        if project_env_file.exists():
-            try:
-                with open(project_env_file) as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith("#") and "=" in line:
-                            key, value = line.split("=", 1)
-                            key = key.strip()
-                            value = value.strip()
-                            if key not in env:
-                                env[key] = value
-                logger.info("[AgentService] Loaded project .env for spec creation")
-            except Exception as e:
-                logger.warning(f"[AgentService] Failed to load project .env: {e}")
+        # Project settings store: allowlisted project settings only (#1745, #1795)
+        await project_settings_store.load_project_env(project_path, env)
 
         # Get OAuth token from the pool (#670) so concurrent builds draw DISTINCT
         # credentials; returned to the pool when this build ends.
@@ -277,6 +265,8 @@ class SpecCreationMixin:
                 "attempt": 1,
                 "model": spec_phase_model or "sonnet",
             }
+
+        env.update(await project_settings_store.mcp_spawn_env(project_path))
 
         # Start subprocess with a pseudo-TTY to prevent "Stream closed" errors
         # Claude Code CLI expects a TTY for permission handling
@@ -308,6 +298,7 @@ class SpecCreationMixin:
         os.close(slave_fd)
 
         self.running_tasks[task_id] = proc
+        self._spec_creation_procs[task_id] = proc
 
         # Initialize tracking for sequence numbers and start time
         self._task_sequence_numbers[task_id] = 0

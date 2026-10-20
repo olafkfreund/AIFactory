@@ -10,8 +10,16 @@ import pytest
 TASK = "http://tf/api/tfactory/tasks/048-feat"
 
 
-def _task(status: str = "triaged", project: str = "demo") -> tuple[int, object]:
-    return 200, {"project_id": project, "status_json": {"status": status}}
+def _task(
+    status: str = "triaged", project: str = "demo", sha: str | None = "abc"
+) -> tuple[int, object]:
+    payload: dict[str, object] = {
+        "project_id": project,
+        "status_json": {"status": status},
+    }
+    if sha is not None:
+        payload["source_sha"] = sha
+    return 200, payload
 
 
 def _verdicts(*kinds: str) -> tuple[int, object]:
@@ -27,7 +35,9 @@ def _cfg(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _run(
-    routes: dict[str, tuple[int, object]], spec_id: str = "048-feat"
+    routes: dict[str, tuple[int, object]],
+    spec_id: str = "048-feat",
+    head: str = "abc",
 ) -> tuple[str | None, list[tuple[str, dict[str, str]]]]:
     calls: list[tuple[str, dict[str, str]]] = []
 
@@ -35,7 +45,7 @@ def _run(
         calls.append((url, headers))
         return routes[url]
 
-    return tc.tfactory_verdict(Path("spec"), spec_id, getter=getter), calls
+    return tc.tfactory_verdict(Path("spec"), spec_id, head=head, getter=getter), calls
 
 
 def test_flag_does_not_block_and_request_shape() -> None:
@@ -55,27 +65,59 @@ def test_reject_fails() -> None:
 
 
 @pytest.mark.parametrize(
-    "routes",
+    ("routes", "head"),
     [
-        {TASK: _task(project="other"), TASK + "/verdicts.json": _verdicts("accept")},
-        {TASK: _task("running"), TASK + "/verdicts.json": _verdicts("accept")},
-        {TASK: _task("triaged_empty"), TASK + "/verdicts.json": _verdicts("accept")},
-        {TASK: (404, None), TASK + "/verdicts.json": _verdicts("accept")},
-        {TASK: _task(), TASK + "/verdicts.json": (404, None)},
-        {TASK: _task(), TASK + "/verdicts.json": _verdicts()},
-        {TASK: _task(), TASK + "/verdicts.json": (200, [1])},
-        {TASK: (200, [1]), TASK + "/verdicts.json": _verdicts("accept")},
+        (
+            {
+                TASK: _task(project="other"),
+                TASK + "/verdicts.json": _verdicts("accept"),
+            },
+            "abc",
+        ),
+        ({TASK: _task("running"), TASK + "/verdicts.json": _verdicts("accept")}, "abc"),
+        (
+            {
+                TASK: _task("triaged_empty"),
+                TASK + "/verdicts.json": _verdicts("accept"),
+            },
+            "abc",
+        ),
+        ({TASK: (404, None), TASK + "/verdicts.json": _verdicts("accept")}, "abc"),
+        ({TASK: _task(), TASK + "/verdicts.json": (404, None)}, "abc"),
+        ({TASK: _task(), TASK + "/verdicts.json": _verdicts()}, "abc"),
+        ({TASK: _task(), TASK + "/verdicts.json": (200, [1])}, "abc"),
+        ({TASK: (200, [1]), TASK + "/verdicts.json": _verdicts("accept")}, "abc"),
+        (
+            {TASK: _task(sha="old"), TASK + "/verdicts.json": _verdicts("accept")},
+            "abc",
+        ),
+        (
+            {TASK: _task(sha=None), TASK + "/verdicts.json": _verdicts("accept")},
+            "abc",
+        ),
+        (
+            {TASK: _task(sha=""), TASK + "/verdicts.json": _verdicts("accept")},
+            "",
+        ),
+        (
+            {TASK: _task(sha="old"), TASK + "/verdicts.json": _verdicts("reject")},
+            "abc",
+        ),
     ],
 )
-def test_no_trusted_result_is_none(routes: dict[str, tuple[int, object]]) -> None:
-    assert _run(routes)[0] is None
+def test_no_trusted_result_is_none(
+    routes: dict[str, tuple[int, object]], head: str
+) -> None:
+    assert _run(routes, head=head)[0] is None
 
 
 def test_getter_raising_is_none() -> None:
     def boom(_url: str, _headers: dict[str, str]) -> tuple[int, object]:
         raise OSError("down")
 
-    assert tc.tfactory_verdict(Path("spec"), "048-feat", getter=boom) is None
+    assert (
+        tc.tfactory_verdict(Path("spec"), "048-feat", head="abc", getter=boom) is None
+    )
 
 
 def test_unconfigured_is_none(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -107,6 +149,8 @@ def test_config_error_never_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(tc, "tfactory_config", boom)
     assert (
-        tc.tfactory_verdict(Path("spec"), "048-feat", getter=lambda _u, _h: (200, {}))
+        tc.tfactory_verdict(
+            Path("spec"), "048-feat", head="abc", getter=lambda _u, _h: (200, {})
+        )
         is None
     )

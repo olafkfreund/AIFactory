@@ -21,7 +21,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from core.child_env import child_env
+from core import process_hardening
+from core.child_env import child_env, lfs_upload
 from core.git_credentials import authed_push_url
 
 _log = logging.getLogger(__name__)
@@ -92,7 +93,7 @@ def maybe_unpack_workspace(project_dir: str | os.PathLike[str]) -> bool:
     return True
 
 
-def maybe_push_workspace_branch(
+def maybe_push_workspace_branch(  # noqa: PLR0911 - one early return per refusal
     project_dir: str | os.PathLike[str], spec_id: str
 ) -> bool:
     """Push the built worktree branch to origin on the packed path (RFC-0017 #190).
@@ -116,6 +117,12 @@ def maybe_push_workspace_branch(
     if not wt.is_dir():
         _log.warning("[workspace_fetch] no worktree at %s; nothing to push", wt)
         return False
+    if (
+        process_hardening.in_build_job()
+        and not process_hardening.kill_stray_processes()
+    ):
+        _log.error("agent-started processes survived; refusing to push (#1724)")
+        return False
 
     def _git(*args: str) -> str:
         return subprocess.run(  # noqa: S603
@@ -138,17 +145,36 @@ def maybe_push_workspace_branch(
         # or env; the URL is not rewritten. /proc/<pid>/cmdline is world-readable
         # for the lifetime of the child (AIFactory#1366, #1723).
         with authed_push_url(url) as (push_url, git_env):
-            res = subprocess.run(  # noqa: S603
-                ["git", "push", push_url, f"HEAD:{branch}"],  # noqa: S607
-                cwd=str(wt),
-                env=git_env,
-                capture_output=True,
-                text=True,
-                timeout=180,
-                check=False,
-            )
-        if res.returncode != 0:
-            _log.warning("[workspace_fetch] branch push failed: %s", res.stderr[:200])
+
+            def run(argv: list[str], t: int) -> tuple[int, str, str]:
+                p = subprocess.run(  # noqa: S603
+                    argv,
+                    cwd=str(wt),
+                    env=git_env,
+                    capture_output=True,
+                    text=True,
+                    timeout=t,
+                    check=False,
+                )
+                return p.returncode, p.stdout, p.stderr
+
+            # Best-effort upload; only the safety-net refusal skips the push.
+            err = lfs_upload(run, "HEAD")
+            if err:
+                err = f"LFS upload: {err}"
+            else:
+                res = subprocess.run(  # noqa: S603
+                    ["git", "push", push_url, f"HEAD:{branch}"],  # noqa: S607
+                    cwd=str(wt),
+                    env=git_env,
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                    check=False,
+                )
+                err = res.stderr if res.returncode != 0 else None
+        if err is not None:
+            _log.warning("[workspace_fetch] branch push failed: %s", err[:200])
             return False
         _log.info(
             "[workspace_fetch] pushed build branch %s to origin (packed path)", branch

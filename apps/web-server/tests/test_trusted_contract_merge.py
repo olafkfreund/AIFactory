@@ -226,14 +226,24 @@ def test_15_legacy_task_on_non_isolated_host_holds(
 def test_16_untouched_record_low_tier_auto_merges(tmp_path: Path) -> None:
     spec, signed = _spec(tmp_path)
 
-    assert pe.merge_disposition(spec, "low", trusted=_rec(signed)) == "auto-merge"
+    out = pe.merge_disposition(
+        spec, "low", trusted=_rec(signed), fetch_signals=lambda: _FETCH_PASS
+    )
+    assert out == "auto-merge"
 
 
-def test_17a_legacy_without_contract_unchanged(tmp_path: Path) -> None:
+def test_17a_legacy_without_contract_merges_only_on_a_fetched_pass(
+    tmp_path: Path,
+) -> None:
     spec = tmp_path / ".aifactory" / "specs" / "001-x"
     spec.mkdir(parents=True)
 
-    assert pe.merge_disposition(spec, "low", trusted=None) == "auto-merge"
+    # #1697: nothing measured is not a pass.
+    assert pe.merge_disposition(spec, "low", trusted=None) != "auto-merge"
+    out = pe.merge_disposition(
+        spec, "low", trusted=None, fetch_signals=lambda: _FETCH_PASS
+    )
+    assert out == "auto-merge"
 
 
 def test_17b_legacy_unparseable_contract_holds(tmp_path: Path) -> None:
@@ -376,7 +386,7 @@ def test_spec_key_ignores_a_symlinked_spec_dir(tmp_path: Path) -> None:
 def test_pid_namespaced_sandbox_host_is_not_isolated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """D4 narrowed: run.py in the sandbox carries the server env (#1680)."""
+    """D4 stays narrow (#1760): run.py and the agent share uid and pidns there."""
     monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "subprocess")
     monkeypatch.setenv("AIFACTORY_AGENT_SANDBOX", "strict")
     monkeypatch.setenv("AIFACTORY_AGENT_SANDBOX_PIDNS", "1")
@@ -461,7 +471,10 @@ def test_27_blank_tier_takes_signed_auto(
     _warn(caplog)
     spec, signed = _spec(tmp_path, review_tier="auto")
 
-    assert pe.merge_disposition(spec, tier, trusted=_rec(signed)) == "auto-merge"
+    out = pe.merge_disposition(
+        spec, tier, trusted=_rec(signed), fetch_signals=lambda: _FETCH_PASS
+    )
+    assert out == "auto-merge"
     assert "below signed" not in caplog.text
 
 
@@ -531,13 +544,13 @@ async def test_spawn_env_holds(
     assert await spawn_env(spec) == {ENV: "hold"}
 
 
-async def test_spawn_env_legacy_is_empty(
+async def test_spawn_env_legacy_is_explicit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     spec = tmp_path / ".aifactory" / "specs" / "001-x"
     spec.mkdir(parents=True)
     _lookup(monkeypatch, None)
-    assert await spawn_env(spec) == {}
+    assert await spawn_env(spec) == {ENV: "legacy"}
 
 
 async def test_cross_side_digest_matches_pod_verdict(
@@ -600,11 +613,55 @@ def test_1695_verified_raising_fetch_holds(tmp_path: Path) -> None:
     assert out == pe.HOLD_BLOCKING_DISPOSITION
 
 
-def test_1695_legacy_never_calls_the_fetch(tmp_path: Path) -> None:
+def _legacy_spec(tmp_path: Path) -> Path:
     spec = tmp_path / ".aifactory" / "specs" / "001-x"
     spec.mkdir(parents=True)
-    plain = pe.merge_disposition(spec, "low", trusted=None)
-    assert pe.merge_disposition(spec, "low", trusted=None, fetch_signals=_boom) == plain
+    return spec
+
+
+def test_1697_legacy_calls_the_fetch(tmp_path: Path) -> None:
+    spec = _legacy_spec(tmp_path)
+    out = pe.merge_disposition(spec, "low", trusted=None, fetch_signals=_boom)
+    assert out == pe.HOLD_BLOCKING_DISPOSITION
+
+
+@pytest.mark.parametrize(
+    "fetched",
+    [
+        {"tfactory_verdict": None, "host_ci_green": True},
+        {"tfactory_verdict": "pass", "host_ci_green": None},
+    ],
+)
+def test_1697_legacy_unknown_signal_does_not_merge(
+    tmp_path: Path, fetched: dict[str, object]
+) -> None:
+    spec = _legacy_spec(tmp_path)
+    out = pe.merge_disposition(spec, "low", trusted=None, fetch_signals=lambda: fetched)
+    assert out != pe.AUTO_MERGE_DISPOSITION
+
+
+def test_1697_legacy_path_floor_is_enforced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(pe.PATH_RISK_FLOOR_ENV, raising=False)
+    spec = _legacy_spec(tmp_path)
+    out = pe.merge_disposition(
+        spec, "low", trusted=None, fetch_signals=lambda: _FETCH_PASS, floor="blocking"
+    )
+    assert out == pe.HOLD_BLOCKING_DISPOSITION
+
+
+def test_1697_legacy_unrecognised_tier_still_holds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Review: an unrecognised tier ranks below auto, so the floor must not
+    # "raise" it into a mergeable tier.
+    monkeypatch.delenv(pe.PATH_RISK_FLOOR_ENV, raising=False)
+    spec = _legacy_spec(tmp_path)
+    out = pe.merge_disposition(
+        spec, "blocker", trusted=None, fetch_signals=lambda: _FETCH_PASS, floor="auto"
+    )
+    assert out == pe.HOLD_BLOCKING_DISPOSITION
 
 
 def test_1695_human_approval_cannot_clear_a_red_fetch(tmp_path: Path) -> None:
@@ -617,7 +674,7 @@ def test_1695_human_approval_cannot_clear_a_red_fetch(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("verified", [True, False])
-def test_1695_endgame_arms_the_gate_only_for_non_legacy(
+def test_1697_endgame_arms_the_gate_for_legacy_too(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verified: bool
 ) -> None:
     spec, signed = _spec(tmp_path, tier="low")
@@ -631,8 +688,8 @@ def test_1695_endgame_arms_the_gate_only_for_non_legacy(
     monkeypatch.setattr(pe, "create_pr", lambda **_k: 42)
     monkeypatch.setattr(pe, "request_copilot_review", lambda *_a, **_k: True)
     monkeypatch.setattr(pe, "_pr_title_body", lambda _d, _s: ("t", "b"))
-    if not verified:  # legacy: no contract at all
-        _contract_file(spec).unlink()
+    if not verified:  # legacy: no contract, no trusted-plan provenance
+        spec = _legacy_spec(tmp_path / "legacy")
     asyncio.run(
         pe.run_pr_endgame(
             spec_dir=spec,
@@ -648,7 +705,7 @@ def test_1695_endgame_arms_the_gate_only_for_non_legacy(
             trusted=_rec(signed) if verified else None,
         )
     )
-    assert callable(captured["gate"]) if verified else captured["gate"] is None
+    assert callable(captured["gate"])
 
 
 # --- #1695 review: the gate built by _build_merge_gate is exercised ---------- #
@@ -669,10 +726,30 @@ def _gate(
         heads.append(f"{owner}/{repo}@{sha}")
         return ci
 
+    def fake_req(
+        owner: str, repo: str, base: str, sha: str, **_k: object
+    ) -> bool | None:
+        heads.append(f"{owner}/{repo}:{base}@{sha}")
+        return True
+
     monkeypatch.setattr(pe, "host_ci_green", fake_ci)
-    monkeypatch.setattr(tc, "tfactory_verdict", lambda _d, _s, **_k: verdict)
+    monkeypatch.setattr(pe, "required_checks_green", fake_req)
+
+    def fake_verdict(_d: object, _s: object, **k: object) -> str | None:
+        heads.append(f"verdict@{k.get('head')}")
+        return verdict
+
+    monkeypatch.setattr(tc, "tfactory_verdict", fake_verdict)
     gate = pe._build_merge_gate(
-        spec, "001-x", ("o", "r"), _rec(signed), "low", human, lambda *_a, **_k: None
+        spec,
+        "001-x",
+        ("o", "r"),
+        _rec(signed),
+        "low",
+        None,
+        human,
+        lambda *_a, **_k: None,
+        "main",
     )
     return gate, heads
 
@@ -683,7 +760,7 @@ def test_1695_gate_green_passes_the_exact_head(
 ) -> None:
     gate, heads = _gate(tmp_path, monkeypatch, verdict="pass", ci=True, human=human)
     assert gate("deadbeef") is True
-    assert heads == ["o/r@deadbeef"]
+    assert heads == ["verdict@deadbeef", "o/r@deadbeef", "o/r:main@deadbeef"]
 
 
 @pytest.mark.parametrize(
@@ -701,6 +778,14 @@ def test_1695_gate_red_or_unknown_is_false(
     assert gate("deadbeef") is False
 
 
+def test_1766_gate_required_checks_none_is_false(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gate, _ = _gate(tmp_path, monkeypatch, verdict="pass", ci=True)
+    monkeypatch.setattr(pe, "required_checks_green", lambda *_a, **_k: None)
+    assert gate("deadbeef") is False
+
+
 def test_1695_gate_is_set_when_resolve_contract_raises(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -711,6 +796,136 @@ def test_1695_gate_is_set_when_resolve_contract_raises(
 
     monkeypatch.setattr("server.services.trusted_contract.resolve_contract", boom)
     gate = pe._build_merge_gate(
-        spec, "001-x", ("o", "r"), _rec(signed), "low", False, lambda *_a, **_k: None
+        spec,
+        "001-x",
+        ("o", "r"),
+        _rec(signed),
+        "low",
+        None,
+        False,
+        lambda *_a, **_k: None,
+        "main",
     )
     assert gate is not None
+
+
+@pytest.mark.parametrize(("verdict", "merges"), [("pass", True), (None, False)])
+def test_1697_legacy_gate_needs_a_real_verdict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verdict: str | None, merges: bool
+) -> None:
+    spec = _legacy_spec(tmp_path)
+    monkeypatch.setattr(pe, "host_ci_green", lambda *_a, **_k: True)
+    monkeypatch.setattr(pe, "required_checks_green", lambda *_a, **_k: True)
+    monkeypatch.setattr(tc, "tfactory_verdict", lambda _d, _s, **_k: verdict)
+    gate = pe._build_merge_gate(
+        spec,
+        "001-x",
+        ("o", "r"),
+        None,
+        "low",
+        None,
+        False,
+        lambda *_a, **_k: None,
+        "main",
+    )
+    assert gate("deadbeef") is merges
+
+
+# --- #1698: the PR body states the tier the gate decides on ---------------- #
+
+
+@pytest.mark.parametrize(
+    ("tier", "signed", "expected"),
+    [
+        ("low", "blocking", ("blocking", True)),
+        ("blocking", "auto", ("blocking", False)),
+        (None, "auto", ("auto", False)),
+        ("auto", "auto", ("auto", False)),
+    ],
+)
+def test_raise_to_signed(
+    tier: str | None, signed: str, expected: tuple[str, bool]
+) -> None:
+    assert pe._raise_to_signed(tier, signed) == expected
+
+
+def test_raise_to_signed_unrecognised_tier_is_preserved() -> None:
+    effective, below = pe._raise_to_signed("bogus", "auto")
+    assert effective == "bogus"
+    assert below is True
+
+
+def test_review_tier_note_flags_tier_below_signed(tmp_path: Path) -> None:
+    spec, signed = _spec(tmp_path, review_tier="blocking")
+
+    note = pe.review_tier_note(spec, "low", trusted=_rec(signed))
+
+    assert "Effective review tier: blocking (signed floor blocking)." in note
+    assert "Possible tampering" in note
+    assert "reviewTier low is below the signed tier blocking" in note
+    assert "the merge gate decides on blocking." in note
+
+
+def test_review_tier_note_matching_signed_has_no_tampering_warning(
+    tmp_path: Path,
+) -> None:
+    spec, signed = _spec(tmp_path, review_tier="auto")
+
+    note = pe.review_tier_note(spec, "auto", trusted=_rec(signed))
+
+    assert note == "Effective review tier: auto (signed floor auto)."
+    assert "Possible tampering" not in note
+
+
+def test_review_tier_note_legacy_without_contract(tmp_path: Path) -> None:
+    spec, _ = _spec(tmp_path)
+    _contract_file(spec).unlink()
+
+    note = pe.review_tier_note(spec, "low", trusted=None)
+
+    assert "Review tier: low (not checked" in note
+
+
+def test_review_tier_note_crafted_tier_uses_constant_label(tmp_path: Path) -> None:
+    spec, _ = _spec(tmp_path)
+    _contract_file(spec).unlink()
+
+    note = pe.review_tier_note(spec, "low\n\n@evil", trusted=None)
+
+    assert "unrecognised" in note
+    assert "@evil" not in note
+
+
+def test_1698_endgame_body_flags_tier_below_signed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec, signed = _spec(tmp_path, review_tier="blocking")
+    captured: dict[str, str] = {}
+
+    async def _fake_watch(**_k: object) -> dict[str, object]:
+        return {"merged": False, "reason": "stub"}
+
+    def _fake_create_pr(**kwargs: Any) -> int:
+        captured["body"] = kwargs["body"]
+        return 42
+
+    monkeypatch.setattr(pe, "watch_and_finish", _fake_watch)
+    monkeypatch.setattr(pe, "create_pr", _fake_create_pr)
+    monkeypatch.setattr(pe, "request_copilot_review", lambda *_a, **_k: True)
+    monkeypatch.setattr(pe, "_pr_title_body", lambda _d, _s: ("t", "b"))
+    asyncio.run(
+        pe.run_pr_endgame(
+            spec_dir=spec,
+            spec_id="001-x",
+            worktree=spec,
+            branch="aifactory/001-x",
+            base="main",
+            repo="owner/repo",
+            auto_merge=False,
+            review_tier="low",
+            reviewer="copilot",
+            background=False,
+            trusted=_rec(signed),
+        )
+    )
+    assert "Possible tampering" in captured["body"]

@@ -181,16 +181,14 @@ class RecoveryManager:
         attempts = subtask_data.get("attempts", [])
 
         cutoff_time = datetime.now(UTC) - timedelta(seconds=ATTEMPT_WINDOW_SECONDS)
-        cutoff_time_naive = datetime.now() - timedelta(seconds=ATTEMPT_WINDOW_SECONDS)
 
         recent_count = 0
         for attempt in attempts:
             try:
-                attempt_time = datetime.fromisoformat(attempt["timestamp"])
-                cutoff = (
-                    cutoff_time_naive if attempt_time.tzinfo is None else cutoff_time
+                attempt_time = datetime.fromisoformat(attempt["timestamp"]).astimezone(
+                    UTC
                 )
-                if attempt_time >= cutoff:
+                if attempt_time >= cutoff_time:
                     recent_count += 1
             except (KeyError, ValueError):
                 recent_count += 1

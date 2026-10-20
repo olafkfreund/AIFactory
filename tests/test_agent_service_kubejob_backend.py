@@ -182,13 +182,12 @@ async def test_dispatch_build_job_forwards_pooled_oauth_token(
     assert captured["task_id"] == "p:s1"
 
 
-async def test_dispatch_build_job_releases_token_on_dispatch_error(
+async def test_dispatch_build_job_holds_token_on_dispatch_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # If the Job dispatch raises, the pooled credential is returned immediately
-    # (the Job will never run, so a reaper would never fire to release it).
-    service = await _make_service(tmp_path / "tokerr.db")
+    # A dispatch error cannot establish whether the Job was created.
+    service = AgentService()
 
     monkeypatch.setattr(
         service,
@@ -213,7 +212,8 @@ async def test_dispatch_build_job_releases_token_on_dispatch_error(
             spec_id="s1",
             correlation_key="9",
         )
-    assert released == ["p:s1"]
+    assert released == []
+    assert service._held_credentials == {"p:s1"}
 
 
 async def _noop() -> None:

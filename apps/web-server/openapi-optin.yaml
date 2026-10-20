@@ -1,0 +1,5670 @@
+openapi: 3.1.0
+info:
+  title: AIFactory Web API (opt-in surfaces)
+  description: Routes enabled by SAML_ENABLED, SCIM_ENABLED, AIFACTORY_MCP_REMOTE_ENABLED, AIFACTORY_RMUX_ENABLED
+    and APP_RMUX_ENABLED.
+  version: opt-in
+paths:
+  /api/auth/saml/login:
+    get:
+      tags:
+      - Auth (SAML)
+      summary: Begin SAML SP-init flow
+      description: 'Redirect the browser to the IdP SSO URL with a fresh AuthnRequest.
+
+
+        The ``idp`` query param identifies which configured IdP to use; in
+
+        v1.1 we have at most one SAML IdP per release, so this is mostly
+
+        forward-compatible — we still validate it against the configured
+
+        name so a typo''d link fails loud instead of silently picking the
+
+        default.'
+      operationId: saml_login_api_auth_saml_login_get
+      parameters:
+      - name: idp
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Idp
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/auth/saml/acs:
+    post:
+      tags:
+      - Auth (SAML)
+      summary: SAML Assertion Consumer Service
+      description: "Process a signed SAML assertion + mint our session cookie.\n\nTrust pipeline (each\
+        \ step rejects on failure):\n\n1. ``OneLogin_Saml2_Auth.process_response()`` — signature, audience,\n\
+        \   recipient, NotOnOrAfter, XSW. Refusing here is the most common path.\n2. ``SamlReplayCache.check_and_add()``\
+        \ — duplicate-assertion-id rejection.\n3. ``RelayState`` verification (SP-init only) — HMAC, expiry,\
+        \ ``idp``\n   matches the configured one.\n4. User lookup by email — 403 if SCIM hasn't provisioned\
+        \ the row.\n5. Cross-IdP collision guard — 409 if another-kind identity exists.\n\nOn success:\
+        \ insert/keep the ``ExternalIdentity`` row, stamp\n``users.last_login_at``, set the access-token\
+        \ cookie, 302 to\n``return_to``."
+      operationId: saml_acs_api_auth_saml_acs_post
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Body_saml_acs_api_auth_saml_acs_post'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/auth/saml/metadata:
+    get:
+      tags:
+      - Auth (SAML)
+      summary: Public SP metadata XML
+      description: 'Return the SP metadata XML the operator uploads at the IdP.
+
+
+        Cacheable; idempotent; safe to expose without auth (the IdP fetches
+
+        this from a public URL by design).
+
+
+        When ``SAML_SLO_ENABLED=true`` the metadata XML includes a
+
+        ``<SingleLogoutService>`` element advertising the HTTP-POST binding
+
+        for the ``/sls`` endpoint (v1.2 decision D-6).'
+      operationId: saml_metadata_api_auth_saml_metadata_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /api/auth/saml/logout:
+    post:
+      tags:
+      - Auth (SAML)
+      summary: SP-initiated SAML SLO
+      description: "Begin a SP-initiated Single Logout.\n\n1. Read the user's NameID (email) from the\
+        \ access-token cookie.\n   Returns 401 when no authenticated session is present — there is\n \
+        \  nothing to log out from.\n2. Mint an HMAC-signed RelayState carrying {nameid, nonce, exp}\n\
+        \   so the SLS callback can detect tampering.\n3. Build a signed SAML LogoutRequest via the OneLogin\
+        \ SDK\n   (``auth.logout()``).\n4. Redirect the browser to the IdP's SLO URL.\n\nReturns 404 when\
+        \ ``SAML_SLO_ENABLED`` is false (default; backward compat).\nReturns 503 when SAML config is incomplete.\n\
+        Returns 503 when the IdP metadata does not advertise a SLO endpoint and\nno ``SAML_IDP_SLO_URL``\
+        \ override is set."
+      operationId: saml_logout_api_auth_saml_logout_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /api/auth/saml/sls:
+    post:
+      tags:
+      - Auth (SAML)
+      summary: SAML Single Logout Service
+      description: "Single Logout Service — handles both SP-init confirmation and IdP-init.\n\n**SP-init\
+        \ confirmation** (browser returns from IdP after we initiated SLO):\n- ``SAMLResponse`` is present,\
+        \ ``RelayState`` is our HMAC-signed token.\n- Validate signature + status. Verify RelayState HMAC.\
+        \ Clear cookies.\n- 302 to the login page.\n\n**IdP-init** (IdP sends a ``LogoutRequest`` to terminate\
+        \ a session):\n- ``SAMLRequest`` is present.\n- Validate signature + audience + replay.\n- Clear\
+        \ session cookies in the HTTP response.\n- Return a signed ``LogoutResponse`` (auto-submit POST\
+        \ form or redirect).\n- Uses ``NoSession`` status when the SP has no live session for the\n  NameID\
+        \ (per decision D-2 — never return 4xx for unknown NameID).\n\nReturns 404 when ``SAML_SLO_ENABLED``\
+        \ is false.\nReturns 400 on any validation failure (tampered RelayState, bad signature,\nreplay,\
+        \ missing required fields)."
+      operationId: saml_sls_api_auth_saml_sls_post
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Body_saml_sls_api_auth_saml_sls_post'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /scim/v2/Users:
+    post:
+      tags:
+      - SCIM
+      summary: Scim Create User
+      description: Create a SCIM User. 409 on email collision. 400 if userName != emails[0].value.
+      operationId: scim_create_user_scim_v2_Users_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: If-Match
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: If-Match
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScimUser'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    get:
+      tags:
+      - SCIM
+      summary: Scim List Users
+      description: 'List Users with optional filter + paging.
+
+
+        Soft-deleted users (``is_active=false``) are excluded by default.
+
+        They are included ONLY when the filter is ``active eq false``.
+
+        This matches Azure AD''s sync pattern: it lists all active users
+
+        during normal sync; listing inactive users is an explicit audit action.'
+      operationId: scim_list_users_scim_v2_Users_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: filter
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Filter
+      - name: startIndex
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 1
+          title: Startindex
+      - name: count
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 100
+          title: Count
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /scim/v2/Users/{user_id}:
+    get:
+      tags:
+      - SCIM
+      summary: Scim Get User
+      description: 'Return a single User. 404 if missing OR soft-deleted.
+
+
+        Returning 404 on soft-deleted rows is intentional: Azure AD
+
+        re-GETs after DELETE and expects 404 to confirm the deprovisioning
+
+        completed. Returning 200 with active=false would cause a sync loop.'
+      operationId: scim_get_user_scim_v2_Users__user_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: User Id
+      - name: If-Match
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: If-Match
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    patch:
+      tags:
+      - SCIM
+      summary: Scim Patch User
+      description: 'Per-attribute update per RFC 7644 §3.5.2.
+
+
+        Azure AD sends capitalised ops (``Add``, ``Replace``, ``Remove``).
+
+        The ScimPatchOperation model accepts both; we normalise to lowercase
+
+        before dispatch in _apply_user_patch.'
+      operationId: scim_patch_user_scim_v2_Users__user_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: User Id
+      - name: If-Match
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: If-Match
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScimPatchRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    put:
+      tags:
+      - SCIM
+      summary: Scim Replace User
+      description: Whole-resource replace. 404 if missing or soft-deleted.
+      operationId: scim_replace_user_scim_v2_Users__user_id__put
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: User Id
+      - name: If-Match
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: If-Match
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScimUser'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - SCIM
+      summary: Scim Delete User
+      description: 'Soft-delete: sets ``is_active=False``. Preserves row for audit.
+
+
+        A subsequent GET on this user returns 404, matching Azure AD''s
+
+        expectation that a deprovisioned user is gone from SCIM''s perspective.'
+      operationId: scim_delete_user_scim_v2_Users__user_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: User Id
+      - name: If-Match
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: If-Match
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /scim/v2/Groups:
+    post:
+      tags:
+      - SCIM
+      summary: Scim Create Group
+      description: Create a SCIM Group. 409 if externalId already exists.
+      operationId: scim_create_group_scim_v2_Groups_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: If-Match
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: If-Match
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScimGroup'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    get:
+      tags:
+      - SCIM
+      summary: Scim List Groups
+      description: List Groups with optional filter + paging.
+      operationId: scim_list_groups_scim_v2_Groups_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: filter
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Filter
+      - name: startIndex
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 1
+          title: Startindex
+      - name: count
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 100
+          title: Count
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /scim/v2/Groups/{group_id}:
+    get:
+      tags:
+      - SCIM
+      summary: Scim Get Group
+      description: Return a single Group. 404 if missing or soft-deleted.
+      operationId: scim_get_group_scim_v2_Groups__group_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: group_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Group Id
+      - name: If-Match
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: If-Match
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    patch:
+      tags:
+      - SCIM
+      summary: Scim Patch Group
+      description: 'Per-attribute update per RFC 7644 §3.5.2.
+
+
+        ``op: add`` on ``members`` MUST append, never replace. Azure AD
+
+        sends incremental member additions as PATCH Add; replacing the
+
+        member list would break its sync.'
+      operationId: scim_patch_group_scim_v2_Groups__group_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: group_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Group Id
+      - name: If-Match
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: If-Match
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScimPatchRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    put:
+      tags:
+      - SCIM
+      summary: Scim Replace Group
+      description: Whole-resource replace. Replaces members list atomically.
+      operationId: scim_replace_group_scim_v2_Groups__group_id__put
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: group_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Group Id
+      - name: If-Match
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: If-Match
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScimGroup'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - SCIM
+      summary: Scim Delete Group
+      description: 'Soft-delete: sets ``active=False``. Preserves row + members for audit.'
+      operationId: scim_delete_group_scim_v2_Groups__group_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: group_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Group Id
+      - name: If-Match
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: If-Match
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp-remote/sse:
+    get:
+      tags:
+      - MCP-Remote
+      summary: Sse Endpoint
+      description: 'SSE connection endpoint — long-lived event stream for one MCP client.
+
+
+        The client sends an ``Authorization: Bearer acw_<key>`` header. We
+
+        validate it via our adapter (NOT the legacy middleware), set the
+
+        ContextVar, then hand off to ``SseServerTransport.connect_sse``
+
+        which holds the connection open and dispatches incoming messages.'
+      operationId: sse_endpoint_api_mcp_remote_sse_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /api/mcp-remote/messages/:
+    post:
+      tags:
+      - MCP-Remote
+      summary: Messages Endpoint
+      description: 'Inbound JSON-RPC message endpoint for the SSE transport.
+
+
+        SseServerTransport''s ``handle_post_message`` does the body parsing
+
+        and delivery into the active SSE session. We authenticate per-call
+
+        here too because the SSE session''s auth context is per-connection
+
+        but message posts come on separate HTTP requests.'
+      operationId: messages_endpoint_api_mcp_remote_messages__post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /api/tasks/{spec_id}/agent-console/attach:
+    post:
+      tags:
+      - rmux Live Console
+      summary: Attach
+      description: 'Flip the named connection into bidirectional input mode.
+
+
+        On success: 200, writes ``audit.action=console.attach`` row.
+
+        On race lost: 409, no audit row.
+
+        On unknown spec: 404.
+
+
+        The audit row binds (user_id, org_id, ip, connection_id, spec_id)
+
+        so an investigator can answer "who attached when?" for any session.'
+      operationId: attach_api_tasks__spec_id__agent_console_attach_post
+      parameters:
+      - name: spec_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Spec Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttachRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/{spec_id}/agent-console/detach:
+    post:
+      tags:
+      - rmux Live Console
+      summary: Detach
+      description: 'Release attach mode held by ``connection_id``.
+
+
+        Only the holder can detach (gates against a hostile client
+
+        detaching someone else''s session).  Writes ``console.detach``.
+
+
+        Returns 200 even if the connection wasn''t the holder, so the WS
+
+        disconnect cleanup path can be fire-and-forget — that case is
+
+        benign (race between client close and explicit detach).'
+      operationId: detach_api_tasks__spec_id__agent_console_detach_post
+      parameters:
+      - name: spec_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Spec Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttachRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+components:
+  schemas:
+    APIKeyRequest:
+      properties:
+        api_key:
+          type: string
+          minLength: 5
+          format: password
+          title: Api Key
+          writeOnly: true
+      type: object
+      required:
+      - api_key
+      title: APIKeyRequest
+    ActiveProfileRequest:
+      properties:
+        profileId:
+          type: string
+          title: Profileid
+      type: object
+      required:
+      - profileId
+      title: ActiveProfileRequest
+    AddRemoteRequest:
+      properties:
+        projectPath:
+          type: string
+          title: Projectpath
+        repoFullName:
+          type: string
+          title: Repofullname
+      type: object
+      required:
+      - projectPath
+      - repoFullName
+      title: AddRemoteRequest
+    ApiKeyResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        name:
+          type: string
+          title: Name
+        org_id:
+          type: string
+          title: Org Id
+        scopes:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Scopes
+        key_preview:
+          type: string
+          title: Key Preview
+        last_used_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Last Used At
+        expires_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Expires At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - id
+      - name
+      - org_id
+      - scopes
+      - key_preview
+      - last_used_at
+      - expires_at
+      - created_at
+      title: ApiKeyResponse
+    ApiProfileModels:
+      properties:
+        default:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Default
+          description: Default model (maps to ANTHROPIC_MODEL)
+        haiku:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Haiku
+          description: Haiku model (maps to ANTHROPIC_DEFAULT_HAIKU_MODEL)
+        sonnet:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Sonnet
+          description: Sonnet model (maps to ANTHROPIC_DEFAULT_SONNET_MODEL)
+        opus:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Opus
+          description: Opus model (maps to ANTHROPIC_DEFAULT_OPUS_MODEL)
+      type: object
+      title: ApiProfileModels
+      description: Optional model mappings for API profile.
+    ApiProfileUpdate:
+      properties:
+        name:
+          anyOf:
+          - type: string
+            maxLength: 100
+            minLength: 1
+          - type: 'null'
+          title: Name
+          description: Profile name (1-100 characters)
+        baseUrl:
+          anyOf:
+          - type: string
+            minLength: 1
+          - type: 'null'
+          title: Baseurl
+          description: API endpoint URL
+        apiKey:
+          anyOf:
+          - type: string
+            minLength: 20
+          - type: 'null'
+          title: Apikey
+          description: API key (minimum 20 characters)
+        models:
+          anyOf:
+          - $ref: '#/components/schemas/ApiProfileModels'
+          - type: 'null'
+          description: Optional model mappings
+      type: object
+      title: ApiProfileUpdate
+      description: 'Model for updating API profile configuration.
+
+
+        All fields are optional to support partial updates. Only provided fields
+
+        will be updated in the profile.'
+    AppSettings:
+      properties:
+        theme:
+          type: string
+          enum:
+          - light
+          - dark
+          - system
+          title: Theme
+          description: UI theme (dark/light/system)
+          default: dark
+        colorTheme:
+          anyOf:
+          - type: string
+            const: ocean
+          - type: 'null'
+          title: Colortheme
+          description: Color theme (default/dusk/lime/ocean/retro/neo/forest)
+          default: ocean
+        language:
+          type: string
+          title: Language
+          description: UI language code
+          default: en
+        uiScale:
+          anyOf:
+          - type: integer
+            maximum: 200.0
+            minimum: 75.0
+          - type: 'null'
+          title: Uiscale
+          description: UI scale percentage (75-200)
+          default: 125
+        default_model:
+          type: string
+          title: Default Model
+          description: Default Claude model for tasks
+          default: claude-sonnet-4-5-20250929
+        agentFramework:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agentframework
+          description: Agent framework to use
+          default: claude-code
+        thinking_level:
+          type: string
+          title: Thinking Level
+          description: Thinking level (none, standard, extended)
+          default: extended
+        max_thinking_tokens:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Max Thinking Tokens
+          description: Max thinking tokens (None for unlimited)
+        selectedAgentProfile:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Selectedagentprofile
+          description: Selected agent profile ID
+        auto_continue:
+          type: boolean
+          title: Auto Continue
+          description: Automatically continue to next phase after spec creation
+          default: true
+        auto_qa:
+          type: boolean
+          title: Auto Qa
+          description: Automatically run QA after implementation
+          default: true
+        default_shell:
+          type: string
+          title: Default Shell
+          description: Default shell for terminals
+          default: /bin/bash
+        terminal_font_size:
+          type: integer
+          title: Terminal Font Size
+          description: Terminal font size
+          default: 14
+        autoNameTerminals:
+          type: boolean
+          title: Autonameterminals
+          description: Auto-generate terminal names
+          default: true
+        preferredIDE:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Preferredide
+          description: Preferred IDE
+        customIDEPath:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Customidepath
+          description: Custom IDE path
+        preferredTerminal:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Preferredterminal
+          description: Preferred terminal
+        customTerminalPath:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Customterminalpath
+          description: Custom terminal path
+        github_enabled:
+          type: boolean
+          title: Github Enabled
+          description: Enable GitHub integration
+          default: false
+        graphiti_enabled:
+          type: boolean
+          title: Graphiti Enabled
+          description: Enable Graphiti memory
+          default: true
+        memoryEnabled:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Memoryenabled
+          description: Enable memory system
+        memoryEmbeddingProvider:
+          anyOf:
+          - type: string
+            enum:
+            - openai
+            - voyage
+            - azure_openai
+            - ollama
+            - google
+            - openrouter
+          - type: 'null'
+          title: Memoryembeddingprovider
+          description: Memory embedding provider (openai/voyage/azure_openai/ollama/google/openrouter)
+        autoBuildPath:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Autobuildpath
+          description: Path to Magestic AI backend (apps/backend directory)
+        autoUpdateAutoBuild:
+          type: boolean
+          title: Autoupdateautobuild
+          description: Auto-update Magestic AI source
+          default: true
+        globalClaudeOAuthToken:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Globalclaudeoauthtoken
+          description: Global Claude OAuth token
+        globalOpenAIApiKey:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Globalopenaiapikey
+          description: Global OpenAI API key
+        globalAnthropicApiKey:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Globalanthropicapikey
+          description: Global Anthropic API key
+        onboardingCompleted:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Onboardingcompleted
+          description: Whether onboarding is completed
+        betaUpdates:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Betaupdates
+          description: Opt into beta updates
+          default: false
+        bmadSessionSegmentation:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Bmadsessionsegmentation
+          description: Enable session segmentation
+          default: false
+        soloMode:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Solomode
+          description: Enable solo mode (single self-directed agent)
+          default: false
+        parallel_execution:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Parallel Execution
+          description: Default parallel (multi-agent) build execution for new builds; None = unset (defer
+            to AIFACTORY_INTAKE_PARALLEL, else off)
+        parallel_workers:
+          type: integer
+          maximum: 8.0
+          minimum: 1.0
+          title: Parallel Workers
+          description: Default max concurrent subtasks per wave when parallelExecution is on (1-8)
+          default: 3
+        emailMicrosoftClientId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Emailmicrosoftclientid
+          description: Microsoft OAuth Client ID for email notifications
+        emailMicrosoftClientSecret:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Emailmicrosoftclientsecret
+          description: Microsoft OAuth Client Secret for email notifications
+        emailGoogleClientId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Emailgoogleclientid
+          description: Google OAuth Client ID for email notifications
+        emailGoogleClientSecret:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Emailgoogleclientsecret
+          description: Google OAuth Client Secret for email notifications
+        llmProvider:
+          anyOf:
+          - type: string
+            enum:
+            - ollama
+            - anthropic
+            - openai
+          - type: 'null'
+          title: Llmprovider
+          default: ollama
+        llmOllamaBaseUrl:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Llmollamabaseurl
+          default: http://localhost:11434
+        llmOllamaModel:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Llmollamamodel
+          default: qwen3-30b-local:latest
+        llmAnthropicModel:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Llmanthropicmodel
+          default: claude-sonnet-4-5-20250929
+        llmOpenaiModel:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Llmopenaimodel
+          default: gpt-4o
+        llmOpenaiBaseUrl:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Llmopenaibaseurl
+        phaseModels:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Phasemodels
+          description: 'Per-phase model overrides, e.g. {spec: ''opus'', coding: ''ollama:llama3''}. Valid
+            keys: spec, planning, coding, qa, qa_fixer. Values may be any non-empty string (provider-prefixed
+            or plain shorthand).'
+      additionalProperties: true
+      type: object
+      title: AppSettings
+      description: Application settings model.
+    ApplyCorrectionRequest:
+      properties:
+        fix_request_md:
+          type: string
+          title: Fix Request Md
+          description: QA_FIX_REQUEST.md body to apply
+        source:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source
+          description: Origin, e.g. 'triage' or 'visual_inspection'
+        confirm:
+          type: boolean
+          title: Confirm
+          description: Required true to write + run the QA Fixer
+          default: false
+        triage:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Triage
+          description: Structured triage report (TFactory#283). When present it is schema-validated before
+            the QA Fixer runs; malformed reports are rejected.
+        manifest_hash:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Manifest Hash
+          description: TFactory assertion-manifest hash, recorded for audit
+        correlation_key:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Correlation Key
+          description: RFC-0001 correlation key for keyed observability
+        tfactory_task_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Tfactory Task Id
+          description: TFactory workspace id
+        tfactory_callback_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Tfactory Callback Url
+          description: URL AIFactory calls back when the fix completes
+      type: object
+      required:
+      - fix_request_md
+      title: ApplyCorrectionRequest
+      description: 'A correction hand-back from an external test tool (e.g. TFactory, #317).
+
+
+        Fields below ``confirm`` are the additive #467 typed-handback contract. They
+
+        are all optional, so the legacy markdown-only POST keeps working untouched
+
+        until TFactory cuts over to sending the structured ``triage`` block.'
+    ApprovePlanRequest:
+      properties:
+        auto_restart:
+          type: boolean
+          title: Auto Restart
+          description: Auto-restart task after approval
+          default: true
+      type: object
+      title: ApprovePlanRequest
+      description: Request to approve a plan.
+    ArchiveTasksRequest:
+      properties:
+        taskIds:
+          items:
+            type: string
+          type: array
+          title: Taskids
+          description: List of task IDs to archive
+        version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Version
+          description: Version tag for the archive (e.g., 'v1.2.0')
+      type: object
+      required:
+      - taskIds
+      title: ArchiveTasksRequest
+      description: Request to archive tasks.
+    AssignPRRequest:
+      properties:
+        username:
+          type: string
+          title: Username
+      type: object
+      required:
+      - username
+      title: AssignPRRequest
+    AttachRequest:
+      properties:
+        connection_id:
+          type: string
+          maxLength: 64
+          minLength: 1
+          title: Connection Id
+          description: UUID v4 from the WS handshake's `connected` frame
+      type: object
+      required:
+      - connection_id
+      title: AttachRequest
+      description: 'Body for ``POST /attach``.
+
+
+        ``connection_id`` MUST match the value the server sent on the WS
+
+        handshake''s first frame — that''s how we bind the audit row + the
+
+        attach right to a specific browser tab.'
+    AuditLogEntry:
+      properties:
+        id:
+          type: string
+          title: Id
+        org_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Org Id
+        user_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: User Id
+        user_email:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: User Email
+        user_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: User Name
+        action:
+          type: string
+          title: Action
+        resource_type:
+          type: string
+          title: Resource Type
+        resource_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Resource Id
+        details:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Details
+        ip:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Ip
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - id
+      - org_id
+      - user_id
+      - action
+      - resource_type
+      - resource_id
+      - ip
+      - created_at
+      title: AuditLogEntry
+      description: Single audit log entry returned to the client.
+    AuditLogListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/AuditLogEntry'
+          type: array
+          title: Items
+        total:
+          type: integer
+          title: Total
+        offset:
+          type: integer
+          title: Offset
+        limit:
+          type: integer
+          title: Limit
+      type: object
+      required:
+      - items
+      - total
+      - offset
+      - limit
+      title: AuditLogListResponse
+      description: Paginated list of audit log entries.
+    AuthResponse:
+      properties:
+        user:
+          $ref: '#/components/schemas/UserResponse'
+        access_token:
+          type: string
+          title: Access Token
+        refresh_token:
+          type: string
+          title: Refresh Token
+      type: object
+      required:
+      - user
+      - access_token
+      - refresh_token
+      title: AuthResponse
+    AutoFixConfigPayload:
+      properties:
+        enabled:
+          type: boolean
+          title: Enabled
+          default: false
+        labels:
+          items:
+            type: string
+          type: array
+          title: Labels
+        requireHumanApproval:
+          type: boolean
+          title: Requirehumanapproval
+          default: false
+        botToken:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Bottoken
+          default: ''
+        model:
+          type: string
+          title: Model
+          default: sonnet
+        thinkingLevel:
+          type: string
+          title: Thinkinglevel
+          default: none
+      type: object
+      title: AutoFixConfigPayload
+      description: Mirrors AutoFixConfig at apps/frontend-web/src/shared/types/github-api.ts:21
+    AutoSwitchSettingsUpdate:
+      properties:
+        enabled:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Enabled
+        threshold:
+          anyOf:
+          - type: integer
+            maximum: 100.0
+            minimum: 0.0
+          - type: 'null'
+          title: Threshold
+          description: Usage threshold percentage (0-100)
+        proactiveSwapEnabled:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Proactiveswapenabled
+        autoSwitchOnRateLimit:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Autoswitchonratelimit
+        usageCheckInterval:
+          anyOf:
+          - type: integer
+            minimum: 0.0
+          - type: 'null'
+          title: Usagecheckinterval
+          description: Usage polling interval in ms (0 disables)
+        sessionThreshold:
+          anyOf:
+          - type: integer
+            maximum: 100.0
+            minimum: 0.0
+          - type: 'null'
+          title: Sessionthreshold
+          description: Percent threshold for session usage
+        weeklyThreshold:
+          anyOf:
+          - type: integer
+            maximum: 100.0
+            minimum: 0.0
+          - type: 'null'
+          title: Weeklythreshold
+          description: Percent threshold for weekly usage
+      type: object
+      title: AutoSwitchSettingsUpdate
+      description: Model for updating auto-switch settings.
+    Body_pull_ollama_model_api_settings_ollama_pull_post:
+      properties:
+        modelName:
+          type: string
+          title: Modelname
+        ollamaBaseUrl:
+          type: string
+          title: Ollamabaseurl
+          default: http://localhost:11434
+      type: object
+      required:
+      - modelName
+      title: Body_pull_ollama_model_api_settings_ollama_pull_post
+    Body_saml_acs_api_auth_saml_acs_post:
+      properties:
+        SAMLResponse:
+          type: string
+          title: Samlresponse
+        RelayState:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Relaystate
+      type: object
+      required:
+      - SAMLResponse
+      title: Body_saml_acs_api_auth_saml_acs_post
+    Body_saml_sls_api_auth_saml_sls_post:
+      properties:
+        SAMLResponse:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Samlresponse
+        SAMLRequest:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Samlrequest
+        RelayState:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Relaystate
+      type: object
+      title: Body_saml_sls_api_auth_saml_sls_post
+    Body_test_ollama_connection_api_settings_ollama_test_post:
+      properties:
+        ollamaBaseUrl:
+          type: string
+          title: Ollamabaseurl
+        modelName:
+          type: string
+          title: Modelname
+      type: object
+      required:
+      - ollamaBaseUrl
+      - modelName
+      title: Body_test_ollama_connection_api_settings_ollama_test_post
+    BranchDiffOptions:
+      properties:
+        baseBranch:
+          type: string
+          title: Basebranch
+        compareBranch:
+          type: string
+          title: Comparebranch
+        baseBranchRef:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Basebranchref
+        compareBranchRef:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Comparebranchref
+      type: object
+      required:
+      - baseBranch
+      - compareBranch
+      title: BranchDiffOptions
+    ChangelogGenerateRequest:
+      properties:
+        sourceMode:
+          type: string
+          title: Sourcemode
+        version:
+          type: string
+          title: Version
+        date:
+          type: string
+          title: Date
+        format:
+          type: string
+          title: Format
+        audience:
+          type: string
+          title: Audience
+        emojiLevel:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Emojilevel
+        customInstructions:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Custominstructions
+        taskIds:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Taskids
+        gitHistory:
+          anyOf:
+          - $ref: '#/components/schemas/GitHistoryOptions'
+          - type: 'null'
+        branchDiff:
+          anyOf:
+          - $ref: '#/components/schemas/BranchDiffOptions'
+          - type: 'null'
+      type: object
+      required:
+      - sourceMode
+      - version
+      - date
+      - format
+      - audience
+      title: ChangelogGenerateRequest
+    ChangelogSaveRequest:
+      properties:
+        content:
+          type: string
+          title: Content
+        version:
+          type: string
+          title: Version
+        format:
+          type: string
+          title: Format
+          default: markdown
+      type: object
+      required:
+      - content
+      - version
+      title: ChangelogSaveRequest
+    ClarificationAnswer:
+      properties:
+        questionId:
+          type: string
+          title: Questionid
+        question:
+          type: string
+          title: Question
+        answer:
+          type: string
+          title: Answer
+      type: object
+      required:
+      - questionId
+      - question
+      - answer
+      title: ClarificationAnswer
+      description: A single answered clarification question.
+    ClarificationAnswersRequest:
+      properties:
+        answers:
+          items:
+            $ref: '#/components/schemas/ClarificationAnswer'
+          type: array
+          title: Answers
+      type: object
+      required:
+      - answers
+      title: ClarificationAnswersRequest
+      description: Request to submit clarification answers.
+    ClarificationQuestion:
+      properties:
+        id:
+          type: string
+          title: Id
+        question:
+          type: string
+          title: Question
+        options:
+          items:
+            type: string
+          type: array
+          title: Options
+      type: object
+      required:
+      - id
+      - question
+      title: ClarificationQuestion
+      description: A single clarification question with multiple-choice options.
+    ClarificationResponse:
+      properties:
+        questions:
+          items:
+            $ref: '#/components/schemas/ClarificationQuestion'
+          type: array
+          title: Questions
+        skip:
+          type: boolean
+          title: Skip
+          default: false
+        skipReason:
+          type: string
+          title: Skipreason
+          default: ''
+      type: object
+      title: ClarificationResponse
+      description: Response from clarification question generation.
+    ClaudeProfile:
+      properties:
+        id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Id
+        name:
+          type: string
+          title: Name
+        email:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Email
+        token:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Token
+        isActive:
+          type: boolean
+          title: Isactive
+          default: false
+      type: object
+      required:
+      - name
+      title: ClaudeProfile
+      description: 'Claude profile model with frontend-compatible field names.
+
+
+        Uses camelCase field names with snake_case aliases for backward compatibility
+
+        with existing stored data.'
+    ClearLogsResponse:
+      properties:
+        success:
+          type: boolean
+          title: Success
+        message:
+          type: string
+          title: Message
+      type: object
+      required:
+      - success
+      - message
+      title: ClearLogsResponse
+      description: Response for log clearing operation.
+    CommitsPreviewRequest:
+      properties:
+        options:
+          additionalProperties: true
+          type: object
+          title: Options
+        mode:
+          type: string
+          title: Mode
+      type: object
+      required:
+      - options
+      - mode
+      title: CommitsPreviewRequest
+    ConflictResolveOptions:
+      properties:
+        useAI:
+          type: boolean
+          title: Useai
+          default: true
+        strategy:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Strategy
+      type: object
+      title: ConflictResolveOptions
+      description: Options for conflict resolution.
+    CopilotDispatchRequest:
+      properties:
+        repo_full_name:
+          type: string
+          title: Repo Full Name
+          description: GitHub repository in 'owner/repo' format
+        issue_number:
+          type: integer
+          title: Issue Number
+          description: GitHub issue number to assign to Copilot
+        fallback_to_local:
+          type: boolean
+          title: Fallback To Local
+          description: If True, fall back to the local AIFactory pipeline on dispatch failure
+          default: true
+      type: object
+      required:
+      - repo_full_name
+      - issue_number
+      title: CopilotDispatchRequest
+      description: Request to delegate a task to the GitHub Copilot cloud agent.
+    CreateAndRunRequest:
+      properties:
+        auto_continue:
+          type: boolean
+          title: Auto Continue
+          description: Auto-continue to next phase
+          default: true
+        complexity:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Complexity
+          description: Complexity override for spec creation
+        parallel:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Parallel
+          description: Enable parallel execution
+        workers:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Workers
+          description: Number of parallel workers
+        model:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Model
+          description: Model override for execution
+        auto_handover_tfactory:
+          type: boolean
+          title: Auto Handover Tfactory
+          description: Hand the finished build to TFactory for testing on completion (#496)
+          default: false
+        baseBranch:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Basebranch
+          description: Base branch for worktree creation
+        mode:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Mode
+          description: 'Execution mode: ''quick'' for simplified prompts, ''full'' for comprehensive'
+          default: full
+        provenance:
+          anyOf:
+          - $ref: '#/components/schemas/TaskProvenance'
+          - type: 'null'
+          description: Upstream provenance (session_id, issue#) to persist
+      type: object
+      title: CreateAndRunRequest
+      description: Body for create-and-run; adds optional upstream provenance (#332).
+    CreateApiKeyRequest:
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          minLength: 1
+          title: Name
+          description: Human-readable name for the key
+        org_id:
+          type: string
+          title: Org Id
+          description: Organization ID this key is scoped to
+        scopes:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Scopes
+          description: Optional list of permission scopes (e.g. ['read', 'write'])
+        expires_in_days:
+          anyOf:
+          - type: integer
+            maximum: 365.0
+            exclusiveMinimum: 0.0
+          - type: 'null'
+          title: Expires In Days
+          description: Optional expiration in days from now (max 365)
+      type: object
+      required:
+      - name
+      - org_id
+      title: CreateApiKeyRequest
+    CreateApiKeyResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        name:
+          type: string
+          title: Name
+        org_id:
+          type: string
+          title: Org Id
+        scopes:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Scopes
+        key_preview:
+          type: string
+          title: Key Preview
+        last_used_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Last Used At
+        expires_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Expires At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        raw_key:
+          type: string
+          title: Raw Key
+          description: The full API key. Store it securely -- it cannot be retrieved again.
+      type: object
+      required:
+      - id
+      - name
+      - org_id
+      - scopes
+      - key_preview
+      - last_used_at
+      - expires_at
+      - created_at
+      - raw_key
+      title: CreateApiKeyResponse
+      description: 'Returned only on key creation. Contains the raw key which cannot be
+
+        retrieved again after this response.'
+    CreateGitCredentialRequest:
+      properties:
+        org_id:
+          type: string
+          title: Org Id
+          description: Organization that owns this credential
+        name:
+          type: string
+          maxLength: 255
+          minLength: 1
+          title: Name
+          description: Human-readable label
+        token:
+          type: string
+          minLength: 1
+          format: password
+          title: Token
+          description: The Personal Access Token. Never logged, encrypted at rest, cannot be retrieved
+            after creation.
+          writeOnly: true
+        kind:
+          type: string
+          title: Kind
+          description: Credential kind. V1 supports 'pat' only.
+          default: pat
+        host:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Host
+          description: Informational host label (e.g. 'github.com'). Not enforced.
+        username:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Username
+          description: Username for the HTTPS URL injection. Most providers accept 'oauth2' or 'x-token-auth'.
+            Defaults to 'oauth2' if omitted.
+      type: object
+      required:
+      - org_id
+      - name
+      - token
+      title: CreateGitCredentialRequest
+    CreateOrgRequest:
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          minLength: 1
+          title: Name
+        slug:
+          anyOf:
+          - type: string
+            maxLength: 255
+            minLength: 1
+          - type: 'null'
+          title: Slug
+          description: URL-friendly slug. Auto-generated from name if omitted.
+      type: object
+      required:
+      - name
+      title: CreateOrgRequest
+    CreatePRFromTaskOptions:
+      properties:
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+        body:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Body
+        draft:
+          type: boolean
+          title: Draft
+          default: false
+        baseBranch:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Basebranch
+        targetRepo:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Targetrepo
+      type: object
+      title: CreatePRFromTaskOptions
+    CreateRepoRequest:
+      properties:
+        repoName:
+          type: string
+          title: Reponame
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+        private:
+          type: boolean
+          title: Private
+          default: false
+        orgName:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Orgname
+      type: object
+      required:
+      - repoName
+      title: CreateRepoRequest
+    CreateTaskRequest:
+      properties:
+        title:
+          type: string
+          title: Title
+        description:
+          type: string
+          title: Description
+        metadata:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Metadata
+      type: object
+      required:
+      - title
+      - description
+      title: CreateTaskRequest
+    CreateTerminalRequest:
+      properties:
+        id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Id
+          description: Terminal ID (optional - will be generated if not provided)
+        projectId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Projectid
+          description: Project ID - terminal will open in project directory
+        cwd:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Cwd
+          description: Working directory (overrides project_id)
+        projectPath:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Projectpath
+          description: Project path (alternative to project_id)
+        shell:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Shell
+          description: Shell to use (defaults to /bin/bash)
+        cols:
+          type: integer
+          title: Cols
+          description: Terminal width in columns
+          default: 80
+        rows:
+          type: integer
+          title: Rows
+          description: Terminal height in rows
+          default: 24
+      type: object
+      title: CreateTerminalRequest
+      description: Request to create a new terminal.
+    CreateTerminalWorktreeRequest:
+      properties:
+        terminalId:
+          type: string
+          title: Terminalid
+          description: Terminal ID
+        name:
+          type: string
+          title: Name
+          description: Worktree name (lowercase, alphanumeric, dashes, underscores)
+        taskId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Taskid
+          description: Optional task ID association
+        createGitBranch:
+          type: boolean
+          title: Creategitbranch
+          description: Whether to create a git branch
+          default: true
+        projectPath:
+          type: string
+          title: Projectpath
+          description: Project path
+        baseBranch:
+          type: string
+          title: Basebranch
+          description: Base branch to branch from
+          default: main
+      type: object
+      required:
+      - terminalId
+      - name
+      - projectPath
+      title: CreateTerminalWorktreeRequest
+      description: Request to create a new terminal worktree.
+    CreateWorktreeRequest:
+      properties:
+        name:
+          type: string
+          maxLength: 100
+          minLength: 1
+          title: Name
+          description: Worktree name (used for directory and branch)
+        baseBranch:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Basebranch
+          description: Base branch to create worktree from (defaults to current branch)
+        createBranch:
+          type: boolean
+          title: Createbranch
+          description: Whether to create a new branch for the worktree
+          default: true
+      type: object
+      required:
+      - name
+      title: CreateWorktreeRequest
+      description: Request model for creating a git worktree.
+    DirectoryListing:
+      properties:
+        path:
+          type: string
+          title: Path
+        entries:
+          items:
+            $ref: '#/components/schemas/FileEntry'
+          type: array
+          title: Entries
+        parent:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Parent
+      type: object
+      required:
+      - path
+      - entries
+      title: DirectoryListing
+      description: Directory listing response.
+    DoneTasksRequest:
+      properties:
+        tasks:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+          title: Tasks
+      type: object
+      required:
+      - tasks
+      title: DoneTasksRequest
+    EndpointCreate:
+      properties:
+        label:
+          type: string
+          maxLength: 255
+          minLength: 1
+          title: Label
+        base_url:
+          type: string
+          maxLength: 2083
+          minLength: 1
+          format: uri
+          title: Base Url
+        api_key:
+          anyOf:
+          - type: string
+            maxLength: 512
+            format: password
+            writeOnly: true
+          - type: 'null'
+          title: Api Key
+        default_model:
+          type: string
+          maxLength: 255
+          minLength: 1
+          title: Default Model
+        headers:
+          anyOf:
+          - additionalProperties:
+              type: string
+            type: object
+          - type: 'null'
+          title: Headers
+      type: object
+      required:
+      - label
+      - base_url
+      - default_model
+      title: EndpointCreate
+    EndpointResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        label:
+          type: string
+          title: Label
+        base_url:
+          type: string
+          title: Base Url
+        api_key_preview:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Api Key Preview
+        default_model:
+          type: string
+          title: Default Model
+        headers:
+          anyOf:
+          - additionalProperties:
+              type: string
+            type: object
+          - type: 'null'
+          title: Headers
+        created_at:
+          type: string
+          title: Created At
+        updated_at:
+          type: string
+          title: Updated At
+      type: object
+      required:
+      - id
+      - label
+      - base_url
+      - api_key_preview
+      - default_model
+      - headers
+      - created_at
+      - updated_at
+      title: EndpointResponse
+    EndpointTestRequest:
+      properties:
+        base_url:
+          type: string
+          maxLength: 2083
+          minLength: 1
+          format: uri
+          title: Base Url
+        api_key:
+          anyOf:
+          - type: string
+            format: password
+            writeOnly: true
+          - type: 'null'
+          title: Api Key
+        headers:
+          anyOf:
+          - additionalProperties:
+              type: string
+            type: object
+          - type: 'null'
+          title: Headers
+      type: object
+      required:
+      - base_url
+      title: EndpointTestRequest
+      description: For testing arbitrary credentials before saving.
+    EndpointTestResponse:
+      properties:
+        ok:
+          type: boolean
+          title: Ok
+        status_code:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Status Code
+        models:
+          items:
+            type: string
+          type: array
+          title: Models
+          default: []
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
+      type: object
+      required:
+      - ok
+      title: EndpointTestResponse
+    EndpointUpdate:
+      properties:
+        label:
+          anyOf:
+          - type: string
+            maxLength: 255
+            minLength: 1
+          - type: 'null'
+          title: Label
+        base_url:
+          anyOf:
+          - type: string
+            maxLength: 2083
+            minLength: 1
+            format: uri
+          - type: 'null'
+          title: Base Url
+        api_key:
+          anyOf:
+          - type: string
+            maxLength: 512
+            format: password
+            writeOnly: true
+          - type: 'null'
+          title: Api Key
+        default_model:
+          anyOf:
+          - type: string
+            maxLength: 255
+            minLength: 1
+          - type: 'null'
+          title: Default Model
+        headers:
+          anyOf:
+          - additionalProperties:
+              type: string
+            type: object
+          - type: 'null'
+          title: Headers
+      type: object
+      title: EndpointUpdate
+    FileContent:
+      properties:
+        path:
+          type: string
+          title: Path
+        content:
+          type: string
+          title: Content
+        size:
+          type: integer
+          title: Size
+        modified:
+          type: string
+          title: Modified
+        language:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Language
+        encoding:
+          type: string
+          title: Encoding
+          default: utf-8
+      type: object
+      required:
+      - path
+      - content
+      - size
+      - modified
+      title: FileContent
+      description: File content response.
+    FileEntry:
+      properties:
+        name:
+          type: string
+          title: Name
+        path:
+          type: string
+          title: Path
+        type:
+          type: string
+          enum:
+          - file
+          - directory
+          title: Type
+        size:
+          type: integer
+          title: Size
+          default: 0
+        modified:
+          type: string
+          title: Modified
+        extension:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Extension
+        language:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Language
+      type: object
+      required:
+      - name
+      - path
+      - type
+      - modified
+      title: FileEntry
+      description: Single file or directory entry.
+    FileWrite:
+      properties:
+        content:
+          type: string
+          title: Content
+      type: object
+      required:
+      - content
+      title: FileWrite
+      description: File write request.
+    FromIssueRequest:
+      properties:
+        project_id:
+          type: string
+          title: Project Id
+          description: Target AIFactory project id
+        provider:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Provider
+          description: Git provider hint (github|gitlab|azure_devops)
+        repo:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Repo
+          description: 'The task contract''s repo reference, optionally provider-qualified (RFC-0020 3.5):
+            ''owner/repo'' | ''gitlab:group/project'' | ''azure_devops:org/project/repo''. Decides which
+            git HOST this build belongs to, outranking the project''s gitProvider setting, and is recorded
+            on the spec so the PR endgame honours it too.'
+        issue_number:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Issue Number
+          description: Issue/work-item number to fetch via the provider
+        payload:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Payload
+          description: Pre-fetched issue dict (title/body/labels); skips fetch
+        labels:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Labels
+          description: Label names override (e.g. from a webhook)
+        change_mode:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Change Mode
+          description: change-mode; 'migration' forces the hard tier
+        auto_continue:
+          type: boolean
+          title: Auto Continue
+          description: Auto-continue to next phase
+          default: true
+        base_branch:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Base Branch
+          description: Base branch for the worktree
+      type: object
+      required:
+      - project_id
+      title: FromIssueRequest
+      description: Request to ingest a labelled issue as a tier-driven build.
+    FromPlanRequest:
+      properties:
+        auto_continue:
+          type: boolean
+          title: Auto Continue
+          description: Auto-continue to next phase
+          default: true
+        complexity:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Complexity
+          description: Complexity override for spec creation
+        parallel:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Parallel
+          description: Enable parallel execution
+        workers:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Workers
+          description: Number of parallel workers
+        model:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Model
+          description: Model override for execution
+        auto_handover_tfactory:
+          type: boolean
+          title: Auto Handover Tfactory
+          description: Hand the finished build to TFactory for testing on completion (#496)
+          default: false
+        baseBranch:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Basebranch
+          description: Base branch for worktree creation
+        mode:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Mode
+          description: 'Execution mode: ''quick'' for simplified prompts, ''full'' for comprehensive'
+          default: full
+        plan:
+          additionalProperties: true
+          type: object
+          title: Plan
+          description: Signed implementation_plan.json (incl. 'approval')
+        provenance:
+          anyOf:
+          - $ref: '#/components/schemas/TaskProvenance'
+          - type: 'null'
+          description: Upstream provenance to persist alongside the approval
+      type: object
+      required:
+      - plan
+      title: FromPlanRequest
+      description: 'Trusted Plan Handoff (#390): build directly from a signed, vetted plan.
+
+
+        The plan must embed an ``approval`` envelope (see ``trusted_plan.sign_plan``)
+
+        that verifies against an authority key in the environment. On success the
+
+        spec pipeline is skipped and the build starts immediately.'
+    FrontendLogEntry:
+      properties:
+        timestamp:
+          type: string
+          title: Timestamp
+        level:
+          type: string
+          title: Level
+        category:
+          type: string
+          title: Category
+        message:
+          type: string
+          title: Message
+        data:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Data
+        stack:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Stack
+      type: object
+      required:
+      - timestamp
+      - level
+      - category
+      - message
+      title: FrontendLogEntry
+      description: A log entry from the frontend.
+    FrontendLogsRequest:
+      properties:
+        entries:
+          items:
+            $ref: '#/components/schemas/FrontendLogEntry'
+          type: array
+          title: Entries
+      type: object
+      required:
+      - entries
+      title: FrontendLogsRequest
+      description: Request containing frontend log entries.
+    FrontendLogsResponse:
+      properties:
+        success:
+          type: boolean
+          title: Success
+        received:
+          type: integer
+          title: Received
+      type: object
+      required:
+      - success
+      - received
+      title: FrontendLogsResponse
+      description: Response for frontend log submission.
+    GenerateTaskRequest:
+      properties:
+        modelConfig:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Modelconfig
+      type: object
+      title: GenerateTaskRequest
+    GitCredentialResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        org_id:
+          type: string
+          title: Org Id
+        name:
+          type: string
+          title: Name
+        kind:
+          type: string
+          title: Kind
+        host:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Host
+        username:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Username
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        last_used_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Last Used At
+      type: object
+      required:
+      - id
+      - org_id
+      - name
+      - kind
+      - host
+      - username
+      - created_at
+      - last_used_at
+      title: GitCredentialResponse
+      description: Response shape — never carries the token plaintext.
+    GitHistoryOptions:
+      properties:
+        type:
+          type: string
+          title: Type
+        count:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Count
+        sinceDate:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Sincedate
+        fromTag:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Fromtag
+        toTag:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Totag
+        includeMergeCommits:
+          type: boolean
+          title: Includemergecommits
+          default: false
+      type: object
+      required:
+      - type
+      title: GitHistoryOptions
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    ImportIssuesRequest:
+      properties:
+        issueNumbers:
+          items:
+            type: integer
+          type: array
+          title: Issuenumbers
+      type: object
+      required:
+      - issueNumbers
+      title: ImportIssuesRequest
+    InboxEnqueueResponse:
+      properties:
+        messageId:
+          type: string
+          title: Messageid
+        delivered:
+          type: boolean
+          title: Delivered
+        recipient:
+          type: string
+          title: Recipient
+      type: object
+      required:
+      - messageId
+      - delivered
+      - recipient
+      title: InboxEnqueueResponse
+      description: Response after enqueuing an inbox message.
+    InboxMessage:
+      properties:
+        from:
+          type: string
+          title: From
+        text:
+          type: string
+          title: Text
+        summary:
+          type: string
+          title: Summary
+        timestamp:
+          type: string
+          title: Timestamp
+        messageId:
+          type: string
+          title: Messageid
+        read:
+          type: boolean
+          title: Read
+      type: object
+      required:
+      - from
+      - text
+      - summary
+      - timestamp
+      - messageId
+      - read
+      title: InboxMessage
+      description: A stored inbox message.
+    InboxMessageCreate:
+      properties:
+        text:
+          type: string
+          minLength: 1
+          title: Text
+          description: Message body for the agent
+        recipient:
+          type: string
+          title: Recipient
+          description: Logical agent recipient (e.g. 'agent', 'coder', 'planner')
+          default: agent
+        sender:
+          type: string
+          title: Sender
+          description: Sender identity
+          default: user
+        summary:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Summary
+          description: Optional short summary (auto-derived if omitted)
+      type: object
+      required:
+      - text
+      title: InboxMessageCreate
+      description: Request to deliver a directed message to a running task's agent.
+    InitGitRequest:
+      properties:
+        path:
+          type: string
+          title: Path
+      type: object
+      required:
+      - path
+      title: InitGitRequest
+    InsightsMessageRequest:
+      properties:
+        message:
+          type: string
+          title: Message
+        modelConfig:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Modelconfig
+      type: object
+      required:
+      - message
+      title: InsightsMessageRequest
+    InvestigateRequest:
+      properties:
+        selectedCommentIds:
+          anyOf:
+          - items:
+              anyOf:
+              - type: integer
+              - type: string
+            type: array
+          - type: 'null'
+          title: Selectedcommentids
+      type: object
+      title: InvestigateRequest
+    InviteMemberRequest:
+      properties:
+        email:
+          type: string
+          format: email
+          title: Email
+        role:
+          type: string
+          title: Role
+          description: 'Role: viewer, member, admin'
+          default: member
+      type: object
+      required:
+      - email
+      title: InviteMemberRequest
+    LoadSpecsRequest:
+      properties:
+        taskIds:
+          items:
+            type: string
+          type: array
+          title: Taskids
+      type: object
+      required:
+      - taskIds
+      title: LoadSpecsRequest
+    LogEntry:
+      properties:
+        timestamp:
+          type: string
+          title: Timestamp
+        level:
+          type: string
+          title: Level
+        logger:
+          type: string
+          title: Logger
+        message:
+          type: string
+          title: Message
+        raw:
+          type: string
+          title: Raw
+      type: object
+      required:
+      - timestamp
+      - level
+      - logger
+      - message
+      - raw
+      title: LogEntry
+      description: A single log entry.
+    LogFilesResponse:
+      properties:
+        files:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+          title: Files
+        log_dir:
+          type: string
+          title: Log Dir
+      type: object
+      required:
+      - files
+      - log_dir
+      title: LogFilesResponse
+      description: Response listing available log files.
+    LoginRequest:
+      properties:
+        email:
+          type: string
+          format: email
+          title: Email
+        password:
+          type: string
+          format: password
+          title: Password
+          writeOnly: true
+      type: object
+      required:
+      - email
+      - password
+      title: LoginRequest
+    LogoutRequest:
+      properties:
+        refresh_token:
+          anyOf:
+          - type: string
+            format: password
+            writeOnly: true
+          - type: 'null'
+          title: Refresh Token
+      type: object
+      title: LogoutRequest
+    LogsResponse:
+      properties:
+        entries:
+          items:
+            $ref: '#/components/schemas/LogEntry'
+          type: array
+          title: Entries
+        total:
+          type: integer
+          title: Total
+        log_type:
+          type: string
+          title: Log Type
+        log_file:
+          type: string
+          title: Log File
+      type: object
+      required:
+      - entries
+      - total
+      - log_type
+      - log_file
+      title: LogsResponse
+      description: Response containing log entries.
+    MarkAllReadResponse:
+      properties:
+        success:
+          type: boolean
+          title: Success
+        count:
+          type: integer
+          title: Count
+      type: object
+      required:
+      - success
+      - count
+      title: MarkAllReadResponse
+      description: Response for mark-all-read operations.
+    MarkReadResponse:
+      properties:
+        success:
+          type: boolean
+          title: Success
+      type: object
+      required:
+      - success
+      title: MarkReadResponse
+      description: Response for mark-read operations.
+    McpServerConfig:
+      properties:
+        id:
+          type: string
+          title: Id
+        name:
+          type: string
+          title: Name
+        type:
+          type: string
+          title: Type
+        command:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Command
+        args:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Args
+        url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Url
+        headers:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Headers
+      type: object
+      required:
+      - id
+      - name
+      - type
+      title: McpServerConfig
+    MergePRRequest:
+      properties:
+        mergeMethod:
+          type: string
+          title: Mergemethod
+          default: squash
+      type: object
+      title: MergePRRequest
+    MessageResponse:
+      properties:
+        message:
+          type: string
+          title: Message
+      type: object
+      required:
+      - message
+      title: MessageResponse
+    NotificationListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/NotificationResponse'
+          type: array
+          title: Items
+        unread_count:
+          type: integer
+          title: Unread Count
+      type: object
+      required:
+      - items
+      - unread_count
+      title: NotificationListResponse
+      description: List of notifications with metadata.
+    NotificationResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        user_id:
+          type: string
+          title: User Id
+        type:
+          type: string
+          title: Type
+        title:
+          type: string
+          title: Title
+        message:
+          type: string
+          title: Message
+        data:
+          additionalProperties: true
+          type: object
+          title: Data
+        read:
+          type: boolean
+          title: Read
+        created_at:
+          type: string
+          title: Created At
+      type: object
+      required:
+      - id
+      - user_id
+      - type
+      - title
+      - message
+      - data
+      - read
+      - created_at
+      title: NotificationResponse
+      description: A single notification returned to the client.
+    NotificationSettingsUpdate:
+      properties:
+        onTaskComplete:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Ontaskcomplete
+        onTaskFailed:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Ontaskfailed
+        onReviewNeeded:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Onreviewneeded
+        sound:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Sound
+        emailEnabled:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Emailenabled
+      type: object
+      title: NotificationSettingsUpdate
+      description: Model for updating notification settings.
+    OpenAICompatTestRequest:
+      properties:
+        baseUrl:
+          type: string
+          title: Baseurl
+          description: Base URL of the OpenAI-compatible server
+        apiKey:
+          anyOf:
+          - type: string
+            format: password
+            writeOnly: true
+          - type: 'null'
+          title: Apikey
+          description: Optional API key for authentication
+      type: object
+      required:
+      - baseUrl
+      title: OpenAICompatTestRequest
+      description: Request model for testing an OpenAI-compatible server connection.
+    OpenInIDERequest:
+      properties:
+        worktreePath:
+          type: string
+          title: Worktreepath
+        ide:
+          type: string
+          title: Ide
+        customPath:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Custompath
+          description: 'customPath is no longer accepted: it let the request body choose the program the
+            server executes, outside the agent sandbox, for any token holder. Use the `ide`/`terminal`
+            name instead. See issue #1267 for the operator-side allowlist that would replace it.'
+      type: object
+      required:
+      - worktreePath
+      - ide
+      title: OpenInIDERequest
+      description: Request body for opening a path in IDE.
+    OpenInTerminalRequest:
+      properties:
+        worktreePath:
+          type: string
+          title: Worktreepath
+        terminal:
+          type: string
+          title: Terminal
+        customPath:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Custompath
+          description: 'customPath is no longer accepted: it let the request body choose the program the
+            server executes, outside the agent sandbox, for any token holder. Use the `ide`/`terminal`
+            name instead. See issue #1267 for the operator-side allowlist that would replace it.'
+      type: object
+      required:
+      - worktreePath
+      - terminal
+      title: OpenInTerminalRequest
+      description: Request body for opening a path in terminal.
+    OrgMemberResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        user_id:
+          type: string
+          title: User Id
+        email:
+          type: string
+          title: Email
+        name:
+          type: string
+          title: Name
+        avatar_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Avatar Url
+        role:
+          type: string
+          title: Role
+        joined_at:
+          type: string
+          format: date-time
+          title: Joined At
+      type: object
+      required:
+      - id
+      - user_id
+      - email
+      - name
+      - avatar_url
+      - role
+      - joined_at
+      title: OrgMemberResponse
+    OrgResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        name:
+          type: string
+          title: Name
+        slug:
+          type: string
+          title: Slug
+        owner_id:
+          type: string
+          title: Owner Id
+        plan:
+          type: string
+          title: Plan
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        member_count:
+          type: integer
+          title: Member Count
+        user_role:
+          type: string
+          title: User Role
+      type: object
+      required:
+      - id
+      - name
+      - slug
+      - owner_id
+      - plan
+      - created_at
+      - member_count
+      - user_role
+      title: OrgResponse
+    PRReviewRequest:
+      properties:
+        followup:
+          type: boolean
+          title: Followup
+          default: false
+      type: object
+      title: PRReviewRequest
+    PaginatedSkillList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/SkillSummary'
+          type: array
+          title: Items
+        total:
+          type: integer
+          title: Total
+          description: Total number of skills matching the query
+        page:
+          type: integer
+          title: Page
+          description: Current page (1-based)
+        limit:
+          type: integer
+          title: Limit
+          description: Items per page
+        has_next:
+          type: boolean
+          title: Has Next
+          description: Whether there is a next page
+      type: object
+      required:
+      - items
+      - total
+      - page
+      - limit
+      - has_next
+      title: PaginatedSkillList
+      description: Paginated list of skill summaries.
+    PersistTokenRequest:
+      properties:
+        projectId:
+          type: string
+          title: Projectid
+      type: object
+      required:
+      - projectId
+      title: PersistTokenRequest
+    PostPRCommentRequest:
+      properties:
+        body:
+          type: string
+          title: Body
+      type: object
+      required:
+      - body
+      title: PostPRCommentRequest
+    PostPRReviewRequest:
+      properties:
+        selectedFindingIds:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Selectedfindingids
+      type: object
+      title: PostPRReviewRequest
+    PreflightRequest:
+      properties:
+        version:
+          type: string
+          title: Version
+      type: object
+      required:
+      - version
+      title: PreflightRequest
+    ProfileRename:
+      properties:
+        name:
+          type: string
+          title: Name
+      type: object
+      required:
+      - name
+      title: ProfileRename
+    ProjectCreate:
+      properties:
+        path:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Path
+          description: Absolute path to the project directory (local mode)
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
+          description: Display name for the project
+        git_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Git Url
+          description: Git URL to clone (HTTPS or SSH). Triggers the portal-managed clone path.
+        branch:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch
+          description: Branch to checkout after clone. Defaults to the remote's HEAD.
+        git_credential_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Git Credential Id
+          description: Reference to a stored git credential. Reserved for PR-C; ignored in PR-A.
+      type: object
+      title: ProjectCreate
+      description: "Model for creating a new project.\n\nTwo mutually exclusive shapes (#82 PR-A):\n\n\
+        1. **Local path** (laptop installs) — set ``path``. Existing\n   behaviour: the directory is registered\
+        \ as-is.\n2. **Git URL** (SaaS/K8s installs) — set ``gitUrl`` (alias of\n   ``git_url``), optionally\
+        \ ``branch``. The portal clones the\n   repository into ``PROJECT_WORKSPACE_ROOT`` (defaults to\n\
+        \   ``~/.aifactory/workspaces/``) and registers the clone's path.\n   This is the path that unblocks\
+        \ shared-host deployment shapes\n   where the user's repo isn't on the portal's filesystem.\n\n\
+        Exactly one of ``path`` or ``gitUrl`` must be provided."
+    ProjectEnvUpdate:
+      properties:
+        githubToken:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Githubtoken
+        githubRepo:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Githubrepo
+        gitProvider:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Gitprovider
+        gitToken:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Gittoken
+        gitRepo:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Gitrepo
+        gitBaseUrl:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Gitbaseurl
+        gitOrg:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Gitorg
+        gitProject:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Gitproject
+        graphitiEnabled:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Graphitienabled
+        enableFancyUi:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Enablefancyui
+        claudeToken:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Claudetoken
+        graphitiProviderConfig:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Graphitiproviderconfig
+        mcpServers:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Mcpservers
+        agentMcpOverrides:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Agentmcpoverrides
+        customMcpServers:
+          anyOf:
+          - items: {}
+            type: array
+          - type: 'null'
+          title: Custommcpservers
+      type: object
+      title: ProjectEnvUpdate
+      description: Model for updating project environment configuration.
+    ProjectSettingsUpdate:
+      properties:
+        model:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Model
+        memoryBackend:
+          anyOf:
+          - type: string
+            enum:
+            - graphiti
+            - file
+          - type: 'null'
+          title: Memorybackend
+        notifications:
+          anyOf:
+          - $ref: '#/components/schemas/NotificationSettingsUpdate'
+          - type: 'null'
+        graphitiMcpEnabled:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Graphitimcpenabled
+        graphitiMcpUrl:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Graphitimcpurl
+        mainBranch:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Mainbranch
+        useClaudeMd:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Useclaudemd
+        git_provider:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Git Provider
+        git_token:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Git Token
+        git_base_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Git Base Url
+        git_org:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Git Org
+        git_project:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Git Project
+        git_repo:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Git Repo
+        remote_control_by_default:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Remote Control By Default
+        delegate_by_default:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Delegate By Default
+        auto_pr:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Auto Pr
+        auto_merge:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Auto Merge
+        pr_reviewer:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Pr Reviewer
+      type: object
+      title: ProjectSettingsUpdate
+      description: 'Model for updating project settings.
+
+
+        BUG-1.2-005: Added notifications field to allow updating notification preferences.
+
+        BUG-1.2-003: Added memoryBackend validation.'
+    PullModelRequest:
+      properties:
+        modelName:
+          type: string
+          title: Modelname
+        baseUrl:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Baseurl
+      type: object
+      required:
+      - modelName
+      title: PullModelRequest
+    RecoverTaskRequest:
+      properties:
+        targetStatus:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Targetstatus
+          description: Target status after recovery
+          default: backlog
+        autoRestart:
+          type: boolean
+          title: Autorestart
+          description: Auto-restart the task after recovery
+          default: false
+        force:
+          type: boolean
+          title: Force
+          description: Recover even while a build for this task is still running. Recovery resets the
+            task's record but does NOT stop the Job, so forcing it can leave a live build writing against
+            a reset task (#1619).
+          default: false
+      type: object
+      title: RecoverTaskRequest
+      description: Request to recover a stuck task.
+    RefreshRequest:
+      properties:
+        refresh_token:
+          type: string
+          format: password
+          title: Refresh Token
+          writeOnly: true
+      type: object
+      required:
+      - refresh_token
+      title: RefreshRequest
+    RefreshResponse:
+      properties:
+        access_token:
+          type: string
+          title: Access Token
+      type: object
+      required:
+      - access_token
+      title: RefreshResponse
+    RegisterRequest:
+      properties:
+        email:
+          type: string
+          format: email
+          title: Email
+        name:
+          type: string
+          maxLength: 255
+          minLength: 1
+          title: Name
+        password:
+          type: string
+          maxLength: 128
+          minLength: 8
+          format: password
+          title: Password
+          writeOnly: true
+      type: object
+      required:
+      - email
+      - name
+      - password
+      title: RegisterRequest
+    RejectPlanRequest:
+      properties:
+        feedback:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Feedback
+          description: Optional reason for rejection — gets recorded on the review state's feedback log.
+      type: object
+      title: RejectPlanRequest
+      description: 'Request to reject a plan with feedback for the planner.
+
+
+        Mirrors ApprovePlanRequest''s shape but carries the operator''s reason so the
+
+        planner''s next iteration sees it in the spec''s review feedback log.'
+    RenameSessionRequest:
+      properties:
+        title:
+          type: string
+          title: Title
+      type: object
+      required:
+      - title
+      title: RenameSessionRequest
+    ResizeTerminalRequest:
+      properties:
+        cols:
+          type: integer
+          title: Cols
+          description: Terminal width in columns
+        rows:
+          type: integer
+          title: Rows
+          description: Terminal height in rows
+      type: object
+      required:
+      - cols
+      - rows
+      title: ResizeTerminalRequest
+      description: Request to resize a terminal.
+    RetryWithProfileRequest:
+      properties:
+        profileId:
+          type: string
+          minLength: 1
+          title: Profileid
+          description: ID of the profile to switch to
+        reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reason
+          description: Reason for the switch (e.g., 'rate_limit', 'error')
+        operationContext:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Operationcontext
+          description: Optional context about the failed operation
+      type: object
+      required:
+      - profileId
+      title: RetryWithProfileRequest
+      description: Request model for retrying with a different profile.
+    RunningTasksResponse:
+      properties:
+        tasks:
+          items:
+            type: string
+          type: array
+          title: Tasks
+        count:
+          type: integer
+          title: Count
+      type: object
+      required:
+      - tasks
+      - count
+      title: RunningTasksResponse
+      description: Response listing all running tasks.
+    SaveImageRequest:
+      properties:
+        imageData:
+          type: string
+          title: Imagedata
+        filename:
+          type: string
+          title: Filename
+      type: object
+      required:
+      - imageData
+      - filename
+      title: SaveImageRequest
+    ScanProjectsRequest:
+      properties:
+        basePath:
+          type: string
+          title: Basepath
+          description: Base directory to scan for projects
+        maxDepth:
+          type: integer
+          maximum: 5.0
+          minimum: 1.0
+          title: Maxdepth
+          description: Maximum scan depth (1-5, default 1)
+          default: 1
+      type: object
+      required:
+      - basePath
+      title: ScanProjectsRequest
+      description: Request model for scanning filesystem for projects.
+    ScimEmail:
+      properties:
+        value:
+          type: string
+          title: Value
+        type:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Type
+        primary:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Primary
+      type: object
+      required:
+      - value
+      title: ScimEmail
+      description: RFC 7643 §4.1.2 — multi-valued email attribute.
+    ScimGroup:
+      properties:
+        schemas:
+          items:
+            type: string
+          type: array
+          title: Schemas
+        id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Id
+        externalId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Externalid
+        displayName:
+          type: string
+          title: Displayname
+        members:
+          items:
+            $ref: '#/components/schemas/ScimGroupMember'
+          type: array
+          title: Members
+        meta:
+          anyOf:
+          - $ref: '#/components/schemas/ScimMeta'
+          - type: 'null'
+      type: object
+      required:
+      - displayName
+      title: ScimGroup
+      description: RFC 7643 §4.2 — Group resource.
+    ScimGroupMember:
+      properties:
+        value:
+          type: string
+          title: Value
+        display:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Display
+        type:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Type
+      type: object
+      required:
+      - value
+      title: ScimGroupMember
+      description: RFC 7643 §4.2 — multi-valued 'members' attribute on Group.
+    ScimMeta:
+      properties:
+        resourceType:
+          type: string
+          title: Resourcetype
+        created:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Created
+        lastModified:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Lastmodified
+        location:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Location
+        version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Version
+      type: object
+      required:
+      - resourceType
+      title: ScimMeta
+      description: RFC 7643 §3.1 common attributes.
+    ScimName:
+      properties:
+        givenName:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Givenname
+        familyName:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Familyname
+        formatted:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Formatted
+        middleName:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Middlename
+      type: object
+      title: ScimName
+      description: RFC 7643 §4.1.1 — complex 'name' attribute.
+    ScimPatchOperation:
+      properties:
+        op:
+          type: string
+          enum:
+          - add
+          - replace
+          - remove
+          - Add
+          - Replace
+          - Remove
+          title: Op
+        path:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Path
+        value:
+          title: Value
+      type: object
+      required:
+      - op
+      title: ScimPatchOperation
+      description: 'RFC 7644 §3.5.2 — one op in a PATCH request.
+
+
+        ``op`` is parsed case-insensitively in the routes layer (Azure AD
+
+        sends "Add" capitalised).'
+    ScimPatchRequest:
+      properties:
+        schemas:
+          items:
+            type: string
+          type: array
+          title: Schemas
+        Operations:
+          items:
+            $ref: '#/components/schemas/ScimPatchOperation'
+          type: array
+          title: Operations
+      type: object
+      required:
+      - Operations
+      title: ScimPatchRequest
+    ScimUser:
+      properties:
+        schemas:
+          items:
+            type: string
+          type: array
+          title: Schemas
+        id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Id
+        externalId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Externalid
+        userName:
+          type: string
+          title: Username
+        name:
+          anyOf:
+          - $ref: '#/components/schemas/ScimName'
+          - type: 'null'
+        displayName:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Displayname
+        emails:
+          items:
+            $ref: '#/components/schemas/ScimEmail'
+          type: array
+          title: Emails
+        active:
+          type: boolean
+          title: Active
+          default: true
+        meta:
+          anyOf:
+          - $ref: '#/components/schemas/ScimMeta'
+          - type: 'null'
+      type: object
+      required:
+      - userName
+      title: ScimUser
+      description: 'RFC 7643 §4.1 — User resource.
+
+
+        We don''t model every spec attribute — only the ones AIFactory
+
+        actually consumes + the ones Okta/Azure AD reliably send.'
+    SearchResponse:
+      properties:
+        query:
+          type: string
+          title: Query
+        results:
+          items:
+            $ref: '#/components/schemas/SearchResult'
+          type: array
+          title: Results
+        total:
+          type: integer
+          title: Total
+        truncated:
+          type: boolean
+          title: Truncated
+          default: false
+      type: object
+      required:
+      - query
+      - results
+      - total
+      title: SearchResponse
+      description: Search response.
+    SearchResult:
+      properties:
+        path:
+          type: string
+          title: Path
+        line:
+          type: integer
+          title: Line
+        column:
+          type: integer
+          title: Column
+        content:
+          type: string
+          title: Content
+        match:
+          type: string
+          title: Match
+      type: object
+      required:
+      - path
+      - line
+      - column
+      - content
+      - match
+      title: SearchResult
+      description: Search result entry.
+    SelectedSkill:
+      properties:
+        id:
+          type: string
+          title: Id
+        name:
+          type: string
+          title: Name
+        category:
+          type: string
+          title: Category
+        source:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source
+      type: object
+      required:
+      - id
+      - name
+      - category
+      title: SelectedSkill
+      description: A skill selected to be applied to a task.
+    SetTokenRequest:
+      properties:
+        token:
+          type: string
+          format: password
+          title: Token
+          writeOnly: true
+        email:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Email
+      type: object
+      required:
+      - token
+      title: SetTokenRequest
+    SettingsUpdate:
+      properties:
+        theme:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Theme
+        colorTheme:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Colortheme
+        language:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Language
+        uiScale:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Uiscale
+        default_model:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Default Model
+        agentFramework:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agentframework
+        thinking_level:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Thinking Level
+        max_thinking_tokens:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Max Thinking Tokens
+        selectedAgentProfile:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Selectedagentprofile
+        auto_continue:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Auto Continue
+        auto_qa:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Auto Qa
+        default_shell:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Default Shell
+        terminal_font_size:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Terminal Font Size
+        autoNameTerminals:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Autonameterminals
+        preferredIDE:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Preferredide
+        customIDEPath:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Customidepath
+        preferredTerminal:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Preferredterminal
+        customTerminalPath:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Customterminalpath
+        github_enabled:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Github Enabled
+        graphiti_enabled:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Graphiti Enabled
+        memoryEnabled:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Memoryenabled
+        memoryEmbeddingProvider:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Memoryembeddingprovider
+        autoBuildPath:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Autobuildpath
+        autoUpdateAutoBuild:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Autoupdateautobuild
+        globalClaudeOAuthToken:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Globalclaudeoauthtoken
+        globalOpenAIApiKey:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Globalopenaiapikey
+        globalAnthropicApiKey:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Globalanthropicapikey
+        onboardingCompleted:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Onboardingcompleted
+        betaUpdates:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Betaupdates
+        bmadSessionSegmentation:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Bmadsessionsegmentation
+        soloMode:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Solomode
+        parallel_execution:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Parallel Execution
+        parallel_workers:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Parallel Workers
+        emailMicrosoftClientId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Emailmicrosoftclientid
+        emailMicrosoftClientSecret:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Emailmicrosoftclientsecret
+        llmProvider:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Llmprovider
+        llmOllamaBaseUrl:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Llmollamabaseurl
+        llmOllamaModel:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Llmollamamodel
+        llmAnthropicModel:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Llmanthropicmodel
+        llmOpenaiModel:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Llmopenaimodel
+        llmOpenaiBaseUrl:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Llmopenaibaseurl
+        phaseModels:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Phasemodels
+      additionalProperties: true
+      type: object
+      title: SettingsUpdate
+      description: Model for partial settings update.
+    SkillCategory:
+      properties:
+        name:
+          type: string
+          title: Name
+          description: Category directory name
+        count:
+          type: integer
+          title: Count
+          description: Number of skills in this category
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+          description: Optional category description
+      type: object
+      required:
+      - name
+      - count
+      title: SkillCategory
+      description: Summary metadata for a skill category.
+    SkillDetail:
+      properties:
+        id:
+          type: string
+          title: Id
+          description: 'Unique skill identifier: ''{category}/{skill_name}'''
+        name:
+          type: string
+          title: Name
+          description: Skill file stem (e.g. 'alpine-js')
+        category:
+          type: string
+          title: Category
+          description: Parent category name
+        description:
+          type: string
+          title: Description
+          description: First prose paragraph from the skill file
+        source:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source
+          description: Source URL extracted from skill metadata
+        content:
+          type: string
+          title: Content
+          description: Full markdown content of the skill file
+      type: object
+      required:
+      - id
+      - name
+      - category
+      - description
+      - content
+      title: SkillDetail
+      description: Full skill data including the raw markdown content.
+    SkillSuggestion:
+      properties:
+        skill:
+          $ref: '#/components/schemas/SkillSummary'
+        relevance_score:
+          type: number
+          maximum: 1.0
+          minimum: 0.0
+          title: Relevance Score
+          description: Relevance score (0-1)
+        reason:
+          type: string
+          title: Reason
+          description: Human-readable explanation of why this skill was matched
+      type: object
+      required:
+      - skill
+      - relevance_score
+      - reason
+      title: SkillSuggestion
+      description: A scored skill suggestion derived from a task description.
+    SkillSummary:
+      properties:
+        id:
+          type: string
+          title: Id
+          description: 'Unique skill identifier: ''{category}/{skill_name}'''
+        name:
+          type: string
+          title: Name
+          description: Skill file stem (e.g. 'alpine-js')
+        category:
+          type: string
+          title: Category
+          description: Parent category name
+        description:
+          type: string
+          title: Description
+          description: First prose paragraph from the skill file
+        source:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source
+          description: Source URL extracted from skill metadata
+      type: object
+      required:
+      - id
+      - name
+      - category
+      - description
+      title: SkillSummary
+      description: Lightweight skill metadata, without full content.
+    SourceEnvUpdate:
+      properties:
+        claudeToken:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Claudetoken
+          description: Claude Code OAuth token (CLAUDE_CODE_OAUTH_TOKEN)
+        anthropicBaseUrl:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Anthropicbaseurl
+          description: Custom Anthropic API endpoint (ANTHROPIC_BASE_URL)
+        graphitiEnabled:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Graphitienabled
+          description: Enable Graphiti memory system (GRAPHITI_ENABLED)
+        githubToken:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Githubtoken
+          description: GitHub personal access token (GITHUB_TOKEN)
+        openaiApiKey:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Openaiapikey
+          description: OpenAI API key for Graphiti (OPENAI_API_KEY)
+        debug:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Debug
+          description: Enable debug mode (DEBUG)
+      type: object
+      title: SourceEnvUpdate
+      description: Model for updating Magestic AI source environment configuration.
+    SquashCommitsRequest:
+      properties:
+        count:
+          type: integer
+          minimum: 2.0
+          title: Count
+          description: Number of commits to squash (minimum 2)
+        message:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Message
+          description: Custom commit message for the squashed commit
+      type: object
+      required:
+      - count
+      title: SquashCommitsRequest
+      description: Request model for squashing commits.
+    StartTaskRequest:
+      properties:
+        auto_continue:
+          type: boolean
+          title: Auto Continue
+          description: Auto-continue to next phase
+          default: true
+        complexity:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Complexity
+          description: Complexity override for spec creation
+        parallel:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Parallel
+          description: Enable parallel execution
+        workers:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Workers
+          description: Number of parallel workers
+        model:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Model
+          description: Model override for execution
+        auto_handover_tfactory:
+          type: boolean
+          title: Auto Handover Tfactory
+          description: Hand the finished build to TFactory for testing on completion (#496)
+          default: false
+        baseBranch:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Basebranch
+          description: Base branch for worktree creation
+        mode:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Mode
+          description: 'Execution mode: ''quick'' for simplified prompts, ''full'' for comprehensive'
+          default: full
+      type: object
+      title: StartTaskRequest
+      description: Request to start task execution.
+    Subtask:
+      properties:
+        id:
+          type: string
+          title: Id
+        title:
+          type: string
+          title: Title
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+        status:
+          type: string
+          enum:
+          - pending
+          - in_progress
+          - completed
+          - failed
+          - blocked
+          title: Status
+          default: pending
+        files:
+          items:
+            type: string
+          type: array
+          title: Files
+        verification:
+          anyOf:
+          - $ref: '#/components/schemas/SubtaskVerification'
+          - type: 'null'
+        depends_on:
+          items:
+            type: string
+          type: array
+          title: Depends On
+        service:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Service
+        started_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Started At
+        completed_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Completed At
+      type: object
+      required:
+      - id
+      - title
+      title: Subtask
+      description: Subtask model from implementation plan.
+    SubtaskVerification:
+      properties:
+        type:
+          type: string
+          title: Type
+          default: command
+        run:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Run
+        scenario:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Scenario
+      type: object
+      title: SubtaskVerification
+      description: Verification configuration for a subtask.
+    SuggestVersionCommitsRequest:
+      properties:
+        commits:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+          title: Commits
+      type: object
+      required:
+      - commits
+      title: SuggestVersionCommitsRequest
+    SuggestVersionRequest:
+      properties:
+        taskIds:
+          items:
+            type: string
+          type: array
+          title: Taskids
+      type: object
+      required:
+      - taskIds
+      title: SuggestVersionRequest
+    Task:
+      properties:
+        title:
+          type: string
+          title: Title
+          description: Task title
+        description:
+          type: string
+          title: Description
+          description: Task description/requirements
+        id:
+          type: string
+          title: Id
+          description: Unique task ID
+        spec_id:
+          type: string
+          title: Spec Id
+          description: Spec directory name (e.g., '001-feature')
+        project_id:
+          type: string
+          title: Project Id
+          description: Project ID
+        status:
+          type: string
+          enum:
+          - backlog
+          - in_progress
+          - ai_review
+          - human_review
+          - done
+          - copilot_running
+          - copilot_pr_opened
+          title: Status
+          description: Current task status
+          default: backlog
+        phase:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Phase
+          description: Current execution phase
+        subtasks:
+          items:
+            $ref: '#/components/schemas/Subtask'
+          type: array
+          title: Subtasks
+        created_at:
+          type: string
+          title: Created At
+          description: ISO timestamp
+        created_at_is_estimate:
+          type: boolean
+          title: Created At Is Estimate
+          description: created_at is inferred, not recorded at creation
+          default: false
+        updated_at:
+          type: string
+          title: Updated At
+          description: ISO timestamp
+        worktree_path:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Worktree Path
+          description: Path to git worktree if active
+        branch_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Name
+          description: Git branch name
+        metadata:
+          anyOf:
+          - $ref: '#/components/schemas/TaskMetadata'
+          - type: 'null'
+          description: Task metadata
+        review_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Review Reason
+          description: Reason for human review (e.g., 'plan_review')
+        github_issue:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Github Issue
+          description: Upstream GitHub issue number (RFC-0001 correlation key) from PFactory provenance;
+            lets the cockpit thread plan→code→test.
+        repo:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Repo
+          description: 'Target repo (owner/name) this task runs against, for cross-portal tracking + visibility
+            (W5, Factory #218).'
+      type: object
+      required:
+      - title
+      - description
+      - id
+      - spec_id
+      - project_id
+      - created_at
+      - updated_at
+      title: Task
+      description: Full task model with all fields.
+    TaskCreate:
+      properties:
+        title:
+          type: string
+          title: Title
+          description: Task title
+        description:
+          type: string
+          title: Description
+          description: Task description/requirements
+        project_id:
+          type: string
+          title: Project Id
+          description: ID of the project this task belongs to
+        metadata:
+          anyOf:
+          - $ref: '#/components/schemas/TaskMetadataUpdate'
+          - type: 'null'
+          description: Optional task metadata
+      type: object
+      required:
+      - title
+      - description
+      - project_id
+      title: TaskCreate
+      description: Model for creating a new task.
+    TaskCreateRequest:
+      properties:
+        title:
+          type: string
+          title: Title
+          description: Task title (optional, auto-generated if empty)
+          default: ''
+        description:
+          type: string
+          minLength: 1
+          title: Description
+          description: Task description (required)
+        metadata:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Metadata
+          description: Optional task metadata
+      type: object
+      required:
+      - description
+      title: TaskCreateRequest
+      description: Request model for creating a task via project endpoint.
+    TaskExecutionStatus:
+      properties:
+        task_id:
+          type: string
+          title: Task Id
+        is_running:
+          type: boolean
+          title: Is Running
+        phase:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Phase
+        message:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Message
+      type: object
+      required:
+      - task_id
+      - is_running
+      title: TaskExecutionStatus
+      description: Task execution status response.
+    TaskList:
+      properties:
+        tasks:
+          items:
+            $ref: '#/components/schemas/Task'
+          type: array
+          title: Tasks
+        total:
+          type: integer
+          title: Total
+      type: object
+      required:
+      - tasks
+      - total
+      title: TaskList
+      description: Response model for listing tasks.
+    TaskMetadata:
+      properties:
+        sourceType:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Sourcetype
+        category:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Category
+        priority:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Priority
+        complexity:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Complexity
+        impact:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Impact
+        githubIssueNumber:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Githubissuenumber
+        affectedFiles:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Affectedfiles
+        acceptanceCriteria:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Acceptancecriteria
+        model:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Model
+        thinkingLevel:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Thinkinglevel
+        requireReviewBeforeCoding:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Requirereviewbeforecoding
+        mode:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Mode
+        isAutoProfile:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Isautoprofile
+        phaseModels:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Phasemodels
+        phaseThinking:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Phasethinking
+        baseBranch:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Basebranch
+        archivedAt:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Archivedat
+        archivedInVersion:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Archivedinversion
+        selectedSkills:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/SelectedSkill'
+            type: array
+          - type: 'null'
+          title: Selectedskills
+      type: object
+      title: TaskMetadata
+      description: Task metadata fields.
+    TaskMetadataUpdate:
+      properties:
+        model:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Model
+        thinkingLevel:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Thinkinglevel
+        requireReviewBeforeCoding:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Requirereviewbeforecoding
+        category:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Category
+        priority:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Priority
+        complexity:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Complexity
+        impact:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Impact
+        isAutoProfile:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Isautoprofile
+        phaseModels:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Phasemodels
+        phaseThinking:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Phasethinking
+        baseBranch:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Basebranch
+        mode:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Mode
+        attachedImages:
+          anyOf:
+          - items: {}
+            type: array
+          - type: 'null'
+          title: Attachedimages
+        referencedFiles:
+          anyOf:
+          - items: {}
+            type: array
+          - type: 'null'
+          title: Referencedfiles
+        selectedSkills:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/SelectedSkill'
+            type: array
+          - type: 'null'
+          title: Selectedskills
+      type: object
+      title: TaskMetadataUpdate
+      description: 'Model for updating task metadata fields.
+
+
+        Fields can be set to None to explicitly clear them from the task.
+
+        When a field is not provided (excluded from the request), it won''t be modified.
+
+        When a field is set to null/None, it will be removed from the task metadata.'
+    TaskProvenance:
+      properties:
+        session_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Session Id
+          description: Upstream session/plan id
+        issue_number:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Issue Number
+          description: Originating GitHub issue number
+        repo:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Repo
+          description: Originating repo, e.g. 'owner/name'
+        source:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source
+          description: Origin system, e.g. 'pfactory'
+        trusted_plan:
+          type: boolean
+          title: Trusted Plan
+          description: Whether this task carries a verified trusted plan
+          default: false
+        approved_by:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Approved By
+          description: Signing authority, e.g. 'cfactory' or 'pfactory'
+        approval_timestamp:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Approval Timestamp
+          description: ISO-8601 time the plan was approved/signed
+        plan_contract_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Plan Contract Version
+          description: Trusted-plan contract version the signer used
+        signature:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Signature
+          description: HMAC signature over the canonical plan JSON
+      type: object
+      title: TaskProvenance
+      description: 'Upstream provenance for a handed-off task (e.g. from PFactory, #332).
+
+
+        Persisted onto the spec so the correlation chain (PFactory plan/session →
+
+        GitHub issue → AIFactory spec) is traversable downstream.'
+    TaskStatusUpdate:
+      properties:
+        status:
+          type: string
+          enum:
+          - backlog
+          - in_progress
+          - ai_review
+          - human_review
+          - done
+          - copilot_running
+          - copilot_pr_opened
+          title: Status
+        force:
+          type: boolean
+          title: Force
+          default: false
+      type: object
+      required:
+      - status
+      title: TaskStatusUpdate
+      description: Model for updating only task status (for kanban).
+    TaskUpdate:
+      properties:
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+        status:
+          anyOf:
+          - type: string
+            enum:
+            - backlog
+            - in_progress
+            - ai_review
+            - human_review
+            - done
+            - copilot_running
+            - copilot_pr_opened
+          - type: 'null'
+          title: Status
+        metadata:
+          anyOf:
+          - $ref: '#/components/schemas/TaskMetadataUpdate'
+          - type: 'null'
+      type: object
+      title: TaskUpdate
+      description: Model for updating task fields.
+    TerminalInfo:
+      properties:
+        id:
+          type: string
+          title: Id
+        cwd:
+          type: string
+          title: Cwd
+        shell:
+          type: string
+          title: Shell
+        cols:
+          type: integer
+          title: Cols
+        rows:
+          type: integer
+          title: Rows
+        created_at:
+          type: string
+          title: Created At
+        is_alive:
+          type: boolean
+          title: Is Alive
+      type: object
+      required:
+      - id
+      - cwd
+      - shell
+      - cols
+      - rows
+      - created_at
+      - is_alive
+      title: TerminalInfo
+      description: 'Terminal session information with frontend-compatible field names.
+
+
+        Uses camelCase field names with snake_case aliases for backward compatibility
+
+        with data from PTY manager.'
+    TerminalListResponse:
+      properties:
+        terminals:
+          items:
+            $ref: '#/components/schemas/TerminalInfo'
+          type: array
+          title: Terminals
+        count:
+          type: integer
+          title: Count
+        max_terminals:
+          type: integer
+          title: Max Terminals
+      type: object
+      required:
+      - terminals
+      - count
+      - max_terminals
+      title: TerminalListResponse
+      description: Response for listing terminals.
+    TerminalWorktreeConfig:
+      properties:
+        name:
+          type: string
+          title: Name
+        path:
+          type: string
+          title: Path
+        branch:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch
+        base_branch:
+          type: string
+          title: Base Branch
+        task_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Task Id
+        created_at:
+          type: string
+          title: Created At
+        terminal_id:
+          type: string
+          title: Terminal Id
+      type: object
+      required:
+      - name
+      - path
+      - base_branch
+      - created_at
+      - terminal_id
+      title: TerminalWorktreeConfig
+      description: Configuration for a terminal worktree.
+    TerminalWorktreeResult:
+      properties:
+        success:
+          type: boolean
+          title: Success
+        config:
+          anyOf:
+          - $ref: '#/components/schemas/TerminalWorktreeConfig'
+          - type: 'null'
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
+      type: object
+      required:
+      - success
+      title: TerminalWorktreeResult
+      description: Result of worktree operation.
+    TestGraphitiRequest:
+      properties:
+        embeddingProvider:
+          type: string
+          title: Embeddingprovider
+        embeddingModel:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Embeddingmodel
+        openaiApiKey:
+          anyOf:
+          - type: string
+            format: password
+            writeOnly: true
+          - type: 'null'
+          title: Openaiapikey
+        voyageApiKey:
+          anyOf:
+          - type: string
+            format: password
+            writeOnly: true
+          - type: 'null'
+          title: Voyageapikey
+        ollamaBaseUrl:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Ollamabaseurl
+        database:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Database
+        dbPath:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Dbpath
+      type: object
+      required:
+      - embeddingProvider
+      title: TestGraphitiRequest
+    TokenResponse:
+      properties:
+        access_token:
+          type: string
+          title: Access Token
+      type: object
+      required:
+      - access_token
+      title: TokenResponse
+    UnarchiveTasksRequest:
+      properties:
+        taskIds:
+          items:
+            type: string
+          type: array
+          title: Taskids
+          description: List of task IDs to unarchive
+      type: object
+      required:
+      - taskIds
+      title: UnarchiveTasksRequest
+      description: Request to unarchive tasks.
+    UnreadCountResponse:
+      properties:
+        count:
+          type: integer
+          title: Count
+      type: object
+      required:
+      - count
+      title: UnreadCountResponse
+      description: Unread notification count.
+    UpdateApiKeyRequest:
+      properties:
+        keyType:
+          type: string
+          title: Keytype
+          description: Type of API key (anthropic, openai, claude)
+        keyValue:
+          type: string
+          title: Keyvalue
+          description: The API key value
+        saveToEnv:
+          type: boolean
+          title: Savetoenv
+          description: Whether to save to .env file
+          default: true
+      type: object
+      required:
+      - keyType
+      - keyValue
+      title: UpdateApiKeyRequest
+      description: Request model for updating API keys.
+    UpdateMemberRoleRequest:
+      properties:
+        role:
+          type: string
+          title: Role
+          description: 'New role: viewer, member, admin, owner'
+      type: object
+      required:
+      - role
+      title: UpdateMemberRoleRequest
+    UpdateModelConfigRequest:
+      properties:
+        provider:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Provider
+        profileId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Profileid
+        model:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Model
+        thinkingLevel:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Thinkinglevel
+        temperature:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Temperature
+      type: object
+      title: UpdateModelConfigRequest
+    UpdateOrgRequest:
+      properties:
+        name:
+          anyOf:
+          - type: string
+            maxLength: 255
+            minLength: 1
+          - type: 'null'
+          title: Name
+        slug:
+          anyOf:
+          - type: string
+            maxLength: 255
+            minLength: 1
+          - type: 'null'
+          title: Slug
+        plan:
+          anyOf:
+          - type: string
+            maxLength: 50
+          - type: 'null'
+          title: Plan
+        settings_json:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Settings Json
+      type: object
+      title: UpdateOrgRequest
+    UserResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        email:
+          type: string
+          title: Email
+        name:
+          type: string
+          title: Name
+        avatar_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Avatar Url
+        role:
+          type: string
+          title: Role
+        is_active:
+          type: boolean
+          title: Is Active
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - id
+      - email
+      - name
+      - avatar_url
+      - role
+      - is_active
+      - created_at
+      title: UserResponse
+    ValidateApiKeyRequest:
+      properties:
+        provider:
+          type: string
+          title: Provider
+        apiKey:
+          type: string
+          format: password
+          title: Apikey
+          writeOnly: true
+      type: object
+      required:
+      - provider
+      - apiKey
+      title: ValidateApiKeyRequest
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+        input:
+          title: Input
+        ctx:
+          type: object
+          title: Context
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+    WorktreeMergeOptions:
+      properties:
+        noCommit:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Nocommit
+          default: false
+      type: object
+      title: WorktreeMergeOptions
+    server__routes__context__TestConnectionRequest:
+      properties:
+        dbPath:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Dbpath
+        database:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Database
+      type: object
+      title: TestConnectionRequest
+    server__routes__git__CreateReleaseRequest:
+      properties:
+        projectId:
+          type: string
+          title: Projectid
+        version:
+          type: string
+          title: Version
+        releaseNotes:
+          type: string
+          title: Releasenotes
+        platform:
+          type: string
+          title: Platform
+          default: github
+      type: object
+      required:
+      - projectId
+      - version
+      - releaseNotes
+      title: CreateReleaseRequest
+    server__routes__github__CreateReleaseRequest:
+      properties:
+        version:
+          type: string
+          title: Version
+        releaseNotes:
+          type: string
+          title: Releasenotes
+        draft:
+          type: boolean
+          title: Draft
+          default: false
+        prerelease:
+          type: boolean
+          title: Prerelease
+          default: false
+      type: object
+      required:
+      - version
+      - releaseNotes
+      title: CreateReleaseRequest
+    server__routes__settings__TestConnectionRequest:
+      properties:
+        baseUrl:
+          type: string
+          title: Baseurl
+        apiKey:
+          type: string
+          format: password
+          title: Apikey
+          writeOnly: true
+      type: object
+      required:
+      - baseUrl
+      - apiKey
+      title: TestConnectionRequest
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT access token or legacy API token
+security:
+- BearerAuth: []

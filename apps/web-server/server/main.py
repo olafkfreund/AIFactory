@@ -8,6 +8,7 @@ Main entry point for the web server that provides:
 """
 
 import logging
+import os
 import sys
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
@@ -73,7 +74,7 @@ from .routes import (
 from .routes import (
     settings as settings_routes,
 )
-from .services import github_app
+from .services import github_app, project_settings_store
 from .services.skills_service import init_skills_service
 from .websockets import (
     events as events_ws,
@@ -133,6 +134,9 @@ async def lifespan(app: FastAPI):
             app_settings.autoBuildPath = str(backend_path)
             save_app_settings(app_settings)
             logger.info(f"Auto-configured autoBuildPath: {backend_path}")
+
+    # #1795: children never fall back to .aifactory/.env
+    os.environ.setdefault(project_settings_store.ENV, "{}")
 
     # Initialize database (creates tables if needed)
     await init_db()
@@ -226,24 +230,20 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("RFC-0011 intake poller disabled (AIFACTORY_INTAKE_POLLER unset)")
 
-    # RFC-0016 #671 control/execution split: when builds run as k8s Jobs
-    # (AIFACTORY_BUILD_BACKEND=kubejob), the control plane reconciles by polling
-    # Postgres + reaps vanished Jobs on an interval, so a missed completion event
-    # never strands a build. Off by default — no-op for the in-pod subprocess
-    # backend (the loop is only started when the kubejob backend is enabled).
+    # Reconcile kubejob builds and reap orphaned subprocess rows when the
+    # durable store is enabled (#671, #1705).
     from .services.build_backend import kubejob_enabled as _kubejob_enabled
+    from .services.job_state_store import store_enabled  # noqa: PLC0415
 
     app.state.kubejob_reconcile_stop = None
     app.state.kubejob_reconcile_task = None
-    if _kubejob_enabled():
+    if _kubejob_enabled() or store_enabled():
         kj_stop = _asyncio.Event()
         app.state.kubejob_reconcile_stop = kj_stop
         app.state.kubejob_reconcile_task = _asyncio.create_task(
             get_agent_service().kubejob_reconcile_loop(stop=kj_stop)
         )
-        logger.info(
-            "RFC-0016 #671 kubejob build backend enabled — reconcile loop started"
-        )
+        logger.info("RFC-0016 #671/#1705 build reconcile loop started")
     else:
         logger.info("RFC-0016 #671 kubejob build backend disabled (subprocess default)")
 
@@ -732,7 +732,8 @@ def create_app() -> FastAPI:
         )
     else:
         # Placeholder for development
-        @app.get("/")
+        # include_in_schema=False: spec must not depend on static/ (#1731)
+        @app.get("/", include_in_schema=False)
         async def root():
             return {
                 "message": "AIFactory Web Server",
@@ -786,10 +787,9 @@ def _make_non_dumpable() -> None:
     backend = str(Path(__file__).resolve().parents[2] / "backend")
     if backend not in sys.path:
         sys.path.insert(0, backend)
-    from core.process_hardening import make_non_dumpable  # noqa: PLC0415
+    from core.process_hardening import require_non_dumpable  # noqa: PLC0415
 
-    if not make_non_dumpable():
-        raise SystemExit("prctl(PR_SET_DUMPABLE, 0) failed")
+    require_non_dumpable()
 
 
 if __name__ == "__main__":

@@ -67,7 +67,6 @@ LANGUAGE_COMMANDS: dict[str, set[str]] = {
         "cargo-fmt",
         "cargo-miri",
         # Common dev tools
-        "cargo-watch",
         "cargo-nextest",
         "cargo-llvm-cov",
         "cargo-tarpaulin",

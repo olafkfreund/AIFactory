@@ -190,6 +190,32 @@ async def test_redelivered_issue_is_deduplicated(project):
     assert other["spec_id"] != first["spec_id"]
 
 
+async def test_dedup_is_repo_aware(project):
+    """#1775: issue 7 of repo a/x must not swallow issue 7 of repo b/y."""
+    _, started = project
+
+    def req(repo):
+        return FromIssueRequest(
+            project_id="p",
+            repo=repo,
+            payload={"number": 7, "title": "Same number", "labels": ["factory:low"]},
+        )
+
+    first = await create_from_issue(req("a/x"))
+    assert first["correlation_key"] == "a/x#7"
+
+    other = await create_from_issue(req("b/y"))
+    assert other.get("deduplicated") is None
+    assert other["spec_id"] != first["spec_id"]
+    assert other["correlation_key"] == "b/y#7"
+
+    # no declared repo: the issue number alone still dedups
+    again = await create_from_issue(req(None))
+    assert again["deduplicated"] is True
+    assert again["spec_id"] == first["spec_id"]
+    assert again["correlation_key"] == "a/x#7"
+
+
 async def test_missing_issue_is_422(project):
     _, _ = project
     req = FromIssueRequest(project_id="p")

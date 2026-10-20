@@ -24,12 +24,14 @@ from server.project_registry import resolve_project_path
 from server.services import review_redrive_service, task_control
 from server.specpath import spec_dir_for
 
-from .build_backend import _TERMINAL_STATES, orphaned_worktree_registrations
+from .build_backend import (
+    _TERMINAL_STATES,
+    kubejob_enabled,
+    orphaned_worktree_registrations,
+)
 from .build_log_stream import PlanSync
 from .task_log_writer import TaskLogWriter
 from .task_phase import TaskPhase
-
-_LIVE_KINDS = ("k8s-job", "pending")  # subprocess rows: pod-local, see #1669
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -114,6 +116,7 @@ class KubejobMixin:
         # declared here so mypy can resolve the self.* references in a mixin.
         _kubejob_log_streamers: dict[str, Any]
         _active_kubejob_task_ids: set[str]
+        _held_credentials: set[str]
         _kubejob_dispatched_this_tick: set[str]
         _task_current_phases: dict[str, Any]
         _task_log_writers: dict[str, Any]
@@ -125,6 +128,7 @@ class KubejobMixin:
         _drain_queue: Callable[..., Any]
         _emit_log: Callable[..., Any]
         _release_task_credential: Callable[..., Any]
+        reap_orphaned_subprocess_rows: Callable[..., Any]
         # Declared for the same reason as its siblings above: a sibling mixin
         # provides it, and every self._update_plan_status call in this file was
         # otherwise an attr-defined error (#1430).
@@ -454,16 +458,17 @@ class KubejobMixin:
                 base_branch=base_branch,
                 mode=mode,
             )
-        except Exception:
-            # Dispatch failed → the Job will never run, so return the credential
-            # now rather than leaking it until a reaper that never fires.
-            self._release_task_credential(task_id)
+        except BaseException:
+            # A dispatch raise does not prove no Job exists; wait for its 404.
+            self._held_credentials.add(task_id)
             raise
         # #1662: the build is live from here, not from the next reconcile
         # tick (≤15s later). Without this, is_running() said False for that
         # window and recovery reset a live Job despite the #1619 guard.
         # After the except block on purpose: a failed dispatch never marks.
         self._active_kubejob_task_ids.add(task_id)
+        # #1714: this Job now owns the credential; an earlier hold must not free it.
+        self._held_credentials.discard(task_id)
         self._kubejob_dispatched_this_tick.add(task_id)
         # RFC-0017 #680: feed the cockpit log stream + rmux Live Console from the
         # Job pod's logs, exactly as the in-pod subprocess path does — the
@@ -521,6 +526,10 @@ class KubejobMixin:
                 mode=mode,
             )
             return None
+        # #1705: claim before spawn so a crash between them leaves this pod's row;
+        # a claim error is a spawn failure and callers free the slot.
+        if getattr(self, "_store_enabled", False):
+            await self._store().mark_running(task_id)
         return await self._spawn_task_execution(
             task_id=task_id,
             project_path=project_path,
@@ -791,6 +800,9 @@ class KubejobMixin:
                 terminal = await backend.reconcile_by_poll(job_id)
             except Exception:  # noqa: BLE001
                 _log.exception("[AgentService] kubejob reconcile failed for %s", job_id)
+                # #1693: unknown this tick → keep last tick's answer.
+                if job_id in self._active_kubejob_task_ids:
+                    live.add(job_id)
                 continue
             if terminal is not None:
                 out[job_id] = terminal
@@ -860,9 +872,9 @@ class KubejobMixin:
     async def kubejob_reconcile_loop(
         self, *, stop: asyncio.Event, interval_seconds: float = 15.0
     ) -> None:
-        """Periodic reconcile-by-poll + reaper for k8s-Job builds (#671).
+        """Periodic reconcile and reaper for build rows (#671, #1705).
 
-        Started from the app lifespan only when the kubejob backend is enabled.
+        Started from the app lifespan for kubejob or durable subprocess builds.
         Each tick polls Postgres for terminal transitions the Jobs wrote
         (so a missed completion event never strands a build) and reaps vanished
         Jobs. Never raises — a bad tick is logged and the loop continues.
@@ -876,11 +888,12 @@ class KubejobMixin:
             try:
                 await self.reconcile_kubejob_builds()
                 await self.reap_kubejob_builds()
+                await self.reap_orphaned_subprocess_rows()
                 # Task-level reaper on a slower cadence (#1001): the spec-dir scan
                 # is heavier than the job-state poll and the deadline is generous,
                 # so every ~4th tick (~60s at the default interval) is plenty.
                 tick += 1
-                if tick % 4 == 0:
+                if tick % 4 == 0 and kubejob_enabled():
                     await self.reap_abandoned_tasks()
             except Exception:  # noqa: BLE001 - loop must survive a bad tick
                 _log.exception("[AgentService] kubejob reconcile tick failed")
@@ -906,12 +919,26 @@ class KubejobMixin:
             )
         except Exception:  # noqa: BLE001 - reaper must never crash the loop
             _log.exception("[AgentService] kubejob reaper failed")
-            return []
+            reaped = []
         if reaped:
             # #671 OAuth-env: return each reaped build's pooled credential.
             for job_id in reaped:
                 self._release_task_credential(job_id)
             await self._drain_queue()
+        for task_id in list(self._held_credentials):
+            try:
+                if await self._build_backend().job_gone(task_id):
+                    self._release_task_credential(task_id)
+                    self._held_credentials.discard(task_id)
+            except Exception:  # noqa: BLE001 - retry on the next tick
+                _log.exception(
+                    "[AgentService] could not verify Job for held credential %s",
+                    sanitize_log(task_id),
+                )
+        try:
+            await self._build_backend().sweep_orphan_jobs()
+        except Exception:  # noqa: BLE001 - sweep must never crash the loop
+            _log.exception("[AgentService] kubejob orphan sweep failed")
         return reaped
 
     # Frontend statuses that claim a live build. A task at one of these with no
@@ -997,18 +1024,15 @@ class KubejobMixin:
         return reaped
 
     async def is_running_anywhere(self, task_id: str) -> bool:
-        """True when ``task_id`` builds here or, per the shared store, on any replica (#1669).
+        """True when a build runs here or any running row exists (#1669, #1705).
 
         The sync ``is_running`` sees only this pod's memory. A store read
         failure reads as running (fail closed: Recover refuses, never
-        double-starts).
+        double-starts). The reaper closes orphaned subprocess rows.
         """
         if self.is_running(task_id):
             return True
-        if (
-            not getattr(self, "_store_enabled", False)
-            or not self._kubejob_backend_enabled()
-        ):
+        if not getattr(self, "_store_enabled", False):
             return False
         try:
             state = await self._store().get_state(task_id)
@@ -1018,11 +1042,7 @@ class KubejobMixin:
                 sanitize_log(task_id),
             )
             return True
-        return (
-            state is not None
-            and state.get("lifecycle_state") == "running"
-            and (state.get("worker_ref") or {}).get("kind") in _LIVE_KINDS
-        )
+        return state is not None and state.get("lifecycle_state") == "running"
 
     async def _kubejob_liveness(self, task_id: str) -> str:
         """Tri-state liveness for ``task_id``, per the backend actually in play.

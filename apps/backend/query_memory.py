@@ -22,7 +22,7 @@ import json
 import os
 import re
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -193,7 +193,7 @@ def cmd_get_memories(args):
                 "id": row.get("uuid") or row.get("name", "unknown"),
                 "name": row.get("name", ""),
                 "type": infer_episode_type(row.get("name", ""), row.get("content", "")),
-                "timestamp": row.get("created_at") or datetime.now().isoformat(),
+                "timestamp": row.get("created_at") or datetime.now(UTC).isoformat(),
                 "content": row.get("content")
                 or row.get("description")
                 or row.get("name", ""),
@@ -259,7 +259,7 @@ def cmd_search(args):
                 "id": row.get("uuid") or row.get("name", "unknown"),
                 "name": row.get("name", ""),
                 "type": infer_episode_type(row.get("name", ""), row.get("content", "")),
-                "timestamp": row.get("created_at") or datetime.now().isoformat(),
+                "timestamp": row.get("created_at") or datetime.now(UTC).isoformat(),
                 "content": row.get("content")
                 or row.get("description")
                 or row.get("name", ""),
@@ -381,7 +381,7 @@ async def _async_semantic_search(args):
                         "name": result.fact[:100] if result.fact else "",
                         "type": "session_insight",
                         "timestamp": getattr(
-                            result, "created_at", datetime.now().isoformat()
+                            result, "created_at", datetime.now(UTC).isoformat()
                         ),
                         "content": result.fact or "",
                         "score": getattr(result, "score", 1.0),
@@ -395,7 +395,7 @@ async def _async_semantic_search(args):
                             getattr(result, "name", ""), getattr(result, "content", "")
                         ),
                         "timestamp": getattr(
-                            result, "created_at", datetime.now().isoformat()
+                            result, "created_at", datetime.now(UTC).isoformat()
                         ),
                         "content": result.content or "",
                         "score": getattr(result, "score", 1.0),
@@ -406,7 +406,7 @@ async def _async_semantic_search(args):
                         "id": str(getattr(result, "uuid", "unknown")),
                         "name": str(result)[:100],
                         "type": "session_insight",
-                        "timestamp": datetime.now().isoformat(),
+                        "timestamp": datetime.now(UTC).isoformat(),
                         "content": str(result),
                         "score": 1.0,
                     }
@@ -472,7 +472,7 @@ def cmd_get_entities(args):
                 "id": row.get("uuid") or row.get("name", "unknown"),
                 "name": row.get("name", ""),
                 "type": infer_entity_type(row.get("name", "")),
-                "timestamp": row.get("created_at") or datetime.now().isoformat(),
+                "timestamp": row.get("created_at") or datetime.now(UTC).isoformat(),
                 "content": row.get("summary", ""),
             }
             entities.append(entity)

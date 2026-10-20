@@ -35,6 +35,7 @@ from typing import Generator
 from unittest.mock import MagicMock, patch
 
 import pytest
+from server.services import project_settings_store
 from server.services.http_verdict import REFUSED_STATUS
 from verdict_helpers import verdict
 
@@ -295,16 +296,34 @@ class TestProfileManagementWorkflow:
 # ============================================================================
 
 
+@pytest.fixture
+def memory_settings_store(monkeypatch) -> dict[str, dict[str, str]]:
+    """No DB here: an in-memory stand-in for the settings store (#1795)."""
+    stored: dict[str, dict[str, str]] = {}
+
+    async def fake_get(path, *_a):
+        return dict(stored.get(str(path), {}))
+
+    async def fake_put(path, values, *_a):
+        stored[str(path)] = dict(values)
+
+    monkeypatch.setattr(project_settings_store, "get_settings", fake_get)
+    monkeypatch.setattr(project_settings_store, "put_settings", fake_put)
+    return stored
+
+
 class TestProjectSetupWorkflow:
     """Test complete project onboarding and configuration."""
 
-    def test_project_onboarding_workflow(self, tmp_path: Path, monkeypatch):
+    def test_project_onboarding_workflow(
+        self, tmp_path: Path, monkeypatch, memory_settings_store
+    ):
         """
         Test the complete project setup workflow (#912):
         1. Scan the filesystem for candidate projects
         2. Register the discovered project
         3. Reject registering the same path twice (409)
-        4. Update project settings (.aifactory/.env mapping, 0o600 perms)
+        4. Update project settings (stored outside the clone, #1795)
         5. Read the project back with merged settings
         6. Remove the project (unregister only, files stay)
 
@@ -371,7 +390,7 @@ class TestProjectSetupWorkflow:
             )
         assert exc.value.status_code == 409
 
-        # Step 4: Update project settings; fields map to .aifactory/.env
+        # Step 4: Update project settings; stored outside the clone (#1795)
         result = asyncio.run(
             projects_routes.update_project_settings(
                 project_id,
@@ -385,25 +404,21 @@ class TestProjectSetupWorkflow:
         )
         assert result["success"] is True
 
-        env_file = app_dir / ".aifactory" / ".env"
-        env = dict(
-            line.split("=", 1)
-            for line in env_file.read_text().splitlines()
-            if "=" in line
-        )
+        env = memory_settings_store[str(app_dir)]
         assert env["AI_FACTORY_MODEL"] == "claude-test-model"
         assert env["MAIN_BRANCH"] == "main"
         assert env["AIFACTORY_AUTO_PR"] == "true"
         assert env["AIFACTORY_AUTO_MERGE"] == "false"
-        # May carry a git token later - must not be world-readable.
-        assert env_file.stat().st_mode & 0o777 == 0o600
+        # Nothing is written into the agent-reachable clone any more.
+        assert not (app_dir / ".aifactory" / ".env").exists()
 
-        # Step 5: Read the project back - saved settings are merged in and
-        # the .aifactory dir created above now marks it initialized.
+        # Step 5: Read the project back - saved settings are merged in. Saving
+        # settings no longer creates .aifactory/ in the clone (#1795), so the
+        # project stays uninitialized until the initialize endpoint runs.
         fetched = asyncio.run(projects_routes.get_project(project_id))
         assert fetched["settings"]["model"] == "claude-test-model"
         assert fetched["settings"]["autoPr"] is True
-        assert fetched["autoBuildPath"] == ".aifactory"
+        assert fetched["autoBuildPath"] == ""
 
         # Step 6: Remove the project - unregistered, but files untouched
         asyncio.run(projects_routes.remove_project(project_id))

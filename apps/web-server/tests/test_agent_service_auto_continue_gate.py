@@ -49,6 +49,16 @@ if str(_WEB_SERVER) not in sys.path:
 from server.services.agent_service import AgentService  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _empty_project_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No DB here: the project has no stored settings (#1795)."""
+
+    async def _empty(*_args: Any, **_kwargs: Any) -> dict[str, str]:
+        return {}
+
+    monkeypatch.setattr("server.services.project_settings_store.get_settings", _empty)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("auto_continue", [True, False])
 async def test_start_task_execution_reaches_the_spawn_on_both_auto_continue_settings(

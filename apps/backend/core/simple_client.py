@@ -22,11 +22,13 @@ Example usage:
 """
 
 import logging
+import weakref
 from pathlib import Path
 
 from agents.tools_pkg import get_agent_config, get_default_thinking_level
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from core import process_hardening
+from core.agent_home import AgentHome
 from core.auth import get_agent_env_blanks, get_sdk_env_vars, require_auth_token
 from core.model_config import DEFAULT_UTILITY_MODEL
 from core.outbound_scrub import wrap_client_outbound_scrub
@@ -75,8 +77,7 @@ def create_simple_client(
     Raises:
         ValueError: If agent_type is not found in AGENT_CONFIGS
     """
-    if not process_hardening.make_non_dumpable():
-        logger.warning("could not make the process non-dumpable; env stays readable")
+    process_hardening.require_non_dumpable()
     # Get authentication
     oauth_token = require_auth_token()
     import os
@@ -87,6 +88,8 @@ def create_simple_client(
     sdk_env = get_sdk_env_vars()
     # Same host-secret scrub as create_client: these agents get read tools too.
     sdk_env.update(get_agent_env_blanks())
+    home = AgentHome("claude")
+    sdk_env.update(home.env)
 
     # Get agent configuration (raises ValueError if unknown type)
     config = get_agent_config(agent_type)
@@ -110,6 +113,7 @@ def create_simple_client(
             model=model,
             system_prompt=system_prompt,
             allowed_tools=allowed_tools,
+            tools=allowed_tools,  # #1741: base set; allowed_tools alone does not limit under bypass
             max_turns=max_turns,
             cwd=str(cwd.resolve()) if cwd else None,
             env=sdk_env,
@@ -119,6 +123,7 @@ def create_simple_client(
             disallowed_tools=["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash"],
         )
     )
+    weakref.finalize(bare_client, home.close)
 
     # v1.2 / #207 — reviewer finding #6: simple_client also needs enforcement
     # wiring so web-server call sites can opt in by passing org_id.

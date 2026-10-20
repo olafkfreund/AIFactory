@@ -1,7 +1,119 @@
 ## [Unreleased]
 
+### Added
+
+- **Opt-in repo lint gate (#1742).** With `AIFACTORY_REPO_LINT_GATE=1`, the
+  trailing gates run the target repo's CI linters that AIFactory has a
+  curated command for (`ruff check .`, `flake8`, `ktlint`), never the CI
+  step text. A lint that fails goes to `GATE_FAILURES.md` and the QA fix
+  loop; a missing tool reads `skipped`. The planner prompt also names the
+  linters CI runs. Off by default, because it can fail builds that pass
+  today. `ci_linters` now refuses a repo with more than 64 workflow files.
+
 ### Security
 
+- **Legacy and from-issue tasks need a real verified green to auto-merge (#1697).**
+  Tasks without a signed contract (including MODE 0 from-issue tasks) now
+  go through the same merge-time gate as signed ones: auto-merge needs a
+  TFactory pass and green host CI on the head commit. A missing verdict or
+  missing CI now counts as not passed, and `task_metadata.json` can only
+  tighten these signals, never loosen them. The path risk floor is always
+  enforced for these tasks, whatever `AIFACTORY_PATH_RISK_FLOOR_ENFORCE`
+  says. **Breaking for projects without TFactory or without CI:** their
+  legacy and from-issue tasks no longer auto-merge. The PR stays open and
+  the watcher times out to a human stop.
+- **Server git and the web terminal pin the remaining agent-writable git config keys (#1745).**
+  `child_env()` now also pins `core.askPass` (empty), `credential.helper`
+  (reset, then `!gh auth git-credential` for github.com) and
+  `sequence.editor`, and defaults `GIT_PAGER` to `cat`, which overrides
+  `pager.<cmd>`. A `.git/config` an agent writes can no longer make the
+  server run a program through any of them. The web terminal gets the same
+  pins and keeps the user's `EDITOR`/`PAGER`. After the reset it re-adds the
+  user's own system and global credential helpers (`store`, libsecret, glab),
+  so HTTPS pushes from the terminal keep working, and a helper planted in the
+  repo config still does not run. On the server, a host credential helper
+  other than gh no longer applies to factory git. Use `GITHUB_TOKEN` or
+  `gh auth login` there. Not covered: `filter.*` and merge drivers (#1761).
+- **Git config and exec settings can no longer be smuggled in through the environment (#1754).**
+  `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n`, `GIT_SSH_COMMAND`, `GIT_EXEC_PATH`,
+  `GIT_DIR` and every other `GIT_*` key outside a short safe list (author and
+  committer identity, prompt, locks) are refused wherever a command sets them:
+  as a prefix, through `env`, `export`, `read`, `printf -v` or a `for` loop
+  variable. `LD_*` keys and array-subscript names are refused too.
+  `GIT_PAGER`, `GIT_EDITOR`, `PAGER`, `EDITOR` and `VISUAL` accept only
+  `cat`, `true` or `:`. Clearing the environment (`env -i`, `env -`,
+  `exec -c`) or unsetting the git safety pins is refused, as are `let`,
+  `set -a`/`set -o allexport` and `mapfile -C`.
+- **`time`, `source`, `npx` and `cargo watch` no longer hide the program they run (#1784).**
+  `/usr/bin/time CMD` now checks `CMD`. `source` and `.` take only a literal
+  file. `npx`, `pnpx` and `npm exec` accept a fixed set of options and refuse
+  `-c`/`--call`/`--shell-mode`, which run a shell command string. `cargo watch`
+  is refused and `cargo-watch` leaves the Rust allowlist.
+  `npm` options before the subcommand must be known ones, so `npm -w x exec -c …`
+  is checked as `npm exec`, and `cargo --config` accepts only a `.toml` file path.
+  Every npm option before `--` must be on a list of common options, so
+  `--script-shell`, `--node-options` and `-c` after the subcommand or package
+  are refused; `-p`/`--package` is refused. `source` and shell script operands
+  under `/dev` or `/proc` are refused after path normalisation.
+  The program `npx`, `pnpx`, `npm exec` and `npm x` run is now checked
+  against the allowlist like any command, and `-y`/`--yes` (install without
+  asking) is refused for them.
+- **`pnpm exec`/`dlx`, `yarn exec`/`dlx`, `bunx`, `bun x`, `uvx`, `uv tool run` and `pipx run` no longer hide the program they run (#1807).**
+  The program they run is checked against the allowlist like any command, and
+  a dynamic program or subcommand is refused. Options before the program are
+  refused for them (and now for `pnpx` too), as is a global option before the
+  runner subcommand (e.g. `pnpm --filter x exec`).
+- **Command substitution inside `${…}` and heredoc bodies is refused (#1797).**
+  The Bash command parser does not parse the inside of `${…}` or a heredoc
+  body, so `echo ${X:-$(cmd)}` and a heredoc containing `$(cmd)` checked only
+  the outer command. A `$(` or backtick in either now blocks the command;
+  plain `${X:-default}` and `$VAR` in heredocs still work. Also refused: `${…}` forms that evaluate
+  text as code: the `@P`, `@E` and `@A` operators, `${!x}` indirection, and an
+  offset, length or array subscript that is not a plain integer.
+- **Quoted heredocs and the `time` keyword no longer block a command (#1809).**
+  `cat <<'EOF'`, `<<"EOF"`, `<<\EOF` and `<<-'EOF'` now parse, so the usual
+  `git commit -m "$(cat <<'EOF' … EOF)"` form works. bash never expands a
+  quoted heredoc body, so it is treated as text. `time CMD` checks `CMD`
+  the same way `/usr/bin/time` does. Unquoted heredoc bodies keep the
+  #1797 check, and any other command the parser cannot read is still refused.
+- **Commands inside redirect targets are now checked (#1783).**
+  The Bash command parser skipped redirect targets, so `ls > $(nc …)`,
+  `cat < <(nc …)` and `cat <<< $(nc …)` checked only the outer command. It
+  now walks every node of the parsed command, so no part of it can hide a
+  command.
+- **A variable as the Bash command word no longer bypasses the allowlist (#1753).**
+  The command parser skipped a command whose first word was `$X`, `"$X"`,
+  `${X}`, `$(...)` or a backtick, so `echo hi; $X status` was allowed with
+  only `echo` checked. Any non-literal command word now fails closed and the
+  command is blocked, including a bare `` `cmd` `` or `$(cmd)` used as the
+  command.
+- **Agent children can no longer read the parent's secrets through `/proc` or `$HOME` (#1762).**
+  Each agent CLI spawn (Claude SDK paths, codex, copilot, gemini/antigravity,
+  opencode and the tool-loop Bash) gets a private 0700 HOME that holds only
+  that CLI's login file and a `.gitconfig` with `user.*` and `safe.directory`.
+  A refreshed login is written back only if the real file is unchanged. If
+  the private HOME cannot be built the spawn fails; nothing falls back to the
+  real HOME. Agent children also get an env allowlist (#1757), so
+  `SSH_AUTH_SOCK` and other inherited names are dropped. Breaking for
+  operators: agents lose `~/.ssh` and home-folder tool configs; add needed
+  env names with `AIFACTORY_AGENT_ENV_EXTRA`, and name an MCP server's host
+  vars with `env_keys`. On local runners the `/proc` window stays open (#1724).
+- **Project settings moved out of the agent-reachable project clone (#1795).**
+  Per-project settings now live in the web-server database (`project_settings`
+  table, sealed with the same KMS key material as the other stores) instead of
+  `<project>/.aifactory/.env`, which agents can write. On the first read an
+  untracked `.aifactory/.env` is imported once (allowed keys only) and renamed
+  to `.env.migrated-<date>`; after that the database wins and a reappearing
+  file is ignored. The web-server passes MCP config to every launcher and the
+  build Job as `AIFACTORY_PROJECT_MCP_CONFIG`, so an agent that writes the file
+  can no longer change MCP commands (#1791), tokens or the auto-PR and
+  auto-merge flags.
+- **The QA Fixer can no longer delete the handback receipt that holds a merge (#1696).**
+  A confirmed TFactory handback is now also recorded in the `handback_receipts`
+  table, and auto-merge is withheld when a row exists, both in
+  `run_pr_endgame` and at merge time. A failed read holds the merge. The
+  existing `handback_received.json` check stays, so a receipt from before the
+  upgrade still holds.
 - **Tool-loop Bash and Grep commands no longer inherit host secrets in their environment (#1713).**
   The Ollama, Ollama Cloud, OpenAI-compatible and GitHub Models runtimes now
   spawn model-written commands with `child_env()`: every denied secret and
@@ -182,6 +294,26 @@
 
 ### Changed
 
+- PR bodies now state the review tier the merge gate decides on (#1698). For
+  a verified trusted task the body says `Effective review tier: <tier> (signed
+  floor <tier>)`, and when the agent-writable `reviewTier` is below the signed
+  tier it adds a "Possible tampering" warning naming both. The merge decision
+  is unchanged. The merger's PR body no longer echoes the raw on-disk tier; it
+  shows a constant label marked "not checked against a signed contract".
+- A held task contract now shows on the task (#1709). The hold reason
+  (e.g. `contract held (digest mismatch); normal build`) is written to the
+  task plan as `contractHold`, returned on the task row and shown as a neutral
+  "Contract held" badge in the task header. It never changes the task's status
+  or review reason, so a hold is not counted as a build failure. A held
+  migration still stops the build with exit 1, as before.
+- Gemini credentials and the TFactory handoff are now checked before a phase
+  is spent (#1646). A new `probe_google` checks `GEMINI_API_KEY` with one
+  generation-free request (key in a header, never the URL or logs), and
+  `gemini*` models use it on the build path. `send_handoff` probes the
+  providers in the contract's `phase_models` before posting (3 s timeout).
+  `AIFACTORY_AUTH_PREFLIGHT=warn` (default) only logs, `enforce` refuses a
+  definite rejection, `off` skips the probe. An inconclusive result never
+  blocks.
 - Trailing gates now record CI linters that no gate ran (e.g. `ktlint: skipped`)
   instead of omitting them; reporting only, never blocks (#1627).
 
@@ -216,6 +348,18 @@
   that needs Opus to code can say so (RFC-0014 precedence, #1397).
 
 ### Fixed
+
+- **Pushes now upload Git LFS objects at every push site, and the image ships git-lfs (#1721).**
+  One shared routine uploads the LFS objects the pushed ref points to before
+  the push, at the web-server and backend push sites. It runs only for an
+  `https://github.com/` origin in a repo that uses LFS, so other repos push as
+  before. An upload failure is logged and the push goes ahead. Nothing writes
+  git config; new large files are not converted to LFS pointers.
+
+- **Gates inside the build Job now use the operator's gate timeout and sandbox network (#1796).**
+  The build Job now forwards `AIFACTORY_GATE_TIMEOUT_SECONDS` and
+  `AIFACTORY_SANDBOX_NETWORK`. `AIFACTORY_DATA_ROOT` is not forwarded: the Job
+  does not mount the data volume at that path.
 
 - **The stale sweep is no longer skewed by the host's UTC offset (#1624).**
   Web-server timestamps are now aware UTC (`datetime.now(UTC)`), matching the

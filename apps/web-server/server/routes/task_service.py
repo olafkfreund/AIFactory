@@ -24,6 +24,11 @@ from factory_common.logsafe import sanitize_log
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from server.services.completion import (
+    correlation_key,
+    read_issue_number,
+    read_issue_repo,
+)
 from server.services.task_branch import recorded_branch
 from server.services.task_status import PLAN_UNREADABLE, read_plan
 from server.specpath import safe_spec_component
@@ -1262,6 +1267,8 @@ def task_to_dict(task: Task) -> dict:
     execution_progress = None
     archive_metadata = {}
     specs_path = None
+    corr_key = None
+    hold_note = None
     if task.spec_id:
         # Try to find spec dir for this task
         projects = load_projects()
@@ -1270,6 +1277,10 @@ def task_to_dict(task: Task) -> dict:
             spec_dir = project_path / ".aifactory" / "specs" / task.spec_id
             if spec_dir.exists():
                 specs_path = str(spec_dir)  # Store path for frontend Files tab
+                # Declared key (#1775): CFactory uses it as given.
+                corr_key = correlation_key(
+                    task.spec_id, read_issue_number(spec_dir), read_issue_repo(spec_dir)
+                )
                 execution_progress = get_execution_progress(spec_dir, task.subtasks)
                 # Load archive metadata from plan file
                 plan_file = spec_dir / "implementation_plan.json"
@@ -1284,6 +1295,10 @@ def task_to_dict(task: Task) -> dict:
                             archive_metadata["archivedInVersion"] = plan[
                                 "archivedInVersion"
                             ]
+                        if isinstance(plan, dict) and isinstance(
+                            plan.get("contractHold"), str
+                        ):
+                            hold_note = plan["contractHold"]
 
     result = {
         "id": task.id,
@@ -1296,6 +1311,7 @@ def task_to_dict(task: Task) -> dict:
         # RFC-0001 correlation: surface the upstream GitHub issue so the cockpit
         # threads this build with its PFactory plan + TFactory test.
         "githubIssueNumber": task.github_issue,
+        "correlationKey": corr_key,
         # W5 (Factory #218): target repo (owner/name) for cross-portal tracking.
         "repo": task.repo,
         "subtasks": [
@@ -1328,6 +1344,9 @@ def task_to_dict(task: Task) -> dict:
         "reviewReason": task.review_reason,
         "specsPath": specs_path,  # Path to spec directory for Files tab
     }
+
+    if hold_note:
+        result["contractHold"] = hold_note
 
     if execution_progress:
         result["executionProgress"] = execution_progress

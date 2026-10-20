@@ -134,10 +134,12 @@ async def test_a_raising_merger_never_changes_the_outcome(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
-async def test_fix_push_lfs_failure_returns_false(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+async def test_fix_push_lfs_failure_warns_and_pushes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """#1690: the PR-fix push uploads LFS objects first; a failed upload fails the fix."""
+    """#1721: the PR-fix push uploads LFS objects best-effort; a failed upload warns and still pushes."""
     from server.services import pr_endgame
 
     spec_dir = _make_spec(tmp_path, "011-lfs-fix", commits=["a1"])
@@ -168,6 +170,8 @@ async def test_fix_push_lfs_failure_returns_false(
 
     def rec(argv: list[str], *_a: Any, **_k: Any) -> subprocess.CompletedProcess[str]:
         calls.append(argv)
+        if argv[:2] == ["git", "grep"]:
+            return subprocess.CompletedProcess(argv, 0, "", "")
         if argv[:3] == ["git", "remote", "get-url"]:
             return subprocess.CompletedProcess(argv, 0, "https://github.com/o/r\n", "")
         if "--get-regexp" in argv:
@@ -177,10 +181,14 @@ async def test_fix_push_lfs_failure_returns_false(
         return subprocess.CompletedProcess(argv, 0, "", "")
 
     monkeypatch.setattr(subprocess, "run", rec)
-    with patch("qa.correction.apply_correction", new=AsyncMock()):
+    with (
+        patch("qa.correction.apply_correction", new=AsyncMock()),
+        caplog.at_level(logging.WARNING, logger="core.child_env"),
+    ):
         # fix_fn uses asyncio.run internally, so it needs a thread without a loop.
         result = await asyncio.to_thread(fix_fn, [])
 
-    assert result is False
+    assert result is True
+    assert "boom" in caplog.text
     assert any("lfs" in c and c[c.index("lfs") + 1] == "push" for c in calls)
-    assert not any(c[:2] == ["git", "push"] for c in calls)
+    assert any(c[:2] == ["git", "push"] for c in calls)

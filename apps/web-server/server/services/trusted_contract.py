@@ -17,7 +17,12 @@ _BACKEND_DIR = Path(__file__).resolve().parents[3] / "backend"
 if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
-from core.contract_trust import ENV, contract_digest, has_trusted_trace  # noqa: E402
+from core.contract_trust import (  # noqa: E402
+    ENV,
+    LEGACY,
+    contract_digest,
+    has_trusted_trace,
+)
 
 _ISOLATED_STAMPS = ("kubejob", "sandbox-pidns")
 
@@ -28,9 +33,11 @@ def host_isolated() -> bool:
     from server.services.job_state_store import store_enabled  # noqa: PLC0415
 
     # Without DATABASE_URL the kubejob backend falls back to in-pod builds.
-    # D4 narrowed (#1667 review): a PID-namespaced sandbox is not enough while
-    # run.py inside it carries the server's env (#1680); the agent could read
-    # DATABASE_URL and rewrite its own record. Revisit when #1680 lands.
+    # D4 narrowed (#1667 review), kept narrow after #1680 (#1760, 2026-10-17):
+    # in a PID-namespaced sandbox run.py and the agent share the uid and the
+    # namespace, so the agent can wait for the per-call GitHub token there,
+    # and the sandbox cannot yet run the backend from /home or /nix. Widen
+    # once the agent runs under its own uid or such a sandbox exists.
     return selected_backend() == "kubejob" and store_enabled()
 
 
@@ -57,11 +64,11 @@ def handoff_contract(spec_dir: Path, trusted: Any) -> dict[str, Any] | None:
 
 
 async def spawn_env(spec_dir: Path) -> dict[str, str]:
-    """The verdict handed to run.py (#1673): a digest if verified, ``hold``, or nothing."""
+    """The verdict handed to run.py (#1673): a digest if verified, ``hold``, or ``legacy``."""
     state, contract = resolve_contract(spec_dir, await lookup(spec_dir))
     if state == "verified":
         return {ENV: contract_digest(contract)}
-    return {ENV: "hold"} if state == "hold" else {}
+    return {ENV: "hold"} if state == "hold" else {ENV: LEGACY}
 
 
 def resolve_contract(spec_dir: Path, trusted: Any) -> tuple[str, dict[str, Any]]:

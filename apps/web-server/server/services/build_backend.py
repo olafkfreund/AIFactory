@@ -150,11 +150,20 @@ _ENV_BACKEND = "AIFACTORY_BUILD_BACKEND"
 _ENV_BUILD_IMAGE = "AIFACTORY_BUILD_IMAGE"
 _ENV_RUNNING_IMAGE = "AIFACTORY_IMAGE"
 _ENV_REPO_PVC = "AIFACTORY_SANDBOX_REPO_PVC"
-_ENV_NIX_STORE_PVC = "AIFACTORY_NIX_STORE_PVC"
 _ENV_DATA_ROOT = "AIFACTORY_DATA_ROOT"
 _ENV_NAMESPACE = "AIFACTORY_SANDBOX_NAMESPACE"
 _ENV_SERVICE_ACCOUNT = "AIFACTORY_BUILD_SA"
 _ENV_DEADLINE = "AIFACTORY_BUILD_DEADLINE_SECONDS"
+_ENV_SWEEP_DRY_RUN = "AIFACTORY_JOB_SWEEP_DRY_RUN"
+_SWEEP_GRACE_SECONDS = 600
+_SWEEP_SELECTOR = "app=aifactory,factory.io/kind=task"
+
+
+def sweep_dry_run() -> bool:
+    # Fail closed on a typo, like stale_reaper.dry_run.
+    return os.environ.get(_ENV_SWEEP_DRY_RUN, "true").strip().lower() != "false"
+
+
 # Where run.py lives inside the build image. This is the SAME var the in-pod
 # path resolves (config.Settings.BACKEND_PATH is bound to APP_BACKEND_PATH), so
 # the Job entrypoint references the identical run.py the in-pod subprocess does
@@ -171,11 +180,6 @@ _ENV_BACKEND_PATH = "APP_BACKEND_PATH"
 # set AND S3_* is provisioned, and the Job-side consumer (unpack) lands in a
 # separate slice — so an emitted ``WORKSPACE_URI`` is harmless until both are on.
 _ENV_PACK_WORKSPACE = "AIFACTORY_PACK_WORKSPACE"
-# RFC-0017 #190: when the build image ships its own ``/nix/store`` (the ``-nix``
-# build-image variant), the node-pinned RWO ``aifactory-nix-store`` warm-cache
-# PVC must NOT be co-mounted on the packed path — that mount both re-pins the
-# Job to the PVC's single node AND masks the image's baked store. This flag
-# The nix-source flag itself now lives in core.nix_env (both Job paths read it).
 
 # Defaults mirror gate_runner.py + the kube_sandbox SA.
 _DEFAULT_REPO_PVC = "aifactory-data"
@@ -275,6 +279,16 @@ _PASSTHROUGH_BUILD_ENV: tuple[str, ...] = (
     # must run an image carrying the AIFactory code + boto3 — i.e. this one. The
     # build Job cannot know its own image otherwise.
     "AIFACTORY_BUILD_IMAGE",
+    # #1736: the gate in this Job reads both (gate_runner.py, nix_env.py).
+    # Forward them together: the PVC alone brings back the #253 node pin.
+    "AIFACTORY_PACKED_NIX_IN_IMAGE",
+    "AIFACTORY_NIX_STORE_PVC",
+    # #1796: gates in this Job read these (gate_runner.py). Not
+    # AIFACTORY_DATA_ROOT: the Job does not mount the data PVC there.
+    "AIFACTORY_GATE_TIMEOUT_SECONDS",
+    "AIFACTORY_SANDBOX_NETWORK",
+    # #1742: opt-in repo lint gates run in this Job's trailing gate.
+    "AIFACTORY_REPO_LINT_GATE",
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_MODEL",
@@ -656,13 +670,7 @@ def build_run_py_job_manifest(
 
     image = _resolve_build_image(DEFAULT_NIX_IMAGE)
     repo_pvc = os.environ.get(_ENV_REPO_PVC, _DEFAULT_REPO_PVC).strip() or None
-    nix_store_pvc = os.environ.get(_ENV_NIX_STORE_PVC, "").strip() or None
-    # RFC-0017 #190: on the packed (multi-node) path, the warm-store PVC is a
-    # second RWO local-path pin (and would mask the image's baked /nix/store), so
-    # drop it when the build image carries nix. Gated (default OFF); the co-mount
-    # and non-packed paths keep the warm store. See _packed_nix_in_image.
-    if workspace_uri and _packed_nix_in_image():
-        nix_store_pvc = None
+    # The build Job mounts no Nix store: the image carries /nix (#1736).
     data_root = os.environ.get(_ENV_DATA_ROOT, _DEFAULT_DATA_ROOT)
     namespace = (
         os.environ.get(_ENV_NAMESPACE, _DEFAULT_NAMESPACE).strip() or _DEFAULT_NAMESPACE
@@ -753,7 +761,6 @@ def build_run_py_job_manifest(
         service_account=service_account,
         data_pvc=repo_pvc if worktree_subpath is not None else None,
         worktree_subpath=worktree_subpath,
-        nix_store_pvc=nix_store_pvc,
         namespace=namespace,
         deadline_seconds=deadline,
         nix_develop=False,
@@ -879,25 +886,6 @@ def _pack_workspace_enabled() -> bool:
         "yes",
         "on",
     )
-
-
-def _packed_nix_in_image() -> bool:
-    """RFC-0017 #190 nix-source gate. Default OFF.
-
-    When ON, a packed build Job (``workspace_uri`` set) drops the node-pinned
-    ``aifactory-nix-store`` warm-cache PVC and uses the ``/nix/store`` baked into
-    the build image instead, making the Job node-agnostic. Only meaningful once
-    ``AIFACTORY_BUILD_IMAGE`` points at the nix-baked ``-nix`` image; flip both
-    together in gitops. Off → the warm-store co-mount is unchanged.
-
-    Delegates to ``core.nix_env.nix_in_image`` so the build and gate paths read
-    one predicate — two copies is how the gate path missed the #258 flip (#253).
-    """
-    from core.nix_env import (
-        nix_in_image,
-    )
-
-    return nix_in_image()
 
 
 def _maybe_pack_workspace(
@@ -1264,9 +1252,11 @@ class KubeJobBuildBackend:
         await stamp_spawn(spec_dir_for(project_path, spec_id), "kubejob")
 
         extra_env = build_job_env(oauth_token)
+        from . import project_settings_store  # noqa: PLC0415
         from .trusted_contract import spawn_env  # noqa: PLC0415
 
         extra_env.update(await spawn_env(spec_dir_for(project_path, spec_id)))
+        extra_env.update(await project_settings_store.mcp_spawn_env(project_path))
 
         manifest = build_run_py_job_manifest(
             task_id=task_id,
@@ -1356,6 +1346,20 @@ class KubeJobBuildBackend:
                 sanitize_log(job_id),
             )
             return True
+        finally:
+            if owns_client:
+                api = getattr(batch, "api_client", None)
+                if api is not None:
+                    await api.close()
+
+    async def job_gone(self, job_id: str, batch: Any = None) -> bool:
+        """Return true only when the reconstructed Job lookup returns 404."""
+        job_name, namespace = _reconstructed_ref(job_id)
+        owns_client = batch is None
+        if owns_client:
+            batch = await self._batch_api()
+        try:
+            return await self._job_outcome(batch, namespace, job_name) == "gone"
         finally:
             if owns_client:
                 api = getattr(batch, "api_client", None)
@@ -1581,6 +1585,80 @@ class KubeJobBuildBackend:
                 if api is not None:
                     await api.close()
         return reaped
+
+    async def sweep_orphan_jobs(
+        self, *, now: float | None = None, batch: Any = None
+    ) -> list[str]:
+        """Report or delete old build Jobs with no active owner row (#1714)."""
+        import time as _time  # noqa: PLC0415
+
+        try:
+            rows = await self._store.get_active_kubejobs()
+        except Exception:  # noqa: BLE001 - uncertain ownership leaves Jobs alone
+            _log.exception("[build_backend] #1714 could not read Job owners")
+            return []
+        owned = {
+            row["job_name"] or _reconstructed_ref(row["job_id"])[0] for row in rows
+        }
+        namespace = _dispatch_namespace()
+        owns_client = batch is None
+        if owns_client:
+            batch = await self._batch_api()
+        try:
+            try:
+                listing = await batch.list_namespaced_job(
+                    namespace, label_selector=_SWEEP_SELECTOR
+                )
+            except Exception as exc:  # noqa: BLE001 - uncertain list leaves Jobs alone
+                _log.warning(
+                    "[build_backend] #1714 could not list build Jobs in %s "
+                    "(status=%s; 403 means missing Jobs list RBAC): %s",
+                    namespace,
+                    getattr(exc, "status", None),
+                    exc,
+                )
+                return []
+
+            clock = now if now is not None else _time.time()
+            swept: list[str] = []
+            for job in listing.items or []:
+                name = job.metadata.name
+                created = _to_epoch(job.metadata.creation_timestamp)
+                if (
+                    not name
+                    or name in owned
+                    or created is None
+                    or clock - created < _SWEEP_GRACE_SECONDS
+                ):
+                    continue
+                if sweep_dry_run():
+                    _log.warning(
+                        "[build_backend] #1714 dry-run: would delete orphan Job %s/%s",
+                        namespace,
+                        name,
+                    )
+                    swept.append(name)
+                    continue
+                try:
+                    await batch.delete_namespaced_job(
+                        name, namespace, propagation_policy="Background"
+                    )
+                except Exception as exc:  # noqa: BLE001 - continue with other Jobs
+                    if getattr(exc, "status", None) != 404:  # noqa: PLR2004 - HTTP Not Found
+                        _log.warning(
+                            "[build_backend] #1714 could not delete orphan Job %s/%s: %s",
+                            namespace,
+                            name,
+                            exc,
+                        )
+                        continue
+                swept.append(name)
+            return swept
+        finally:
+            if owns_client:
+                api = getattr(batch, "api_client", None)
+                if api is not None:
+                    await api.close()
 
     async def _done(self, job_id: str) -> None:
         """Mark a build done from the Job's own success (#857).

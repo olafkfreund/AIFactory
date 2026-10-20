@@ -11,6 +11,7 @@ from pathlib import Path
 
 from core.child_env import (
     child_env,
+    merge_driver_pins,
 )  # backend is already on sys.path (cli is its package)
 
 # Ensure parent directory is in path for imports (before other imports)
@@ -429,7 +430,7 @@ def handle_cleanup_worktrees_command(project_dir: Path) -> None:
     cleanup_all_worktrees(project_dir, confirm=True)
 
 
-def _check_git_merge_conflicts(project_dir: Path, spec_name: str) -> dict:
+def _check_git_merge_conflicts(project_dir: Path, spec_name: str) -> dict:  # noqa: PLR0912, PLR0915
     """
     Check for git-level merge conflicts WITHOUT modifying the working directory.
 
@@ -505,9 +506,17 @@ def _check_git_merge_conflicts(project_dir: Path, spec_name: str) -> dict:
         # Use git merge-tree to check for conflicts WITHOUT touching working directory
         # This is a plumbing command that does a 3-way merge in memory
         # Note: --write-tree mode only accepts 2 branches (it auto-finds the merge base)
+        try:
+            pins = merge_driver_pins(project_dir)
+        except RuntimeError as exc:
+            debug_warning(MODULE, f"Cannot read merge drivers: {exc}")
+            result["has_conflicts"] = True
+            return result
+
         merge_tree_result = subprocess.run(
             [
                 "git",
+                *pins,
                 "merge-tree",
                 "--write-tree",
                 "--no-messages",
@@ -517,6 +526,7 @@ def _check_git_merge_conflicts(project_dir: Path, spec_name: str) -> dict:
             cwd=project_dir,
             capture_output=True,
             text=True,
+            env=child_env(),
         )
 
         # merge-tree returns exit code 1 if there are conflicts

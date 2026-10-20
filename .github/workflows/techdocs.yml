@@ -28,6 +28,7 @@ on:
       - "apps/frontend-web/package.json"
       - "apps/web-server/server/**"
       - "apps/web-server/openapi.yaml"
+      - "apps/web-server/openapi-optin.yaml"
       - ".github/workflows/techdocs.yml"
       - "docs/**"
       - "mkdocs.yml"
@@ -42,6 +43,7 @@ on:
       - "apps/frontend-web/package.json"
       - "apps/web-server/server/**"
       - "apps/web-server/openapi.yaml"
+      - "apps/web-server/openapi-optin.yaml"
       - ".github/workflows/techdocs.yml"
       - "docs/**"
       - "mkdocs.yml"
@@ -159,13 +161,17 @@ jobs:
       #    continue-on-error here — a spec we cannot generate is a real failure.
       #    The generator pins SAML_ENABLED, SCIM_ENABLED, AIFACTORY_MCP_REMOTE_ENABLED,
       #    AIFACTORY_RMUX_ENABLED and APP_RMUX_ENABLED to false, so the spec is
-      #    the default deployment (#1632).
+      #    the default deployment (#1632). Step 5 reruns it with them all on and fails
+      #    if the spec changes (#1729).
+      #    The opt-in run writes apps/web-server/openapi-optin.yaml and reads the
+      #    committed base spec, so it runs second (#1730).
       - name: Regenerate OpenAPI spec
         run: |
           python3 -m venv /tmp/ws
           /tmp/ws/bin/pip install --quiet -r apps/web-server/requirements.txt
           /tmp/ws/bin/pip install --quiet -r apps/backend/requirements.txt
           APP_DISABLE_AUTH=true /tmp/ws/bin/python scripts/generate-openapi-spec.py
+          APP_DISABLE_AUTH=true /tmp/ws/bin/python scripts/generate-openapi-spec.py --opt-in
 
       # 3. Validate the TechDocs build (the same thing Backstage runs on view).
       - name: Validate TechDocs build
@@ -178,14 +184,14 @@ jobs:
       #    just generated. The fix is a one-liner a human runs and commits.
       - name: Check generated docs are committed
         run: |
-          if git diff --quiet -- docs/dependencies.md apps/web-server/openapi.yaml; then
+          if git diff --quiet -- docs/dependencies.md apps/web-server/openapi.yaml apps/web-server/openapi-optin.yaml; then
             echo "TechDocs inputs are up to date."
             exit 0
           fi
           echo "::error::Generated TechDocs artifacts are stale. Regenerate and commit them."
           echo
           echo "The following generated files differ from what the current code produces:"
-          git diff --stat -- docs/dependencies.md apps/web-server/openapi.yaml
+          git diff --stat -- docs/dependencies.md apps/web-server/openapi.yaml apps/web-server/openapi-optin.yaml
           echo
           echo "To fix, run from the repo root and commit the result:"
           echo
@@ -194,7 +200,27 @@ jobs:
           echo "  /tmp/ws/bin/pip install -r apps/web-server/requirements.txt"
           echo "  /tmp/ws/bin/pip install -r apps/backend/requirements.txt"
           echo "  APP_DISABLE_AUTH=true /tmp/ws/bin/python scripts/generate-openapi-spec.py"
-          echo "  (output ignores .env and exported feature flags; apps/web-server/static/ must be absent)"
+          echo "  APP_DISABLE_AUTH=true /tmp/ws/bin/python scripts/generate-openapi-spec.py --opt-in"
+          echo "  (output ignores .env, exported feature flags and apps/web-server/static/)"
           echo
-          git diff -- docs/dependencies.md apps/web-server/openapi.yaml
+          git diff -- docs/dependencies.md apps/web-server/openapi.yaml apps/web-server/openapi-optin.yaml
           exit 1
+
+      # 5. The generator pins SAML/SCIM/mcp-remote/rmux off (#1632). Prove the
+      #    pin holds: with every listed flag exported on, the output must still equal
+      #    the committed spec that step 4 just matched to the flags-off run
+      #    (#1729). A new env gate goes in both lists.
+      - name: Check the OpenAPI spec ignores feature flags
+        env:
+          APP_DISABLE_AUTH: "true"
+          SAML_ENABLED: "true"
+          SCIM_ENABLED: "true"
+          AIFACTORY_MCP_REMOTE_ENABLED: "true"
+          AIFACTORY_RMUX_ENABLED: "true"
+          APP_RMUX_ENABLED: "true"
+        run: |
+          /tmp/ws/bin/python scripts/generate-openapi-spec.py
+          if ! git diff --exit-code -- apps/web-server/openapi.yaml; then
+            echo "::error::A flag set in this step is no longer pinned off by scripts/generate-openapi-spec.py; restore the pin."
+            exit 1
+          fi

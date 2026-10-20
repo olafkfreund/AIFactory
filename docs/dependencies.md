@@ -2,7 +2,7 @@
 
 > Auto-generated from the project manifests by `scripts/generate-techdocs-deps.py` (run in CI). Do not edit by hand.
 
-AIFactory **declares** **17** backend, **36** web-server, and **47** frontend runtime dependencies.
+AIFactory **declares** **17** backend, **37** web-server, and **47** frontend runtime dependencies.
 
 > **Python versions below are declared floors, not installed versions.** The runtime image installs the fully-resolved, hash-pinned closure from [`requirements.lock`](https://github.com/olafkfreund/AIFactory/blob/dev/requirements.lock) via `pip --require-hashes`; CI test jobs still resolve the floors freely (#1284).
 
@@ -49,6 +49,7 @@ AIFactory **declares** **17** backend, **36** web-server, and **47** frontend ru
 | `hvac` | `>=2.3.0` |
 | `itsdangerous` | `>=2.2.0` |
 | `kubernetes-asyncio` | `>=32.0` |
+| `mcp` | `>=2.0` |
 | `opentelemetry-api` | `>=1.27` |
 | `opentelemetry-exporter-otlp` | `>=1.27` |
 | `opentelemetry-instrumentation-asyncpg` | `>=0.48b0` |

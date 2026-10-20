@@ -19,6 +19,10 @@ class _Stop(Exception):
     pass
 
 
+class _Client:
+    pass
+
+
 def _recorder(seen: list[dict[str, Any]], *, stop: bool = False):
     def _opts(**kwargs: Any) -> dict[str, Any]:
         seen.append(kwargs)
@@ -34,12 +38,19 @@ def _assert_blanked(seen: list[dict[str, Any]]) -> None:
     env = seen[0]["env"]
     assert env["GITHUB_TOKEN"] == ""
     assert env["GH_TOKEN"] == ""
+    assert Path(env["HOME"]).name.startswith("aif-home-")
+    assert env["SSH_AUTH_SOCK"] == ""
 
 
 @pytest.fixture(autouse=True)
-def _tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+def _tokens(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
     monkeypatch.setenv("GH_TOKEN", TOKEN)
+    monkeypatch.setenv("SSH_AUTH_SOCK", str(tmp_path / "agent.sock"))
+    real_home = tmp_path / "real"
+    real_home.mkdir()
+    monkeypatch.setenv("HOME", str(real_home))
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
 
 
 def test_ai_analyzer_client_blanks_the_token(
@@ -49,13 +60,17 @@ def test_ai_analyzer_client_blanks_the_token(
 
     seen: list[dict[str, Any]] = []
     monkeypatch.setattr(cc, "ClaudeAgentOptions", _recorder(seen))
-    monkeypatch.setattr(cc, "ClaudeSDKClient", lambda **_kw: object())
+    monkeypatch.setattr(cc, "ClaudeSDKClient", lambda **_kw: _Client())
     monkeypatch.setattr(cc, "wrap_client_outbound_scrub", lambda c: c)
     monkeypatch.setattr(
         cc.ClaudeAnalysisClient, "_validate_oauth_token", lambda _s: None
     )
-    cc.ClaudeAnalysisClient(tmp_path)._create_client(tmp_path / "settings.json")
+    client = cc.ClaudeAnalysisClient(tmp_path)._create_client(
+        tmp_path / "settings.json"
+    )
     _assert_blanked(seen)
+    assert Path(seen[0]["env"]["HOME"]).is_dir()
+    del client
 
 
 def test_insights_runner_blanks_the_token(
@@ -94,5 +109,11 @@ def test_followup_reviewer_passes_blanked_env() -> None:
     assert calls
     for call in calls:
         env = next((k.value for k in call.keywords if k.arg == "env"), None)
-        assert isinstance(env, ast.Call)
-        assert getattr(env.func, "id", "") == "get_agent_env_blanks"
+        assert isinstance(env, ast.Dict)
+        assert any(
+            key is None
+            and isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Name)
+            and value.func.id == "get_agent_env_blanks"
+            for key, value in zip(env.keys, env.values, strict=True)
+        )

@@ -23,6 +23,7 @@ from server.error_ref import InputRejectedError, client_error
 # call sites unchanged -- and so `patch("server.routes.projects.load_projects")`
 # still works for tests that drive THIS module's handlers.
 from server.project_registry import load_projects, save_projects
+from server.services import project_settings_store
 from server.services.audit_service import ACTION_TASK_CREATE, audit_task_action
 from server.services.http_verdict import honest_status
 from server.specpath import browse_roots, safe_spec_component, within_roots
@@ -904,16 +905,8 @@ async def update_project_settings(
     try:
         project_data = projects[project_id]
         project_path = Path(project_data["path"])
-        env_path = project_path / ".aifactory" / ".env"
 
-        # Read existing .env or start fresh
-        existing = {}
-        if env_path.exists():
-            for line in env_path.read_text().split("\n"):
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, value = line.split("=", 1)
-                    existing[key.strip()] = value.strip()
+        existing = await project_settings_store.get_settings(project_path)
 
         # Map ProjectSettingsUpdate fields to environment variables
         # Only update non-None values
@@ -959,15 +952,7 @@ async def update_project_settings(
             if settings_key in settings_dict:
                 existing[env_key] = "true" if settings_dict[settings_key] else "false"
 
-        # Ensure .aifactory directory exists
-        env_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Write back to .env file
-        content = "\n".join(f"{k}={v}" for k, v in existing.items())
-        env_path.write_text(content)
-
-        # Set secure file permissions (owner read/write only)
-        env_path.chmod(0o600)
+        await project_settings_store.put_settings(project_path, existing)
 
         # Also update settings in projects.json
         if "settings" not in project_data:

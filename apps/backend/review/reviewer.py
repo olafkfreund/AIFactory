@@ -216,7 +216,7 @@ def run_review_checkpoint(
             # ponytail: unparseable timestamp just skips the "Approved at" line
             with contextlib.suppress(ValueError):
                 dt = datetime.fromisoformat(state.approved_at)
-                formatted = dt.strftime("%Y-%m-%d %H:%M")
+                formatted = dt.astimezone().strftime("%Y-%m-%d %H:%M")
                 content.append(f"{muted('Approved at:')} {formatted}")
         print()
         print(box(content, width=60, style="light"))

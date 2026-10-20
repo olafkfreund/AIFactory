@@ -162,6 +162,30 @@ def detect_gates(project_dir: Path) -> list[Gate]:
     return gates
 
 
+# Curated lint commands (#1742). CI text never runs; others stay `skipped`.
+_LINT_COMMANDS: dict[str, list[str]] = {
+    "flake8": ["flake8"],
+    "ktlint": ["ktlint"],
+    "ruff": ["ruff", "check", "."],
+}
+
+
+def repo_lint_enabled(env: Mapping[str, str] = os.environ) -> bool:
+    """AIFACTORY_REPO_LINT_GATE opt-in: lint can fail builds that pass today."""
+    return env.get("AIFACTORY_REPO_LINT_GATE", "").lower() in ("1", "true", "yes")
+
+
+def lint_gates(linters: list[str]) -> list[Gate]:
+    """One gate per detected CI linter with a curated command; [] when off."""
+    if not repo_lint_enabled():
+        return []
+    return [
+        Gate(t, list(_LINT_COMMANDS[t]), skip_code=127)
+        for t in linters
+        if t in _LINT_COMMANDS
+    ]
+
+
 # Build files that mark the root of a module the descriptor's command can run in.
 # Keyed by descriptor name, deliberately NOT one shared list: this fleet's repos
 # are polyglot, and a generic marker at the root — a package.json beside
@@ -487,12 +511,10 @@ def _nix_kube_runner(image: str) -> Callable[[list[str], Path], tuple[int | None
     # whenever the two PVs stranded on different nodes (the live factory cluster:
     # aifactory-data on the server, aifactory-nix-store on the agent). See
     # nix_in_image for why the image is a sufficient /nix source.
-    # Both gate paths (packed and co-mount) drop the PVC when nix_in_image() is
-    # true; the build path drops it on its packed path only
-    # (_packed_nix_in_image in build_backend.py). Inside the build Job neither
-    # variable is forwarded (_PASSTHROUGH_BUILD_ENV, build_backend.py:259), so
-    # the guard is inert there today. The two must be forwarded together (#1736): forwarding
-    # only the PVC brings back the #253 node pin.
+    # Both gate paths drop the PVC when nix_in_image() is true. The build Job
+    # forwards both variables (_PASSTHROUGH_BUILD_ENV, #1736), so this guard
+    # sees the same values here as on the control plane; the build Job itself
+    # mounts no store.
     nix_store_pvc = (
         None
         if nix_in_image()

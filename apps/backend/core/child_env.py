@@ -10,9 +10,10 @@ import logging
 import os
 import re
 import shutil
-from collections.abc import Iterable, Mapping
+import subprocess
+from collections.abc import Callable, Iterable, Mapping
 
-from core.auth import is_denied_env_key
+from core.auth import _log_dropped, is_agent_env_allowed, is_denied_env_key
 
 logger = logging.getLogger(__name__)
 
@@ -32,52 +33,142 @@ GITHUB_KEEP: tuple[str, ...] = ("GITHUB_TOKEN", "GH_TOKEN")
 _CREDENTIAL_NAME = re.compile(r"(_KEY|_TOKEN)$", re.IGNORECASE)
 
 
+# (key, value) pins; None means the editor/pager argument (#1689, #1717, #1745).
+_GIT_PINS: tuple[tuple[str, str | None], ...] = (
+    ("core.hooksPath", "/dev/null"),
+    ("core.fsmonitor", "false"),
+    ("protocol.ext.allow", "never"),
+    ("core.sshCommand", "ssh"),
+    ("core.pager", None),
+    ("core.editor", None),
+    ("core.askPass", ""),
+    ("credential.helper", ""),  # empty resets every inherited helper
+    ("credential.https://github.com.helper", "!gh auth git-credential"),
+    ("sequence.editor", None),
+)
+
+
+def pin_git_config(
+    env: dict[str, str], *, editor: str = "true", pager: str = "cat"
+) -> dict[str, str]:
+    """Append git command-scope pins and default ``GIT_PAGER`` onto ``env``."""
+    try:
+        n = max(int(env.get("GIT_CONFIG_COUNT", "0")), 0)
+    except ValueError:
+        n = 0
+    for i, (key, val) in enumerate(_GIT_PINS):
+        env[f"GIT_CONFIG_KEY_{n + i}"] = key
+        env[f"GIT_CONFIG_VALUE_{n + i}"] = (
+            pager if key == "core.pager" else editor if val is None else val
+        )
+    env["GIT_CONFIG_COUNT"] = str(n + len(_GIT_PINS))
+    env.setdefault("GIT_PAGER", pager)
+    return env
+
+
+_MERGE_DRIVER_KEYS = (
+    "git",
+    "config",
+    "-z",
+    "--includes",
+    "--name-only",
+    "--list",
+)
+
+
+def merge_driver_pins(
+    cwd: str | os.PathLike[str],
+    run: Callable[[list[str]], tuple[int, str]] | None = None,
+    env: Mapping[str, str] | None = None,
+) -> list[str]:
+    """Return ``-c merge.<name>.driver=`` pins for every driver in git config (#1761).
+
+    An agent can define ``merge.<name>.driver`` in ``.git/config`` and bind it in
+    ``.git/info/attributes``; overriding each key with an empty value makes git
+    report a conflict instead of running the program. Callers fail closed on
+    ``RuntimeError``. Keys are filtered in Python, not by ``--get-regexp``:
+    under a UTF-8 locale git's regex skips a non-UTF-8 subsection. ``run``
+    must decode with ``surrogateescape`` so such a key round-trips to argv.
+    Raises RuntimeError when git metadata changed since the baseline (#1746).
+    """
+    from core.git_metadata import check_git_metadata  # noqa: PLC0415 - import cycle
+
+    check_git_metadata(cwd, run)
+    argv = list(_MERGE_DRIVER_KEYS)
+    try:
+        if run is not None:
+            rc, out = run(argv)
+        else:
+            proc = subprocess.run(  # noqa: S603 - fixed argv
+                argv,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                errors="surrogateescape",
+                env=dict(env) if env is not None else child_env(),
+                timeout=60,
+                check=False,
+            )
+            rc, out = proc.returncode, proc.stdout
+    except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
+        raise RuntimeError(f"git config failed: {exc}") from exc
+    if rc != 0:
+        raise RuntimeError(f"git config exited {rc}")
+    pins: list[str] = []
+    for key in out.split("\0"):
+        if not (
+            key.startswith("merge.")
+            and key.endswith(".driver")
+            and len(key) >= len("merge..driver")
+        ):
+            continue
+        if "=" in key:
+            raise RuntimeError(f"merge driver key contains '=': {key!r}")
+        pins.extend(("-c", f"{key}="))
+    return pins
+
+
 def child_env(
     keep: Iterable[str] = (),
     extra: Mapping[str, str] | None = None,
     *,
     runner: bool = False,
+    agent: bool = False,
 ) -> dict[str, str]:
     """Return a scrubbed copy of ``os.environ`` for a child process.
 
     Drops every host secret ``is_denied_env_key`` matches plus ``_STRIP_VARS``,
-    and, unless ``runner``, every ``*_KEY``/``*_TOKEN`` name;
-    restores the ``keep`` names that are set, applies ``extra``, and disables
-    git hooks, fsmonitor and the ext:: transport via git env config. The pins
-    also set the ssh command (``ssh``), pager (``cat``) and editor (``true``);
+    and, unless ``runner``, every ``*_KEY``/``*_TOKEN`` name.
+    ``agent`` also drops names outside the agent allowlist. Then it restores
+    the ``keep`` names that are set, applies ``extra``, and pins git
+    exec-bearing config keys via ``pin_git_config``: hooks, fsmonitor, the
+    ``ext::`` transport, ssh command (``ssh``), pager (``cat``, plus
+    ``GIT_PAGER`` default), editor and sequence editor (``true``), askPass
+    (empty) and credential helpers (reset, then ``!gh auth git-credential``
+    for github.com).
     ``GIT_SSH_COMMAND``, ``GIT_PAGER`` or ``GIT_EDITOR`` in the server env
-    overrides them. The pins are appended last (an existing ``GIT_CONFIG_*``
-    entry keeps its lower index).
+    overrides the corresponding setting. The pins are appended last, after any
+    ``GIT_CONFIG_*`` entry already in the env or ``extra``, so they win. For
+    ``credential.helper`` that means the reset also wipes every helper such an
+    entry added; a caller that needs one appends it after this call (as
+    ``github_env`` does).
     Build it per call: ``os.environ`` changes at runtime.
     """
     env = {
         k: v
         for k, v in os.environ.items()
         if not is_denied_env_key(k)
-        and k not in _STRIP_VARS
+        # Linux env names are case-sensitive: a lowercase copy is its own variable.
+        and k.upper() not in _STRIP_VARS
         and (runner or not _CREDENTIAL_NAME.search(k))
+        and (not agent or is_agent_env_allowed(k))
     }
+    if agent:
+        _log_dropped(k for k in os.environ if not is_agent_env_allowed(k))
     env.update({k: os.environ[k] for k in keep if k in os.environ})
     if extra:
         env.update(extra)
-    try:
-        n = max(int(env.get("GIT_CONFIG_COUNT", "0")), 0)
-    except ValueError:
-        n = 0
-    env[f"GIT_CONFIG_KEY_{n}"] = "core.hooksPath"
-    env[f"GIT_CONFIG_VALUE_{n}"] = "/dev/null"
-    env[f"GIT_CONFIG_KEY_{n + 1}"] = "core.fsmonitor"
-    env[f"GIT_CONFIG_VALUE_{n + 1}"] = "false"
-    env[f"GIT_CONFIG_KEY_{n + 2}"] = "protocol.ext.allow"
-    env[f"GIT_CONFIG_VALUE_{n + 2}"] = "never"
-    env[f"GIT_CONFIG_KEY_{n + 3}"] = "core.sshCommand"
-    env[f"GIT_CONFIG_VALUE_{n + 3}"] = "ssh"
-    env[f"GIT_CONFIG_KEY_{n + 4}"] = "core.pager"
-    env[f"GIT_CONFIG_VALUE_{n + 4}"] = "cat"
-    env[f"GIT_CONFIG_KEY_{n + 5}"] = "core.editor"
-    env[f"GIT_CONFIG_VALUE_{n + 5}"] = "true"
-    env["GIT_CONFIG_COUNT"] = str(n + 6)
-    return env
+    return pin_git_config(env)
 
 
 _GITHUB_ORIGIN = re.compile(
@@ -125,3 +216,82 @@ def lfs_push_argv(push_url_output: str, ref: str) -> list[str] | None:
         "origin",
         ref,
     ]
+
+
+LFS_UPLOAD_TIMEOUT = 600
+
+
+def lfs_upload(
+    run: Callable[[list[str], int], tuple[int, str, str]],
+    ref: str,
+) -> str | None:
+    """Upload ``ref``'s LFS objects before a push; None = done or not needed (#1721).
+
+    Blocking for up to ``LFS_UPLOAD_TIMEOUT``: async callers use a thread.
+
+    ``run(argv, timeout)`` runs git in the repo with the push's env and returns
+    ``(rc, stdout, stderr)``. Without ``git-lfs`` on PATH, for non-GitHub or ssh
+    origins, or when ``.gitattributes`` at ``ref`` has no ``filter=lfs``, it
+    returns None. The upload gets ``LFS_UPLOAD_TIMEOUT``. Best-effort, because no
+    image before #1721 shipped git-lfs, so no push ever failed on it: an upload
+    failure, a timeout or the ``url.*``/customtransfer refusal logs a warning and
+    returns None. Only the safety-net refusal (a local ``filter.lfs.clean`` with
+    no supported endpoint) is returned, and the caller skips the push.
+    """
+    if shutil.which("git-lfs") is None:
+        return None
+    url_rc, out, _ = run(["git", "remote", "get-url", "--push", "--all", "origin"], 60)
+    url = out.strip()
+    if url_rc != 0 or not url.startswith("https://github.com/"):
+        return None
+    gate, _, _ = run(
+        [
+            "git",
+            "grep",
+            "-q",
+            "-F",
+            "-e",
+            "filter=lfs",
+            ref,
+            "--",
+            ":(glob)**/.gitattributes",
+        ],
+        60,
+    )
+    if gate != 0:
+        return None
+    argv = lfs_push_argv(url, ref)
+    if argv is None:
+        # Safety net: only a repo with the clean filter on can hold new pointers;
+        # without it commits are raw blobs and the push goes ahead as before.
+        filt, _, _ = run(["git", "config", "--local", "--get", "filter.lfs.clean"], 60)
+        return (
+            None
+            if filt != 0
+            else (
+                "LFS repo but no supported LFS endpoint for this origin; "
+                "refusing to push pointers without objects"
+            )
+        )
+    check_rc, _, _ = run(
+        [
+            "git",
+            "config",
+            "--name-only",
+            "--get-regexp",
+            r"^(lfs\.customtransfer\.|url\.)",
+        ],
+        60,
+    )
+    if check_rc != 1:
+        err: str | None = "LFS step refused (lfs.customtransfer.* or url.* defined)"
+    else:
+        try:
+            upload_rc, _, stderr = run(argv, LFS_UPLOAD_TIMEOUT)
+        except subprocess.TimeoutExpired as exc:
+            err = f"git lfs push timed out after {exc.timeout} s"
+        else:
+            err = None if upload_rc == 0 else (stderr.strip() or "git lfs push failed")
+    if err:
+        logger.warning("LFS upload failed; pushing without it: %s", err[:200])
+    return None

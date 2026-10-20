@@ -4,15 +4,20 @@ Context and Memory routes.
 Handles project context, memory infrastructure, and Graphiti integration.
 """
 
+import json
 import logging
+import re
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path as FilePath
+from typing import Any
 
 from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, Path, Query
 from pydantic import BaseModel, Field, SecretStr
 
 from server.error_ref import client_error
+from server.services import project_settings_store
 from server.services.http_verdict import honest_status
 from server.services.pr_endgame import is_graphiti_enabled
 from server.utils.subprocess_env import child_env
@@ -20,6 +25,10 @@ from server.utils.subprocess_env import child_env
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+_AGENT_MCP_PREFIX = "AGENT_MCP_"
+_AGENT_NAME_RE = re.compile(r"[A-Za-z0-9_]+")
+_AGENT_MCP_KEY_RE = re.compile(r"AGENT_MCP_([A-Za-z0-9_]+)_(ADD|REMOVE)")
 
 
 # ============================================
@@ -53,6 +62,9 @@ class ProjectEnvUpdate(BaseModel):
     claudeToken: str | None = Field(default=None, repr=False)
     # Graphiti Provider Config (nested object from frontend)
     graphitiProviderConfig: dict | None = None
+    mcpServers: dict[str, Any] | None = None  # noqa: N815 - frontend field name
+    agentMcpOverrides: dict[str, Any] | None = None  # noqa: N815 - frontend field name
+    customMcpServers: list[Any] | None = None  # noqa: N815 - frontend field name
 
 
 class TestGraphitiRequest(BaseModel):
@@ -77,8 +89,6 @@ project_router = APIRouter()
 @honest_status
 async def get_project_context(projectId: str = Path(...)):
     """Get project context including index and memories."""
-    import json
-
     from server.project_registry import load_projects
 
     projects = load_projects()
@@ -112,6 +122,14 @@ async def get_project_context(projectId: str = Path(...)):
     # `_flag` is the existing resolver: per-project setting wins, else the
     # deployment env var, both default OFF. A project that has not enabled
     # Graphiti now reads `false`, which is the whole point.
+    try:
+        await project_settings_store.get_settings(project_path)
+    except Exception:  # noqa: BLE001 - fall back to existing snapshot / global default
+        logger.warning(
+            "failed to load project settings for %s",
+            sanitize_log(str(project_path)),
+            exc_info=True,
+        )
     memory_enabled = is_graphiti_enabled(project_path)
 
     # Collect recent memories from all specs
@@ -200,11 +218,11 @@ async def refresh_project_index(projectId: str = Path(...)):
         files = result.stdout.strip().split("\n") if result.returncode == 0 else []
 
         # Create basic index
-        index = {
+        index: dict[str, Any] = {
             "files": len(files),
             "languages": {},
             "frameworks": [],
-            "lastRefreshed": __import__("datetime").datetime.now().isoformat(),
+            "lastRefreshed": datetime.now(UTC).isoformat(),
         }
 
         # Count files by extension
@@ -216,8 +234,6 @@ async def refresh_project_index(projectId: str = Path(...)):
         # Save index
         index_path = project_path / ".aifactory" / "project_index.json"
         index_path.parent.mkdir(parents=True, exist_ok=True)
-        import json
-
         index_path.write_text(json.dumps(index, indent=2))
 
         return {"success": True, "data": index}
@@ -271,8 +287,6 @@ async def get_memory_status(projectId: str = Path(...)):
 @honest_status
 async def search_memories(projectId: str = Path(...), q: str = Query(...)):
     """Search project memories."""
-    import json
-
     from server.project_registry import load_projects
 
     projects = load_projects()
@@ -333,8 +347,6 @@ async def search_memories(projectId: str = Path(...), q: str = Query(...)):
 @honest_status
 async def get_recent_memories(projectId: str = Path(...), limit: int = Query(10)):
     """Get recent memories for project."""
-    import json
-
     from server.project_registry import load_projects
 
     projects = load_projects()
@@ -420,9 +432,8 @@ async def get_project_env(projectId: str = Path(...)):
         return {"success": False, "error": f"Project {projectId} not found"}
 
     project_path = FilePath(projects[projectId]["path"])
-    env_path = project_path / ".aifactory" / ".env"
 
-    config = {
+    config: dict[str, Any] = {
         "claudeAuthStatus": "not_configured",
         "githubEnabled": False,
         "githubTokenSet": False,
@@ -437,93 +448,115 @@ async def get_project_env(projectId: str = Path(...)):
         "gitProject": "",
     }
 
-    # Initialize graphiti provider config
-    graphiti_provider_config = {}
+    # Initialize graphiti provider config and MCP config structures
+    graphiti_provider_config: dict[str, Any] = {}
+    mcp_servers: dict[str, bool] = {}
+    agent_mcp_overrides: dict[str, dict[str, list[str]]] = {}
 
-    if env_path.exists():
-        try:
-            env_content = env_path.read_text()
-            for line in env_content.split("\n"):
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if "=" in line:
-                    key, value = line.split("=", 1)
-                    key = key.strip()
-                    value = value.strip().strip('"').strip("'")
-
-                    if key == "GITHUB_TOKEN" and value:
-                        config["githubEnabled"] = True
-                        config["githubTokenSet"] = True
-                        if not config.get("gitToken"):
-                            config["gitToken"] = value
-                    elif key == "GITHUB_REPO" and value:
-                        config["githubRepo"] = value
-                        if not config.get("gitRepo"):
-                            config["gitRepo"] = value
-                    elif key == "GIT_PROVIDER" and value:
-                        config["gitProvider"] = value
-                    elif key == "GIT_TOKEN" and value:
-                        config["gitToken"] = value
-                        config["githubEnabled"] = True
-                        config["githubTokenSet"] = True
-                    elif key == "GIT_REPO" and value:
-                        config["gitRepo"] = value
-                        if not config.get("githubRepo"):
-                            config["githubRepo"] = value
-                    elif key == "GIT_BASE_URL" and value:
-                        config["gitBaseUrl"] = value
-                    elif key == "GIT_ORG" and value:
-                        config["gitOrg"] = value
-                    elif key == "GIT_PROJECT" and value:
-                        config["gitProject"] = value
-                    elif key == "GRAPHITI_ENABLED":
-                        config["graphitiEnabled"] = value.lower() == "true"
-                    elif key == "ENABLE_FANCY_UI":
-                        config["enableFancyUi"] = value.lower() != "false"
-                    elif key in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"):
-                        if value:
-                            config["claudeAuthStatus"] = "configured"
-                    # Graphiti provider config fields
-                    elif key == "GRAPHITI_EMBEDDER_PROVIDER":
-                        graphiti_provider_config["embeddingProvider"] = value
-                    elif key == "OLLAMA_BASE_URL":
-                        graphiti_provider_config["ollamaBaseUrl"] = value
-                    elif key == "OLLAMA_EMBEDDING_MODEL":
-                        graphiti_provider_config["ollamaEmbeddingModel"] = value
-                    elif key == "OLLAMA_EMBEDDING_DIM":
-                        try:
-                            graphiti_provider_config["ollamaEmbeddingDim"] = int(value)
-                        except ValueError:
-                            logger.warning(
-                                "OLLAMA_EMBEDDING_DIM in .env is not an int, ignoring"
-                            )
-                    elif key == "OPENAI_API_KEY":
-                        graphiti_provider_config["openaiApiKey"] = value
-                    elif key == "VOYAGE_API_KEY":
-                        graphiti_provider_config["voyageApiKey"] = value
-                    elif key == "VOYAGE_EMBEDDING_MODEL":
-                        graphiti_provider_config["voyageEmbeddingModel"] = value
-                    elif key == "GOOGLE_API_KEY":
-                        graphiti_provider_config["googleApiKey"] = value
-                    elif key == "AZURE_OPENAI_API_KEY":
-                        graphiti_provider_config["azureOpenaiApiKey"] = value
-                    elif key == "AZURE_OPENAI_ENDPOINT":
-                        graphiti_provider_config["azureOpenaiBaseUrl"] = value
-                    elif key == "AZURE_OPENAI_EMBEDDING_DEPLOYMENT":
-                        graphiti_provider_config["azureOpenaiEmbeddingDeployment"] = (
-                            value
-                        )
-                    elif key == "GRAPHITI_DATABASE":
-                        graphiti_provider_config["database"] = value
-                    elif key == "GRAPHITI_DB_PATH":
-                        graphiti_provider_config["dbPath"] = value
-        except OSError:
-            logger.warning("failed to read %s for env config", env_path, exc_info=True)
+    for key, value in (await project_settings_store.get_settings(project_path)).items():
+        if key == "GITHUB_TOKEN" and value:
+            config["githubEnabled"] = True
+            config["githubTokenSet"] = True
+            if not config.get("gitToken"):
+                config["gitToken"] = value
+        elif key == "GITHUB_REPO" and value:
+            config["githubRepo"] = value
+            if not config.get("gitRepo"):
+                config["gitRepo"] = value
+        elif key == "GIT_PROVIDER" and value:
+            config["gitProvider"] = value
+        elif key == "GIT_TOKEN" and value:
+            config["gitToken"] = value
+            config["githubEnabled"] = True
+            config["githubTokenSet"] = True
+        elif key == "GIT_REPO" and value:
+            config["gitRepo"] = value
+            if not config.get("githubRepo"):
+                config["githubRepo"] = value
+        elif key == "GIT_BASE_URL" and value:
+            config["gitBaseUrl"] = value
+        elif key == "GIT_ORG" and value:
+            config["gitOrg"] = value
+        elif key == "GIT_PROJECT" and value:
+            config["gitProject"] = value
+        elif key == "GRAPHITI_ENABLED":
+            config["graphitiEnabled"] = value.lower() == "true"
+        elif key == "ENABLE_FANCY_UI":
+            config["enableFancyUi"] = value.lower() != "false"
+        elif key in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"):
+            if value:
+                config["claudeAuthStatus"] = "configured"
+        # Graphiti provider config fields
+        elif key == "GRAPHITI_EMBEDDER_PROVIDER":
+            graphiti_provider_config["embeddingProvider"] = value
+        elif key == "OLLAMA_BASE_URL":
+            graphiti_provider_config["ollamaBaseUrl"] = value
+        elif key == "OLLAMA_EMBEDDING_MODEL":
+            graphiti_provider_config["ollamaEmbeddingModel"] = value
+        elif key == "OLLAMA_EMBEDDING_DIM":
+            try:
+                graphiti_provider_config["ollamaEmbeddingDim"] = int(value)
+            except ValueError:
+                logger.warning(
+                    "OLLAMA_EMBEDDING_DIM in project settings is not an int, ignoring"
+                )
+        elif key == "OPENAI_API_KEY":
+            graphiti_provider_config["openaiApiKey"] = value
+        elif key == "VOYAGE_API_KEY":
+            graphiti_provider_config["voyageApiKey"] = value
+        elif key == "VOYAGE_EMBEDDING_MODEL":
+            graphiti_provider_config["voyageEmbeddingModel"] = value
+        elif key == "GOOGLE_API_KEY":
+            graphiti_provider_config["googleApiKey"] = value
+        elif key == "AZURE_OPENAI_API_KEY":
+            graphiti_provider_config["azureOpenaiApiKey"] = value
+        elif key == "AZURE_OPENAI_ENDPOINT":
+            graphiti_provider_config["azureOpenaiBaseUrl"] = value
+        elif key == "AZURE_OPENAI_EMBEDDING_DEPLOYMENT":
+            graphiti_provider_config["azureOpenaiEmbeddingDeployment"] = value
+        elif key == "GRAPHITI_DATABASE":
+            graphiti_provider_config["database"] = value
+        elif key == "GRAPHITI_DB_PATH":
+            graphiti_provider_config["dbPath"] = value
+        # MCP settings (#1795)
+        elif key == "CONTEXT7_ENABLED":
+            mcp_servers["context7Enabled"] = value.lower() == "true"
+        elif key == "PLAYWRIGHT_MCP_ENABLED" or (
+            key == "PUPPETEER_MCP_ENABLED" and "playwrightEnabled" not in mcp_servers
+        ):
+            mcp_servers["playwrightEnabled"] = value.lower() == "true"
+        elif (m := _AGENT_MCP_KEY_RE.fullmatch(key)) is not None:
+            agent_name, action = m.group(1), m.group(2)
+            items = [item.strip() for item in value.split(",") if item.strip()]
+            if items:
+                agent_entry = agent_mcp_overrides.setdefault(agent_name, {})
+                agent_entry["add" if action == "ADD" else "remove"] = items
+        elif key == "CUSTOM_MCP_SERVERS" and value:
+            try:
+                parsed_servers = json.loads(value)
+                if isinstance(parsed_servers, list):
+                    config["customMcpServers"] = parsed_servers
+            except json.JSONDecodeError:
+                logger.warning(
+                    "CUSTOM_MCP_SERVERS in project settings is not valid JSON, ignoring"
+                )
 
     # Add graphiti provider config if any fields were found
     if graphiti_provider_config:
         config["graphitiProviderConfig"] = graphiti_provider_config
+    if mcp_servers:
+        config["mcpServers"] = mcp_servers
+    if agent_mcp_overrides:
+        config["agentMcpOverrides"] = agent_mcp_overrides
+
+    aifactory_dir = project_path / ".aifactory"
+    if aifactory_dir.is_dir():
+        migrated = sorted(
+            aifactory_dir.glob(".env.migrated-*"),
+            key=lambda p: (p.stat().st_mtime_ns, p.name),
+        )
+        if migrated:
+            config["legacySettingsFile"] = migrated[-1].name
 
     # Also check for Claude auth via keychain
     try:
@@ -551,14 +584,14 @@ async def update_project_env(
     """
     Update project environment configuration.
 
-    Updates the .aifactory/.env file with environment variables for:
+    Updates the project settings store with environment variables for:
     - GitHub integration (GITHUB_TOKEN)
     - Graphiti memory system (GRAPHITI_ENABLED)
     - UI preferences (ENABLE_FANCY_UI)
     - Claude authentication (CLAUDE_CODE_OAUTH_TOKEN)
+    - MCP configuration (CONTEXT7_ENABLED, PLAYWRIGHT_MCP_ENABLED, AGENT_MCP_*, CUSTOM_MCP_SERVERS)
 
     Only updates fields that are provided (partial updates supported).
-    Sets secure file permissions (0o600) to protect sensitive tokens.
     """
     from server.project_registry import load_projects
 
@@ -568,17 +601,9 @@ async def update_project_env(
         return {"success": False, "error": f"Project {projectId} not found"}
 
     project_path = FilePath(projects[projectId]["path"])
-    env_path = project_path / ".aifactory" / ".env"
 
     try:
-        # Read existing .env or start fresh
-        existing = {}
-        if env_path.exists():
-            for line in env_path.read_text().split("\n"):
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, value = line.split("=", 1)
-                    existing[key.strip()] = value.strip()
+        existing = await project_settings_store.get_settings(project_path)
 
         # Get only provided fields (exclude None values)
         config_dict = config.model_dump(exclude_none=True)
@@ -689,16 +714,68 @@ async def update_project_env(
                         elif env_key in existing:
                             del existing[env_key]
 
-        # Ensure .aifactory directory exists
-        env_path.parent.mkdir(parents=True, exist_ok=True)
+        # Handle MCP server toggles (#1795)
+        if "mcpServers" in config_dict:
+            mcp_servers = config_dict["mcpServers"]
+            if isinstance(mcp_servers, dict):
+                if (
+                    "context7Enabled" in mcp_servers
+                    and mcp_servers["context7Enabled"] is not None
+                ):
+                    existing["CONTEXT7_ENABLED"] = (
+                        "true" if mcp_servers["context7Enabled"] else "false"
+                    )
+                if (
+                    "playwrightEnabled" in mcp_servers
+                    and mcp_servers["playwrightEnabled"] is not None
+                ):
+                    existing["PLAYWRIGHT_MCP_ENABLED"] = (
+                        "true" if mcp_servers["playwrightEnabled"] else "false"
+                    )
 
-        # Write back to .env file
-        content = "\n".join(f"{k}={v}" for k, v in existing.items())
-        env_path.write_text(content)
+        # Handle per-agent MCP overrides (#1795)
+        if "agentMcpOverrides" in config_dict:
+            overrides = config_dict["agentMcpOverrides"]
+            if isinstance(overrides, dict):
+                for agent in overrides:
+                    if not isinstance(agent, str) or not _AGENT_NAME_RE.fullmatch(
+                        agent
+                    ):
+                        return {
+                            "success": False,
+                            "error": f"Invalid agent name: {agent}",
+                        }
+                for k in [k for k in existing if k.startswith(_AGENT_MCP_PREFIX)]:
+                    del existing[k]
+                for agent, agent_cfg in overrides.items():
+                    if not isinstance(agent_cfg, dict):
+                        continue
+                    add_list = [
+                        str(item).strip()
+                        for item in (agent_cfg.get("add") or [])
+                        if str(item).strip()
+                    ]
+                    if add_list:
+                        existing[f"{_AGENT_MCP_PREFIX}{agent}_ADD"] = ",".join(add_list)
+                    remove_list = [
+                        str(item).strip()
+                        for item in (agent_cfg.get("remove") or [])
+                        if str(item).strip()
+                    ]
+                    if remove_list:
+                        existing[f"{_AGENT_MCP_PREFIX}{agent}_REMOVE"] = ",".join(
+                            remove_list
+                        )
 
-        # Set secure file permissions (owner read/write only)
-        # This is critical for protecting API keys and tokens
-        env_path.chmod(0o600)
+        # Handle custom MCP servers (#1795)
+        if "customMcpServers" in config_dict:
+            custom_servers = config_dict["customMcpServers"]
+            if isinstance(custom_servers, list) and custom_servers:
+                existing["CUSTOM_MCP_SERVERS"] = json.dumps(custom_servers)
+            else:
+                existing.pop("CUSTOM_MCP_SERVERS", None)
+
+        await project_settings_store.put_settings(project_path, existing)
 
         # Also update settings in projects.json
         try:
@@ -742,12 +819,10 @@ async def update_project_env(
             elif "gitToken" in config_dict:
                 projects[projectId]["settings"]["githubToken"] = config_dict["gitToken"]
 
-            from datetime import UTC, datetime
-
             projects[projectId]["updated_at"] = datetime.now(UTC).isoformat()
             save_projects(projects)
         except Exception:
-            # .env write above already succeeded; this only mirrors gitToken/
+            # Store write above already succeeded; this only mirrors gitToken/
             # githubToken into projects.json, so degrade instead of failing the
             # request, but log it since the response below is silent about it.
             logger.warning(
