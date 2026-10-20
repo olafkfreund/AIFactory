@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1834
 spec: spec/2026-10-20-1834-changelog-backfill.md
 ---
