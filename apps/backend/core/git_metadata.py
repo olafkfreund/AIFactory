@@ -254,7 +254,13 @@ def check_git_metadata(
     if not path.exists():
         _write_snapshot(path, _shared_snapshot(current))
         _write_worktree_baseline(current)
-        logger.warning("git metadata baseline taken late for %s", repo)
+        # Not fail closed: direct/CLI-only mode relies on it (#1832, user decision).
+        msg = (
+            f"git metadata baseline taken late for {repo}; "
+            "changes made before now are not detected"
+        )
+        logger.warning("%s", msg)
+        print(f"WARNING: {msg}", flush=True)  # noqa: T201 - visible in the build log
         return
     base_cfg, base_attrs = _load_baseline(path)
     cur_cfg: dict[str, object] = current["config"]  # type: ignore[assignment]

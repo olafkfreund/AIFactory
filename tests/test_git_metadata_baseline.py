@@ -122,11 +122,15 @@ def test_added_non_executable_submodule_update_passes(repo: Path) -> None:
 
 
 def test_missing_baseline_records_late_then_compares(
-    repo: Path, caplog: pytest.LogCaptureFixture
+    repo: Path, caplog: pytest.LogCaptureFixture, capsys: pytest.CaptureFixture[str]
 ) -> None:
     with caplog.at_level("WARNING"):
         check_git_metadata(repo)
     assert "git metadata baseline taken late" in caplog.text
+    # Visible in the build output, not only the logger (#1832).
+    out = capsys.readouterr().out
+    assert "WARNING: git metadata baseline taken late" in out
+    assert "not detected" in out
 
     with open(repo / ".git" / "config", "a", encoding="utf-8") as fh:
         fh.write('[merge "evil"]\n\tdriver = touch x\n')
@@ -864,3 +868,89 @@ def test_qa_preapproved_metadata_change_fails_build_nonzero(
     phases = [c.args[0] for c in emit.call_args_list]
     assert ExecutionPhase.FAILED in phases
     assert ExecutionPhase.COMPLETE not in phases
+
+
+def _baseline_exists(repo: Path) -> bool:
+    return _baseline_path(str(snapshot(repo)["repo"])).exists()
+
+
+def test_direct_build_records_baseline_before_first_agent(
+    repo: Path, tmp_path: Path
+) -> None:
+    """Direct mode never calls create_worktree; the build baselines first (#1832)."""
+    from unittest.mock import MagicMock, patch  # noqa: PLC0415
+
+    from cli import build_commands  # noqa: PLC0415
+
+    spec_dir = tmp_path / "001-spec"
+    spec_dir.mkdir()
+    (spec_dir / "spec.md").write_text("# Feature\n", encoding="utf-8")
+    seen: list[bool] = []
+
+    async def agent(*_a, **_k):
+        seen.append(_baseline_exists(repo))
+        raise RuntimeError("stop after the first agent")
+
+    patches = [
+        patch("agent.run_autonomous_agent", new=agent),
+        patch("cli.utils.validate_environment", MagicMock(return_value=True)),
+        patch("cli.utils.print_banner", MagicMock()),
+        patch.object(
+            build_commands,
+            "choose_workspace",
+            MagicMock(return_value=build_commands.WorkspaceMode.DIRECT),
+        ),
+        patch.object(
+            build_commands, "get_existing_build_worktree", MagicMock(return_value=None)
+        ),
+        patch.object(
+            build_commands,
+            "ReviewState",
+            MagicMock(load=MagicMock(return_value=MagicMock())),
+        ),
+    ]
+    with contextlib.ExitStack() as stack:
+        for p in patches:
+            stack.enter_context(p)
+        with contextlib.suppress(SystemExit, RuntimeError):
+            build_commands.handle_build_command(
+                project_dir=repo,
+                spec_dir=spec_dir,
+                model="claude-sonnet-4-5",
+                max_iterations=1,
+                verbose=False,
+                force_isolated=False,
+                force_direct=True,
+                auto_continue=True,
+                skip_qa=True,
+                force_bypass_approval=False,
+            )
+
+    assert seen == [True]
+
+
+def test_spec_runner_records_baseline_before_spec_agents(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec-pipeline agents run before create_worktree; baseline first (#1832)."""
+    from unittest.mock import MagicMock  # noqa: PLC0415
+
+    from runners import spec_runner  # noqa: PLC0415
+
+    seen: list[bool] = []
+
+    async def run(**_k: object) -> bool:
+        seen.append(_baseline_exists(repo))
+        return False
+
+    (repo / ".aifactory").mkdir()  # stop main()'s project-root walk at repo
+    orch = MagicMock()
+    orch.run = run
+    monkeypatch.setattr(spec_runner, "SpecOrchestrator", MagicMock(return_value=orch))
+    monkeypatch.setattr(
+        sys, "argv", ["spec_runner.py", "--task", "x", "--project-dir", str(repo)]
+    )
+    with pytest.raises(SystemExit):
+        spec_runner.main()
+
+    assert seen == [True]

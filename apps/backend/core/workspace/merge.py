@@ -748,6 +748,10 @@ def _resolve_git_conflicts_with_ai(
     conflicting_files = git_conflicts.get("conflicting_files", [])
     base_branch = git_conflicts.get("base_branch", "main")
     spec_branch = git_conflicts.get("spec_branch", f"aifactory/{spec_name}")
+    try:
+        pins = merge_driver_pins(project_dir)
+    except RuntimeError as exc:
+        return {"success": False, "resolved_files": [], "error": str(exc)}
 
     debug_detailed(
         MODULE,
@@ -823,7 +827,7 @@ def _resolve_git_conflicts_with_ai(
                     target_path.parent.mkdir(parents=True, exist_ok=True)
                     target_path.write_text(content, encoding="utf-8")
                     subprocess.run(
-                        ["git", "add", target_file_path],
+                        ["git", *pins, "add", target_file_path],
                         cwd=project_dir,
                         capture_output=True,
                     )
@@ -944,7 +948,9 @@ def _resolve_git_conflicts_with_ai(
                     target_path.parent.mkdir(parents=True, exist_ok=True)
                     target_path.write_text(merged_content, encoding="utf-8")
                     subprocess.run(
-                        ["git", "add", file_path], cwd=project_dir, capture_output=True
+                        ["git", *pins, "add", file_path],
+                        cwd=project_dir,
+                        capture_output=True,
                     )
                     resolved_files.append(file_path)
                     print(success(f"    ✓ {file_path} (new file)"))
@@ -954,7 +960,7 @@ def _resolve_git_conflicts_with_ai(
                     if target_path.exists():
                         target_path.unlink()
                         subprocess.run(
-                            ["git", "add", file_path],
+                            ["git", *pins, "add", file_path],
                             cwd=project_dir,
                             capture_output=True,
                         )
@@ -1005,7 +1011,7 @@ def _resolve_git_conflicts_with_ai(
                 target_path.parent.mkdir(parents=True, exist_ok=True)
                 target_path.write_text(merge_result.merged_content, encoding="utf-8")
                 subprocess.run(
-                    ["git", "add", merge_result.file_path],
+                    ["git", *pins, "add", merge_result.file_path],
                     cwd=project_dir,
                     capture_output=True,
                 )
@@ -1125,7 +1131,7 @@ def _resolve_git_conflicts_with_ai(
                 target_path.parent.mkdir(parents=True, exist_ok=True)
                 target_path.write_text(merge_result.merged_content, encoding="utf-8")
                 subprocess.run(
-                    ["git", "add", merge_result.file_path],
+                    ["git", *pins, "add", merge_result.file_path],
                     cwd=project_dir,
                     capture_output=True,
                 )
@@ -1159,7 +1165,7 @@ def _resolve_git_conflicts_with_ai(
                 if target_path.exists():
                     target_path.unlink()
                     subprocess.run(
-                        ["git", "add", target_file_path],
+                        ["git", *pins, "add", target_file_path],
                         cwd=project_dir,
                         capture_output=True,
                     )
@@ -1173,7 +1179,7 @@ def _resolve_git_conflicts_with_ai(
                     target_path.parent.mkdir(parents=True, exist_ok=True)
                     target_path.write_text(content, encoding="utf-8")
                     subprocess.run(
-                        ["git", "add", target_file_path],
+                        ["git", *pins, "add", target_file_path],
                         cwd=project_dir,
                         capture_output=True,
                     )

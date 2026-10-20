@@ -81,11 +81,13 @@ def merge_driver_pins(
     run: Callable[[list[str]], tuple[int, str]] | None = None,
     env: Mapping[str, str] | None = None,
 ) -> list[str]:
-    """Return ``-c merge.<name>.driver=`` pins for every driver in git config (#1761).
+    """Return empty command-scope pins for merge drivers and content filters.
 
     An agent can define ``merge.<name>.driver`` in ``.git/config`` and bind it in
     ``.git/info/attributes``; overriding each key with an empty value makes git
-    report a conflict instead of running the program. Callers fail closed on
+    report a conflict instead of running the program. The same pins disable
+    ``filter.<name>.clean``, ``.smudge`` and ``.process`` commands; ``.required``
+    remains untouched. Callers fail closed on
     ``RuntimeError``. Keys are filtered in Python, not by ``--get-regexp``:
     under a UTF-8 locale git's regex skips a non-UTF-8 subsection. ``run``
     must decode with ``surrogateescape`` so such a key round-trips to argv.
@@ -117,13 +119,19 @@ def merge_driver_pins(
     pins: list[str] = []
     for key in out.split("\0"):
         if not (
-            key.startswith("merge.")
-            and key.endswith(".driver")
-            and len(key) >= len("merge..driver")
+            (
+                key.startswith("merge.")
+                and key.endswith(".driver")
+                and len(key) >= len("merge..driver")
+            )
+            or (
+                key.startswith("filter.")
+                and key.endswith((".clean", ".smudge", ".process"))
+            )
         ):
             continue
         if "=" in key:
-            raise RuntimeError(f"merge driver key contains '=': {key!r}")
+            raise RuntimeError(f"git config key contains '=': {key!r}")
         pins.extend(("-c", f"{key}="))
     return pins
 
