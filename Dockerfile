@@ -313,9 +313,9 @@ RUN mkdir -p /home/nonroot/.npm-global \
 # that needs it. The `antigravity` symlink is asserted through gemini, which it
 # points at.
 RUN npm install -g \
-        @anthropic-ai/claude-code@2.1.293 \
-        @openai/codex@0.149.0 \
-        @google/gemini-cli@0.56.0 \
+        @anthropic-ai/claude-code@2.1.303 \
+        @openai/codex@0.163.0 \
+        @google/gemini-cli@0.64.0 \
  && node /home/nonroot/.npm-global/lib/node_modules/@anthropic-ai/claude-code/install.cjs \
  && /home/nonroot/.npm-global/bin/claude --version \
  && /home/nonroot/.npm-global/bin/codex --version \
