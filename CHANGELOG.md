@@ -12,6 +12,17 @@
 
 ### Security
 
+- **Git metadata baseline follow-ups (#1832).** The baseline now also
+  tracks `lfs.customtransfer.*.path`, `lfs.*standalonetransferagent` and
+  `submodule.*.update` set to `!cmd`, so a change to any of them fails the
+  check. With `extensions.worktreeConfig`, each worktree's
+  `config.worktree` is compared with its own baseline, so one worktree's
+  config no longer reads as drift in another, and a change to it is still
+  reported. A project slug of `.git-baselines` is refused, and
+  `resolve_pr_conflicts` removes a baseline file it created for a build
+  clone. A repo whose old baseline holds per-worktree keys reports drift
+  once; rebaseline with `python -m core.git_metadata --rebaseline <path>`.
+
 - **Legacy and from-issue tasks need a real verified green to auto-merge (#1697).**
   Tasks without a signed contract (including MODE 0 from-issue tasks) now
   go through the same merge-time gate as signed ones: auto-merge needs a
