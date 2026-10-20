@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import subprocess
 import sys
 from pathlib import Path
@@ -389,3 +390,142 @@ def test_resolve_pr_conflicts_repins_after_fixer(
     assert refused.resolved is False
     assert "rebase refused" in refused.reason
     assert not (clone2 / ".git" / "rebase-merge").exists()
+
+
+# --- #1832: server status/add/worktree diff must unpack the pins -----------
+
+_ROOT = Path(__file__).resolve().parent.parent
+_SERVER_GIT_SOURCES = (
+    "apps/web-server/server",
+    "apps/backend/core/worktree.py",
+    "apps/backend/core/workspace",
+    "apps/backend/cli/workspace_commands.py",
+)
+
+
+def _server_git_files() -> list[tuple[Path, str]]:
+    out: list[tuple[Path, str]] = []
+    for rel in _SERVER_GIT_SOURCES:
+        p = _ROOT / rel
+        for f in sorted(p.rglob("*.py")) if p.is_dir() else [p]:
+            if "tests" in f.parts or f.name.startswith("test_"):
+                continue
+            out.append((f, f.relative_to(_ROOT).as_posix()))
+    return out
+
+
+def _callee_name(call: ast.Call) -> str:
+    f = call.func
+    if isinstance(f, ast.Name):
+        return f.id.lower()
+    if isinstance(f, ast.Attribute):
+        return f.attr.lower()
+    return ""
+
+
+def _needs_filter_pins(elts: list[ast.expr], wrapper: bool) -> bool:
+    """True for a status/add/worktree-reading diff argv, or an unforced remove."""
+    consts = [
+        e.value
+        for e in elts
+        if isinstance(e, ast.Constant) and isinstance(e.value, str)
+    ]
+    if not consts:
+        return False
+    if consts[0] == "git":
+        rest = consts[1:]
+    elif wrapper:
+        rest = consts
+    else:
+        return False
+    rest = [v for v in rest if v not in ("-c",) and "=" not in v]
+    if not rest:
+        return False
+    sub, args = rest[0], rest[1:]
+    if sub in ("status", "add"):
+        return True
+    if sub == "worktree":
+        return bool(args) and args[0] == "remove" and "--force" not in args
+    if sub == "diff":
+        non_const = [
+            e
+            for e in elts
+            if not (isinstance(e, ast.Constant) and isinstance(e.value, str))
+            and not isinstance(e, ast.Starred)
+        ]
+        return (
+            not non_const
+            and all(a.startswith("-") for a in args)
+            and not {"--cached", "--staged"} & set(args)
+        )
+    return False
+
+
+def _unpinned_filter_sites(tree: ast.AST, rel: str) -> list[str]:
+    pin_names = {
+        t.id
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Assign)
+        and isinstance(n.value, ast.Call)
+        and _callee_name(n.value) == "merge_driver_pins"
+        for t in n.targets
+        if isinstance(t, ast.Name)
+    }
+    wrapper_args: set[int] = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call) and "git" in _callee_name(n) and n.args:
+            wrapper_args.add(id(n.args[0]))
+    hits: list[str] = []
+    for n in ast.walk(tree):
+        if not isinstance(n, (ast.List, ast.Tuple)):
+            continue
+        if not _needs_filter_pins(n.elts, id(n) in wrapper_args):
+            continue
+        pinned = any(
+            isinstance(e, ast.Starred)
+            and (
+                (isinstance(e.value, ast.Name) and e.value.id in pin_names)
+                or (
+                    isinstance(e.value, ast.Call)
+                    and _callee_name(e.value) == "merge_driver_pins"
+                )
+            )
+            for e in n.elts
+        )
+        if not pinned:
+            hits.append(f"{rel}:{n.lineno}")
+    return hits
+
+
+def test_scan_flags_unpinned_filter_sites() -> None:
+    def hits(src: str) -> list[str]:
+        return _unpinned_filter_sites(ast.parse(src), "x.py")
+
+    assert hits('["git", "status", "--porcelain"]') == ["x.py:1"]
+    assert hits('run_git_command(["add", "-A"], p)') == ["x.py:1"]
+    assert hits('["git", "diff", "--name-only", "--diff-filter=U"]') == ["x.py:1"]
+    assert hits('["git", "worktree", "remove", p]') == ["x.py:1"]
+    assert hits('pins = merge_driver_pins(p)\n["git", *pins, "add", f]\n') == []
+    assert hits('["git", "diff", "--name-only", f"{a}...{b}"]') == []
+    assert hits('["git", "diff", "--cached", "--name-only"]') == []
+    assert hits('["git", "worktree", "add", p]') == []
+    assert hits('["git", "worktree", "remove", "--force", p]') == []
+    assert hits('["git", "remote", "add", "origin", u]') == []
+
+
+def test_every_server_status_add_diff_pins_filters() -> None:
+    """Server git calls that read the worktree must unpack the pins (#1832).
+
+    Known limit: only literal argv is seen, like the #1718/#1761 scans.
+    """
+    offenders = [
+        hit
+        for path, rel in _server_git_files()
+        for hit in _unpinned_filter_sites(
+            ast.parse(path.read_text(encoding="utf-8"), filename=rel), rel
+        )
+    ]
+    assert not offenders, (
+        "server git status/add/worktree diff missing *merge_driver_pins (#1832):\n"
+        + "\n".join(offenders)
+    )
