@@ -237,6 +237,16 @@ async def _strip_credential_or_raise(
         ) from exc
 
 
+def _workspace_name(git_url: str, slug: str | None) -> str:
+    name = slug or slug_from_git_url(git_url)
+    # The chart keeps the git baselines at <workspace root>/.git-baselines.
+    if name == ".git-baselines":
+        raise InputRejectedError(
+            "Invalid gitUrl: its path is not a usable workspace directory name"
+        )
+    return name
+
+
 async def clone_or_update(
     git_url: str,
     branch: str | None = None,
@@ -271,13 +281,7 @@ async def clone_or_update(
     Raises:
         GitOperationError: On any non-zero ``git`` exit code or timeout.
     """
-    name = slug or slug_from_git_url(git_url)
-    # The chart keeps the git baselines at <workspace root>/.git-baselines.
-    if name == ".git-baselines":
-        raise InputRejectedError(
-            "Invalid gitUrl: its path is not a usable workspace directory name"
-        )
-    workspace = (root or workspace_root()) / name
+    workspace = (root or workspace_root()) / _workspace_name(git_url, slug)
     workspace.parent.mkdir(parents=True, exist_ok=True)
 
     # Build the URL that actually gets passed to ``git`` for network ops, plus

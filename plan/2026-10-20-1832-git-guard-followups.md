@@ -133,7 +133,7 @@ Approved decisions (from the spec):
    Traps: the fake runner returns "" for rev-parse, so `baseline_file` resolves
    `/wt`; that is fine. Do not delete a pre-existing baseline.
 
-4. `apps/web-server/server/services/project_workspace_service.py:274` (item 4).
+4. `apps/web-server/server/services/project_workspace_service.py:274` (item 4). Deviation: the check lives in a new `_workspace_name(git_url, slug)` helper that `clone_or_update` calls, because the extra branch tripped the CI ruff ratchet (PLR0912).
    Before building `workspace`, compute `name = slug or slug_from_git_url(git_url)`
    and raise `InputRejectedError("Invalid gitUrl: its path is not a usable
    workspace directory name")` when `name == ".git-baselines"` (one-line comment:
