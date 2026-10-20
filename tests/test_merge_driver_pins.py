@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 from core.child_env import merge_driver_pins
+from core.workspace.git_utils import has_uncommitted_changes
+from core.worktree import WorktreeManager
 
 _WS = str(Path(__file__).resolve().parent.parent / "apps" / "web-server")
 if _WS not in sys.path:
@@ -124,7 +126,8 @@ def test_merge_driver_pins_non_utf8_subsection(
     assert not marker.exists()
 
 
-def test_merge_driver_pins_blocks_status_clean_filter(tmp_path: Path) -> None:
+@pytest.fixture
+def filter_repo(tmp_path: Path) -> tuple[Path, Path]:
     repo = tmp_path / "repo"
     repo.mkdir()
     marker = tmp_path / "pwned"
@@ -152,10 +155,27 @@ def test_merge_driver_pins_blocks_status_clean_filter(tmp_path: Path) -> None:
     if not marker.exists():
         pytest.skip("git status did not run the clean filter")
     marker.unlink()
+    return repo, marker
+
+
+def test_merge_driver_pins_blocks_status_clean_filter(
+    filter_repo: tuple[Path, Path],
+) -> None:
+    repo, marker = filter_repo
 
     pins = merge_driver_pins(repo)
     assert "filter.evil.clean=" in pins
     _git(repo, *pins, "status", "--porcelain")
+    assert not marker.exists()
+
+
+def test_backend_status_probes_pin_clean_filter(
+    filter_repo: tuple[Path, Path],
+) -> None:
+    repo, marker = filter_repo
+    assert WorktreeManager(repo, base_branch="main").has_uncommitted_changes() is True
+    assert not marker.exists()
+    assert has_uncommitted_changes(repo) is True
     assert not marker.exists()
 
 

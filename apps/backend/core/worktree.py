@@ -1104,7 +1104,7 @@ class WorktreeManager:
         # merge (the merge brings the branch's version of those files), or
         # restore it if the merge fails.
         stashed = False
-        status = self._run_git(["status", "--porcelain"])
+        status = self._run_git([*pins, "status", "--porcelain"])
         if status.returncode == 0 and status.stdout.strip():
             stash = self._run_git(
                 [
@@ -1202,7 +1202,13 @@ class WorktreeManager:
         if not worktree_path.exists():
             return False
 
-        add = self._run_git(["add", ".", ":!.aifactory"], cwd=worktree_path)
+        try:
+            pins = merge_driver_pins(worktree_path, env=_git_env())
+        except RuntimeError as exc:
+            logger.error("Commit refused for '%s': %s", spec_name, exc)
+            return False
+
+        add = self._run_git([*pins, "add", ".", ":!.aifactory"], cwd=worktree_path)
         result = self._run_git(["commit", "-m", message], cwd=worktree_path)
 
         if result.returncode == 0:
@@ -1405,5 +1411,10 @@ class WorktreeManager:
             worktree_path = self.get_worktree_path(spec_name)
             if worktree_path.exists():
                 cwd = worktree_path
-        result = self._run_git(["status", "--porcelain"], cwd=cwd)
-        return bool(result.stdout.strip())
+        try:
+            pins = merge_driver_pins(cwd or self.project_dir, env=_git_env())
+        except RuntimeError as exc:
+            logger.warning("Cannot check uncommitted changes: %s", exc)
+            return True
+        result = self._run_git([*pins, "status", "--porcelain"], cwd=cwd)
+        return result.returncode != 0 or bool(result.stdout.strip())
