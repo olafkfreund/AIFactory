@@ -6,11 +6,15 @@ helper is not yet wired into the live merge path; these lock its contract.
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "apps" / "web-server"))
 
+from core.git_metadata import baseline_file, record_baseline  # noqa: E402
 from server.services.pr_endgame import CmdResult, resolve_pr_conflicts  # noqa: E402
 
 
@@ -40,6 +44,49 @@ class FakeRunner:
 
 _OK = CmdResult(0, "", "")
 _FAIL = CmdResult(1, "", "boom")
+
+
+def _git(cwd: Path, *args: str) -> None:
+    subprocess.run(  # noqa: S603 - fixed git argv
+        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
+    )
+
+
+@pytest.fixture
+def clone(tmp_path: Path) -> Path:
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _git(origin, "init", "-q", "-b", "main")
+    _git(origin, "config", "user.email", "test@example.com")
+    _git(origin, "config", "user.name", "Test")
+    (origin / "file").write_text("content\n")
+    _git(origin, "add", "file")
+    _git(origin, "commit", "-q", "-m", "initial")
+    worktree = tmp_path / "clone"
+    _git(tmp_path, "clone", "-q", str(origin), str(worktree))
+    return worktree
+
+
+def test_clean_rebase_removes_new_baseline(clone: Path, tmp_path: Path) -> None:
+    baseline = baseline_file(clone)
+    assert not baseline.exists()
+
+    res = resolve_pr_conflicts(str(clone), "main", fixer=lambda _f, _w: False)
+
+    assert res.resolved is True
+    assert not baseline.exists()
+    assert list((tmp_path / "git-baselines").iterdir()) == []
+
+
+def test_clean_rebase_preserves_existing_baseline(clone: Path) -> None:
+    record_baseline(clone)
+    baseline = baseline_file(clone)
+    original = baseline.read_bytes()
+
+    res = resolve_pr_conflicts(str(clone), "main", fixer=lambda _f, _w: False)
+
+    assert res.resolved is True
+    assert baseline.read_bytes() == original
 
 
 def test_clean_rebase_does_not_call_fixer():

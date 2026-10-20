@@ -24,6 +24,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps" / "backend")
 from core.worktree import WorktreeManager  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _mock_pins(monkeypatch):
+    monkeypatch.setattr(
+        sys.modules[WorktreeManager.__module__], "merge_driver_pins", lambda *a, **k: []
+    )
+
+
 def _mgr(tmp_path: Path) -> WorktreeManager:
     # base_branch explicit → __init__ doesn't shell out to detect it.
     return WorktreeManager(tmp_path, base_branch="main")

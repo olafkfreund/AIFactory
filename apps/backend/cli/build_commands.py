@@ -107,6 +107,16 @@ def _check_qa_git_metadata(work_dir: Path) -> None:
         raise  # the outer handler exits 1
 
 
+def _record_git_baseline_early(work_dir: Path) -> None:
+    """Take the git metadata baseline before the first agent session (#1832)."""
+    from core.git_metadata import record_baseline  # noqa: PLC0415
+
+    try:
+        record_baseline(work_dir)
+    except RuntimeError as exc:
+        logger.warning("git metadata baseline not recorded: %s", exc)
+
+
 def _contract_gap_in_existing_code(spec_dir: Path, work_dir: Path | None) -> list[str]:
     """Names the spec enumerates that the checkout does not define (#1430).
 
@@ -509,6 +519,8 @@ def handle_build_command(
         working_dir=str(working_dir),
         spec_dir=str(spec_dir),
     )
+
+    _record_git_baseline_early(working_dir)
 
     try:
         debug("run.py", "Starting agent execution")
