@@ -18,11 +18,12 @@ from security.git_validators import _is_dangerous_git_config
 
 logger = logging.getLogger(__name__)
 
-_REV_PARSE_COMMON_DIR = (
+_REV_PARSE_DIRS = (
     "git",
     "rev-parse",
     "--path-format=absolute",
     "--git-common-dir",
+    "--git-dir",
 )
 _CONFIG_LIST = (
     "git",
@@ -71,32 +72,43 @@ def _sha256_str(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", errors="surrogateescape")).hexdigest()
 
 
-def _is_tracked_config_key(key: str) -> bool:
+def _is_tracked_config_key(key: str, value: str = "") -> bool:
     k = key.lower()
     return (
         _is_dangerous_git_config(k)
         or k.startswith(_TRACKED_PREFIXES)
         or k == "core.attributesfile"
+        or (k.startswith("lfs.customtransfer.") and k.endswith(".path"))
+        or k.endswith("standalonetransferagent")
+        or (
+            k.startswith("submodule.")
+            and k.endswith(".update")
+            and value.lstrip().startswith("!")
+        )
     )
 
 
-def _parse_config(raw: str) -> dict[str, list[str]]:
+def _parse_config(raw: str) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
     if not raw:
-        return {}
+        return {}, {}
     parts = raw.split("\0")
     if parts[-1] == "":
         parts.pop()
     if len(parts) % 2 != 0:
         raise RuntimeError("malformed git config --list -z output")
-    grouped: dict[str, list[str]] = {}
+    grouped: dict[str, dict[str, list[str]]] = {scope: {} for scope in _TRACKED_SCOPES}
     for i in range(0, len(parts), 2):
         scope, entry = parts[i], parts[i + 1]
         if scope not in _TRACKED_SCOPES:
             continue
         key, _, value = entry.partition("\n")
-        if key and _is_tracked_config_key(key):
-            grouped.setdefault(key, []).append(_sha256_str(value))
-    return {k: sorted(v) for k, v in sorted(grouped.items())}
+        if key and _is_tracked_config_key(key, value):
+            grouped[scope].setdefault(key, []).append(_sha256_str(value))
+    local, worktree = (
+        {k: sorted(v) for k, v in sorted(grouped[scope].items())}
+        for scope in ("local", "worktree")
+    )
+    return local, worktree
 
 
 def snapshot(
@@ -104,10 +116,13 @@ def snapshot(
     run: Callable[[list[str]], tuple[int, str]] | None = None,
 ) -> dict[str, object]:
     """Capture a hash-only snapshot of repo-local git config and info/attributes."""
-    raw_common = _run_git(cwd, list(_REV_PARSE_COMMON_DIR), run).strip()
+    dirs = _run_git(cwd, list(_REV_PARSE_DIRS), run).splitlines()
+    raw_common = dirs[0] if dirs else ""
+    raw_gitdir = dirs[1] if len(dirs) > 1 else raw_common
     commondir = str((Path(cwd) / raw_common).resolve())
+    gitdir = str((Path(cwd) / raw_gitdir).resolve())
     cfg_out = _run_git(cwd, list(_CONFIG_LIST), run)
-    config = _parse_config(cfg_out)
+    config, worktree_config = _parse_config(cfg_out)
     attr_path = Path(commondir) / "info" / "attributes"
     try:
         attr_bytes = attr_path.read_bytes()
@@ -119,7 +134,9 @@ def snapshot(
         attributes = hashlib.sha256(attr_bytes).hexdigest()
     return {
         "repo": commondir,
+        "gitdir": gitdir,
         "config": config,
+        "worktree_config": worktree_config,
         "attributes": attributes,
     }
 
@@ -136,6 +153,20 @@ def _baseline_dir() -> Path:
 
 def _baseline_path(commondir: str) -> Path:
     return _baseline_dir() / f"{_sha256_str(commondir)[:32]}.json"
+
+
+def _worktree_baseline_path(gitdir: str) -> Path:
+    return _baseline_path(gitdir + "\0worktree")
+
+
+def baseline_file(
+    cwd: str | os.PathLike[str],
+    run: Callable[[list[str]], tuple[int, str]] | None = None,
+) -> Path:
+    """Return the shared baseline path after resolving the git common directory."""
+    dirs = _run_git(cwd, list(_REV_PARSE_DIRS), run).splitlines()
+    commondir = str((Path(cwd) / (dirs[0] if dirs else "")).resolve())
+    return _baseline_path(commondir)
 
 
 def _write_snapshot(path: Path, snap: dict[str, object]) -> None:
@@ -157,6 +188,18 @@ def _write_snapshot(path: Path, snap: dict[str, object]) -> None:
         raise RuntimeError(f"cannot write baseline {path}: {exc}") from exc
 
 
+def _shared_snapshot(snap: dict[str, object]) -> dict[str, object]:
+    return {key: snap[key] for key in ("repo", "config", "attributes")}
+
+
+def _write_worktree_baseline(snap: dict[str, object]) -> None:
+    path = _worktree_baseline_path(str(snap["gitdir"]))
+    if snap["worktree_config"]:
+        _write_snapshot(path, {"config": snap["worktree_config"]})
+    else:
+        path.unlink(missing_ok=True)
+
+
 def record_baseline(
     cwd: str | os.PathLike[str],
     *,
@@ -166,12 +209,23 @@ def record_baseline(
     """Record the git metadata baseline for ``cwd`` unless one already exists."""
     snap = snapshot(cwd, run=run)
     path = _baseline_path(str(snap["repo"]))
-    if not overwrite and path.exists():
-        return
-    _write_snapshot(path, snap)
+    fresh = not path.exists()
+    if overwrite or fresh:
+        _write_snapshot(path, _shared_snapshot(snap))
+        _write_worktree_baseline(snap)
 
 
-def _load_baseline(path: Path) -> tuple[dict[str, object], str | None]:
+def record_worktree_baseline(
+    cwd: str | os.PathLike[str],
+    run: Callable[[list[str]], tuple[int, str]] | None = None,
+) -> None:
+    """Record only the worktree-scoped config baseline for ``cwd``."""
+    _write_worktree_baseline(snapshot(cwd, run=run))
+
+
+def _load_baseline(
+    path: Path, *, worktree: bool = False
+) -> tuple[dict[str, object], str | None]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
@@ -179,12 +233,12 @@ def _load_baseline(path: Path) -> tuple[dict[str, object], str | None]:
     if not isinstance(data, dict):
         raise RuntimeError(f"corrupt git metadata baseline {path}")
     cfg = data.get("config")
+    if not isinstance(cfg, dict):
+        raise RuntimeError(f"corrupt git metadata baseline {path}")
+    if worktree:
+        return cfg, None
     attrs = data.get("attributes")
-    if (
-        not isinstance(cfg, dict)
-        or "attributes" not in data
-        or (attrs is not None and not isinstance(attrs, str))
-    ):
+    if "attributes" not in data or (attrs is not None and not isinstance(attrs, str)):
         raise RuntimeError(f"corrupt git metadata baseline {path}")
     return cfg, attrs
 
@@ -198,7 +252,8 @@ def check_git_metadata(
     repo = str(current["repo"])
     path = _baseline_path(repo)
     if not path.exists():
-        _write_snapshot(path, current)
+        _write_snapshot(path, _shared_snapshot(current))
+        _write_worktree_baseline(current)
         # Not fail closed: direct/CLI-only mode relies on it (#1832, user decision).
         msg = (
             f"git metadata baseline taken late for {repo}; "
@@ -214,6 +269,18 @@ def check_git_metadata(
     )
     if base_attrs != current["attributes"]:
         changed.append("info/attributes")
+    worktree_path = _worktree_baseline_path(str(current["gitdir"]))
+    worktree_cfg = (
+        _load_baseline(worktree_path, worktree=True)[0]
+        if worktree_path.exists()
+        else {}
+    )
+    current_worktree: dict[str, object] = current["worktree_config"]  # type: ignore[assignment]
+    changed.extend(
+        f"worktree:{key}"
+        for key in sorted(set(worktree_cfg) | set(current_worktree))
+        if worktree_cfg.get(key) != current_worktree.get(key)
+    )
     if changed:
         raise RuntimeError(
             f"git metadata changed since the baseline: {', '.join(changed)}; "
