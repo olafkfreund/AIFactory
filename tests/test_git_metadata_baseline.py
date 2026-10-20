@@ -16,6 +16,7 @@ from core.git_metadata import (
     _baseline_path,
     check_git_metadata,
     record_baseline,
+    record_worktree_baseline,
     snapshot,
 )
 
@@ -97,12 +98,39 @@ def test_filter_lfs_clean_change_raises(repo: Path) -> None:
         check_git_metadata(repo)
 
 
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("lfs.customtransfer.evil.path", "/tmp/x"),
+        ("lfs.standalonetransferagent", "evil"),
+        ("submodule.s.update", "!touch x"),
+    ],
+)
+def test_added_executable_config_raises(repo: Path, key: str, value: str) -> None:
+    record_baseline(repo)
+    _git(repo, "config", key, value)
+
+    with pytest.raises(RuntimeError, match=re.escape(key)):
+        check_git_metadata(repo)
+
+
+def test_added_non_executable_submodule_update_passes(repo: Path) -> None:
+    record_baseline(repo)
+    _git(repo, "config", "submodule.s.update", "checkout")
+
+    check_git_metadata(repo)
+
+
 def test_missing_baseline_records_late_then_compares(
-    repo: Path, caplog: pytest.LogCaptureFixture
+    repo: Path, caplog: pytest.LogCaptureFixture, capsys: pytest.CaptureFixture[str]
 ) -> None:
     with caplog.at_level("WARNING"):
         check_git_metadata(repo)
     assert "git metadata baseline taken late" in caplog.text
+    # Visible in the build output, not only the logger (#1832).
+    out = capsys.readouterr().out
+    assert "WARNING: git metadata baseline taken late" in out
+    assert "not detected" in out
 
     with open(repo / ".git" / "config", "a", encoding="utf-8") as fh:
         fh.write('[merge "evil"]\n\tdriver = touch x\n')
@@ -155,6 +183,57 @@ def test_linked_worktree_shares_baseline(repo: Path, tmp_path: Path) -> None:
         check_git_metadata(repo)
     with pytest.raises(RuntimeError, match=r"merge\.wt\.driver"):
         check_git_metadata(wt)
+
+
+def _configured_linked_worktree(repo: Path, tmp_path: Path) -> Path:
+    # The main worktree's config.worktree differs from the linked one's: under
+    # the old shared baseline a check in the linked worktree reported drift.
+    _git(repo, "config", "extensions.worktreeConfig", "true")
+    wt = tmp_path / "wt"
+    _git(repo, "worktree", "add", "-q", "-b", "wt-branch", str(wt))
+    _git(repo, "config", "--worktree", "merge.x.driver", "true")
+    record_baseline(repo)
+    record_worktree_baseline(wt)
+    return wt
+
+
+def test_linked_worktree_config_does_not_trigger_shared_baseline(
+    repo: Path, tmp_path: Path
+) -> None:
+    wt = _configured_linked_worktree(repo, tmp_path)
+
+    check_git_metadata(wt)
+    check_git_metadata(repo)
+
+
+def test_linked_worktree_config_tamper_is_isolated(repo: Path, tmp_path: Path) -> None:
+    wt = _configured_linked_worktree(repo, tmp_path)
+    _git(wt, "config", "--worktree", "merge.y.driver", "evil")
+
+    with pytest.raises(RuntimeError, match=r"worktree:merge\.y\.driver"):
+        check_git_metadata(wt)
+    check_git_metadata(repo)
+
+
+def test_missing_worktree_baseline_expects_empty_config(repo: Path) -> None:
+    _git(repo, "config", "extensions.worktreeConfig", "true")
+    record_baseline(repo)
+    _git(repo, "config", "--worktree", "core.fsmonitor", "x")
+
+    with pytest.raises(RuntimeError, match=r"worktree:core\.fsmonitor"):
+        check_git_metadata(repo)
+
+
+def test_create_worktree_records_its_config_baseline(repo: Path) -> None:
+    from core.worktree import WorktreeManager
+
+    _git(repo, "config", "extensions.worktreeConfig", "true")
+    _git(repo, "config", "--worktree", "merge.x.driver", "true")
+    mgr = WorktreeManager(repo)
+    mgr.setup()
+    wt = mgr.create_worktree("worktree-config")
+
+    check_git_metadata(wt.path)
 
 
 def test_create_worktree_records_baseline_without_overwriting(repo: Path) -> None:
@@ -631,3 +710,247 @@ def test_qa_fixer_metadata_change_fails_build_nonzero(
     phases = [c.args[0] for c in emit.call_args_list]
     assert ExecutionPhase.FAILED in phases
     assert ExecutionPhase.COMPLETE not in phases
+
+
+def test_qa_post_loop_metadata_change_fails_build_nonzero(
+    repo: Path, tmp_path: Path
+) -> None:
+    from unittest.mock import AsyncMock, MagicMock, patch  # noqa: PLC0415
+
+    import qa_loop  # noqa: PLC0415
+    from cli import build_commands  # noqa: PLC0415
+    from phase_event import ExecutionPhase  # noqa: PLC0415
+
+    loop_globals = qa_loop.run_qa_validation_loop.__globals__
+    record_baseline(repo)
+    spec_dir = tmp_path / "001-spec"
+    spec_dir.mkdir()
+    (spec_dir / "spec.md").write_text("# Feature\n", encoding="utf-8")
+    (spec_dir / "QA_FIX_REQUEST.md").write_text("fix it\n", encoding="utf-8")
+
+    async def fixer(*_a, **_k):
+        _git(repo, "config", "core.fsmonitor", "/tmp/evil")
+        return "fixed", ""
+
+    client = MagicMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    emit = MagicMock()
+    reviewer = AsyncMock(return_value=("approved", "ok"))
+    review_state = MagicMock()
+    review_state.is_approval_valid.return_value = True
+    patches = [
+        patch("agent.run_autonomous_agent", new=AsyncMock(return_value=None)),
+        patch("agent.sync_plan_to_source", MagicMock(return_value=False)),
+        patch("qa_loop.should_run_qa", MagicMock(return_value=True)),
+        patch("cli.utils.validate_environment", MagicMock(return_value=True)),
+        patch("cli.utils.print_banner", MagicMock()),
+        patch.object(
+            build_commands,
+            "choose_workspace",
+            MagicMock(return_value=build_commands.WorkspaceMode.DIRECT),
+        ),
+        patch.object(
+            build_commands, "get_existing_build_worktree", MagicMock(return_value=None)
+        ),
+        patch.object(
+            build_commands, "build_is_silent_noop", MagicMock(return_value=False)
+        ),
+        patch.object(
+            build_commands,
+            "ReviewState",
+            MagicMock(load=MagicMock(return_value=review_state)),
+        ),
+        patch("phase_event.emit_phase", emit),
+        patch("agents.coder.emit_phase", emit),
+        patch.dict(
+            loop_globals,
+            {
+                "emit_phase": emit,
+                "is_build_complete": MagicMock(return_value=True),
+                "is_no_test_project": MagicMock(return_value=False),
+                "get_task_logger": MagicMock(return_value=None),
+                "create_client": MagicMock(return_value=client),
+                "run_qa_fixer_session": fixer,
+                "get_qa_iteration_count": MagicMock(
+                    return_value=loop_globals["MAX_QA_ITERATIONS"]
+                ),
+                "_create_qa_reviewer_provider": MagicMock(return_value=client),
+                "run_qa_agent_session": reviewer,
+            },
+        ),
+    ]
+    with contextlib.ExitStack() as stack:
+        for p in patches:
+            stack.enter_context(p)
+        with pytest.raises(SystemExit) as exc:
+            build_commands.handle_build_command(
+                project_dir=repo,
+                spec_dir=spec_dir,
+                model="claude-sonnet-4-5",
+                max_iterations=1,
+                verbose=False,
+                force_isolated=False,
+                force_direct=True,
+                auto_continue=True,
+                skip_qa=False,
+                force_bypass_approval=False,
+            )
+
+    assert exc.value.code == 1
+    phases = [c.args[0] for c in emit.call_args_list]
+    assert ExecutionPhase.FAILED in phases
+    assert ExecutionPhase.COMPLETE not in phases
+    reviewer.assert_not_awaited()
+
+
+def test_qa_preapproved_metadata_change_fails_build_nonzero(
+    repo: Path, tmp_path: Path
+) -> None:
+    from unittest.mock import AsyncMock, MagicMock, patch  # noqa: PLC0415
+
+    from cli import build_commands  # noqa: PLC0415
+    from phase_event import ExecutionPhase  # noqa: PLC0415
+
+    record_baseline(repo)
+    spec_dir = tmp_path / "001-spec"
+    spec_dir.mkdir()
+    (spec_dir / "spec.md").write_text("# Feature\n", encoding="utf-8")
+    _git(repo, "config", "core.fsmonitor", "/tmp/evil")
+
+    emit = MagicMock()
+    review_state = MagicMock()
+    review_state.is_approval_valid.return_value = True
+    patches = [
+        patch("agent.run_autonomous_agent", new=AsyncMock(return_value=None)),
+        patch("agent.sync_plan_to_source", MagicMock(return_value=False)),
+        patch("qa_loop.should_run_qa", MagicMock(return_value=False)),
+        patch("qa_loop.is_qa_approved", MagicMock(return_value=True)),
+        patch("cli.utils.validate_environment", MagicMock(return_value=True)),
+        patch("cli.utils.print_banner", MagicMock()),
+        patch.object(
+            build_commands,
+            "choose_workspace",
+            MagicMock(return_value=build_commands.WorkspaceMode.DIRECT),
+        ),
+        patch.object(
+            build_commands, "get_existing_build_worktree", MagicMock(return_value=None)
+        ),
+        patch.object(
+            build_commands, "build_is_silent_noop", MagicMock(return_value=False)
+        ),
+        patch.object(
+            build_commands,
+            "ReviewState",
+            MagicMock(load=MagicMock(return_value=review_state)),
+        ),
+        patch("phase_event.emit_phase", emit),
+        patch("agents.coder.emit_phase", emit),
+    ]
+    with contextlib.ExitStack() as stack:
+        for p in patches:
+            stack.enter_context(p)
+        with pytest.raises(SystemExit) as exc:
+            build_commands.handle_build_command(
+                project_dir=repo,
+                spec_dir=spec_dir,
+                model="claude-sonnet-4-5",
+                max_iterations=1,
+                verbose=False,
+                force_isolated=False,
+                force_direct=True,
+                auto_continue=True,
+                skip_qa=False,
+                force_bypass_approval=False,
+            )
+
+    assert exc.value.code == 1
+    phases = [c.args[0] for c in emit.call_args_list]
+    assert ExecutionPhase.FAILED in phases
+    assert ExecutionPhase.COMPLETE not in phases
+
+
+def _baseline_exists(repo: Path) -> bool:
+    return _baseline_path(str(snapshot(repo)["repo"])).exists()
+
+
+def test_direct_build_records_baseline_before_first_agent(
+    repo: Path, tmp_path: Path
+) -> None:
+    """Direct mode never calls create_worktree; the build baselines first (#1832)."""
+    from unittest.mock import MagicMock, patch  # noqa: PLC0415
+
+    from cli import build_commands  # noqa: PLC0415
+
+    spec_dir = tmp_path / "001-spec"
+    spec_dir.mkdir()
+    (spec_dir / "spec.md").write_text("# Feature\n", encoding="utf-8")
+    seen: list[bool] = []
+
+    async def agent(*_a, **_k):
+        seen.append(_baseline_exists(repo))
+        raise RuntimeError("stop after the first agent")
+
+    patches = [
+        patch("agent.run_autonomous_agent", new=agent),
+        patch("cli.utils.validate_environment", MagicMock(return_value=True)),
+        patch("cli.utils.print_banner", MagicMock()),
+        patch.object(
+            build_commands,
+            "choose_workspace",
+            MagicMock(return_value=build_commands.WorkspaceMode.DIRECT),
+        ),
+        patch.object(
+            build_commands, "get_existing_build_worktree", MagicMock(return_value=None)
+        ),
+        patch.object(
+            build_commands,
+            "ReviewState",
+            MagicMock(load=MagicMock(return_value=MagicMock())),
+        ),
+    ]
+    with contextlib.ExitStack() as stack:
+        for p in patches:
+            stack.enter_context(p)
+        with contextlib.suppress(SystemExit, RuntimeError):
+            build_commands.handle_build_command(
+                project_dir=repo,
+                spec_dir=spec_dir,
+                model="claude-sonnet-4-5",
+                max_iterations=1,
+                verbose=False,
+                force_isolated=False,
+                force_direct=True,
+                auto_continue=True,
+                skip_qa=True,
+                force_bypass_approval=False,
+            )
+
+    assert seen == [True]
+
+
+def test_spec_runner_records_baseline_before_spec_agents(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec-pipeline agents run before create_worktree; baseline first (#1832)."""
+    from unittest.mock import MagicMock  # noqa: PLC0415
+
+    from runners import spec_runner  # noqa: PLC0415
+
+    seen: list[bool] = []
+
+    async def run(**_k: object) -> bool:
+        seen.append(_baseline_exists(repo))
+        return False
+
+    (repo / ".aifactory").mkdir()  # stop main()'s project-root walk at repo
+    orch = MagicMock()
+    orch.run = run
+    monkeypatch.setattr(spec_runner, "SpecOrchestrator", MagicMock(return_value=orch))
+    monkeypatch.setattr(
+        sys, "argv", ["spec_runner.py", "--task", "x", "--project-dir", str(repo)]
+    )
+    with pytest.raises(SystemExit):
+        spec_runner.main()
+
+    assert seen == [True]

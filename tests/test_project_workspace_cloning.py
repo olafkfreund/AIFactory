@@ -11,6 +11,7 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -179,6 +180,18 @@ def test_workspace_root_falls_back_to_default(monkeypatch):
 # ---------------------------------------------------------------------------
 # clone_or_update — mock the subprocess, assert the right git invocations
 # ---------------------------------------------------------------------------
+
+
+def test_clone_or_update_refuses_git_baselines_workspace(tmp_path):
+    from server.error_ref import InputRejectedError
+    from server.services.project_workspace_service import clone_or_update
+
+    with pytest.raises(InputRejectedError, match="Invalid gitUrl"):
+        asyncio.run(
+            clone_or_update("https://example.test/.git-baselines.git", root=tmp_path)
+        )
+
+    assert list(tmp_path.iterdir()) == []
 
 
 def _mock_proc(returncode: int = 0, stdout: bytes = b"", stderr: bytes = b""):
