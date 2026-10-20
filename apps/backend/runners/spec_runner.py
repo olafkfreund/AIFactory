@@ -307,6 +307,14 @@ Examples:
         force_ai_assessment=args.force_ai_assessment,
     )
 
+    # Baseline before the spec agents run, not at create_worktree (#1832).
+    from core.git_metadata import record_baseline  # noqa: PLC0415
+
+    try:
+        record_baseline(project_dir)
+    except RuntimeError as exc:
+        print_status(f"git metadata baseline not recorded: {exc}", "warning")
+
     try:
         debug("spec_runner", "Starting spec orchestrator run...")
         success = asyncio.run(

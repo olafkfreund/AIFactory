@@ -1282,6 +1282,7 @@ def resolve_pr_conflicts(  # noqa: PLR0911
     status = runner(
         [
             "git",
+            *pins,
             "diff",
             "--no-ext-diff",
             "--no-textconv",
@@ -1313,7 +1314,7 @@ def resolve_pr_conflicts(  # noqa: PLR0911
         runner(["git", "rebase", "--abort"], worktree)
         return ConflictResolution(False, conflicted, f"rebase refused: {exc}"[:200])
 
-    runner(["git", "add", "-A"], worktree)
+    runner(["git", *pins, "add", "-A"], worktree)
     # core.editor=true: non-interactive `rebase --continue` (no $EDITOR prompt).
     cont = runner(
         ["git", *pins, "-c", "core.editor=true", "rebase", "--continue"], worktree
