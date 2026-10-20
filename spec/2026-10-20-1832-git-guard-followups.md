@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1832
 intent: intent/2026-10-20-1832-git-guard-followups.md
 ---
