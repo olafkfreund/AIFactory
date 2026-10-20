@@ -70,7 +70,11 @@ Approved decisions (from the spec):
      `_write_worktree_baseline`.
    - `check_git_metadata`: shared compare as today against `current["config"]`
      (local only). Keep the late-baseline branch exactly as is, but write only
-     the shared fields. Then load the per-worktree file if it exists (reuse the
+     the shared fields, and also write the per-worktree file
+     (`_write_worktree_baseline`), the same rule as `record_baseline` (a fresh
+     shared file writes both). Deviation (implementation): without it a late
+     baseline in a worktree with legit tracked `worktree` keys reports drift on
+     every later check. Then load the per-worktree file if it exists (reuse the
      `config` dict check from `_load_baseline`, treat a non-dict as corrupt →
      RuntimeError), else `{}`; compare with `current["worktree_config"]` and add
      each differing key as `worktree:<key>` to `changed`. Keep the message format.
@@ -82,9 +86,11 @@ Approved decisions (from the spec):
    - The CLI `--rebaseline` path already calls `record_baseline(overwrite=True)`;
      no change.
    Tests in `tests/test_git_metadata_baseline.py`:
-   (a) false positive: in `repo` set `extensions.worktreeConfig true` and
-   `git config --worktree merge.x.driver true`, `record_baseline(repo)`, add a
-   linked worktree with `git worktree add`, `record_worktree_baseline(wt)`, then
+   (a) false positive: in `repo` set `extensions.worktreeConfig true`, add a
+   linked worktree with `git worktree add`, then set
+   `git config --worktree merge.x.driver true` in `repo` (after the add: git
+   copies `config.worktree` into a new worktree, so before the add both sides
+   match and old code passes), `record_baseline(repo)`, `record_worktree_baseline(wt)`, then
    `check_git_metadata(wt)` and `check_git_metadata(repo)` pass. Fails on old
    code: the main worktree's key is missing in the linked worktree's view.
    (b) real tamper: same setup, then `git config --worktree merge.y.driver evil`

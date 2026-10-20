@@ -16,6 +16,7 @@ from core.git_metadata import (
     _baseline_path,
     check_git_metadata,
     record_baseline,
+    record_worktree_baseline,
     snapshot,
 )
 
@@ -97,6 +98,29 @@ def test_filter_lfs_clean_change_raises(repo: Path) -> None:
         check_git_metadata(repo)
 
 
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("lfs.customtransfer.evil.path", "/tmp/x"),
+        ("lfs.standalonetransferagent", "evil"),
+        ("submodule.s.update", "!touch x"),
+    ],
+)
+def test_added_executable_config_raises(repo: Path, key: str, value: str) -> None:
+    record_baseline(repo)
+    _git(repo, "config", key, value)
+
+    with pytest.raises(RuntimeError, match=re.escape(key)):
+        check_git_metadata(repo)
+
+
+def test_added_non_executable_submodule_update_passes(repo: Path) -> None:
+    record_baseline(repo)
+    _git(repo, "config", "submodule.s.update", "checkout")
+
+    check_git_metadata(repo)
+
+
 def test_missing_baseline_records_late_then_compares(
     repo: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -155,6 +179,57 @@ def test_linked_worktree_shares_baseline(repo: Path, tmp_path: Path) -> None:
         check_git_metadata(repo)
     with pytest.raises(RuntimeError, match=r"merge\.wt\.driver"):
         check_git_metadata(wt)
+
+
+def _configured_linked_worktree(repo: Path, tmp_path: Path) -> Path:
+    # The main worktree's config.worktree differs from the linked one's: under
+    # the old shared baseline a check in the linked worktree reported drift.
+    _git(repo, "config", "extensions.worktreeConfig", "true")
+    wt = tmp_path / "wt"
+    _git(repo, "worktree", "add", "-q", "-b", "wt-branch", str(wt))
+    _git(repo, "config", "--worktree", "merge.x.driver", "true")
+    record_baseline(repo)
+    record_worktree_baseline(wt)
+    return wt
+
+
+def test_linked_worktree_config_does_not_trigger_shared_baseline(
+    repo: Path, tmp_path: Path
+) -> None:
+    wt = _configured_linked_worktree(repo, tmp_path)
+
+    check_git_metadata(wt)
+    check_git_metadata(repo)
+
+
+def test_linked_worktree_config_tamper_is_isolated(repo: Path, tmp_path: Path) -> None:
+    wt = _configured_linked_worktree(repo, tmp_path)
+    _git(wt, "config", "--worktree", "merge.y.driver", "evil")
+
+    with pytest.raises(RuntimeError, match=r"worktree:merge\.y\.driver"):
+        check_git_metadata(wt)
+    check_git_metadata(repo)
+
+
+def test_missing_worktree_baseline_expects_empty_config(repo: Path) -> None:
+    _git(repo, "config", "extensions.worktreeConfig", "true")
+    record_baseline(repo)
+    _git(repo, "config", "--worktree", "core.fsmonitor", "x")
+
+    with pytest.raises(RuntimeError, match=r"worktree:core\.fsmonitor"):
+        check_git_metadata(repo)
+
+
+def test_create_worktree_records_its_config_baseline(repo: Path) -> None:
+    from core.worktree import WorktreeManager
+
+    _git(repo, "config", "extensions.worktreeConfig", "true")
+    _git(repo, "config", "--worktree", "merge.x.driver", "true")
+    mgr = WorktreeManager(repo)
+    mgr.setup()
+    wt = mgr.create_worktree("worktree-config")
+
+    check_git_metadata(wt.path)
 
 
 def test_create_worktree_records_baseline_without_overwriting(repo: Path) -> None:
