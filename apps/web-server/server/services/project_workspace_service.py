@@ -271,7 +271,13 @@ async def clone_or_update(
     Raises:
         GitOperationError: On any non-zero ``git`` exit code or timeout.
     """
-    workspace = (root or workspace_root()) / (slug or slug_from_git_url(git_url))
+    name = slug or slug_from_git_url(git_url)
+    # The chart keeps the git baselines at <workspace root>/.git-baselines.
+    if name == ".git-baselines":
+        raise InputRejectedError(
+            "Invalid gitUrl: its path is not a usable workspace directory name"
+        )
+    workspace = (root or workspace_root()) / name
     workspace.parent.mkdir(parents=True, exist_ok=True)
 
     # Build the URL that actually gets passed to ``git`` for network ops, plus
