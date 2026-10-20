@@ -1246,7 +1246,7 @@ class ConflictResolution:
 ConflictFixer = Callable[["list[str]", str], bool]
 
 
-def resolve_pr_conflicts(  # noqa: PLR0911
+def _resolve_pr_conflicts(  # noqa: PLR0911
     worktree: str,
     base_branch: str,
     *,
@@ -1324,6 +1324,32 @@ def resolve_pr_conflicts(  # noqa: PLR0911
             False, conflicted, f"rebase --continue failed: {cont.err[:200]}"
         )
     return ConflictResolution(True, conflicted, "resolved via fixer")
+
+
+def resolve_pr_conflicts(
+    worktree: str,
+    base_branch: str,
+    *,
+    fixer: ConflictFixer,
+    runner: Runner = _default_runner,
+) -> ConflictResolution:
+    """Resolve PR conflicts without leaving a newly created git metadata baseline."""
+    from core.git_metadata import baseline_file  # noqa: PLC0415 - backend path shim
+
+    def run(argv: list[str]) -> tuple[int, str]:
+        result = runner(argv, worktree)
+        return result.rc, result.out
+
+    try:
+        baseline = baseline_file(worktree, run=run)
+    except RuntimeError as exc:
+        return ConflictResolution(False, [], f"rebase refused: {exc}"[:200])
+    created = not baseline.exists()
+    try:
+        return _resolve_pr_conflicts(worktree, base_branch, fixer=fixer, runner=runner)
+    finally:
+        if created:
+            baseline.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
