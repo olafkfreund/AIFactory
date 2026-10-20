@@ -75,7 +75,7 @@ class ConflictResolveOptions(BaseModel):
 
 @router.get("/{task_id}/worktree/merge-preview")
 @honest_status
-async def get_worktree_merge_preview(
+async def get_worktree_merge_preview(  # noqa: PLR0911 - #1832 pins guard
     task_id: str, _access: dict = Depends(require_task_access("viewer"))
 ):
     """
@@ -1333,7 +1333,7 @@ async def resolve_uncommitted_conflicts(
 
 @router.post("/{task_id}/worktree/resolve-git-merge")
 @honest_status
-async def resolve_git_merge_conflicts(
+async def resolve_git_merge_conflicts(  # noqa: PLR0911 - #1832 pins guard
     task_id: str, _access: dict = Depends(require_task_access("member"))
 ):
     """

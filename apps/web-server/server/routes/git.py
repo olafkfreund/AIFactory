@@ -953,7 +953,7 @@ async def check_source_update():
 
 @updates_router.post("/source/download")
 @honest_status
-async def download_source_update():
+async def download_source_update():  # noqa: PLR0912 - #1832 pins guard
     """
     Download Magestic AI source update via git pull.
 
