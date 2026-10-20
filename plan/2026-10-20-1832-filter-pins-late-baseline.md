@@ -143,3 +143,12 @@ Revert the PR. No data or config migration; baselines already written stay valid
   status probe fails (it used to proceed). All fail closed.
 - Step 2: both `has_uncommitted_changes` probes also count a non-zero
   `git status` as "has changes".
+- Review fix (site-list gap): `git commit` refreshes the index and re-runs
+  the clean filter on racily-clean entries, so a pinned `add` followed by an
+  unpinned `commit` still ran a planted filter. The commits after the pinned
+  adds now unpack the pins already in scope: `worktree.py`
+  `commit_in_worktree`; `git.py` `initialize_git` and `squash_commits`;
+  `worktree_merge.py` `resolve_worktree_conflicts` (clean merge, resumed
+  merge, AI-resolved) and `resolve_git_merge_conflicts`. The step 4 scan now
+  also flags `commit`, and `test_merge_driver_pins_blocks_commit_clean_filter`
+  checks a pinned add+commit runs no filter.

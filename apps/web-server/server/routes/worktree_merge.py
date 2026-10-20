@@ -682,7 +682,13 @@ async def resolve_worktree_conflicts(
             # as "Clean merge - no conflicts" with the merge left uncommitted in
             # the index. The caller had no way to tell the difference.
             commit = subprocess.run(
-                ["git", "commit", "-m", f"Merge {worktree_branch} into current branch"],
+                [
+                    "git",
+                    *pins,
+                    "commit",
+                    "-m",
+                    f"Merge {worktree_branch} into current branch",
+                ],
                 cwd=project_path,
                 capture_output=True,
                 text=True,
@@ -796,7 +802,7 @@ async def resolve_worktree_conflicts(
         # success whatever happened, so a hook rejection or a stale index.lock
         # reached the caller as `success: true` with the merge uncommitted.
         commit = subprocess.run(
-            ["git", "commit", "--no-edit"],
+            ["git", *pins, "commit", "--no-edit"],
             cwd=project_path,
             capture_output=True,
             text=True,
@@ -946,7 +952,7 @@ async def resolve_worktree_conflicts(
     try:
         commit_msg = f"Merge {worktree_branch} (AI-resolved conflicts)"
         result = subprocess.run(
-            ["git", "commit", "-m", commit_msg],
+            ["git", *pins, "commit", "-m", commit_msg],
             cwd=project_path,
             capture_output=True,
             text=True,
@@ -1625,7 +1631,7 @@ async def resolve_git_merge_conflicts(  # noqa: PLR0911 - #1832 pins guard
         # Commit the merge
         commit_msg = f"Merge {merge_branch} (AI-resolved conflicts)"
         result = subprocess.run(
-            ["git", "commit", "-m", commit_msg],
+            ["git", *pins, "commit", "-m", commit_msg],
             cwd=work_path,
             capture_output=True,
             text=True,

@@ -170,6 +170,19 @@ def test_merge_driver_pins_blocks_status_clean_filter(
     assert not marker.exists()
 
 
+def test_merge_driver_pins_blocks_commit_clean_filter(
+    filter_repo: tuple[Path, Path],
+) -> None:
+    """commit refreshes the index and re-runs clean on racy entries (#1832)."""
+    repo, marker = filter_repo
+
+    pins = merge_driver_pins(repo)
+    _git(repo, *pins, "add", ".")
+    ident = ["-c", "user.name=Test", "-c", "user.email=t@example.com"]
+    _git(repo, *ident, *pins, "commit", "-q", "-m", "x")
+    assert not marker.exists()
+
+
 def test_backend_status_probes_pin_clean_filter(
     filter_repo: tuple[Path, Path],
 ) -> None:
@@ -442,7 +455,7 @@ def _needs_filter_pins(elts: list[ast.expr], wrapper: bool) -> bool:
     if not rest:
         return False
     sub, args = rest[0], rest[1:]
-    if sub in ("status", "add"):
+    if sub in ("status", "add", "commit"):
         return True
     if sub == "worktree":
         return bool(args) and args[0] == "remove" and "--force" not in args
@@ -504,6 +517,7 @@ def test_scan_flags_unpinned_filter_sites() -> None:
     assert hits('["git", "status", "--porcelain"]') == ["x.py:1"]
     assert hits('run_git_command(["add", "-A"], p)') == ["x.py:1"]
     assert hits('["git", "diff", "--name-only", "--diff-filter=U"]') == ["x.py:1"]
+    assert hits('["git", "commit", "-m", m]') == ["x.py:1"]
     assert hits('["git", "worktree", "remove", p]') == ["x.py:1"]
     assert hits('pins = merge_driver_pins(p)\n["git", *pins, "add", f]\n') == []
     assert hits('["git", "diff", "--name-only", f"{a}...{b}"]') == []
@@ -526,6 +540,6 @@ def test_every_server_status_add_diff_pins_filters() -> None:
         )
     ]
     assert not offenders, (
-        "server git status/add/worktree diff missing *merge_driver_pins (#1832):\n"
+        "server git status/add/commit/worktree diff missing *merge_driver_pins (#1832):\n"
         + "\n".join(offenders)
     )

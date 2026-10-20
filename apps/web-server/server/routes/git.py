@@ -199,7 +199,7 @@ async def initialize_git(request: InitGitRequest):
     except RuntimeError:
         return {"success": False, "error": "Could not read merge drivers (#1761)"}
     run_git_command([*pins, "add", "-A"], path)
-    run_git_command(["commit", "-m", "Initial commit", "--allow-empty"], path)
+    run_git_command([*pins, "commit", "-m", "Initial commit", "--allow-empty"], path)
 
     return {"success": True}
 
@@ -1260,7 +1260,9 @@ async def squash_commits(projectId: str, request: SquashCommitsRequest):
         }
 
     # Step 2: Create new commit with all the squashed changes
-    commit_result = run_git_command(["commit", "-m", commit_message], project_path)
+    commit_result = run_git_command(
+        [*pins, "commit", "-m", commit_message], project_path
+    )
 
     if not commit_result["success"]:
         # Try to recover by resetting back

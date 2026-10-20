@@ -1209,7 +1209,7 @@ class WorktreeManager:
             return False
 
         add = self._run_git([*pins, "add", ".", ":!.aifactory"], cwd=worktree_path)
-        result = self._run_git(["commit", "-m", message], cwd=worktree_path)
+        result = self._run_git([*pins, "commit", "-m", message], cwd=worktree_path)
 
         if result.returncode == 0:
             return True
