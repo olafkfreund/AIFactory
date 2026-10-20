@@ -215,7 +215,9 @@ class TerminalWorktreeService:
         if branch and self._is_git_repo():
             # Use git worktree remove if it's a git worktree
             try:
-                pins = merge_driver_pins(self.project_path)
+                # Unforced remove runs `status` in the worktree; read pins there so
+                # a per-worktree config.worktree filter is pinned too (#1832).
+                pins = merge_driver_pins(worktree_path)
                 self._run_git_command(
                     ["git", *pins, "worktree", "remove", str(worktree_path)]
                 )

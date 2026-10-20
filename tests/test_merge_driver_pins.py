@@ -543,3 +543,41 @@ def test_every_server_status_add_diff_pins_filters() -> None:
         "server git status/add/commit/worktree diff missing *merge_driver_pins (#1832):\n"
         + "\n".join(offenders)
     )
+
+
+def test_terminal_worktree_remove_pins_per_worktree_filter(tmp_path: Path) -> None:
+    """Unforced `worktree remove` runs status in the worktree, whose
+    config.worktree can define a filter the main repo's config does not list."""
+    import json
+
+    from server.services.terminal_worktree_service import TerminalWorktreeService
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    wt = tmp_path / "wt"
+    marker = tmp_path / "pwned"
+    ident = ["-c", "user.name=Test", "-c", "user.email=t@example.com"]
+    _git(repo, "init", "-q", "-b", "main")
+    (repo / "f").write_text("base\n")
+    _git(repo, "add", "f")
+    _git(repo, *ident, "commit", "-q", "-m", "base")
+    _git(repo, "worktree", "add", "-q", "-b", "wt", str(wt))
+    _git(repo, "config", "extensions.worktreeConfig", "true")
+    _git(wt, "config", "--worktree", "filter.evil.clean", f"touch {marker}; cat")
+    (repo / ".git" / "info" / "attributes").write_text("* filter=evil\n")
+    (wt / "f").write_text("edit\n")
+    _git(wt, "status", "--porcelain")
+    if not marker.exists():
+        pytest.skip("git status did not run the per-worktree clean filter")
+    marker.unlink()
+
+    svc = object.__new__(TerminalWorktreeService)
+    svc.project_path = repo
+    svc.config_file = repo / ".aifactory" / "terminal-worktrees.json"
+    svc.config_file.parent.mkdir()
+    svc.config_file.write_text(
+        json.dumps({"worktrees": [{"name": "wt", "path": str(wt), "branch": "wt"}]})
+    )
+
+    svc.remove_worktree("wt")
+    assert not marker.exists()

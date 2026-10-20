@@ -50,6 +50,11 @@ runs `git worktree remove` WITHOUT `--force`; git then runs `status` in the
 worktree, which ran a planted clean filter on git 2.54, and `-c` pins reach
 that child (checked). It is pinned in step 3.
 
+Review fix: its pins are read from `worktree_path`, not `project_path`. With
+`extensions.worktreeConfig=true`, a filter in that worktree's `config.worktree`
+is invisible to the main repo's config listing, and the remove runs `status`
+there. Regression: `test_terminal_worktree_remove_pins_per_worktree_filter`.
+
 ## Steps
 
 1. `apps/backend/core/child_env.py:79-126`: extend the key filter in
