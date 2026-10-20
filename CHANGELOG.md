@@ -1,5 +1,48 @@
 ## [Unreleased]
 
+## 3.10.4 - 2026-10-20
+
+### Security
+
+- **aiohttp 3.14.3 -> 3.14.5 (#1836).** Fixes CVE-2026-111064 (no initial
+  request/header timeout) and GHSA-2g87-pp6c-29x5 (unbounded memory and CPU
+  on crafted requests). yarl moves 1.24.5 -> 1.25.1 with it. The Trivy gate
+  on PRs to dev failed until this landed.
+- **Server-side git no longer runs repo filters, and a late baseline is
+  visible (#1832, PR #1837).** `merge_driver_pins` now also pins
+  `filter.<x>.clean`, `.smudge` and `.process` empty for every configured
+  filter, and every server-side `git status`, `git add`, worktree-reading
+  `git diff` and the unforced `git worktree remove` use the pins. A
+  `required` filter is left unpinned, so git exits 128 and the call fails
+  closed; if the pins cannot be read the call refuses and a status probe
+  reports "has changes". The git metadata baseline is now recorded before
+  the spec pipeline's agents and before a build's first agent session, which
+  covers direct mode and builds without workspaces. A baseline taken late
+  still passes, but the build output now prints `WARNING: git metadata
+  baseline taken late for <repo>; changes made before now are not detected`.
+- **Git metadata baseline follow-ups (#1832).** The baseline now also
+  tracks `lfs.customtransfer.*.path`, `lfs.*standalonetransferagent` and
+  `submodule.*.update` set to `!cmd`, so a change to any of them fails the
+  check. With `extensions.worktreeConfig`, each worktree's
+  `config.worktree` is compared with its own baseline, so one worktree's
+  config no longer reads as drift in another, and a change to it is still
+  reported. A project slug of `.git-baselines` is refused, and
+  `resolve_pr_conflicts` removes a baseline file it created for a build
+  clone. A repo whose old baseline holds per-worktree keys reports drift
+  once; rebaseline with `python -m core.git_metadata --rebaseline <path>`.
+
+### Changed
+
+- **Baked agent-CLI pins (#1411):** `@anthropic-ai/claude-code` 2.1.303,
+  `@openai/codex` 0.163.0, `@google/gemini-cli` 0.64.0. PFactory and
+  TFactory pin the same versions.
+- Dependency bumps: GitHub Actions group (#1744: setup-uv 10.3.0,
+  kind-action 1.15.1, setup-node 7.1.0, sbom-action 0.24.3, codeql-action
+  4.39.0, upload-artifact 7.0.2, download-artifact 8.0.2); npm
+  source-map-js 1.2.2 (#1739); and in `/docs` source-map-js 1.2.2 (#1654),
+  shell-quote 1.12.0 (#1653), proxy-addr 2.0.8 (#1655) and compression
+  1.8.2 (#1656).
+
 ## 3.10.3 - 2026-10-17
 
 ### Added
@@ -13,17 +56,6 @@
   today. `ci_linters` now refuses a repo with more than 64 workflow files.
 
 ### Security
-
-- **Git metadata baseline follow-ups (#1832).** The baseline now also
-  tracks `lfs.customtransfer.*.path`, `lfs.*standalonetransferagent` and
-  `submodule.*.update` set to `!cmd`, so a change to any of them fails the
-  check. With `extensions.worktreeConfig`, each worktree's
-  `config.worktree` is compared with its own baseline, so one worktree's
-  config no longer reads as drift in another, and a change to it is still
-  reported. A project slug of `.git-baselines` is refused, and
-  `resolve_pr_conflicts` removes a baseline file it created for a build
-  clone. A repo whose old baseline holds per-worktree keys reports drift
-  once; rebaseline with `python -m core.git_metadata --rebaseline <path>`.
 
 - **Legacy and from-issue tasks need a real verified green to auto-merge (#1697).**
   Tasks without a signed contract (including MODE 0 from-issue tasks) now
