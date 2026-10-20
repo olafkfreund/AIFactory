@@ -30,7 +30,7 @@ Approved decisions (from the spec):
   `_resolve_pr_conflicts`) and in a `finally` removes the shared baseline file
   only if it did not exist before the call. A path it cannot resolve means refuse.
 - Two QA tests: post-loop check (`cli/build_commands.py:612`) and the check at
-  the top of the pre-approved branch (`cli/build_commands.py:638`).
+  the top of the pre-approved branch (`cli/build_commands.py:651`).
 - Out of scope: items 1 and 3 (the other lane). Use `Refs #1832`, not `Closes`.
 
 ## Steps
@@ -153,9 +153,9 @@ Approved decisions (from the spec):
    `FAILED` in phases, no `COMPLETE`; assert the reviewer mock was not awaited.
    (b) pre-approved: patch `qa_loop.should_run_qa` to False and
    `qa_loop.is_qa_approved` to True (check the import name build_commands uses
-   at line 628), tamper the config after `record_baseline` and before the call;
+   at line 641), tamper the config after `record_baseline` and before the call;
    expect exit 1 and `FAILED`.
-   Prove each fails by deleting its call (`build_commands.py:612` or `:638`)
+   Prove each fails by deleting its call (`build_commands.py:612` or `:651`)
    in a scratch copy, then restore.
    → verify `$V/pytest tests/test_git_metadata_baseline.py -q`.
    Traps: other test files re-import `qa.loop`; patch the loop's `__globals__`
