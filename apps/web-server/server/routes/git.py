@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from server.error_ref import client_error
 from server.services.http_verdict import honest_status
 from server.specpath import browse_roots, within_roots
-from server.utils.subprocess_env import child_env, github_env
+from server.utils.subprocess_env import child_env, github_env, merge_driver_pins
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +194,11 @@ async def initialize_git(request: InitGitRequest):
             pass  # Not critical if this fails
 
     # Stage all files and create initial commit (only if no commits yet)
-    run_git_command(["add", "-A"], path)
+    try:
+        pins = merge_driver_pins(path)
+    except RuntimeError:
+        return {"success": False, "error": "Could not read merge drivers (#1761)"}
+    run_git_command([*pins, "add", "-A"], path)
     run_git_command(["commit", "-m", "Initial commit", "--allow-empty"], path)
 
     return {"success": True}
@@ -983,7 +987,14 @@ async def download_source_update():
             }
 
         # Check for uncommitted changes
-        status_result = run_git_command(["status", "--porcelain"], source_path)
+        try:
+            pins = merge_driver_pins(source_path)
+        except RuntimeError:
+            return {
+                "success": False,
+                "error": "Failed to check git status: could not read merge drivers (#1761)",
+            }
+        status_result = run_git_command([*pins, "status", "--porcelain"], source_path)
         if not status_result["success"]:
             return {
                 "success": False,
@@ -1188,8 +1199,17 @@ async def squash_commits(projectId: str, request: SquashCommitsRequest):
     current_branch = branch_result["output"]
 
     # Check for uncommitted changes
-    status_result = run_git_command(["status", "--porcelain"], project_path)
-    if status_result["success"] and status_result["output"].strip():
+    try:
+        pins = merge_driver_pins(project_path)
+    except RuntimeError:
+        return {
+            "success": False,
+            "error": "Failed to check git status: could not read merge drivers (#1761)",
+        }
+    status_result = run_git_command([*pins, "status", "--porcelain"], project_path)
+    if not status_result["success"]:
+        return {"success": False, "error": "Failed to check git status"}
+    if status_result["output"].strip():
         return {
             "success": False,
             "error": "Cannot squash with uncommitted changes. Please commit or stash your changes first.",

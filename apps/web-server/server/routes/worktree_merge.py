@@ -220,6 +220,12 @@ async def get_worktree_merge_preview(
     conflicting_files = []
     try:
         pins = merge_driver_pins(project_path)
+    except RuntimeError:
+        return {
+            "success": False,
+            "error": "Merge preview refused: cannot read merge drivers (#1761)",
+        }
+    try:
         # Use --write-tree explicitly for git 2.38+ behavior
         result = subprocess.run(
             ["git", *pins, "merge-tree", "--write-tree", base_branch, work_ref],
@@ -252,9 +258,6 @@ async def get_worktree_merge_preview(
         # Legacy fallback: Check for conflict markers (older git versions < 2.38)
         elif "<<<<<<" in result.stdout:
             has_conflicts = True
-    except RuntimeError:
-        logger.warning("merge preview refused: cannot read merge drivers")
-        has_conflicts = True
     except subprocess.CalledProcessError as e:
         # Command failed - check output for conflict indicators
         output = (e.stdout or "") + (e.stderr or "")
@@ -323,8 +326,8 @@ async def get_worktree_merge_preview(
     uncommitted_conflicting_files = []
     try:
         # Get uncommitted files in main project
-        result = subprocess.run(
-            ["git", "status", "--porcelain"],
+        result = subprocess.run(  # noqa: S603 - fixed argv plus config pins
+            ["git", *pins, "status", "--porcelain"],
             cwd=project_path,
             capture_output=True,
             text=True,
@@ -645,18 +648,18 @@ async def resolve_worktree_conflicts(
 
     # Check if a merge is already in progress
     merge_head = project_path / ".git" / "MERGE_HEAD"
+    try:
+        pins = merge_driver_pins(project_path)
+    except RuntimeError:
+        return {
+            "success": False,
+            "error": "Merge refused: cannot read merge drivers (#1761)",
+        }
     if merge_head.exists():
         logger.info(
             f"Merge already in progress for {sanitize_log(task_id)}, resolving existing conflicts"
         )
     else:
-        try:
-            pins = merge_driver_pins(project_path)
-        except RuntimeError:
-            return {
-                "success": False,
-                "error": "Merge refused: cannot read merge drivers (#1761)",
-            }
         # Start the git merge (allow conflicts)
         logger.info(
             "Starting git merge of %s into current branch for task %s",
@@ -736,9 +739,10 @@ async def resolve_worktree_conflicts(
     # Get list of conflicted files
     conflicted_files = []
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603 - fixed argv plus config pins
             [
                 "git",
+                *pins,
                 "diff",
                 "--no-ext-diff",
                 "--no-textconv",
@@ -766,8 +770,8 @@ async def resolve_worktree_conflicts(
     # Fallback: check git status for unmerged files
     if not conflicted_files:
         try:
-            result = subprocess.run(
-                ["git", "status", "--porcelain"],
+            result = subprocess.run(  # noqa: S603 - fixed argv plus config pins
+                ["git", *pins, "status", "--porcelain"],
                 cwd=project_path,
                 capture_output=True,
                 text=True,
@@ -858,8 +862,8 @@ async def resolve_worktree_conflicts(
 
             if "<<<<<<< " not in content:
                 logger.info(f"File {file_path} has no conflict markers, staging")
-                subprocess.run(
-                    ["git", "add", file_path],
+                subprocess.run(  # noqa: S603 - fixed argv plus config pins
+                    ["git", *pins, "add", file_path],
                     cwd=project_path,
                     capture_output=True,
                     text=True,
@@ -891,8 +895,8 @@ async def resolve_worktree_conflicts(
                 full_path.write_text(resolved_content)
                 logger.info(f"Wrote resolved content to {full_path}")
 
-                result = subprocess.run(
-                    ["git", "add", file_path],
+                result = subprocess.run(  # noqa: S603 - fixed argv plus config pins
+                    ["git", *pins, "add", file_path],
                     cwd=project_path,
                     capture_output=True,
                     text=True,
@@ -1083,8 +1087,9 @@ async def resolve_uncommitted_conflicts(
     # Get uncommitted files that conflict with task
     uncommitted_files = []
     try:
-        result = subprocess.run(
-            ["git", "status", "--porcelain"],
+        pins = merge_driver_pins(project_path)
+        result = subprocess.run(  # noqa: S603 - fixed argv plus config pins
+            ["git", *pins, "status", "--porcelain"],
             cwd=project_path,
             capture_output=True,
             text=True,
@@ -1099,6 +1104,8 @@ async def resolve_uncommitted_conflicts(
                 filename = parts[-1].strip()
                 if filename:
                     uncommitted_files.append(filename)
+    except RuntimeError:
+        return {"success": False, "error": "Could not get uncommitted files"}
     except subprocess.CalledProcessError:
         return {"success": False, "error": "Could not get uncommitted files"}
 
@@ -1417,9 +1424,14 @@ async def resolve_git_merge_conflicts(
     # Get list of files with unresolved conflicts
     conflicted_files = []
     try:
-        result = subprocess.run(
+        pins = merge_driver_pins(work_path)
+    except RuntimeError:
+        return {"success": False, "error": "Could not read merge drivers (#1761)"}
+    try:
+        result = subprocess.run(  # noqa: S603 - fixed argv plus config pins
             [
                 "git",
+                *pins,
                 "diff",
                 "--no-ext-diff",
                 "--no-textconv",
@@ -1445,8 +1457,8 @@ async def resolve_git_merge_conflicts(
             "No files from git diff --diff-filter=U, scanning for conflict markers..."
         )
         try:
-            result = subprocess.run(
-                ["git", "status", "--porcelain"],
+            result = subprocess.run(  # noqa: S603 - fixed argv plus config pins
+                ["git", *pins, "status", "--porcelain"],
                 cwd=work_path,
                 capture_output=True,
                 text=True,
@@ -1510,8 +1522,8 @@ async def resolve_git_merge_conflicts(
             if "<<<<<<< " not in content:
                 logger.info(f"File {file_path} has no conflict markers, skipping")
                 # Stage it anyway since git thinks it's conflicted
-                subprocess.run(
-                    ["git", "add", file_path],
+                subprocess.run(  # noqa: S603 - fixed argv plus config pins
+                    ["git", *pins, "add", file_path],
                     cwd=work_path,
                     capture_output=True,
                     text=True,
@@ -1546,8 +1558,8 @@ async def resolve_git_merge_conflicts(
                 logger.info(f"Wrote resolved content to {sanitize_log(full_path)}")
 
                 # Stage the file
-                result = subprocess.run(
-                    ["git", "add", file_path],
+                result = subprocess.run(  # noqa: S603 - fixed argv plus config pins
+                    ["git", *pins, "add", file_path],
                     cwd=work_path,
                     capture_output=True,
                     text=True,

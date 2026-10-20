@@ -43,6 +43,12 @@ Sites (line numbers on origin/dev at bea91102):
 | same | 1423, 1449, 1514, 1550 | `resolve_git_merge_conflicts` | new; on error the route's failure response |
 | `apps/web-server/server/services/pr_endgame.py` | 1285, 1316 | `resolve_pr_conflicts` | existing pins (1272/1309) |
 | `apps/web-server/server/routes/git.py` | 197, 986, 1191 | `initialize_git`, `download_source_update`, `squash_commits` | new; on error the route's failure response |
+| `apps/web-server/server/services/terminal_worktree_service.py` | 218 | `remove_worktree` (unforced `worktree remove`) | new; on error fall through to its existing rmtree fallback (deviation, see below) |
+
+Deviation (found while writing the step 4 scan): `terminal_worktree_service.py:218`
+runs `git worktree remove` WITHOUT `--force`; git then runs `status` in the
+worktree, which ran a planted clean filter on git 2.54, and `-c` pins reach
+that child (checked). It is pinned in step 3.
 
 ## Steps
 
@@ -71,7 +77,7 @@ Sites (line numbers on origin/dev at bea91102):
    Traps: do not change other git calls; existing tests that script `_run_git`
    or `subprocess.run` may need the extra config call answered.
 3. Web-server sites (table rows for `worktree_merge.py`, `pr_endgame.py`,
-   `routes/git.py`): unpack pins per decision 3. `merge_driver_pins` is imported
+   `routes/git.py`, `terminal_worktree_service.py`): unpack pins per decision 3. `merge_driver_pins` is imported
    from `server.utils.subprocess_env` in web-server modules. For
    `run_git_command([...], path)` in `routes/git.py` put `*pins` first in the
    list (check `run_git_command` prepends `git`). `pr_endgame` pins take
@@ -126,3 +132,14 @@ must fail on origin/dev.
 ## Rollback
 
 Revert the PR. No data or config migration; baselines already written stay valid.
+
+## Deviations recorded during implementation
+
+- Step 3: `get_worktree_merge_preview` reuses the merge-tree pins for its
+  status probe, so a pins failure now returns `success: false` with an error
+  instead of a preview flagged `has_conflicts`. `resolve_worktree_conflicts`
+  reads pins before its MERGE_HEAD branch, so resuming an in-progress merge
+  also refuses when they cannot be read. `squash_commits` refuses when the
+  status probe fails (it used to proceed). All fail closed.
+- Step 2: both `has_uncommitted_changes` probes also count a non-zero
+  `git status` as "has changes".
