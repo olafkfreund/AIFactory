@@ -78,6 +78,70 @@
   operators: agents lose `~/.ssh` and home-folder tool configs; add needed
   env names with `AIFACTORY_AGENT_ENV_EXTRA`, and name an MCP server's host
   vars with `env_keys`. On local runners the `/proc` window stays open (#1724).
+- **The merge gate binds the TFactory verdict to the head commit and checks the base branch's required checks (#1766).**
+  A TFactory verdict counts only when its `source_sha` equals the head being
+  merged; a missing, empty or different SHA means not passed. The PR watcher
+  now also stops at its `max_minutes` deadline. Once host CI is green, every
+  required check of the base branch (classic protection and rulesets) must be
+  present and green on the head; red refuses, missing or pending holds, and a
+  token that cannot read them holds the merge. **Breaking until TFactory
+  returns `source_sha` (TFactory#1378):** every gated auto-merge holds
+  (`merge_gate_timeout`). PR #1824.
+- **Server merges, rebases and previews no longer run a planted merge driver (#1761).**
+  Every `merge.*.driver` key is pinned empty (`-c merge.<name>.driver=`) on
+  the `merge-tree` previews and on the real merge and rebase sites, so git
+  reports a conflict instead of running the program. If the keys cannot be
+  read, previews report conflicts and merges do not start. Real merge drivers
+  no longer run on server merges either, so files they would resolve show as
+  conflicts. The `--no-ext-diff` scan now also covers `show`, `blame`,
+  `range-diff` and `stash show -p`. PR #1829.
+- **Server merges are refused when the repo's git metadata changed since its baseline (#1746, #1747).**
+  When a worktree is created, SHA-256 hashes (never values) of the
+  exec-bearing local git config keys (including `merge.*`, `filter.*`,
+  `diff.*`, `core.attributesFile`) and of `info/attributes` are recorded in
+  `~/.aifactory/git-baselines/` (or `AIFACTORY_GIT_BASELINE_DIR`). Every
+  server merge, rebase and preview, and the end of each agent session, checks
+  them and refuses on any change, naming the keys. A human re-baselines with
+  `python -m core.git_metadata --rebaseline <repo>`. A repo without a
+  baseline gets one at its first check, with a warning. PR #1818.
+- **`pnpm`, `yarn`, `bun` and `uv run` check the program they run implicitly (#1812).**
+  A first word that is not a built-in subcommand is checked as a command
+  (`pnpm nc` checks `nc`), `uv run` and `bun run` targets are checked, and
+  `pnpm recursive`, `yarn workspace` and `yarn workspaces foreach` are
+  followed. Unknown global options and options on `uv run`/`bun run` are
+  refused. **Breaking:** script shorthands such as `pnpm build`, `yarn lint`
+  or `bun run dev` are refused unless the name is allowlisted; `pnpm run
+  <script>` and `yarn run <script>` still work. `uv run --frozen …` is
+  refused. PR #1823.
+
+### Fixed
+
+- **Agents see the image's pre-baked npm globals and Playwright browsers again (#1757).**
+  The private agent HOME hid the npm global prefix set in `~/.npmrc` and the
+  browsers under `~/.cache/ms-playwright`, so `npx` MCP servers fetched from
+  the registry again and Playwright reported a missing executable. The agent
+  env now sets `NPM_CONFIG_PREFIX` (the `.npmrc` itself is not copied, as it
+  can hold tokens) and `PLAYWRIGHT_BROWSERS_PATH`, and allows
+  `PLAYWRIGHT_BROWSERS_PATH`, `PLAYWRIGHT_SKIP_*` and `FONTCONFIG_FILE`.
+  PR #1828.
+- **A build has one owner: start and approval no longer stop a running build, and orphans are reaped only on proof (#1704, #1705, #1714).**
+  Start and plan approval answer 409 while the build is running anywhere (or
+  the store read fails) instead of stopping it. Running rows record their
+  pod and boot; another pod's row is failed only when its pod returns 404.
+  The reaper lists task Jobs that no running row names and deletes those
+  older than 10 minutes one at a time, but only logs "would delete" unless
+  `AIFACTORY_JOB_SWEEP_DRY_RUN=false`. A failed Job dispatch holds the
+  credential until the Job is confirmed gone. PR #1819.
+- **A failed gate Job names the pod phase (#1737).**
+  On a non-success result the gate output ends with the pod phase and each
+  container's waiting or terminated reason, e.g. `[pod Pending; runner:
+  waiting ErrImagePull (...)]`, or `[no pod found]`. PR #1831.
+- **The remote MCP router works on mcp 2.x (#1820).**
+  `server/mcp_remote/server.py` uses the mcp 2.x `Server(on_list_tools=,
+  on_call_tool=)` API instead of the removed decorators, so enabling
+  `AIFACTORY_MCP_REMOTE_ENABLED` no longer fails with an `AttributeError`.
+  The web-server now requires `mcp>=2.0`, and the opt-in OpenAPI spec lists
+  `/api/mcp-remote/sse` and `/api/mcp-remote/messages/`. PR #1827.
 
 ## 3.10.2 - 2026-10-17
 
@@ -164,6 +228,11 @@
   `run_pr_endgame` and at merge time. A failed read holds the merge. The
   existing `handback_received.json` check stays, so a receipt from before the
   upgrade still holds.
+- **Agent runners fail closed when they cannot become non-dumpable (#1762).**
+  `create_client`, `create_simple_client` and `get_provider` now exit when
+  `prctl(PR_SET_DUMPABLE, 0)` fails, as the server already did, instead of
+  only logging a warning. Non-Linux stays a no-op. The child env strip list
+  is now matched case-insensitively. PR #1810.
 
 ### Changed
 
