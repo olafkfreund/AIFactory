@@ -75,7 +75,7 @@ def test_merge_driver_pins_blocks_merge_tree_driver(
     marker.unlink()
 
     pins = merge_driver_pins(repo)
-    assert pins == ["-c", "merge.evil.driver="]
+    assert "merge.evil.driver=" in pins
 
     pinned = subprocess.run(
         ["git", *pins, "merge-tree", "--write-tree", "main", "aifactory/t"],
@@ -124,6 +124,41 @@ def test_merge_driver_pins_non_utf8_subsection(
     assert not marker.exists()
 
 
+def test_merge_driver_pins_blocks_status_clean_filter(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    marker = tmp_path / "pwned"
+    _git(repo, "init", "-q", "-b", "main")
+    tracked = repo / "f"
+    tracked.write_text("base\n")
+    _git(repo, "add", "f")
+    _git(
+        repo,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=t@example.com",
+        "commit",
+        "-q",
+        "-m",
+        "base",
+    )
+
+    _git(repo, "config", "filter.evil.clean", f"touch {marker}; cat")
+    (repo / ".git" / "info" / "attributes").write_text("* filter=evil\n")
+    tracked.write_text("edit\n")
+
+    _git(repo, "status", "--porcelain")
+    if not marker.exists():
+        pytest.skip("git status did not run the clean filter")
+    marker.unlink()
+
+    pins = merge_driver_pins(repo)
+    assert "filter.evil.clean=" in pins
+    _git(repo, *pins, "status", "--porcelain")
+    assert not marker.exists()
+
+
 def test_worktree_merge_pins_non_utf8_driver(
     non_utf8_repo: tuple[Path, Path],
 ) -> None:
@@ -150,10 +185,23 @@ def test_merge_driver_pins_injected_run(tmp_path: Path) -> None:
         run=_script(
             (
                 0,
-                "core.bare\0merge.a.driver\0merge.B c.driver\0merge.a.name\0",
+                "core.bare\0merge.a.driver\0merge.B c.driver\0merge.a.name\0"
+                "filter.a.clean\0filter.a.smudge\0filter.a.process\0"
+                "filter.a.required\0",
             )
         ),
-    ) == ["-c", "merge.a.driver=", "-c", "merge.B c.driver="]
+    ) == [
+        "-c",
+        "merge.a.driver=",
+        "-c",
+        "merge.B c.driver=",
+        "-c",
+        "filter.a.clean=",
+        "-c",
+        "filter.a.smudge=",
+        "-c",
+        "filter.a.process=",
+    ]
 
     with pytest.raises(RuntimeError):
         merge_driver_pins(tmp_path, run=_script((1, "")))
@@ -163,6 +211,9 @@ def test_merge_driver_pins_injected_run(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError):
         merge_driver_pins(tmp_path, run=_script((0, "merge.a=b.driver\0")))
+
+    with pytest.raises(RuntimeError):
+        merge_driver_pins(tmp_path, run=_script((0, "filter.a=b.clean\0")))
 
     def _raise_oserror(_a: list[str]) -> tuple[int, str]:
         raise OSError("boom")
