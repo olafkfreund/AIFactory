@@ -8,6 +8,8 @@ Main entry point for the web server that provides:
 """
 
 import logging
+import os
+import sys
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
@@ -72,6 +74,7 @@ from .routes import (
 from .routes import (
     settings as settings_routes,
 )
+from .services import github_app, project_settings_store
 from .services.skills_service import init_skills_service
 from .websockets import (
     events as events_ws,
@@ -98,6 +101,17 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler for startup/shutdown."""
+    # The serving process (a reload worker included) launches the agents, so it
+    # must be non-dumpable too, not only the __main__ supervisor (#1679).
+    _make_non_dumpable()
+    from .utils.subprocess_env import sweep_github_dirs  # noqa: PLC0415
+
+    sweep_github_dirs()
+    # Before any loop starts; env_bootstrap already loaded a .env PAT (#1671).
+    github_app.start()
+    github_app.warn_legacy_web_login()
+    github_app.load_web_login()  # no-op when a token or the App is present
+
     settings = get_settings()
 
     # Startup
@@ -120,6 +134,9 @@ async def lifespan(app: FastAPI):
             app_settings.autoBuildPath = str(backend_path)
             save_app_settings(app_settings)
             logger.info(f"Auto-configured autoBuildPath: {backend_path}")
+
+    # #1795: children never fall back to .aifactory/.env
+    os.environ.setdefault(project_settings_store.ENV, "{}")
 
     # Initialize database (creates tables if needed)
     await init_db()
@@ -186,6 +203,15 @@ async def lifespan(app: FastAPI):
             "Completion outbox relay disabled (AIFACTORY_COMPLETION_OUTBOX unset)"
         )
 
+    app.state.github_app_refresh_stop = None
+    app.state.github_app_refresh_task = None
+    if github_app.configured():
+        gh_stop = _asyncio.Event()
+        app.state.github_app_refresh_stop = gh_stop
+        app.state.github_app_refresh_task = _asyncio.create_task(
+            github_app.refresh_loop(stop=gh_stop)
+        )
+
     # Start the RFC-0011 label-driven intake poller when enabled (#636). Off by
     # default — only runs when AIFACTORY_INTAKE_POLLER is set. Polls the
     # configured repos for factory:* labels and routes by difficulty tier with
@@ -204,24 +230,20 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("RFC-0011 intake poller disabled (AIFACTORY_INTAKE_POLLER unset)")
 
-    # RFC-0016 #671 control/execution split: when builds run as k8s Jobs
-    # (AIFACTORY_BUILD_BACKEND=kubejob), the control plane reconciles by polling
-    # Postgres + reaps vanished Jobs on an interval, so a missed completion event
-    # never strands a build. Off by default — no-op for the in-pod subprocess
-    # backend (the loop is only started when the kubejob backend is enabled).
+    # Reconcile kubejob builds and reap orphaned subprocess rows when the
+    # durable store is enabled (#671, #1705).
     from .services.build_backend import kubejob_enabled as _kubejob_enabled
+    from .services.job_state_store import store_enabled  # noqa: PLC0415
 
     app.state.kubejob_reconcile_stop = None
     app.state.kubejob_reconcile_task = None
-    if _kubejob_enabled():
+    if _kubejob_enabled() or store_enabled():
         kj_stop = _asyncio.Event()
         app.state.kubejob_reconcile_stop = kj_stop
         app.state.kubejob_reconcile_task = _asyncio.create_task(
             get_agent_service().kubejob_reconcile_loop(stop=kj_stop)
         )
-        logger.info(
-            "RFC-0016 #671 kubejob build backend enabled — reconcile loop started"
-        )
+        logger.info("RFC-0016 #671/#1705 build reconcile loop started")
     else:
         logger.info("RFC-0016 #671 kubejob build backend disabled (subprocess default)")
 
@@ -247,6 +269,26 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Stale-task reaper disabled (AIFACTORY_STALE_REAPER unset)")
 
+    # Factory#2586: backstop for the merger's build-end call. In-process for
+    # the reaper's reason: the spec tree is on an RWO local-path PVC.
+    # Off by default; report-only until AIFACTORY_MERGER_SWEEP_DRY_RUN=false.
+    from .services import merger as _merger  # noqa: PLC0415
+
+    app.state.merger_stop = None
+    app.state.merger_task = None
+    if _merger.merger_sweep_enabled():
+        merger_stop = _asyncio.Event()
+        app.state.merger_stop = merger_stop
+        app.state.merger_task = _asyncio.create_task(
+            _merger.merger_loop(stop=merger_stop)
+        )
+        logger.info(
+            "Merger sweep enabled (%s)",
+            "report-only" if _merger.dry_run() else "WRITING: pushes + opens PRs",
+        )
+    else:
+        logger.info("Merger sweep disabled (AIFACTORY_MERGER_SWEEP unset)")
+
     yield
 
     # Shutdown
@@ -266,12 +308,24 @@ async def lifespan(app: FastAPI):
             await _asyncio.wait_for(app.state.outbox_relay_task, timeout=5.0)
         except (TimeoutError, _asyncio.CancelledError):
             app.state.outbox_relay_task.cancel()
+    if app.state.github_app_refresh_task is not None:
+        app.state.github_app_refresh_stop.set()
+        try:
+            await _asyncio.wait_for(app.state.github_app_refresh_task, timeout=5.0)
+        except (TimeoutError, _asyncio.CancelledError):
+            app.state.github_app_refresh_task.cancel()
     if app.state.stale_reaper_task is not None:
         app.state.stale_reaper_stop.set()
         try:
             await _asyncio.wait_for(app.state.stale_reaper_task, timeout=5.0)
         except (TimeoutError, _asyncio.CancelledError):
             app.state.stale_reaper_task.cancel()
+    if app.state.merger_task is not None:
+        app.state.merger_stop.set()
+        try:
+            await _asyncio.wait_for(app.state.merger_task, timeout=5.0)
+        except (TimeoutError, _asyncio.CancelledError):
+            app.state.merger_task.cancel()
     if app.state.intake_poller_task is not None:
         app.state.intake_poller_stop.set()
         try:
@@ -678,7 +732,8 @@ def create_app() -> FastAPI:
         )
     else:
         # Placeholder for development
-        @app.get("/")
+        # include_in_schema=False: spec must not depend on static/ (#1731)
+        @app.get("/", include_in_schema=False)
         async def root():
             return {
                 "message": "AIFactory Web Server",
@@ -719,8 +774,29 @@ def custom_openapi():
 app.openapi = custom_openapi
 
 
+def _make_non_dumpable() -> None:
+    """Hide this process's environ and memory from same-uid processes.
+
+    The agents this server spawns run as the same uid, and /proc/<pid>/environ
+    of a dumpable process is readable by that uid: it holds DATABASE_URL,
+    JWT_SECRET, API_TOKEN and the trusted-plan keys. A non-dumpable process's
+    /proc files are owned by root, so without CAP_SYS_PTRACE they are unreadable.
+    Children reset to dumpable on execve and still inherit the full env (#1680).
+    Fails closed: a server that cannot hide its secrets must not start.
+    """
+    backend = str(Path(__file__).resolve().parents[2] / "backend")
+    if backend not in sys.path:
+        sys.path.insert(0, backend)
+    from core.process_hardening import require_non_dumpable  # noqa: PLC0415
+
+    require_non_dumpable()
+
+
 if __name__ == "__main__":
     import uvicorn
+
+    # Before anything else: in-pod agents must not read our secrets via /proc.
+    _make_non_dumpable()
 
     settings = get_settings()
 

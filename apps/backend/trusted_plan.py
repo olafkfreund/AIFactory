@@ -576,10 +576,19 @@ def _git_subprocess_env() -> dict[str, str] | None:
     package is importable, which the pure-verification callers do not require.
     """
     try:
+        from core.child_env import child_env  # noqa: PLC0415 - see docstring
         from core.worktree import _git_env  # noqa: PLC0415 - see docstring
     except ImportError:  # pragma: no cover - defensive; core may be unavailable
         return None
-    env: dict[str, str] = _git_env()
+    # Ambient-git-var scrub (worktree) AND server-secret scrub (#1680): keep what
+    # both leave, plus the hooksPath config child_env appended.
+    ambient_clean = _git_env()
+    env = {
+        k: v
+        for k, v in child_env().items()
+        if k in ambient_clean or k.startswith("GIT_CONFIG_")
+    }
+    env["GIT_TERMINAL_PROMPT"] = "0"  # forced headless, as _git_env does
     return env
 
 
@@ -664,7 +673,15 @@ def check_baseline_drift(
         )
 
     ahead = _git(Path(project_dir), "rev-list", "--count", f"{resolved}..HEAD")
-    changed = _git(Path(project_dir), "diff", "--name-only", resolved, "HEAD")
+    changed = _git(
+        Path(project_dir),
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--name-only",
+        resolved,
+        "HEAD",
+    )
     changed_files = set((changed or "").splitlines())
     overlap = sorted(changed_files & set(_blast_radius_files(plan)))
 
@@ -699,6 +716,9 @@ def baseline_drift_rejects(drift: BaselineDrift, policy: str | None = None) -> b
 # Maps Task Contract v2 `execution` keys to the task_metadata.json keys the
 # executor already honors (phase_config + agent_service._read_parallel_opts).
 _EXECUTION_TO_METADATA = {
+    # #1607: without this a signed contract's execution.runtime was silently
+    # dropped, so the gate could never see what the contract asked for.
+    "runtime": "runtime",
     "model": "model",
     "phase_models": "phaseModels",
     "phase_thinking": "phaseThinking",

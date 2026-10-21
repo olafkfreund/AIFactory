@@ -52,8 +52,8 @@ def test_extract_from_verification_command_strings():
             }
         ]
     }
-    # First-token basenames only.
-    assert extract_command_names(plan) == {"uv", "ruff"}
+    # Runner targets are surfaced too (`uv run pytest` runs pytest, #1812).
+    assert extract_command_names(plan) == {"uv", "pytest", "ruff"}
 
 
 def test_extract_from_service_commands():
@@ -101,7 +101,8 @@ def test_extract_npx_first_token():
         "required_commands": [],
         "services": [{"test_command": "npx playwright test"}],
     }
-    assert extract_command_names(plan) == {"npx"}
+    # The npx target is a command the hook checks too (#1784).
+    assert extract_command_names(plan) == {"npx", "playwright"}
 
 
 # ---- sanitization ---------------------------------------------------------

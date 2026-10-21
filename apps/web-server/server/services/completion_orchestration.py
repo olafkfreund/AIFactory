@@ -28,8 +28,15 @@ from typing import Any
 from factory_common.logsafe import sanitize_log
 
 from server.background import spawn
+from server.services.review_redrive_service import (
+    sync_spec_file_from_worktree,
+    worktree_spec_dir,
+)
 
+from . import project_settings_store
 from .task_control import write_control
+from .trusted_contract import handoff_contract
+from .trusted_contract_store import lookup
 
 
 def _build_wrote_nothing(
@@ -92,6 +99,26 @@ async def run_terminal_completion(
     asked for, or the plan says "completed" for a build this function already
     ruled failed (#1430).
     """
+    try:
+        # #1795: fresh settings for this project before the sync pr_endgame reads.
+        await project_settings_store.get_settings(project_path)
+    except Exception:  # noqa: BLE001 - never break the completion path
+        logger.warning(
+            "project-settings load failed before terminal completion", exc_info=True
+        )
+
+    # #1550: on the co-mount Job path the gate marker is written into the task
+    # worktree's spec dir and nothing else brings it home (the packed path's
+    # object-store fetch is a no-op here). Copy it before anything reads it --
+    # the merger (#1566) runs below. Newer-only and never raises, so a repeat,
+    # a retried completion or a missing worktree is a no-op.
+    try:
+        sync_spec_file_from_worktree(
+            spec_dir, worktree_spec_dir(project_path, spec_id), ".trailing_gates_done"
+        )
+    except Exception:  # noqa: BLE001 - never break the completion path
+        logger.debug("gate-marker copy-back failed", exc_info=True)
+
     # Evidence gate (#1070): a build with nothing to show is a FAILED build, not
     # a review request. Downgrading here covers both build backends at once —
     # the in-pod subprocess path and the kubejob path both finish through this
@@ -195,6 +222,9 @@ async def run_terminal_completion(
             # unless AIFACTORY_PATH_RISK_FLOOR_ENFORCE is on (it then rewrites
             # reviewTier, which both TFactory and the PR endgame already read).
             # Same helper the endgame calls; idempotent, best-effort.
+            # #1667: one lookup of the signed record, passed to every merge-path
+            # consumer below. A failed read is LOOKUP_FAILED, which holds.
+            trusted = await lookup(spec_dir)
             try:
                 from .pr_endgame import apply_path_risk_floor  # noqa: PLC0415
 
@@ -206,6 +236,7 @@ async def run_terminal_completion(
                     spec_id,
                     str(_meta.get("base_branch") or _meta.get("baseBranch") or "main"),
                     _meta.get("reviewTier"),
+                    trusted=trusted,
                 )
             except Exception:  # noqa: BLE001 — never blocks completion
                 logger.debug("path risk floor skipped (best-effort)", exc_info=True)
@@ -218,7 +249,9 @@ async def run_terminal_completion(
                     sys.path.insert(0, str(backend_path))
                 from pfactory.tfactory_client import maybe_auto_handoff_tfactory
 
-                handoff = await maybe_auto_handoff_tfactory(spec_dir, spec_id)
+                handoff = await maybe_auto_handoff_tfactory(
+                    spec_dir, spec_id, contract=handoff_contract(spec_dir, trusted)
+                )
                 if handoff.get("sent"):
                     logger.info(
                         "[AgentService] Auto-handed off %s to TFactory for testing",
@@ -256,7 +289,9 @@ async def run_terminal_completion(
                 )
 
                 if is_auto_pr_enabled(project_path):
-                    ctx = gather_pr_context(project_path, spec_dir, spec_id)
+                    ctx = gather_pr_context(
+                        project_path, spec_dir, spec_id, trusted=trusted
+                    )
                     if ctx:
 
                         async def _re_test() -> None:
@@ -264,7 +299,11 @@ async def run_terminal_completion(
                                 maybe_auto_handoff_tfactory,
                             )
 
-                            await maybe_auto_handoff_tfactory(spec_dir, spec_id)
+                            await maybe_auto_handoff_tfactory(
+                                spec_dir,
+                                spec_id,
+                                contract=handoff_contract(spec_dir, trusted),
+                            )
 
                         def _re_test_sync() -> None:
                             spawn(_re_test())
@@ -281,8 +320,7 @@ async def run_terminal_completion(
                         _fix_fn = None
                         _conflict_fixer = None
                         if _reviewer == "aifactory":
-                            import subprocess as _sp
-
+                            from . import pr_endgame  # noqa: PLC0415
                             from .pr_data_service import get_pr_data_service
                             from .pr_endgame import ReviewState
                             from .pr_review_service import get_pr_review_service
@@ -364,22 +402,15 @@ async def run_terminal_completion(
                                             correlation_key=f"pr-{prn}",
                                         )
                                     )
-                                    _sp.run(
-                                        ["gh", "auth", "setup-git"],
-                                        capture_output=True,
-                                        timeout=30,
-                                    )
-                                    push = _sp.run(
+                                    push = pr_endgame.push_with_lfs(
                                         ["git", "push", "origin", "HEAD"],
-                                        cwd=str(_wt),
-                                        capture_output=True,
-                                        text=True,
-                                        timeout=120,
+                                        "HEAD",
+                                        str(_wt),
                                     )
-                                    if push.returncode != 0:
+                                    if not push.ok:
                                         logger.warning(
                                             "[pr-endgame] fix push failed: %s",
-                                            (push.stderr or "")[:200],
+                                            push.err[:200],
                                         )
                                         return False
                                     # Re-review the FIXED code and wait for the
@@ -484,6 +515,7 @@ async def run_terminal_completion(
                         endgame = await run_pr_endgame(
                             spec_dir=spec_dir,
                             spec_id=spec_id,
+                            trusted=trusted,
                             worktree=ctx["worktree"],
                             branch=ctx["branch"],
                             base=ctx["base"],
@@ -520,4 +552,28 @@ async def run_terminal_completion(
                         )
             except Exception:
                 logger.debug("PR endgame failed (best-effort)", exc_info=True)
+
+            # Factory#2586: land the work even when the endgame did not run
+            # (QA refused, no clean-build context). The merger is idempotent,
+            # so after an endgame PR it only sees `already_open` and records
+            # `awaiting_merge`; otherwise it pushes the branch and opens the
+            # PR. Runs after the endgame on purpose, never instead of it.
+            try:
+                import asyncio  # noqa: PLC0415
+
+                from .merger import process_one  # noqa: PLC0415
+
+                landed = await asyncio.to_thread(
+                    process_one,
+                    task_id.split(":", 1)[0] if ":" in task_id else project_path.name,
+                    project_path,
+                    spec_dir,
+                )
+                logger.info(
+                    "[AgentService] merger for %s: %s",
+                    sanitize_log(spec_id),
+                    sanitize_log(landed),
+                )
+            except Exception:  # noqa: BLE001 - landing never breaks completion
+                logger.debug("merger landing failed (best-effort)", exc_info=True)
     return terminal_status

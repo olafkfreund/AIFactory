@@ -14,7 +14,9 @@ properties the RFC calls out:
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -36,6 +38,17 @@ from server.services.job_state_store import (  # noqa: E402
     JobStateStore,
     SpawnArgs,
 )
+
+
+@pytest.fixture(autouse=True)
+def _empty_project_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No DB here: the project has no stored settings (#1795)."""
+
+    async def _empty(*_args: Any, **_kwargs: Any) -> dict[str, str]:
+        return {}
+
+    monkeypatch.setattr("server.services.project_settings_store.get_settings", _empty)
+
 
 _DATA_ROOT = "/home/nonroot/.aifactory"
 
@@ -121,7 +134,8 @@ def _spawn_args(spec_id: str) -> SpawnArgs:
 def test_manifest_runs_run_py_on_build_image_with_mounts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Worktree under the data root so it gets co-mounted; warm store + SA set.
+    # Worktree under the data root so it gets co-mounted; store PVC set to prove
+    # the build ignores it (#1736).
     # The build image defaults to the running aifactory image (AIFACTORY_IMAGE,
     # chart-injected) — NOT the thin nix gate substrate (#671 fix).
     monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
@@ -172,9 +186,10 @@ def test_manifest_runs_run_py_on_build_image_with_mounts(
     assert "nix develop" not in cmd
 
     mount_paths = {mt["mountPath"] for mt in c["volumeMounts"]}
-    # /clis is the always-on install-clis provisioning (#777), alongside the
-    # worktree + warm-store mounts.
-    assert mount_paths == {"/work", "/nix/store", "/clis"}
+    # #1621: the install-clis initContainer and its /clis emptyDir are gone —
+    # the provider CLIs are baked into the image (Dockerfile), as the control
+    # plane already assumed under #791. #1736: only the worktree remains.
+    assert mount_paths == {"/work"}
     # /work subPath is the data-root-relative BUILD CLONE dir — deliberately not
     # worktrees/tasks/<spec>, which belongs to the linked task worktree (#1467).
     work_mt = next(mt for mt in c["volumeMounts"] if mt["mountPath"] == "/work")
@@ -283,10 +298,9 @@ def test_manifest_outside_data_root_has_no_worktree_mount(
         spec_id="s",
     )
     pod = m["spec"]["template"]["spec"]
-    # No worktree / warm-store volume — only the always-on install-clis emptyDir
-    # (#777) is present.
+    # No worktree / warm-store volume, and since #1621 no /clis emptyDir either.
     vol_names = {v["name"] for v in pod.get("volumes", [])}
-    assert vol_names == {"clis"}
+    assert vol_names == set()
 
 
 # --------------------------------------------------------------------------- #
@@ -330,6 +344,34 @@ def test_build_job_env_propagates_present_provider_env(
     # Unset passthrough vars are omitted, not blanked.
     assert "GH_TOKEN" not in env
     assert "NO_PROXY" not in env
+
+
+def test_build_job_env_forwards_both_nix_store_vars(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1736: forward AIFACTORY_PACKED_NIX_IN_IMAGE and AIFACTORY_NIX_STORE_PVC
+    together into the build Job or the #253 node pin returns."""
+    for var in bb._PASSTHROUGH_BUILD_ENV:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("AIFACTORY_PACKED_NIX_IN_IMAGE", "1")
+    monkeypatch.setenv("AIFACTORY_NIX_STORE_PVC", "aifactory-nix-store")
+    env = bb.build_job_env("t")
+    assert env["AIFACTORY_PACKED_NIX_IN_IMAGE"] == "1"
+    assert env["AIFACTORY_NIX_STORE_PVC"] == "aifactory-nix-store"
+
+
+def test_build_job_env_forwards_gate_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#1796: gates in the build Job read the timeout and sandbox network. The
+    data root is not forwarded: the Job does not mount the data PVC there."""
+    for var in bb._PASSTHROUGH_BUILD_ENV:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("AIFACTORY_GATE_TIMEOUT_SECONDS", "900")
+    monkeypatch.setenv("AIFACTORY_SANDBOX_NETWORK", "bridge")
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", "/data")
+    env = bb.build_job_env("t")
+    assert env["AIFACTORY_GATE_TIMEOUT_SECONDS"] == "900"
+    assert env["AIFACTORY_SANDBOX_NETWORK"] == "bridge"
+    assert "AIFACTORY_DATA_ROOT" not in env
 
 
 def test_build_job_env_propagates_non_claude_provider_env(
@@ -523,6 +565,96 @@ async def test_dispatch_records_worker_ref(
         "namespace": "factory",
         "job_name": job_name,
     }
+    assert fake.deleted == []
+
+
+async def _dispatch_with_failing_ref(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    err: BaseException,
+    fake: _FakeBatch,
+) -> None:
+    """Dispatch with a set_worker_ref that raises ``err`` (#1677)."""
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    monkeypatch.setattr(bb, "populate_build_worktree", lambda *_a, **_k: None)
+    store = await _make_store(tmp_path / "d.db")
+    await store.admit("p:s1", _spawn_args("s1"), cap=2, correlation_key="9")
+
+    async def _boom(*_a: Any, **_k: Any) -> None:
+        raise err
+
+    monkeypatch.setattr(store, "set_worker_ref", _boom)
+    await bb.KubeJobBuildBackend(store).dispatch(
+        task_id="p:s1",
+        project_path=Path(_DATA_ROOT) / "workspaces" / "p",
+        spec_id="s1",
+        correlation_key="9",
+        batch=fake,
+    )
+
+
+async def test_dispatch_deletes_job_when_worker_ref_write_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _KwBatch(_FakeBatch):
+        kw: dict[str, Any] = {}
+
+        async def delete_namespaced_job(
+            self, name: str, namespace: str, **_kw: Any
+        ) -> None:
+            self.kw = _kw
+            await super().delete_namespaced_job(name, namespace, **_kw)
+
+    err = RuntimeError("db down")
+    fake = _KwBatch()
+    with pytest.raises(RuntimeError) as exc:
+        await _dispatch_with_failing_ref(tmp_path, monkeypatch, err, fake)
+    assert exc.value is err
+    name = fake.created[0][1]["metadata"]["name"]
+    assert fake.deleted == [("factory", name)]
+    assert fake.kw == {"propagation_policy": "Background"}
+
+
+async def test_dispatch_reraises_original_error_when_rollback_delete_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _FailDelete(_FakeBatch):
+        async def delete_namespaced_job(
+            self, name: str, namespace: str, **_kw: Any
+        ) -> None:
+            raise _ApiError(500)
+
+    err = RuntimeError("db down")
+    fake = _FailDelete()
+    with caplog.at_level(logging.ERROR, logger=bb.__name__):
+        with pytest.raises(RuntimeError) as exc:
+            await _dispatch_with_failing_ref(tmp_path, monkeypatch, err, fake)
+    assert exc.value is err
+    name = fake.created[0][1]["metadata"]["name"]
+    recs = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.ERROR and name in r.getMessage()
+    ]
+    assert recs
+    assert recs[0].exc_info is not None
+    assert isinstance(recs[0].exc_info[1], _ApiError)
+
+
+async def test_dispatch_deletes_job_when_cancelled_during_worker_ref_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _FakeBatch()
+    with pytest.raises(asyncio.CancelledError):
+        await _dispatch_with_failing_ref(
+            tmp_path, monkeypatch, asyncio.CancelledError(), fake
+        )
+    name = fake.created[0][1]["metadata"]["name"]
+    assert fake.deleted == [("factory", name)]
 
 
 async def test_dispatch_injects_oauth_token_into_job_env(
@@ -937,8 +1069,8 @@ def _seed_env(monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def test_seed_creds_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     # No AIFACTORY_CLI_CREDS_SECRET → env-auth-only path unchanged: no seed-creds
-    # initContainer, no cc-* volumes. install-clis is unconditional (#777) so it
-    # is present regardless.
+    # initContainer, no cc-* volumes. Since #1621 there is no install-clis
+    # initContainer either, so the pod has none at all.
     monkeypatch.delenv("AIFACTORY_CLI_CREDS_SECRET", raising=False)
     project_path = _seed_env(monkeypatch)
     m = bb.build_run_py_job_manifest(
@@ -946,7 +1078,7 @@ def test_seed_creds_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     pod = m["spec"]["template"]["spec"]
     init_names = {c["name"] for c in pod.get("initContainers", [])}
-    assert init_names == {"install-clis"}
+    assert init_names == set()
     vol_names = {v["name"] for v in pod.get("volumes", [])}
     assert "cli-creds" not in vol_names
     assert "cc-claude" not in vol_names
@@ -998,46 +1130,6 @@ def test_seed_creds_injected_when_secret_configured(
 # --------------------------------------------------------------------------- #
 
 
-def test_install_clis_initcontainer_present(monkeypatch: pytest.MonkeyPatch) -> None:
-    # A build routed to a non-claude runtime (e.g. codex — core/runtime_gating.py)
-    # dies "Codex CLI executable not found" because the dispatched Job pod is
-    # FRESH and never got the control-plane's CLI provisioning. The build Job
-    # must carry the SAME install-clis initContainer, unconditionally (no flag).
-    project_path = _seed_env(monkeypatch)
-    m = bb.build_run_py_job_manifest(
-        task_id="proj-1:s", project_path=project_path, spec_id="s"
-    )
-    pod = m["spec"]["template"]["spec"]
-
-    init = next(c for c in pod["initContainers"] if c["name"] == "install-clis")
-    assert init["image"] == "node:22-bookworm-slim"
-    script = init["args"][0]
-    assert "npm install -g" in script
-    assert "@anthropic-ai/claude-code" in script
-    assert "@openai/codex" in script
-    assert "@google/gemini-cli" in script
-    assert "ln -sf /clis/bin/gemini /clis/bin/antigravity" in script
-    init_mount = next(mt for mt in init["volumeMounts"] if mt["name"] == "clis")
-    assert init_mount["mountPath"] == "/clis"
-
-    # /clis is a shared emptyDir (writable, node-agnostic — no PVC).
-    clis_vol = next(v for v in pod["volumes"] if v["name"] == "clis")
-    assert clis_vol == {"name": "clis", "emptyDir": {}}
-
-    # The build container mounts /clis and has /clis/bin prepended to PATH so
-    # the provisioned `codex`/`claude`/`gemini`/`antigravity` binaries resolve.
-    container = pod["containers"][0]
-    build_mounts = {mt["mountPath"] for mt in container["volumeMounts"]}
-    assert "/clis" in build_mounts
-    path_env = next(e for e in container["env"] if e["name"] == "PATH")
-    assert path_env["value"].startswith("/clis/bin:")
-    # Regression guard: prepending /clis/bin must NOT drop the -nix build image's
-    # own PATH — `nix` lives at /nix/var/nix/profiles/default/bin and the build
-    # runs `nix develop` for the SUT toolchain (dropping it breaks the build).
-    assert "/nix/var/nix/profiles/default/bin" in path_env["value"]
-    assert "/home/nonroot/.npm-global/bin" in path_env["value"]
-
-
 def test_build_job_pod_hardening(monkeypatch: pytest.MonkeyPatch) -> None:
     # #812 (Factory#274 compensating controls): the Job pod pins runAsNonRoot +
     # RuntimeDefault seccomp, every container drops all capabilities and forbids
@@ -1063,7 +1155,8 @@ def test_build_job_pod_hardening(monkeypatch: pytest.MonkeyPatch) -> None:
         "capabilities": {"drop": ["ALL"]},
     }
     by_name = {c["name"]: c for c in pod["initContainers"]}
-    for name, uid in (("install-clis", 1000), ("seed-creds", 65532)):
+    # #1621 removed install-clis (uid 1000); seed-creds is the only one left.
+    for name, uid in (("seed-creds", 65532),):
         sc = by_name[name]["securityContext"]
         assert sc["runAsUser"] == uid
         assert sc["allowPrivilegeEscalation"] is False
@@ -1104,25 +1197,6 @@ def test_build_job_pins_a_numeric_uid_not_just_runasnonroot(
     )
 
 
-def test_install_clis_unaffected_by_seed_creds_flag(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # install-clis has no opt-in flag: it is present whether or not the
-    # unrelated file-auth seed-creds path (#690) is configured.
-    monkeypatch.setenv("AIFACTORY_CLI_CREDS_SECRET", "factory-cli-creds")
-    project_path = _seed_env(monkeypatch)
-    m = bb.build_run_py_job_manifest(
-        task_id="proj-1:s", project_path=project_path, spec_id="s"
-    )
-    pod = m["spec"]["template"]["spec"]
-    init_names = [c["name"] for c in pod["initContainers"]]
-    assert "install-clis" in init_names
-    assert "seed-creds" in init_names
-
-
-# --------------------------------------------------------------------------- #
-# 6. Self-contained build worktree (#671 — /work has a real .git, not a
-#    dangling linked-worktree pointer). Real-git integration test.
 # --------------------------------------------------------------------------- #
 
 import subprocess as _sp  # noqa: E402
@@ -1466,12 +1540,8 @@ def test_manifest_default_keeps_work_comount(
 
 
 # --------------------------------------------------------------------------- #
-# 10. RFC-0017 #190 (nix source): a packed-workspace Job drops the node-pinned
-#     aifactory-nix-store warm-cache PVC when AIFACTORY_PACKED_NIX_IN_IMAGE is on
-#     (the build image then carries /nix/store). That PVC is RWO local-path and
-#     PV-pinned to one node, so co-mounting it re-pins the Job — the second pin
-#     after the /work co-mount (§9). The flag is the gate; it only affects the
-#     packed path. Default OFF and the non-packed path keep the warm store.
+# 10. #1736: the build Job never mounts the nix-store PVC (it was unseeded: no
+#     /nix/var db). Gates mount it, seeded, via kube_sandbox.
 # --------------------------------------------------------------------------- #
 
 
@@ -1484,78 +1554,32 @@ def _nix_store_present(manifest: dict) -> tuple[bool, bool]:
     return vol, mt
 
 
-def test_manifest_packed_nix_in_image_drops_nix_store_pvc(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("packed", [True, False])
+@pytest.mark.parametrize("flag", [True, False])
+def test_build_job_never_mounts_nix_store(
+    monkeypatch: pytest.MonkeyPatch, packed: bool, flag: bool
 ) -> None:
-    # Packed path + flag ON + a configured warm-store PVC → the node-pinned RWO
-    # nix-store co-mount is dropped so the Job uses the image's baked /nix/store
-    # and stays node-agnostic. /work stays the writable emptyDir (§9).
     monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
     monkeypatch.setenv("AIFACTORY_NIX_STORE_PVC", "aifactory-nix-store")
-    monkeypatch.setenv("AIFACTORY_PACKED_NIX_IN_IMAGE", "1")
-    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
-    monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3-nix")
-    uri = (
-        "s3://factory-artifacts/aifactory/482/proj-1:042-go/workspace/workspace.tar.gz"
-    )
-    m = bb.build_run_py_job_manifest(
-        task_id="proj-1:042-go",
-        project_path=Path(_DATA_ROOT) / "workspaces" / "proj-1",
-        spec_id="042-go",
-        correlation_key=482,
-        workspace_uri=uri,
-    )
-    vol, mt = _nix_store_present(m)
-    assert not vol  # the RWO node-pinned warm-cache volume is gone
-    assert not mt  # nothing mounted at /nix/store → baked image store is used
-    pod = m["spec"]["template"]["spec"]
-    work_vol = next(v for v in pod["volumes"] if v["name"] == "work")
-    assert "emptyDir" in work_vol  # /work pin (§9) stays dropped too
-
-
-def test_manifest_packed_keeps_nix_store_pvc_when_flag_off(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # The pin guard: SAME packed Job, flag OFF (default) → the warm-store PVC is
-    # still co-mounted. This is the node pin #190 documents; the flag removes it.
-    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
-    monkeypatch.setenv("AIFACTORY_NIX_STORE_PVC", "aifactory-nix-store")
-    monkeypatch.delenv("AIFACTORY_PACKED_NIX_IN_IMAGE", raising=False)
     monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
     monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
-    uri = (
-        "s3://factory-artifacts/aifactory/482/proj-1:042-go/workspace/workspace.tar.gz"
-    )
+    if flag:
+        monkeypatch.setenv("AIFACTORY_PACKED_NIX_IN_IMAGE", "1")
+    else:
+        monkeypatch.delenv("AIFACTORY_PACKED_NIX_IN_IMAGE", raising=False)
+    kwargs: dict = {}
+    if packed:
+        kwargs["workspace_uri"] = (
+            "s3://factory-artifacts/aifactory/482/proj-1:042-go/workspace/workspace.tar.gz"
+        )
     m = bb.build_run_py_job_manifest(
         task_id="proj-1:042-go",
         project_path=Path(_DATA_ROOT) / "workspaces" / "proj-1",
         spec_id="042-go",
         correlation_key=482,
-        workspace_uri=uri,
+        **kwargs,
     )
-    vol, mt = _nix_store_present(m)
-    assert vol and mt  # unchanged: still the RWO node-pinned warm store
-
-
-def test_manifest_nonpacked_keeps_nix_store_pvc_even_with_flag(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Scope guard: the flag only de-pins the PACKED path. A non-packed (no
-    # workspace_uri) build keeps its warm-store co-mount even with the flag on —
-    # the co-mount path is single-node by design (#671) and the warm cache helps.
-    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
-    monkeypatch.setenv("AIFACTORY_NIX_STORE_PVC", "aifactory-nix-store")
-    monkeypatch.setenv("AIFACTORY_PACKED_NIX_IN_IMAGE", "1")
-    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
-    monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
-    m = bb.build_run_py_job_manifest(
-        task_id="proj-1:042-go",
-        project_path=Path(_DATA_ROOT) / "workspaces" / "proj-1",
-        spec_id="042-go",
-        correlation_key=482,
-    )
-    vol, mt = _nix_store_present(m)
-    assert vol and mt  # non-packed → warm store unchanged
+    assert _nix_store_present(m) == (False, False)
 
 
 def test_manifest_stop_after_planning_adds_run_py_flag(
@@ -1859,3 +1883,93 @@ def test_token_only_when_gates_dispatch_jobs(monkeypatch):
     monkeypatch.setenv("AIFACTORY_SANDBOX_GATES", "true")
     monkeypatch.setenv("AIFACTORY_SANDBOX_IMAGE", "")
     assert _gates_dispatch_jobs() is False
+
+
+def test_no_install_clis_initcontainer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#1621: the build Job uses the CLIs its image pins, and fetches nothing.
+
+    The initContainer npm-installed claude-code/codex/gemini-cli into a /clis
+    emptyDir and prepended it to PATH, shadowing the pinned copies the Dockerfile
+    already bakes — 790 MB per pod, unpinned, on the critical path of every build.
+    The control plane dropped the same initContainer under #791; this is the
+    build path catching up.
+    """
+    project_path = _seed_env(monkeypatch)
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:s", project_path=project_path, spec_id="s"
+    )
+    pod = m["spec"]["template"]["spec"]
+
+    assert "install-clis" not in {c["name"] for c in pod.get("initContainers", [])}
+    assert "clis" not in {v["name"] for v in pod.get("volumes", [])}
+    container = pod["containers"][0]
+    assert "/clis" not in {mt["mountPath"] for mt in container.get("volumeMounts", [])}
+
+
+def test_build_path_keeps_the_image_entries(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PATH is still injected, and still carries what the packed build needs.
+
+    _inject_install_clis did two jobs and only one was removed (#1621). Dropping
+    /nix/var/nix/profiles/default/bin would take `nix` off PATH and break
+    `nix develop`; dropping /home/nonroot/.npm-global/bin would take the baked
+    CLIs off it — the very thing this change relies on.
+    """
+    project_path = _seed_env(monkeypatch)
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:s", project_path=project_path, spec_id="s"
+    )
+    container = m["spec"]["template"]["spec"]["containers"][0]
+    path = next(e["value"] for e in container["env"] if e["name"] == "PATH")
+
+    assert not path.startswith("/clis/bin")
+    assert "/clis" not in path
+    assert "/nix/var/nix/profiles/default/bin" in path
+    assert "/home/nonroot/.npm-global/bin" in path
+
+
+# --------------------------------------------------------------------------- #
+# #1425: the scheduler must be able to see the resource that actually binds
+# --------------------------------------------------------------------------- #
+
+
+def test_build_job_declares_an_ephemeral_storage_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without this the node reports `ephemeral-storage 0 (0%)` requested and
+    cannot refuse a build that would fill the disk — it discovers the problem by
+    evicting pods, which on a single node means postgres and minio too.
+
+    A LIMIT rather than a request is the point: allocatable ephemeral-storage
+    (933.7 GB) overstates the real headroom (~185 GB) fivefold, because the
+    node's filesystem is the host root. A request would be evaluated against the
+    fiction; the limit is enforced per pod by the kubelet.
+    """
+    project_path = _seed_env(monkeypatch)
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:s", project_path=project_path, spec_id="s"
+    )
+    limits = m["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"]
+
+    assert limits["ephemeral-storage"] == "4Gi"
+    # cpu/memory are unchanged — this adds a key, it does not restate the others.
+    assert limits["cpu"] == "2"
+    assert limits["memory"] == "4Gi"
+
+
+def test_ephemeral_storage_is_not_hand_written_as_a_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Kubernetes derives an equal request from a limit; the manifest must not
+    set one itself, exactly as it does not for cpu/memory today."""
+    project_path = _seed_env(monkeypatch)
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:s", project_path=project_path, spec_id="s"
+    )
+    resources = m["spec"]["template"]["spec"]["containers"][0]["resources"]
+
+    assert set(resources) == {"limits"}
+
+
+def test_passthrough_never_carries_a_private_key() -> None:
+    """Build Jobs use an allowlist; the GitHub App key must never join it (#1671)."""
+    assert not any("PRIVATE_KEY" in v for v in bb._PASSTHROUGH_BUILD_ENV)

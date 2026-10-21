@@ -42,6 +42,7 @@ stall every other request and WebSocket for the scan's whole duration.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -50,8 +51,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from server.database.engine import get_db
 from server.project_registry import load_projects
 from server.routes.project_authz import accessible_org_ids
-from server.services.merger import sweep
+from server.services import project_settings_store
+from server.services.merger import last_tick_at, sweep
 from server.tenancy import multi_tenant_enabled, resolve_tenant
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -85,11 +89,23 @@ async def report_merger(
     request: Request,
     db: AsyncSession = _DB_DEP,
 ) -> dict[str, Any]:
-    """What the merger would do. Opens nothing."""
+    """What the merger would do. Opens nothing.
+
+    ``last_tick_at`` is when the backstop loop last finished a sweep (None if
+    it never ran or is disabled) -- job-watchdog cannot see an in-process
+    loop, so a stale value here is how a dead one shows (Factory#2586).
+    """
     project_ids = await _visible_project_ids(request, db)
-    return await asyncio.to_thread(
+    try:
+        await project_settings_store.refresh_all()
+    except Exception:  # noqa: BLE001 - never block merger report on settings refresh
+        logger.warning(
+            "project-settings refresh failed before merger report", exc_info=True
+        )
+    report = await asyncio.to_thread(
         sweep, dry_run=True, project_ids=project_ids, tenant=_tenant_scope(request)
     )
+    return {**report, "last_tick_at": last_tick_at()}
 
 
 @router.post("/api/maintenance/merger/run")
@@ -106,6 +122,12 @@ async def run_merger(
     # opens nothing, so it stays at the report's "any membership" level.
     minimum_role = "viewer" if dry_run else "member"
     project_ids = await _visible_project_ids(request, db, minimum_role=minimum_role)
+    try:
+        await project_settings_store.refresh_all()
+    except Exception:  # noqa: BLE001 - never block merger run on settings refresh
+        logger.warning(
+            "project-settings refresh failed before merger run", exc_info=True
+        )
     return await asyncio.to_thread(
         sweep, dry_run=dry_run, project_ids=project_ids, tenant=_tenant_scope(request)
     )

@@ -111,15 +111,21 @@ def _main_spec_dir(project_path: Path, spec_id: str) -> Path:
     return spec_dir_for(project_path, spec_id)
 
 
-def _worktree_spec_dir(project_path: Path, spec_id: str) -> Path:
+def worktree_spec_dir(project_path: Path, spec_id: str) -> Path:
     return spec_dir_for(
         project_path / ".aifactory" / "worktrees" / "tasks" / spec_id,
         spec_id,
     )
 
 
-def _sync_cycle_file_from_worktree(main_spec: Path, worktree_spec: Path) -> None:
-    """Copy the build's live cycle file into the main spec dir if newer (#1249).
+def sync_spec_file_from_worktree(
+    main_spec: Path, worktree_spec: Path, name: str
+) -> None:
+    """Copy one build-authored file into the main spec dir if newer (#1249, #1550).
+
+    Used for ``qa_review_cycle.json`` (#1249, below) and for the trailing-gate
+    evidence marker ``.trailing_gates_done`` on the co-mount Job path (#1550,
+    ``completion_orchestration.run_terminal_completion``).
 
     ``qa_review_cycle.json`` is authored by the running build into its
     WORKTREE spec dir. On the subprocess backend the generic worktree-sync
@@ -130,12 +136,12 @@ def _sync_cycle_file_from_worktree(main_spec: Path, worktree_spec: Path) -> None
     worktree ones. Rather than reanimate the generic per-tick copy of every
     file, sync just the one file this authority reads, mirroring the targeted
     single-artifact sync already used for the plan/usage/task-logs (#1228,
-    #852). Best-effort: a copy failure just means the guard below no-ops.
+    #852). Best-effort: a copy failure just means the reader sees no copy.
     """
-    src = worktree_spec / _CYCLE_FILE
+    src = worktree_spec / name
     if not src.is_file():
         return
-    dst = main_spec / _CYCLE_FILE
+    dst = main_spec / name
     try:
         if dst.is_file() and dst.stat().st_mtime >= src.stat().st_mtime:
             return
@@ -143,7 +149,8 @@ def _sync_cycle_file_from_worktree(main_spec: Path, worktree_spec: Path) -> None
         shutil.copy2(src, dst)
     except OSError:
         logger.debug(
-            "[review_redrive] cycle-file sync from worktree failed (best-effort)",
+            "[review_redrive] %s sync from worktree failed (best-effort)",
+            name,
             exc_info=True,
         )
 
@@ -168,10 +175,10 @@ def check_review_obligation(
         return None
 
     main_spec = _main_spec_dir(project_path, spec_id)
-    worktree_spec = _worktree_spec_dir(project_path, spec_id)
+    worktree_spec = worktree_spec_dir(project_path, spec_id)
     # #1249: pull the worktree's live cycle file in before the guard below
-    # checks main — see _sync_cycle_file_from_worktree for why this is needed.
-    _sync_cycle_file_from_worktree(main_spec, worktree_spec)
+    # checks main — see sync_spec_file_from_worktree for why this is needed.
+    sync_spec_file_from_worktree(main_spec, worktree_spec, _CYCLE_FILE)
     # No cycle file yet → nothing to drive; cheap early-out avoids module work.
     if not (main_spec / "qa_review_cycle.json").exists():
         return None

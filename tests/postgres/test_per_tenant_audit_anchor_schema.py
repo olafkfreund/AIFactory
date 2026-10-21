@@ -15,17 +15,13 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import create_engine, text
 
-from tests.postgres.helpers import alembic_available, run_alembic
+from tests.postgres.helpers import alembic_available, run_alembic, sync_url
 
 # The migration immediately before c3d7e8f1a2b4 (per-tenant anchor).
 # Pinned explicitly — a relative downgrade (-1) breaks when later migrations
 # are stacked on top of this one (lesson from #178).
 # scim_groups (a1b2c3d4e5f6) is the actual head that c3d7e8f1a2b4 builds on.
 _PARENT_REVISION = "a1b2c3d4e5f6"
-
-
-def _sync_url(url: str) -> str:
-    return url.replace("+asyncpg", "")
 
 
 @pytest.mark.postgres
@@ -41,7 +37,7 @@ def test_per_tenant_columns_created(test_postgres_url: str) -> None:
     )
     assert result.returncode == 0, f"upgrade failed: {result.stderr[-1000:]}"
 
-    engine = create_engine(_sync_url(test_postgres_url))
+    engine = create_engine(sync_url(test_postgres_url))
     with engine.connect() as conn:
         anchor_cols = (
             conn.execute(
@@ -99,7 +95,7 @@ def test_audit_logs_composite_index_created(test_postgres_url: str) -> None:
 
     run_alembic(["upgrade", "head"], env={"DATABASE_URL": test_postgres_url})
 
-    engine = create_engine(_sync_url(test_postgres_url))
+    engine = create_engine(sync_url(test_postgres_url))
     with engine.connect() as conn:
         idx_exists = conn.execute(
             text("""
@@ -121,7 +117,7 @@ def test_per_tenant_anchor_unique_per_org_day(test_postgres_url: str) -> None:
 
     run_alembic(["upgrade", "head"], env={"DATABASE_URL": test_postgres_url})
 
-    engine = create_engine(_sync_url(test_postgres_url))
+    engine = create_engine(sync_url(test_postgres_url))
 
     # Seed org + key.
     org_id = "00000000-0000-0000-0000-000000000042"
@@ -199,7 +195,7 @@ def test_shared_anchor_still_allowed_after_migration(test_postgres_url: str) -> 
 
     run_alembic(["upgrade", "head"], env={"DATABASE_URL": test_postgres_url})
 
-    engine = create_engine(_sync_url(test_postgres_url))
+    engine = create_engine(sync_url(test_postgres_url))
     with engine.begin() as conn:
         conn.execute(text("DELETE FROM audit_anchors WHERE id LIKE 'shared-test-%'"))
         existing = conn.execute(
@@ -252,7 +248,7 @@ def test_downgrade_drops_columns(test_postgres_url: str) -> None:
     down = run_alembic(["downgrade", _PARENT_REVISION], env=env)
     assert down.returncode == 0, f"downgrade failed: {down.stderr[-1000:]}"
 
-    engine = create_engine(_sync_url(test_postgres_url))
+    engine = create_engine(sync_url(test_postgres_url))
     with engine.connect() as conn:
         # tenant_audit_state table should be gone.
         tables = (

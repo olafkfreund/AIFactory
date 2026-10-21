@@ -74,3 +74,46 @@ def test_get_runtime_provider_refuses_ungated(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(factory, "get_provider", _stub)
     with pytest.raises(rg.RuntimeNotEnabledError):
         factory.get_runtime_provider({"runtime": "codex"}, phase="coding", env={})
+
+
+# --------------------------------------------------------------------------- #
+# #1607: the allowlist is now enforced on the live path, not just describable
+# --------------------------------------------------------------------------- #
+
+
+def test_claude_is_unaffected_by_the_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The regression net for the entire fleet's actual workload.
+
+    479 task files on the live PVC show zero non-Claude models, so if enforcement
+    breaks anything today it breaks everything. claude must construct with the
+    allowlist unset, set to something else, and empty.
+    """
+    from providers import factory
+
+    for value in (None, "codex", ""):
+        if value is None:
+            monkeypatch.delenv("AIFACTORY_RUNTIMES", raising=False)
+        else:
+            monkeypatch.setenv("AIFACTORY_RUNTIMES", value)
+        # Resolution must not raise; construction is mocked away elsewhere.
+        factory._resolve_canonical("claude")
+        import core.runtime_gating as rg
+
+        assert rg.is_runtime_enabled("claude") is True
+
+
+def test_disabled_runtime_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    import core.runtime_gating as rg
+
+    monkeypatch.delenv("AIFACTORY_RUNTIMES", raising=False)
+    with pytest.raises(rg.RuntimeNotEnabledError) as excinfo:
+        rg.require_enabled("codex")
+    assert "codex" in str(excinfo.value)
+
+
+def test_allowlisted_runtime_is_permitted(monkeypatch: pytest.MonkeyPatch) -> None:
+    import core.runtime_gating as rg
+
+    monkeypatch.setenv("AIFACTORY_RUNTIMES", "codex,copilot")
+    rg.require_enabled("codex")
+    rg.require_enabled("copilot")

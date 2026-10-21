@@ -18,6 +18,8 @@ import asyncio
 import sys
 from pathlib import Path
 
+import pytest
+
 BACKEND = Path(__file__).resolve().parents[1] / "apps" / "backend"
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
@@ -344,7 +346,7 @@ def test_build_subprocess_env_prewarms_from_home_cache(tmp_path, monkeypatch):
     p = OpenCodeAgenticProvider(
         model="opencode:anthropic/claude-sonnet-4-5", working_dir=tmp_path
     )
-    env = p._build_subprocess_env()
+    env = p._build_subprocess_env({"XDG_CACHE_HOME": str(target_cache)})
 
     target = target_cache / "opencode" / "models.json"
     assert env["XDG_CACHE_HOME"] == str(target_cache)
@@ -376,7 +378,7 @@ def test_build_subprocess_env_copies_version_sentinel(tmp_path, monkeypatch):
     p = OpenCodeAgenticProvider(
         model="opencode:anthropic/claude-sonnet-4-5", working_dir=tmp_path
     )
-    p._build_subprocess_env()
+    p._build_subprocess_env({"XDG_CACHE_HOME": str(target_cache)})
 
     target_version = target_cache / "opencode" / "version"
     assert target_version.is_file()
@@ -403,7 +405,7 @@ def test_build_subprocess_env_does_not_clobber_real_user_cache(tmp_path, monkeyp
         model="opencode:anthropic/claude-sonnet-4-5", working_dir=tmp_path
     )
     # Should early-return (source == target) without raising or rewriting.
-    env = p._build_subprocess_env()
+    env = p._build_subprocess_env({"XDG_CACHE_HOME": str(cache)})
     assert cat.read_text(encoding="utf-8") == _BIG_CATALOGUE
     assert env["XDG_CACHE_HOME"] == str(cache)
 
@@ -422,7 +424,9 @@ def test_build_subprocess_env_no_warm_cache_is_best_effort(tmp_path, monkeypatch
     p = OpenCodeAgenticProvider(
         model="opencode:anthropic/claude-sonnet-4-5", working_dir=tmp_path
     )
-    env = p._build_subprocess_env()  # must not raise
+    env = p._build_subprocess_env(
+        {"XDG_CACHE_HOME": str(target_cache)}
+    )  # must not raise
     # No catalogue was created (nothing to copy from).
     assert not (target_cache / "opencode" / "models.json").exists()
     assert "XDG_CACHE_HOME" in env
@@ -465,3 +469,24 @@ def test_run_opencode_passes_env_to_subprocess(monkeypatch, tmp_path):
     asyncio.run(_run())
     assert captured["env"] is not None
     assert captured["env"][opencode_agentic._DISABLE_AUTOUPDATE_ENV_VAR] == "1"
+
+
+# --------------------------------------------------------------------------- #
+# #1607: these tests exercise provider RESOLUTION, not operator policy.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture(autouse=True)
+def _enable_every_runtime(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Opt this module's tests into every runtime.
+
+    The factory now enforces the RFC-0014 operator allowlist, so constructing a
+    non-claude provider requires the operator to have enabled it. Opting in here,
+    rather than blanket-enabling in conftest, keeps the gate load-bearing in every
+    other test — where an unexpected refusal should still be a failure.
+    """
+    import core.runtime_gating as rg
+
+    monkeypatch.setenv(
+        rg.ALLOWLIST_ENV, ",".join(sorted(rg.known_runtimes() - rg.MANUAL_ENABLE_ONLY))
+    )

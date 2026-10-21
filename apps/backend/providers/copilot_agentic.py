@@ -37,13 +37,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import os
 import re
 import shutil
 from collections.abc import AsyncGenerator, AsyncIterator
 from pathlib import Path
 from typing import Any
 
+from core.agent_home import AgentHome
+from core.child_env import child_env
 from providers import BaseLLMProvider
 from providers.types import AssistantMessage, TextBlock
 
@@ -192,7 +193,12 @@ class CopilotAgenticProvider(BaseLLMProvider):
         proc: asyncio.subprocess.Process | None = None
         try:
             # COPILOT_ALLOW_ALL mirrors --allow-all-tools for non-interactive runs.
-            env = {**os.environ, "COPILOT_ALLOW_ALL": "true"}
+            home = AgentHome("copilot")
+            env = child_env(
+                keep=("COPILOT_GITHUB_TOKEN",),
+                extra={**home.env, "COPILOT_ALLOW_ALL": "true"},
+                agent=True,
+            )
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdin=asyncio.subprocess.DEVNULL,

@@ -758,6 +758,19 @@ mcpCredentials:
     # Mapped to the ``GCP_MCP_ENDPOINT`` env var in the deployment template.
     endpointOverride: ""
 
+# GitHub App identity for PR actions (#1671). When enabled, the server mints an
+# installation token at boot and opens/merges PRs as the App (type Bot), so a
+# maintainer's approval of the head commit can satisfy the human-approval gate.
+# Mutually exclusive with mcpCredentials.providers.github (no PAT in the pod).
+# The Secret ``secretName`` holds the App's PEM private key under ``privateKeyKey``.
+# See docs/docs/concepts/github-app.md.
+githubApp:
+  enabled: false
+  appId: ""
+  installationId: ""
+  secretName: ""
+  privateKeyKey: private-key
+
 # Redis pub/sub for cross-replica WebSocket fan-out (Epic #35 #40).
 #
 # Default OFF — single-replica deployments work unchanged with no

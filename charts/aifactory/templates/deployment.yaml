@@ -579,6 +579,12 @@ spec:
             # repos to durable storage instead of the pod's tmpfs root.
             - name: PROJECT_WORKSPACE_ROOT
               value: {{ .Values.workspaces.mountPath | quote }}
+            # Git metadata baselines (#1746) must outlive the pod: the
+            # aifactory-data emptyDir does not, and a lost baseline is
+            # re-taken from the possibly tampered repo. Job pods only mount
+            # worktree subPaths, so this sibling of the clones stays out of reach.
+            - name: AIFACTORY_GIT_BASELINE_DIR
+              value: {{ printf "%s/.git-baselines" (trimSuffix "/" .Values.workspaces.mountPath) | quote }}
             {{- end }}
             {{- if .Values.mcpCredentials.enabled }}
             # MCP credentials — env-var-only providers.  File-based
@@ -658,6 +664,22 @@ spec:
               value: {{ .Values.mcpCredentials.gcp.endpointOverride | quote }}
             {{- end }}
             {{- end }}
+            {{- end }}
+            {{- if .Values.githubApp.enabled }}
+            {{- if and .Values.mcpCredentials.enabled .Values.mcpCredentials.providers.github }}
+            {{- fail "githubApp.enabled and mcpCredentials.providers.github are mutually exclusive (#1671): the GitHub PAT must not be in the pod when AIFactory acts as a GitHub App. Set mcpCredentials.providers.github=false." }}
+            {{- end }}
+            # GitHub App identity for PR actions (#1671). The server mints an
+            # installation token at boot and pops the private key from its env.
+            - name: AIFACTORY_GITHUB_APP_ID
+              value: {{ required "githubApp.enabled requires githubApp.appId" .Values.githubApp.appId | quote }}
+            - name: AIFACTORY_GITHUB_APP_INSTALLATION_ID
+              value: {{ required "githubApp.enabled requires githubApp.installationId" .Values.githubApp.installationId | quote }}
+            - name: AIFACTORY_GITHUB_APP_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "githubApp.enabled requires githubApp.secretName" .Values.githubApp.secretName }}
+                  key: {{ .Values.githubApp.privateKeyKey }}
             {{- end }}
           livenessProbe:
             httpGet:

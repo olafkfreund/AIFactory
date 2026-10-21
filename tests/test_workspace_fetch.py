@@ -11,8 +11,11 @@ S3, so they run on every PR without Docker, S3, or MinIO.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
+
+import pytest
 
 _BACKEND = Path(__file__).parent.parent / "apps" / "backend"
 if str(_BACKEND) not in sys.path:
@@ -145,25 +148,36 @@ def test_push_branch_pushes_to_origin(monkeypatch, tmp_path) -> None:
             self.returncode = rc
 
     envs = []
+    hosts = []
 
     def fake_run(args, **kwargs):
         calls.append(args)
         envs.append(kwargs.get("env"))
+        env = kwargs.get("env") or {}
+        # the per-call dir is removed on exit: read hosts.yml at call time
+        hosts.append(
+            Path(env["GH_CONFIG_DIR"], "hosts.yml").read_text()
+            if "GH_CONFIG_DIR" in env
+            else ""
+        )
         if args[:2] == ["git", "rev-parse"]:
             return _R(stdout="aifactory/042-x")
         if args[:3] == ["git", "remote", "get-url"]:
             return _R(stdout="https://github.com/o/r.git")
+        if args[:2] == ["git", "grep"]:
+            return _R(rc=1)  # no filter=lfs: no LFS step (#1721)
         return _R(rc=0)  # push
 
     monkeypatch.setattr(wf.subprocess, "run", fake_run)
     assert wf.maybe_push_workspace_branch(tmp_path, "042-x") is True
     idx = next(i for i, c in enumerate(calls) if c[:2] == ["git", "push"])
     push, push_env = calls[idx], envs[idx]
-    # USERNAME-ONLY URL: since AIFactory#1366 the token rides in GIT_ASKPASS,
-    # never in argv, where /proc/<pid>/cmdline publishes it host-wide.
-    assert push[2] == "https://x-access-token@github.com/o/r.git"
+    # Plain URL: since AIFactory#1366/#1723 the token rides in a per-call
+    # GH_CONFIG_DIR, never in argv, where /proc/<pid>/cmdline publishes it.
+    assert push[2] == "https://github.com/o/r.git"
     assert push[3] == "HEAD:aifactory/042-x"
-    assert push_env["GIT_PASS"] == "ghs_faketoken"  # vacuity guard
+    assert "ghs_faketoken" in hosts[idx]  # vacuity guard
+    assert "GIT_PASS" not in push_env
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +217,87 @@ def test_usage_round_trip(monkeypatch, tmp_path):
     )
 
 
-def test_fetch_usage_noop_when_present(monkeypatch, tmp_path):
-    (tmp_path / "token_usage.json").write_text("{}")
-    # already present -> no fetch attempted (would not even need the store)
+def _seed(monkeypatch, payload):
+    """Install a fake store as ArtifactStore; put ``payload`` at the usage key."""
+    store = a_s._fake_store()
+    monkeypatch.setattr(a_s, "ArtifactStore", lambda *a, **k: store)
+    if payload is not None:
+        store.put_bytes(wf._usage_key("042-x"), payload)
+    return store
+
+
+def _local(tmp_path, payload: bytes):
+    f = tmp_path / "token_usage.json"
+    f.write_bytes(payload)
+    return f
+
+
+def test_fetch_usage_without_s3_endpoint_keeps_local(monkeypatch, tmp_path):
+    monkeypatch.delenv("S3_ENDPOINT", raising=False)
+    f = _local(tmp_path, b'{"totalTokens":5}')
     assert wf.maybe_fetch_usage(tmp_path, "042-x") is False
+    assert f.read_bytes() == b'{"totalTokens":5}'
+
+
+def test_fetch_usage_overwrites_lower_local(monkeypatch, tmp_path):
+    _seed(monkeypatch, b'{"totalTokens":500}')
+    f = _local(tmp_path, b'{"totalTokens":100}')
+    assert wf.maybe_fetch_usage(tmp_path, "042-x") is True
+    assert json.loads(f.read_text())["totalTokens"] == 500
+
+
+@pytest.mark.parametrize("local", [500, 900])
+def test_fetch_usage_keeps_equal_or_higher_local(monkeypatch, tmp_path, local):
+    _seed(monkeypatch, b'{"totalTokens":500}')
+    body = b'{"totalTokens":%d}' % local
+    f = _local(tmp_path, body)
+    assert wf.maybe_fetch_usage(tmp_path, "042-x") is False
+    assert f.read_bytes() == body
+
+
+def test_fetch_usage_unreadable_local_is_lower(monkeypatch, tmp_path):
+    _seed(monkeypatch, b'{"totalTokens":500}')
+    f = _local(tmp_path, b"not json")
+    assert wf.maybe_fetch_usage(tmp_path, "042-x") is True
+    assert json.loads(f.read_text())["totalTokens"] == 500
+
+
+@pytest.mark.parametrize(("size_delta", "expected"), [(0, True), (1, False)])
+def test_fetch_usage_size_cap(monkeypatch, tmp_path, size_delta, expected):
+    base = b'{"totalTokens":%d}' % 10**6
+    payload = base + b" " * ((1 << 20) + size_delta - len(base))
+    _seed(monkeypatch, payload)
+    f = _local(tmp_path, b'{"totalTokens":1}')
+    assert wf.maybe_fetch_usage(tmp_path, "042-x") is expected
+    if not expected:
+        assert f.read_bytes() == b'{"totalTokens":1}'
+
+
+@pytest.mark.parametrize(
+    "payload", [b"\x00garbage{", b"[1, 2]"], ids=["non_json", "non_dict"]
+)
+def test_fetch_usage_skips_bad_payload(monkeypatch, tmp_path, payload):
+    _seed(monkeypatch, payload)
+    f = _local(tmp_path, b'{"totalTokens":1}')
+    assert wf.maybe_fetch_usage(tmp_path, "042-x") is False
+    assert f.read_bytes() == b'{"totalTokens":1}'
+
+
+def test_fetch_usage_no_object_leaves_local(monkeypatch, tmp_path):
+    _seed(monkeypatch, None)
+    f = _local(tmp_path, b'{"totalTokens":1}')
+    assert wf.maybe_fetch_usage(tmp_path, "042-x") is False
+    assert f.read_bytes() == b'{"totalTokens":1}'
+
+
+def test_fetch_usage_failed_replace_leaves_local(monkeypatch, tmp_path):
+    _seed(monkeypatch, b'{"totalTokens":500}')
+    f = _local(tmp_path, b'{"totalTokens":100}')
+
+    def _boom(*_a, **_k):
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(wf.os, "replace", _boom)
+    assert wf.maybe_fetch_usage(tmp_path, "042-x") is False
+    assert json.loads(f.read_text())["totalTokens"] == 100
+    assert [p.name for p in tmp_path.iterdir()] == ["token_usage.json"]

@@ -43,6 +43,7 @@ exactly the build's; it is throttled, and still best-effort.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
@@ -65,6 +66,11 @@ RmuxFeed = Callable[[str, bytes], None]
 # Job pod's logs via the k8s API.
 LineSource = Callable[[str, str], AsyncIterator[bytes]]
 
+# #1619: "is this Job still running?", asked after a clean end-of-stream to
+# decide reattach-vs-stop. Injectable so tests need no cluster; when absent the
+# streamer makes a single pass, which is the pre-#1619 behaviour.
+JobActive = Callable[[], Awaitable[bool]]
+
 # Pulls the Job's pushed ``implementation_plan.json`` onto the control plane
 # (#1228). Blocking object-store I/O, so it is run off the event loop.
 PlanSync = Callable[[], Any]
@@ -75,6 +81,14 @@ PlanSync = Callable[[], Any]
 # per line. Ten seconds is well under the cockpit's own poll cadence, so the DAG
 # is never more than one interval behind the Job.
 _PLAN_SYNC_INTERVAL_SECONDS = 10.0
+
+# #1619: how long to wait before re-following a Job's log after a clean EOF,
+# and how many consecutive empty reattaches to tolerate before giving up.
+# 3s x 20 is a minute of silence — long enough to ride out a pod restart or an
+# API blip, short enough that a genuinely dead stream says so while the build
+# is still running rather than at the end.
+_REATTACH_INTERVAL_SECONDS = 3.0
+_MAX_EMPTY_REATTACHES = 20
 
 
 async def _default_line_source(namespace: str, job_name: str) -> AsyncIterator[bytes]:
@@ -142,7 +156,7 @@ async def _await_pod_name(core: Any, namespace: str, job_name: str) -> str | Non
             )
             pods = None
         items = getattr(pods, "items", None) or []
-        if items:
+        if items and _pod_has_started(items[0]):
             name = items[0].metadata.name
             if name:
                 return str(name)
@@ -150,12 +164,38 @@ async def _await_pod_name(core: Any, namespace: str, job_name: str) -> str | Non
     return None
 
 
+def _pod_has_started(pod: Any) -> bool:
+    """True once the pod's app container is running (or already finished).
+
+    #1619: waiting only for the pod *object* was the whole defect. The pod is
+    created seconds after the Job applies, but a build pod runs three init
+    containers first — the npm install in ``install-clis`` alone takes over a
+    minute. Following the log of a container that has not started returns an
+    immediately-ending stream, and the streamer treated that clean EOF as
+    "the build produced one line and finished".
+
+    Measured on task 022: pod created 09:22:35, stream "completed (1 line(s))"
+    09:22:37, app container started 09:24:03 — 86 seconds later, after which
+    145 minutes of phase events went nowhere.
+
+    ``phase`` is the cheapest correct predicate: Pending covers init, and
+    Running/Succeeded/Failed all mean the app containers have been started.
+    """
+    phase = getattr(getattr(pod, "status", None), "phase", None)
+    return str(phase) in {"Running", "Succeeded", "Failed"}
+
+
 class KubeJobLogStreamer:
     """Stream a build Job's pod logs into the cockpit + rmux sinks (#680).
 
-    Construct with the two sinks (both injectable for tests) and an optional
-    ``line_source`` (defaults to the real k8s follow-logs stream). Call
-    ``stream`` to pump until the Job pod's log stream ends; it never raises.
+    Construct with the two sinks (both injectable for tests), an optional
+    ``line_source`` (defaults to the real k8s follow-logs stream) and an
+    optional ``job_active`` liveness check. Call ``stream`` to pump until the
+    Job stops running; it never raises.
+
+    #1619: without ``job_active`` the pump makes one pass and returns on the
+    first end-of-stream — which, against a pod whose app container had not
+    started yet, meant the whole build was never followed.
     """
 
     def __init__(
@@ -179,7 +219,42 @@ class KubeJobLogStreamer:
         # fully-pending DAG for that whole interval. None means "never synced".
         self._plan_synced_at: float | None = None
 
-    async def stream(self, *, namespace: str, job_name: str, spec_id: str) -> int:
+    async def _should_reattach(
+        self, empty_reattaches: int, namespace: str, job_name: str, delivered: int
+    ) -> bool:
+        """Whether a clean end-of-stream means "go round again" (#1619).
+
+        False in three cases: no liveness authority was injected (one pass, the
+        pre-#1619 behaviour, which keeps the streamer usable and its tests
+        honest); the Job is done, so this EOF really was the end; or an active
+        Job has produced nothing across enough reattaches that following it is
+        pointless — which is said out loud rather than silently abandoned.
+        """
+        if self._job_active is None:
+            return False
+        if not await self._job_active():
+            return False
+        if empty_reattaches >= _MAX_EMPTY_REATTACHES:
+            _log.warning(
+                "[build_log_stream] Job %s/%s reports active but produced "
+                "nothing across %d reattaches — giving up on live logs "
+                "(build unaffected, %d line(s) delivered)",
+                namespace,
+                job_name,
+                empty_reattaches,
+                delivered,
+            )
+            return False
+        return True
+
+    async def stream(
+        self,
+        *,
+        namespace: str,
+        job_name: str,
+        spec_id: str,
+        job_active: JobActive | None = None,
+    ) -> int:
         """Pump the Job pod's logs into both sinks. Returns lines streamed.
 
         Best-effort: a failing line-source, a sink that raises, or a mid-stream
@@ -188,12 +263,42 @@ class KubeJobLogStreamer:
         delivered (for observability + tests).
         """
         delivered = 0
+        self._job_active = job_active
         try:
-            async for raw in self._line_source(namespace, job_name):
-                if not raw:
-                    continue
-                await self._fan_out(spec_id, raw)
-                delivered += 1
+            # #1619: a clean end-of-stream is NOT proof the build ended. The
+            # only authority on that is the reconcile loop, which cancels this
+            # task when the Job goes terminal. So an EOF means "reattach", and
+            # the loop below exits by cancellation, by the pod never starting,
+            # or by giving up loudly after too many empty reattaches.
+            empty_reattaches = 0
+            # Lines READ from the source, which is not the same as lines
+            # delivered: an empty raw line is consumed but never fanned out,
+            # and ``delivered`` is this method's return contract. Conflating
+            # the two inflates the count that callers and tests rely on.
+            consumed = 0
+            while True:
+                seen = 0
+                async for raw in self._line_source(namespace, job_name):
+                    seen += 1
+                    # Re-following returns the pod log from the beginning, so
+                    # skip what was already read rather than replaying it.
+                    # Chosen over the API's ``since_time`` because it needs no
+                    # change to the injectable LineSource signature and cannot
+                    # drop a line at a second-granularity seam (see the plan's
+                    # recorded deviation).
+                    if seen <= consumed:
+                        continue
+                    consumed = seen
+                    if not raw:
+                        continue
+                    await self._fan_out(spec_id, raw)
+                    delivered += 1
+                empty_reattaches = 0 if seen > 0 else empty_reattaches + 1
+                if not await self._should_reattach(
+                    empty_reattaches, namespace, job_name, delivered
+                ):
+                    break
+                await asyncio.sleep(_REATTACH_INTERVAL_SECONDS)
         except asyncio.CancelledError:
             # Reconcile/stop cancelled us — the Job reached a terminal state or
             # the build was deleted. Propagate so the task is properly cancelled.
@@ -208,12 +313,29 @@ class KubeJobLogStreamer:
                 exc_info=True,
             )
         else:
-            _log.info(
-                "[build_log_stream] Job %s/%s log stream completed (%d line(s))",
-                namespace,
-                job_name,
-                delivered,
-            )
+            still_active = False
+            if self._job_active is not None:
+                with contextlib.suppress(Exception):
+                    still_active = await self._job_active()
+            if still_active:
+                # #1619: this is the shape that hid the defect — "completed
+                # (1 line(s))" at INFO, against a build that then ran for 145
+                # minutes. A stream that stops while its Job is alive is a
+                # fault, and now says so.
+                _log.warning(
+                    "[build_log_stream] Job %s/%s log stream ended after "
+                    "%d line(s) while the Job is still active",
+                    namespace,
+                    job_name,
+                    delivered,
+                )
+            else:
+                _log.info(
+                    "[build_log_stream] Job %s/%s log stream completed (%d line(s))",
+                    namespace,
+                    job_name,
+                    delivered,
+                )
         return delivered
 
     async def _fan_out(self, spec_id: str, raw: bytes) -> None:

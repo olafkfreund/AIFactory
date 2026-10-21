@@ -11,7 +11,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +69,7 @@ class ImplementationPlan:
     planStatus: str | None = None
     reviewReason: str | None = None
     recoveryNote: str | None = None
+    contractHold: str | None = None  # noqa: N815 - JSON key (#1709)
     qa_signoff: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -94,6 +95,8 @@ class ImplementationPlan:
             result["reviewReason"] = self.reviewReason
         if self.recoveryNote:
             result["recoveryNote"] = self.recoveryNote
+        if self.contractHold:
+            result["contractHold"] = self.contractHold
         if self.qa_signoff:
             result["qa_signoff"] = self.qa_signoff
         return result
@@ -132,12 +135,13 @@ class ImplementationPlan:
             planStatus=data.get("planStatus"),
             reviewReason=data.get("reviewReason"),
             recoveryNote=data.get("recoveryNote"),
+            contractHold=data.get("contractHold"),
             qa_signoff=data.get("qa_signoff"),
         )
 
     def save(self, path: Path) -> None:
         """Save plan to JSON file."""
-        self.updated_at = datetime.now().isoformat()
+        self.updated_at = datetime.now(UTC).isoformat()
         if not self.created_at:
             self.created_at = self.updated_at
 

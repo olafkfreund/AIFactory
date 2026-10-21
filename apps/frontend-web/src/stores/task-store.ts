@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Task, TaskStatus, ImplementationPlan, Subtask, TaskMetadata, ExecutionProgress, ExecutionPhase, ReviewReason, TaskDraft, SubtaskStatus } from '../shared/types';
 import { useProjectStore } from './project-store';
+import { PR_STATE_REVIEW_REASONS } from '../shared/constants';
 
 // Fields that can be included in a full task update from WebSocket events
 export interface TaskFullUpdate {
@@ -906,6 +907,10 @@ export function isIncompleteHumanReview(task: Task): boolean {
 
   // Plan review tasks legitimately have 0 completed subtasks - they're waiting for approval
   if (task.reviewReason === 'plan_review') return false;
+
+  // The merger recorded the PR state: the PR, not the subtask count, says
+  // what this task needs (Factory#2586). "Needs resume" would be wrong advice.
+  if (task.reviewReason && PR_STATE_REVIEW_REASONS.has(task.reviewReason)) return false;
 
   // If no subtasks defined, task hasn't been planned yet (shouldn't be in human_review)
   if (!task.subtasks || task.subtasks.length === 0) return true;

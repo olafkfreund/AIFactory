@@ -7,6 +7,8 @@ the three enforcement modes (warn = advisory, deny = raises, off = no-op).
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from model_registry import (
     ENV_ENFORCE,
@@ -16,6 +18,7 @@ from model_registry import (
     enforce_model_registry,
     load_registry,
 )
+from phase_config import resolve_model_id
 
 
 class TestCheck:
@@ -75,9 +78,20 @@ class TestRegistryOverride:
         assert "claude-opus-4-8" in load_registry()
 
     def test_inline_json_override(self, monkeypatch: pytest.MonkeyPatch):
+        # Keyed by whatever `opus` resolves to today: the point of the test is
+        # that an override NARROWS the stages, not which flagship is current.
+        # Hard-coding the id made this fail on a model bump with "not in the
+        # registry", which is a different refusal than the one under test.
         monkeypatch.setenv(
             ENV_REGISTRY,
-            '{"claude-opus-4-8": {"provenance": "Anthropic", "stages": ["qa"]}}',
+            json.dumps(
+                {
+                    resolve_model_id("opus"): {
+                        "provenance": "Anthropic",
+                        "stages": ["qa"],
+                    }
+                }
+            ),
         )
         ok, reason = check_model_registered("opus", "coding")
         assert not ok  # override narrows opus to qa only

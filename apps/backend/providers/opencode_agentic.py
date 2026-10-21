@@ -70,6 +70,8 @@ from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from pathlib import Path
 from typing import Any
 
+from core.agent_home import AgentHome
+from core.child_env import child_env
 from providers import BaseLLMProvider
 from providers.types import AssistantMessage, TextBlock
 
@@ -179,6 +181,37 @@ def _strip_opencode_prefix(model: str) -> str:
     if model.lower().startswith("opencode:"):
         return model[len("opencode:") :]
     return model
+
+
+# Fixed allow-list: `keep` overrides the deny list, so a model string rewritten
+# to e.g. `linear/x` must not restore LINEAR_API_KEY. anthropic stays out.
+_OPENCODE_KEY_PROVIDERS = frozenset(
+    {
+        "openai",
+        "openrouter",
+        "groq",
+        "mistral",
+        "deepseek",
+        "together",
+        "xai",
+        "google",
+        "fireworks",
+        "cerebras",
+        "perplexity",
+    }
+)
+
+
+def _opencode_keep(model: str) -> tuple[str, ...]:
+    # ponytail: only <PROVIDER>_API_KEY for the ids above; any other provider
+    # (bedrock AWS_*, google-vertex ADC, azure) falls back to `opencode auth login`.
+    provider = model.partition("/")[0].lower()
+    if "/" not in model or provider not in _OPENCODE_KEY_PROVIDERS:
+        return ()
+    name = f"{provider.upper()}_API_KEY"
+    if provider == "google":
+        return (name, "GOOGLE_GENERATIVE_AI_API_KEY", "GEMINI_API_KEY")
+    return (name,)
 
 
 class OpenCodeAgenticProvider(BaseLLMProvider):
@@ -295,7 +328,9 @@ class OpenCodeAgenticProvider(BaseLLMProvider):
             cmd.extend(self._extra_args)
         return cmd
 
-    def _build_subprocess_env(self) -> dict[str, str]:
+    def _build_subprocess_env(
+        self, home_env: Mapping[str, str] | None = None
+    ) -> dict[str, str]:
         """Build the env for the OpenCode subprocess with a usable catalogue.
 
         OpenCode resolves its model catalogue at runtime from
@@ -323,7 +358,9 @@ class OpenCodeAgenticProvider(BaseLLMProvider):
         untouched and let OpenCode behave as before (the build may still fail
         for models absent from the embedded fallback — see the #291 docs note).
         """
-        env = os.environ.copy()
+        env: dict[str, str] = child_env(
+            keep=_opencode_keep(self._model), extra=home_env, agent=True
+        )
         env.setdefault(_DISABLE_AUTOUPDATE_ENV_VAR, "1")
 
         target_root = _xdg_cache_home(env)
@@ -403,7 +440,8 @@ class OpenCodeAgenticProvider(BaseLLMProvider):
         cwd = str(self._working_dir) if self._working_dir else None
         # Pre-warm OpenCode's models.dev catalogue so the model resolves even
         # when the build sandbox blocks egress to models.dev (#291).
-        env = self._build_subprocess_env()
+        home = AgentHome("opencode")
+        env = self._build_subprocess_env(home.env)
         logger.debug(
             "OpenCodeAgenticProvider: spawning model=%s cwd=%r", self._model, cwd
         )

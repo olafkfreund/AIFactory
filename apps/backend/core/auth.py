@@ -14,6 +14,7 @@ import os
 import platform
 import re
 import subprocess
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -90,7 +91,7 @@ SDK_ENV_VARS = [
 ]
 
 
-# --- Agent env credential scrubbing (#363 / H1, slice 1) -------------------
+# --- Agent env allowlist (#363, #1757) -------------------------------------
 #
 # The Claude Agent SDK spawns the agent CLI with the FULL parent environment
 # merged in (``process_env = {**os.environ, ..., **options.env}`` in the SDK's
@@ -100,10 +101,9 @@ SDK_ENV_VARS = [
 # reachable via ``env`` / ``printenv`` and exfiltratable by a prompt-injected
 # command. An isolated feature-build agent never legitimately needs these.
 #
-# Since ``options.env`` wins over the inherited environment, we neutralize the
-# secrets by setting them to empty there. The agent's OWN auth vars
-# (``CLAUDE_CODE_OAUTH_TOKEN`` / ``ANTHROPIC_AUTH_TOKEN`` / SDK passthrough) are
-# preserved so it keeps working. (Full OS isolation — caps/RO-FS/egress — is the
+# Since ``options.env`` wins over the inherited environment, we blank every
+# name outside the agent allowlist there. The agent's own auth vars and SDK
+# passthrough are preserved. (Full OS isolation — caps/RO-FS/egress — is the
 # remainder of #363.)
 
 # Vars the agent CLI legitimately needs — never blanked.
@@ -124,6 +124,8 @@ _AGENT_ENV_DENY_EXACT: set[str] = {
     "APP_JWT_SECRET",
     "DATABASE_URL",
     "APP_DATABASE_URL",
+    # The intake poller's API token; falls back to APP_API_TOKEN, so treat it the same.
+    "AIFACTORY_TOKEN",
     # Provider API keys (the agent authenticates via OAuth, not these).
     "ANTHROPIC_API_KEY",
     "OPENAI_API_KEY",
@@ -146,20 +148,78 @@ _AGENT_ENV_DENY_EXACT: set[str] = {
     "LINEAR_API_KEY",
     "GITHUB_TOKEN",
     "GH_TOKEN",
+    # Host keys that matched neither list (#1674). Their readers keep them: web
+    # server (own env), runner via RUNNER_KEEP, kubejob run.py via Job spec.
+    "APP_CFACTORY_READ_KEY",
+    "CONTEXT7_KEY",
+    "RAPIDAPI_KEY",
+    "LANGCHAIN_API_KEY",
+    "OPENAI_COMPATIBLE_API_KEY",
+    "S3_ACCESS_KEY",
+    "OLLAMA_API_KEY",
+    # #1708: the agent must read the verdict as hold, never the real digest.
+    "AIFACTORY_TRUSTED_CONTRACT",
 }
 
 # Generic secret-bearing names (any host var matching is neutralized).
+# TRUSTED_PLAN_KEY: the HMAC keys that sign trusted plans; an agent holding one
+# could re-sign a task contract it edited (#1667).
 _AGENT_ENV_DENY_PATTERN = re.compile(
-    r"(SECRET|PASSWORD|PRIVATE_KEY|CREDENTIAL|_KMS|PASSPHRASE)", re.I
+    r"(SECRET|PASSWORD|PRIVATE_KEY|CREDENTIAL|(?:^|_)KMS|PASSPHRASE|TRUSTED_PLAN_KEY)",
+    re.I,
 )
+
+_AGENT_ENV_ALLOW = re.compile(
+    r"PATH|LANG|LANGUAGE|TZ|TERM|COLORTERM|TMPDIR|USER|LOGNAME|SHELL|CI"
+    r"|PYTHONUNBUFFERED|PYTHONIOENCODING|TRACEPARENT"
+    r"|SSL_CERT_FILE|SSL_CERT_DIR|NODE_EXTRA_CA_CERTS|REQUESTS_CA_BUNDLE"
+    r"|GIT_(?:AUTHOR|COMMITTER)_(?:NAME|EMAIL)"
+    # child_env() git pins (hooksPath, fsmonitor, editors, helper reset); blanking re-enables them.
+    r"|GIT_CONFIG_(?:COUNT|KEY_\d+|VALUE_\d+)|GIT_PAGER"
+    # Provider endpoint/project config the CLIs read (not credentials).
+    r"|OPENAI_BASE_URL|GOOGLE_CLOUD_PROJECT|GOOGLE_CLOUD_LOCATION|GOOGLE_GENAI_USE_VERTEXAI"
+    r"|LC_\w+|CLAUDE_CODE_\w+|NIX_\w+|(?i:(?:HTTPS?|NO|ALL)_PROXY)"
+    # devShell browser wiring (nix_provisioner); not credentials.
+    r"|PLAYWRIGHT_BROWSERS_PATH|PLAYWRIGHT_SKIP_\w+|FONTCONFIG_FILE"
+)
+_logged_dropped_env_names: set[str] = set()
+
+
+def is_denied_env_key(name: str) -> bool:
+    """True when ``name`` is a host secret that must not reach a child process."""
+    return name.upper() in _AGENT_ENV_DENY_EXACT or bool(
+        _AGENT_ENV_DENY_PATTERN.search(name)
+    )
+
+
+def is_agent_env_allowed(name: str) -> bool:
+    """Allow only the agent's auth, runtime, and explicitly named variables."""
+    if name in _AGENT_ENV_KEEP:
+        return True
+    extra = {
+        n.strip() for n in os.environ.get("AIFACTORY_AGENT_ENV_EXTRA", "").split(",")
+    }
+    return (
+        bool(_AGENT_ENV_ALLOW.fullmatch(name)) or name in extra
+    ) and not is_denied_env_key(name)
+
+
+def _log_dropped(names: Iterable[str]) -> None:
+    """Log each newly dropped non-secret variable name once per process."""
+    new = {
+        name for name in names if not is_denied_env_key(name)
+    } - _logged_dropped_env_names
+    if new:
+        _logged_dropped_env_names.update(new)
+        logger.info("agent env allowlist dropped (names only, #1757): %s", sorted(new))
 
 
 def get_agent_env_blanks() -> dict[str, str]:
-    """Return ``{var: ""}`` for host secrets that must not reach the agent.
+    """Return ``{var: ""}`` for host variables outside the agent allowlist.
 
     Blanking (not deleting) because the SDK merges ``options.env`` over the
     inherited environment — an explicit empty value overrides the inherited
-    secret. Never blanks the agent's own auth vars (:data:`_AGENT_ENV_KEEP`).
+    variable. Never blanks the agent's own auth vars (:data:`_AGENT_ENV_KEEP`).
     """
     allow_api_key = api_key_auth_enabled()
     blanks: dict[str, str] = {}
@@ -170,8 +230,9 @@ def get_agent_env_blanks() -> dict[str, str]:
         # ANTHROPIC_API_KEY — don't blank it. Default (off) still scrubs it.
         if key == "ANTHROPIC_API_KEY" and allow_api_key:
             continue
-        if key in _AGENT_ENV_DENY_EXACT or _AGENT_ENV_DENY_PATTERN.search(key):
+        if not is_agent_env_allowed(key):
             blanks[key] = ""
+    _log_dropped(blanks)
     return blanks
 
 
@@ -200,6 +261,8 @@ def get_token_from_keychain() -> str | None:
 
 def _get_token_from_macos_keychain() -> str | None:
     """Get token from macOS Keychain."""
+    from core.child_env import child_env  # noqa: PLC0415 - circular import
+
     try:
         result = subprocess.run(
             [
@@ -212,6 +275,7 @@ def _get_token_from_macos_keychain() -> str | None:
             capture_output=True,
             text=True,
             timeout=5,
+            env=child_env(),
         )
 
         if result.returncode != 0:

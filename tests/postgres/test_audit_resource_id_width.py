@@ -31,14 +31,11 @@ from tests.postgres.helpers import (
     WEB_SERVER_ROOT,
     alembic_available,
     run_alembic,
+    sync_url,
 )
 
 if str(WEB_SERVER_ROOT) not in sys.path:
     sys.path.insert(0, str(WEB_SERVER_ROOT))
-
-
-def _sync_url(url: str) -> str:
-    return url.replace("+asyncpg", "")
 
 
 def _upgrade_head(test_postgres_url: str) -> None:
@@ -54,7 +51,7 @@ def test_resource_id_is_as_wide_as_resource_type(test_postgres_url: str) -> None
         pytest.skip("alembic CLI not on PATH")
     _upgrade_head(test_postgres_url)
 
-    engine = create_engine(_sync_url(test_postgres_url))
+    engine = create_engine(sync_url(test_postgres_url))
     with engine.connect() as conn:
         widths = dict(
             conn.execute(
@@ -159,5 +156,9 @@ def test_migration_file_chains_onto_the_previous_head() -> None:
         "script_location",
         str(Path(WEB_SERVER_ROOT) / "server" / "database" / "alembic"),
     )
-    heads = ScriptDirectory.from_config(cfg).get_heads()
-    assert heads == ["c1f5a3d7b924"], f"expected a single head, got {heads}"
+    script = ScriptDirectory.from_config(cfg)
+    heads = script.get_heads()
+    assert len(heads) == 1, f"expected a single head, got {heads}"
+    # Later migrations may sit on top; this one must stay in the deployed chain.
+    chain = {rev.revision for rev in script.iterate_revisions(heads[0], "base")}
+    assert "c1f5a3d7b924" in chain

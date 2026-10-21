@@ -65,7 +65,7 @@ BASE_COMMANDS: set[str] = {
     "time",
     "sleep",
     "timeout",
-    "watch",
+    # `watch` removed (#1753): it runs its arguments through `sh -c`.
     "true",
     "false",
     "test",
@@ -143,7 +143,6 @@ BASE_COMMANDS: set[str] = {
     "mktemp",
     "bc",
     "expr",
-    "let",
     "seq",
     "yes",
     "jq",

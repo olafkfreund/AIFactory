@@ -1,0 +1,16 @@
+{
+  "name": "AIFactory",
+  "url": "https://github.com/olafkfreund/AIFactory",
+  "hook_attributes": {
+    "url": "https://example.invalid/unused",
+    "active": false
+  },
+  "redirect_url": "http://localhost/",
+  "public": false,
+  "default_permissions": {
+    "contents": "write",
+    "pull_requests": "write",
+    "metadata": "read"
+  },
+  "default_events": []
+}

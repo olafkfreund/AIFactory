@@ -9,7 +9,7 @@ import functools
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 
@@ -65,7 +65,7 @@ class ChangelogProgress:
     phase: ChangelogPhase
     progress: int
     message: str
-    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 logger = logging.getLogger(__name__)
@@ -138,7 +138,7 @@ class ChangelogService:
             "--version",
             request.get("version", "1.0.0"),
             "--date",
-            request.get("date", datetime.now().strftime("%Y-%m-%d")),
+            request.get("date", datetime.now(UTC).strftime("%Y-%m-%d")),
             "--format",
             request.get("format", "keep-a-changelog"),
             "--audience",

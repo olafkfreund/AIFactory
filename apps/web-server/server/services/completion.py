@@ -6,9 +6,9 @@ event so the cockpit (CFactory) can thread the unit of work end to end:
 
 Conforms to the Factory correlation-key RFC (olafkfreund/Factory#4 / RFC-0001):
 ``{correlation_key, service, task_id, status, phase, updated_at}`` + an optional
-``correlation`` chain block. The shared key is the source GitHub issue number
-(rendered as a string), with a synthetic ``af-<spec_id>`` fallback so it is never
-null.
+``correlation`` chain block. The shared key is ``<repo>#<issue number>`` when the
+task knows its repo (RFC-0001 §2, #1775), the bare issue number otherwise, with a
+synthetic ``af-<spec_id>`` fallback so it is never null.
 
 Additive envelope upgrade (#466) — every field below rides *alongside* the
 existing ones; nothing is removed, so existing consumers (CFactory) keep working
@@ -32,7 +32,9 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
+import re
 import secrets
 import shutil
 import time
@@ -40,6 +42,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from factory_common.logsafe import sanitize_log
 
@@ -202,9 +205,61 @@ def read_issue_number(spec_dir: Path) -> int | None:
         return None
 
 
-def correlation_key(spec_id: str, issue_number: int | None) -> str:
-    """RFC-0001 §2: issue# as a string, synthetic ``af-<spec_id>`` fallback."""
-    return str(issue_number) if issue_number is not None else f"af-{spec_id}"
+_ISSUE_URL_PATH = re.compile(r"^/([^/]+/[^/]+)/issues/\d+$")
+
+
+def read_issue_repo(spec_dir: Path) -> str | None:
+    """The source repo (``owner/repo``) from requirements.json: ``provenance.repo``,
+    then ``githubIssue.repo``, then parsed from ``githubIssue.url`` (#1775)."""
+    try:
+        reqs = json.loads((spec_dir / "requirements.json").read_text())
+    except (OSError, ValueError):
+        return None
+    prov = reqs.get("provenance")
+    issue = reqs.get("githubIssue")
+    for block in (prov, issue):
+        repo = block.get("repo") if isinstance(block, dict) else None
+        if repo and isinstance(repo, str):
+            return repo
+    url = issue.get("url") if isinstance(issue, dict) else None
+    if isinstance(url, str) and (m := _ISSUE_URL_PATH.match(urlparse(url).path)):
+        return m.group(1)
+    return None
+
+
+def correlation_key(
+    spec_id: str, issue_number: int | None, repo: str | None = None
+) -> str:
+    """RFC-0001 §2: ``<repo>#<n>``, else bare issue#, else synthetic ``af-<spec_id>``."""
+    if issue_number is None:
+        return f"af-{spec_id}"
+    return f"{repo}#{issue_number}" if repo else str(issue_number)
+
+
+class _BadUsageError(Exception):
+    """token_usage.json held a value no real run could have written (#1633)."""
+
+
+_TOKEN_CAP = 1e12
+_COST_CAP = 1e6
+_DURATION_CAP = 1e10
+_MAX_WORKERS = 256
+
+
+def _num(v: object, cap: float) -> float:
+    """A usage number from an untrusted file: None counts as 0, anything else
+    that is not a finite, non-negative int/float within ``cap`` is rejected."""
+    if v is None:
+        return 0
+    if isinstance(v, bool) or not isinstance(v, int | float):
+        raise _BadUsageError
+    if not math.isfinite(v) or v < 0 or v > cap:
+        raise _BadUsageError
+    return v
+
+
+def _str128(v: object) -> str | None:
+    return v[:128] if isinstance(v, str) else None
 
 
 def _worker_records(agg: dict) -> list[dict]:
@@ -222,33 +277,36 @@ def _worker_records(agg: dict) -> list[dict]:
     for wid, rec in workers.items():
         if not isinstance(rec, dict):
             continue
-        in_tok = int(rec.get("input_tokens", 0) or 0)
-        out_tok = int(rec.get("output_tokens", 0) or 0)
+        in_tok = int(_num(rec.get("input_tokens"), _TOKEN_CAP))
+        out_tok = int(_num(rec.get("output_tokens"), _TOKEN_CAP))
+        provider = _str128(rec.get("provider"))
         record = {
-            "worker_id": rec.get("worker_id") or wid,
-            "phase": rec.get("phase"),
-            "subtask_id": rec.get("subtask_id"),
-            "provider": rec.get("provider"),
-            "model": rec.get("model"),
+            "worker_id": _str128(rec.get("worker_id")) or _str128(wid),
+            "phase": _str128(rec.get("phase")),
+            "subtask_id": _str128(rec.get("subtask_id")),
+            "provider": provider,
+            "model": _str128(rec.get("model")),
             "input_tokens": in_tok,
             "output_tokens": out_tok,
-            "total_tokens": int(rec.get("total_tokens", 0) or 0) or (in_tok + out_tok),
-            "cost_usd": round(float(rec.get("cost_usd", 0.0) or 0.0), 6),
-            "duration_ms": int(rec.get("duration_ms", 0) or 0),
+            "total_tokens": int(_num(rec.get("total_tokens"), _TOKEN_CAP))
+            or (in_tok + out_tok),
+            "cost_usd": round(float(_num(rec.get("cost_usd"), _COST_CAP)), 6),
+            "duration_ms": int(_num(rec.get("duration_ms"), _DURATION_CAP)),
             # Billing mode (#96): api/cloud are metered (show cost);
             # subscription/local are not (show tokens + time). Lets CFactory
             # avoid surfacing a notional dollar cost for subscription/local work.
-            "billing_mode": classify_billing_mode(rec.get("provider")),
+            "billing_mode": classify_billing_mode(provider),
         }
         # RFC-0014 (#803, additive): echo the routing tier the backend's token
         # attribution stamped when a routing policy was active. Omitted entirely
         # when absent (policy off), keeping the envelope byte-identical to v1.3.
-        if rec.get("routing_tier"):
-            record["routing_tier"] = rec["routing_tier"]
+        tier = _str128(rec.get("routing_tier"))
+        if tier:
+            record["routing_tier"] = tier
         records.append(record)
     # Deterministic order for stable events/tests.
     records.sort(key=lambda r: str(r["worker_id"]))
-    return records
+    return records[:_MAX_WORKERS]
 
 
 def _rollup(records: list[dict], key: str) -> dict:
@@ -401,27 +459,36 @@ def usage_from_aggregate(
     """
     if not isinstance(agg, dict):
         return None
-    in_tok = int(agg.get("totalInputTokens", 0) or 0)
-    out_tok = int(agg.get("outputTokens", 0) or 0)
-    if in_tok == 0 and out_tok == 0:
+    # token_usage.json is written by the build Job: treat it as untrusted (#1633).
+    # A bad value drops the usage block, never the terminal event that carries it.
+    try:
+        in_tok = int(_num(agg.get("totalInputTokens"), _TOKEN_CAP))
+        out_tok = int(_num(agg.get("outputTokens"), _TOKEN_CAP))
+        if in_tok == 0 and out_tok == 0:
+            return None
+        total = int(_num(agg.get("totalTokens"), _TOKEN_CAP)) or (in_tok + out_tok)
+        block: dict[str, Any] = {
+            "input_tokens": in_tok,
+            "output_tokens": out_tok,
+            "total_tokens": total,
+            "cost_usd": round(float(_num(agg.get("totalCostUsd"), _COST_CAP)), 6),
+            "model": _str128(agg.get("model")),
+        }
+        cache_read = int(_num(agg.get("cacheReadTokens"), _TOKEN_CAP))
+        cache_creation = int(_num(agg.get("cacheCreationTokens"), _TOKEN_CAP))
+        workers = _worker_records(agg)
+    except _BadUsageError:
         return None
-    total = int(agg.get("totalTokens", 0) or 0) or (in_tok + out_tok)
-    block = {
-        "input_tokens": in_tok,
-        "output_tokens": out_tok,
-        "total_tokens": total,
-        "cost_usd": round(float(agg.get("totalCostUsd", 0.0) or 0.0), 6),
-        "model": agg.get("model"),
-    }
-    workers = _worker_records(agg)
+    # #1398: cache writes vs reads. Additive, and only when a cache was actually
+    # reported, so the block for a no-cache provider or a pre-#1398 file stays
+    # byte-identical. CFactory's TokenUsage ignores unknown keys today.
+    if cache_read or cache_creation:
+        block["cache_read_tokens"] = cache_read
+        block["cache_creation_tokens"] = cache_creation
     if workers:
         block["workers"] = workers
         block["by_provider"] = _rollup(workers, "provider")
         block["by_model"] = _rollup(workers, "model")
-        # OTel per-worker / per-provider metric emission (#45 P1). Complete
-        # no-op when OTel is disabled (no exporter endpoint) and best-effort
-        # otherwise — never affects the usage block or the completion path.
-        _emit_worker_metrics(workers)
     # Soft budget alert (#45 P2, additive + OBSERVE-ONLY): when the contract set
     # a budget (carried into task_metadata.budgetUsd), attach a usage.budget
     # block comparing the rolled-up aggregate spend (block["cost_usd"]) against
@@ -473,6 +540,7 @@ def build_completion_event(
     halt_reason: str | None = None,
     injection_scan: dict | None = None,
     tenant_id: str | None = None,
+    repo: str | None = None,
 ) -> dict:
     """The RFC-0001 completion-event envelope (six core fields + chain block).
 
@@ -517,13 +585,14 @@ def build_completion_event(
             sanitize_log(correlation_key(spec_id, None)),
         )
     event = {
-        "correlation_key": correlation_key(spec_id, issue_number),
+        "correlation_key": correlation_key(spec_id, issue_number, repo),
         "service": SERVICE_NAME,
         "task_id": task_id,
         "status": status,
         "phase": phase,
         "correlation": {
             "issue_number": issue_number,
+            "repo": repo,
             "spec_id": spec_id,
             "project_id": project_id,
         },
@@ -577,6 +646,7 @@ def build_worker_event(
     event_id: str | None = None,
     traceparent: str | None = None,
     tracestate: str | None = None,
+    repo: str | None = None,
 ) -> dict:
     """A LIVE per-worker sub-event (RFC-0001 v1.3, #45 P1).
 
@@ -613,13 +683,14 @@ def build_worker_event(
         "duration_ms": int(rec.get("duration_ms", 0) or 0),
     }
     event = {
-        "correlation_key": correlation_key(spec_id, issue_number),
+        "correlation_key": correlation_key(spec_id, issue_number, repo),
         "service": SERVICE_NAME,
         "task_id": task_id,
         "status": _WORKER_STATUS,
         "phase": _WORKER_PHASE,
         "correlation": {
             "issue_number": issue_number,
+            "repo": repo,
             "spec_id": spec_id,
             "project_id": project_id,
         },
@@ -651,6 +722,7 @@ def build_worker_progress_event(
     event_id: str | None = None,
     traceparent: str | None = None,
     tracestate: str | None = None,
+    repo: str | None = None,
 ) -> dict:
     """A LIVE per-worker PROGRESS heartbeat event (#45 Tier 2).
 
@@ -683,13 +755,14 @@ def build_worker_progress_event(
         "elapsed_ms": int(rec.get("elapsed_ms", 0) or 0),
     }
     event = {
-        "correlation_key": correlation_key(spec_id, issue_number),
+        "correlation_key": correlation_key(spec_id, issue_number, repo),
         "service": SERVICE_NAME,
         "task_id": task_id,
         "status": _WORKER_PROGRESS_STATUS,
         "phase": _WORKER_PROGRESS_PHASE,
         "correlation": {
             "issue_number": issue_number,
+            "repo": repo,
             "spec_id": spec_id,
             "project_id": project_id,
         },
@@ -733,6 +806,7 @@ def emit_worker_completion(
             task_id=task_id,
             spec_id=spec_id,
             issue_number=read_issue_number(spec_dir),
+            repo=read_issue_repo(spec_dir),
             project_id=project_id,
             worker=worker,
         )
@@ -821,6 +895,7 @@ def emit_worker_progress(
             task_id=task_id,
             spec_id=spec_id,
             issue_number=read_issue_number(spec_dir),
+            repo=read_issue_repo(spec_dir),
             project_id=project_id,
             worker=worker,
         )
@@ -966,6 +1041,7 @@ def emit_terminal_completion(
     # already present) and best-effort (never raises).
     try:
         from core.workspace_fetch import (  # noqa: PLC0415
+            maybe_fetch_gate_marker,
             maybe_fetch_memory,
             maybe_fetch_plan,
             maybe_fetch_task_logs,
@@ -973,6 +1049,8 @@ def emit_terminal_completion(
         )
 
         maybe_fetch_usage(spec_dir, spec_id)
+        # #1550: the gate-evidence marker, which the merger reads for its PR body.
+        maybe_fetch_gate_marker(spec_dir, spec_id)
         # W1 (Factory #218): also pull the Job's task_logs.json so spec_to_task
         # reports the real terminal status (done/failed) on the packed path
         # instead of defaulting to backlog/queued.
@@ -990,11 +1068,15 @@ def emit_terminal_completion(
     except Exception:  # noqa: BLE001 - defensive; emit must still proceed
         logger.debug("usage fetch skipped (best-effort)", exc_info=True)
     usage = read_usage(spec_dir)
+    # OTel per-worker metrics (#45 P1), once per terminal event (#1633): not from
+    # usage_from_aggregate, which also serves snapshots and the live mapping.
+    _emit_worker_metrics((usage or {}).get("workers") or [])
     event = build_completion_event(
         task_id=task_id,
         spec_id=spec_id,
         status=status,
         issue_number=read_issue_number(spec_dir),
+        repo=read_issue_repo(spec_dir),
         project_id=project_id,
         usage=usage,
         halt_reason=_read_halt_reason(spec_dir),
@@ -1061,6 +1143,7 @@ def emit_usage_snapshot(  # noqa: PLR0913 - event fields, all required by the en
             spec_id=spec_id,
             status=status,
             issue_number=read_issue_number(spec_dir),
+            repo=read_issue_repo(spec_dir),
             project_id=project_id,
             usage=usage,
             injection_scan=_read_injection_scan(spec_dir),

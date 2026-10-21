@@ -55,6 +55,9 @@ At verify time:
 4. **Retire** the old key: add its id to
    `AIFACTORY_TRUSTED_PLAN_RETIRED_KIDS` (e.g. `cfactory/2026q3`), then remove
    its env var. Any lingering envelope signed with it is now rejected.
+   The merge gate re-verifies the stored contract at merge time, so retiring or
+   removing a kid also holds the auto-merge of every trusted task signed with it
+   that has not merged yet.
 
 ## Emergency revocation (leaked key)
 

@@ -14,14 +14,20 @@ no-op and today's behaviour is unchanged.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import subprocess
+import tempfile
 from pathlib import Path
 
+from core import process_hardening
+from core.child_env import child_env, lfs_upload
 from core.git_credentials import authed_push_url
 
 _log = logging.getLogger(__name__)
+
+_USAGE_MAX_BYTES = 1 << 20
 
 WORKSPACE_URI_ENV = "WORKSPACE_URI"
 
@@ -49,6 +55,7 @@ def _mark_git_safe_directory(dest: Path) -> None:
                 ["git", "config", "--global", "--add", "safe.directory", path],  # noqa: S607
                 check=True,
                 capture_output=True,
+                env=child_env(),
             )
         except (OSError, subprocess.CalledProcessError) as exc:
             _log.warning("[workspace_fetch] could not mark %s git-safe: %s", path, exc)
@@ -86,7 +93,7 @@ def maybe_unpack_workspace(project_dir: str | os.PathLike[str]) -> bool:
     return True
 
 
-def maybe_push_workspace_branch(
+def maybe_push_workspace_branch(  # noqa: PLR0911 - one early return per refusal
     project_dir: str | os.PathLike[str], spec_id: str
 ) -> bool:
     """Push the built worktree branch to origin on the packed path (RFC-0017 #190).
@@ -110,11 +117,18 @@ def maybe_push_workspace_branch(
     if not wt.is_dir():
         _log.warning("[workspace_fetch] no worktree at %s; nothing to push", wt)
         return False
+    if (
+        process_hardening.in_build_job()
+        and not process_hardening.kill_stray_processes()
+    ):
+        _log.error("agent-started processes survived; refusing to push (#1724)")
+        return False
 
     def _git(*args: str) -> str:
         return subprocess.run(  # noqa: S603
             ["git", *args],  # noqa: S607
             cwd=str(wt),
+            env=child_env(),
             capture_output=True,
             text=True,
             timeout=120,
@@ -127,20 +141,40 @@ def maybe_push_workspace_branch(
         if not branch or not url:
             _log.warning("[workspace_fetch] worktree has no branch/origin; skip push")
             return False
-        # The token rides in GIT_ASKPASS, never in argv — /proc/<pid>/cmdline is
-        # world-readable for the lifetime of the child (AIFactory#1366).
+        # The token rides in a per-call GH_CONFIG_DIR (github_env), never in argv
+        # or env; the URL is not rewritten. /proc/<pid>/cmdline is world-readable
+        # for the lifetime of the child (AIFactory#1366, #1723).
         with authed_push_url(url) as (push_url, git_env):
-            res = subprocess.run(  # noqa: S603
-                ["git", "push", push_url, f"HEAD:{branch}"],  # noqa: S607
-                cwd=str(wt),
-                env=git_env,
-                capture_output=True,
-                text=True,
-                timeout=180,
-                check=False,
-            )
-        if res.returncode != 0:
-            _log.warning("[workspace_fetch] branch push failed: %s", res.stderr[:200])
+
+            def run(argv: list[str], t: int) -> tuple[int, str, str]:
+                p = subprocess.run(  # noqa: S603
+                    argv,
+                    cwd=str(wt),
+                    env=git_env,
+                    capture_output=True,
+                    text=True,
+                    timeout=t,
+                    check=False,
+                )
+                return p.returncode, p.stdout, p.stderr
+
+            # Best-effort upload; only the safety-net refusal skips the push.
+            err = lfs_upload(run, "HEAD")
+            if err:
+                err = f"LFS upload: {err}"
+            else:
+                res = subprocess.run(  # noqa: S603
+                    ["git", "push", push_url, f"HEAD:{branch}"],  # noqa: S607
+                    cwd=str(wt),
+                    env=git_env,
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                    check=False,
+                )
+                err = res.stderr if res.returncode != 0 else None
+        if err is not None:
+            _log.warning("[workspace_fetch] branch push failed: %s", err[:200])
             return False
         _log.info(
             "[workspace_fetch] pushed build branch %s to origin (packed path)", branch
@@ -202,18 +236,33 @@ def maybe_push_usage(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
         return False
 
 
+def _total_tokens(raw: bytes) -> float | None:
+    """``totalTokens`` of a usage document, or None when it is not a JSON object."""
+    try:
+        doc = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(doc, dict):
+        return None
+    total = doc.get("totalTokens", 0)
+    return total if isinstance(total, int | float) else 0
+
+
 def maybe_fetch_usage(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
     """Control-plane counterpart to :func:`maybe_push_usage`.
 
-    If the data-PVC spec dir has no ``token_usage.json`` (the packed path never
-    wrote it there), fetch the one the Job pushed and write it locally so
-    ``completion.read_usage`` finds it and the completion event carries real token
-    usage to CFactory. No-op when the file already exists (co-mount path) or no
-    pushed copy exists. Best-effort: never raises.
+    Fetches the ``token_usage.json`` the Job pushed and writes it locally so
+    ``completion.read_usage`` and the completion event carry real token usage.
+    The object is always fetched (a failed or stopped build may have pushed a
+    higher total than a stale local copy) but written only when the local copy is
+    missing, unreadable, or has a strictly lower ``totalTokens`` (#1633). Objects
+    over 1 MiB, or that are not a JSON object, are skipped.
+
+    Returns True only when a write happened (new spend to report). With no object
+    store, or nothing pushed, the local file is kept and False is returned.
+    Best-effort: never raises.
     """
     dest = Path(spec_dir) / _USAGE_FILE
-    if dest.is_file():
-        return False
     try:
         from core.artifact_store import ArtifactStore  # noqa: PLC0415
 
@@ -221,15 +270,34 @@ def maybe_fetch_usage(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
     except Exception as exc:  # noqa: BLE001 - no pushed usage / store unreachable
         _log.debug("[workspace_fetch] no pushed usage to fetch: %s", exc)
         return False
+    if len(data) > _USAGE_MAX_BYTES:
+        _log.warning("[workspace_fetch] pushed usage skipped: %d bytes", len(data))
+        return False
+    fetched = _total_tokens(data)
+    if fetched is None:
+        _log.warning("[workspace_fetch] pushed usage skipped: not a JSON object")
+        return False
+    try:
+        local = _total_tokens(dest.read_bytes())
+    except OSError:
+        local = None  # missing/unreadable local: accept any valid object
+    if local is not None and fetched <= local:
+        return False
+    tmp = ""
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(data)
+        fd, tmp = tempfile.mkstemp(dir=dest.parent)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        Path(tmp).replace(dest)
         _log.info(
             "[workspace_fetch] fetched %s from object store (packed path)", _USAGE_FILE
         )
         return True
     except OSError as exc:
         _log.warning("[workspace_fetch] could not write fetched usage: %s", exc)
+        if tmp:
+            Path(tmp).unlink(missing_ok=True)
         return False
 
 
@@ -402,6 +470,102 @@ def maybe_fetch_plan(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
         return True
     except OSError as exc:
         _log.warning("[workspace_fetch] could not write fetched plan: %s", exc)
+        return False
+
+
+_GATE_MARKER_FILE = ".trailing_gates_done"
+
+
+def _gate_marker_key(spec_id: str) -> str:
+    """Deterministic object key for a task's gate-evidence marker (#1550)."""
+    from core.artifact_store import ArtifactRef  # noqa: PLC0415
+
+    return str(
+        ArtifactRef(
+            service="aifactory", job_id=spec_id, role="build", path=_GATE_MARKER_FILE
+        ).key()
+    )
+
+
+def gate_marker_spec_dir(
+    project_dir: str | os.PathLike[str], spec_dir: str | os.PathLike[str]
+) -> Path:
+    """The spec dir the build actually wrote its gate marker into (#1550).
+
+    In isolated mode ``handle_build_command`` builds from a copy of the spec
+    INSIDE the task worktree (``copy_spec_to_worktree``:
+    ``<worktree>/.aifactory/specs/<spec>``, worktree
+    ``.aifactory/worktrees/tasks/<spec>`` as in ``gate_dir_for``) and the
+    trailing gates write the marker there. The caller's ``spec_dir`` is the
+    SOURCE copy, which no sync brings the marker back to. Prefer the worktree
+    copy when it holds a marker; otherwise (direct mode) keep ``spec_dir``.
+    """
+    spec = Path(spec_dir)
+    worktree_spec = (
+        Path(project_dir)
+        / ".aifactory"
+        / "worktrees"
+        / "tasks"
+        / spec.name
+        / ".aifactory"
+        / "specs"
+        / spec.name
+    )
+    if (worktree_spec / _GATE_MARKER_FILE).is_file():
+        return worktree_spec
+    return spec
+
+
+def maybe_push_gate_marker(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
+    """Push the Job's trailing-gate evidence marker to object storage (#1550).
+
+    Same packed-path gap as the plan: the marker is written into the Job's
+    ephemeral ``/work`` and died with it, so the merger's PR body and the QA
+    guard on the control plane never saw the gates that DID run. No marker
+    (gates never ran) pushes nothing -- absence stays absence. No-op off the
+    packed path. Best-effort: never raises.
+    """
+    if not os.environ.get(WORKSPACE_URI_ENV, "").strip():
+        return False
+    src = Path(spec_dir) / _GATE_MARKER_FILE
+    if not src.is_file():
+        return False
+    try:
+        from core.artifact_store import ArtifactStore  # noqa: PLC0415
+
+        ArtifactStore().put_bytes(
+            _gate_marker_key(spec_id), src.read_bytes(), "text/plain", role="build"
+        )
+        _log.info("[workspace_fetch] pushed %s (packed path)", _GATE_MARKER_FILE)
+        return True
+    except Exception as exc:  # noqa: BLE001 - must never break a green build
+        _log.warning("[workspace_fetch] gate marker push failed: %s", exc)
+        return False
+
+
+def maybe_fetch_gate_marker(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
+    """Control-plane counterpart to :func:`maybe_push_gate_marker` (#1550).
+
+    OVERWRITES, like :func:`maybe_fetch_plan`: a marker the control plane holds
+    from worktree setup or an earlier run is stale by definition, and the Job's
+    copy is the one bound to the tree that was actually gated. No-op when
+    nothing was pushed. Best-effort: never raises.
+    """
+    try:
+        from core.artifact_store import ArtifactStore  # noqa: PLC0415
+
+        data = ArtifactStore().get_bytes(_gate_marker_key(spec_id))
+    except Exception as exc:  # noqa: BLE001 - nothing pushed / store unreachable
+        _log.debug("[workspace_fetch] no pushed gate marker to fetch: %s", exc)
+        return False
+    dest = Path(spec_dir) / _GATE_MARKER_FILE
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(data)
+        _log.info("[workspace_fetch] fetched %s (packed path)", _GATE_MARKER_FILE)
+        return True
+    except OSError as exc:
+        _log.warning("[workspace_fetch] could not write fetched gate marker: %s", exc)
         return False
 
 

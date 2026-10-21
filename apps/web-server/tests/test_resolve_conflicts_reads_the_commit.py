@@ -91,18 +91,17 @@ def _run(task_id: str, projects_file: Path) -> dict[str, Any]:
 
 
 def test_a_failing_commit_is_not_reported_as_success(tmp_path: Path) -> None:
-    """A pre-commit hook that refuses must not produce `success: true`."""
+    """A commit that is refused must not produce `success: true`."""
     task_id, project_path, projects_file = _stage(tmp_path)
 
     # A hook that always refuses is the cleanest stand-in for the real causes
     # (hook rejection, index.lock, unwritable objects): it makes `git commit`
     # exit non-zero WITHOUT the "nothing to commit" wording, which is exactly
     # the case the old code swallowed.
-    hooks = project_path / ".git" / "hooks"
-    hooks.mkdir(parents=True, exist_ok=True)
-    hook = hooks / "pre-commit"
-    hook.write_text("#!/bin/sh\necho 'refused by policy' >&2\nexit 1\n")
-    hook.chmod(0o755)
+    # Not a hook: child_env() disables hooks (#1680). A signing program that
+    # always fails gives the same non-zero exit through repo config.
+    _git(["config", "commit.gpgsign", "true"], project_path)
+    _git(["config", "gpg.program", "false"], project_path)
     # Something staged, so the commit is genuinely attempted rather than a no-op.
     (project_path / "new.txt").write_text("x\n")
     _git(["add", "new.txt"], project_path)

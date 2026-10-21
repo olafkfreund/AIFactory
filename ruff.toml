@@ -124,6 +124,9 @@ select = [
     # and the four remaining fire-and-forget UI/telemetry emits carry a per-line
     # `# noqa: RUF006` stating what is lost if one is dropped.
     "RUF006", # store a reference to the return value of asyncio.create_task
+    # #1624/#1740: aware UTC timestamps, gated repo-wide (tests exempt below)
+    "DTZ005", # datetime.now() without tz
+    "DTZ006", # datetime.fromtimestamp() without tz
 ]
 
 ignore = [
@@ -143,6 +146,15 @@ ignore = [
     "F821",   # undefined name (forward refs in type hints used as strings)
     "UP035",  # deprecated typing imports (legacy modules use typing.List/Dict)
 ]
+
+[lint.isort]
+# The repo root holds the artifact workflow's `spec/` folder (intent/ spec/
+# plan/). Ruff's first-party detection treats any root directory as a module,
+# so with `spec/` present it reclassified the backend's own `spec` package and
+# demanded a different import order in runners/spec_runner.py -- a red
+# `backend (ruff + pytest)` on every PR that carries artifacts. Pin it to the
+# group it sorts in today so the order no longer depends on which folders exist.
+known-third-party = ["spec"]
 
 # ---------------------------------------------------------------------------
 # Feature Architecture Standard — enforced import boundary (issue #261)
@@ -242,9 +254,9 @@ ignore = [
 # reopening a hole standards/ruff.toml closed. (Measured 2026-08-13: this
 # repo's own config, whole-repo, with `--select S`: 10,763 S101 findings --
 # every one of them a test-tree file the vendored carve-out never reached.)
-"**/test_*.py" = ["S101", "PLR2004"]
-"**/*_test.py" = ["S101", "PLR2004"]
-"**/tests/**" = ["S101", "PLR2004"]
+"**/test_*.py" = ["S101", "PLR2004", "DTZ005", "DTZ006"]
+"**/*_test.py" = ["S101", "PLR2004", "DTZ005", "DTZ006"]
+"**/tests/**" = ["S101", "PLR2004", "DTZ005", "DTZ006"]
 
 [format]
 quote-style = "double"

@@ -36,7 +36,7 @@ import { cn } from '../../lib/utils';
 import { calculateProgress } from '../../lib/utils';
 import { startTask, stopTask, submitReview, recoverStuckTask, deleteTask, persistTaskStatus } from '../../stores/task-store';
 import { useProjectStore } from '../../stores/project-store';
-import { TASK_STATUS_LABELS } from '../../shared/constants';
+import { reviewReasonBadge, TASK_STATUS_LABELS } from '../../shared/constants';
 import { TaskEditDialog } from '../TaskEditDialog';
 import { useTaskDetail } from './hooks/useTaskDetail';
 import { TaskMetadata } from './TaskMetadata';
@@ -144,16 +144,9 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
 
   // Memoize review reason badge variant and label - ensures proper reactivity for review states
   const { reviewBadgeVariant, reviewLabel } = useMemo(() => {
-    if (!task.reviewReason) return { reviewBadgeVariant: null, reviewLabel: null };
-    const variant: 'success' | 'destructive' | 'warning' =
-      task.reviewReason === 'completed' ? 'success'
-      : task.reviewReason === 'errors' ? 'destructive'
-      : 'warning';
-    const label = task.reviewReason === 'completed' ? 'Completed'
-      : task.reviewReason === 'errors' ? 'Has Errors'
-      : task.reviewReason === 'plan_review' ? 'Approve Plan'
-      : 'QA Issues';
-    return { reviewBadgeVariant: variant, reviewLabel: label };
+    const badge = reviewReasonBadge(task.reviewReason);
+    if (!badge) return { reviewBadgeVariant: null, reviewLabel: null };
+    return { reviewBadgeVariant: badge.variant, reviewLabel: badge.label };
   }, [task.reviewReason]);
 
   // Memoize showTaskReview to ensure TaskReview section appears when:

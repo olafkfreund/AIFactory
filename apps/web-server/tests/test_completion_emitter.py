@@ -6,6 +6,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 _WS = Path(__file__).resolve().parents[1]
 if str(_WS) not in sys.path:
     sys.path.insert(0, str(_WS))
@@ -22,6 +24,7 @@ from server.services.completion import (  # noqa: E402
     emit_worker_progress,
     notify_completion,
     read_issue_number,
+    read_issue_repo,
     read_usage,
 )
 
@@ -65,6 +68,47 @@ def test_read_issue_absent_is_none(tmp_path):
 def test_correlation_key_issue_vs_synthetic():
     assert correlation_key("spec-9", 412) == "412"
     assert correlation_key("spec-9", None) == "af-spec-9"
+
+
+def _spec_with(tmp_path: Path, name: str, requirements: dict[str, object]) -> Path:
+    d = tmp_path / name
+    d.mkdir()
+    (d / "requirements.json").write_text(json.dumps(requirements))
+    return d
+
+
+def test_key_is_scoped_to_the_repo(tmp_path: Path) -> None:
+    keys: list[str] = []
+    for name, repo in (("s1", "a/x"), ("s2", "b/y")):
+        d = _spec_with(
+            tmp_path,
+            name,
+            {"metadata": {"githubIssueNumber": 7}, "provenance": {"repo": repo}},
+        )
+        ev = build_completion_event(
+            task_id="t",
+            spec_id=name,
+            status="done",
+            issue_number=read_issue_number(d),
+            repo=read_issue_repo(d),
+        )
+        keys.append(ev["correlation_key"])
+        assert ev["correlation"]["repo"] == repo
+    assert keys == ["a/x#7", "b/y#7"]
+
+
+def test_read_issue_repo_parses_the_issue_url_and_falls_back_to_bare(
+    tmp_path: Path,
+) -> None:
+    d = _spec_with(
+        tmp_path,
+        "s1",
+        {"githubIssue": {"number": 7, "url": "https://github.com/o/r/issues/7"}},
+    )
+    assert read_issue_repo(d) == "o/r"
+    bare = _spec_with(tmp_path, "s2", {"githubIssue": {"number": 7}})
+    assert read_issue_repo(bare) is None
+    assert correlation_key("s2", 7, read_issue_repo(bare)) == "7"
 
 
 def test_envelope_has_rfc_core_fields():
@@ -188,6 +232,22 @@ def test_failed_terminal_emits_failed_status(tmp_path, monkeypatch):
     assert ev["correlation_key"] == "412"
 
 
+def test_emit_fetches_the_jobs_gate_marker(tmp_path, monkeypatch):
+    """#1550: the packed Job's gate-evidence marker is pulled before emitting."""
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "backend"))
+    monkeypatch.delenv("AIFACTORY_COMPLETION_WEBHOOK", raising=False)
+    monkeypatch.delenv("AIFACTORY_COMPLETION_SENTINEL", raising=False)
+    calls = []
+    monkeypatch.setattr(
+        "core.workspace_fetch.maybe_fetch_gate_marker", lambda _d, s: calls.append(s)
+    )
+    spec = _spec_with_issue(tmp_path, 412)
+    emit_terminal_completion(
+        spec, task_id="proj:spec-9", project_id="proj", spec_id="spec-9", status="done"
+    )
+    assert calls == ["spec-9"]
+
+
 def test_emit_terminal_completion_builds_from_spec(tmp_path, monkeypatch):
     monkeypatch.delenv("AIFACTORY_COMPLETION_WEBHOOK", raising=False)
     monkeypatch.delenv("AIFACTORY_COMPLETION_SENTINEL", raising=False)
@@ -229,6 +289,31 @@ def test_read_usage_maps_token_attribution_fields(tmp_path):
         "total_tokens": 2500,
         "cost_usd": 1.25,
         "model": "claude-sonnet-4-6",
+    }
+
+
+def test_read_usage_carries_the_cache_split_when_reported(tmp_path):
+    """#1398: the split rides along; every pre-existing key is unchanged."""
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    _write_usage(
+        spec,
+        totalInputTokens=2400,
+        outputTokens=100,
+        totalTokens=2500,
+        totalCostUsd=1.25,
+        model="claude-sonnet-4-6",
+        cacheReadTokens=1800,
+        cacheCreationTokens=200,
+    )
+    assert read_usage(spec) == {
+        "input_tokens": 2400,
+        "output_tokens": 100,
+        "total_tokens": 2500,
+        "cost_usd": 1.25,
+        "model": "claude-sonnet-4-6",
+        "cache_read_tokens": 1800,
+        "cache_creation_tokens": 200,
     }
 
 
@@ -1370,3 +1455,27 @@ def test_progress_sentinel_is_rolling_and_never_clobbers(tmp_path, monkeypatch):
     assert json.loads((spec / "WORKER.sub-A.json").read_text()) == {
         "keep": "worker_done"
     }
+
+
+@pytest.mark.parametrize(
+    "requirements",
+    [
+        {"metadata": {"githubIssueNumber": 7}, "provenance": {"repo": "a/x"}},
+        {"githubIssue": {"number": 7, "repo": "gitlab:g/p"}},
+        {"githubIssue": {"number": 7, "url": "https://github.com/o/r/issues/7"}},
+        {"githubIssue": {"number": 7}},
+    ],
+)
+def test_tfactory_handoff_key_matches_the_event_key(
+    tmp_path: Path, requirements: dict[str, object]
+) -> None:
+    # #1775: the TFactory handoff mirrors this module's key readers (it lives in
+    # the backend and this module is stdlib-only); a drift splits the work item.
+    backend = str(Path(__file__).resolve().parents[2] / "backend")
+    if backend not in sys.path:
+        sys.path.insert(0, backend)
+    from pfactory.tfactory_client import _event_correlation_key  # noqa: PLC0415
+
+    d = _spec_with(tmp_path, "s", requirements)
+    expected = correlation_key("s", read_issue_number(d), read_issue_repo(d))
+    assert _event_correlation_key(requirements) == expected

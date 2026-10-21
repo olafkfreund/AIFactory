@@ -16,7 +16,7 @@ import sys
 import threading
 from collections import deque
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +27,7 @@ from server.specpath import spec_dir_for
 
 from ..config import get_settings
 from ..utils.subprocess_env import make_subprocess_env
-from . import task_control
+from . import job_state_store, project_settings_store, task_control
 from .agent_credential import CredentialMixin
 from .agent_emit import (
     EmitMixin,
@@ -39,9 +39,64 @@ from .agent_skill_context import SkillContextMixin
 from .agent_spec_creation import SpecCreationMixin
 from .agent_worktree_sync import WorktreeSyncMixin
 
+# subprocess_env adds apps/backend to sys.path before this import.
+# isort: split
+from core.auth import is_denied_env_key
+
 # Module-level logger for the admission-control paths (RFC-0016 #668). The rest
 # of this (legacy) module still uses local ``import logging`` inside methods.
 _log = logging.getLogger(__name__)
+_HTTP_NOT_FOUND = 404
+_SA_NAMESPACE_FILE = Path("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
+
+
+def _own_namespace() -> str | None:
+    try:
+        return _SA_NAMESPACE_FILE.read_text().strip() or None
+    except OSError:
+        return None
+
+
+def _incluster_core_api() -> tuple[Any, Any]:
+    """(CoreV1Api, ApiClient) for this pod's own cluster, or (None, None) (#1705).
+
+    No kubeconfig fallback: a dev kubeconfig points at some other cluster.
+    """
+    if _own_namespace() is None:
+        return None, None
+    try:
+        from kubernetes_asyncio import (  # noqa: PLC0415 - optional dependency
+            client,
+            config,
+        )
+
+        config.load_incluster_config()  # type: ignore[no-untyped-call]
+        api_client = client.ApiClient()
+        return client.CoreV1Api(api_client), api_client
+    except Exception:  # noqa: BLE001 - no client means no pod is proven gone
+        _log.warning("[AgentService] no in-cluster client (#1705)", exc_info=True)
+        return None, None
+
+
+async def _pod_gone(core: Any, pod: str) -> bool:
+    """True only when the API answers 404 for ``pod`` (#1705); anything else is alive."""
+    ns = _own_namespace()
+    if ns is None:
+        return False
+    try:
+        await core.read_namespaced_pod(pod, ns)
+    except Exception as exc:  # noqa: BLE001 - any doubt reads as alive
+        status = getattr(exc, "status", None)
+        if status == _HTTP_NOT_FOUND:
+            return True
+        _log.warning(
+            "[AgentService] pod read failed for %s (status=%s; 403 means missing "
+            "Pods get RBAC); leaving subprocess row live (#1705)",
+            sanitize_log(pod),
+            status,
+        )
+    return False
+
 
 # ---------------------------------------------------------------------------
 # Re-exports from the god-file decomposition. Every name below moved out of this
@@ -85,6 +140,17 @@ from .tenant_target import TenantTarget, resolve_tenant_target  # noqa: E402,F40
 _TERMINAL_PLAN_STATUSES = frozenset({"completed", "failed"})
 
 
+def _load_backend_env(path: Path, env: dict[str, str]) -> None:
+    with path.open() as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                key = key.strip()
+                if key not in env and not is_denied_env_key(key):
+                    env[key] = value.strip()
+
+
 class AgentService(
     KubejobMixin,
     CredentialMixin,
@@ -99,6 +165,20 @@ class AgentService(
     def __init__(self):
         self.settings = get_settings()
         self.running_tasks: dict[str, asyncio.subprocess.Process] = {}
+        # #1619: kubejob builds run as k8s Jobs, never as an entry in
+        # ``running_tasks`` (only ``_spawn_task_execution``'s subprocess writes
+        # there). The reconcile loop replaces this set wholesale each tick from
+        # the rows it just polled, so ``is_running`` can answer for both
+        # backends without a Kubernetes call or a DB round-trip per request.
+        self._active_kubejob_task_ids: set[str] = set()
+        # #1714 task ids whose dispatch raised; released when their Job 404s.
+        self._held_credentials: set[str] = set()
+        # #1704: spec-creation process per task, so Start/approve stop only that.
+        self._spec_creation_procs: dict[str, Any] = {}
+        # #1662: ids dispatched since the current reconcile tick began
+        # its store read; that tick unions them in so it cannot drop a
+        # build whose row it read too early. Reset every tick.
+        self._kubejob_dispatched_this_tick: set[str] = set()
         self._log_callbacks: dict[str, list[Callable]] = {}
         self._progress_callbacks: dict[str, list[Callable]] = {}
         self._task_log_writers: dict[str, tuple[TaskLogWriter, TaskLogWriter]] = {}
@@ -283,6 +363,35 @@ class AgentService(
         await self._free_durable_slot_on_exit(task_id, spec_dir_hint)
         await self._drain_queue()
 
+    async def _k8s_job_owns(self, task_id: str) -> bool:
+        """True when this task's row carries a live k8s-job reference (#1628).
+
+        On the ``/start`` path the subprocess whose exit calls the caller is
+        **spec creation**, not the build — the build that follows runs as a
+        Kubernetes Job on the same row. Marking the task terminal there left a
+        row holding a live Job reference AND ``done``, which
+        ``get_active_kubejobs`` (it selects ``running``) never returns, so
+        reconcile, the reaper, the #1249 review re-drive, streamer cancellation
+        and credential release were all blind to that build. A Job owns its
+        task's lifecycle; the reconcile loop marks it terminal.
+
+        A read failure answers False: the terminal write is the safer default,
+        because leaving a dead build ``running`` strands its slot.
+        """
+        try:
+            state = await self._store().get_state(task_id)
+        except Exception:  # noqa: BLE001 - a read failure must not skip the write
+            return False
+        ref = (state or {}).get("worker_ref") or {}
+        if not (isinstance(ref, dict) and ref.get("kind") == "k8s-job"):
+            return False
+        _log.debug(
+            "[AgentService] not marking %s terminal on subprocess exit: a "
+            "k8s Job owns this task (#1628)",
+            sanitize_log(task_id),
+        )
+        return True
+
     async def _free_durable_slot_on_exit(
         self, task_id: str, spec_dir: Path | None = None
     ) -> None:
@@ -324,13 +433,6 @@ class AgentService(
                 sanitize_log(task_id),
                 exc_info=True,
             )
-        try:
-            await self._store().mark_terminal(task_id, lifecycle, error=error)
-        except Exception:  # noqa: BLE001 - never break the exit/drain path
-            _log.exception(
-                "[AgentService] could not free durable slot for %s",
-                sanitize_log(task_id),
-            )
         # Running-cost: a build that paused at review still spent real tokens, but
         # emit_terminal_completion only fires on terminal states (done/failed/
         # stuck), so a review-paused build's usage never reaches the cockpit. Emit
@@ -355,6 +457,24 @@ class AgentService(
                     sanitize_log(task_id),
                     exc_info=True,
                 )
+
+        # #1628: on the /start path this handler fires when SPEC CREATION's
+        # subprocess exits, not the build's — and the build that follows runs as
+        # a k8s Job on the same row. Marking the task terminal there left a row
+        # carrying a live Job reference AND `done`, which `get_active_kubejobs`
+        # (it selects `running`) never returns, so reconcile, the reaper, the
+        # #1249 review re-drive, streamer cancellation and credential release
+        # were all blind to that build. A Job owns its task's lifecycle; the
+        # reconcile loop is what marks it terminal.
+        if await self._k8s_job_owns(task_id):
+            return
+        try:
+            await self._store().mark_terminal(task_id, lifecycle, error=error)
+        except Exception:  # noqa: BLE001 - never break the exit/drain path
+            _log.exception(
+                "[AgentService] could not free durable slot for %s",
+                sanitize_log(task_id),
+            )
 
     async def _update_plan_status(
         self,
@@ -998,38 +1118,15 @@ class AgentService(
         backend_env_file = self.backend_path / ".env"
         if backend_env_file.exists():
             try:
-                with open(backend_env_file) as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith("#") and "=" in line:
-                            key, value = line.split("=", 1)
-                            key = key.strip()
-                            value = value.strip()
-                            # Don't override existing env vars
-                            if key not in env:
-                                env[key] = value
+                _load_backend_env(backend_env_file, env)
                 logger.info(
                     f"[AgentService] Loaded backend .env from {backend_env_file}"
                 )
             except Exception as e:
                 logger.warning(f"[AgentService] Failed to load backend .env: {e}")
 
-        # Load project .aifactory/.env for project-level settings (USE_CLAUDE_MD, etc.)
-        project_env_file = project_path / ".aifactory" / ".env"
-        if project_env_file.exists():
-            try:
-                with open(project_env_file) as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith("#") and "=" in line:
-                            key, value = line.split("=", 1)
-                            key = key.strip()
-                            value = value.strip()
-                            if key not in env:
-                                env[key] = value
-                logger.info("[AgentService] Loaded project .env for task execution")
-            except Exception as e:
-                logger.warning(f"[AgentService] Failed to load project .env: {e}")
+        # Project settings store: allowlisted project settings only (#1745, #1795)
+        await project_settings_store.load_project_env(project_path, env)
 
         # Get OAuth token from the pool (#670) so concurrent builds draw DISTINCT
         # credentials; returned to the pool when this build ends.
@@ -1174,6 +1271,22 @@ class AgentService(
 
         cmd = build_sandboxed_command(cmd, project_path)
 
+        # #1667: stamp from the REAL argv. --unshare-pid counts only before "--",
+        # since what follows is agent-adjacent input.
+        from . import sandbox  # noqa: PLC0415
+        from .trusted_contract_store import stamp_spawn  # noqa: PLC0415
+
+        head = cmd[: cmd.index("--")] if "--" in cmd else cmd
+        pidns = (
+            bool(head) and head[0] == sandbox._bwrap_path() and "--unshare-pid" in head
+        )
+        await stamp_spawn(spec_dir, "sandbox-pidns" if pidns else "none")
+
+        from .trusted_contract import spawn_env  # noqa: PLC0415
+
+        env.update(await spawn_env(spec_dir))
+        env.update(await project_settings_store.mcp_spawn_env(project_path))
+
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=slave_fd,
@@ -1197,7 +1310,7 @@ class AgentService(
 
         # Initialize tracking for sequence numbers and start time
         self._task_sequence_numbers[task_id] = 0
-        self._task_start_times[task_id] = datetime.now().isoformat()
+        self._task_start_times[task_id] = datetime.now(UTC).isoformat()
         # Store spec directory for reading implementation plans during progress updates
         self._spec_dirs[task_id] = spec_dir
 
@@ -1287,6 +1400,31 @@ class AgentService(
         # Fall back to signalling just the process (e.g. non-POSIX, or no pgrp).
         with contextlib.suppress(ProcessLookupError, OSError):
             proc.send_signal(sig)
+
+    async def stop_stale_spec_creation(self, task_id: str) -> None:
+        proc = self.running_tasks.get(task_id)
+        if proc is None or proc is not self._spec_creation_procs.get(task_id):
+            return
+        # Spec creation never owns a running row, so a running row (or an
+        # unreadable one) is another build: stop_task would fail it. Leave
+        # both alone and let the caller's 409 check refuse (#1704).
+        if self._store_enabled:
+            try:
+                state = await self._store().get_state(task_id)
+            except Exception:  # noqa: BLE001 - doubt reads as live
+                return
+            if state is not None and state.get("lifecycle_state") == "running":
+                return
+        try:
+            await self.stop_task(task_id)
+        except Exception:  # noqa: BLE001 - same fallback the routes had
+            _log.warning(
+                "[AgentService] failed to stop stale spec creation for %s",
+                sanitize_log(task_id),
+                exc_info=True,
+            )
+            self.running_tasks.pop(task_id, None)
+        self._spec_creation_procs.pop(task_id, None)
 
     async def stop_task(self, task_id: str) -> bool:
         """Stop a running task."""
@@ -1480,6 +1618,7 @@ class AgentService(
         """
         if not self._store_enabled:
             return {"running": 0, "queued": 0}
+        await self.reap_orphaned_subprocess_rows()
         try:
             state = await self._store().reconstruct()
         except Exception:  # noqa: BLE001 - startup must not crash on a store hiccup
@@ -1497,9 +1636,77 @@ class AgentService(
         await self._drain_queue()
         return {"running": running, "queued": queued}
 
+    async def _fail_orphan_row(
+        self, job_id: str, pod: str, boot: str, reason: str
+    ) -> bool:
+        try:
+            return bool(
+                await self._store().fail_subprocess_row(job_id, pod, boot, reason)
+            )
+        except Exception:  # noqa: BLE001 - retried on the next tick
+            _log.warning(
+                "[AgentService] subprocess row fail failed for %s (#1705)",
+                sanitize_log(job_id),
+                exc_info=True,
+            )
+            return False
+
+    async def reap_orphaned_subprocess_rows(self, *, core: Any = None) -> list[str]:
+        """Fail only subprocess claims whose stamped owner is confirmed gone (#1705)."""
+        if not self._store_enabled:
+            return []
+        try:
+            rows = await self._store().get_running_subprocess_rows()
+        except Exception:  # noqa: BLE001 - unknown owners stay live
+            _log.warning(
+                "[AgentService] subprocess row read failed (#1705)", exc_info=True
+            )
+            return []
+
+        here, boot_now = job_state_store.POD_NAME, job_state_store.BOOT_ID
+        rows = [
+            r
+            for r in rows
+            if r["pod"] and r["boot"] and (r["pod"], r["boot"]) != (here, boot_now)
+        ]
+        api_client = None
+        if core is None and any(r["pod"] != here for r in rows):
+            core, api_client = _incluster_core_api()
+        reaped: list[str] = []
+        try:
+            for row in rows:
+                job_id, pod, boot = row["job_id"], row["pod"], row["boot"]
+                if pod == here:
+                    reason = "control plane restarted under the build (#1705)"
+                elif core is not None and await _pod_gone(core, pod):
+                    reason = f"owning pod {pod} no longer exists (#1705)"
+                else:
+                    continue
+                if await self._fail_orphan_row(job_id, pod, boot, reason):
+                    reaped.append(job_id)
+        finally:
+            if api_client is not None:
+                with contextlib.suppress(Exception):
+                    await api_client.close()
+        if reaped:
+            try:
+                await self._drain_queue()
+            except Exception:  # noqa: BLE001 - the next tick drains again
+                _log.warning(
+                    "[AgentService] subprocess reaper drain failed", exc_info=True
+                )
+        return reaped
+
     def is_running(self, task_id: str) -> bool:
-        """Check if a task is currently running."""
-        return task_id in self.running_tasks
+        """Check if a task is currently running, on either build backend.
+
+        ``running_tasks`` holds only in-pod subprocess builds. A kubejob build
+        is a k8s Job the reconcile loop tracks, so asking the dict alone
+        answered ``False`` for its entire run — which the cockpit renders as
+        "Stuck", offering a Recover button that resets the record out from
+        under a live Job (#1619).
+        """
+        return task_id in self.running_tasks or task_id in self._active_kubejob_task_ids
 
     def get_running_tasks(self) -> list[str]:
         """Get list of running task IDs."""

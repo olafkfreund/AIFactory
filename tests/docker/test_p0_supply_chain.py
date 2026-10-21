@@ -61,6 +61,27 @@ def _findings(report: dict, what: str) -> list:
     return [v for t in results for v in (t.get("Vulnerabilities") or [])]
 
 
+def _describe(vuln: dict) -> str:
+    """One finding as `SEVERITY CVE pkg installed -> fixed`.
+
+    #1634: the message used to print only (id, severity), so a red gate could
+    not be diagnosed from CI at all — nobody could tell whether a base-image
+    bump would fix it or whether the CVE even has a fix. That matters because
+    this gate is time-dependent: it went red on an unchanged commit when the
+    vulnerability database moved, and the first question is always "in which
+    package, and is there a fix?".
+
+    ``FixedVersion`` empty means unfixed — no bump resolves it, so it is said
+    out loud rather than left as a blank.
+    """
+    fixed = vuln.get("FixedVersion") or "no fix available"
+    return (
+        f"  {vuln.get('Severity', '?'):8} {vuln.get('VulnerabilityID', '?')}"
+        f"  {vuln.get('PkgName', '?')} {vuln.get('InstalledVersion', '?')}"
+        f" -> {fixed}"
+    )
+
+
 @pytest.mark.docker
 def test_base_images_pinned_by_digest() -> None:
     """P0.7 — every external `FROM` base uses `@sha256:...`, not a floating tag.
@@ -114,8 +135,8 @@ def test_trivy_no_high_critical(built_image: str) -> None:
     report = json.loads(result.stdout)
     findings = _findings(report, "the runtime image")
     assert not findings, (
-        f"Trivy found {len(findings)} HIGH/CRITICAL vulns: "
-        f"{[(v.get('VulnerabilityID'), v.get('Severity')) for v in findings[:5]]}"
+        f"Trivy found {len(findings)} HIGH/CRITICAL vulns:\n"
+        + "\n".join(_describe(v) for v in findings[:10])
     )
 
 

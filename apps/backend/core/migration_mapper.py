@@ -28,7 +28,7 @@ ORACLE_DIRNAME = ".aifactory/oracle"
 
 
 def load_contract(spec_dir: Path | str) -> dict[str, Any] | None:
-    """Best-effort load the signed Task Contract stashed by the trusted-plan ingest.
+    """Best-effort load the on-disk contract (unverified; use contract_trust.trusted_contract).
 
     Returns None when absent/unreadable (the common non-trusted-plan path), so
     callers degrade to the normal build flow. Never raises.

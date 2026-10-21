@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from server.error_ref import client_error
 from server.services.http_verdict import honest_status
 from server.specpath import browse_roots, within_roots
+from server.utils.subprocess_env import child_env, github_env, merge_driver_pins
 
 logger = logging.getLogger(__name__)
 
@@ -52,14 +53,16 @@ def _confined(path: str) -> str:
 def run_git_command(args: list[str], cwd: str) -> dict:
     """Run a git command and return result."""
     try:
-        result = subprocess.run(
-            ["git"] + args,
-            check=False,
-            capture_output=True,
-            text=True,
-            cwd=cwd,
-            timeout=30,
-        )
+        with github_env(child_env()) as env:
+            result = subprocess.run(
+                ["git"] + args,
+                check=False,
+                capture_output=True,
+                text=True,
+                cwd=cwd,
+                timeout=30,
+                env=env,
+            )
         if result.returncode != 0:
             return {"success": False, "error": result.stderr.strip()}
         return {"success": True, "output": result.stdout.strip()}
@@ -191,8 +194,12 @@ async def initialize_git(request: InitGitRequest):
             pass  # Not critical if this fails
 
     # Stage all files and create initial commit (only if no commits yet)
-    run_git_command(["add", "-A"], path)
-    run_git_command(["commit", "-m", "Initial commit", "--allow-empty"], path)
+    try:
+        pins = merge_driver_pins(path)
+    except RuntimeError:
+        return {"success": False, "error": "Could not read merge drivers (#1761)"}
+    run_git_command([*pins, "add", "-A"], path)
+    run_git_command([*pins, "commit", "-m", "Initial commit", "--allow-empty"], path)
 
     return {"success": True}
 
@@ -386,6 +393,7 @@ async def check_claude_code_version():
                 capture_output=True,
                 text=True,
                 timeout=5,
+                env=child_env(),
             )
             if result.returncode == 0:
                 claude_path = result.stdout.strip()
@@ -398,6 +406,7 @@ async def check_claude_code_version():
                 capture_output=True,
                 text=True,
                 timeout=5,
+                env=child_env(),
             )
             if result.returncode == 0:
                 return {
@@ -453,6 +462,7 @@ async def install_claude_code():
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=child_env(),
         )
 
     # Step 1: Check if claude is already installed
@@ -498,6 +508,7 @@ async def install_claude_code():
                 capture_output=True,
                 text=True,
                 timeout=60,
+                env=child_env(),
             )
             if result.returncode != 0:
                 return {
@@ -776,6 +787,7 @@ def _check_npm_package_installed(package: str) -> bool:
             capture_output=True,
             text=True,
             timeout=8,
+            env=child_env(),
         )
         return result.returncode == 0 and package in result.stdout
     except Exception:
@@ -941,7 +953,7 @@ async def check_source_update():
 
 @updates_router.post("/source/download")
 @honest_status
-async def download_source_update():
+async def download_source_update():  # noqa: PLR0912 - #1832 pins guard
     """
     Download Magestic AI source update via git pull.
 
@@ -975,7 +987,14 @@ async def download_source_update():
             }
 
         # Check for uncommitted changes
-        status_result = run_git_command(["status", "--porcelain"], source_path)
+        try:
+            pins = merge_driver_pins(source_path)
+        except RuntimeError:
+            return {
+                "success": False,
+                "error": "Failed to check git status: could not read merge drivers (#1761)",
+            }
+        status_result = run_git_command([*pins, "status", "--porcelain"], source_path)
         if not status_result["success"]:
             return {
                 "success": False,
@@ -1180,8 +1199,17 @@ async def squash_commits(projectId: str, request: SquashCommitsRequest):
     current_branch = branch_result["output"]
 
     # Check for uncommitted changes
-    status_result = run_git_command(["status", "--porcelain"], project_path)
-    if status_result["success"] and status_result["output"].strip():
+    try:
+        pins = merge_driver_pins(project_path)
+    except RuntimeError:
+        return {
+            "success": False,
+            "error": "Failed to check git status: could not read merge drivers (#1761)",
+        }
+    status_result = run_git_command([*pins, "status", "--porcelain"], project_path)
+    if not status_result["success"]:
+        return {"success": False, "error": "Failed to check git status"}
+    if status_result["output"].strip():
         return {
             "success": False,
             "error": "Cannot squash with uncommitted changes. Please commit or stash your changes first.",
@@ -1232,7 +1260,9 @@ async def squash_commits(projectId: str, request: SquashCommitsRequest):
         }
 
     # Step 2: Create new commit with all the squashed changes
-    commit_result = run_git_command(["commit", "-m", commit_message], project_path)
+    commit_result = run_git_command(
+        [*pins, "commit", "-m", commit_message], project_path
+    )
 
     if not commit_result["success"]:
         # Try to recover by resetting back
@@ -1434,14 +1464,16 @@ def run_gh_command(args: list[str], cwd: str) -> dict:
         Dict with success status, output or error message
     """
     try:
-        result = subprocess.run(
-            ["gh"] + args,
-            check=False,
-            capture_output=True,
-            text=True,
-            cwd=cwd,
-            timeout=30,
-        )
+        with github_env(child_env()) as env:
+            result = subprocess.run(
+                ["gh"] + args,
+                check=False,
+                capture_output=True,
+                text=True,
+                cwd=cwd,
+                timeout=30,
+                env=env,
+            )
         if result.returncode != 0:
             return {"success": False, "error": result.stderr.strip()}
         return {"success": True, "output": result.stdout.strip()}

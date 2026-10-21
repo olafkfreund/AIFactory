@@ -13,6 +13,7 @@ from pathlib import Path
 
 from server.error_ref import InputRejectedError
 from server.specpath import contained_path, registered_project_roots
+from server.utils.subprocess_env import child_env, merge_driver_pins
 
 from .argv_safety import assert_not_option, assert_safe_git_ref
 
@@ -214,8 +215,13 @@ class TerminalWorktreeService:
         if branch and self._is_git_repo():
             # Use git worktree remove if it's a git worktree
             try:
-                self._run_git_command(["git", "worktree", "remove", str(worktree_path)])
-            except subprocess.CalledProcessError:
+                # Unforced remove runs `status` in the worktree; read pins there so
+                # a per-worktree config.worktree filter is pinned too (#1832).
+                pins = merge_driver_pins(worktree_path)
+                self._run_git_command(
+                    ["git", *pins, "worktree", "remove", str(worktree_path)]
+                )
+            except (subprocess.CalledProcessError, RuntimeError):
                 # If git worktree remove fails, force remove the directory
                 if worktree_path.exists():
                     import shutil
@@ -394,5 +400,10 @@ class TerminalWorktreeService:
             subprocess.CalledProcessError: If check=True and command fails
         """
         return subprocess.run(
-            cmd, cwd=self.project_path, capture_output=True, check=check, text=True
+            cmd,
+            cwd=self.project_path,
+            capture_output=True,
+            check=check,
+            text=True,
+            env=child_env(),
         )

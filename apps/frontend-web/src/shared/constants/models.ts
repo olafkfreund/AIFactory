@@ -11,8 +11,8 @@ import { apiRequest } from '../../lib/api-client';
 // ============================================
 
 export const AVAILABLE_MODELS = [
-  { value: 'opus', label: 'Claude Opus 4.8' },
-  { value: 'sonnet', label: 'Claude Sonnet 4.6' },
+  { value: 'opus', label: 'Claude Opus 5.5' },
+  { value: 'sonnet', label: 'Claude Sonnet 5' },
   { value: 'haiku', label: 'Claude Haiku 4.5' }
 ] as const;
 
@@ -20,8 +20,8 @@ export const AVAILABLE_MODELS = [
 // The provider is inferred from the model ID on the backend, so no separate
 // provider setting is needed per phase.
 export const ALL_AVAILABLE_MODELS = [
-  { value: 'opus', label: 'Claude Opus 4.8' },
-  { value: 'sonnet', label: 'Claude Sonnet 4.6' },
+  { value: 'opus', label: 'Claude Opus 5.5' },
+  { value: 'sonnet', label: 'Claude Sonnet 5' },
   { value: 'haiku', label: 'Claude Haiku 4.5' },
   { value: 'gpt-5.6', label: 'GPT-5.6' },
   { value: 'gpt-5.5', label: 'GPT-5.5' },
@@ -178,13 +178,13 @@ export const THINKING_LEVELS = [
 // ============================================
 
 // Default phase model configuration for Auto profile
-// Uses a high-capability model across all phases for maximum quality
+// Mirrors the backend DEFAULT_PHASE_MODELS (apps/backend/phase_config.py)
 export const DEFAULT_PHASE_MODELS: PhaseModelConfig = {
   spec: 'opus',       // Best quality for spec creation
   planning: 'opus',   // Complex architecture decisions benefit from highest-capability model
-  coding: 'opus',     // Highest quality implementation
+  coding: 'sonnet',   // Executes decided plans; Sonnet where volume dominates (#1626)
   qa: 'opus',         // Thorough QA review
-  qa_fixer: 'opus'    // Opus 4.8 across all phases (Auto = highest-capability everywhere)
+  qa_fixer: 'opus'    // Opus plans and judges, Sonnet codes -- mirrors backend DEFAULT_PHASE_MODELS
 };
 
 // Default phase thinking configuration for Auto profile
@@ -289,8 +289,8 @@ import type { InsightsProvider } from '../types/insights';
 
 export const PROVIDER_MODELS: Record<string, { id: string; label: string }[]> = {
   claude: [
-    { id: 'opus', label: 'Claude Opus 4.8' },
-    { id: 'sonnet', label: 'Claude Sonnet 4.6' },
+    { id: 'opus', label: 'Claude Opus 5.5' },
+    { id: 'sonnet', label: 'Claude Sonnet 5' },
     { id: 'haiku', label: 'Claude Haiku 4.5' },
   ],
   codex: [

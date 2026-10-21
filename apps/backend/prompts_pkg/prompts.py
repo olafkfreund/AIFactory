@@ -8,9 +8,13 @@ Supports Quick Mode for simplified prompts (~70% fewer tokens).
 """
 
 import json
+import logging
 import os
 import re
 from pathlib import Path
+from typing import Any
+
+from core import contract_trust
 
 from .project_context import (
     detect_project_capabilities,
@@ -21,6 +25,8 @@ from .project_context import (
 # Directory containing prompt files
 # prompts/ is a sibling directory of prompts_pkg/, so go up one level first
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
+
+logger = logging.getLogger(__name__)
 
 # Ponytail: minimal-code discipline injected into every build agent (planner,
 # coder, solo). Plain prompt text on purpose — it is model- and provider-neutral,
@@ -364,23 +370,15 @@ Subtasks with previous attempts:
 def get_house_standards_context(spec_dir: Path) -> str:
     """Render the RFC-0012 house standards as a prompt block.
 
-    Reads the signed Task Contract (``context/task_contract.json``, falling back
-    to ``implementation_plan.json``) and surfaces
+    Reads the verified contract, or the legacy fallback (``_load_contract``), and
+    surfaces
     ``epic_context.house_standards`` so the coder / QA agents FOLLOW the team's
     own conventions (linters, build managers, golden-path guides) instead of
     generic defaults. Degrades silently to "" when no standards were retrieved —
     RFC-0012 retrieval is best-effort, but the standards_conformance gate fails
     the build if a *retrieved* standard is then ignored.
     """
-    contract = None
-    for rel in ("context/task_contract.json", "implementation_plan.json"):
-        path = spec_dir / rel
-        if path.exists():
-            try:
-                contract = json.loads(path.read_text())
-                break
-            except (OSError, json.JSONDecodeError):
-                continue
+    contract = _load_contract(spec_dir)
     if not isinstance(contract, dict):
         return ""
 
@@ -502,8 +500,8 @@ explicitly rather than silently choosing another.
 def get_constitution_context(spec_dir: Path) -> str:
     """Render the RFC-0015 §3.1 constitution as a prompt block.
 
-    Reads the signed Task Contract (``context/task_contract.json``, falling back
-    to ``implementation_plan.json``) and surfaces
+    Reads the verified contract, or the legacy fallback (``_load_contract``), and
+    surfaces
     ``epic_context.constitution`` so the coder / QA agents HONOUR the project's
     human-authored governing principles. Mirrors the RFC-0012 house-standards
     injection pattern (``get_house_standards_context``).
@@ -517,15 +515,7 @@ def get_constitution_context(spec_dir: Path) -> str:
     false, no principles, or the block is absent) — RFC-0015 retrieval degrades,
     never fakes, and the absent case leaves today's behaviour unchanged.
     """
-    contract = None
-    for rel in ("context/task_contract.json", "implementation_plan.json"):
-        path = spec_dir / rel
-        if path.exists():
-            try:
-                contract = json.loads(path.read_text())
-                break
-            except (OSError, json.JSONDecodeError):
-                continue
+    contract = _load_contract(spec_dir)
     if not isinstance(contract, dict):
         return ""
 
@@ -593,23 +583,29 @@ def get_constitution_context(spec_dir: Path) -> str:
     return "\n".join(lines)
 
 
-def _load_contract(spec_dir: Path) -> dict | None:
-    """Read the signed Task Contract for ``spec_dir``.
-
-    Tries ``context/task_contract.json`` first, then ``implementation_plan.json``
-    (same resolution order as ``get_house_standards_context``). Returns the
-    parsed dict, or None when absent / unreadable. Never raises.
-    """
-    for rel in ("context/task_contract.json", "implementation_plan.json"):
-        path = spec_dir / rel
-        if path.exists():
-            try:
-                data = json.loads(path.read_text())
-            except (OSError, json.JSONDecodeError):
-                continue
-            if isinstance(data, dict):
-                return data
-    return None
+def _load_contract(spec_dir: Path) -> dict[str, Any] | None:
+    """Return the verified contract, or the legacy fallback; None if held or untrusted (#1708)."""
+    state, contract, why = contract_trust.trusted_contract(spec_dir)
+    if state == "hold":
+        logger.warning(
+            "[trusted-contract] contract prompt blocks withheld: %s",
+            contract_trust.reason_label(why),
+        )
+        return None
+    if isinstance(contract, dict):  # verified, or legacy with task_contract.json
+        return contract
+    traced = contract_trust.has_trusted_trace(spec_dir)
+    if os.environ.get(contract_trust.ENV) == contract_trust.LEGACY and not traced:
+        return None  # the server vouched for no contract
+    if contract_trust.ENV in os.environ or traced:
+        logger.warning("[trusted-contract] implementation_plan.json is not verified")
+        return None
+    # ponytail: true-legacy fallback, drop once every task carries a server verdict
+    try:
+        data = json.loads((spec_dir / "implementation_plan.json").read_text())
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def _deployment_names(deployment: dict, key: str) -> list[str]:
@@ -702,8 +698,9 @@ def _deployment_verification_lines(deployment: dict) -> list[str]:
 def get_deployment_context(spec_dir: Path) -> str:
     """Render the RFC-0013 ``deployment`` block as a prompt block (#643).
 
-    Reads the signed Task Contract and surfaces ``deployment`` so the coder / QA
-    agents PLAN FOR HOW THE CHANGE SHIPS, not just what it does: the required
+    Reads the verified contract, or the legacy fallback (``_load_contract``), and
+    surfaces ``deployment`` so the coder / QA agents PLAN FOR HOW THE CHANGE
+    SHIPS, not just what it does: the required
     pre-deploy scans they must wire in, the system gates that must pass, and the
     DRY-RUN deploy-verification policy (production is VAL-4 and NEVER applied
     autonomously). Degrades silently to "" when there is no deployment block —

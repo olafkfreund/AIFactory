@@ -11,6 +11,8 @@ import logging
 import subprocess
 from pathlib import Path
 
+from core.child_env import merge_driver_pins
+
 logger = logging.getLogger(__name__)
 
 # Constants for merge limits
@@ -196,13 +198,18 @@ def get_merge_base(project_dir: Path, ref1: str, ref2: str) -> str | None:
 
 def has_uncommitted_changes(project_dir: Path) -> bool:
     """Check if user has unsaved work."""
-    result = subprocess.run(
-        ["git", "status", "--porcelain"],
+    try:
+        pins = merge_driver_pins(project_dir)
+    except RuntimeError as exc:
+        logger.warning("Cannot check uncommitted changes: %s", exc)
+        return True
+    result = subprocess.run(  # noqa: S603 - fixed argv plus config pins
+        ["git", *pins, "status", "--porcelain"],
         cwd=project_dir,
         capture_output=True,
         text=True,
     )
-    return bool(result.stdout.strip())
+    return result.returncode != 0 or bool(result.stdout.strip())
 
 
 def get_current_branch(project_dir: Path) -> str:
@@ -274,7 +281,14 @@ def get_changed_files_from_branch(
         List of (file_path, status) tuples
     """
     result = subprocess.run(
-        ["git", "diff", "--name-status", f"{base_branch}...{spec_branch}"],
+        [
+            "git",
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--name-status",
+            f"{base_branch}...{spec_branch}",
+        ],
         cwd=project_dir,
         capture_output=True,
         text=True,

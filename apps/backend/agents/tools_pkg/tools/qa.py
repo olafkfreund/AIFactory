@@ -251,7 +251,7 @@ async def _refresh_stale_gate_evidence(spec_dir: Path, project_dir: Path) -> str
     if not marker.exists():
         return None
     gate_dir = gate_dir_for(spec_dir, project_dir)
-    if trailing_gate_marker_is_current(spec_dir, gate_dir):
+    if trailing_gate_marker_is_current(spec_dir, gate_dir, project_dir=project_dir):
         return None  # already current -- nothing to refresh
 
     if not _claim_gate_refresh(spec_dir):

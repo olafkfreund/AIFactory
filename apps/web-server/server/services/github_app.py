@@ -1,0 +1,189 @@
+"""Open and merge PRs as a GitHub App instead of a maintainer's PAT (#1671).
+
+``start()`` mints an installation token at boot and writes it to ``GH_TOKEN`` /
+``GITHUB_TOKEN`` in ``os.environ``; ``child_env`` keeps both for gh/git, so every
+PR path picks it up. No App vars set means nothing changes.
+Web login is published through the same ``_publish()`` (``load_web_login``).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import logging
+import os
+import shutil
+import subprocess
+import time
+from pathlib import Path
+
+import httpx
+import yaml
+from jose import jwt
+
+from server.utils.subprocess_env import child_env, github_token
+
+logger = logging.getLogger(__name__)
+
+_KEY_VAR = "AIFACTORY_GITHUB_APP_PRIVATE_KEY"
+_APP_VARS = (
+    "AIFACTORY_GITHUB_APP_ID",
+    "AIFACTORY_GITHUB_APP_INSTALLATION_ID",
+    _KEY_VAR,
+)
+_PAT_VARS = ("GITHUB_TOKEN", "GH_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN")
+_OK_DELAY = 1800
+_RETRY_DELAY = 60
+
+_app_id: str | None = None
+_installation_id: str | None = None
+_key: str | None = None
+
+
+def configured() -> bool:
+    return _key is not None
+
+
+def _managed_gh_dir() -> Path:
+    """Where web login keeps its gh config, away from ~/.config/gh (#1723)."""
+    from server.paths import get_data_dir  # noqa: PLC0415 - paths migrates on import
+
+    d = get_data_dir() / "gh"
+    d.mkdir(mode=0o700, exist_ok=True)
+    d.chmod(0o700)
+    return d
+
+
+def _default_gh_dir() -> Path:
+    return Path(os.environ.get("GH_CONFIG_DIR") or Path.home() / ".config" / "gh")
+
+
+def _hosts_yml_has_token() -> bool:
+    return _dir_has_token(_default_gh_dir()) or _dir_has_token(_managed_gh_dir())
+
+
+def _dir_has_token(cfg: Path) -> bool:
+    try:
+        data = yaml.safe_load((cfg / "hosts.yml").read_text()) or {}
+    except FileNotFoundError:
+        return False
+    except yaml.YAMLError:
+        # The YAML error quotes the bad line, which may hold a token.
+        raise RuntimeError("gh hosts.yml is unreadable; fix or remove it") from None
+    host = data.get("github.com") if isinstance(data, dict) else None
+    if not isinstance(host, dict):
+        return False
+    users = host.get("users")
+    entries = [host, *(users.values() if isinstance(users, dict) else [])]
+    return any(isinstance(e, dict) and e.get("oauth_token") for e in entries)
+
+
+def _mint() -> str:
+    now = int(time.time())
+    claims = {"iat": now - 60, "exp": now + 540, "iss": _app_id}
+    token = str(jwt.encode(claims, _key, algorithm="RS256"))
+    resp = httpx.post(
+        f"https://api.github.com/app/installations/{_installation_id}/access_tokens",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    minted = str(resp.json().get("token") or "")
+    if not minted:
+        raise RuntimeError("GitHub returned no installation token")
+    return minted
+
+
+def _publish(token: str) -> None:
+    os.environ["GH_TOKEN"] = os.environ["GITHUB_TOKEN"] = token
+
+
+def warn_legacy_web_login() -> None:
+    """Warn that an old web-login token sits in the default gh dir (#1723)."""
+    old = _default_gh_dir()
+    try:
+        if old == _managed_gh_dir() or not _dir_has_token(old):
+            return
+    except (RuntimeError, OSError):  # a warning must never stop startup
+        logger.warning("%s/hosts.yml could not be checked for an old token", old)
+        return
+    logger.warning(
+        "%s/hosts.yml holds an old web-login GitHub token. It is still read by "
+        "gh calls until you remove it; log in again from the UI to move to "
+        "~/.aifactory/gh.",
+        old,
+    )
+
+
+def load_web_login() -> None:
+    """Publish the token ``gh auth login`` stored in the managed dir, if any."""
+    gh = shutil.which("gh")
+    if github_token() or configured() or not gh:
+        return
+    try:
+        out = subprocess.run(  # noqa: S603 - fixed argv, no shell
+            [gh, "auth", "token", "--hostname", "github.com"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+            env=child_env(extra={"GH_CONFIG_DIR": str(_managed_gh_dir())}),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return
+    token = out.stdout.strip()
+    if out.returncode == 0 and token:
+        _publish(token)
+        logger.info("published the web-login GitHub token")
+
+
+def start() -> None:
+    global _app_id, _installation_id, _key  # noqa: PLW0603 — process-wide token state
+    present = [v for v in _APP_VARS if os.environ.get(v)]
+    if not present:
+        return
+    if len(present) != len(_APP_VARS):
+        raise RuntimeError(
+            f"GitHub App needs all of {', '.join(_APP_VARS)}; set only {present}"
+        )
+    from core.mcp_credentials import _load_operator_config  # noqa: PLC0415
+
+    token_env = (_load_operator_config().get("github") or {}).get("tokenEnv")
+    for name in (*_PAT_VARS, token_env):
+        if name and os.environ.get(name):
+            raise RuntimeError(
+                f"{name} is set; remove the PAT from the pod to use the GitHub App"
+            )
+    if _hosts_yml_has_token():
+        raise RuntimeError(
+            "gh hosts.yml holds a github.com token; remove it to use the GitHub App"
+        )
+    _app_id = os.environ["AIFACTORY_GITHUB_APP_ID"]
+    _installation_id = os.environ["AIFACTORY_GITHUB_APP_INSTALLATION_ID"]
+    _key = os.environ.pop(_KEY_VAR)
+    try:
+        _publish(_mint())
+    except BaseException:
+        _key = None  # fail closed: a failed start leaves nothing configured
+        raise
+
+
+# ponytail: process-wide token, 1h TTL, refreshed every 30 min; a build/Job snapshots it
+# at spawn and gets >=30 min. Longer packed builds fail their final push quietly
+# (core/workspace_fetch.py:91-108). Upgrade: per-call tokens with #1688.
+async def refresh_loop(stop: asyncio.Event) -> None:
+    delay = _OK_DELAY
+    while not stop.is_set():
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=delay)
+        if stop.is_set():
+            break
+        try:
+            _publish(await asyncio.to_thread(_mint))
+            delay = _OK_DELAY
+        except Exception:  # keep the current token, retry soon
+            logger.exception("GitHub App token refresh failed; keeping current token")
+            delay = _RETRY_DELAY

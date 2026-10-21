@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 
 from core.client import create_client
+from core.git_metadata import check_git_metadata
 from phase_config import (
     get_phase_model,
     get_phase_thinking_budget,
@@ -133,6 +134,11 @@ async def run_followup_planner(
             status, response, _error_info = await run_agent_session(
                 client, prompt, spec_dir, verbose, phase=LogPhase.PLANNING
             )
+        try:
+            check_git_metadata(project_dir)
+        except RuntimeError as exc:
+            logger.error("%s", exc)
+            status = "error"
 
         # End planning phase in task logger
         if task_logger:

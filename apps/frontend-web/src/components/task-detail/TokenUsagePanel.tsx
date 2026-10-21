@@ -5,7 +5,7 @@
  * Response:  { version, turns, model, maxTokens, totalInputTokens, outputTokens,
  *              totalTokens, totalCostUsd, pctOfWindow,
  *              categories: Array<{ key, label, color, tokens, pctOfWindow, costUsd }>,
- *              updatedAt }
+ *              cacheReadTokens?, cacheCreationTokens?, cacheHitRate?, updatedAt }
  *
  * Empty-state is shown when the endpoint returns no data yet.
  */
@@ -31,6 +31,10 @@ interface TokenUsageData {
   maxTokens: number;
   totalCostUsd: number;
   pctOfWindow: number;
+  // #1398: optional -- responses from before the split don't carry them.
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
+  cacheHitRate?: number | null;
 }
 
 interface TokenUsagePanelProps {
@@ -98,6 +102,9 @@ export function TokenUsagePanel({ taskId }: TokenUsagePanelProps) {
     );
   }
 
+  const cacheRead = data.cacheReadTokens ?? 0;
+  const cacheWritten = data.cacheCreationTokens ?? 0;
+
   const windowPct = data.maxTokens > 0
     ? Math.min(100, Math.round((data.totalTokens / data.maxTokens) * 100))
     : 0;
@@ -133,6 +140,17 @@ export function TokenUsagePanel({ taskId }: TokenUsagePanelProps) {
             style={{ width: `${windowPct}%` }}
           />
         </div>
+      )}
+
+      {/* Cache writes vs reads (#1398): shown only when a provider reported cache. */}
+      {(cacheRead > 0 || cacheWritten > 0) && (
+        <p className="text-xs font-mono text-muted-foreground">
+          {t('tasks:tokenUsage.cache', {
+            read: formatTokens(cacheRead),
+            written: formatTokens(cacheWritten),
+            rate: Math.round((data.cacheHitRate ?? 0) * 100),
+          })}
+        </p>
       )}
 
       {/* Per-category breakdown */}

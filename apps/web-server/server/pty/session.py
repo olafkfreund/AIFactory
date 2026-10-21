@@ -9,12 +9,43 @@ import asyncio
 import contextlib
 import os
 import signal
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from uuid import uuid4
+
+from server.utils.subprocess_env import pin_git_config
+
+_HELPER_KEY = r"^credential\.(.+\.)?helper$"
+
+
+def _user_credential_helpers(env: dict[str, str]) -> list[tuple[str, str]]:
+    """The user's own system and global credential helpers, in git's order.
+
+    Never reads repo config, so a helper an agent planted there stays reset.
+    """
+    out: list[tuple[str, str]] = []
+    for scope in ("--system", "--global"):
+        try:
+            r = subprocess.run(  # noqa: S603
+                ["git", "config", scope, "--get-regexp", _HELPER_KEY],  # noqa: S607
+                capture_output=True,
+                text=True,
+                timeout=5,
+                env=env,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if r.returncode == 0:
+            for line in r.stdout.splitlines():
+                key, _, value = line.partition(" ")
+                out.append((key, value))
+    return out
+
 
 # Import ptyprocess for PTY handling (cross-platform)
 try:
@@ -60,6 +91,18 @@ class PTYSession:
         env.pop("CLAUDECODE", None)
         if self.env:
             env.update(self.env)
+        # Agent worktrees share .git/config: pin git's exec keys, but keep the
+        # user's editor, pager and own credential helpers (#1745).
+        pin_git_config(
+            env,
+            editor=env.get("VISUAL") or env.get("EDITOR") or "vi",
+            pager=env.get("PAGER") or "less",
+        )
+        n = int(env["GIT_CONFIG_COUNT"])
+        for i, (key, value) in enumerate(_user_credential_helpers(env)):
+            env[f"GIT_CONFIG_KEY_{n + i}"] = key
+            env[f"GIT_CONFIG_VALUE_{n + i}"] = value
+            env["GIT_CONFIG_COUNT"] = str(n + i + 1)
 
         # Start the PTY process
         self._pty = PtyProcessUnicode.spawn(

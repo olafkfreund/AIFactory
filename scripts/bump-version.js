@@ -24,7 +24,6 @@
  *      - Creates git tag
  *      - Builds binaries
  *      - Creates GitHub release
- *      - Updates README
  */
 
 const fs = require('fs');
@@ -204,6 +203,31 @@ function changelogHasVersion(content, version) {
   });
 }
 
+// Rewrite info.version in the OpenAPI spec text (#1631). Constant regex scoped to
+// the top-level info: block; the first 2-space `version:` under it wins, so the
+// 8-space component `version:` keys are never touched. Nothing from argv enters
+// the pattern (#1283), and the replacer is a function so `$&`/`$1` in the
+// version stay literal. Emits the unquoted form the generator writes
+// (_read_app_version, apps/web-server/server/main.py:336-356). Returns null when
+// there is no info.version line.
+function setOpenapiVersion(text, version) {
+  const re = /^(info:\n(?:  .*\n)*?)  version: .*$/m;
+  if (!re.test(text)) return null;
+  return text.replace(re, (_m, head) => `${head}  version: ${version}`);
+}
+
+// Rewrite root and workspace versions in package-lock.json (#1727).
+function setLockVersions(text, version) {
+  const lock = JSON.parse(text);
+  if (!lock.packages || !lock.packages[''] || !lock.packages['apps/frontend-web']) {
+    return null;
+  }
+  lock.version = version;
+  lock.packages[''].version = version;
+  lock.packages['apps/frontend-web'].version = version;
+  return JSON.stringify(lock, null, 2) + '\n';
+}
+
 // Main function
 function main() {
   const bumpType = process.argv[2];
@@ -244,6 +268,19 @@ function main() {
   run(process.execPath, [validateScript, `v${newVersion}`]);
   success('Release validation passed');
 
+  // 4b. Pre-compute the OpenAPI spec bump; fail before writing anything (#1631).
+  const openapiPath = path.join(__dirname, '..', 'apps', 'web-server', 'openapi.yaml');
+  const openapiRaw = readIfPresent(openapiPath);
+  if (openapiRaw === null) error(`OpenAPI spec not found at ${openapiPath}`);
+  const openapiNext = setOpenapiVersion(openapiRaw, newVersion);
+  if (openapiNext === null) error(`No info.version line in ${openapiPath}`);
+
+  const lockPath = path.join(__dirname, '..', 'package-lock.json');
+  const lockRaw = readIfPresent(lockPath);
+  if (lockRaw === null) error(`package-lock.json not found at ${lockPath}`);
+  const lockNext = setLockVersions(lockRaw, newVersion);
+  if (lockNext === null) error(`No root/apps/frontend-web entries in ${lockPath}`);
+
   // 5. Update all version files
   info('Updating package.json files...');
   updatePackageJson(newVersion);
@@ -254,9 +291,13 @@ function main() {
     success('Updated apps/backend/__init__.py');
   }
 
-  // Note: README.md is NOT updated here - it gets updated by the release workflow
-  // after the GitHub release is successfully published. This prevents version
-  // mismatches where README shows a version that doesn't exist yet.
+  info('Updating apps/web-server/openapi.yaml...');
+  fs.writeFileSync(openapiPath, openapiNext);
+  success('Updated apps/web-server/openapi.yaml');
+
+  info('Updating package-lock.json...');
+  fs.writeFileSync(lockPath, lockNext);
+  success('Updated package-lock.json');
 
   // 6. Check if CHANGELOG.md has entry for this version
   info('Checking CHANGELOG.md...');
@@ -288,7 +329,7 @@ function main() {
 
   // 7. Create git commit
   info('Creating git commit...');
-  run('git', ['add', '--', 'apps/frontend-web/package.json', 'package.json', 'apps/backend/__init__.py']);
+  run('git', ['add', '--', 'apps/frontend-web/package.json', 'package.json', 'apps/backend/__init__.py', 'apps/web-server/openapi.yaml', 'package-lock.json']);
   run('git', ['commit', '-m', `chore: bump version to ${newVersion}`]);
   success(`Created commit: "chore: bump version to ${newVersion}"`);
 
@@ -311,8 +352,7 @@ function main() {
   log(`      - Validate CHANGELOG.md has entry for v${newVersion}`, colors.yellow);
   log(`      - Create tag v${newVersion}`, colors.yellow);
   log(`      - Build binaries for all platforms`, colors.yellow);
-  log(`      - Create GitHub release with changelog from CHANGELOG.md`, colors.yellow);
-  log(`      - Update README with new version\n`, colors.yellow);
+  log(`      - Create GitHub release with changelog from CHANGELOG.md\n`, colors.yellow);
 
   warning('Note: The commit has been created locally but NOT pushed.');
   if (!hasChangelogEntry) {
@@ -328,4 +368,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { readIfPresent, changelogHasVersion };
+module.exports = { readIfPresent, changelogHasVersion, setOpenapiVersion, setLockVersions };

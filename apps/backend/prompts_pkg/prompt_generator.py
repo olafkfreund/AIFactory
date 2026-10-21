@@ -288,6 +288,18 @@ not in the spec directory.
 ---
 
 """
+    from agents.gate_runner import repo_lint_enabled  # noqa: PLC0415
+    from analysis.ci_discovery import ci_linters  # noqa: PLC0415
+
+    if repo_lint_enabled() and (linters := ci_linters(project_dir)):
+        header += (
+            "## REPO LINT\n\n"
+            f"The target repo's CI runs: {', '.join(linters)}. A trailing gate "
+            "runs the ones AIFactory supports after the last subtask and sends "
+            "failures back for fixing, so plan code and verification that keep "
+            "it clean for them.\n\n"
+        )
+
     # #805 / Factory#273: spec text is issue-derived (untrusted) - frame it as
     # data, not instructions, before the planner reads it.
     from .prompts import UNTRUSTED_CONTENT_BOUNDARY  # noqa: PLC0415 - no cycle

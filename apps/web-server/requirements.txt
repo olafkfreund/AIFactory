@@ -131,3 +131,7 @@ kubernetes-asyncio>=32.0
 # commands fail-closed. Pin it here too so the production runtime never
 # silently degrades to the bypassable regex parser.
 bashlex>=0.18
+
+# #1820 — server/mcp_remote/server.py uses the mcp 2.x lowlevel Server API
+# (on_list_tools/on_call_tool constructor handlers); 1.x fails at import.
+mcp>=2.0

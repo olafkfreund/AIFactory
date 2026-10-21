@@ -7,13 +7,18 @@ CLI commands for building specs and handling the main build flow.
 
 import asyncio
 import json
+import logging
+import os
 import sys
 from pathlib import Path
+from typing import Any
 
 # Ensure parent directory is in path for imports (before other imports)
 _PARENT_DIR = Path(__file__).parent.parent
 if str(_PARENT_DIR) not in sys.path:
     sys.path.insert(0, str(_PARENT_DIR))
+
+logger = logging.getLogger(__name__)
 
 # Import only what we need at module level
 # Heavy imports are lazy-loaded in functions to avoid import errors
@@ -88,6 +93,28 @@ def _gate_outcomes(evidence: str) -> list[str]:
 
     result: list[str] = gate_outcomes(evidence)
     return result
+
+
+def _check_qa_git_metadata(work_dir: Path) -> None:
+    """QA reviewer/fixer sessions ran in work_dir: fail the build on drift (#1746)."""
+    from agents.coder import _fail_on_git_metadata  # noqa: PLC0415
+    from core.git_metadata import check_git_metadata  # noqa: PLC0415
+
+    try:
+        check_git_metadata(work_dir)
+    except RuntimeError as exc:
+        _fail_on_git_metadata(exc, StatusManager(work_dir))
+        raise  # the outer handler exits 1
+
+
+def _record_git_baseline_early(work_dir: Path) -> None:
+    """Take the git metadata baseline before the first agent session (#1832)."""
+    from core.git_metadata import record_baseline  # noqa: PLC0415
+
+    try:
+        record_baseline(work_dir)
+    except RuntimeError as exc:
+        logger.warning("git metadata baseline not recorded: %s", exc)
 
 
 def _contract_gap_in_existing_code(spec_dir: Path, work_dir: Path | None) -> list[str]:
@@ -168,6 +195,60 @@ def build_is_silent_noop(spec_dir: Path, work_dir: Path | None = None) -> bool:
     except (OSError, json.JSONDecodeError):
         plan = {}
     return plan.get("status") != "human_review"
+
+
+def _record_preflight_pause(spec_dir: Path) -> None:
+    """Mark the plan ``human_review/plan_review`` so the control plane sees the pause (#1633).
+
+    Packed Jobs only: the plan is pushed on exit and the control plane reads the
+    status from it. Without a plan a ``{"phases": []}`` skeleton is written.
+    """
+    from core import workspace_fetch  # noqa: PLC0415
+
+    if not os.environ.get(workspace_fetch.WORKSPACE_URI_ENV):
+        return
+    plan_file = spec_dir / "implementation_plan.json"
+    try:
+        plan = json.loads(plan_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        plan = None
+    if not isinstance(plan, dict):
+        plan = {"phases": []}
+    plan["status"] = "human_review"
+    plan["reviewReason"] = "plan_review"
+    try:
+        plan_file.write_text(json.dumps(plan, indent=2), encoding="utf-8")
+    except OSError as exc:
+        logger.warning("could not record pre-flight pause: %s", type(exc).__name__)
+
+
+def _resolve_build_contract(
+    spec_dir: Path, source_spec_dir: Path | None = None
+) -> dict[str, Any] | None:
+    """The contract the server verified, or None. A held migration stops the build (#1673)."""
+    from core.contract_trust import (  # noqa: PLC0415
+        reason_label,
+        record_hold,
+        trusted_contract,
+    )
+    from core.migration_mapper import is_migration  # noqa: PLC0415
+
+    state, contract, why = trusted_contract(spec_dir)
+    held: dict[str, Any] | None = contract  # typed local: core.* resolves to Any here
+    if state != "hold":
+        record_hold(spec_dir, None, source_spec_dir)
+        return held
+    if is_migration(contract):
+        msg = f"[trusted-contract] migration contract held ({reason_label(why)}); build stopped"
+        logger.warning(msg)
+        print_status(msg, "error")
+        record_hold(spec_dir, msg.removeprefix("[trusted-contract] "), source_spec_dir)
+        sys.exit(1)
+    msg = f"[trusted-contract] contract held ({reason_label(why)}); normal build"
+    logger.warning(msg)
+    print_status(msg, "warning")
+    record_hold(spec_dir, msg.removeprefix("[trusted-contract] "), source_spec_dir)
+    return None
 
 
 def handle_build_command(
@@ -349,6 +430,7 @@ def handle_build_command(
             if auto_continue:
                 # Save review state indicating spec is waiting for approval
                 review_state.save(spec_dir)
+                _record_preflight_pause(spec_dir)
                 # Exit with success code - web UI will handle the human_review transition
                 sys.exit(0)
             else:
@@ -410,11 +492,10 @@ def handle_build_command(
         try:
             from core.migration_mapper import (
                 is_migration,
-                load_contract,
                 prepare_migration_workspace,
             )
 
-            _contract = load_contract(spec_dir)
+            _contract = _resolve_build_contract(spec_dir, source_spec_dir)
             if is_migration(_contract):
                 summary = prepare_migration_workspace(
                     working_dir, project_dir, _contract
@@ -438,6 +519,8 @@ def handle_build_command(
         working_dir=str(working_dir),
         spec_dir=str(spec_dir),
     )
+
+    _record_git_baseline_early(working_dir)
 
     try:
         debug("run.py", "Starting agent execution")
@@ -538,6 +621,7 @@ def handle_build_command(
                         verbose=verbose,
                     )
                 )
+                _check_qa_git_metadata(working_dir)
 
                 if qa_approved:
                     print("\n" + "=" * 70)
@@ -576,6 +660,7 @@ def handle_build_command(
             # never found, no gate ran at all, and the run still completed as
             # "QA validation passed (pre-approved)" — indistinguishable, to
             # anyone reading the result, from a suite that ran and was green.
+            _check_qa_git_metadata(working_dir)
             gate_evidence = _trailing_gate_evidence(spec_dir, working_dir)
             emit_phase(
                 ExecutionPhase.QA_REVIEW, "QA pre-approved by coder agent", progress=100

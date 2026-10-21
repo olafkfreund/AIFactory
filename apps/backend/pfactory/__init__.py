@@ -22,7 +22,6 @@ from .taxonomy import (
 )
 from .tfactory_client import (
     build_handoff_payload,
-    load_tfactory_block,
     send_handoff,
     tfactory_config,
 )
@@ -40,7 +39,6 @@ __all__ = [
     "extract_child_issue_numbers",
     "is_governed_requirements",
     "load_pfactory_metadata",
-    "load_tfactory_block",
     "parse_pfactory_meta",
     "priority_rank",
     "render_pfactory_context",

@@ -1,0 +1,347 @@
+"""#1619 — ``is_running`` must answer for kubejob builds, not only subprocesses.
+
+``AgentService.is_running`` was ``task_id in self.running_tasks``, and the only
+write to that dict happens right after ``asyncio.create_subprocess_exec`` — the
+in-pod subprocess backend. A kubejob build dispatches a k8s Job instead, so the
+answer was ``False`` for its whole run. The cockpit renders that as **Stuck**
+and offers **Recover**, which resets the task's record while the Job keeps
+writing. Measured live: a Job ``Running`` for 49 minutes, with its pod log
+advancing, while ``GET /api/tasks/<id>/running`` answered ``is_running: false``.
+
+The live set is rebuilt wholesale on every reconcile tick. These tests pin both
+directions: a running build is reported running, and a build that left the rows
+stops being reported running on the very next tick.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import sys
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+_WEB_SERVER = Path(__file__).parent.parent / "apps" / "web-server"
+if str(_WEB_SERVER) not in sys.path:
+    sys.path.insert(0, str(_WEB_SERVER))
+_BACKEND = Path(__file__).parent.parent / "apps" / "backend"
+if str(_BACKEND) not in sys.path:
+    sys.path.insert(0, str(_BACKEND))
+
+from server.services.agent_service import AgentService  # noqa: E402
+
+TASK = "proj-uuid:022-some-spec"
+OTHER = "proj-uuid:023-other-spec"
+
+
+class _StillRunningBackend:
+    """Every polled job is still running (``reconcile_by_poll`` -> None)."""
+
+    async def reconcile_by_poll(self, _job_id: str) -> str | None:
+        return None
+
+
+class _TerminalBackend:
+    """Every polled job has finished."""
+
+    async def reconcile_by_poll(self, _job_id: str) -> str | None:
+        return "completed"
+
+
+class _RaisingBackend:
+    async def reconcile_by_poll(self, _job_id: str) -> str | None:
+        raise RuntimeError("poll failed")
+
+
+def _service(
+    monkeypatch: pytest.MonkeyPatch, rows: list[str], backend: Any
+) -> AgentService:
+    monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "kubejob")
+    service = AgentService()
+    service._store_enabled = True
+
+    class _FakeStore:
+        async def get_active_kubejobs(self) -> list[dict[str, Any]]:
+            return [
+                {"job_id": r, "job_name": "j", "namespace": "factory"} for r in rows
+            ]
+
+    monkeypatch.setattr(service, "_store", lambda: _FakeStore())
+    monkeypatch.setattr(service, "_build_backend", lambda: backend)
+    monkeypatch.setattr(service, "_redrive_kubejob_review", _noop)
+    monkeypatch.setattr(service, "_drain_queue", _noop)
+    monkeypatch.setattr(service, "_cancel_kubejob_log_stream", lambda *_a, **_k: None)
+    monkeypatch.setattr(service, "_reap_kubejob_console", _noop)
+    monkeypatch.setattr(service, "_release_task_credential", lambda *_a, **_k: None)
+    return service
+
+
+async def _noop(*_args: Any, **_kwargs: Any) -> None:
+    return None
+
+
+@pytest.mark.asyncio
+async def test_running_kubejob_reads_as_running(monkeypatch: pytest.MonkeyPatch):
+    """THE regression: a dispatched Job is running, and nothing else knows it.
+
+    Mutation guard: drop ``_active_kubejob_task_ids`` from ``is_running`` and
+    this fails — which is precisely the production behaviour #1619 reports.
+    """
+    service = _service(monkeypatch, [TASK], _StillRunningBackend())
+    assert service.is_running(TASK) is False, "nothing polled yet"
+
+    await service.reconcile_kubejob_builds()
+
+    assert service.is_running(TASK) is True
+    assert service.running_tasks == {}, "no subprocess was involved"
+
+
+@pytest.mark.asyncio
+async def test_finished_kubejob_stops_reading_as_running(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The set is replaced, not accumulated.
+
+    A set that is only added to would keep claiming a finished build is alive,
+    which strands it and makes ``/start`` refuse with "already running" — the
+    failure the intent calls worse than the one being fixed.
+    """
+    service = _service(monkeypatch, [TASK], _StillRunningBackend())
+    await service.reconcile_kubejob_builds()
+    assert service.is_running(TASK) is True
+
+    # Next tick: the row is gone from the store entirely.
+    class _EmptyStore:
+        async def get_active_kubejobs(self) -> list[dict[str, Any]]:
+            return []
+
+    monkeypatch.setattr(service, "_store", lambda: _EmptyStore())
+    await service.reconcile_kubejob_builds()
+
+    assert service.is_running(TASK) is False
+
+
+@pytest.mark.asyncio
+async def test_terminal_job_is_not_reported_running(monkeypatch: pytest.MonkeyPatch):
+    """A row still present but polled terminal must not join the live set."""
+    service = _service(monkeypatch, [TASK], _TerminalBackend())
+    await service.reconcile_kubejob_builds()
+    assert service.is_running(TASK) is False
+
+
+@pytest.mark.asyncio
+async def test_unrelated_task_is_not_reported_running(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Only the polled ids are live — the answer is not a blanket True."""
+    service = _service(monkeypatch, [TASK], _StillRunningBackend())
+    await service.reconcile_kubejob_builds()
+    assert service.is_running(OTHER) is False
+
+
+@pytest.mark.asyncio
+async def test_store_failure_leaves_the_previous_answer_standing(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A store hiccup must not report every live build dead.
+
+    The set is only replaced when the poll succeeded; an early return keeps the
+    last known answer rather than inventing "nothing is running", which would
+    make the cockpit flap between running and Stuck on a transient DB error.
+    """
+    service = _service(monkeypatch, [TASK], _StillRunningBackend())
+    await service.reconcile_kubejob_builds()
+    assert service.is_running(TASK) is True
+
+    class _BrokenStore:
+        async def get_active_kubejobs(self) -> list[dict[str, Any]]:
+            raise RuntimeError("connection reset")
+
+    monkeypatch.setattr(service, "_store", lambda: _BrokenStore())
+    await service.reconcile_kubejob_builds()
+
+    assert service.is_running(TASK) is True
+
+
+@pytest.mark.asyncio
+async def test_poll_error_keeps_last_ticks_membership(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service = _service(monkeypatch, [TASK], _StillRunningBackend())
+    await service.reconcile_kubejob_builds()
+    assert service.is_running(TASK) is True
+
+    monkeypatch.setattr(service, "_build_backend", lambda: _RaisingBackend())
+    await service.reconcile_kubejob_builds()
+    assert service.is_running(TASK) is True
+
+
+@pytest.mark.asyncio
+async def test_poll_error_does_not_invent_membership(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service = _service(monkeypatch, [TASK], _RaisingBackend())
+    await service.reconcile_kubejob_builds()
+    assert service.is_running(TASK) is False
+
+
+@pytest.mark.asyncio
+async def test_poll_error_keeps_a_dispatch_marked_build(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A build marked at dispatch (#1662) survives a first-tick poll error."""
+    service = _service(monkeypatch, [TASK], _RaisingBackend())
+    service._active_kubejob_task_ids.add(TASK)
+    await service.reconcile_kubejob_builds()
+    assert service.is_running(TASK) is True
+
+
+@pytest.mark.asyncio
+async def test_streamer_liveness_check_follows_the_same_set(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """#1619: the log streamer's reattach authority is the same live set.
+
+    If these two could disagree, the cockpit would say "running" while the
+    streamer gave up (or the reverse), which is how the original defect stayed
+    invisible — two views of the same build, neither checked against the other.
+    """
+    service = _service(monkeypatch, [TASK], _StillRunningBackend())
+    await service.reconcile_kubejob_builds()
+
+    active = service._kubejob_still_active(TASK)
+    assert await active() is True
+    assert service.is_running(TASK) is True
+
+    # A build that has left the rows is no longer followed...
+    gone = service._kubejob_still_active(OTHER)
+    assert await gone() is False
+    assert service.is_running(OTHER) is False
+
+    # Next tick: the row is gone. The SAME closure must now say False (D8).
+    class _EmptyStore:
+        async def get_active_kubejobs(self) -> list[dict[str, Any]]:
+            return []
+
+    monkeypatch.setattr(service, "_store", lambda: _EmptyStore())
+    await service.reconcile_kubejob_builds()
+    assert await active() is False
+    assert service.is_running(TASK) is False
+
+
+@pytest.mark.asyncio
+async def test_unmarked_id_reads_inactive_to_streamer(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """#1670: no time-based grace; both readers answer from the same set.
+
+    An id dispatch never marked is inactive for the streamer and for
+    ``is_running``; ``_MAX_EMPTY_REATTACHES`` is the backstop for a dead stream.
+    """
+    service = _service(monkeypatch, [], _StillRunningBackend())
+    unmarked = "proj-uuid:999-never-polled"
+    assert await service._kubejob_still_active(unmarked)() is False
+    assert service.is_running(unmarked) is False
+
+
+class _DispatchingBackend(_StillRunningBackend):
+    """A backend whose dispatch succeeds, or raises when ``fail`` is set."""
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+
+    async def dispatch(self, **_kwargs: Any) -> str:
+        if self.fail:
+            raise RuntimeError("k8s api unavailable")
+        return "aifactory-build-job"
+
+
+def _dispatchable(
+    monkeypatch: pytest.MonkeyPatch, backend: _DispatchingBackend, rows: list[str]
+) -> AgentService:
+    service = _service(monkeypatch, rows, backend)
+    monkeypatch.setattr(service, "_write_skill_context", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        service, "_resolve_claude_token_pooled", lambda *_a, **_k: (None, None, None)
+    )
+    monkeypatch.setattr(service, "_start_kubejob_log_stream", _noop)
+    monkeypatch.setattr(service, "_safe_emit_task_status", _noop)
+    return service
+
+
+async def _dispatch(service: AgentService) -> None:
+    await service._dispatch_build_job(
+        task_id=TASK,
+        project_path=Path("/nonexistent-project"),
+        spec_id="022-some-spec",
+        correlation_key=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_dispatched_build_is_running_before_any_tick(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """#1662: recovery must refuse a build dispatched seconds ago."""
+    from fastapi import HTTPException
+    from server.routes import execution
+
+    service = _dispatchable(monkeypatch, _DispatchingBackend(), rows=[])
+    await _dispatch(service)
+
+    assert await service._kubejob_still_active(TASK)() is True
+    assert service.is_running(TASK) is True
+    with pytest.raises(HTTPException) as exc:
+        await execution._refuse_recovery_while_running(TASK, service, force=False)
+    assert exc.value.status_code == 409
+    # force still overrides the guard
+    await execution._refuse_recovery_while_running(TASK, service, force=True)
+
+
+@pytest.mark.asyncio
+async def test_tick_in_flight_does_not_drop_a_fresh_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """#1662: a tick that read rows before dispatch must not clear it."""
+    service = _dispatchable(monkeypatch, _DispatchingBackend(), rows=[])
+
+    class _GatedStore:
+        def __init__(self) -> None:
+            self.reading = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def get_active_kubejobs(self) -> list[dict[str, Any]]:
+            self.reading.set()
+            await self.release.wait()
+            return []  # read before set_worker_ref committed
+
+    store = _GatedStore()
+    monkeypatch.setattr(service, "_store", lambda: store)
+    tick = asyncio.create_task(service.reconcile_kubejob_builds())
+    await store.reading.wait()
+    await _dispatch(service)
+    store.release.set()
+    await tick
+
+    assert service.is_running(TASK) is True
+
+    # Bounded: the next tick reads rows without TASK (its Job is gone)
+    # and drops it, so the set never only grows.
+    class _EmptyStore:
+        async def get_active_kubejobs(self) -> list[dict[str, Any]]:
+            return []
+
+    monkeypatch.setattr(service, "_store", lambda: _EmptyStore())
+    await service.reconcile_kubejob_builds()
+    assert service.is_running(TASK) is False
+
+
+@pytest.mark.asyncio
+async def test_failed_dispatch_is_not_marked_running(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service = _dispatchable(monkeypatch, _DispatchingBackend(fail=True), rows=[])
+    with pytest.raises(RuntimeError):
+        await _dispatch(service)
+    assert service.is_running(TASK) is False

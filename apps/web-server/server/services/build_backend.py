@@ -83,11 +83,13 @@ default flip (``AIFACTORY_BUILD_BACKEND=kubejob``, RFC-0016 #671) is now READY
 pending a live validation run (a real build green Job-native with the console
 intact) — deliberately NOT flipped in this change.
 
-#777: the build Job now also gets an ``install-clis`` initContainer (mirroring
-the control-plane pod's provisioning) so non-``claude`` runtimes selectable via
-``core/runtime_gating.py`` (``codex``, ``antigravity``/gemini) have their CLI
-binary on PATH in the Job, not just a valid API credential. See
-``_inject_install_clis``.
+#777 gave the build Job an ``install-clis`` initContainer so non-``claude``
+runtimes selectable via ``core/runtime_gating.py`` (``codex``,
+``antigravity``/gemini) had their CLI binary on PATH, not just a valid API
+credential. #1621 removed it: the Dockerfile bakes all of them at pinned
+versions and the ``-nix`` build stage inherits them, so the initContainer was
+re-fetching the same packages unpinned on every build and shadowing the pinned
+copies. The Job now gets them from its image. See ``_inject_build_path``.
 """
 
 from __future__ import annotations
@@ -104,6 +106,7 @@ from factory_common.logsafe import sanitize_log
 
 from server.services.task_branch import record_branch
 from server.specpath import safe_spec_component, spec_dir_for
+from server.utils.subprocess_env import child_env, github_env
 
 from .task_phase import (
     _append_parallel_flags,
@@ -147,11 +150,20 @@ _ENV_BACKEND = "AIFACTORY_BUILD_BACKEND"
 _ENV_BUILD_IMAGE = "AIFACTORY_BUILD_IMAGE"
 _ENV_RUNNING_IMAGE = "AIFACTORY_IMAGE"
 _ENV_REPO_PVC = "AIFACTORY_SANDBOX_REPO_PVC"
-_ENV_NIX_STORE_PVC = "AIFACTORY_NIX_STORE_PVC"
 _ENV_DATA_ROOT = "AIFACTORY_DATA_ROOT"
 _ENV_NAMESPACE = "AIFACTORY_SANDBOX_NAMESPACE"
 _ENV_SERVICE_ACCOUNT = "AIFACTORY_BUILD_SA"
 _ENV_DEADLINE = "AIFACTORY_BUILD_DEADLINE_SECONDS"
+_ENV_SWEEP_DRY_RUN = "AIFACTORY_JOB_SWEEP_DRY_RUN"
+_SWEEP_GRACE_SECONDS = 600
+_SWEEP_SELECTOR = "app=aifactory,factory.io/kind=task"
+
+
+def sweep_dry_run() -> bool:
+    # Fail closed on a typo, like stale_reaper.dry_run.
+    return os.environ.get(_ENV_SWEEP_DRY_RUN, "true").strip().lower() != "false"
+
+
 # Where run.py lives inside the build image. This is the SAME var the in-pod
 # path resolves (config.Settings.BACKEND_PATH is bound to APP_BACKEND_PATH), so
 # the Job entrypoint references the identical run.py the in-pod subprocess does
@@ -168,11 +180,6 @@ _ENV_BACKEND_PATH = "APP_BACKEND_PATH"
 # set AND S3_* is provisioned, and the Job-side consumer (unpack) lands in a
 # separate slice — so an emitted ``WORKSPACE_URI`` is harmless until both are on.
 _ENV_PACK_WORKSPACE = "AIFACTORY_PACK_WORKSPACE"
-# RFC-0017 #190: when the build image ships its own ``/nix/store`` (the ``-nix``
-# build-image variant), the node-pinned RWO ``aifactory-nix-store`` warm-cache
-# PVC must NOT be co-mounted on the packed path — that mount both re-pins the
-# Job to the PVC's single node AND masks the image's baked store. This flag
-# The nix-source flag itself now lives in core.nix_env (both Job paths read it).
 
 # Defaults mirror gate_runner.py + the kube_sandbox SA.
 _DEFAULT_REPO_PVC = "aifactory-data"
@@ -252,7 +259,7 @@ _FIXED_BUILD_ENV: dict[str, str] = {
 # Provider/runtime env to propagate WHEN PRESENT in the control-plane env. Mirrors
 # core/auth.py::_AGENT_ENV_KEEP (the SDK passthrough the agent legitimately needs)
 # plus GITHUB_TOKEN/GH_TOKEN for run.py's PR endgame. ANTHROPIC_API_KEY is NOT
-# here — OAuth-only policy (subprocess_env._STRIP_VARS).
+# here — OAuth-only policy (core.child_env._STRIP_VARS).
 _PASSTHROUGH_BUILD_ENV: tuple[str, ...] = (
     # The build Job runs the trailing gates itself, and
     # `gate_runner._select_runner` reads these to decide whether a gate goes to a
@@ -260,6 +267,10 @@ _PASSTHROUGH_BUILD_ENV: tuple[str, ...] = (
     # silently chose the subprocess, found no toolchain, and recorded
     # `kotlin-unit skipped (tool not available)` — a gate that ran and verified
     # nothing (#1491).
+    # #1607: the allowlist is enforced in the coder, which runs HERE — an
+    # unforwarded value means every dispatched build sees an empty allowlist
+    # and gates everything to claude regardless of the Deployment.
+    "AIFACTORY_RUNTIMES",
     "AIFACTORY_SANDBOX_GATES",
     "AIFACTORY_SANDBOX_IMAGE",
     "AIFACTORY_SANDBOX_BACKEND",
@@ -268,6 +279,16 @@ _PASSTHROUGH_BUILD_ENV: tuple[str, ...] = (
     # must run an image carrying the AIFactory code + boto3 — i.e. this one. The
     # build Job cannot know its own image otherwise.
     "AIFACTORY_BUILD_IMAGE",
+    # #1736: the gate in this Job reads both (gate_runner.py, nix_env.py).
+    # Forward them together: the PVC alone brings back the #253 node pin.
+    "AIFACTORY_PACKED_NIX_IN_IMAGE",
+    "AIFACTORY_NIX_STORE_PVC",
+    # #1796: gates in this Job read these (gate_runner.py). Not
+    # AIFACTORY_DATA_ROOT: the Job does not mount the data PVC there.
+    "AIFACTORY_GATE_TIMEOUT_SECONDS",
+    "AIFACTORY_SANDBOX_NETWORK",
+    # #1742: opt-in repo lint gates run in this Job's trailing gate.
+    "AIFACTORY_REPO_LINT_GATE",
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_MODEL",
@@ -471,39 +492,38 @@ _SEED_HOME_VOLUMES: tuple[tuple[str, str], ...] = (
 )
 
 
-# -- provider CLI provisioning (#777) ----------------------------------------- #
+# -- provider CLI availability (#777, #1621) ---------------------------------- #
 #
 # The coding phase can select the ``codex`` runtime (core/runtime_gating.py), whose
-# provider spawns the ``codex`` CLI binary directly (not just the API). The
-# control-plane Deployment provisions ``claude``/``codex``/``gemini`` (+ the
-# ``antigravity`` alias) into a shared ``/clis`` emptyDir via an ``install-clis``
-# initContainer (factory-gitops apps/aifactory/manifests/manifests.yaml) and
-# prepends ``/clis/bin`` to ``PATH``. The dispatched build Job is a FRESH pod that
-# never got this treatment, so a build routed to ``codex`` died ``Fatal error:
-# Codex CLI executable not found: 'codex'`` even though OPENAI_API_KEY was valid —
-# the CLI just was not on PATH. This mirrors that SAME provisioning into the build
-# Job pod, unconditionally (the control plane always runs it on every pod start,
-# so the build Job does too — no opt-in flag). The -nix build image bakes
-# ``claude`` already (a claude build works), but not ``codex``/``gemini`` — this
-# closes that gap for every runtime.
-_INSTALL_CLIS_IMAGE = "node:22-bookworm-slim"
-_INSTALL_CLIS_SCRIPT = (
-    "set -e\n"
-    "export npm_config_prefix=/clis\n"
-    "npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli\n"
-    # antigravity CLI == gemini-cli, invoked as `antigravity` (matches gitops).
-    "ln -sf /clis/bin/gemini /clis/bin/antigravity\n"
-)
-_CLIS_VOLUME_NAME = "clis"
-_CLIS_MOUNT_PATH = "/clis"
+# provider spawns the ``codex`` CLI binary directly (not just the API). A build
+# routed to it once died ``Fatal error: Codex CLI executable not found: 'codex'``
+# with a perfectly valid OPENAI_API_KEY — the binary was simply not on PATH in the
+# freshly dispatched Job pod. #777 fixed that by mirroring the control plane's
+# ``install-clis`` initContainer into the build Job: an npm install into a shared
+# ``/clis`` emptyDir, with ``/clis/bin`` prepended to PATH.
+#
+# #1621 removed it. The Dockerfile bakes claude-code, codex and gemini-cli at
+# pinned versions and the ``-nix`` build stage inherits them via ``FROM runtime``,
+# so the initContainer was re-fetching the same three packages UNPINNED on every
+# build and shadowing the pinned copies — 790 MB per pod, a live npm dependency on
+# the critical path, and no guarantee two builds ran the same CLI version. The
+# claim that this image bakes ``claude`` but not ``codex``/``gemini`` was true when
+# #777 landed and stopped being true without anything noticing, because the rescue
+# kept working. factory-gitops dropped the same initContainer from the
+# control-plane Deployment under #791 for the same reason.
+#
+# The binaries now come from the image and nowhere else, so the Dockerfile asserts
+# each one with ``--version`` at build time: a missing CLI fails the image once, in
+# CI, instead of failing every build that needs it.
 # Prepends /clis/bin to the -nix BUILD image's own default PATH (Dockerfile
 # build-runtime stage), NOT the control-plane Deployment's — the build image
 # additionally carries /nix/var/nix/profiles/default/bin (where ``nix`` lives; the
-# build runs ``nix develop`` for the SUT toolchain) and /home/nonroot/.npm-global/bin.
-# Dropping either breaks the packed build, so keep the image's exact PATH and only
-# prepend /clis/bin for the provisioned provider CLIs.
+# build runs ``nix develop`` for the SUT toolchain) and /home/nonroot/.npm-global/bin
+# (the baked provider CLIs). Dropping either breaks the packed build, so this is the
+# image's exact PATH. #1621 removed the /clis/bin prefix that used to shadow the
+# baked, pinned CLIs with unpinned ones fetched per pod.
 _BUILD_PATH_ENV = (
-    "/clis/bin:/nix/var/nix/profiles/default/bin:/home/nonroot/.npm-global/bin:"
+    "/nix/var/nix/profiles/default/bin:/home/nonroot/.npm-global/bin:"
     "/home/projects/MagesticAI/.venv/bin:/usr/local/sbin:/usr/local/bin:"
     "/usr/bin:/usr/sbin:/sbin:/bin"
 )
@@ -571,34 +591,26 @@ def _inject_seed_creds(manifest: dict[str, Any]) -> dict[str, Any]:
     return manifest
 
 
-def _inject_install_clis(manifest: dict[str, Any]) -> dict[str, Any]:
-    """Add the ``install-clis`` initContainer so the build Job has the same
-    provider CLIs (``claude``/``codex``/``gemini``/``antigravity``) on PATH that
-    the control-plane pod is provisioned with (#777). Unconditional — mirrors the
-    control plane, which runs this on every pod start with no opt-in flag.
-    Mutates + returns the manifest. Pure (no env / no I/O) → unit-testable.
+def _inject_build_path(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Set the build container's ``PATH`` to the build image's own layout.
+
+    Until #1621 this also added an ``install-clis`` initContainer that
+    npm-installed claude-code/codex/gemini-cli into a ``/clis`` emptyDir and
+    prepended it here, so the build Job would have the provider CLIs on PATH
+    (#777). That became redundant when the Dockerfile started baking all three at
+    pinned versions (``Dockerfile`` ``npm install -g …@2.1.293/@0.149.0/@0.56.0``,
+    inherited by the ``-nix`` build stage via ``FROM runtime``): the initContainer
+    re-fetched the same packages UNPINNED on every build and shadowed the pinned
+    copies, 790 MB per pod. The control plane dropped it under #791 for the same
+    reason; this is the build path catching up.
+
+    What remains is load-bearing and must not be dropped with it: the build image
+    additionally carries ``/nix/var/nix/profiles/default/bin`` (where ``nix``
+    lives — the build runs ``nix develop`` for the SUT toolchain) and
+    ``/home/nonroot/.npm-global/bin`` (the baked CLIs). Losing either breaks the
+    packed build. Mutates + returns the manifest. Pure (no env / no I/O).
     """
-    pod = manifest["spec"]["template"]["spec"]
-    pod.setdefault("volumes", []).append({"name": _CLIS_VOLUME_NAME, "emptyDir": {}})
-    pod.setdefault("initContainers", []).insert(
-        0,
-        {
-            "name": "install-clis",
-            "image": _INSTALL_CLIS_IMAGE,
-            "command": ["sh", "-c"],
-            "args": [_INSTALL_CLIS_SCRIPT],
-            # node image's "node" user (uid 1000): HOME=/home/node stays
-            # writable for the npm cache; /clis is a world-writable emptyDir.
-            "securityContext": _init_container_security_context(1000),
-            "volumeMounts": [
-                {"name": _CLIS_VOLUME_NAME, "mountPath": _CLIS_MOUNT_PATH}
-            ],
-        },
-    )
-    container = pod["containers"][0]
-    container.setdefault("volumeMounts", []).append(
-        {"name": _CLIS_VOLUME_NAME, "mountPath": _CLIS_MOUNT_PATH}
-    )
+    container = manifest["spec"]["template"]["spec"]["containers"][0]
     container.setdefault("env", []).append({"name": "PATH", "value": _BUILD_PATH_ENV})
     return manifest
 
@@ -658,13 +670,7 @@ def build_run_py_job_manifest(
 
     image = _resolve_build_image(DEFAULT_NIX_IMAGE)
     repo_pvc = os.environ.get(_ENV_REPO_PVC, _DEFAULT_REPO_PVC).strip() or None
-    nix_store_pvc = os.environ.get(_ENV_NIX_STORE_PVC, "").strip() or None
-    # RFC-0017 #190: on the packed (multi-node) path, the warm-store PVC is a
-    # second RWO local-path pin (and would mask the image's baked /nix/store), so
-    # drop it when the build image carries nix. Gated (default OFF); the co-mount
-    # and non-packed paths keep the warm store. See _packed_nix_in_image.
-    if workspace_uri and _packed_nix_in_image():
-        nix_store_pvc = None
+    # The build Job mounts no Nix store: the image carries /nix (#1736).
     data_root = os.environ.get(_ENV_DATA_ROOT, _DEFAULT_DATA_ROOT)
     namespace = (
         os.environ.get(_ENV_NAMESPACE, _DEFAULT_NAMESPACE).strip() or _DEFAULT_NAMESPACE
@@ -755,7 +761,6 @@ def build_run_py_job_manifest(
         service_account=service_account,
         data_pvc=repo_pvc if worktree_subpath is not None else None,
         worktree_subpath=worktree_subpath,
-        nix_store_pvc=nix_store_pvc,
         namespace=namespace,
         deadline_seconds=deadline,
         nix_develop=False,
@@ -773,7 +778,7 @@ def build_run_py_job_manifest(
         # in-process has no reason to hold an API token.
         automount_service_account_token=_gates_dispatch_jobs(),
     )
-    return _inject_install_clis(_inject_seed_creds(build_job_manifest(spec)))
+    return _inject_build_path(_inject_seed_creds(build_job_manifest(spec)))
 
 
 def _gates_dispatch_jobs() -> bool:
@@ -883,25 +888,6 @@ def _pack_workspace_enabled() -> bool:
     )
 
 
-def _packed_nix_in_image() -> bool:
-    """RFC-0017 #190 nix-source gate. Default OFF.
-
-    When ON, a packed build Job (``workspace_uri`` set) drops the node-pinned
-    ``aifactory-nix-store`` warm-cache PVC and uses the ``/nix/store`` baked into
-    the build image instead, making the Job node-agnostic. Only meaningful once
-    ``AIFACTORY_BUILD_IMAGE`` points at the nix-baked ``-nix`` image; flip both
-    together in gitops. Off → the warm-store co-mount is unchanged.
-
-    Delegates to ``core.nix_env.nix_in_image`` so the build and gate paths read
-    one predicate — two copies is how the gate path missed the #258 flip (#253).
-    """
-    from core.nix_env import (
-        nix_in_image,
-    )
-
-    return nix_in_image()
-
-
 def _maybe_pack_workspace(
     worktree_path: str | None,
     *,
@@ -952,15 +938,15 @@ def _git(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[
     # GIT_TERMINAL_PROMPT=0: never block a dispatch on an interactive credential
     # prompt — an unreachable/unauthorised remote (e.g. the #960 refresh fetch)
     # must fail fast instead of hanging the server.
-    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
-    return subprocess.run(
-        ["git", *args],
-        check=check,
-        capture_output=True,
-        text=True,
-        timeout=300,
-        env=env,
-    )
+    with github_env(child_env(extra={"GIT_TERMINAL_PROMPT": "0"})) as env:
+        return subprocess.run(
+            ["git", *args],
+            check=check,
+            capture_output=True,
+            text=True,
+            timeout=300,
+            env=env,
+        )
 
 
 def _git_out(args: list[str]) -> str:
@@ -1259,7 +1245,18 @@ class KubeJobBuildBackend:
 
         # #671 OAuth-env defect: mirror the in-pod build env into the Job (the
         # pooled token + the SDK passthrough). Goes into container env, NOT argv.
+        # #1667: stamp before the Job exists so the record never lags the build.
+        # #1673: and before the verdict below, which reads the stamp.
+        from .trusted_contract_store import stamp_spawn  # noqa: PLC0415
+
+        await stamp_spawn(spec_dir_for(project_path, spec_id), "kubejob")
+
         extra_env = build_job_env(oauth_token)
+        from . import project_settings_store  # noqa: PLC0415
+        from .trusted_contract import spawn_env  # noqa: PLC0415
+
+        extra_env.update(await spawn_env(spec_dir_for(project_path, spec_id)))
+        extra_env.update(await project_settings_store.mcp_spawn_env(project_path))
 
         manifest = build_run_py_job_manifest(
             task_id=task_id,
@@ -1283,16 +1280,32 @@ class KubeJobBuildBackend:
             batch = await self._batch_api()
         try:
             await batch.create_namespaced_job(namespace, manifest)
+            try:
+                await self._store.set_worker_ref(
+                    task_id,
+                    {"kind": "k8s-job", "namespace": namespace, "job_name": job_name},
+                )
+            except BaseException:
+                # #1677: a raise from dispatch must mean nothing is running.
+                try:
+                    await batch.delete_namespaced_job(
+                        job_name, namespace, propagation_policy="Background"
+                    )
+                except Exception:  # noqa: BLE001 - logged; the original error wins
+                    _log.exception(
+                        "[build_backend] could not roll back k8s Job %s/%s for task %s "
+                        "after the worker_ref write failed",
+                        sanitize_log(namespace),
+                        sanitize_log(job_name),
+                        sanitize_log(task_id),
+                    )
+                raise
         finally:
             if owns_client:
                 api = getattr(batch, "api_client", None)
                 if api is not None:
                     await api.close()
 
-        await self._store.set_worker_ref(
-            task_id,
-            {"kind": "k8s-job", "namespace": namespace, "job_name": job_name},
-        )
         _log.info(
             "[build_backend] dispatched run.py Job %s/%s for task %s",
             sanitize_log(namespace),
@@ -1339,6 +1352,20 @@ class KubeJobBuildBackend:
                 if api is not None:
                     await api.close()
 
+    async def job_gone(self, job_id: str, batch: Any = None) -> bool:
+        """Return true only when the reconstructed Job lookup returns 404."""
+        job_name, namespace = _reconstructed_ref(job_id)
+        owns_client = batch is None
+        if owns_client:
+            batch = await self._batch_api()
+        try:
+            return await self._job_outcome(batch, namespace, job_name) == "gone"
+        finally:
+            if owns_client:
+                api = getattr(batch, "api_client", None)
+                if api is not None:
+                    await api.close()
+
     # -- reconcile-by-poll --------------------------------------------------
 
     async def reconcile_by_poll(self, job_id: str) -> str | None:
@@ -1359,6 +1386,118 @@ class KubeJobBuildBackend:
         return None
 
     # -- reaper -------------------------------------------------------------
+
+    async def _reconstructed_job_is_ours(
+        self, batch: Any, namespace: str, job_name: str, job_id: str
+    ) -> bool:
+        """True when the Job found under a RECONSTRUCTED name really is this row's.
+
+        ``job_dispatch._short`` keeps only the last 20 characters of the job_id, so
+        two ids can produce one Job name. The Job object carries the same short id
+        as its ``factory.io/job-id`` label, so compare them before this row's
+        verdict is written from that Job's status (#1606).
+
+        Fails CLOSED: an unreadable Job, a missing label or any error returns
+        False, which leaves the row untouched for a later tick. A missed reap
+        costs a slot until the next pass; failing the wrong build is unrecoverable.
+        """
+        # ``job_labels`` is the function that STAMPED the label at dispatch, so
+        # asking it for the expected value cannot drift from the labelling rule the
+        # way a second copy of ``_short`` would. Lazy import: see _reconstructed_ref.
+        from core.job_dispatch import job_labels  # noqa: PLC0415
+
+        try:
+            job = await batch.read_namespaced_job(job_name, namespace)
+        except Exception as exc:  # noqa: BLE001 - never crash the reaper
+            _log.warning(
+                "[build_backend] #1606 could not re-read reconstructed Job %s/%s "
+                "for %s (%s) — leaving the row for a later tick",
+                namespace,
+                job_name,
+                sanitize_log(job_id),
+                exc,
+            )
+            return False
+        found = _job_id_label(job)
+        expected = job_labels("aifactory", job_id)["factory.io/job-id"]
+        if found == expected:
+            return True
+        _log.warning(
+            "[build_backend] #1606 reconstructed Job %s/%s belongs to another task "
+            "(factory.io/job-id=%r, expected %r) — leaving %s alone rather than "
+            "reading another build's verdict",
+            namespace,
+            job_name,
+            found,
+            expected,
+            sanitize_log(job_id),
+        )
+        return False
+
+    async def _repair_worker_ref(
+        self, job_id: str, job_name: str, namespace: str
+    ) -> None:
+        """Persist a verified reconstructed reference so later ticks take the
+        ordinary path (#1606). Best-effort: reconciliation already works without
+        it, so a failed write must not abort this pass."""
+        try:
+            await self._store.set_worker_ref(
+                job_id,
+                {"kind": "k8s-job", "job_name": job_name, "namespace": namespace},
+            )
+        except Exception:  # noqa: BLE001 - never crash the reaper
+            _log.exception(
+                "[build_backend] #1606 could not persist the reconstructed ref for %s",
+                sanitize_log(job_id),
+            )
+            return
+        _log.info(
+            "[build_backend] #1606 repaired the lost worker reference for %s -> %s/%s "
+            "(crashed between Job creation and the ref write)",
+            sanitize_log(job_id),
+            namespace,
+            job_name,
+        )
+
+    async def _resolve_row_ref(
+        self, batch: Any, row: dict[str, Any]
+    ) -> tuple[str, str, str, bool] | None:
+        """``(job_name, namespace, outcome, reconstructed)`` for one active row.
+
+        Returns ``None`` when the row must be left alone this pass.
+
+        #1606: dispatch creates the Job and only then writes the ref, so a crash
+        between the two leaves a granted slot nobody claimed. Such a row used to be
+        skipped here ("leave for the deadline path" — a path nested under
+        ``outcome == "running"`` that cannot be reached without a job_name) and it
+        held its concurrency slot forever. The Job name is deterministic, so
+        rebuild it and ASK the API: the row may still have a live Job, and assuming
+        otherwise would orphan a real build.
+
+        A reconstructed name is not proof of identity — ``_short`` keeps only the
+        last 20 characters of the id, so another task's Job can answer to it — so
+        the label is checked before the caller may write a verdict from that Job's
+        status. There is no Job to read when the outcome is ``gone``; the caller
+        distinguishes that case by ``reconstructed``.
+        """
+        recorded_name = row.get("job_name")
+        recorded_ns = row.get("namespace")
+        reconstructed = not recorded_name or not recorded_ns
+        job_name, namespace = (
+            _reconstructed_ref(row["job_id"])
+            if reconstructed
+            else (str(recorded_name), str(recorded_ns))
+        )
+
+        outcome = await self._job_outcome(batch, namespace, job_name)
+        if reconstructed and outcome != "gone":
+            job_id = row["job_id"]
+            if not await self._reconstructed_job_is_ours(
+                batch, namespace, job_name, job_id
+            ):
+                return None
+            await self._repair_worker_ref(job_id, job_name, namespace)
+        return job_name, namespace, outcome, reconstructed
 
     async def reap_vanished_jobs(
         self,
@@ -1393,13 +1532,10 @@ class KubeJobBuildBackend:
         try:
             for row in rows:
                 job_id = row["job_id"]
-                job_name = row.get("job_name")
-                namespace = row.get("namespace")
-                if not job_name or not namespace:
-                    # No usable ref — can't verify; leave for the deadline path.
+                resolved = await self._resolve_row_ref(batch, row)
+                if resolved is None:
                     continue
-
-                outcome = await self._job_outcome(batch, namespace, job_name)
+                job_name, namespace, outcome, reconstructed = resolved
 
                 # #857: reconcile from the Job's OWN status. The Job cannot write
                 # its job-state row (mark_terminal lives only in the control
@@ -1440,9 +1576,7 @@ class KubeJobBuildBackend:
                 # GENUINE anomaly (evicted / GC'd before any tick observed it),
                 # not the everyday path it used to be.
                 await self._fail(
-                    job_id,
-                    f"k8s Job {namespace}/{job_name} disappeared without a "
-                    "terminal write (evicted / GC'd / crashed before report)",
+                    job_id, _vanished_reason(namespace, job_name, reconstructed)
                 )
                 reaped.append(job_id)
         finally:
@@ -1451,6 +1585,80 @@ class KubeJobBuildBackend:
                 if api is not None:
                     await api.close()
         return reaped
+
+    async def sweep_orphan_jobs(
+        self, *, now: float | None = None, batch: Any = None
+    ) -> list[str]:
+        """Report or delete old build Jobs with no active owner row (#1714)."""
+        import time as _time  # noqa: PLC0415
+
+        try:
+            rows = await self._store.get_active_kubejobs()
+        except Exception:  # noqa: BLE001 - uncertain ownership leaves Jobs alone
+            _log.exception("[build_backend] #1714 could not read Job owners")
+            return []
+        owned = {
+            row["job_name"] or _reconstructed_ref(row["job_id"])[0] for row in rows
+        }
+        namespace = _dispatch_namespace()
+        owns_client = batch is None
+        if owns_client:
+            batch = await self._batch_api()
+        try:
+            try:
+                listing = await batch.list_namespaced_job(
+                    namespace, label_selector=_SWEEP_SELECTOR
+                )
+            except Exception as exc:  # noqa: BLE001 - uncertain list leaves Jobs alone
+                _log.warning(
+                    "[build_backend] #1714 could not list build Jobs in %s "
+                    "(status=%s; 403 means missing Jobs list RBAC): %s",
+                    namespace,
+                    getattr(exc, "status", None),
+                    exc,
+                )
+                return []
+
+            clock = now if now is not None else _time.time()
+            swept: list[str] = []
+            for job in listing.items or []:
+                name = job.metadata.name
+                created = _to_epoch(job.metadata.creation_timestamp)
+                if (
+                    not name
+                    or name in owned
+                    or created is None
+                    or clock - created < _SWEEP_GRACE_SECONDS
+                ):
+                    continue
+                if sweep_dry_run():
+                    _log.warning(
+                        "[build_backend] #1714 dry-run: would delete orphan Job %s/%s",
+                        namespace,
+                        name,
+                    )
+                    swept.append(name)
+                    continue
+                try:
+                    await batch.delete_namespaced_job(
+                        name, namespace, propagation_policy="Background"
+                    )
+                except Exception as exc:  # noqa: BLE001 - continue with other Jobs
+                    if getattr(exc, "status", None) != 404:  # noqa: PLR2004 - HTTP Not Found
+                        _log.warning(
+                            "[build_backend] #1714 could not delete orphan Job %s/%s: %s",
+                            namespace,
+                            name,
+                            exc,
+                        )
+                        continue
+                swept.append(name)
+            return swept
+        finally:
+            if owns_client:
+                api = getattr(batch, "api_client", None)
+                if api is not None:
+                    await api.close()
 
     async def _done(self, job_id: str) -> None:
         """Mark a build done from the Job's own success (#857).
@@ -1537,6 +1745,64 @@ class KubeJobBuildBackend:
         if (getattr(status, "failed", None) or 0) >= 1:
             return "failed"
         return "running"
+
+
+def _dispatch_namespace() -> str:
+    """The namespace builds are dispatched into — same resolution as dispatch.
+
+    Read from the environment rather than remembered on the row, so a
+    reconstructed reference (#1606) lands where ``_build_manifest`` put the Job.
+    """
+    return (
+        os.environ.get(_ENV_NAMESPACE, _DEFAULT_NAMESPACE).strip() or _DEFAULT_NAMESPACE
+    )
+
+
+def _reconstructed_ref(job_id: str) -> tuple[str, str]:
+    """Rebuild the (job_name, namespace) a build's Job was created with.
+
+    ``job_dispatch.job_name`` is deterministic — ``factory-<service>-<short id>``
+    — and a build dispatches with ``job_id=task_id``, so the inputs that named
+    the Job are still on the row even when the ref write never happened (#1606).
+
+    The name alone is NOT proof of identity: ``_short`` keeps only the last 20
+    characters of the id, so two ids can collide. Callers must check the Job's
+    ``factory.io/job-id`` label before writing any terminal state.
+    """
+    # Lazy for the same reason as the other core.* imports in this file: ``core``
+    # joins sys.path at startup, so a module-level import would not resolve on a
+    # pure web-server import path.
+    from core.job_dispatch import job_name as build_job_name  # noqa: PLC0415
+
+    return build_job_name("aifactory", job_id), _dispatch_namespace()
+
+
+def _vanished_reason(namespace: str, job_name: str, reconstructed: bool) -> str:
+    """Why a ``running`` row is being failed when its Job is not there.
+
+    #1606: for a RECONSTRUCTED reference a 404 is consistent with "the Job was
+    never created" (the leak this frees) and, less likely, "created under a
+    colliding name" — the label check cannot run with nothing to read. Name the
+    case so the two stay separable in the logs afterwards.
+    """
+    if reconstructed:
+        return (
+            f"no k8s Job {namespace}/{job_name}: no worker ever claimed this slot "
+            "and no Job exists under the name dispatch would have used (crashed "
+            "between Job creation and the ref write, or never dispatched)"
+        )
+    return (
+        f"k8s Job {namespace}/{job_name} disappeared without a terminal write "
+        "(evicted / GC'd / crashed before report)"
+    )
+
+
+def _job_id_label(job: Any) -> str | None:
+    """The ``factory.io/job-id`` label off a fetched Job object, if present."""
+    meta = getattr(job, "metadata", None)
+    labels = getattr(meta, "labels", None) or {}
+    value = labels.get("factory.io/job-id")
+    return str(value) if value is not None else None
 
 
 def _to_epoch(value: Any) -> float | None:

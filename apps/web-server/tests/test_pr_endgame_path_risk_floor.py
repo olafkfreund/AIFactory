@@ -36,6 +36,14 @@ from review_tier import HIGH_RISK_PATTERNS  # noqa: E402
 from server.services import pr_endgame as pe  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _isolated_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests model a legacy task on an isolated host (#1667, D4-i)."""
+    monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "kubejob")
+    # kubejob counts as isolated only with the durable store (#1667).
+    monkeypatch.setattr("server.services.job_state_store.store_enabled", lambda: True)
+
+
 def _spec(
     tmp_path: Path, tier: str | None, *, deployment: dict[str, object] | None = None
 ) -> Path:
@@ -95,7 +103,9 @@ def test_auto_tier_touching_auth_is_floored_at_the_call_site(
     _changed(monkeypatch, ["app/auth/session.py"])
 
     with caplog.at_level(logging.INFO, logger=pe.logger.name):
-        ctx = pe.gather_pr_context(tmp_path, spec, "001-x", runner=_runner)
+        ctx = pe.gather_pr_context(
+            tmp_path, spec, "001-x", runner=_runner, trusted=None
+        )
 
     assert ctx is not None
     assert ctx["review_tier_floor"] == "blocking"
@@ -116,7 +126,7 @@ def test_enforcing_the_floor_withholds_the_auto_merge(
     spec = _spec(tmp_path, "auto")
     _changed(monkeypatch, ["app/auth/session.py"])
 
-    ctx = pe.gather_pr_context(tmp_path, spec, "001-x", runner=_runner)
+    ctx = pe.gather_pr_context(tmp_path, spec, "001-x", runner=_runner, trusted=None)
 
     assert ctx is not None
     assert ctx["review_tier"] == "blocking"
@@ -137,7 +147,7 @@ def test_blocking_tier_with_unfloored_paths_stays_blocking(
     spec = _spec(tmp_path, "blocking")
     _changed(monkeypatch, ["README.md", "docs/guide.md"])
 
-    ctx = pe.gather_pr_context(tmp_path, spec, "001-x", runner=_runner)
+    ctx = pe.gather_pr_context(tmp_path, spec, "001-x", runner=_runner, trusted=None)
 
     assert ctx is not None
     assert ctx["review_tier"] == "blocking"
@@ -167,7 +177,7 @@ def test_high_risk_deployment_floors_an_auto_task(
     spec = _spec(tmp_path, "auto", deployment={"risk_class": "high"})
     _changed(monkeypatch, ["README.md"])
 
-    ctx = pe.gather_pr_context(tmp_path, spec, "001-x", runner=_runner)
+    ctx = pe.gather_pr_context(tmp_path, spec, "001-x", runner=_runner, trusted=None)
 
     assert ctx is not None
     assert ctx["review_tier"] == "blocking"
@@ -190,7 +200,7 @@ def test_unreadable_diff_leaves_the_tier_untouched(
 
     monkeypatch.setattr(workspace_commands, "_get_changed_files_from_git", _boom)
 
-    ctx = pe.gather_pr_context(tmp_path, spec, "001-x", runner=_runner)
+    ctx = pe.gather_pr_context(tmp_path, spec, "001-x", runner=_runner, trusted=None)
 
     assert ctx is not None
     assert ctx["review_tier"] == "auto"

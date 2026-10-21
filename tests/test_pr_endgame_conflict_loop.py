@@ -7,6 +7,7 @@ across polls) + a scripted review_fn. poll_interval=0 keeps them fast.
 
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
 
@@ -58,9 +59,12 @@ async def test_conflict_resolved_then_remerges_after_rereview():
             "gh pr merge": [_CONFLICT, _OK],
             "gh pr update-branch": [_FAIL],  # true conflict -> merge_pr returns False
             "git rebase origin/main": [_FAIL],  # conflict during resolve
-            "diff --name-only --diff-filter=U": [CmdResult(0, "app.py", "")],
+            "diff --no-ext-diff --no-textconv --name-only --diff-filter=U": [
+                CmdResult(0, "app.py", "")
+            ],
             "rebase --continue": [_OK],
             "git push --force-with-lease": [_OK],
+            "git grep": [_FAIL],  # no filter=lfs: no LFS step (#1721)
         }
     )
     fixed = []
@@ -83,13 +87,62 @@ async def test_conflict_resolved_then_remerges_after_rereview():
 
 
 @pytest.mark.asyncio
+async def test_conflict_push_lfs_failure_warns_and_merges(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # #1721: the resolve push uploads LFS objects best-effort; a failed upload
+    # logs a warning and still pushes the resolved branch so the PR can merge.
+    real_which = shutil.which
+    monkeypatch.setattr(
+        "core.child_env.shutil.which",
+        lambda c, *a, **k: "/x/git-lfs" if c == "git-lfs" else real_which(c, *a, **k),
+    )
+    runner = SeqRunner(
+        {
+            "gh pr merge": [_CONFLICT, _OK],
+            "gh pr update-branch": [_FAIL],
+            "git rebase origin/main": [_FAIL],
+            "diff --no-ext-diff --no-textconv --name-only --diff-filter=U": [
+                CmdResult(0, "app.py", "")
+            ],
+            "rebase --continue": [_OK],
+            "git grep": [_OK],
+            "get-url": [CmdResult(0, "https://github.com/o/r", "")],
+            "--get-regexp": [CmdResult(1, "", "")],
+            "lfs push": [_FAIL],
+        }
+    )
+    with caplog.at_level("WARNING", logger="core.child_env"):
+        out = await watch_and_finish(
+            owner="o",
+            repo="r",
+            pr=7,
+            auto_merge=True,
+            review_fn=_approved,
+            conflict_fixer=lambda files, wt: True,
+            worktree="/wt",
+            base_branch="main",
+            runner=runner,
+            poll_interval=0,
+            max_minutes=1,
+        )
+    assert out["merged"] is True
+    assert "boom" in caplog.text
+    assert runner.ran("lfs push")
+    assert runner.ran("git push --force-with-lease")
+
+
+@pytest.mark.asyncio
 async def test_unresolvable_conflict_human_stops():
     runner = SeqRunner(
         {
             "gh pr merge": [_CONFLICT],
             "gh pr update-branch": [_FAIL],
             "git rebase origin/main": [_FAIL],
-            "diff --name-only --diff-filter=U": [CmdResult(0, "app.py", "")],
+            "diff --no-ext-diff --no-textconv --name-only --diff-filter=U": [
+                CmdResult(0, "app.py", "")
+            ],
         }
     )
     out = await watch_and_finish(

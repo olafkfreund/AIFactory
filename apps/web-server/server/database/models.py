@@ -1188,7 +1188,10 @@ class JobState(Base):
     )
     # admission{enqueued_at, queue_position, started_at} per the schema.
     admission: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    # worker_ref{kind="subprocess"|"k8s-job", ...}. Phase 1 = subprocess.
+    # worker_ref{kind="pending"|"subprocess"|"k8s-job", ...}. "pending" (#1606) is
+    # a granted slot no worker has claimed yet: admit() runs before the backend is
+    # chosen, so it names none. "subprocess" is mark_running() declaring itself and
+    # "k8s-job" is set_worker_ref() after dispatch. NULL only on a queued row.
     worker_ref: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # Persisted args needed to (re)spawn a queued/running build on drain or
     # restart-recovery. Small JSON (paths + flags), never a blob.
@@ -1214,3 +1217,80 @@ class JobState(Base):
             f"<JobState job_id={self.job_id!r} "
             f"state={self.lifecycle_state!r} attempt={self.attempt}>"
         )
+
+
+class TrustedContract(Base):
+    """The PFactory-signed task contract, stored at ingest (#1667).
+
+    The coding agent can edit ``context/task_contract.json`` in the spec dir, so
+    the merge gate decides from this row instead. ``contract`` is the verbatim
+    signed plan (JSON text). ``build_isolation`` is stamped by the web server at
+    spawn (``kubejob`` | ``sandbox-pidns`` | ``none``); NULL means never stamped.
+    """
+
+    __tablename__ = "trusted_contracts"
+
+    # sha256 hex of the resolved spec directory path.
+    spec_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    spec_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    contract: Mapped[str] = mapped_column(Text, nullable=False)
+    build_isolation: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        return f"<TrustedContract spec_id={self.spec_id!r}>"
+
+
+class HandbackReceipt(Base):
+    """TFactory handback receipt held outside the spec directory."""
+
+    __tablename__ = "handback_receipts"
+
+    spec_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    spec_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        return f"<HandbackReceipt spec_id={self.spec_id!r}>"
+
+
+class ProjectSettings(Base):
+    """Per-project settings, kept outside the agent-writable clone (#1795).
+
+    ``settings`` is ``secret_field.seal(json.dumps(dict[str, str]))``; see
+    ``services/project_settings_store.py``. ``project_key`` is the sha256 hex
+    of the project's absolute path.
+    """
+
+    __tablename__ = "project_settings"
+
+    project_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    settings: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ProjectSettings project_key={self.project_key!r}>"

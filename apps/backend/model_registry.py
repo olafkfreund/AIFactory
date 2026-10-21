@@ -51,6 +51,11 @@ class ModelNotApprovedError(RuntimeError):
 # what it is and pin the exact release the eval-gate signed off on. Kept in sync
 # with the shorthands in ``phase_config.MODEL_ID_MAP``.
 DEFAULT_REGISTRY: dict[str, dict[str, Any]] = {
+    "claude-opus-5-5": {
+        "provenance": "Anthropic",
+        "version": "opus-5.5",
+        "stages": sorted(ALL_STAGES),
+    },
     "claude-opus-4-8": {
         "provenance": "Anthropic",
         "version": "opus-4.8",

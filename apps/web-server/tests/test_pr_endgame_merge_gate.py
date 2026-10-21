@@ -17,10 +17,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 _WS = Path(__file__).resolve().parents[1]
 _BACKEND = _WS.parents[0] / "backend"
@@ -28,8 +31,25 @@ for _p in (str(_WS), str(_BACKEND)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+import server.services.handback_receipt_store as hrs  # noqa: E402
 from merge import merge_policy  # noqa: E402
+from server.database.models import Base  # noqa: E402
 from server.services import pr_endgame as pe  # noqa: E402
+
+# Captured before conftest's autouse stub replaces it (#1696).
+_REAL_ON_RECORD = hrs.on_record
+
+
+@pytest.fixture(autouse=True)
+def _isolated_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests model a legacy task on an isolated host (#1667, D4-i)."""
+    monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "kubejob")
+    # kubejob counts as isolated only with the durable store (#1667).
+    monkeypatch.setattr("server.services.job_state_store.store_enabled", lambda: True)
+    # #1795: the project's settings are loaded, as on a running server.
+    monkeypatch.setattr(
+        "server.services.project_settings_store.is_loaded", lambda _p: True
+    )
 
 
 def _spec(tmp_path: Path, **meta: object) -> Path:
@@ -44,12 +64,20 @@ async def _endgame_auto_merge(
     spec: Path,
     tier: str | None,
     monkeypatch: pytest.MonkeyPatch,
-) -> bool:
-    """Run the endgame far enough to capture the auto_merge it settled on."""
+    *,
+    both: bool = False,
+) -> bool | tuple[bool, bool]:
+    """Run the endgame far enough to capture the auto_merge it settled on.
+
+    ``both`` also returns the ``human_approval_required`` handed to the watcher.
+    """
     captured: dict[str, bool] = {}
 
     async def _fake_watch(**kwargs: object) -> dict[str, object]:
         captured["auto_merge"] = bool(kwargs["auto_merge"])
+        captured["human_approval_required"] = bool(
+            kwargs.get("human_approval_required")
+        )
         return {"merged": False, "reason": "stub"}
 
     monkeypatch.setattr(pe, "watch_and_finish", _fake_watch)
@@ -68,7 +96,10 @@ async def _endgame_auto_merge(
         review_tier=tier,
         reviewer="copilot",
         background=False,
+        trusted=None,
     )
+    if both:
+        return captured["auto_merge"], captured["human_approval_required"]
     return captured["auto_merge"]
 
 
@@ -147,8 +178,14 @@ def test_the_gate_fails_closed_when_the_policy_module_is_missing(
     """It returned True ("no opinion") on ImportError, so the one failure that
     removes the gate also removed the gate's ability to say no."""
     monkeypatch.setitem(sys.modules, "merge.merge_policy", None)
-    assert pe.merge_disposition(tmp_path, "auto") == pe.HOLD_BLOCKING_DISPOSITION
-    assert pe.merge_disposition(tmp_path, None) == pe.HOLD_BLOCKING_DISPOSITION
+    assert (
+        pe.merge_disposition(tmp_path, "auto", trusted=None)
+        == pe.HOLD_BLOCKING_DISPOSITION
+    )
+    assert (
+        pe.merge_disposition(tmp_path, None, trusted=None)
+        == pe.HOLD_BLOCKING_DISPOSITION
+    )
 
 
 def test_the_disposition_literals_track_the_policy_module() -> None:
@@ -167,7 +204,9 @@ def test_the_path_risk_floor_fails_closed_when_the_policy_is_missing(
     monkeypatch.setitem(sys.modules, "merge.merge_policy", None)
     spec = _spec(tmp_path, reviewTier="auto")
 
-    tier, floor = pe.apply_path_risk_floor(tmp_path, spec, "001-x", "main", "auto")
+    tier, floor = pe.apply_path_risk_floor(
+        tmp_path, spec, "001-x", "main", "auto", trusted=None
+    )
 
     assert (tier, floor) == ("blocking", "blocking")
     assert (
@@ -184,7 +223,9 @@ def test_the_advisory_rollout_is_still_honoured_on_the_closed_path(
     monkeypatch.setitem(sys.modules, "merge.merge_policy", None)
     spec = _spec(tmp_path, reviewTier="auto")
 
-    tier, floor = pe.apply_path_risk_floor(tmp_path, spec, "001-x", "main", "auto")
+    tier, floor = pe.apply_path_risk_floor(
+        tmp_path, spec, "001-x", "main", "auto", trusted=None
+    )
 
     assert (tier, floor) == ("auto", "blocking")
 
@@ -194,12 +235,11 @@ def test_the_advisory_rollout_is_still_honoured_on_the_closed_path(
 # --------------------------------------------------------------------------- #
 
 
-def test_recorded_approvals_reach_the_deployment_overlay(
+def test_recorded_approvals_do_not_lift_the_deployment_floor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """deployment_block_reasons was called without satisfied_gates, so once
-    `human-approval` was required it read unsatisfied FOREVER and the tier
-    stayed floored even after a human approved."""
+    """Task metadata is agent-writable, so it is not gate evidence (#1663): the
+    floor sees no evidence and a declared gate keeps the tier floored."""
     monkeypatch.setenv(pe.PATH_RISK_FLOOR_ENV, "true")
     spec = _spec(tmp_path, reviewTier="auto", satisfiedSystemGates=["human-approval"])
     (spec / "implementation_plan.json").write_text(
@@ -212,9 +252,11 @@ def test_recorded_approvals_reach_the_deployment_overlay(
     )
     monkeypatch.setattr(pe, "task_repo_dir", lambda *_a, **_k: None)
 
-    tier, floor = pe.apply_path_risk_floor(tmp_path, spec, "001-x", "main", "auto")
+    tier, _floor = pe.apply_path_risk_floor(
+        tmp_path, spec, "001-x", "main", "auto", trusted=None
+    )
 
-    assert (tier, floor) == ("auto", None)
+    assert tier == "blocking"
 
 
 def test_an_outstanding_gate_still_floors_the_tier(
@@ -233,22 +275,185 @@ def test_an_outstanding_gate_still_floors_the_tier(
     )
     monkeypatch.setattr(pe, "task_repo_dir", lambda *_a, **_k: None)
 
-    tier, _floor = pe.apply_path_risk_floor(tmp_path, spec, "001-x", "main", "auto")
+    tier, _floor = pe.apply_path_risk_floor(
+        tmp_path, spec, "001-x", "main", "auto", trusted=None
+    )
 
     assert tier == "blocking"
 
 
-def test_satisfied_gates_reads_both_the_contract_and_the_metadata(
+# --------------------------------------------------------------------------- #
+# The RFC-0013 deployment overlay holds on the live merge path (#1658)
+# --------------------------------------------------------------------------- #
+
+_GREEN = {
+    "tfactoryVerdict": "pass",
+    "achievedVal": 2,
+    "valFloor": 1,
+    "ciParity": True,
+    "hostCiGreen": True,
+}
+
+
+def _contracted(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    contract: object,
+    **extra: object,
+) -> Path:
+    """A green-signal spec whose context/task_contract.json is ``contract``."""
+    monkeypatch.delenv(pe.PATH_RISK_FLOOR_ENV, raising=False)
+    spec = _spec(tmp_path, **_GREEN, **extra)
+    (spec / "context").mkdir()
+    text = contract if isinstance(contract, str) else json.dumps(contract)
+    (spec / "context" / "task_contract.json").write_text(text)
+    return spec
+
+
+def _deployment(**dep: object) -> dict[str, object]:
+    return {"contract_version": "2", "deployment": dep}
+
+
+def test_a_production_deployment_holds_on_the_live_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    spec = _spec(tmp_path, satisfiedSystemGates=["human-approval"])
-    gates = pe.satisfied_system_gates(spec, {"satisfied_gates": ["sbom"]})
-    assert sorted(gates) == ["human-approval", "sbom"]
+    spec = _contracted(
+        tmp_path, monkeypatch, _deployment(production_classification="production")
+    )
+    assert (
+        pe.merge_disposition(spec, "low", trusted=None) == pe.HOLD_BLOCKING_DISPOSITION
+    )
 
 
-def test_satisfied_gates_of_an_unreadable_spec_is_empty(tmp_path: Path) -> None:
-    """Unknown approvals must leave the gate OUTSTANDING, never cleared."""
-    assert pe.satisfied_system_gates(tmp_path / "nope") == []
+def test_a_high_risk_deployment_holds_on_the_live_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _contracted(tmp_path, monkeypatch, _deployment(risk_class="high"))
+    assert (
+        pe.merge_disposition(spec, "low", trusted=None) == pe.HOLD_BLOCKING_DISPOSITION
+    )
+
+
+def test_a_satisfied_system_gate_clears_only_its_own_hold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dep = _deployment(system_gates=["human-approval"])
+    held = _contracted(tmp_path / "a", monkeypatch, dep)
+    assert (
+        pe.merge_disposition(held, "low", trusted=None) == pe.HOLD_BLOCKING_DISPOSITION
+    )
+    cleared = _contracted(tmp_path / "b", monkeypatch, dep)
+    assert (
+        pe.merge_disposition(
+            cleared,
+            "low",
+            trusted=None,
+            satisfied_gates=["human-approval"],
+            fetch_signals=lambda: _PASS,
+        )
+        == pe.AUTO_MERGE_DISPOSITION
+    )
+
+
+def test_a_contract_cannot_satisfy_its_own_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _contracted(
+        tmp_path,
+        monkeypatch,
+        _deployment(
+            system_gates=["human-approval"], satisfied_gates=["human-approval"]
+        ),
+    )
+    assert (
+        pe.merge_disposition(spec, "low", trusted=None) == pe.HOLD_BLOCKING_DISPOSITION
+    )
+
+
+def test_task_metadata_is_not_gate_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _contracted(
+        tmp_path,
+        monkeypatch,
+        _deployment(system_gates=["human-approval"]),
+        satisfiedSystemGates=["human-approval"],
+    )
+    assert (
+        pe.merge_disposition(spec, "low", trusted=None) == pe.HOLD_BLOCKING_DISPOSITION
+    )
+
+
+def test_merge_disposition_takes_explicit_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _contracted(
+        tmp_path, monkeypatch, _deployment(system_gates=["human-approval"])
+    )
+    assert (
+        pe.merge_disposition(
+            spec,
+            "low",
+            trusted=None,
+            satisfied_gates=["human-approval"],
+            fetch_signals=lambda: _PASS,
+        )
+        == pe.AUTO_MERGE_DISPOSITION
+    )
+
+
+async def test_a_human_only_hold_keeps_the_watcher_armed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gated = _contracted(
+        tmp_path / "a", monkeypatch, _deployment(system_gates=["human-approval"])
+    )
+    assert await _endgame_auto_merge(gated, "auto", monkeypatch, both=True) == (
+        True,
+        True,
+    )
+    prod = _contracted(
+        tmp_path / "b",
+        monkeypatch,
+        _deployment(production_classification="production"),
+    )
+    assert await _endgame_auto_merge(prod, "auto", monkeypatch, both=True) == (
+        False,
+        False,
+    )
+    high = _contracted(
+        tmp_path / "c",
+        monkeypatch,
+        _deployment(system_gates=["human-approval"], risk_class="high"),
+    )
+    assert await _endgame_auto_merge(high, "auto", monkeypatch, both=True) == (
+        False,
+        False,
+    )
+
+
+@pytest.mark.parametrize("text", ["{not json", "[]"])
+def test_an_unreadable_contract_holds_on_the_live_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text: str
+) -> None:
+    spec = _contracted(tmp_path, monkeypatch, text)
+    assert (
+        pe.merge_disposition(spec, "low", trusted=None) == pe.HOLD_BLOCKING_DISPOSITION
+    )
+
+
+def test_a_satisfied_gate_never_clears_production(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _contracted(
+        tmp_path, monkeypatch, _deployment(production_classification="production")
+    )
+    assert (
+        pe.merge_disposition(
+            spec, "low", trusted=None, satisfied_gates=["human-approval"]
+        )
+        == pe.HOLD_BLOCKING_DISPOSITION
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -287,6 +492,7 @@ async def test_the_background_watcher_is_strongly_referenced(
         auto_merge=False,
         reviewer="copilot",
         background=True,
+        trusted=None,
     )
 
     assert res["watching"] is True
@@ -297,3 +503,177 @@ async def test_the_background_watcher_is_strongly_referenced(
     # ...and is released when it completes, so the set cannot grow unbounded.
     assert not pe._BACKGROUND_TASKS
     assert started.is_set()
+
+
+@pytest.mark.parametrize(
+    "where",
+    [("context", "task_contract.json"), ("implementation_plan.json",)],
+)
+def test_a_contract_that_raises_on_read_holds_instead(
+    tmp_path: Path, where: tuple[str, ...]
+) -> None:
+    """#1658 review: a nested-past-the-recursion-limit or non-UTF-8 contract
+    raised out of merge_disposition, aborting the endgame before the PR opened."""
+    spec = _spec(tmp_path)
+    target = spec.joinpath(*where)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("[" * 100_000)
+    assert (
+        pe.merge_disposition(spec, "low", trusted=None) == pe.HOLD_BLOCKING_DISPOSITION
+    )
+    target.write_bytes(b"\xff\xfe not utf-8")
+    assert (
+        pe.merge_disposition(spec, "low", trusted=None) == pe.HOLD_BLOCKING_DISPOSITION
+    )
+
+
+async def _watch_once(**kw: object) -> dict[str, Any]:
+    result: dict[str, Any] = await pe.watch_and_finish(
+        owner="o",
+        repo="r",
+        pr=7,
+        auto_merge=True,
+        review_fn=lambda: pe.ReviewState("changes_requested"),
+        poll_interval=0,
+        max_minutes=1,
+        **kw,
+    )
+    return result
+
+
+@pytest.mark.parametrize(
+    ("configured", "required", "warns"),
+    [(False, True, True), (True, True, False), (False, False, False)],
+    ids=["human_gate_without_app_warns", "with_app_silent", "no_human_gate_silent"],
+)
+async def test_human_gate_warning(
+    configured: bool,
+    required: bool,
+    warns: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(pe.github_app, "configured", lambda: configured)
+    with caplog.at_level(logging.WARNING, logger=pe.logger.name):
+        await _watch_once(human_approval_required=required)
+    hits = [r for r in caplog.records if "no GitHub App configured" in r.getMessage()]
+    assert len(hits) == (1 if warns else 0)
+
+
+# --------------------------------------------------------------------------- #
+# #1695: fetched (trusted) signals; metadata can only tighten them
+# --------------------------------------------------------------------------- #
+
+_PASS = {"tfactory_verdict": "pass", "host_ci_green": True}
+
+
+def test_1695_recorded_fail_tightens_a_fetched_pass(tmp_path: Path) -> None:
+    spec = _spec(tmp_path, tfactoryVerdict="fail")
+    assert pe.merge_gate_signals(spec, fetched=_PASS)["tfactory_verdict"] == "fail"
+
+
+def test_1695_handback_receipt_beats_the_fetched_verdict(tmp_path: Path) -> None:
+    spec = _spec(tmp_path, tfactoryVerdict="fail")
+    (spec / pe._HANDBACK_RECEIPT).write_text("{}")
+    out = pe.merge_gate_signals(spec, fetched=_PASS)
+    assert out["tfactory_verdict"] == "handback"
+
+
+def test_1695_recorded_pass_cannot_clear_a_fetched_fail(tmp_path: Path) -> None:
+    spec = _spec(tmp_path, tfactoryVerdict="pass")
+    fetched = {"tfactory_verdict": "fail", "host_ci_green": True}
+    assert pe.merge_gate_signals(spec, fetched=fetched)["tfactory_verdict"] == "fail"
+
+
+@pytest.mark.parametrize(
+    "fetched", [{"tfactory_verdict": None, "host_ci_green": None}, {}]
+)
+def test_1695_missing_fetched_values_fail_closed(
+    tmp_path: Path, fetched: dict[str, object]
+) -> None:
+    out = pe.merge_gate_signals(_spec(tmp_path), fetched=fetched)
+    assert out["host_ci_green"] is False
+    assert out["tfactory_verdict"] is None
+
+
+def test_1695_recorded_host_ci_false_tightens(tmp_path: Path) -> None:
+    spec = _spec(tmp_path, hostCiGreen=False)
+    assert pe.merge_gate_signals(spec, fetched=_PASS)["host_ci_green"] is False
+
+
+def test_1695_recorded_host_ci_true_cannot_clear_an_unknown(tmp_path: Path) -> None:
+    spec = _spec(tmp_path, hostCiGreen=True)
+    fetched = {"tfactory_verdict": "pass", "host_ci_green": None}
+    assert pe.merge_gate_signals(spec, fetched=fetched)["host_ci_green"] is False
+
+
+def test_1697_metadata_greens_do_not_loosen(tmp_path: Path) -> None:
+    out = pe.merge_gate_signals(_spec(tmp_path, **_GREEN))
+    assert out["tfactory_verdict"] is None
+    assert out["host_ci_green"] is False
+
+
+def test_1697_no_fetch_is_not_passed(tmp_path: Path) -> None:
+    assert pe.merge_gate_signals(_spec(tmp_path)) == {
+        "host_ci_green": False,
+        "tfactory_verdict": None,
+        "achieved_val": 0,
+        "val_floor": None,
+        "ci_parity": True,
+    }
+
+
+# --------------------------------------------------------------------------- #
+# #1696: the DB receipt holds after the QA Fixer deletes the file
+# --------------------------------------------------------------------------- #
+
+
+async def _receipt_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'r.db'}")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    monkeypatch.setattr(
+        "server.database.engine.async_session_factory",
+        async_sessionmaker(engine, expire_on_commit=False),
+    )
+    monkeypatch.setattr(hrs, "on_record", _REAL_ON_RECORD)
+    return engine
+
+
+async def test_1696_deleted_receipt_file_still_holds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = await _receipt_db(tmp_path, monkeypatch)
+    try:
+        spec = _spec(tmp_path)
+        receipt = spec / pe._HANDBACK_RECEIPT
+        receipt.write_text("{}")
+        await hrs.record(spec)
+        receipt.unlink()  # what a QA Fixer on the control-plane spec dir can do
+        assert await _endgame_auto_merge(spec, "auto", monkeypatch) is False
+    finally:
+        await engine.dispose()
+
+
+async def test_1696_no_receipt_row_still_merges(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = await _receipt_db(tmp_path, monkeypatch)
+    try:
+        assert await _endgame_auto_merge(_spec(tmp_path), "auto", monkeypatch) is True
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.parametrize(("held", "expected"), [(True, False), (False, True)])
+async def test_1696_merge_time_gate_checks_the_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, held: bool, expected: bool
+) -> None:
+    async def _on_record(_spec_dir: object) -> bool:
+        return held
+
+    monkeypatch.setattr(hrs, "on_record", _on_record)
+    gate = pe._with_receipt_veto(
+        lambda _h: True, _spec(tmp_path), asyncio.get_running_loop()
+    )
+    assert await asyncio.to_thread(gate, "deadbeef") is expected

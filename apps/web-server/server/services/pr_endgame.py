@@ -23,15 +23,23 @@ import json
 import logging
 import os
 import subprocess
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from factory_common.logsafe import sanitize_log
 
+from server.services import github_app, project_settings_store
 from server.services.build_backend import task_repo_dir
 from server.services.task_branch import resolve_task_branch
+from server.utils.subprocess_env import (
+    child_env,
+    github_env,
+    lfs_upload,
+    merge_driver_pins,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -63,9 +71,43 @@ class CmdResult:
 Runner = Callable[[list[str], "str | None"], CmdResult]
 
 
-def _default_runner(argv: list[str], cwd: str | None = None) -> CmdResult:
-    p = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=120)
+def _default_runner(
+    argv: list[str], cwd: str | None = None, timeout: int = 120
+) -> CmdResult:
+    with github_env(child_env()) as env:
+        p = subprocess.run(
+            argv,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=env,
+        )
     return CmdResult(p.returncode, p.stdout.strip(), p.stderr.strip())
+
+
+def push_with_lfs(
+    push_argv: list[str], ref: str, cwd: str, runner: Runner = _default_runner
+) -> CmdResult:
+    """Gate LFS upload on attributes, then run ``push_argv`` (#1690, #1721).
+
+    Hooks are off (#1680) so git-lfs's pre-push no longer uploads. The upload
+    is best-effort: a failure is logged and the push goes ahead. Only the
+    safety-net refusal (no supported endpoint) is returned without pushing.
+    """
+
+    def run(argv: list[str], timeout: int) -> tuple[int, str, str]:
+        r = (
+            _default_runner(argv, cwd, timeout)
+            if runner is _default_runner
+            else runner(argv, cwd)
+        )
+        return r.rc, r.out, r.err
+
+    err = lfs_upload(run, ref)
+    if err:
+        return CmdResult(1, "", err)
+    return runner(push_argv, cwd)
 
 
 # ---------------------------------------------------------------------------
@@ -76,23 +118,16 @@ _TRUTHY = {"1", "true", "yes", "on"}
 
 
 def _project_env(project_path: Path | None, key: str) -> str | None:
-    """Read ``key`` from a project's ``.aifactory/.env`` (the per-project settings
-    store the Settings UI writes via PATCH /api/projects/{id}/settings). Returns
-    None when unset/unreadable so the caller can fall back to the global env.
+    """Read ``key`` from a project's in-process settings snapshot (#1795).
+
+    Async entry points populate ``project_settings_store._SNAPSHOT`` from the
+    ``project_settings`` database table before invoking ``pr_endgame``. Returns
+    ``None`` when ``project_path`` is ``None`` or the key is unset, so the
+    caller can fall back to the global env.
     """
     if project_path is None:
         return None
-    env_path = Path(project_path) / ".aifactory" / ".env"
-    try:
-        for line in env_path.read_text().splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                if k.strip() == key:
-                    return v.strip()
-    except OSError:
-        return None
-    return None
+    return project_settings_store.cached_setting(project_path, key)
 
 
 def _flag(key: str, project_path: Path | None) -> bool:
@@ -109,6 +144,9 @@ def is_auto_pr_enabled(project_path: Path | None = None) -> bool:
 
 
 def is_auto_merge_enabled(project_path: Path | None = None) -> bool:
+    # #1795: settings never loaded (DB down since start) -> hold, don't use defaults
+    if project_path is not None and not project_settings_store.is_loaded(project_path):
+        return False
     return _flag("AIFACTORY_AUTO_MERGE", project_path)
 
 
@@ -187,12 +225,14 @@ def path_floor_enforced(project_path: Path | None = None) -> bool:
     return _flag(PATH_RISK_FLOOR_ENV, project_path)
 
 
-def apply_path_risk_floor(
+def apply_path_risk_floor(  # noqa: PLR0913 - trusted is the required #1667 keyword
     project_path: Path,
     spec_dir: Path,
     spec_id: str,
     base: str,
     tier: str | None,
+    *,
+    trusted: object,
 ) -> tuple[str | None, str | None]:
     """Raise *tier* to the floor this task's REAL diff + deployment block demand.
 
@@ -221,8 +261,9 @@ def apply_path_risk_floor(
             floor_from_paths,
             raise_review_tier,
         )
-        from pfactory.tfactory_client import (  # type: ignore[import-not-found,unused-ignore] # noqa: PLC0415
-            load_task_contract,
+
+        from server.services.trusted_contract import (  # noqa: PLC0415
+            resolve_contract,
         )
     except ImportError:
         # Fail CLOSED. This block imports the ONLY thing that scores the diff
@@ -250,13 +291,10 @@ def apply_path_risk_floor(
     except Exception:  # noqa: BLE001 - never break the endgame over a diff
         logger.debug("[pr-endgame] path risk floor: diff unreadable", exc_info=True)
     try:
-        deployment = (load_task_contract(spec_dir) or {}).get("deployment")
-        # satisfied_gates is not optional decoration: without it EVERY declared
-        # system gate reads as outstanding forever, so once `human-approval` is
-        # required the tier stays floored even after a human actually approves.
-        if deployment_block_reasons(
-            deployment, satisfied_gates=satisfied_system_gates(spec_dir, deployment)
-        ):
+        state, contract = resolve_contract(spec_dir, trusted)
+        deployment = contract.get("deployment")
+        # No gate evidence here: the PR does not exist yet (#1663).
+        if state == "hold" or deployment_block_reasons(deployment):
             floor = "blocking"
     except Exception:  # noqa: BLE001 - same: an unreadable contract adds nothing
         logger.debug("[pr-endgame] path risk floor: contract unreadable", exc_info=True)
@@ -310,37 +348,6 @@ def _path_risk_floor_closed(
     return "blocking", "blocking"
 
 
-# Where an operator (or an upstream approval step) records the RFC-0013 system
-# gates that have actually been cleared for this task.
-SATISFIED_GATES_KEYS = ("satisfiedSystemGates", "satisfied_system_gates")
-
-
-def satisfied_system_gates(spec_dir: Path, deployment: object = None) -> list[str]:
-    """The RFC-0013 system gates recorded as already cleared for this task.
-
-    Read from ``task_metadata.json`` (``satisfiedSystemGates``) and from the
-    contract's own ``deployment.satisfied_gates``. Best-effort: an unreadable
-    file contributes nothing, which is the SAFE direction here -- an unknown
-    approval leaves the gate outstanding and the change held.
-    """
-    gates: list[str] = []
-    if isinstance(deployment, dict):
-        declared = deployment.get("satisfied_gates")
-        if isinstance(declared, list):
-            gates.extend(str(g) for g in declared)
-    try:
-        meta = json.loads((Path(spec_dir) / "task_metadata.json").read_text())
-    except (OSError, ValueError):
-        return gates
-    if not isinstance(meta, dict):
-        return gates
-    for key in SATISFIED_GATES_KEYS:
-        recorded = meta.get(key)
-        if isinstance(recorded, list):
-            gates.extend(str(g) for g in recorded)
-    return gates
-
-
 def _record_path_risk_floor(spec_dir: Path, floor: str, *, enforced: bool) -> None:
     """Persist the floor onto task_metadata.json. Best-effort, never raises."""
     meta_file = Path(spec_dir) / "task_metadata.json"
@@ -385,7 +392,9 @@ def _meta_signal(meta: dict[str, object], key: str) -> object:
     return None
 
 
-def merge_gate_signals(spec_dir: Path) -> dict[str, object]:
+def merge_gate_signals(
+    spec_dir: Path, *, fetched: Mapping[str, object] | None = None
+) -> dict[str, object]:
     """The RFC-0011 gate signals this task actually recorded, for ``decide_merge``.
 
     Returns a dict keyed exactly like ``decide_merge``'s keyword arguments.
@@ -397,17 +406,18 @@ def merge_gate_signals(spec_dir: Path) -> dict[str, object]:
       whole point: the merge is refused.
     * NOT MEASURED -- AIFactory records no host-CI roll-up at PR-open time (the
       checks have not run yet) and no VAL/parity roll-up at all today. An
-      unmeasured signal takes the value that leaves the decision where it was
-      before this gate existed, because withholding every merge on evidence
-      nobody has produced yet would just switch the feature off.
+      unmeasured verdict or host CI means not passed.
 
-    So this NARROWS: it can refuse a merge on recorded evidence of failure, and
-    it never invents a green. That is strictly more than the tier ceiling it
-    replaces, which read only ``reviewTier`` and ignored the verdict entirely.
+    This refuses a merge without a measured pass and never invents a green.
+
+    With ``fetched`` the verdict and host-CI start from those trusted values;
+    recorded metadata can only tighten them.
     """
+    from merge.merge_policy import _verdict_pass  # noqa: PLC0415
+
     signals: dict[str, object] = {
-        "host_ci_green": True,
-        "tfactory_verdict": "pass",
+        "host_ci_green": False,
+        "tfactory_verdict": None,
         # 0, not None: `decide_merge` fails a MISSING achieved level closed, and
         # rightly so. VAL-0 is "nothing verified", which satisfies only the
         # "no floor declared" case -- so a task that records a `valFloor` and no
@@ -416,6 +426,9 @@ def merge_gate_signals(spec_dir: Path) -> dict[str, object]:
         "val_floor": None,
         "ci_parity": True,
     }
+    if fetched is not None:
+        signals["tfactory_verdict"] = fetched.get("tfactory_verdict")
+        signals["host_ci_green"] = fetched.get("host_ci_green") is True
     spec_dir = Path(spec_dir)
     if (spec_dir / _HANDBACK_RECEIPT).is_file():
         signals["tfactory_verdict"] = "handback"
@@ -427,19 +440,101 @@ def merge_gate_signals(spec_dir: Path) -> dict[str, object]:
         return signals
     for key in ("tfactory_verdict", "achieved_val", "val_floor"):
         recorded = _meta_signal(meta, key)
-        if recorded is not None:
-            signals[key] = recorded
+        if recorded is None:
+            continue
+        if key == "tfactory_verdict" and _verdict_pass(recorded):
+            continue  # metadata can only tighten a verdict
+        signals[key] = recorded
     for key in ("ci_parity", "host_ci_green"):
         recorded = _meta_signal(meta, key)
-        if isinstance(recorded, bool):
-            signals[key] = recorded
+        if not isinstance(recorded, bool):
+            continue
+        if key == "host_ci_green" and recorded:
+            continue
+        signals[key] = recorded
     # A recorded handback is never overwritten by a stale metadata verdict.
     if (spec_dir / _HANDBACK_RECEIPT).is_file():
         signals["tfactory_verdict"] = "handback"
     return signals
 
 
-def merge_disposition(spec_dir: Path, tier: str | None) -> str:
+def _contract_unreadable(spec_dir: Path) -> bool:
+    """True when ``context/task_contract.json`` exists but cannot be used (#1658, option A).
+
+    An absent file is back-compat (False): tasks without a contract decide as
+    before. ``load_task_contract`` skips unparseable files on purpose, because
+    the TFactory handoff relies on that, so the merge path checks separately and
+    fails closed rather than treating a corrupt contract as "no deployment".
+    """
+    path = Path(spec_dir) / "context" / "task_contract.json"
+    if not path.exists():
+        return False
+    try:
+        return not isinstance(json.loads(path.read_text()), dict)
+    except (OSError, ValueError):
+        return True
+
+
+def _raise_to_signed(tier: str | None, signed: str) -> tuple[str, bool]:
+    """``(tier decided on, metadata tier below signed)``; signed is the floor (#1672)."""
+    from merge.merge_policy import raise_review_tier  # noqa: PLC0415
+
+    blank = tier is None or not str(tier).strip()
+    effective = "low" if blank else str(tier)
+    below = not blank and raise_review_tier(tier, signed) != tier
+    if _describe_tier(effective) != "unrecognised":
+        effective = raise_review_tier(signed, effective) or effective
+    return effective, below
+
+
+def review_tier_note(spec_dir: Path, tier: str | None, *, trusted: object) -> str:
+    """The PR-body line for the review tier the merge gate uses (#1698).
+
+    Labels only (``_describe_tier``): the metadata tier is agent-writable.
+    Never raises.
+    """
+    try:
+        from server.services.trusted_contract import (  # noqa: PLC0415
+            resolve_contract,
+        )
+
+        state, contract = resolve_contract(spec_dir, trusted)
+        execution = contract.get("execution") if state == "verified" else None
+        signed = execution.get("review_tier") if isinstance(execution, dict) else None
+        if isinstance(signed, str) and _describe_tier(signed) not in (
+            "none",
+            "unrecognised",
+        ):
+            effective, below = _raise_to_signed(tier, signed)
+            note = (
+                f"Effective review tier: {_describe_tier(effective)} "
+                f"(signed floor {_describe_tier(signed)})."
+            )
+            if below:
+                note += (
+                    f"\n\n> **Possible tampering:** task metadata reviewTier "
+                    f"{_describe_tier(tier)} is below the signed tier "
+                    f"{_describe_tier(signed)}; the merge gate decides on "
+                    f"{_describe_tier(effective)}."
+                )
+            return note
+    except Exception:  # noqa: BLE001 - a body line must never break the endgame
+        logger.debug("[pr-endgame] review tier note fell back", exc_info=True)
+    # A blank tier is decided as low (merge_disposition's back-compat rule).
+    blank = tier is None or not str(tier).strip()
+    label = "none (decided as low)" if blank else _describe_tier(tier)
+    return f"Review tier: {label} (not checked against a signed contract)."
+
+
+def merge_disposition(  # noqa: PLR0913 - floor is the legacy path floor (#1697)
+    spec_dir: Path,
+    tier: str | None,
+    *,
+    trusted: object,
+    satisfied_gates: Iterable[str] = (),
+    fetch_signals: Callable[[], Mapping[str, object]] | None = None,
+    floor: str | None = None,
+) -> str:
     """The RFC-0011/RFC-0013 merge disposition for this task (#637).
 
     THE fix for the hole this module carried: ``merge.merge_policy.decide_merge``
@@ -458,18 +553,95 @@ def merge_disposition(spec_dir: Path, tier: str | None) -> str:
     tier the task effectively had before RFC-0011 -- rather than as an unknown
     spelling, so a task that never carried a tier still behaves as it did. An
     UNRECOGNISED tier is passed straight through and ``decide_merge`` holds it.
+    For a verified trusted task the signed ``execution.review_tier`` is the
+    floor; metadata can only raise it, and a verified contract without one
+    holds. Legacy tasks also enforce the path floor.
+
+    The RFC-0013 deployment overlay is enforced here, independent of the
+    path-floor flag (#1658): a production or high-risk deployment holds, and
+    satisfied system gates clear only ``system_gates`` holds. Gate evidence
+    comes only from the caller (a GitHub review, #1663), never from the contract
+    or task_metadata.
+
+    ``fetch_signals`` supplies the verdict and host-CI for any readable,
+    non-hold task; a raise holds.
     """
     try:
-        from merge.merge_policy import decide_merge  # noqa: PLC0415
+        from merge.merge_policy import decide_merge, raise_review_tier  # noqa: PLC0415
+
+        from server.services.trusted_contract import (  # noqa: PLC0415
+            host_isolated,
+            resolve_contract,
+        )
     except ImportError:
         logger.warning(
-            "[pr-endgame] merge_policy unavailable; auto-merge withheld "
+            "[pr-endgame] merge_policy or task-contract loader unavailable; "
+            "auto-merge withheld "
             "(reviewTier=%s)",
             sanitize_log(_describe_tier(tier)),
         )
         return HOLD_BLOCKING_DISPOSITION
+    # D4-i (#1667): on a host that does not isolate the agent, the agent can read
+    # the web server's keys, so no task is auto-merged.
+    if not host_isolated():
+        logger.warning(
+            "[pr-endgame] host does not isolate the build; auto-merge withheld"
+        )
+        return HOLD_BLOCKING_DISPOSITION
     effective = tier if tier is not None and str(tier).strip() else "low"
-    return str(decide_merge(str(effective), **merge_gate_signals(spec_dir)))
+    fetched: Mapping[str, object] | None = None
+    try:
+        state, contract = resolve_contract(spec_dir, trusted)
+        if state == "hold":
+            logger.warning(
+                "[pr-endgame] task contract not verifiable or build not isolated; "
+                "auto-merge withheld"
+            )
+            return HOLD_BLOCKING_DISPOSITION
+        unreadable = state == "legacy" and _contract_unreadable(spec_dir)
+        deployment = contract.get("deployment")
+        if state == "verified":
+            execution = contract.get("execution")
+            signed = (
+                execution.get("review_tier") if isinstance(execution, dict) else None
+            )
+            if not isinstance(signed, str) or _describe_tier(signed) in (
+                "none",
+                "unrecognised",
+            ):
+                logger.warning(
+                    "[pr-endgame] verified contract has no signed review_tier; "
+                    "auto-merge withheld"
+                )
+                return HOLD_BLOCKING_DISPOSITION
+            effective, below = _raise_to_signed(tier, signed)
+            if below:
+                logger.warning(
+                    "[pr-endgame] reviewTier %s below signed %s; "
+                    "deciding on the stricter tier",
+                    sanitize_log(_describe_tier(tier)),
+                    sanitize_log(_describe_tier(signed)),
+                )
+        elif state == "legacy" and _describe_tier(effective) != "unrecognised":
+            # An unrecognised tier ranks below auto; raising it would un-hold it.
+            effective = raise_review_tier(effective, floor)
+        if not unreadable and fetch_signals is not None:
+            fetched = fetch_signals()
+    except Exception:  # noqa: BLE001 - e.g. RecursionError, UnicodeDecodeError
+        # Hold, never raise: an exception here would abort the endgame before
+        # the PR is opened, and "we could not read it" is not "not production".
+        unreadable = True
+    if unreadable:
+        logger.warning("[pr-endgame] task contract unreadable; auto-merge withheld")
+        return HOLD_BLOCKING_DISPOSITION
+    return str(
+        decide_merge(
+            str(effective),
+            **merge_gate_signals(spec_dir, fetched=fetched),
+            deployment=deployment,
+            satisfied_gates=list(satisfied_gates),
+        )
+    )
 
 
 # Which reviewer gates the merge. "aifactory" = AIFactory's own review engine
@@ -508,12 +680,6 @@ def create_pr(
     Idempotent-ish: if a PR for the branch already exists, gh reports it and we
     parse the number out.
     """
-    # Ensure git can authenticate the push: configure gh as the credential
-    # helper (idempotent, best-effort). Without this the deployed pod's raw
-    # `git push` fails with "could not read Username" even though gh itself is
-    # authenticated via GITHUB_TOKEN — the PR would never open.
-    runner(["gh", "auth", "setup-git"], None)
-
     # #959: on the kubejob/packed path the build ran in a k8s Job on an ephemeral
     # /work emptyDir and pushed its branch to origin from there
     # (core.workspace_fetch.maybe_push_workspace_branch, #751). THIS control-plane
@@ -535,7 +701,9 @@ def create_pr(
             (fetch.err or fetch.out)[:200],
         )
 
-    push = runner(["git", "push", "-u", "origin", branch], str(worktree))
+    push = push_with_lfs(
+        ["git", "push", "-u", "origin", branch], branch, str(worktree), runner
+    )
     if not push.ok and "up-to-date" not in (push.err + push.out).lower():
         logger.warning("[pr-endgame] git push failed: %s", push.err[:300])
         # keep going — the branch may already be pushed
@@ -709,15 +877,310 @@ def read_review_verdict(
     )
 
 
-def merge_pr(
+_DECISIVE_STATES = {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}
+
+
+def human_approval_head(
+    owner: str, repo: str, pr: int, *, runner: Runner = _default_runner
+) -> str | None:
+    """The PR head SHA a human has approved, else None (#1663).
+
+    A review counts only if its author is not the PR author and not a Bot, it is
+    that reviewer's latest APPROVED/CHANGES_REQUESTED/DISMISSED review (COMMENTED
+    is ignored), and its ``commit_id`` equals the current head exactly. Any
+    other reviewer's latest CHANGES_REQUESTED blocks. Fails closed: any error
+    means no approval.
+    """
+    base = f"/repos/{owner}/{repo}/pulls/{pr}"
+    try:
+        # A timeout or transport error is no approval, not a crashed watcher.
+        pr_res = runner(
+            ["gh", "api", base, "--jq", "{head: .head.sha, author: .user.login}"],
+            None,
+        )
+        rv_res = runner(
+            [
+                "gh",
+                "api",
+                "--paginate",
+                f"{base}/reviews",
+                "--jq",
+                ".[] | {state, login: .user.login, type: .user.type, commit_id}",
+            ],
+            None,
+        )
+    except Exception:  # noqa: BLE001 - fail closed
+        return None
+    if not (pr_res.ok and rv_res.ok):
+        return None
+    try:
+        info = json.loads(pr_res.out)
+        head, author = info["head"], info["author"]
+        # A null author (deleted account) cannot prove "not the author".
+        if not (head and isinstance(author, str) and author):
+            return None
+        latest: dict[str, dict[str, Any]] = {}
+        for line in rv_res.out.splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if row["state"] in _DECISIVE_STATES:
+                latest[row["login"]] = row  # oldest first, so the last one wins
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return None
+    # Any other reviewer's standing change request blocks, as on GitHub.
+    blocked = any(
+        login != author and row["state"] == "CHANGES_REQUESTED"
+        for login, row in latest.items()
+    )
+    for login, row in latest.items():
+        if (
+            not blocked
+            and isinstance(login, str)
+            and login
+            and login != author
+            and row.get("type") == "User"  # a null or ghost user is not a human
+            and row["state"] == "APPROVED"
+            and row.get("commit_id") == head
+        ):
+            logger.info(
+                "[pr-endgame] pr=%d approved by %s at %s",
+                pr,
+                sanitize_log(login),
+                sanitize_log(head),
+            )
+            return str(head)
+    return None
+
+
+def _pr_head(owner: str, repo: str, pr: int, runner: Runner) -> str | None:
+    """The PR's current head SHA, or None. Never raises (fail closed, #1695)."""
+    try:
+        res = runner(
+            ["gh", "api", f"/repos/{owner}/{repo}/pulls/{pr}", "--jq", ".head.sha"],
+            None,
+        )
+        return (res.out.strip() or None) if res.ok else None
+    except Exception:  # noqa: BLE001 - fail closed
+        return None
+
+
+_GREEN_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
+
+
+def host_ci_green(
+    owner: str, repo: str, sha: str, *, runner: Runner = _default_runner
+) -> bool | None:
+    """Host CI for exactly commit ``sha``: True green, False red, None unknown.
+
+    Read by SHA, not ``gh pr checks``, so it is the head that gets merged. No CI
+    at all is None, not green. Never raises; nothing fetched is logged (#1695).
+    """
+    try:
+        runs_res = runner(
+            [
+                "gh",
+                "api",
+                "--paginate",
+                f"repos/{owner}/{repo}/commits/{sha}/check-runs",
+                "--jq",
+                ".check_runs[] | {status, conclusion}",
+            ],
+            None,
+        )
+        st_res = runner(
+            [
+                "gh",
+                "api",
+                f"repos/{owner}/{repo}/commits/{sha}/status",
+                "--jq",
+                "{state, total_count}",
+            ],
+            None,
+        )
+        # A suite that has runs but is not completed means more checks may still
+        # land, so a green partial roll-up must not count (#1695).
+        suites_res = runner(
+            [
+                "gh",
+                "api",
+                "--paginate",
+                f"repos/{owner}/{repo}/commits/{sha}/check-suites",
+                "--jq",
+                ".check_suites[] | {status, n: .latest_check_runs_count}",
+            ],
+            None,
+        )
+        if not (runs_res.ok and st_res.ok and suites_res.ok):
+            return None
+        runs = [json.loads(ln) for ln in runs_res.out.splitlines() if ln.strip()]
+        suites = [json.loads(ln) for ln in suites_res.out.splitlines() if ln.strip()]
+        status = json.loads(st_res.out)
+        state = status["state"]
+        total = int(status["total_count"])
+        if state in ("failure", "error") or any(
+            r["status"] == "completed" and r["conclusion"] not in _GREEN_CONCLUSIONS
+            for r in runs
+        ):
+            return False
+        pending = (
+            any(r["status"] != "completed" for r in runs)
+            or any(x["n"] > 0 and x["status"] != "completed" for x in suites)
+            or (total > 0 and state != "success")
+            or (not runs and total == 0)
+        )
+        return None if pending else True
+    except Exception:  # noqa: BLE001 - unknown is not green
+        return None
+
+
+def required_checks_green(
+    owner: str,
+    repo: str,
+    base: str,
+    sha: str,
+    *,
+    runner: Runner = _default_runner,
+) -> bool | None:
+    """Required status checks for ``base`` on commit ``sha`` (#1766).
+
+    Reads both classic branch protection and branch rulesets. Returns None (and
+    logs one warning) when protection cannot be read, True when no checks are
+    required or all required checks are green, False when any required check is
+    red, and None when any required check is missing or pending.
+    """
+    try:
+        br_res = runner(
+            [
+                "gh",
+                "api",
+                f"repos/{owner}/{repo}/branches/{base}",
+                "--jq",
+                ".protection",
+            ],
+            None,
+        )
+        rules_res = runner(
+            [
+                "gh",
+                "api",
+                "--paginate",
+                f"repos/{owner}/{repo}/rules/branches/{base}",
+                "--jq",
+                '.[] | select(.type == "required_status_checks")'
+                " | .parameters.required_status_checks[].context",
+            ],
+            None,
+        )
+        try:
+            protection = (
+                json.loads(br_res.out) if (br_res.ok and rules_res.ok) else None
+            )
+        except ValueError:
+            protection = None
+        if not isinstance(protection, dict):
+            logger.warning(
+                "[pr-endgame] cannot read the required checks of %s; "
+                "holding the merge (#1766)",
+                sanitize_log(base),
+            )
+            return None
+        rsc = protection.get("required_status_checks")
+        classic = (rsc.get("contexts") or []) if isinstance(rsc, dict) else []
+        ruleset = [ln.strip() for ln in rules_res.out.splitlines() if ln.strip()]
+        required = {c for c in [*classic, *ruleset] if isinstance(c, str) and c}
+        if not required:
+            return True
+        runs_res = runner(
+            [
+                "gh",
+                "api",
+                "--paginate",
+                f"repos/{owner}/{repo}/commits/{sha}/check-runs",
+                "--jq",
+                ".check_runs[] | {name, status, conclusion}",
+            ],
+            None,
+        )
+        st_res = runner(
+            [
+                "gh",
+                "api",
+                f"repos/{owner}/{repo}/commits/{sha}/status",
+                "--jq",
+                ".statuses[] | {context, state}",
+            ],
+            None,
+        )
+        if not (runs_res.ok and st_res.ok):
+            return None
+        runs = [json.loads(ln) for ln in runs_res.out.splitlines() if ln.strip()]
+        statuses = [json.loads(ln) for ln in st_res.out.splitlines() if ln.strip()]
+        if any(
+            r["name"] in required
+            and r["status"] == "completed"
+            and r["conclusion"] not in _GREEN_CONCLUSIONS
+            for r in runs
+        ) or any(
+            s["context"] in required and s["state"] in ("failure", "error")
+            for s in statuses
+        ):
+            return False
+        green = {
+            r["name"]
+            for r in runs
+            if r["status"] == "completed" and r["conclusion"] in _GREEN_CONCLUSIONS
+        } | {s["context"] for s in statuses if s["state"] == "success"}
+        pending = (
+            not required.issubset(green)
+            or any(r["name"] in required and r["status"] != "completed" for r in runs)
+            or any(
+                s["context"] in required and s["state"] != "success" for s in statuses
+            )
+        )
+        return None if pending else True
+    except Exception:  # noqa: BLE001 - unknown is not green
+        return None
+
+
+def _clears_with_human_approval(
+    spec_dir: Path,
+    tier: str | None,
+    trusted: object,
+    *,
+    fetch_signals: Callable[[], Mapping[str, object]] | None = None,
+    floor: str | None = None,
+) -> bool:
+    """Would the tier auto-merge if only the human-only gates were satisfied?"""
+    try:
+        from merge.merge_policy import HUMAN_ONLY_GATES  # noqa: PLC0415
+    except ImportError:
+        return False  # fail closed: auto-merge stays off
+    return (
+        merge_disposition(
+            spec_dir,
+            tier,
+            trusted=trusted,
+            satisfied_gates=HUMAN_ONLY_GATES,
+            fetch_signals=fetch_signals,
+            floor=floor,
+        )
+        == AUTO_MERGE_DISPOSITION
+    )
+
+
+def merge_pr(  # noqa: PLR0913 - match_head binds the merge to the approved commit
     owner: str,
     repo: str,
     pr: int,
     *,
     method: str = "squash",
     runner: Runner = _default_runner,
+    match_head: str | None = None,
 ) -> bool:
     """Merge the PR. Returns True on success. Never force-merges past a conflict.
+
+    ``match_head`` pins the merge to the commit a human approved (#1663).
 
     On a non-clean merge (branch behind base — the common sequential case where
     an earlier auto-merge advanced main), update the PR branch from base once and
@@ -728,7 +1191,8 @@ def merge_pr(
         method, "--squash"
     )
     full = f"{owner}/{repo}"
-    res = runner(["gh", "pr", "merge", str(pr), flag, "--repo", full], None)
+    extra = ["--match-head-commit", match_head] if match_head else []
+    res = runner(["gh", "pr", "merge", str(pr), flag, "--repo", full, *extra], None)
     if res.ok:
         return True
 
@@ -736,12 +1200,18 @@ def merge_pr(
     if any(
         s in blob for s in ("not mergeable", "cannot be cleanly", "conflict", "behind")
     ):
+        if match_head:
+            # A branch update creates a head nobody approved.
+            logger.info("[pr-endgame] pr=%d not mergeable at the approved head", pr)
+            return False
         logger.info(
             "[pr-endgame] pr=%d not cleanly mergeable — updating branch from base", pr
         )
         upd = runner(["gh", "pr", "update-branch", str(pr), "--repo", full], None)
         if upd.ok:
-            res2 = runner(["gh", "pr", "merge", str(pr), flag, "--repo", full], None)
+            res2 = runner(
+                ["gh", "pr", "merge", str(pr), flag, "--repo", full, *extra], None
+            )
             if res2.ok:
                 return True
             logger.warning(
@@ -776,7 +1246,7 @@ class ConflictResolution:
 ConflictFixer = Callable[["list[str]", str], bool]
 
 
-def resolve_pr_conflicts(
+def _resolve_pr_conflicts(  # noqa: PLR0911
     worktree: str,
     base_branch: str,
     *,
@@ -798,11 +1268,29 @@ def resolve_pr_conflicts(
         return ConflictResolution(False, [], f"fetch failed: {fetch.err[:200]}")
 
     base_ref = f"origin/{base_branch}"
-    reb = runner(["git", "rebase", base_ref], worktree)
+    try:
+        pins = merge_driver_pins(
+            worktree, run=lambda a: ((r := runner(a, worktree)).rc, r.out)
+        )
+    except RuntimeError as exc:
+        return ConflictResolution(False, [], f"rebase refused: {exc}"[:200])
+
+    reb = runner(["git", *pins, "rebase", base_ref], worktree)
     if reb.ok:
         return ConflictResolution(True, [], "rebase clean (no conflict)")
 
-    status = runner(["git", "diff", "--name-only", "--diff-filter=U"], worktree)
+    status = runner(
+        [
+            "git",
+            *pins,
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--name-only",
+            "--diff-filter=U",
+        ],
+        worktree,
+    )
     conflicted = [f for f in status.out.splitlines() if f.strip()]
     if not conflicted:
         # Rebase failed for some reason other than mergeable conflicts.
@@ -817,15 +1305,52 @@ def resolve_pr_conflicts(
             False, conflicted, "fixer did not resolve the conflicts"
         )
 
-    runner(["git", "add", "-A"], worktree)
+    # Re-pin: the fixer ran in this worktree and may have added a driver (#1761).
+    try:
+        pins = merge_driver_pins(
+            worktree, run=lambda a: ((r := runner(a, worktree)).rc, r.out)
+        )
+    except RuntimeError as exc:
+        runner(["git", "rebase", "--abort"], worktree)
+        return ConflictResolution(False, conflicted, f"rebase refused: {exc}"[:200])
+
+    runner(["git", *pins, "add", "-A"], worktree)
     # core.editor=true: non-interactive `rebase --continue` (no $EDITOR prompt).
-    cont = runner(["git", "-c", "core.editor=true", "rebase", "--continue"], worktree)
+    cont = runner(
+        ["git", *pins, "-c", "core.editor=true", "rebase", "--continue"], worktree
+    )
     if not cont.ok:
         runner(["git", "rebase", "--abort"], worktree)
         return ConflictResolution(
             False, conflicted, f"rebase --continue failed: {cont.err[:200]}"
         )
     return ConflictResolution(True, conflicted, "resolved via fixer")
+
+
+def resolve_pr_conflicts(
+    worktree: str,
+    base_branch: str,
+    *,
+    fixer: ConflictFixer,
+    runner: Runner = _default_runner,
+) -> ConflictResolution:
+    """Resolve PR conflicts without leaving a newly created git metadata baseline."""
+    from core.git_metadata import baseline_file  # noqa: PLC0415 - backend path shim
+
+    def run(argv: list[str]) -> tuple[int, str]:
+        result = runner(argv, worktree)
+        return result.rc, result.out
+
+    try:
+        baseline = baseline_file(worktree, run=run)
+    except RuntimeError as exc:
+        return ConflictResolution(False, [], f"rebase refused: {exc}"[:200])
+    created = not baseline.exists()
+    try:
+        return _resolve_pr_conflicts(worktree, base_branch, fixer=fixer, runner=runner)
+    finally:
+        if created:
+            baseline.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -858,7 +1383,21 @@ def _split_repo(repo: str) -> tuple[str, str] | None:
     return None
 
 
-async def watch_and_finish(
+async def _gated_head(
+    merge_gate: Callable[[str], bool],
+    match_head: str | None,
+    pr_head: Callable[[], str | None],
+    pr: int,
+) -> str | None:
+    """The head to merge when ``merge_gate`` is green for it, else None (#1695)."""
+    head = match_head or await asyncio.to_thread(pr_head)
+    if head is None or not await asyncio.to_thread(merge_gate, head):
+        logger.info("[pr-endgame] pr=%d merge gate not green yet", pr)
+        return None
+    return head
+
+
+async def watch_and_finish(  # noqa: PLR0911, PLR0915 - merge-gate human-stop (#1695)
     *,
     owner: str,
     repo: str,
@@ -876,8 +1415,16 @@ async def watch_and_finish(
     runner: Runner = _default_runner,
     poll_interval: int = _POLL_INTERVAL_SECONDS,
     max_minutes: int = _MAX_POLL_MINUTES,
+    human_approval_required: bool = False,
+    merge_gate: Callable[[str], bool] | None = None,
 ) -> dict:
     """Poll the PR's reviews and merge only on a CLEAN Copilot approval.
+
+    ``human_approval_required`` additionally waits for a human GitHub approval
+    of the head commit (``human_approval_head``) and merges bound to that SHA
+    (#1663); until then it keeps polling, and the timeout is the human-stop.
+    ``merge_gate`` (#1695): the merge waits until ``merge_gate(head)`` is true
+    and merges only that head; an endgame-pushed head holds for a human.
 
     Merge requires ALL of: ``auto_merge`` on, no CHANGES_REQUESTED, and — when
     ``require_copilot`` (default) — that GitHub Copilot's code review actually ran
@@ -886,6 +1433,11 @@ async def watch_and_finish(
     a human-stop, and if Copilot never reviews we time out to a human-stop too —
     never a blind merge. Never raises; leaves the PR open on any non-clean path.
     """
+    if human_approval_required and not github_app.configured():
+        logger.warning(
+            "[pr-endgame] human-approval gate but no GitHub App configured; "
+            "the PR author is the maintainer, so this PR must be merged by hand"
+        )
     # review_fn (AIFactory's own engine verdict) takes precedence over reading
     # GitHub review state — AIFactory can't submit a GitHub approval on a PR it
     # opened (self-approval), so its verdict is read from the engine directly.
@@ -895,8 +1447,13 @@ async def watch_and_finish(
 
     fix_cycles = 0
     conflict_cycles = 0
+    gate_held = False
     polls = max(1, (max_minutes * 60) // max(1, poll_interval))
+    # #1766: a slow gate or GitHub must not stretch the stop past max_minutes.
+    deadline = time.monotonic() + max_minutes * 60
     for _ in range(polls):
+        if time.monotonic() >= deadline:
+            break
         await asyncio.sleep(poll_interval)
         if review_fn is not None:
             rs = await asyncio.to_thread(review_fn)
@@ -958,7 +1515,40 @@ async def watch_and_finish(
                     "reason": "auto_merge_disabled",
                     "copilot_approved": rs.copilot_approved,
                 }
-            merged = await asyncio.to_thread(merge_pr, owner, repo, pr, runner=runner)
+            match_head = None
+            if human_approval_required:
+                match_head = await asyncio.to_thread(
+                    human_approval_head, owner, repo, pr, runner=runner
+                )
+                if match_head is None:
+                    continue  # no human approval of the head commit yet
+            if merge_gate is not None:
+                if fix_cycles or conflict_cycles:
+                    logger.info(
+                        "[pr-endgame] pr=%d head was pushed by the endgame and no "
+                        "verdict covers it; handing to a human",
+                        pr,
+                    )
+                    return {
+                        "pr": pr,
+                        "verdict": "approved",
+                        "merged": False,
+                        "reason": "merge_gate_unverified_head",
+                        "fix_cycles": fix_cycles,
+                        "conflict_cycles": conflict_cycles,
+                    }
+                match_head = await _gated_head(
+                    merge_gate,
+                    match_head,
+                    lambda: _pr_head(owner, repo, pr, runner),
+                    pr,
+                )
+                if match_head is None:
+                    gate_held = True
+                    continue
+            merged = await asyncio.to_thread(
+                merge_pr, owner, repo, pr, runner=runner, match_head=match_head
+            )
             # #543: an approved PR that won't merge is usually behind a true
             # line-level conflict. When a conflict_fixer is wired, rebase onto
             # base + resolve the conflicts, push, and RE-REVIEW (loop continues →
@@ -987,9 +1577,11 @@ async def watch_and_finish(
                 )
                 if cr.resolved:
                     push = await asyncio.to_thread(
-                        runner,
+                        push_with_lfs,
                         ["git", "push", "--force-with-lease", "origin", "HEAD"],
+                        "HEAD",
                         worktree,
+                        runner,
                     )
                     if push.ok:
                         continue  # re-review the rebased+resolved branch next poll
@@ -1030,7 +1622,9 @@ async def watch_and_finish(
         "pr": pr,
         "verdict": "pending",
         "merged": False,
-        "reason": "review_timeout (no Copilot approval)"
+        "reason": "merge_gate_timeout"
+        if gate_held
+        else "review_timeout (no Copilot approval)"
         if require_copilot
         else "review_timeout",
     }
@@ -1072,6 +1666,7 @@ def gather_pr_context(
     spec_dir: Path,
     spec_id: str,
     *,
+    trusted: object,
     runner: Runner = _default_runner,
 ) -> dict | None:
     """Resolve {worktree, branch, base, repo, provider} for a task, or None.
@@ -1173,7 +1768,7 @@ def gather_pr_context(
     # allowed to gate anything. Advisory by default: `review_tier` is unchanged
     # and `review_tier_floor` carries the finding to the log + PR body.
     review_tier, review_tier_floor = apply_path_risk_floor(
-        project_path, spec_dir, spec_id, base, review_tier
+        project_path, spec_dir, spec_id, base, review_tier, trusted=trusted
     )
     return {
         "worktree": worktree,
@@ -1186,10 +1781,98 @@ def gather_pr_context(
     }
 
 
+async def _handback_on_record(spec_dir: Path, spec_id: str) -> bool:
+    """A TFactory handback is recorded in the DB (#1696); the QA Fixer can
+    delete ``handback_received.json`` but not this row."""
+    from .handback_receipt_store import on_record  # noqa: PLC0415
+
+    if not await on_record(spec_dir):
+        return False
+    logger.info(
+        "[pr-endgame] %s: TFactory handback on record; auto-merge withheld",
+        sanitize_log(spec_id),
+    )
+    return True
+
+
+def _with_receipt_veto(
+    gate: Callable[[str], bool] | None,
+    spec_dir: Path,
+    loop: asyncio.AbstractEventLoop,
+) -> Callable[[str], bool] | None:
+    if gate is None:
+        return None
+
+    def check(head: str) -> bool:
+        from .handback_receipt_store import on_record  # noqa: PLC0415
+
+        # Runs in a worker thread: _gated_head uses asyncio.to_thread.
+        if asyncio.run_coroutine_threadsafe(on_record(spec_dir), loop).result():
+            return False
+        return gate(head)
+
+    return check
+
+
+def _build_merge_gate(  # noqa: PLR0913 - one-shot builder for run_pr_endgame
+    spec_dir: Path,
+    spec_id: str,
+    repo_parts: tuple[str, str],
+    trusted: object,
+    review_tier: str | None,
+    review_tier_floor: str | None,
+    human_approval_required: bool,
+    runner: Runner,
+    base: str,
+) -> Callable[[str], bool]:
+    """The merge-time gate for every auto-merge task."""
+    owner, name = repo_parts
+
+    def gate(head: str) -> bool:
+        def fetch() -> dict[str, object]:
+            try:
+                from pfactory.tfactory_client import (  # noqa: PLC0415
+                    tfactory_verdict,
+                )
+
+                verdict = tfactory_verdict(spec_dir, spec_id, head=head)
+            except ImportError:
+                verdict = None
+            ci = host_ci_green(owner, name, head, runner=runner)
+            if ci is True:
+                ci = required_checks_green(owner, name, base, head, runner=runner)
+            return {
+                "tfactory_verdict": verdict,
+                "host_ci_green": ci,
+            }
+
+        if human_approval_required:
+            return _clears_with_human_approval(
+                spec_dir,
+                review_tier,
+                trusted,
+                fetch_signals=fetch,
+                floor=review_tier_floor,
+            )
+        return (
+            merge_disposition(
+                spec_dir,
+                review_tier,
+                trusted=trusted,
+                fetch_signals=fetch,
+                floor=review_tier_floor,
+            )
+            == AUTO_MERGE_DISPOSITION
+        )
+
+    return gate
+
+
 async def run_pr_endgame(
     *,
     spec_dir: Path,
     spec_id: str,
+    trusted: object,
     worktree: Path,
     branch: str,
     base: str,
@@ -1253,9 +1936,34 @@ async def run_pr_endgame(
     # `gather_pr_context` (which already parses task_metadata.json for the base
     # branch) and passed in, so this feature adds no second filesystem path
     # built from a request-supplied spec id.
+    auto_merge = auto_merge and not await _handback_on_record(spec_dir, spec_id)
+    human_approval_required = False
     if auto_merge:
-        disposition = merge_disposition(spec_dir, review_tier)
-        if disposition != AUTO_MERGE_DISPOSITION:
+        # PR-open policy needs prospective green; the merge gate checks real evidence.
+        def _prospective() -> dict[str, object]:
+            return {"tfactory_verdict": "pass", "host_ci_green": True}
+
+        disposition = merge_disposition(
+            spec_dir,
+            review_tier,
+            trusted=trusted,
+            fetch_signals=_prospective,
+            floor=review_tier_floor,
+        )
+        if disposition != AUTO_MERGE_DISPOSITION and _clears_with_human_approval(
+            spec_dir,
+            review_tier,
+            trusted,
+            fetch_signals=_prospective,
+            floor=review_tier_floor,
+        ):
+            logger.info(
+                "[pr-endgame] %s: auto-merge waits for a human GitHub approval "
+                "of the head commit",
+                sanitize_log(spec_id),
+            )
+            human_approval_required = True
+        elif disposition != AUTO_MERGE_DISPOSITION:
             # A CONSTANT, never the raw value: reviewTier comes off disk, and
             # interpolating file content into a log record lets a crafted value
             # forge log entries (py/log-injection). `disposition` is one of
@@ -1275,7 +1983,25 @@ async def run_pr_endgame(
         return {"ok": False, "reason": "no_repo", "repo": repo}
     owner, name = parts
 
+    merge_gate = (
+        _build_merge_gate(
+            spec_dir,
+            spec_id,
+            (owner, name),
+            trusted,
+            review_tier,
+            review_tier_floor,
+            human_approval_required,
+            runner,
+            base,
+        )
+        if auto_merge
+        else None
+    )
+    merge_gate = _with_receipt_veto(merge_gate, spec_dir, asyncio.get_running_loop())
+
     title, body = _pr_title_body(spec_dir, spec_id)
+    body = f"{body}\n\n{review_tier_note(spec_dir, review_tier, trusted=trusted)}"
     if review_tier_floor:
         # Advisory rollout (#1456): tell the human reviewer what the paths say,
         # even while the floor is not yet allowed to withhold the merge. Both
@@ -1334,6 +2060,8 @@ async def run_pr_endgame(
         base_branch=base,
         on_approved_merged=re_test,
         runner=runner,
+        human_approval_required=human_approval_required,
+        merge_gate=merge_gate,
     )
     if background:
         # A strong reference, held until the watcher finishes. The event loop

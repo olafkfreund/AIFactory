@@ -24,23 +24,24 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import shlex
 import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from core.child_env import child_env
 from core.nix_env import nix_in_image
 
 logger = logging.getLogger(__name__)
 
 
 # How long any single gate may run before we treat it as failed (seconds).
-# Every gate cold-fetches its toolchain closure from cache.nixos.org: the
-# runner image bakes no language closures (verified — no kotlin or swift paths
-# in its store). Kotlin fits in 600s; Swift, which drags in GTK, does not, and
-# the Job's deadline kills it mid-download. Configurable so raising the budget
-# does not need a release. The real fix is warming the closures (#1541).
+# The budget is 600s and can be raised without a release. The gate image
+# (factory-runner-nix) bakes swift, kotlin, gradle and openjdk-21; why Swift
+# hits the deadline is unknown (SPM fetching over git is a hypothesis), see
+# #1737.
 def _timeout_from_env(env: Mapping[str, str]) -> int:
     """Gate budget in seconds; 600 unless overridden. Pure, so it is testable
     without reloading the module (a reload swaps module identity and breaks
@@ -132,7 +133,22 @@ def detect_gates(project_dir: Path) -> list[Gate]:
         scripts = _package_scripts(pkg)
         if "lint" in scripts:
             gates.append(Gate("lint", ["npm", "run", "lint", "--if-present"]))
-        if "test" in scripts:
+        test_script = str(scripts.get("test") or "")
+        if _PY_TEST_RUNNER.search(test_script) and not _has_python_test_harness(p):
+            # #1443: a JS project whose `test` script runs a Python runner. `npm
+            # test` would only run pytest over JavaScript; fail with the reason
+            # instead, so the QA fixer gets a defect it can act on.
+            msg = (
+                f'package.json "test" runs {test_script!r} but this is not a Python '
+                "project; use the project's JS test runner"
+            )
+            gates.append(
+                Gate(
+                    "test-script-language",
+                    ["sh", "-c", 'printf "%s\\n" "$0" >&2; exit 1', msg],
+                )
+            )
+        elif "test" in scripts:
             gates.append(Gate("test", ["npm", "test", "--if-present"]))
 
     # --- Rust / Go ---
@@ -144,6 +160,30 @@ def detect_gates(project_dir: Path) -> list[Gate]:
     gates.extend(_descriptor_gates(p, already={g.name for g in gates}))
 
     return gates
+
+
+# Curated lint commands (#1742). CI text never runs; others stay `skipped`.
+_LINT_COMMANDS: dict[str, list[str]] = {
+    "flake8": ["flake8"],
+    "ktlint": ["ktlint"],
+    "ruff": ["ruff", "check", "."],
+}
+
+
+def repo_lint_enabled(env: Mapping[str, str] = os.environ) -> bool:
+    """AIFACTORY_REPO_LINT_GATE opt-in: lint can fail builds that pass today."""
+    return env.get("AIFACTORY_REPO_LINT_GATE", "").lower() in ("1", "true", "yes")
+
+
+def lint_gates(linters: list[str]) -> list[Gate]:
+    """One gate per detected CI linter with a curated command; [] when off."""
+    if not repo_lint_enabled():
+        return []
+    return [
+        Gate(t, list(_LINT_COMMANDS[t]), skip_code=127)
+        for t in linters
+        if t in _LINT_COMMANDS
+    ]
 
 
 # Build files that mark the root of a module the descriptor's command can run in.
@@ -251,6 +291,45 @@ def _descriptor_gates(project_dir: Path, *, already: set[str]) -> list[Gate]:
         out.append(Gate(name, shlex.split(unit.command), cwd=module_dir))
         already.add(name)
     return out
+
+
+# A package.json `test` script that invokes a Python test runner (#1443).
+_PY_TEST_RUNNER = re.compile(
+    r"(^|[\s;&|])(pytest|py\.test|python3?\s+-m\s+(pytest|unittest))\b"
+)
+_HARNESS_SKIP_DIRS = frozenset({"node_modules", ".git"})
+
+
+def _has_python_test_harness(p: Path, max_depth: int = 3) -> bool:
+    """True when the project really carries Python tests (#1443)."""
+    if (p / "pytest.ini").exists():
+        return True
+    if _file_contains(p / "setup.cfg", "[tool:pytest]"):
+        return True
+    if _file_contains(p / "pyproject.toml", "[tool.pytest"):
+        return True
+
+    def walk(d: Path, depth: int) -> bool:
+        try:
+            entries = list(d.iterdir())
+        except OSError:
+            return False
+        for e in entries:
+            if (
+                e.is_file()
+                and e.suffix == ".py"
+                and (e.name.startswith("test_") or e.stem.endswith("_test"))
+            ):
+                return True
+        if depth >= max_depth:
+            return False
+        return any(
+            walk(e, depth + 1)
+            for e in entries
+            if e.is_dir() and e.name not in _HARNESS_SKIP_DIRS
+        )
+
+    return walk(p, 0)
 
 
 def _file_contains(path: Path, needle: str) -> bool:
@@ -432,19 +511,15 @@ def _nix_kube_runner(image: str) -> Callable[[list[str], Path], tuple[int | None
     # whenever the two PVs stranded on different nodes (the live factory cluster:
     # aifactory-data on the server, aifactory-nix-store on the agent). See
     # nix_in_image for why the image is a sufficient /nix source.
-    # #1541: the gitops manifest states the condition for bringing it back —
-    # "do not reintroduce it without RWX storage" — and the fleet now has one:
-    # the `nfs` RWX class, proven by tfactory-data-rwx. An RWX claim cannot
-    # strand against another PV, which is what #253 actually hit.
-    # Independently, the packed path (#1525) mounts NO repo PVC at all (the code
-    # arrives in an emptyDir via the unpack initContainer), so the nix store is
-    # the pod's only claim there. It stays dropped on the co-mount path, where
-    # the repo PVC really is mounted.
-    # This matters because the runner image bakes no language closures: without
-    # a persistent store every gate re-downloads its whole toolchain from
-    # cache.nixos.org, and Swift never finishes inside the Job deadline.
-    configured_store_pvc = os.environ.get("AIFACTORY_NIX_STORE_PVC", "") or None
-    nix_store_pvc = None if nix_in_image() else configured_store_pvc
+    # Both gate paths drop the PVC when nix_in_image() is true. The build Job
+    # forwards both variables (_PASSTHROUGH_BUILD_ENV, #1736), so this guard
+    # sees the same values here as on the control plane; the build Job itself
+    # mounts no store.
+    nix_store_pvc = (
+        None
+        if nix_in_image()
+        else (os.environ.get("AIFACTORY_NIX_STORE_PVC", "") or None)
+    )
     if nix_store_pvc:
         logger.info("[gate] warm Nix store PVC %s mounted at /nix", nix_store_pvc)
     else:
@@ -473,13 +548,9 @@ def _nix_kube_runner(image: str) -> Callable[[list[str], Path], tuple[int | None
                 )
             if packed:
                 try:
-                    # Warming matters most here: the runner image bakes no
-                    # language closures, so without a persistent store every
-                    # gate re-downloads its whole toolchain from cache.nixos.org
-                    # and Swift never finishes inside the Job deadline (#1541).
                     res = KubeJobSandbox(
                         image,
-                        nix_store_pvc=configured_store_pvc,
+                        nix_store_pvc=nix_store_pvc,
                         workspace_uri=packed,
                         unpack_image=unpack_image,
                         store_env=_store_env(),
@@ -708,6 +779,7 @@ def _current_head_sha(gate_dir: Path) -> str | None:
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],  # noqa: S607
             cwd=gate_dir,
+            env=child_env(),
             capture_output=True,
             text=True,
             timeout=10,
@@ -719,6 +791,41 @@ def _current_head_sha(gate_dir: Path) -> str | None:
         return None
     sha = result.stdout.strip()
     return sha or None
+
+
+def _task_branch_shas(project_dir: Path, spec_name: str) -> set[str]:
+    """Tip shas of the task branch ``aifactory/<spec>`` in `project_dir` (#1550).
+
+    Lets a reader with no working copy of the task (the web-server merger, a
+    packed-path build whose Job tree is gone) still name the tree the evidence
+    is about. Both the local branch and ``origin/aifactory/<spec>`` count: the
+    co-mount path commits locally and never pushes, while the packed path
+    pushes to origin and leaves the control plane's local ref stale or absent
+    (the merger fetches it before it reads evidence). Same best-effort contract
+    as `_current_head_sha`: an unresolvable ref contributes nothing.
+    """
+    shas: set[str] = set()
+    for ref in (
+        f"refs/heads/aifactory/{spec_name}",
+        f"refs/remotes/origin/aifactory/{spec_name}",
+    ):
+        try:
+            # Fixed argv, no shell; only the ref name varies, and it is a ref lookup.
+            result = subprocess.run(  # noqa: S603
+                ["git", "rev-parse", "--verify", "--quiet", ref],  # noqa: S607
+                cwd=project_dir,
+                env=child_env(),
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        sha = result.stdout.strip() if result.returncode == 0 else ""
+        if sha:
+            shas.add(sha)
+    return shas
 
 
 def write_trailing_gate_marker(spec_dir: Path, gate_dir: Path, evidence: str) -> None:
@@ -736,8 +843,17 @@ def write_trailing_gate_marker(spec_dir: Path, gate_dir: Path, evidence: str) ->
     marker.write_text(f"{sha}\n{evidence}\n", encoding="utf-8")
 
 
-def trailing_gate_marker_is_current(spec_dir: Path, gate_dir: Path) -> bool:
+def trailing_gate_marker_is_current(
+    spec_dir: Path, gate_dir: Path, *, project_dir: Path | None = None
+) -> bool:
     """True when the recorded marker is bound to `gate_dir`'s CURRENT HEAD.
+
+    #1550: when the caller has no working copy of the task (`gate_dir_for`
+    fell back to `project_dir`), `project_dir`'s HEAD is some other branch
+    (main, on the control plane) and never matches. The task branch tip is the
+    tree the evidence is about there, so a marker recorded for that tip also
+    counts. Where a task worktree exists the HEAD check alone decides, as
+    before -- that worktree IS the branch, and its HEAD is the stricter read.
 
     Also true when the binding cannot be checked at all -- no marker sha was
     recorded ("-"), or `gate_dir`'s HEAD cannot be read now. Git is not always
@@ -753,6 +869,12 @@ def trailing_gate_marker_is_current(spec_dir: Path, gate_dir: Path) -> bool:
         return False
     recorded_sha = text.split("\n", 1)[0].strip()
     if not recorded_sha or recorded_sha == "-":
+        return True
+    if (
+        project_dir is not None
+        and gate_dir == project_dir
+        and recorded_sha in _task_branch_shas(project_dir, spec_dir.name)
+    ):
         return True
     current_sha = _current_head_sha(gate_dir)
     if current_sha is None:
@@ -780,7 +902,7 @@ def trailing_gate_evidence(spec_dir: Path, project_dir: Path) -> str | None:
         return None
     if not text:
         return None
-    if not trailing_gate_marker_is_current(spec_dir, gate_dir):
+    if not trailing_gate_marker_is_current(spec_dir, gate_dir, project_dir=project_dir):
         return None
     _, _, evidence = text.partition("\n")
     evidence = evidence.strip()

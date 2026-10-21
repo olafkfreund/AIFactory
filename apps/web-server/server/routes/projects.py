@@ -7,7 +7,7 @@ Handles CRUD operations for projects (git repositories that Magestic AI manages)
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
@@ -23,8 +23,11 @@ from server.error_ref import InputRejectedError, client_error
 # call sites unchanged -- and so `patch("server.routes.projects.load_projects")`
 # still works for tests that drive THIS module's handlers.
 from server.project_registry import load_projects, save_projects
+from server.services import project_settings_store
+from server.services.audit_service import ACTION_TASK_CREATE, audit_task_action
 from server.services.http_verdict import honest_status
 from server.specpath import browse_roots, safe_spec_component, within_roots
+from server.utils.subprocess_env import child_env
 
 from ..database.engine import DEFAULT_ORG_ID, get_db
 
@@ -316,8 +319,8 @@ def project_to_response(project_id: str, project_data: dict) -> dict:
         "id": project_id,
         "path": project_data["path"],
         "name": project_data.get("name", Path(project_data["path"]).name),
-        "createdAt": project_data.get("created_at", datetime.now().isoformat()),
-        "updatedAt": project_data.get("updated_at", datetime.now().isoformat()),
+        "createdAt": project_data.get("created_at", datetime.now(UTC).isoformat()),
+        "updatedAt": project_data.get("updated_at", datetime.now(UTC).isoformat()),
         "autoBuildPath": auto_build_path,
         "settings": default_settings,
     }
@@ -634,7 +637,7 @@ async def add_project(
 
     # Create project entry
     project_id = str(uuid4())
-    now = datetime.now().isoformat()
+    now = datetime.now(UTC).isoformat()
     # Stamp the owning org (#319). Service/M2M creators → default org; human
     # creators → their own org. Defensive: direct callers (MCP stdio proxy,
     # tests) pass no Request / real session → fall back to the default org
@@ -722,7 +725,7 @@ async def update_project(
     if project.name:
         project_data["name"] = project.name
 
-    project_data["updated_at"] = datetime.now().isoformat()
+    project_data["updated_at"] = datetime.now(UTC).isoformat()
 
     projects[project_id] = project_data
     save_projects(projects)
@@ -781,7 +784,7 @@ async def initialize_project(
         (magestic_ai_dir / "specs").mkdir(parents=True, exist_ok=True)
 
         # Update timestamp and autoBuildPath
-        project_data["updated_at"] = datetime.now().isoformat()
+        project_data["updated_at"] = datetime.now(UTC).isoformat()
         project_data["autoBuildPath"] = ".aifactory"
         projects[project_id] = project_data
         save_projects(projects)
@@ -902,16 +905,8 @@ async def update_project_settings(
     try:
         project_data = projects[project_id]
         project_path = Path(project_data["path"])
-        env_path = project_path / ".aifactory" / ".env"
 
-        # Read existing .env or start fresh
-        existing = {}
-        if env_path.exists():
-            for line in env_path.read_text().split("\n"):
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, value = line.split("=", 1)
-                    existing[key.strip()] = value.strip()
+        existing = await project_settings_store.get_settings(project_path)
 
         # Map ProjectSettingsUpdate fields to environment variables
         # Only update non-None values
@@ -957,15 +952,7 @@ async def update_project_settings(
             if settings_key in settings_dict:
                 existing[env_key] = "true" if settings_dict[settings_key] else "false"
 
-        # Ensure .aifactory directory exists
-        env_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Write back to .env file
-        content = "\n".join(f"{k}={v}" for k, v in existing.items())
-        env_path.write_text(content)
-
-        # Set secure file permissions (owner read/write only)
-        env_path.chmod(0o600)
+        await project_settings_store.put_settings(project_path, existing)
 
         # Also update settings in projects.json
         if "settings" not in project_data:
@@ -987,7 +974,7 @@ async def update_project_settings(
                 project_data["settings"]["notifications"].update(notifications_update)
 
         project_data["settings"].update(settings_dict)
-        project_data["updated_at"] = datetime.now().isoformat()
+        project_data["updated_at"] = datetime.now(UTC).isoformat()
 
         save_projects(projects)
 
@@ -1028,6 +1015,7 @@ async def list_project_worktrees(
             capture_output=True,
             text=True,
             timeout=5,
+            env=child_env(),
         )
         base_branch = (
             base_result.stdout.strip() if base_result.returncode == 0 else "main"
@@ -1043,6 +1031,7 @@ async def list_project_worktrees(
             capture_output=True,
             text=True,
             timeout=10,
+            env=child_env(),
         )
         if result.returncode != 0:
             return {"worktrees": []}
@@ -1089,6 +1078,7 @@ async def list_project_worktrees(
                     capture_output=True,
                     text=True,
                     timeout=5,
+                    env=child_env(),
                 )
                 commit_count = (
                     int(commit_result.stdout.strip())
@@ -1098,11 +1088,19 @@ async def list_project_worktrees(
 
                 # Get diff stats
                 diff_result = subprocess.run(
-                    ["git", "diff", "--shortstat", f"{base_branch}...{branch}"],
+                    [
+                        "git",
+                        "diff",
+                        "--no-ext-diff",
+                        "--no-textconv",
+                        "--shortstat",
+                        f"{base_branch}...{branch}",
+                    ],
                     cwd=wt_path,
                     capture_output=True,
                     text=True,
                     timeout=10,
+                    env=child_env(),
                 )
 
                 files_changed = 0
@@ -1226,7 +1224,7 @@ async def create_project_task(
 
     This endpoint delegates to the tasks module for actual creation.
     """
-    from datetime import datetime
+    from datetime import UTC, datetime
 
     from . import tasks as tasks_module
 
@@ -1281,7 +1279,7 @@ Created via Magestic AI Web UI
     requirements = {
         "title": title,
         "description": task_data.description,
-        "created_at": datetime.now().isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
     }
     if task_data.metadata:
         requirements["metadata"] = task_data.metadata
@@ -1338,6 +1336,11 @@ Created via Magestic AI Web UI
     stamp_spec_tenant(spec_dir, resolve_tenant(raw_request))
 
     task = tasks_module.spec_to_task(project_id, spec_dir)
+    # #1466: this is the web UI's create path; it never goes through
+    # routes.tasks.create_task, so it audits the same row itself.
+    await audit_task_action(
+        _access, ACTION_TASK_CREATE, f"{project_id}:{spec_dir.name}", raw_request
+    )
     return tasks_module.task_to_dict(task)
 
 
@@ -1460,7 +1463,7 @@ async def archive_tasks(
                 plan = {}
 
         # Add archive metadata
-        plan["archivedAt"] = datetime.now().isoformat()
+        plan["archivedAt"] = datetime.now(UTC).isoformat()
         if request.version:
             plan["archivedInVersion"] = request.version
 

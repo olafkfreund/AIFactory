@@ -16,10 +16,15 @@ nothing.
 
 from __future__ import annotations
 
-import json
+import logging
 import shutil
 from collections.abc import Mapping
 from pathlib import Path
+
+from core.contract_trust import reason_label, record_hold, trusted_contract
+from ui import print_status
+
+logger = logging.getLogger(__name__)
 
 _TEMPLATES = Path(__file__).parent / "deploy_templates"
 
@@ -76,17 +81,25 @@ def _worktree_root(spec_dir: Path) -> Path:
     return spec_dir.parent
 
 
-def scaffold_deploy_for_spec(spec_dir: Path) -> list[str]:
+def scaffold_deploy_for_spec(
+    spec_dir: Path, source_spec_dir: Path | None = None
+) -> list[str]:
     """Read a spec's contract ``deployment`` block and scaffold the deploy
     artifacts into its worktree. Best-effort: returns the written paths, or an
     empty list when there's no PaaS target / on any error (never raises, so a
     build is never affected). The coder calls this at build completion."""
-    contract = spec_dir / "context" / "task_contract.json"
-    if not contract.exists():
-        return []
     try:
-        data = json.loads(contract.read_text(encoding="utf-8"))
-        deployment = data.get("deployment") if isinstance(data, dict) else None
-        return scaffold_deploy(deployment, _worktree_root(spec_dir))
-    except (OSError, ValueError):
+        state, data, why = trusted_contract(spec_dir)
+        if state == "hold":
+            msg = f"[trusted-contract] deploy scaffold withheld: {reason_label(why)}"
+            logger.warning(msg)
+            print_status(msg, "warning")
+            record_hold(
+                spec_dir, msg.removeprefix("[trusted-contract] "), source_spec_dir
+            )
+            return []
+        return scaffold_deploy(
+            data.get("deployment") if data else None, _worktree_root(spec_dir)
+        )
+    except Exception:  # noqa: BLE001 - never let scaffolding affect a build
         return []

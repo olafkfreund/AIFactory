@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: AIFactory Web API
   description: Web API for AIFactory — self-hosted AI task management + agent orchestration
-  version: 3.6.81
+  version: 3.6.84
 paths:
   /api/auth/register:
     post:
@@ -2874,7 +2874,7 @@ paths:
       description: 'Update project environment configuration.
 
 
-        Updates the .aifactory/.env file with environment variables for:
+        Updates the project settings store with environment variables for:
 
         - GitHub integration (GITHUB_TOKEN)
 
@@ -2884,10 +2884,10 @@ paths:
 
         - Claude authentication (CLAUDE_CODE_OAUTH_TOKEN)
 
+        - MCP configuration (CONTEXT7_ENABLED, PLAYWRIGHT_MCP_ENABLED, AGENT_MCP_*, CUSTOM_MCP_SERVERS)
 
-        Only updates fields that are provided (partial updates supported).
 
-        Sets secure file permissions (0o600) to protect sensitive tokens.'
+        Only updates fields that are provided (partial updates supported).'
       operationId: update_project_env_api_projects__projectId__env_patch
       parameters:
       - name: projectId
@@ -3906,6 +3906,7 @@ paths:
               default:
                 targetStatus: backlog
                 autoRestart: false
+                force: false
       responses:
         '200':
           description: Successful Response
@@ -4530,7 +4531,12 @@ paths:
       tags:
       - Tasks
       summary: Merge Worktree
-      description: Merge the worktree branch into the base branch.
+      description: 'Merge the worktree branch into the base branch.
+
+
+        When a PR exists for the task branch, the PR is merged on GitHub and no
+
+        worktree is needed (CFactory#457). Only the no-PR local merge requires it.'
       operationId: merge_worktree_api_tasks__task_id__worktree_merge_post
       parameters:
       - name: task_id
@@ -5139,7 +5145,14 @@ paths:
       summary: Create Pr From Task
       description: 'Push the worktree branch and create a GitHub Pull Request.
 
-        Does NOT delete the worktree or branch after PR creation.'
+        Does NOT delete the worktree or branch after PR creation.
+
+
+        If an open or already-merged PR exists for the task branch, it is returned
+
+        (``existing: true``) without pushing, so calling this again is safe and
+
+        works after the worktree was cleaned up (CFactory#457).'
       operationId: create_pr_from_task_api_tasks__task_id__worktree_create_pr_post
       parameters:
       - name: task_id
@@ -7926,7 +7939,7 @@ paths:
 
         If projectId is provided, the CLI token is persisted directly to the
 
-        project''s .aifactory/.env file (server-side). The raw token is never
+        project''s settings store (server-side, #1795). The raw token is never
 
         included in the response.'
       operationId: auto_detect_github_api_github_auto_detect_get
@@ -8008,7 +8021,7 @@ paths:
       tags:
       - GitHub
       summary: Persist Github Token
-      description: 'Persist the gh CLI token to a project''s .aifactory/.env file.
+      description: 'Persist the gh CLI token to a project''s settings store.
 
 
         The raw token never appears in the response.'
@@ -8351,7 +8364,14 @@ paths:
   /api/maintenance/merger:
     get:
       summary: Report Merger
-      description: What the merger would do. Opens nothing.
+      description: 'What the merger would do. Opens nothing.
+
+
+        ``last_tick_at`` is when the backstop loop last finished a sweep (None if
+
+        it never ran or is disabled) -- job-watchdog cannot see an in-process
+
+        loop, so a stale value here is how a dead one shows (Factory#2586).'
       operationId: report_merger_api_maintenance_merger_get
       responses:
         '200':
@@ -9993,16 +10013,6 @@ paths:
     get:
       summary: Health Check
       operationId: health_check_api_health_get
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-  /:
-    get:
-      summary: Root
-      operationId: root__get
       responses:
         '200':
           description: Successful Response
@@ -12713,6 +12723,24 @@ components:
             type: object
           - type: 'null'
           title: Graphitiproviderconfig
+        mcpServers:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Mcpservers
+        agentMcpOverrides:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Agentmcpoverrides
+        customMcpServers:
+          anyOf:
+          - items: {}
+            type: array
+          - type: 'null'
+          title: Custommcpservers
       type: object
       title: ProjectEnvUpdate
       description: Model for updating project environment configuration.
@@ -12845,6 +12873,13 @@ components:
           type: boolean
           title: Autorestart
           description: Auto-restart the task after recovery
+          default: false
+        force:
+          type: boolean
+          title: Force
+          description: Recover even while a build for this task is still running. Recovery resets the
+            task's record but does NOT stop the Job, so forcing it can leave a live build writing against
+            a reset task (#1619).
           default: false
       type: object
       title: RecoverTaskRequest
@@ -13685,6 +13720,11 @@ components:
           type: string
           title: Created At
           description: ISO timestamp
+        created_at_is_estimate:
+          type: boolean
+          title: Created At Is Estimate
+          description: created_at is inferred, not recorded at creation
+          default: false
         updated_at:
           type: string
           title: Updated At

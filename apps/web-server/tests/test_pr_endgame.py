@@ -10,15 +10,42 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
 
 _WS = Path(__file__).resolve().parents[1]
 if str(_WS) not in sys.path:
     sys.path.insert(0, str(_WS))
 
+import server.services.project_settings_store as pss  # noqa: E402
 from server.services import pr_endgame as pe  # noqa: E402
 from server.services.pr_endgame import CmdResult  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _isolated_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests model a legacy task on an isolated host (#1667, D4-i)."""
+    monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "kubejob")
+    # kubejob counts as isolated only with the durable store (#1667).
+    monkeypatch.setattr("server.services.job_state_store.store_enabled", lambda: True)
+
+
+@pytest.fixture(autouse=True)
+def _verified_green(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests drive the review/merge flow, not the #1695 gate (its own
+    tests are in test_trusted_contract_merge.py). Since #1697 every auto-merge
+    task gets that gate, so stand in a green one."""
+    monkeypatch.setattr(pe, "_build_merge_gate", lambda *_a, **_k: lambda _h: True)
+    real_head = pe._pr_head
+    # A FakeRunner without a head route still yields a head to gate on.
+    monkeypatch.setattr(pe, "_pr_head", lambda *a: real_head(*a) or "deadbeef")
 
 
 class FakeRunner:
@@ -77,8 +104,70 @@ def test_create_pr_parses_number():
     )
     assert pr == 7
     assert r.saw("pr create")
-    # Must configure git auth before pushing, or the deployed push 401s.
-    assert r.saw("auth setup-git")
+    # #1688: auth is per call (github_env); no global helper.
+    assert not r.saw("auth setup-git")
+
+
+def test_default_runner_hands_gh_a_config_dir_not_the_token(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    token = "ghp_1688FakeTokenSentinelDoNotLeak"  # noqa: S105  # gitleaks:allow
+    monkeypatch.setenv("GITHUB_TOKEN", token)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    seen: list[tuple[dict[str, str], str]] = []
+
+    def read_hosts(env: dict[str, str]) -> str:
+        return Path(env["GH_CONFIG_DIR"], "hosts.yml").read_text()
+
+    def fake_run(argv: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
+        env = dict(kw["env"])
+        seen.append((env, read_hosts(env)))  # at call time: the dir is gone after
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(pe.subprocess, "run", fake_run)
+    pe._default_runner(["gh", "pr", "list"], None)
+    assert seen
+    env, hosts = seen[0]
+    assert token in hosts
+    assert all(token not in v for v in env.values())
+    assert "GITHUB_TOKEN" not in env
+    assert list(tmp_path.glob("aif-gh-*")) == []
+
+
+def test_create_pr_upload_failure_still_opens_pr(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # #1721: a failed LFS upload logs a warning and still pushes the ref and
+    # goes on to `gh pr create`.
+    real_which = shutil.which
+    monkeypatch.setattr(
+        "core.child_env.shutil.which",
+        lambda c, *a, **k: "/x/git-lfs" if c == "git-lfs" else real_which(c, *a, **k),
+    )
+    r = FakeRunner(
+        {
+            "git grep": CmdResult(0, "", ""),
+            "get-url": CmdResult(0, "https://github.com/o/r", ""),
+            "--get-regexp": CmdResult(1, "", ""),
+            "lfs push": CmdResult(2, "", "boom"),
+            "pr create": CmdResult(0, "https://github.com/o/r/pull/11", ""),
+        }
+    )
+    with caplog.at_level("WARNING", logger="core.child_env"):
+        pr = pe.create_pr(
+            worktree=Path("/wt"),
+            branch="b",
+            base="main",
+            title="t",
+            body="b",
+            runner=r,
+        )
+    assert pr == 11
+    assert "boom" in caplog.text
+    assert r.saw("lfs push")
+    assert any(c[:2] == ["git", "push"] for c in r.calls)
 
 
 def test_create_pr_fetches_branch_from_origin_before_push():
@@ -87,6 +176,7 @@ def test_create_pr_fetches_branch_from_origin_before_push():
     # it from origin before the push/gh-pr-create or the refspec doesn't resolve.
     r = FakeRunner(
         {
+            "git grep": CmdResult(1, "", ""),  # no filter=lfs: no LFS step (#1721)
             "fetch origin": CmdResult(0, "", ""),
             "git push": CmdResult(0, "", ""),
             "pr create": CmdResult(0, "https://github.com/o/r/pull/9", ""),
@@ -108,7 +198,7 @@ def test_create_pr_fetches_branch_from_origin_before_push():
         for i, c in enumerate(r.calls)
         if "fetch" in " ".join(c) and "origin" in " ".join(c)
     )
-    push_i = next(i for i, c in enumerate(r.calls) if "push" in " ".join(c))
+    push_i = next(i for i, c in enumerate(r.calls) if "git push" in " ".join(c))
     assert fetch_i < push_i
 
 
@@ -132,7 +222,7 @@ def test_create_pr_survives_fetch_failure():
 COPILOT = "copilot-pull-request-reviewer[bot]"
 
 
-def _reviews(*pairs):
+def _reviews(*pairs: tuple[str, str]) -> CmdResult:
     """pairs of (state, login) → the JSON gh returns for .../reviews."""
     return CmdResult(
         0, json.dumps([{"state": s, "login": login} for s, login in pairs]), ""
@@ -155,6 +245,132 @@ def test_read_review_verdict_copilot_aware():
     )
     rs = pe.read_review_verdict("o", "r", 1, runner=r)
     assert rs.verdict == "changes_requested" and rs.copilot_changes_requested
+
+
+# ── human_approval_head (#1663) ──────────────────────────────────────────────
+
+
+def _rv(
+    state: str, login: str = "alice", type_: str = "User", commit_id: str = "abc"
+) -> dict[str, str]:
+    return {"state": state, "login": login, "type": type_, "commit_id": commit_id}
+
+
+def _approval_runner(
+    *rows: dict[str, str],
+    pr_rc: int = 0,
+    rv_rc: int = 0,
+    raw: str | None = None,
+    merge: CmdResult | None = None,
+) -> FakeRunner:
+    """PR route + newline-delimited reviews route (what --paginate --jq emits).
+
+    "--paginate" and ".head.sha" come before "reviews": first match wins.
+    """
+    body = raw if raw is not None else "\n".join(json.dumps(x) for x in rows)
+    pr = json.dumps({"head": "abc", "author": "olafkfreund"})
+    routes = {
+        ".head.sha": CmdResult(pr_rc, pr, ""),
+        "--paginate": CmdResult(rv_rc, body, ""),
+        "reviews": _reviews(("APPROVED", COPILOT)),
+    }
+    if merge:
+        routes["pr merge"] = merge
+    return FakeRunner(routes)
+
+
+def test_human_approval_head_returns_the_approved_sha() -> None:
+    r = _approval_runner(_rv("APPROVED"))
+    assert pe.human_approval_head("o", "r", 5, runner=r) == "abc"
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        [_rv("APPROVED", login="olafkfreund")],  # the PR author
+        [_rv("APPROVED", login="dependabot[bot]", type_="Bot")],
+        [_rv("APPROVED", commit_id="old")],  # stale
+        [_rv("APPROVED"), _rv("CHANGES_REQUESTED")],
+        [_rv("APPROVED"), _rv("DISMISSED")],
+        # another reviewer's standing change request blocks the approval
+        [_rv("APPROVED"), _rv("CHANGES_REQUESTED", login="bob")],
+        # a deleted / unidentified account is not a human approver
+        [{"state": "APPROVED", "login": None, "type": None, "commit_id": "abc"}],
+    ],
+)
+def test_human_approval_head_rejects(rows: list[dict[str, str]]) -> None:
+    assert pe.human_approval_head("o", "r", 5, runner=_approval_runner(*rows)) is None
+
+
+def test_human_approval_head_ignores_a_later_comment() -> None:
+    r = _approval_runner(_rv("APPROVED"), _rv("COMMENTED"))
+    assert pe.human_approval_head("o", "r", 5, runner=r) == "abc"
+
+
+@pytest.mark.parametrize("kw", [{"pr_rc": 1}, {"rv_rc": 1}, {"raw": "not json"}])
+def test_human_approval_head_fails_closed(kw: dict[str, Any]) -> None:
+    r = _approval_runner(_rv("APPROVED"), **kw)
+    assert pe.human_approval_head("o", "r", 5, runner=r) is None
+
+
+def _gated_watch(r: FakeRunner) -> dict[str, Any]:
+    return asyncio.run(
+        pe.watch_and_finish(
+            owner="o",
+            repo="r",
+            pr=5,
+            auto_merge=True,
+            human_approval_required=True,
+            runner=r,
+            poll_interval=0,
+            max_minutes=1,
+        )
+    )
+
+
+def test_watcher_without_human_approval_never_merges() -> None:
+    r = _approval_runner()
+    res = _gated_watch(r)
+    assert res["merged"] is False
+    assert not r.saw("pr merge")
+
+
+def test_watcher_merges_bound_to_the_approved_commit() -> None:
+    r = _approval_runner(_rv("APPROVED"), merge=CmdResult(0, "merged", ""))
+    _gated_watch(r)
+    assert r.saw("--match-head-commit abc")
+
+
+def test_bound_merge_never_updates_the_branch() -> None:
+    r = _approval_runner(
+        _rv("APPROVED"), merge=CmdResult(1, "", "not mergeable: behind")
+    )
+    _gated_watch(r)
+    assert not r.saw("update-branch")
+
+
+def test_1766_watcher_stops_at_the_wall_clock_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Each poll "takes" 10 minutes (a hung gh/TFactory); 20 min = 40 polls
+    # by count, but the deadline must end it after about two.
+    clock = iter(range(0, 10**6, 600))
+    # Patch only pr_endgame's view of time: asyncio itself reads time.monotonic.
+    monkeypatch.setattr(pe, "time", SimpleNamespace(monotonic=lambda: next(clock)))
+    r = FakeRunner({"reviews": _reviews()})
+    res = asyncio.run(
+        pe.watch_and_finish(
+            owner="o",
+            repo="r",
+            pr=5,
+            auto_merge=False,
+            runner=r,
+            poll_interval=0,
+            max_minutes=20,
+        )
+    )
+    assert "review_timeout" in res["reason"]
+    assert 0 < sum("reviews" in " ".join(c) for c in r.calls) < 5
 
 
 # ── watch_and_finish (Copilot-gated) ─────────────────────────────────────────
@@ -281,16 +497,33 @@ def test_require_copilot_false_allows_human_approval():
 
 def test_flags_read_project_env_over_global(tmp_path, monkeypatch):
     monkeypatch.setenv("AIFACTORY_AUTO_PR", "false")  # global default off
-    env_dir = tmp_path / ".aifactory"
-    env_dir.mkdir()
-    (env_dir / ".env").write_text(
-        "AIFACTORY_AUTO_PR=true\nAIFACTORY_AUTO_MERGE=false\n"
-    )
+    pss._SNAPSHOT[pss.project_key(tmp_path)] = {
+        "AIFACTORY_AUTO_PR": "true",
+        "AIFACTORY_AUTO_MERGE": "false",
+    }
     # project setting (true) overrides the global env (false)
     assert pe.is_auto_pr_enabled(tmp_path) is True
     assert pe.is_auto_merge_enabled(tmp_path) is False
     # no project_path → falls back to global env
     assert pe.is_auto_pr_enabled(None) is False
+
+
+def test_agent_written_env_file_is_ignored(tmp_path, monkeypatch):
+    monkeypatch.delenv("AIFACTORY_AUTO_MERGE", raising=False)
+    pss._SNAPSHOT[pss.project_key(tmp_path)] = {}
+    env_dir = tmp_path / ".aifactory"
+    env_dir.mkdir()
+    (env_dir / ".env").write_text("AIFACTORY_AUTO_MERGE=true\n")
+    assert pe.is_auto_merge_enabled(tmp_path) is False
+
+
+def test_auto_merge_held_when_settings_never_loaded(tmp_path, monkeypatch):
+    """#1795: no loaded settings (DB down since start) holds auto-merge."""
+    monkeypatch.setenv("AIFACTORY_AUTO_MERGE", "true")  # global default on
+    pss._SNAPSHOT.pop(pss.project_key(tmp_path), None)
+    assert pe.is_auto_merge_enabled(tmp_path) is False
+    pss._SNAPSHOT[pss.project_key(tmp_path)] = {}
+    assert pe.is_auto_merge_enabled(tmp_path) is True
 
 
 # ── full chain (inline) ──────────────────────────────────────────────────────
@@ -320,6 +553,7 @@ def test_run_pr_endgame_full_chain():
             reviewer="copilot",
             runner=r,
             background=False,
+            trusted=None,
         )
     )
     assert res["ok"] and res["pr"] == 11 and res["merged"] is True
@@ -349,6 +583,7 @@ def test_run_pr_endgame_aifactory_reviewer_uses_engine_verdict():
             on_pr_opened=lambda prn: opened.update(pr=prn),
             runner=r,
             background=False,
+            trusted=None,
         )
     )
     assert res["ok"] and res["merged"] is True
@@ -366,6 +601,7 @@ def test_run_pr_endgame_no_repo():
             base="main",
             repo="",
             background=False,
+            trusted=None,
         )
     )
     assert res["ok"] is False and res["reason"] == "no_repo"
@@ -375,7 +611,7 @@ def test_run_pr_endgame_no_repo():
 
 
 def test_gather_pr_context_no_worktree(tmp_path):
-    assert pe.gather_pr_context(tmp_path, tmp_path, "spec-1") is None
+    assert pe.gather_pr_context(tmp_path, tmp_path, "spec-1", trusted=None) is None
 
 
 def test_gather_pr_context_resolves_repo(tmp_path):
@@ -388,7 +624,7 @@ def test_gather_pr_context_resolves_repo(tmp_path):
         json.dumps({"github_repo": "olafkfreund/demo"})
     )
     r = FakeRunner({"rev-parse": CmdResult(0, "auto-claude/spec-1", "")})
-    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r)
+    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r, trusted=None)
     assert ctx is not None
     assert ctx["branch"] == "auto-claude/spec-1"
     assert ctx["repo"] == "olafkfreund/demo"
@@ -416,7 +652,7 @@ def test_gather_pr_context_worktree_on_dev_base_resolves_build_branch(tmp_path):
     # The control-plane worktree stayed on the base branch, as it does on the
     # kubejob path.
     r = FakeRunner({"rev-parse": CmdResult(0, "dev", "")})
-    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r)
+    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r, trusted=None)
     assert ctx is not None
     assert ctx["base"] == "dev"
     assert ctx["branch"] == f"aifactory/{spec_id}", (
@@ -439,7 +675,7 @@ def test_gather_pr_context_custom_base_still_resolves(tmp_path):
         json.dumps({"base_branch": "integration"})
     )
     r = FakeRunner({"rev-parse": CmdResult(0, "integration", "")})
-    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r)
+    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r, trusted=None)
     assert ctx is not None and ctx["branch"] == f"aifactory/{spec_id}"
 
 
@@ -454,7 +690,7 @@ def test_gather_pr_context_real_build_branch_is_not_overridden(tmp_path):
     )
     (spec_dir / "task_metadata.json").write_text(json.dumps({"base_branch": "dev"}))
     r = FakeRunner({"rev-parse": CmdResult(0, "feature/hand-made", "")})
-    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r)
+    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r, trusted=None)
     assert ctx is not None and ctx["branch"] == "feature/hand-made"
 
 
@@ -472,7 +708,7 @@ def test_gather_pr_context_base_from_task_metadata(tmp_path):
     )
     (spec_dir / "task_metadata.json").write_text(json.dumps({"base_branch": "dev"}))
     r = FakeRunner({"rev-parse": CmdResult(0, "aifactory/spec-1", "")})
-    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r)
+    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r, trusted=None)
     assert ctx is not None
     assert ctx["repo"] == "olafkfreund/AIFactory"
     assert ctx["base"] == "dev"
@@ -485,7 +721,7 @@ def test_gather_pr_context_base_defaults_to_main(tmp_path):
     spec_dir.mkdir(parents=True)
     (spec_dir / "requirements.json").write_text(json.dumps({"github_repo": "o/r"}))
     r = FakeRunner({"rev-parse": CmdResult(0, "b", "")})
-    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r)
+    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r, trusted=None)
     assert ctx["base"] == "main"
 
 
@@ -528,10 +764,8 @@ def test_resolve_pr_reviewer(tmp_path, monkeypatch):
     assert pe.resolve_pr_reviewer(None) == "copilot"
     monkeypatch.setenv("AIFACTORY_PR_REVIEWER", "bogus")
     assert pe.resolve_pr_reviewer(None) == "aifactory"  # invalid → default
-    # project .env wins
-    d = tmp_path / ".aifactory"
-    d.mkdir()
-    (d / ".env").write_text("AIFACTORY_PR_REVIEWER=any\n")
+    # project setting wins
+    pss._SNAPSHOT[pss.project_key(tmp_path)] = {"AIFACTORY_PR_REVIEWER": "any"}
     assert pe.resolve_pr_reviewer(tmp_path) == "any"
 
 
@@ -785,6 +1019,224 @@ def test_gather_pr_context_base_branch_head_uses_build_branch(tmp_path):
         json.dumps({"github_repo": "olafkfreund/demo"})
     )
     r = FakeRunner({"rev-parse": CmdResult(0, "main", "")})
-    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r)
+    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r, trusted=None)
     assert ctx is not None
     assert ctx["branch"] == "aifactory/040-feature-x"  # NOT "main"
+
+
+def test_human_approval_head_null_pr_author_fails_closed() -> None:
+    r = _approval_runner(_rv("APPROVED"))
+    r.routes[".head.sha"] = CmdResult(
+        0, json.dumps({"head": "abc", "author": None}), ""
+    )
+    assert pe.human_approval_head("o", "r", 5, runner=r) is None
+
+
+def test_human_approval_head_runner_error_fails_closed() -> None:
+    def boom(_argv: list[str], _cwd: object) -> CmdResult:
+        raise subprocess.TimeoutExpired("gh", 30)
+
+    assert pe.human_approval_head("o", "r", 5, runner=boom) is None
+
+
+# ── #1695: merge-time gate and host-CI read ──────────────────────────────────
+
+
+def _gate_watch(r: FakeRunner, gate: Any, **kw: Any) -> dict[str, Any]:
+    return asyncio.run(
+        pe.watch_and_finish(
+            owner="o",
+            repo="r",
+            pr=11,
+            auto_merge=True,
+            review_fn=kw.pop("review_fn", lambda: pe.ReviewState("approved")),
+            merge_gate=gate,
+            runner=r,
+            poll_interval=0,
+            max_minutes=1,
+            **kw,
+        )
+    )
+
+
+def test_1695_red_gate_never_merges() -> None:
+    r = FakeRunner({".head.sha": CmdResult(0, "abc", "")})
+    res = _gate_watch(r, lambda _h: False)
+    assert not r.saw("pr merge")
+    assert res["reason"] == "merge_gate_timeout"
+
+
+def test_1695_green_gate_merges_bound_to_the_head() -> None:
+    r = FakeRunner(
+        {".head.sha": CmdResult(0, "abc", ""), "pr merge": CmdResult(0, "merged", "")}
+    )
+    res = _gate_watch(r, lambda h: h == "abc")
+    assert res["merged"] is True
+    assert r.saw("--match-head-commit abc")
+    assert not r.saw("update-branch")
+
+
+def test_1695_endgame_pushed_head_holds_for_a_human() -> None:
+    states = [
+        pe.ReviewState("changes_requested", findings=[{}]),
+        pe.ReviewState("approved"),
+    ]
+    r = FakeRunner({".head.sha": CmdResult(0, "abc", "")})
+    res = _gate_watch(
+        r,
+        lambda _h: True,
+        review_fn=lambda: states.pop(0) if states else pe.ReviewState("approved"),
+        fix_fn=lambda _f: True,
+    )
+    assert res["reason"] == "merge_gate_unverified_head"
+    assert not r.saw("pr merge")
+
+
+def _ci_runner(runs: list[str], status: str, rc: int = 0) -> FakeRunner:
+    return FakeRunner(
+        {
+            "check-runs": CmdResult(rc, "\n".join(runs), ""),
+            "/status": CmdResult(rc, status, ""),
+        }
+    )
+
+
+_OK = '{"status":"completed","conclusion":"success"}'
+
+
+@pytest.mark.parametrize(
+    ("runs", "status", "rc", "want"),
+    [
+        ([_OK], '{"state":"success","total_count":1}', 0, True),
+        (
+            [_OK, '{"status":"completed","conclusion":"failure"}'],
+            '{"state":"success","total_count":1}',
+            0,
+            False,
+        ),
+        (
+            [_OK, '{"status":"in_progress","conclusion":null}'],
+            '{"state":"success","total_count":1}',
+            0,
+            None,
+        ),
+        ([], '{"state":"pending","total_count":0}', 0, None),
+        ([_OK], '{"state":"pending","total_count":2}', 0, None),
+        ([_OK], '{"state":"success","total_count":1}', 1, None),
+    ],
+)
+def test_1695_host_ci_green(
+    runs: list[str], status: str, rc: int, want: bool | None
+) -> None:
+    assert (
+        pe.host_ci_green("o", "r", "abc", runner=_ci_runner(runs, status, rc)) is want
+    )
+
+
+def test_1695_host_ci_green_timeout_is_none() -> None:
+    def boom(_argv: list[str], _cwd: str | None = None) -> CmdResult:
+        raise subprocess.TimeoutExpired(["gh"], 120)
+
+    assert pe.host_ci_green("o", "r", "abc", runner=boom) is None
+
+
+def _suite_runner(suites: list[str]) -> FakeRunner:
+    return FakeRunner(
+        {
+            "check-runs": CmdResult(0, _OK, ""),
+            "/status": CmdResult(0, '{"state":"success","total_count":1}', ""),
+            "check-suites": CmdResult(0, "\n".join(suites), ""),
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("suites", "want"),
+    [
+        (['{"status":"completed","n":1}'], True),
+        (['{"status":"completed","n":1}', '{"status":"queued","n":2}'], None),
+        (['{"status":"in_progress","n":1}'], None),
+        (['{"status":"queued","n":0}'], True),  # an empty suite has nothing to wait for
+    ],
+)
+def test_1695_host_ci_green_waits_for_unfinished_suites(
+    suites: list[str], want: bool | None
+) -> None:
+    assert pe.host_ci_green("o", "r", "abc", runner=_suite_runner(suites)) is want
+
+
+def _req_runner(
+    *,
+    protection: str = '{"required_status_checks":{"contexts":[]}}',
+    prot_rc: int = 0,
+    rules: str = "",
+    runs: tuple[str, ...] = (),
+    statuses: tuple[str, ...] = (),
+) -> FakeRunner:
+    return FakeRunner(
+        {
+            "rules/branches": CmdResult(0, rules, ""),
+            "branches/": CmdResult(prot_rc, protection, ""),
+            "check-runs": CmdResult(0, "\n".join(runs), ""),
+            "/status": CmdResult(0, "\n".join(statuses), ""),
+        }
+    )
+
+
+_RUN_OK = '{"name":"ci/run","status":"completed","conclusion":"success"}'
+_RUN_RED = '{"name":"ci/run","status":"completed","conclusion":"failure"}'
+_RUN_PEND = '{"name":"ci/run","status":"in_progress","conclusion":null}'
+_ST_OK = '{"context":"ci/st","state":"success"}'
+
+
+@pytest.mark.parametrize(
+    ("kw", "want"),
+    [
+        ({}, True),
+        (
+            {
+                "protection": '{"required_status_checks":{"contexts":["ci/run"]}}',
+                "rules": "ci/st",
+                "runs": (_RUN_OK,),
+                "statuses": (_ST_OK,),
+            },
+            True,
+        ),
+        (
+            {
+                "protection": '{"required_status_checks":{"contexts":["ci/run"]}}',
+                "runs": (_RUN_RED,),
+            },
+            False,
+        ),
+        (
+            {
+                "protection": '{"required_status_checks":{"contexts":["ci/run","ci/missing"]}}',
+                "runs": (_RUN_OK,),
+            },
+            None,
+        ),
+        (
+            {
+                "protection": '{"required_status_checks":{"contexts":["ci/run"]}}',
+                "runs": (_RUN_PEND,),
+            },
+            None,
+        ),
+        ({"prot_rc": 1}, None),
+        ({"protection": "null"}, None),
+        (
+            {
+                "protection": '{"required_status_checks":null}',
+                "rules": "ci/rule",
+                "runs": (_RUN_OK,),
+            },
+            None,
+        ),
+    ],
+)
+def test_1766_required_checks_green(kw: dict[str, Any], want: bool | None) -> None:
+    assert (
+        pe.required_checks_green("o", "r", "main", "abc", runner=_req_runner(**kw))
+        is want
+    )

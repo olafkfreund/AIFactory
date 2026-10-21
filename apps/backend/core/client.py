@@ -16,8 +16,10 @@ import copy
 import json
 import logging
 import os
+import re
 import threading
 import time
+import weakref
 from pathlib import Path
 from typing import Any
 
@@ -205,13 +207,21 @@ from agents.tools_pkg import (
 )
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from claude_agent_sdk.types import HookMatcher
-from core.auth import get_agent_env_blanks, get_sdk_env_vars, require_auth_token
+from core import process_hardening  # noqa: E402
+from core.agent_home import AgentHome  # noqa: E402
+from core.auth import (
+    get_agent_env_blanks,
+    get_sdk_env_vars,
+    is_denied_env_key,
+    require_auth_token,
+)
 from prompts_pkg.project_context import (
     detect_infra_markers,
     detect_project_capabilities,
     load_project_index,
 )
 from security import bash_security_hook, web_fetch_security_hook
+from security.hooks import git_dir_write_hook  # noqa: E402
 
 
 def _validate_custom_mcp_server(server: dict) -> bool:
@@ -356,6 +366,15 @@ def _validate_custom_mcp_server(server: dict) -> bool:
     if "description" in server and not isinstance(server.get("description"), str):
         return False
 
+    if "env_keys" in server and (
+        not isinstance(server["env_keys"], list)
+        or not all(
+            isinstance(name, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name)
+            for name in server["env_keys"]
+        )
+    ):
+        return False
+
     # Reject any unexpected fields that could be exploited
     allowed_fields = {
         "id",
@@ -366,6 +385,7 @@ def _validate_custom_mcp_server(server: dict) -> bool:
         "url",
         "headers",
         "description",
+        "env_keys",
     }
     unexpected_fields = set(server.keys()) - allowed_fields
     if unexpected_fields:
@@ -392,9 +412,53 @@ def _externalize_secret_env(cfg: dict, sink: dict) -> dict:
     return cfg
 
 
+def _custom_server_env(custom: dict[str, Any], sdk_env: dict[str, str]) -> None:
+    """Pass named host values to the CLI env, never its MCP config argv."""
+    for name in custom.get("env_keys", []):
+        if is_denied_env_key(name):
+            logger.warning("Custom MCP server env key denied: %s", name)
+        elif name in os.environ:
+            sdk_env[name] = os.environ[name]
+
+
+_MCP_KEYS = {
+    "CONTEXT7_ENABLED",
+    "PLAYWRIGHT_MCP_ENABLED",
+    "PUPPETEER_MCP_ENABLED",  # backward compat: mapped to PLAYWRIGHT_MCP_ENABLED
+}
+
+
+def _apply_mcp_setting(config: dict, key: str, value: str) -> None:
+    # Include global MCP toggles
+    if key in _MCP_KEYS or key.startswith("AGENT_MCP_"):
+        config[key] = value
+    # Include custom MCP servers (parse JSON with schema validation)
+    elif key == "CUSTOM_MCP_SERVERS":
+        try:
+            parsed = json.loads(value)
+            if not isinstance(parsed, list):
+                logger.warning("CUSTOM_MCP_SERVERS must be a JSON array")
+                config["CUSTOM_MCP_SERVERS"] = []
+            else:
+                # Validate each server and filter out invalid ones
+                valid_servers = []
+                for i, server in enumerate(parsed):
+                    if _validate_custom_mcp_server(server):
+                        valid_servers.append(server)
+                    else:
+                        logger.warning(
+                            f"Skipping invalid custom MCP server at index {i}"
+                        )
+                config["CUSTOM_MCP_SERVERS"] = valid_servers
+        except json.JSONDecodeError:
+            logger.warning("Failed to parse CUSTOM_MCP_SERVERS JSON")
+            config["CUSTOM_MCP_SERVERS"] = []
+
+
 def load_project_mcp_config(project_dir: Path) -> dict:
     """
-    Load MCP configuration from project's .aifactory/.env file.
+    Load project MCP configuration from ``AIFACTORY_PROJECT_MCP_CONFIG`` when
+    set by the web-server; the ``.aifactory/.env`` file is read only by the CLI.
 
     Returns a dict of MCP-related env vars:
     - CONTEXT7_ENABLED (default: true)
@@ -409,17 +473,27 @@ def load_project_mcp_config(project_dir: Path) -> dict:
     Returns:
         Dict of MCP configuration values (string values, except CUSTOM_MCP_SERVERS which is parsed JSON)
     """
+    raw = os.environ.get("AIFACTORY_PROJECT_MCP_CONFIG")
+    if raw is not None:
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.warning("Failed to parse AIFACTORY_PROJECT_MCP_CONFIG JSON")
+            return {}
+        if not isinstance(data, dict):
+            logger.warning("AIFACTORY_PROJECT_MCP_CONFIG must be a JSON object")
+            return {}
+        config: dict = {}
+        for k, v in data.items():
+            if isinstance(k, str) and isinstance(v, str):
+                _apply_mcp_setting(config, k, v)
+        return config
+
     env_path = project_dir / ".aifactory" / ".env"
     if not env_path.exists():
         return {}
 
     config = {}
-    mcp_keys = {
-        "CONTEXT7_ENABLED",
-        "PLAYWRIGHT_MCP_ENABLED",
-        "PUPPETEER_MCP_ENABLED",  # backward compat: mapped to PLAYWRIGHT_MCP_ENABLED
-    }
-
     try:
         with open(env_path, encoding="utf-8") as f:
             for line in f:
@@ -430,34 +504,7 @@ def load_project_mcp_config(project_dir: Path) -> dict:
                     key, value = line.split("=", 1)
                     key = key.strip()
                     value = value.strip().strip("\"'")
-                    # Include global MCP toggles
-                    if key in mcp_keys or key.startswith("AGENT_MCP_"):
-                        config[key] = value
-                    # Include custom MCP servers (parse JSON with schema validation)
-                    elif key == "CUSTOM_MCP_SERVERS":
-                        try:
-                            parsed = json.loads(value)
-                            if not isinstance(parsed, list):
-                                logger.warning(
-                                    "CUSTOM_MCP_SERVERS must be a JSON array"
-                                )
-                                config["CUSTOM_MCP_SERVERS"] = []
-                            else:
-                                # Validate each server and filter out invalid ones
-                                valid_servers = []
-                                for i, server in enumerate(parsed):
-                                    if _validate_custom_mcp_server(server):
-                                        valid_servers.append(server)
-                                    else:
-                                        logger.warning(
-                                            f"Skipping invalid custom MCP server at index {i}"
-                                        )
-                                config["CUSTOM_MCP_SERVERS"] = valid_servers
-                        except json.JSONDecodeError:
-                            logger.warning(
-                                f"Failed to parse CUSTOM_MCP_SERVERS JSON: {value}"
-                            )
-                            config["CUSTOM_MCP_SERVERS"] = []
+                    _apply_mcp_setting(config, key, value)
     except Exception as e:
         logger.debug(f"Failed to load project MCP config from {env_path}: {e}")
 
@@ -596,6 +643,7 @@ def create_client(
        (see security.py for ALLOWED_COMMANDS)
     4. Tool filtering - Each agent type only sees relevant tools (prevents misuse)
     """
+    process_hardening.require_non_dumpable()
     oauth_token = require_auth_token()
     # Ensure SDK can access it via its expected env var
     os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
@@ -633,6 +681,10 @@ def create_client(
         )
     else:
         logger.info("[Fast Mode] inactive — not requested for this client")
+
+    # #1732: copy settings after fast mode updates them.
+    home = AgentHome("claude")
+    sdk_env.update(home.env)
 
     # Check if custom aifactory tools are available
     aifactory_tools_enabled = is_tools_available()
@@ -927,6 +979,7 @@ def create_client(
                 "command": custom.get("command", "npx"),
                 "args": custom.get("args", []),
             }
+            _custom_server_env(custom, sdk_env)
         elif server_type == "http":
             server_config = {
                 "type": "http",
@@ -1030,6 +1083,11 @@ def create_client(
                 # URLs to cloud metadata / loopback / private / non-http(s).
                 HookMatcher(matcher="WebFetch", hooks=[web_fetch_security_hook]),
                 HookMatcher(matcher="WebSearch", hooks=[web_fetch_security_hook]),
+                # #1719: refuse agent writes into git metadata
+                HookMatcher(
+                    matcher="Write|Edit|MultiEdit|NotebookEdit",
+                    hooks=[git_dir_write_hook],
+                ),
                 # #474 anti-loop guardrail + #476 pre-mutation checkpoint — run on
                 # every tool (matcher=None); each no-ops unless its flag is on.
                 HookMatcher(hooks=[guardrail_pretool_hook, mutation_pretool_hook]),
@@ -1142,6 +1200,7 @@ def create_client(
     enforcement.enforce_allowlist()
 
     bare_client = ClaudeSDKClient(options=ClaudeAgentOptions(**options_kwargs))
+    weakref.finalize(bare_client, home.close)
 
     # #1128 outbound PII scrub. The provider adapters get this from
     # BaseLLMProvider, but agents/coder.py and agents/planner.py call

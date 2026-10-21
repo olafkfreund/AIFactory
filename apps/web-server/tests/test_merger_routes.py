@@ -213,3 +213,24 @@ def test_roles_at_or_above_member_excludes_viewer():
 def test_roles_at_or_above_viewer_includes_everyone():
     roles = _roles_at_or_above("viewer")
     assert {"viewer", "member", "admin", "owner"} <= set(roles)
+
+
+# ── Factory#2586: the GET report shows whether the backstop loop is alive ───
+
+
+def test_report_merger_exposes_last_tick_at(monkeypatch):
+    monkeypatch.setattr(merger_routes, "load_projects", lambda: {})
+    monkeypatch.setattr(
+        merger_routes,
+        "sweep",
+        lambda **_k: {"dry_run": True, "results": [], "counts": {}},
+    )
+    monkeypatch.setattr(
+        merger_routes, "last_tick_at", lambda: "2026-09-18T12:00:00+00:00"
+    )
+    with patch.object(
+        merger_routes, "accessible_org_ids", new=AsyncMock(return_value=None)
+    ):
+        out = asyncio.run(merger_routes.report_merger(request=_Req(), db=None))
+    assert out["last_tick_at"] == "2026-09-18T12:00:00+00:00"
+    assert out["dry_run"] is True

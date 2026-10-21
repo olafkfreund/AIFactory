@@ -17,6 +17,7 @@ from core.error_utils import (
     decide_rate_limit_resume,
     extract_rate_limit_cooldown,
 )
+from core.git_metadata import GitMetadataChangedError, check_git_metadata
 from phase_config import (
     get_phase_model,
     get_phase_thinking_budget,
@@ -646,19 +647,23 @@ async def run_autonomous_agent(
             # phase, or a stalled wave, falls through to the serial path below —
             # so this is always safe.
             if parallel:
-                handled = await _maybe_run_parallel_phase(
-                    spec_dir=spec_dir,
-                    project_dir=project_dir,
-                    subtask_id=subtask_id,
-                    model=model,
-                    parallel_workers=parallel_workers,
-                    verbose=verbose,
-                    source_spec_dir=source_spec_dir,
-                    remote_control_session=remote_control_session,
-                    status_manager=status_manager,
-                    disabled_phases=parallel_disabled_phases,
-                    recovery_manager=recovery_manager,
-                )
+                try:
+                    handled = await _maybe_run_parallel_phase(
+                        spec_dir=spec_dir,
+                        project_dir=project_dir,
+                        subtask_id=subtask_id,
+                        model=model,
+                        parallel_workers=parallel_workers,
+                        verbose=verbose,
+                        source_spec_dir=source_spec_dir,
+                        remote_control_session=remote_control_session,
+                        status_manager=status_manager,
+                        disabled_phases=parallel_disabled_phases,
+                        recovery_manager=recovery_manager,
+                    )
+                except GitMetadataChangedError as exc:
+                    _fail_on_git_metadata(exc, status_manager)
+                    raise
                 if handled:
                     # Progress was made in parallel; re-evaluate from the top.
                     print_progress_summary(spec_dir)
@@ -768,6 +773,13 @@ async def run_autonomous_agent(
             client, prompt, spec_dir, verbose, phase=current_log_phase
         )
         _turn_duration_ms = int((time.monotonic() - _turn_start) * 1000)
+        try:
+            await asyncio.to_thread(check_git_metadata, project_dir)
+        except RuntimeError as exc:
+            _fail_on_git_metadata(exc, status_manager)
+            # raise, not return/break: the post-loop path would mark COMPLETE and
+            # the caller would go on to QA; build_commands exits 1 on it (#1747).
+            raise
 
         # === PER-CATEGORY TOKEN ATTRIBUTION (#262) ===
         # Attribute the session's real SDK usage across source categories and
@@ -1089,7 +1101,7 @@ async def run_autonomous_agent(
         status_manager.update(state=BuildState.COMPLETE)
         # RFC-0013 consuming side: a complete build whose contract names a PaaS
         # target gets the proven deploy artifacts scaffolded into the worktree.
-        scaffolded = scaffold_deploy_for_spec(spec_dir)
+        scaffolded = scaffold_deploy_for_spec(spec_dir, source_spec_dir)
         if scaffolded:
             logger.info("Scaffolded deploy artifacts: %s", ", ".join(scaffolded))
     else:
@@ -1238,9 +1250,11 @@ async def _run_trailing_gates_if_build_complete(
     """
     try:
         from .gate_runner import (
+            GateResult,
             detect_gates,
             failing_gates,
             gate_dir_for,
+            lint_gates,
             run_gates,
             summarize_gates,
             trailing_gate_marker_is_current,
@@ -1276,7 +1290,9 @@ async def _run_trailing_gates_if_build_complete(
         # a fix must get its own gate run, not the previous commit's stale
         # pass (#1545).
         done_marker = spec_dir / ".trailing_gates_done"
-        if done_marker.exists() and trailing_gate_marker_is_current(spec_dir, gate_dir):
+        if done_marker.exists() and trailing_gate_marker_is_current(
+            spec_dir, gate_dir, project_dir=project_dir
+        ):
             return
 
         # RFC-0005 Tier A: when gates route through the Nix Job backend,
@@ -1335,6 +1351,12 @@ async def _run_trailing_gates_if_build_complete(
         if route_gate is not None:
             gates.append(route_gate)
 
+        from analysis.ci_discovery import ci_linters  # noqa: PLC0415
+
+        linters = ci_linters(gate_dir)
+        gates.extend(lint_gates(linters))  # opt-in repo lint (#1742)
+
+        # Lint gates (#1742, opt-in) count here: a lint-only repo still runs.
         if not gates:
             # A skipped gate must be VISIBLE, never silently treated as green. (#597)
             write_trailing_gate_marker(
@@ -1347,6 +1369,14 @@ async def _run_trailing_gates_if_build_complete(
             "info",
         )
         results = await run_gates(gate_dir, gates)
+        # A CI linter no gate covered is recorded `skipped`, never silently absent (#1627).
+        # Covered = any result with that name, so a lint gate that was skipped is not listed twice.
+        ran = {r.name for r in results}
+        results += [
+            GateResult(name=tool, passed=True, skipped=True)
+            for tool in linters
+            if ("lint" if tool == "eslint" else tool) not in ran
+        ]
         summary = summarize_gates(results)
         failures = failing_gates(results)
         # Build-layout guard (#601): a root-vs-src import-shadowing layout makes
@@ -1404,6 +1434,13 @@ async def _run_trailing_gates_if_build_complete(
         write_trailing_gate_marker(spec_dir, gate_dir, summary)  # ran once (#597)
     except Exception as exc:  # noqa: BLE001 - gates are best-effort, never break a build
         logger.debug("Trailing gate run skipped: %s", exc)
+
+
+def _fail_on_git_metadata(exc: RuntimeError, status_manager: StatusManager) -> None:
+    print_status(str(exc), "error")
+    status_manager.update(state=BuildState.ERROR)
+    logger.error("%s", exc)
+    emit_phase(ExecutionPhase.FAILED, f"Git metadata changed: {exc}")
 
 
 async def _maybe_run_parallel_phase(
@@ -1482,6 +1519,8 @@ async def _maybe_run_parallel_phase(
 
         # "Made progress" => at least one subtask completed; caller continues.
         return bool(result.completed_ids)
+    except GitMetadataChangedError:
+        raise  # not best-effort: a tampered child ends the build (#1746)
     except Exception as exc:  # noqa: BLE001 - parallel is best-effort; serial is the safety net
         logger.warning(
             "Parallel phase execution failed (%s); falling back to serial", exc

@@ -73,23 +73,30 @@ def approved(
     }
 
 
-def _open_pr(project_path: Path, branch: str) -> tuple[int, str] | None:
-    """The most recent PR for *branch* as (number, state), or None if there is none."""
-    found = run_gh_command(
-        [
-            "pr",
-            "list",
-            "--head",
-            branch,
-            "--state",
-            "all",
-            "--limit",
-            "1",
-            "--json",
-            "number,state",
-        ],
-        cwd=str(project_path),
-    )
+def find_pr(
+    project_path: Path, branch: str, repo: str | None = None
+) -> tuple[int, str, str] | None:
+    """The most recent PR for *branch* as (number, state, url), or None.
+
+    *repo* (``owner/name``) searches another repository, for a cross-fork PR
+    opened with ``--repo``. Used by create-pr to hand back a PR that already
+    exists instead of failing on it (CFactory#457).
+    """
+    args = [
+        "pr",
+        "list",
+        "--head",
+        branch,
+        "--state",
+        "all",
+        "--limit",
+        "1",
+        "--json",
+        "number,state,url",
+    ]
+    if repo:
+        args.extend(["--repo", repo])
+    found = run_gh_command(args, cwd=str(project_path))
     if not found.get("success"):
         return None
     try:
@@ -98,7 +105,17 @@ def _open_pr(project_path: Path, branch: str) -> tuple[int, str] | None:
         return None
     if not prs:
         return None
-    return prs[0].get("number"), (prs[0].get("state") or "").upper()
+    return (
+        prs[0].get("number"),
+        (prs[0].get("state") or "").upper(),
+        prs[0].get("url") or "",
+    )
+
+
+def _open_pr(project_path: Path, branch: str) -> tuple[int, str] | None:
+    """The most recent PR for *branch* as (number, state), or None if there is none."""
+    found = find_pr(project_path, branch)
+    return (found[0], found[1]) if found else None
 
 
 def merge_pull_request(project_path: Path, branch: str) -> tuple[bool, str]:

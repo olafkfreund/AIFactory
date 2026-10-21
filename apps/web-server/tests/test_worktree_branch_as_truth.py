@@ -39,6 +39,15 @@ if str(_WEB_SERVER) not in sys.path:
 from server.routes import worktree_merge  # noqa: E402
 from server.services import conflict_service, pr_endgame, task_branch  # noqa: E402
 
+
+@pytest.fixture(autouse=True)
+def _isolated_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests model a legacy task on an isolated host (#1667, D4-i)."""
+    monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "kubejob")
+    # kubejob counts as isolated only with the durable store (#1667).
+    monkeypatch.setattr("server.services.job_state_store.store_enabled", lambda: True)
+
+
 SPEC_ID = "097-add-feature"
 TASK_BRANCH = f"aifactory/{SPEC_ID}"
 PROJECT_ID = "proj-1"
@@ -289,9 +298,7 @@ def test_gather_pr_context_uses_the_resolver_not_the_convention(
     )
 
     ctx = pr_endgame.gather_pr_context(
-        spec_dir=spec_dir,
-        spec_id=SPEC_ID,
-        project_path=project,
+        spec_dir=spec_dir, spec_id=SPEC_ID, project_path=project, trusted=None
     )
     assert ctx is not None
     assert ctx["branch"] == f"wip/{SPEC_ID}", (

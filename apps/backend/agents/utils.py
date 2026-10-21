@@ -107,7 +107,7 @@ def commit_uncommitted_changes(
         # don't manufacture a commit. `git diff --cached --quiet` exits 0 when the
         # index matches HEAD (nothing staged), 1 when there is staged work.
         staged = subprocess.run(
-            ["git", "diff", "--cached", "--quiet"],
+            ["git", "diff", "--no-ext-diff", "--no-textconv", "--cached", "--quiet"],
             cwd=project_dir,
             capture_output=True,
             text=True,

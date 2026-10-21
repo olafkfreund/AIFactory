@@ -9,6 +9,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+from core.child_env import (
+    child_env,
+    merge_driver_pins,
+)  # backend is already on sys.path (cli is its package)
+
 # Ensure parent directory is in path for imports (before other imports)
 _PARENT_DIR = Path(__file__).parent.parent
 if str(_PARENT_DIR) not in sys.path:
@@ -65,6 +70,7 @@ def _detect_default_branch(project_dir: Path) -> str:
         result = subprocess.run(
             ["git", "rev-parse", "--verify", env_branch],
             cwd=project_dir,
+            env=child_env(),
             capture_output=True,
             text=True,
         )
@@ -76,6 +82,7 @@ def _detect_default_branch(project_dir: Path) -> str:
         result = subprocess.run(
             ["git", "rev-parse", "--verify", branch],
             cwd=project_dir,
+            env=child_env(),
             capture_output=True,
             text=True,
         )
@@ -99,6 +106,7 @@ def _discover_pushed_ref(project_dir: Path, spec_name: str) -> str | None:
             # S607: literal "git", no shell, fixed arguments.
             ["git", "for-each-ref", "--format=%(refname:short)", "refs/remotes/origin"],  # noqa: S607
             cwd=project_dir,
+            env=child_env(),
             capture_output=True,
             text=True,
             check=True,
@@ -149,8 +157,16 @@ def _get_changed_files_from_git(
 
     try:
         result = subprocess.run(
-            ["git", "diff", "--name-only", f"{base_branch}...{head}"],
+            [
+                "git",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--name-only",
+                f"{base_branch}...{head}",
+            ],
             cwd=git_cwd,
+            env=child_env(),
             capture_output=True,
             text=True,
             check=True,
@@ -167,8 +183,17 @@ def _get_changed_files_from_git(
         # Fallback: try without the three-dot notation
         try:
             result = subprocess.run(
-                ["git", "diff", "--name-only", base_branch, head],
+                [
+                    "git",
+                    "diff",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "--name-only",
+                    base_branch,
+                    head,
+                ],
                 cwd=git_cwd,
+                env=child_env(),
                 capture_output=True,
                 text=True,
                 check=True,
@@ -275,7 +300,7 @@ def _generate_and_save_commit_message(project_dir: Path, spec_name: str) -> None
         files_changed = []
         try:
             result = subprocess.run(
-                ["git", "diff", "--staged", "--stat"],
+                ["git", "diff", "--no-ext-diff", "--no-textconv", "--staged", "--stat"],
                 cwd=project_dir,
                 capture_output=True,
                 text=True,
@@ -285,7 +310,14 @@ def _generate_and_save_commit_message(project_dir: Path, spec_name: str) -> None
 
             # Get list of changed files
             result = subprocess.run(
-                ["git", "diff", "--staged", "--name-only"],
+                [
+                    "git",
+                    "diff",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "--staged",
+                    "--name-only",
+                ],
                 cwd=project_dir,
                 capture_output=True,
                 text=True,
@@ -398,7 +430,7 @@ def handle_cleanup_worktrees_command(project_dir: Path) -> None:
     cleanup_all_worktrees(project_dir, confirm=True)
 
 
-def _check_git_merge_conflicts(project_dir: Path, spec_name: str) -> dict:
+def _check_git_merge_conflicts(project_dir: Path, spec_name: str) -> dict:  # noqa: PLR0912, PLR0915
     """
     Check for git-level merge conflicts WITHOUT modifying the working directory.
 
@@ -474,9 +506,17 @@ def _check_git_merge_conflicts(project_dir: Path, spec_name: str) -> dict:
         # Use git merge-tree to check for conflicts WITHOUT touching working directory
         # This is a plumbing command that does a 3-way merge in memory
         # Note: --write-tree mode only accepts 2 branches (it auto-finds the merge base)
+        try:
+            pins = merge_driver_pins(project_dir)
+        except RuntimeError as exc:
+            debug_warning(MODULE, f"Cannot read merge drivers: {exc}")
+            result["has_conflicts"] = True
+            return result
+
         merge_tree_result = subprocess.run(
             [
                 "git",
+                *pins,
                 "merge-tree",
                 "--write-tree",
                 "--no-messages",
@@ -486,6 +526,7 @@ def _check_git_merge_conflicts(project_dir: Path, spec_name: str) -> dict:
             cwd=project_dir,
             capture_output=True,
             text=True,
+            env=child_env(),
         )
 
         # merge-tree returns exit code 1 if there are conflicts
@@ -520,7 +561,15 @@ def _check_git_merge_conflicts(project_dir: Path, spec_name: str) -> dict:
             if not result["conflicting_files"]:
                 # Files changed in main since merge-base
                 main_files_result = subprocess.run(
-                    ["git", "diff", "--name-only", merge_base, result["base_branch"]],
+                    [
+                        "git",
+                        "diff",
+                        "--no-ext-diff",
+                        "--no-textconv",
+                        "--name-only",
+                        merge_base,
+                        result["base_branch"],
+                    ],
                     cwd=project_dir,
                     capture_output=True,
                     text=True,
@@ -533,7 +582,15 @@ def _check_git_merge_conflicts(project_dir: Path, spec_name: str) -> dict:
 
                 # Files changed in spec branch since merge-base
                 spec_files_result = subprocess.run(
-                    ["git", "diff", "--name-only", merge_base, spec_branch],
+                    [
+                        "git",
+                        "diff",
+                        "--no-ext-diff",
+                        "--no-textconv",
+                        "--name-only",
+                        merge_base,
+                        spec_branch,
+                    ],
                     cwd=project_dir,
                     capture_output=True,
                     text=True,

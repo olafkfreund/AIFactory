@@ -42,7 +42,7 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any
 
-from core import runtime_gating
+from core import process_hardening, runtime_gating
 from providers._ollama_http import resolve_ollama_api_key, resolve_ollama_cloud_base_url
 
 if TYPE_CHECKING:
@@ -317,6 +317,9 @@ def get_provider(provider_name: str, phase: str, **kwargs: Any) -> BaseLLMProvid
         ValueError: If provider_name is unrecognised, or if the provider
             doesn't support the requested phase (e.g. Ollama for coding).
     """
+    # #1680: a non-Claude runner never reaches create_client, so harden here
+    # too, before the provider spawns its agent.
+    process_hardening.require_non_dumpable()
     canonical = _resolve_canonical(provider_name)
 
     # A canonical that names a DESTINATION rather than a class (github-models,
@@ -324,6 +327,15 @@ def get_provider(provider_name: str, phase: str, **kwargs: Any) -> BaseLLMProvid
     # credential injected. Shared with get_qa_llm_provider so the two paths
     # cannot route the same name differently (#1213).
     canonical = _apply_endpoint_defaults(canonical, kwargs)
+
+    # #1607: the RFC-0014 operator allowlist is enforced HERE, at the one point
+    # both entry points converge on with the canonical in hand. It used to be
+    # enforced nowhere: ``get_runtime_provider`` consulted it and had no
+    # production caller, while the live path (``infer_provider_from_model`` ->
+    # here, from eight call sites) never did. ``claude`` never reaches this
+    # function — every caller short-circuits to ``create_client`` — so the two
+    # claude-mapped MANUAL_ENABLE_ONLY runtimes are not gated at this seam.
+    runtime_gating.require_enabled(canonical)
 
     if phase in _AGENTIC_PHASES:
         registry = _AGENTIC_REGISTRY
@@ -379,6 +391,15 @@ def get_qa_llm_provider(provider_name: str, **kwargs: Any) -> BaseLLMProvider:
         )
 
     canonical = _apply_endpoint_defaults(canonical, kwargs)
+
+    # #1607: the RFC-0014 operator allowlist is enforced HERE, at the one point
+    # both entry points converge on with the canonical in hand. It used to be
+    # enforced nowhere: ``get_runtime_provider`` consulted it and had no
+    # production caller, while the live path (``infer_provider_from_model`` ->
+    # here, from eight call sites) never did. ``claude`` never reaches this
+    # function — every caller short-circuits to ``create_client`` — so the two
+    # claude-mapped MANUAL_ENABLE_ONLY runtimes are not gated at this seam.
+    runtime_gating.require_enabled(canonical)
 
     module_path, class_name = _TEXT_REGISTRY[canonical]
 

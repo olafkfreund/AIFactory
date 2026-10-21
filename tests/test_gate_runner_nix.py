@@ -321,9 +321,9 @@ def test_no_build_image_falls_back_instead_of_dispatching(monkeypatch, tmp_path)
 
 
 def test_gate_timeout_is_configurable():
-    """Every gate cold-fetches its closure; the budget must be raisable without
-    a release (#1541). Parsed from a mapping, so no module reload is needed —
-    reloading swaps module identity and breaks sibling tests' monkeypatching."""
+    """The budget must be raisable without a release. Parsed from a mapping, so
+    no module reload is needed — reloading swaps module identity and breaks
+    sibling tests' monkeypatching."""
     from agents.gate_runner import _timeout_from_env
 
     assert _timeout_from_env({}) == 600
@@ -338,15 +338,9 @@ def test_gate_timeout_is_configurable():
     assert _timeout_from_env({"AIFACTORY_GATE_TIMEOUT_SECONDS": "-30"}) == 600
 
 
-def test_packed_path_uses_the_warm_store_even_with_nix_in_image(monkeypatch, tmp_path):
-    """#1541: the runner image bakes NO language closures, so without a
-    persistent store every gate re-downloads its whole toolchain and Swift never
-    finishes inside the Job deadline.
-
-    #253 dropped the warm store because the pod already mounted the RWO repo
-    PVC and two RWO PVs stranded on different nodes. The packed path mounts no
-    repo PVC at all — the code arrives in an emptyDir — so the nix store is the
-    pod's only PVC and has nothing to strand against.
+def test_packed_path_drops_the_warm_store_when_nix_in_image(monkeypatch, tmp_path):
+    """The gate image (factory-runner-nix) bakes swift, kotlin, gradle and
+    openjdk-21; the packed path honours nix_in_image() like the co-mount path.
     """
     import agents.gate_runner as gr
     import core.kube_sandbox as ks
@@ -356,7 +350,7 @@ def test_packed_path_uses_the_warm_store_even_with_nix_in_image(monkeypatch, tmp
     monkeypatch.setenv("S3_ENDPOINT", "http://minio:9000")
     monkeypatch.setenv("AIFACTORY_BUILD_IMAGE", "aifactory:sha-x-nix")
     monkeypatch.setenv("AIFACTORY_NIX_STORE_PVC", "aifactory-nix-store")
-    # Nix IS in the image — the old rule dropped the warm store on that alone.
+    # Nix IS in the image, so the packed path drops the warm store too.
     monkeypatch.setenv("AIFACTORY_PACKED_NIX_IN_IMAGE", "true")
     monkeypatch.setattr(gr, "_packed_workspace_for", lambda _r: "s3://b/w.tar.gz")
 
@@ -372,8 +366,36 @@ def test_packed_path_uses_the_warm_store_even_with_nix_in_image(monkeypatch, tmp
     monkeypatch.setattr(ks, "KubeJobSandbox", FakeSandbox)
     gr._nix_kube_runner("gate-image")(["gradle", "test"], tmp_path)
 
-    assert seen["nix_store_pvc"] == "aifactory-nix-store"
-    # And it is genuinely the only PVC on the pod.
+    assert seen["nix_store_pvc"] is None, seen
+    assert "repo_pvc" not in seen  # proves the packed branch ran, not co-mount
+
+
+def test_packed_path_keeps_the_warm_store_when_flag_off(monkeypatch, tmp_path):
+    """Default OFF stays warm on the packed path too."""
+    import agents.gate_runner as gr
+    import core.kube_sandbox as ks
+
+    (tmp_path / "flake.nix").write_text("{}")
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", "/home/nonroot/.aifactory")
+    monkeypatch.setenv("S3_ENDPOINT", "http://minio:9000")
+    monkeypatch.setenv("AIFACTORY_BUILD_IMAGE", "aifactory:sha-x-nix")
+    monkeypatch.setenv("AIFACTORY_NIX_STORE_PVC", "aifactory-nix-store")
+    monkeypatch.delenv("AIFACTORY_PACKED_NIX_IN_IMAGE", raising=False)
+    monkeypatch.setattr(gr, "_packed_workspace_for", lambda _r: "s3://b/w.tar.gz")
+
+    seen: dict = {}
+
+    class FakeSandbox:
+        def __init__(self, image, **kw):
+            seen.update(kw)
+
+        def run(self, *_a, **_k):
+            return SimpleNamespace(ok=True, exit_code=0, output="ok")
+
+    monkeypatch.setattr(ks, "KubeJobSandbox", FakeSandbox)
+    gr._nix_kube_runner("gate-image")(["gradle", "test"], tmp_path)
+
+    assert seen["nix_store_pvc"] == "aifactory-nix-store", seen
     assert "repo_pvc" not in seen
 
 

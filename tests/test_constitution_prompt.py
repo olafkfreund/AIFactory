@@ -17,13 +17,17 @@ Coverage (mirrors tests/test_solo_mode.py + the house-standards test):
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from pathlib import Path
+
+import pytest
 
 _BACKEND = Path(__file__).parent.parent / "apps" / "backend"
 if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
 
+from core import contract_trust  # noqa: E402
 from prompts_pkg.prompts import get_constitution_context  # noqa: E402
 
 
@@ -176,3 +180,32 @@ def test_solo_prompt_unchanged_when_constitution_absent(tmp_path: Path):
     # No contract at all -> no constitution block injected.
     prompt = get_solo_prompt(tmp_path)
     assert "## PROJECT CONSTITUTION" not in prompt
+
+
+@pytest.fixture(autouse=True)
+def _no_verdict(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(contract_trust.ENV, raising=False)
+
+
+def test_hold_withholds_constitution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _write_contract(tmp_path, _constitution())
+    monkeypatch.setenv(contract_trust.ENV, "hold")
+    with caplog.at_level(logging.WARNING):
+        assert get_constitution_context(tmp_path) == ""
+    assert "held by server" in caplog.text
+
+
+def test_verified_renders_same_block_as_legacy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_contract(tmp_path, _constitution())
+    legacy = get_constitution_context(tmp_path)
+    assert legacy
+    monkeypatch.setenv(
+        contract_trust.ENV, contract_trust.contract_digest(_constitution())
+    )
+    assert get_constitution_context(tmp_path) == legacy

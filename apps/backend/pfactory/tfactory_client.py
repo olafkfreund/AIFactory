@@ -19,6 +19,7 @@ tests need no network.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -28,7 +29,10 @@ import subprocess
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, urlparse
 
+from core import auth_preflight
+from core.child_env import child_env, lfs_upload
 from core.git_credentials import authed_push_url
 
 _log = logging.getLogger(__name__)
@@ -36,10 +40,10 @@ _log = logging.getLogger(__name__)
 __all__ = [
     "build_handoff_payload",
     "load_task_contract",
-    "load_tfactory_block",
     "maybe_auto_handoff_tfactory",
     "send_handoff",
     "tfactory_config",
+    "tfactory_verdict",
     "wants_auto_handoff",
 ]
 
@@ -63,25 +67,6 @@ def tfactory_config(env: dict | None = None) -> dict:
         "token": env.get("TFACTORY_TOKEN") or env.get("APP_API_TOKEN") or "",
         "path": env.get("TFACTORY_HANDOFF_PATH") or _DEFAULT_PATH,
     }
-
-
-def load_tfactory_block(spec_dir: Path) -> dict:
-    """Read the Task Contract v2 ``tfactory`` block from implementation_plan.json.
-
-    PFactory computes this block (lanes/frameworks/endpoints/coverage/mutation/
-    security/ac_to_code_map) and it is installed verbatim by trusted_plan ingest.
-    Returns ``{}`` when absent (v1 plans) or unreadable — TFactory then falls
-    back to its own inference.
-    """
-    plan_file = Path(spec_dir) / "implementation_plan.json"
-    if not plan_file.exists():
-        return {}
-    try:
-        plan = json.loads(plan_file.read_text())
-    except (OSError, json.JSONDecodeError):
-        return {}
-    block = plan.get("tfactory")
-    return block if isinstance(block, dict) else {}
 
 
 def load_task_contract(spec_dir: Path) -> dict:
@@ -295,7 +280,7 @@ def _git_stdout(cwd: Path, args: list[str], env: dict[str, str] | None = None) -
     return subprocess.run(
         ["git", *args],
         cwd=str(cwd),
-        env=env,
+        env=env if env is not None else child_env(),
         capture_output=True,
         text=True,
         timeout=60,
@@ -389,11 +374,33 @@ def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | 
         url = _git_stdout(repo, ["remote", "get-url", "origin"])
         if not url:
             return None, None
-        # The token rides in GIT_ASKPASS, never in argv — /proc/<pid>/cmdline is
-        # world-readable for the lifetime of the child (AIFactory#1366). The URL
-        # and the credential env are yielded together, so the token is only ever
-        # offered to a remote this process rewrote.
+        # The token rides in a per-call GH_CONFIG_DIR (github_env), never in argv
+        # or env; the URL is not rewritten. /proc/<pid>/cmdline is world-readable
+        # for the lifetime of the child (AIFactory#1366, #1723). The URL and the
+        # credential env are yielded together, so the token is only ever offered
+        # to an https github.com remote.
         with authed_push_url(url) as (push_url, git_env):
+
+            def run(argv: list[str], t: int) -> tuple[int, str, str]:
+                p = subprocess.run(  # noqa: S603
+                    argv,
+                    cwd=str(repo),
+                    env=git_env,
+                    capture_output=True,
+                    text=True,
+                    timeout=t,
+                    check=False,
+                )
+                return p.returncode, p.stdout, p.stderr
+
+            err = lfs_upload(run, sha)
+            if err:
+                _log.warning(
+                    "[handoff] LFS refused for %s; not pushing: %s",
+                    build_branch,
+                    err[:200],
+                )
+                return url, None
             subprocess.run(
                 [
                     "git",
@@ -572,7 +579,69 @@ def _issue_from_requirements(req: dict[str, Any]) -> int | None:
     return None
 
 
-def build_ingest_payload(spec_dir: Path, spec_id: str) -> dict:
+_ISSUE_URL_PATH = re.compile(r"^/([^/]+/[^/]+)/issues/\d+$")
+
+
+def _event_correlation_key(req: dict[str, Any]) -> str | None:
+    """The key AIFactory's own completion events carry for this spec (#1775).
+
+    Mirrors ``server/services/completion.py`` ``read_issue_number`` +
+    ``read_issue_repo`` + ``correlation_key`` (that module is stdlib-only and
+    lives in the web server); a web-server test pins the two together. None
+    when the spec has no issue: the synthetic key stays service-local.
+    """
+    raw = None
+    if isinstance(req.get("metadata"), dict):
+        raw = req["metadata"].get("githubIssueNumber")
+    gh = req.get("githubIssue")
+    if not raw and isinstance(gh, dict):
+        raw = gh.get("number")
+    try:
+        number = int(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
+    if number is None:
+        return None
+    for block in (req.get("provenance"), gh):
+        repo = block.get("repo") if isinstance(block, dict) else None
+        if repo and isinstance(repo, str):
+            return f"{repo}#{number}"
+    url = gh.get("url") if isinstance(gh, dict) else None
+    if isinstance(url, str) and (m := _ISSUE_URL_PATH.match(urlparse(url).path)):
+        return f"{m.group(1)}#{number}"
+    return str(number)
+
+
+def _thread_issue(
+    contract: dict[str, Any] | None, req: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Thread the origin issue onto the contract TFactory receives.
+
+    ``provenance.github_issue`` lets TFactory correlate the verify task with its
+    build + plan; the label-driven fast path carries no PFactory plan, so it is
+    backfilled from requirements.json (#964). ``correlation_key`` is the key
+    AIFactory's own events carry: AIFactory sends TFactory no issue repo, so
+    without it TFactory falls back to a bare issue number and its work item
+    splits from the build's (#1775). A PFactory contract's own key wins.
+    """
+    issue_no = _issue_from_requirements(req)
+    if issue_no is not None:
+        contract = dict(contract or {})
+        prov = dict(contract.get("provenance") or {})
+        prov.setdefault("github_issue", issue_no)
+        contract["provenance"] = prov
+    # Not gated on issue_no: the event readers also accept metadata.githubIssueNumber
+    # and string numbers, and the key must follow the events, not the #964 block.
+    key = _event_correlation_key(req)
+    if key:
+        contract = dict(contract or {})
+        contract.setdefault("correlation_key", key)
+    return contract
+
+
+def build_ingest_payload(
+    spec_dir: Path, spec_id: str, *, contract: dict[str, Any] | None
+) -> dict:
     """Build the payload for TFactory's self-contained spec intake
     (``POST /api/specs/ingest``): ``{project_id, spec_id, spec_text}``.
 
@@ -618,7 +687,10 @@ def build_ingest_payload(spec_dir: Path, spec_id: str) -> dict:
     # Carry the full signed Task Contract so TFactory tests the DECLARED ACs
     # (tfactory block: lanes/frameworks/ac_to_code_map) rather than inferring
     # from spec_text. Present only for trusted plans; absent → TFactory infers.
-    contract = load_task_contract(spec_dir)
+    # `contract` given (#1667): the web server decided it; `{}` means held, so
+    # TFactory infers instead of trusting the agent-writable spec copy.
+    held = contract is not None and not contract
+    contract = load_task_contract(spec_dir) if contract is None else dict(contract)
     # Propagate the build's per-phase model choice to TFactory's verify lanes so a
     # non-default (e.g. Ollama) build is VERIFIED on the same provider instead of
     # silently falling back to TFactory's default (sonnet). The choice lives in
@@ -626,23 +698,15 @@ def build_ingest_payload(spec_dir: Path, spec_id: str) -> dict:
     # execution.phase_models, which TFactory's ingest turns into its own
     # task_metadata.json (get_phase_model reads that). Additive: a real signed
     # contract's execution block is preserved; we only fill phase_models we add.
-    verify_pm = _verify_phase_models(spec_dir)
+    verify_pm = None if held else _verify_phase_models(spec_dir)
     if verify_pm:
         contract = dict(contract or {})
         execution = dict(contract.get("execution") or {})
         merged = {**verify_pm, **(execution.get("phase_models") or {})}
         execution["phase_models"] = merged
         contract["execution"] = execution
-    # Thread the origin GitHub issue so TFactory can correlate the verify task
-    # with its build + plan (it reads contract.provenance.github_issue). The
-    # label-driven fast path carries no PFactory plan, so backfill from
-    # requirements.json (githubIssue.number / provenance.issue_number). #964
-    _issue_no = _issue_from_requirements(req)
-    if _issue_no is not None:
-        contract = dict(contract or {})
-        _prov = dict(contract.get("provenance") or {})
-        _prov.setdefault("github_issue", _issue_no)
-        contract["provenance"] = _prov
+    if not held:
+        contract = _thread_issue(contract, req)
     if contract:
         payload["contract"] = contract
     # PARR seam: hand TFactory the repo + the build branch so it can fetch the
@@ -697,6 +761,43 @@ async def _httpx_poster(url: str, payload: dict, headers: dict) -> dict:
         }
 
 
+# Short: a handoff must not wait on a slow probe (results are cached 5 min).
+_HANDOFF_PREFLIGHT_TIMEOUT_S = 3
+
+
+def _handoff_preflight_block(payload: dict[str, Any]) -> dict[str, Any] | None:
+    mode = auth_preflight.preflight_mode()
+    if mode == "off":
+        return None
+    contract = payload.get("contract")
+    execution = contract.get("execution") if isinstance(contract, dict) else None
+    phase_models = (
+        execution.get("phase_models") if isinstance(execution, dict) else None
+    )
+    if not isinstance(phase_models, dict):
+        return None
+    models = [model for model in phase_models.values() if isinstance(model, str)]
+    if not models:
+        return None
+
+    blocked: dict[str, Any] | None = None
+    for result in auth_preflight.run_auth_preflight(
+        models, timeout=_HANDOFF_PREFLIGHT_TIMEOUT_S
+    ):
+        if result.status not in ("ok", "skipped"):
+            _log.warning(
+                "TFactory handoff auth preflight %s: %s", result.provider, result.detail
+            )
+        if mode == "enforce" and result.status == "auth_failed" and blocked is None:
+            blocked = {
+                "sent": False,
+                "reason": "auth_preflight_failed",
+                "provider": result.provider,
+                "detail": result.detail,
+            }
+    return blocked
+
+
 async def send_handoff(
     payload: dict,
     *,
@@ -706,13 +807,21 @@ async def send_handoff(
     """POST a handoff payload to TFactory. Never raises.
 
     Returns a JSON-able result: ``{"sent": bool, "reason": str|None, ...}``.
-    ``reason`` is ``"not_configured"`` (no base URL), ``"http_error"`` (non-2xx),
-    or ``"error"`` (transport exception).
+    ``reason`` is ``"not_configured"`` (no base URL), ``"auth_preflight_failed"``,
+    ``"http_error"`` (non-2xx), or ``"error"`` (transport exception).
     """
     config = config or tfactory_config()
     base_url = config.get("base_url")
     if not base_url:
         return {"sent": False, "reason": "not_configured"}
+
+    try:
+        blocked = await asyncio.to_thread(_handoff_preflight_block, payload)
+    except Exception as exc:  # noqa: BLE001 — a preflight bug must not stop a handoff
+        _log.warning("TFactory handoff auth preflight failed: %s", type(exc).__name__)
+        blocked = None
+    if blocked:
+        return blocked
 
     url = base_url + (config.get("path") or _DEFAULT_PATH)
     headers = {"Content-Type": "application/json"}
@@ -776,6 +885,74 @@ async def send_pr_attach(
     }
 
 
+_HTTP_OK, _HTTP_REDIRECT = 200, 300
+
+# (url, headers) -> (status code, parsed JSON body or None)
+Getter = Callable[[str, dict[str, str]], tuple[int, object]]
+
+
+def _httpx_get(url: str, headers: dict[str, str]) -> tuple[int, object]:
+    import httpx  # noqa: PLC0415 - optional dependency, only on this path
+
+    resp = httpx.get(url, headers=headers, timeout=10.0)
+    return resp.status_code, resp.json() if resp.is_success else None
+
+
+def tfactory_verdict(
+    spec_dir: Path, spec_id: str, *, head: str, getter: Getter | None = None
+) -> str | None:
+    """The verdict TFactory itself recorded for this spec at ``head`` (#1695, #1766).
+
+    ``"pass"``, ``"fail"`` or ``None`` (no trusted result: unconfigured,
+    unreachable, wrong project, mismatched or missing ``source_sha``, not triaged,
+    no or unknown verdicts). Only a ``reject`` fails; ``flag`` does not block.
+    Never raises; logs nothing it fetched.
+    """
+    try:
+        config = tfactory_config()
+        base_url = config.get("base_url")
+        project_id = os.environ.get("TFACTORY_PROJECT_ID") or _aifactory_project_name(
+            Path(spec_dir)
+        )
+        if not base_url or not project_id:
+            return None
+        headers = (
+            {"Authorization": f"Bearer {config['token']}"}
+            if config.get("token")
+            else {}
+        )
+        base = f"{base_url}/api/tfactory/tasks/{quote(spec_id, safe='')}"
+        get = getter or _httpx_get
+        code, task = get(base, headers)
+        status_json = task.get("status_json") if isinstance(task, dict) else None
+        if not (
+            _HTTP_OK <= code < _HTTP_REDIRECT
+            and isinstance(task, dict)
+            and task.get("project_id") == project_id
+            and bool(head)
+            and task.get("source_sha") == head
+            and isinstance(status_json, dict)
+            and status_json.get("status") == "triaged"
+        ):
+            return None
+        code, doc = get(f"{base}/verdicts.json", headers)
+        if not (
+            _HTTP_OK <= code < _HTTP_REDIRECT
+            and isinstance(doc, dict)
+            and isinstance(doc.get("verdicts"), list)
+        ):
+            return None
+        kinds = [
+            e.get("verdict") if isinstance(e, dict) else None for e in doc["verdicts"]
+        ]
+    except Exception:  # noqa: BLE001 - no trusted result is not a pass
+        return None
+    # A missing or unknown verdict is not green.
+    if not kinds or any(k not in ("accept", "flag", "reject") for k in kinds):
+        return None
+    return "fail" if "reject" in kinds else "pass"
+
+
 def wants_auto_handoff(spec_dir: Path) -> bool:
     """True if the task opted into auto-handover to TFactory on completion.
 
@@ -792,7 +969,9 @@ def wants_auto_handoff(spec_dir: Path) -> bool:
     )
 
 
-async def maybe_auto_handoff_tfactory(spec_dir: Path, spec_id: str) -> dict:
+async def maybe_auto_handoff_tfactory(
+    spec_dir: Path, spec_id: str, *, contract: dict[str, Any] | None
+) -> dict:
     """On a task's terminal SUCCESS, hand the finished build to TFactory for
     testing — but only when the task opted in (``auto_handover_tfactory`` in
     task_metadata) AND TFactory is configured (``TFACTORY_BASE_URL``). The
@@ -815,7 +994,10 @@ async def maybe_auto_handoff_tfactory(spec_dir: Path, spec_id: str) -> dict:
     if build_commit_count(spec_dir, spec_id) == 0:
         return {"sent": False, "reason": "empty_build"}
     try:
-        payload = build_ingest_payload(spec_dir, spec_id)
+        # Off the event loop: it pushes the build branch (LFS upload up to 600 s).
+        payload = await asyncio.to_thread(
+            build_ingest_payload, spec_dir, spec_id, contract=contract
+        )
         result = await send_handoff(payload)
     except Exception as exc:  # noqa: BLE001 — must never break task completion
         return {"sent": False, "reason": "error", "error": str(exc)[:300]}

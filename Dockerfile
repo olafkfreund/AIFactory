@@ -37,7 +37,7 @@
 # surface. The runtime stage stays on Chainguard, where it does matter.
 # Digest bumps land via Dependabot PRs (.github/dependabot.yml).
 
-FROM docker.io/node:24-bookworm-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03 AS frontend-build
+FROM docker.io/node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS frontend-build
 
 USER root
 WORKDIR /build
@@ -69,7 +69,11 @@ RUN mkdir -p apps/web-server/static \
 # Stage 2: Runtime (Chainguard Python, dev variant for now — minimal split
 # happens in P0.5 once we know what the runtime *actually* needs)
 # ---------------------------------------------------------------------------
-FROM cgr.dev/chainguard/python:latest-dev@sha256:aa89119db7f7fb4a6628ac82e2c38404cc64cd56ccd858d2c78646776b3fffef AS runtime
+# Runtime Node comes from the official image, not apk (Factory#1710). Same
+# digest as frontend-build, so both move together in one Dependabot bump.
+FROM docker.io/node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS node-runtime
+
+FROM cgr.dev/chainguard/python:latest-dev@sha256:894aed3297d91283e1fc4c542f5374a4b5f3726134fda7c94eaa539342be1e05 AS runtime
 
 USER root
 
@@ -89,14 +93,59 @@ ARG SECURITY_REFRESH=0
 RUN echo "security refresh: ${SECURITY_REFRESH}" \
     && apk upgrade --no-cache
 
+# Node from the official image (Factory#1710). apk `nodejs` is rebuilt on the
+# rolling index against the newest glibc, while this base pins glibc exactly in
+# /etc/apk/world, and apk deps are unversioned sonames. apk node needed exactly
+# the image's GLIBC_2.44 (zero headroom) and broke every PR on 2026-09-03. The
+# official binary needs GLIBC_2.28 and only libc/libm/libdl/libpthread/
+# libstdc++/libgcc_s/libatomic (all in the base); libuv/OpenSSL/ICU are bundled.
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-runtime /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+ && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+# Every node:24 image to date bundles an npm whose own vendored deps carry HIGH
+# CVEs the P0 Trivy gate rejects. npm 11.19.1 fixed ip-address and tar, but NOT
+# brace-expansion: measured against the registry, 11.19.1, 11.21.0 and 12.2.0
+# all still bundle brace-expansion 5.0.9 and undici 6.28.0. So no npm release
+# clears these two, and no lockfile of ours can either — Trivy attributes them
+# to usr/local/lib/node_modules/npm/node_modules/*, which is npm's own bundle,
+# not a dependency of this application.
+#
+# Patched upstream versions of the PACKAGES do exist (brace-expansion 5.0.10+,
+# undici 6.28.1), they are simply not in any npm tarball. So we replace npm's
+# vendored copies with the patched ones rather than allow-listing the CVEs: the
+# .trivyignore precedent is for "no known patched version exists", which is not
+# true here, and silencing a report leaves the vulnerable code in an image that
+# runs npm against untrusted repository content.
+#
+# Both bumps are same-major/same-minor patch releases. The trailing `npm
+# --version` is the check: it runs npm after the surgery, so a broken bundle
+# fails the build here rather than in a lane. REMOVE a line once a shipped npm
+# bundles that version or later (Factory#1710, #1634).
+RUN npm install -g npm@11.19.1 \
+ && M=/usr/local/lib/node_modules/npm/node_modules \
+ && for p in brace-expansion@5.0.12 undici@6.28.1; do \
+      n="${p%@*}"; \
+      npm pack "$p" --pack-destination /tmp >/dev/null \
+   && rm -rf "$M/$n" && mkdir -p "$M/$n" \
+   && tar xzf /tmp/"$n"-*.tgz -C "$M/$n" --strip-components=1 \
+   && rm -f /tmp/"$n"-*.tgz; \
+    done \
+ && node -e "const want={'brace-expansion':'5.0.12','undici':'6.28.1'}; let bad=0; for (const [n,v] of Object.entries(want)) { const got=require('/usr/local/lib/node_modules/npm/node_modules/'+n+'/package.json').version; console.log(n, got, got===v?'ok':'EXPECTED '+v); if (got!==v) bad=1; } process.exit(bad)" \
+ && npm --version
+# .nvmrc is the one declaration of the Node major: fail the build on drift.
+COPY .nvmrc /tmp/.nvmrc
+RUN want="$(tr -dc '0-9.' < /tmp/.nvmrc | cut -d. -f1)" \
+ && have="$(node -p 'process.versions.node.split(".")[0]')" \
+ && [ -n "$want" ] && [ "$want" = "$have" ] \
+ || { echo "Node major drift: .nvmrc=$want runtime=$have (Factory#1710)"; exit 1; } \
+ && rm /tmp/.nvmrc
+
 # System packages from Wolfi APK index. Build tools come bundled in :latest-dev.
 #   git           — worktree operations
 #   curl, wget    — downloads (HEALTHCHECK uses curl)
 #   gh            — GitHub CLI (Wolfi apk package name)
-#   nodejs, npm   — runtime Node for `npm install -g @anthropic-ai/claude-code`
-#                   spawned by the agent. Installed via apk instead of
-#                   binary-copying from the frontend stage so dynamic linker
-#                   deps (libuv etc.) resolve correctly.
+#   (Node is NOT from apk: see the node-runtime COPY below, Factory#1710.)
 #   ca-certificates — TLS roots
 #   bash          — entrypoint script (will be removed in P0.3)
 #   bubblewrap    — OS-level bash sandbox for agent commands. Without it the
@@ -122,7 +171,8 @@ RUN echo "security refresh: ${SECURITY_REFRESH}" \
 # (1.38.0-r1 and later already exist); drop each once the base digest ships it.
 # Verified present in the Wolfi x86_64 APKINDEX, then confirmed against the
 # pinned base digest itself — a floor above the newest available version fails
-# the build outright.
+# the build outright. git-lfs: floor checked the same way (3.7.1-r2 .. 3.8.0-r3);
+# the explicit `git lfs push` before every push needs it (#1690, #1721).
 RUN apk add --no-cache \
         bash \
         "busybox>=1.38.0-r0" \
@@ -132,12 +182,24 @@ RUN apk add --no-cache \
         ca-certificates \
         curl \
         git \
+        "git-lfs>=3.7.1" \
         gh \
         gnupg \
-        nodejs \
-        npm \
         socat \
         "wget>=1.25.0-r15"
+
+# The Wolfi package writes system-wide filter.lfs.* (smudge on, required=true),
+# which would turn every repo's LFS files into pointers we may have no endpoint
+# to upload to. Remove them: the image only needs the binary for the explicit
+# `git lfs push` of pointers a ref already holds (#1721).
+RUN git lfs uninstall --system
+
+# Node must come only from the node-runtime COPY above, never from apk: an apk
+# nodejs would be rebuilt against a glibc newer than this base pins and break
+# the build (Factory#1710). Checked AFTER the apk block, where it could appear.
+RUN if apk info 2>/dev/null | grep -q '^nodejs'; then \
+      echo "apk nodejs is installed; runtime Node must come from node-runtime (Factory#1710)"; exit 1; \
+    fi
 
 # RFC-0016 #674: the per-language build toolchains (go/rust/maven/openjdk/cmake/
 # build-base) that USED to be baked here have been REMOVED. AIFactory builds and
@@ -242,14 +304,25 @@ RUN mkdir -p /home/nonroot/.npm-global \
 # `claude --version` is the point of the fix, not decoration: this shipped broken
 # because nothing asserted the CLI works. Full path, since PATH is set for the
 # runtime user rather than for RUN.
+#
+# #1621 extends that assertion to codex and gemini. They had none, and they are
+# exactly the two the build Job's install-clis initContainer was re-fetching per
+# pod — its stale justification claimed this image lacked them. With that
+# initContainer gone, a build gets its CLIs from here and nowhere else, so a
+# missing one must fail the IMAGE build (once, in CI) rather than every build
+# that needs it. The `antigravity` symlink is asserted through gemini, which it
+# points at.
 RUN npm install -g \
-        @anthropic-ai/claude-code@2.1.238 \
-        @openai/codex@0.149.0 \
-        @google/gemini-cli@0.56.0 \
+        @anthropic-ai/claude-code@2.1.303 \
+        @openai/codex@0.163.0 \
+        @google/gemini-cli@0.64.0 \
  && node /home/nonroot/.npm-global/lib/node_modules/@anthropic-ai/claude-code/install.cjs \
  && /home/nonroot/.npm-global/bin/claude --version \
+ && /home/nonroot/.npm-global/bin/codex --version \
+ && /home/nonroot/.npm-global/bin/gemini --version \
  && npm cache clean --force \
- && ln -sf /home/nonroot/.npm-global/bin/gemini /home/nonroot/.npm-global/bin/antigravity
+ && ln -sf /home/nonroot/.npm-global/bin/gemini /home/nonroot/.npm-global/bin/antigravity \
+ && /home/nonroot/.npm-global/bin/antigravity --version
 
 # Google Antigravity CLI (`agy`) — a SEPARATE product from @google/gemini-cli,
 # despite the `antigravity` alias above suggesting otherwise. That alias makes
@@ -458,6 +531,14 @@ USER root
 # not already in the substrate) can't write new paths. Warm builds — the packed
 # multi-node case we're unblocking — work; cold-write support is a follow-up
 # (writable overlay at Job runtime) tracked on the slice-3 issue.
+#
+# This pin DELIBERATELY lags the gate image (AIFactory#1541). Language toolchain
+# closures (python/kotlin/swift) are warmed into factory-runner-nix for the GATE
+# Job, which runs AIFACTORY_SANDBOX_IMAGE (pinned by digest in factory-gitops and
+# bumped by factory-runners' CD after signing). Nothing in this image runs a
+# language `nix develop`: the build Job is not nix-develop wrapped
+# (build_backend.py, nix_develop=False) and gates run in their own Job (#1525).
+# Bumping this digest would add ~1.7 GB of toolchains here for no reader.
 COPY --from=ghcr.io/olafkfreund/factory-runner-nix:latest@sha256:28c94cf7552f81dcf24c556ae74a5220b84eb1ebe9e9bb6e58d67c346d143e1e /nix/store /nix/store
 COPY --from=ghcr.io/olafkfreund/factory-runner-nix:latest@sha256:28c94cf7552f81dcf24c556ae74a5220b84eb1ebe9e9bb6e58d67c346d143e1e --chown=65532:65532 /nix/var /nix/var
 

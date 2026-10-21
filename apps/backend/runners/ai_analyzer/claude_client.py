@@ -4,9 +4,12 @@ Claude SDK client wrapper for AI analysis.
 
 import json
 import os
+import weakref
 from pathlib import Path
 from typing import Any
 
+from core.agent_home import AgentHome
+from core.auth import get_agent_env_blanks
 from core.outbound_scrub import wrap_client_outbound_scrub
 
 try:
@@ -119,22 +122,22 @@ class ClaudeAnalysisClient:
 
         # #1128: built directly, so it does not inherit the outbound PII
         # scrub from create_client() or BaseLLMProvider.
-        return wrap_client_outbound_scrub(
-            ClaudeSDKClient(
-                options=ClaudeAgentOptions(
-                    model=resolve_model_id(
-                        self.DEFAULT_MODEL
-                    ),  # Resolve via API Profile
-                    system_prompt=system_prompt,
-                    allowed_tools=self.ALLOWED_TOOLS,
-                    max_turns=self.MAX_TURNS,
-                    cwd=str(self.project_dir.resolve()),
-                    settings=str(settings_file.resolve()),
-                    # Bypass prompts for headless execution
-                    permission_mode="bypassPermissions",
-                )
+        home = AgentHome("claude")
+        bare = ClaudeSDKClient(
+            options=ClaudeAgentOptions(
+                model=resolve_model_id(self.DEFAULT_MODEL),  # Resolve via API Profile
+                system_prompt=system_prompt,
+                allowed_tools=self.ALLOWED_TOOLS,
+                max_turns=self.MAX_TURNS,
+                cwd=str(self.project_dir.resolve()),
+                settings=str(settings_file.resolve()),
+                env={**get_agent_env_blanks(), **home.env},
+                # Bypass prompts for headless execution
+                permission_mode="bypassPermissions",
             )
         )
+        weakref.finalize(bare, home.close)
+        return wrap_client_outbound_scrub(bare)
 
     async def _collect_response(self, client: Any) -> str:
         """

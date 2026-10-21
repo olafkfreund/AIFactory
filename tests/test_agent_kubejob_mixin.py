@@ -17,6 +17,7 @@ _KUBEJOB_METHODS = (
     "reconcile_kubejob_builds",
     "reap_kubejob_builds",
     "_stop_kubejob_build",
+    "_report_kubejob_usage",
 )
 
 

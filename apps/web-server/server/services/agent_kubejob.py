@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 from pathlib import Path
@@ -20,10 +21,14 @@ from typing import TYPE_CHECKING, Any
 from factory_common.logsafe import sanitize_log
 
 from server.project_registry import resolve_project_path
-from server.services import review_redrive_service
+from server.services import review_redrive_service, task_control
 from server.specpath import spec_dir_for
 
-from .build_backend import _TERMINAL_STATES, orphaned_worktree_registrations
+from .build_backend import (
+    _TERMINAL_STATES,
+    kubejob_enabled,
+    orphaned_worktree_registrations,
+)
 from .build_log_stream import PlanSync
 from .task_log_writer import TaskLogWriter
 from .task_phase import TaskPhase
@@ -65,6 +70,44 @@ def _report_orphaned_worktrees(job_id: str) -> list[str]:
     return orphans
 
 
+_REVIEW_PAUSE_REASONS = ("plan_review", "injection_scan")
+
+
+async def _kubejob_review_reason(job_id: str) -> tuple[Path, str] | None:
+    """``(spec_dir, reason)`` when the Job's pushed plan is a review PAUSE, else None (#1633).
+
+    A Job that stops for human review (pre-flight approval, injection scan) exits
+    0 like a finished build, but nothing was built. Only an allowlisted
+    ``reviewReason`` counts: QA's ``human_review/completed`` and ``qa_issues`` are
+    real completions and keep the handoff. Blocking I/O runs in a thread. Never raises.
+    """
+    try:
+        from core import workspace_fetch  # noqa: PLC0415
+
+        project_id, _, spec_id = job_id.partition(":")
+        if not spec_id:
+            return None
+        spec_dir = spec_dir_for(resolve_project_path(project_id), spec_id)
+        await asyncio.to_thread(workspace_fetch.maybe_fetch_plan, spec_dir, spec_id)
+        raw = await asyncio.to_thread(
+            (spec_dir / "implementation_plan.json").read_text, "utf-8"
+        )
+        plan = json.loads(raw)
+        if (
+            isinstance(plan, dict)
+            and plan.get("status") == "human_review"
+            and plan.get("reviewReason") in _REVIEW_PAUSE_REASONS
+        ):
+            return spec_dir, plan["reviewReason"]
+    except Exception:  # noqa: BLE001 - unreadable plan: take today's path
+        _log.debug(
+            "[AgentService] review-pause check failed for %s",
+            sanitize_log(job_id),
+            exc_info=True,
+        )
+    return None
+
+
 class KubejobMixin:
     """Kubejob build-backend methods (RFC-0016). Mixed into AgentService."""
 
@@ -72,15 +115,20 @@ class KubejobMixin:
         # Attributes/methods provided by the concrete host (AgentService);
         # declared here so mypy can resolve the self.* references in a mixin.
         _kubejob_log_streamers: dict[str, Any]
+        _active_kubejob_task_ids: set[str]
+        _held_credentials: set[str]
+        _kubejob_dispatched_this_tick: set[str]
         _task_current_phases: dict[str, Any]
         _task_log_writers: dict[str, Any]
         _handle_output_line: Callable[..., Any]
         backend_path: Path
         _store_enabled: bool
+        is_running: Callable[[str], bool]
         _task_profiles: dict[str, Any]
         _drain_queue: Callable[..., Any]
         _emit_log: Callable[..., Any]
         _release_task_credential: Callable[..., Any]
+        reap_orphaned_subprocess_rows: Callable[..., Any]
         # Declared for the same reason as its siblings above: a sibling mixin
         # provides it, and every self._update_plan_status call in this file was
         # otherwise an attr-defined error (#1430).
@@ -159,6 +207,9 @@ class KubejobMixin:
                 job_id,
             )
         await self._drain_queue()
+        # Last: the usage fetch is an object-store GET that can stall for minutes,
+        # and must not delay the queue drain (#1633).
+        await self._report_kubejob_usage(job_id, "failed")
 
     async def _record_kubejob_terminal(self, job_id: str, status: str) -> None:
         """Write a terminal status where the task API reads it (#1430).
@@ -182,6 +233,41 @@ class KubejobMixin:
         _log.info("[AgentService] recording terminal status %s for %s", status, job_id)
         await self._update_plan_status(project_path, spec_id, status, job_id)
 
+    async def _report_kubejob_usage(self, job_id: str, status: str) -> None:
+        """Report the spend of a build that ends without a normal completion (#1633).
+
+        Sends a usage snapshot only when fetching the Job's pushed usage wrote NEW,
+        higher spend locally; otherwise the terminal event already carried it (or
+        there is nothing to report), and CFactory dedupes by event id, not status.
+        Best-effort: never raises.
+        """
+        try:
+            from core import workspace_fetch  # noqa: PLC0415
+
+            from . import completion  # noqa: PLC0415
+
+            project_id, _, spec_id = job_id.partition(":")
+            if not spec_id:
+                return
+            spec_dir = spec_dir_for(resolve_project_path(project_id), spec_id)
+            fetched = await asyncio.to_thread(
+                workspace_fetch.maybe_fetch_usage, spec_dir, spec_id
+            )
+            if fetched:
+                completion.emit_usage_snapshot(
+                    spec_dir,
+                    task_id=job_id,
+                    project_id=project_id,
+                    spec_id=spec_id,
+                    status=status,
+                )
+        except Exception:  # noqa: BLE001 - usage reporting must never block bookkeeping
+            _log.debug(
+                "[AgentService] kubejob usage report failed for %s",
+                sanitize_log(job_id),
+                exc_info=True,
+            )
+
     async def _on_kubejob_build_done(self, job_id: str) -> None:
         """A kubejob build reached ``done`` (#852): finish it like a real build.
 
@@ -196,6 +282,29 @@ class KubejobMixin:
         undone by a bookkeeping failure here.
         """
         self._release_task_credential(job_id)
+        # #1633: a Job that stopped for review exits 0 but built nothing. Record
+        # the pause and report its spend; it is not a completion (no handoff,
+        # endgame or #1407 marker).
+        pause = await _kubejob_review_reason(job_id)
+        if pause is not None:
+            try:
+                task_control.write_control(
+                    pause[0],
+                    status="human_review",
+                    review_reason=pause[1],
+                    updated_by="kubejob_review_pause",
+                )
+            except Exception:  # noqa: BLE001
+                _log.exception(
+                    "[AgentService] kubejob review-pause record failed for %s (ignored)",
+                    sanitize_log(job_id),
+                )
+            # The board must leave running/planning now, not at the next poll.
+            await self._safe_emit_task_status(job_id, "human_review", pause[1])
+            _report_orphaned_worktrees(job_id)
+            await self._drain_queue()
+            await self._report_kubejob_usage(job_id, "human_review")
+            return
         # The status the COMPLETION decided, not the one we asked for: its
         # evidence gate downgrades "completed" to "failed" when the build wrote
         # nothing, and recording the optimistic value would put "completed" in
@@ -349,11 +458,18 @@ class KubejobMixin:
                 base_branch=base_branch,
                 mode=mode,
             )
-        except Exception:
-            # Dispatch failed → the Job will never run, so return the credential
-            # now rather than leaking it until a reaper that never fires.
-            self._release_task_credential(task_id)
+        except BaseException:
+            # A dispatch raise does not prove no Job exists; wait for its 404.
+            self._held_credentials.add(task_id)
             raise
+        # #1662: the build is live from here, not from the next reconcile
+        # tick (≤15s later). Without this, is_running() said False for that
+        # window and recovery reset a live Job despite the #1619 guard.
+        # After the except block on purpose: a failed dispatch never marks.
+        self._active_kubejob_task_ids.add(task_id)
+        # #1714: this Job now owns the credential; an earlier hold must not free it.
+        self._held_credentials.discard(task_id)
+        self._kubejob_dispatched_this_tick.add(task_id)
         # RFC-0017 #680: feed the cockpit log stream + rmux Live Console from the
         # Job pod's logs, exactly as the in-pod subprocess path does — the
         # prerequisite to making kubejob the default. Best-effort: any failure
@@ -410,6 +526,10 @@ class KubejobMixin:
                 mode=mode,
             )
             return None
+        # #1705: claim before spawn so a crash between them leaves this pod's row;
+        # a claim error is a spawn failure and callers free the slot.
+        if getattr(self, "_store_enabled", False):
+            await self._store().mark_running(task_id)
         return await self._spawn_task_execution(
             task_id=task_id,
             project_path=project_path,
@@ -499,7 +619,16 @@ class KubejobMixin:
         async def _run_stream() -> None:
             try:
                 await streamer.stream(
-                    namespace=namespace, job_name=job_name, spec_id=spec_id
+                    namespace=namespace,
+                    job_name=job_name,
+                    spec_id=spec_id,
+                    # #1619: without this the pump stopped on the FIRST
+                    # end-of-stream, which for a build pod arrives while its
+                    # init containers are still running — so nothing was
+                    # followed for the rest of the build. The authority on "is
+                    # this Job alive" is the reconcile loop's own set,
+                    # refreshed every 15s from the job-state rows.
+                    job_active=self._kubejob_still_active(task_id),
                 )
             finally:
                 self._kubejob_log_streamers.pop(task_id, None)
@@ -597,6 +726,26 @@ class KubejobMixin:
         except Exception:  # noqa: BLE001 - rmux integration optional
             return None
 
+    def _kubejob_still_active(self, task_id: str) -> Callable[[], Any]:
+        """A liveness check for ``KubeJobLogStreamer`` (#1619, #1670).
+
+        Answers exactly what ``is_running`` answers for a kubejob id:
+        membership in ``self._active_kubejob_task_ids``, the set dispatch
+        marks and each reconcile tick replaces.
+
+        Read the attribute on every call; never capture the set. The tick
+        rebinds it to a new object (``live | _kubejob_dispatched_this_tick``),
+        so a captured set would keep saying True for the rest of the build.
+
+        An id dispatch never marked is not active. There is no time-based
+        grace; ``_MAX_EMPTY_REATTACHES`` stops a dead stream either way.
+        """
+
+        async def _active() -> bool:
+            return task_id in self._active_kubejob_task_ids
+
+        return _active
+
     def _cancel_kubejob_log_stream(self, task_id: str) -> None:
         """Cancel + drop a build's Job-native log streamer if present (#680)."""
         streamer = self._kubejob_log_streamers.pop(task_id, None)
@@ -634,18 +783,26 @@ class KubejobMixin:
         out: dict[str, str] = {}
         if not self._kubejob_backend_enabled():
             return out
+        # #1662: reset BEFORE the first await. Single-threaded asyncio
+        # means every id added from here on was dispatched after this
+        # tick's store read began — exactly the rows it may have missed.
+        self._kubejob_dispatched_this_tick = set()
         try:
             rows = await self._store().get_active_kubejobs()
         except Exception:  # noqa: BLE001 - reconcile must never crash the loop
             _log.exception("[AgentService] kubejob reconcile: store read failed")
             return out
         backend = self._build_backend()
+        live: set[str] = set()
         for row in rows:
             job_id = row["job_id"]
             try:
                 terminal = await backend.reconcile_by_poll(job_id)
             except Exception:  # noqa: BLE001
                 _log.exception("[AgentService] kubejob reconcile failed for %s", job_id)
+                # #1693: unknown this tick → keep last tick's answer.
+                if job_id in self._active_kubejob_task_ids:
+                    live.add(job_id)
                 continue
             if terminal is not None:
                 out[job_id] = terminal
@@ -658,6 +815,7 @@ class KubejobMixin:
                 # dispatch now that the Job is done (mirrors the subprocess path).
                 self._release_task_credential(job_id)
             else:
+                live.add(job_id)  # #1619: still running → is_running() says so
                 # #1249: still running → this IS the tick that used to be the
                 # ONLY route into check_review_obligation (monitor_process's
                 # subprocess-tied loop), which never runs for a kubejob build.
@@ -667,6 +825,16 @@ class KubejobMixin:
                 # this is the one place that fixes it for both the direct
                 # and queue-drained paths.
                 await self._redrive_kubejob_review(job_id)
+        # #1619: replace the live set wholesale from THIS tick's rows, never
+        # mutate it incrementally. A set that is only added to drifts into
+        # claiming dead builds are alive, and `is_running` saying "running"
+        # about a finished build strands it and blocks /start. Only reached
+        # when the poll above succeeded: an early return leaves the previous
+        # tick's answer standing rather than reporting every build dead
+        # because the store hiccuped.
+        # #1662: keep builds dispatched while this tick was reading;
+        # bounded to one tick because the next tick resets the set.
+        self._active_kubejob_task_ids = live | self._kubejob_dispatched_this_tick
         if out:
             # Builds finished → fill freed slots from the FIFO queue.
             await self._drain_queue()
@@ -704,9 +872,9 @@ class KubejobMixin:
     async def kubejob_reconcile_loop(
         self, *, stop: asyncio.Event, interval_seconds: float = 15.0
     ) -> None:
-        """Periodic reconcile-by-poll + reaper for k8s-Job builds (#671).
+        """Periodic reconcile and reaper for build rows (#671, #1705).
 
-        Started from the app lifespan only when the kubejob backend is enabled.
+        Started from the app lifespan for kubejob or durable subprocess builds.
         Each tick polls Postgres for terminal transitions the Jobs wrote
         (so a missed completion event never strands a build) and reaps vanished
         Jobs. Never raises — a bad tick is logged and the loop continues.
@@ -720,11 +888,12 @@ class KubejobMixin:
             try:
                 await self.reconcile_kubejob_builds()
                 await self.reap_kubejob_builds()
+                await self.reap_orphaned_subprocess_rows()
                 # Task-level reaper on a slower cadence (#1001): the spec-dir scan
                 # is heavier than the job-state poll and the deadline is generous,
                 # so every ~4th tick (~60s at the default interval) is plenty.
                 tick += 1
-                if tick % 4 == 0:
+                if tick % 4 == 0 and kubejob_enabled():
                     await self.reap_abandoned_tasks()
             except Exception:  # noqa: BLE001 - loop must survive a bad tick
                 _log.exception("[AgentService] kubejob reconcile tick failed")
@@ -750,12 +919,26 @@ class KubejobMixin:
             )
         except Exception:  # noqa: BLE001 - reaper must never crash the loop
             _log.exception("[AgentService] kubejob reaper failed")
-            return []
+            reaped = []
         if reaped:
             # #671 OAuth-env: return each reaped build's pooled credential.
             for job_id in reaped:
                 self._release_task_credential(job_id)
             await self._drain_queue()
+        for task_id in list(self._held_credentials):
+            try:
+                if await self._build_backend().job_gone(task_id):
+                    self._release_task_credential(task_id)
+                    self._held_credentials.discard(task_id)
+            except Exception:  # noqa: BLE001 - retry on the next tick
+                _log.exception(
+                    "[AgentService] could not verify Job for held credential %s",
+                    sanitize_log(task_id),
+                )
+        try:
+            await self._build_backend().sweep_orphan_jobs()
+        except Exception:  # noqa: BLE001 - sweep must never crash the loop
+            _log.exception("[AgentService] kubejob orphan sweep failed")
         return reaped
 
     # Frontend statuses that claim a live build. A task at one of these with no
@@ -834,7 +1017,32 @@ class KubejobMixin:
                     _log.exception(
                         "[AgentService] reap of abandoned task %s failed", task.id
                     )
+        # After every task is marked failed: the usage fetch is an object-store GET
+        # that can stall, and must not hold up the reap (#1633). Concurrent, so a
+        # blackholed store costs one timeout window, not one per task.
+        await asyncio.gather(*(self._report_kubejob_usage(t, "failed") for t in reaped))
         return reaped
+
+    async def is_running_anywhere(self, task_id: str) -> bool:
+        """True when a build runs here or any running row exists (#1669, #1705).
+
+        The sync ``is_running`` sees only this pod's memory. A store read
+        failure reads as running (fail closed: Recover refuses, never
+        double-starts). The reaper closes orphaned subprocess rows.
+        """
+        if self.is_running(task_id):
+            return True
+        if not getattr(self, "_store_enabled", False):
+            return False
+        try:
+            state = await self._store().get_state(task_id)
+        except Exception:  # noqa: BLE001
+            _log.warning(
+                "[AgentService] job-state read failed for %s; reading as running (#1669)",
+                sanitize_log(task_id),
+            )
+            return True
+        return state is not None and state.get("lifecycle_state") == "running"
 
     async def _kubejob_liveness(self, task_id: str) -> str:
         """Tri-state liveness for ``task_id``, per the backend actually in play.
@@ -965,5 +1173,6 @@ class KubejobMixin:
         self._release_task_credential(task_id)
         await self._safe_emit_task_status(task_id, "human_review", "errors")
         await self._drain_queue()
+        await self._report_kubejob_usage(task_id, "failed")
         _log.info("[AgentService] Stopped k8s-Job build %s", sanitize_log(task_id))
         return True

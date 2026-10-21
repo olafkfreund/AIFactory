@@ -19,8 +19,9 @@ logger = logging.getLogger(__name__)
 
 # Model shorthand to full model ID mapping
 MODEL_ID_MAP: dict[str, str] = {
-    "opus": "claude-opus-4-8",
-    "opus-4.7": "claude-opus-4-7",  # previous flagship — kept for pinning
+    "opus": "claude-opus-5-5",
+    "opus-4.8": "claude-opus-4-8",  # previous flagship — kept for pinning
+    "opus-4.7": "claude-opus-4-7",  # kept for pinning
     "opus-1m": "claude-opus-4-6",  # legacy alias — kept for users who pinned 4.6 + 1M beta
     "opus-4.5": "claude-opus-4-5-20251101",
     "sonnet": "claude-sonnet-5",  # current Sonnet (near-Opus coding, 1M ctx)
@@ -54,6 +55,7 @@ EFFORT_LEVEL_MAP: dict[str, str] = {
 # Models that support adaptive thinking via effort level (env var)
 # These models get both max_thinking_tokens AND effort_level
 ADAPTIVE_THINKING_MODELS: set[str] = {
+    "claude-opus-5-5",
     "claude-opus-4-8",
     "claude-opus-4-7",
     "claude-opus-4-6",
@@ -82,11 +84,21 @@ SPEC_PHASE_THINKING_LEVELS: dict[str, str] = {
 
 # Default phase configuration (fallback, matches 'Balanced' profile)
 DEFAULT_PHASE_MODELS: dict[str, str] = {
-    # Default to Opus 4.8 (current flagship) for all stages — highest-capability
-    # coding/agentic model. Override per-task via the contract `phase_models`.
+    # Opus plans and judges; Sonnet writes the code.
+    #
+    # The stages differ in what they are actually hard at. `spec`, `planning`
+    # and `qa` decide WHAT to build and whether it is right — one long-context
+    # judgement each, where a better call changes the whole run. `coding`
+    # executes a decision already made, across many small, well-specified
+    # subtasks, and it is where nearly all the wall-clock and tokens go: the
+    # 21-subtask demo build spent 145 minutes almost entirely in coding.
+    #
+    # So the flagship is spent where judgement compounds, and the faster model
+    # where volume dominates. Per-task `phaseModels` still overrides either
+    # (RFC-0014 precedence, #1397), so a task that needs Opus to code can say so.
     "spec": "opus",
     "planning": "opus",
-    "coding": "opus",
+    "coding": "sonnet",
     "qa": "opus",
     "qa_fixer": "opus",
 }
@@ -230,8 +242,14 @@ def is_adaptive_model(model_id: str) -> bool:
 # path; the gate here is narrower: only Opus 4.7 routes to the SDK-native
 # {"type": "adaptive"} shape — Opus 4.6 stays on the effort-level path.
 _OPUS_47_ID: str = "claude-opus-4-7"
-# Opus 4.8 — current flagship; same adaptive/interleaved-thinking support.
+# Opus 4.8 — previous flagship; same adaptive/interleaved-thinking support.
 _OPUS_48_ID: str = "claude-opus-4-8"
+# Opus 5.5 — current flagship.
+_OPUS_55_ID: str = "claude-opus-5-5"
+# Every Opus that takes the SDK-native adaptive thinking shape. Named as a set
+# so adding the next flagship is one line here rather than a new member in each
+# `in (...)` test — which is how 4.8 originally shipped supporting neither.
+_ADAPTIVE_OPUS_IDS: frozenset[str] = frozenset({_OPUS_47_ID, _OPUS_48_ID, _OPUS_55_ID})
 
 INTERLEAVED_THINKING_AGENT_TYPES: frozenset[str] = frozenset({"planner", "coder"})
 INTERLEAVED_THINKING_BETA: str = "interleaved-thinking-2025-05-14"
@@ -265,7 +283,7 @@ def thinking_config_for(
     """
     if explicit_budget is not None and explicit_budget > 0:
         return {"type": "enabled", "budget_tokens": explicit_budget}
-    if model_id in (_OPUS_47_ID, _OPUS_48_ID) and thinking_level != "none":
+    if model_id in _ADAPTIVE_OPUS_IDS and thinking_level != "none":
         return {"type": "adaptive"}
     return None
 
@@ -293,7 +311,7 @@ def interleaved_thinking_betas_for(
         List of beta header strings — either [INTERLEAVED_THINKING_BETA] or [].
     """
     if (
-        model_id in (_OPUS_47_ID, _OPUS_48_ID)
+        model_id in _ADAPTIVE_OPUS_IDS
         and agent_type in INTERLEAVED_THINKING_AGENT_TYPES
     ):
         return [INTERLEAVED_THINKING_BETA]

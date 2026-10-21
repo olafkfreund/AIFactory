@@ -19,8 +19,11 @@ historically lived in ``routes/tasks.py`` and are re-exported there for backward
 compatibility (``mcp_stdio/router.py`` imports them from ``..routes.tasks``).
 """
 
+import asyncio
 import json
 import logging
+import subprocess
+from contextlib import suppress
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
@@ -28,16 +31,58 @@ from pydantic import BaseModel
 
 from server.error_ref import client_error
 from server.project_registry import get_projects_file
+from server.services.approval import find_pr
+from server.services.audit_service import ACTION_TASK_CREATE_PR, audit_task_route
 from server.services.build_backend import task_repo_dir
 from server.services.http_verdict import honest_status
-from server.services.task_branch import resolve_task_branch
+from server.services.task_branch import resolve_task_branch_fetching
 from server.specpath import safe_spec_component
+from server.utils.subprocess_env import (
+    child_env,
+    github_env,
+    lfs_upload,
+    merge_driver_pins,
+)
 
 from .project_authz import require_task_access
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _upload_and_push(
+    worktree_path: str, branch: str, push_cmd: list[str]
+) -> subprocess.CompletedProcess[str] | str:
+    """Upload LFS objects, then push: the push result, or a client-safe LFS error.
+
+    Blocking (the upload may take ``LFS_UPLOAD_TIMEOUT``): run it in a thread.
+    Hooks are off (#1680), so the upload is explicit (#1690, #1721).
+    """
+    with github_env(child_env()) as env:
+
+        def run(argv: list[str], timeout: int) -> tuple[int, str, str]:
+            p = subprocess.run(  # noqa: S603, PLW1510
+                argv,
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=env,
+            )
+            return p.returncode, p.stdout, p.stderr
+
+        err = lfs_upload(run, branch)
+        if err:
+            return client_error(logger, "Failed to push LFS objects", err)
+        return subprocess.run(  # noqa: S603, PLW1510
+            push_cmd,
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=env,
+        )
 
 
 class CreatePRFromTaskOptions(BaseModel):
@@ -50,6 +95,7 @@ class CreatePRFromTaskOptions(BaseModel):
 
 @router.post("/{task_id}/worktree/create-pr")
 @honest_status
+@audit_task_route(ACTION_TASK_CREATE_PR)
 async def create_pr_from_task(
     task_id: str,
     options: CreatePRFromTaskOptions = None,
@@ -58,8 +104,11 @@ async def create_pr_from_task(
     """
     Push the worktree branch and create a GitHub Pull Request.
     Does NOT delete the worktree or branch after PR creation.
+
+    If an open or already-merged PR exists for the task branch, it is returned
+    (``existing: true``) without pushing, so calling this again is safe and
+    works after the worktree was cleaned up (CFactory#457).
     """
-    import subprocess
 
     if options is None:
         options = CreatePRFromTaskOptions()
@@ -114,9 +163,10 @@ async def create_pr_from_task(
     # built there, else the kubejob build clone (#1467 moved it to
     # worktrees/builds so it stops clobbering the worktree).
     worktree_path = task_repo_dir(project_path, spec_id)
-
-    if worktree_path is None:
-        return {"success": False, "error": "No worktree found for this task"}
+    # CFactory#457: a missing worktree only blocks the PUSH below. Returning an
+    # existing PR, and resolving the branch (#1073), need no worktree, so the
+    # refusal moves down to where it is actually true.
+    expected_worktree = project_path / ".aifactory" / "worktrees" / "tasks" / spec_id
 
     # Base branch first: resolving the task branch needs to know which branch
     # does NOT count as one.
@@ -129,6 +179,7 @@ async def create_pr_from_task(
                 capture_output=True,
                 text=True,
                 check=True,
+                env=child_env(),
             )
             base_branch = result.stdout.strip()
         except subprocess.CalledProcessError:
@@ -138,27 +189,64 @@ async def create_pr_from_task(
     # the kubejob build backend the build runs in a separate pod and pushes; the
     # control plane's worktree is never switched off the base branch, so that
     # read yielded "main" and this endpoint asked GitHub to open main -> main.
-    worktree_branch, branch_error = resolve_task_branch(
-        worktree_path=worktree_path,
+    # CFactory#457: fetch origin and retry on a miss -- a kubejob build pushed
+    # the branch from its own pod, and this checkout may never have seen it.
+    worktree_branch, branch_error = resolve_task_branch_fetching(
+        worktree_path=worktree_path or expected_worktree,
         project_path=project_path,
         spec_id=spec_id,
         base_branch=base_branch,
     )
     if not worktree_branch:
+        if worktree_path is None:
+            return {"success": False, "error": "No worktree found for this task"}
         return {
             "success": False,
             "error": f"Could not determine task branch: {branch_error}",
         }
 
+    # CFactory#457: an open (or already merged) PR for this branch IS the
+    # result. Hand it back instead of rebasing and pushing under it and then
+    # failing on "a pull request ... already exists" -- which stopped the
+    # cockpit's Approve before its merge step. A CLOSED PR falls through: a
+    # fresh PR is a legitimate outcome.
+    # Lazy import: see the module docstring (routes/github).
+    from .github import _get_project_provider, _use_provider_api, run_gh_command
+
+    # find_pr speaks gh; on GitLab/Azure DevOps it would ask the wrong remote.
+    is_github = not _use_provider_api(project_id)
+    if not is_github:
+        with suppress(Exception):  # unknown provider: keep today's path
+            ptype = _get_project_provider(project_id).provider_type
+            is_github = getattr(ptype, "value", str(ptype)) == "github"
+    if is_github:
+        existing = find_pr(project_path, worktree_branch, options.targetRepo)
+        if existing and existing[1] in {"OPEN", "MERGED"}:
+            return {
+                "success": True,
+                "data": {
+                    "prUrl": existing[2],
+                    "prNumber": existing[0],
+                    "branch": worktree_branch,
+                    "baseBranch": base_branch,
+                    "existing": True,
+                },
+            }
+
+    if worktree_path is None:
+        return {"success": False, "error": "No worktree found for this task"}
+
     # Fetch latest base branch from remote
     try:
-        subprocess.run(
-            ["git", "fetch", "origin", base_branch],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
+        with github_env(child_env()) as env:
+            subprocess.run(
+                ["git", "fetch", "origin", base_branch],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                env=env,
+            )
     except Exception:
         pass  # Non-fatal — rebase will use whatever is available
 
@@ -171,6 +259,7 @@ async def create_pr_from_task(
             capture_output=True,
             text=True,
             timeout=10,
+            env=child_env(),
         )
         # "No local changes to save" means nothing was stashed
         stashed = (
@@ -185,12 +274,14 @@ async def create_pr_from_task(
     # Rebase onto latest base branch to minimize conflicts (best-effort)
     rebase_failed = False
     try:
+        pins = merge_driver_pins(worktree_path)
         result = subprocess.run(
-            ["git", "rebase", f"origin/{base_branch}"],
+            ["git", *pins, "rebase", f"origin/{base_branch}"],
             cwd=worktree_path,
             capture_output=True,
             text=True,
             timeout=120,
+            env=child_env(),
         )
         if result.returncode != 0:
             # Abort the failed rebase to leave worktree clean
@@ -200,6 +291,7 @@ async def create_pr_from_task(
                 capture_output=True,
                 text=True,
                 timeout=10,
+                env=child_env(),
             )
             rebase_failed = True
     except subprocess.TimeoutExpired:
@@ -209,9 +301,10 @@ async def create_pr_from_task(
             capture_output=True,
             text=True,
             timeout=10,
+            env=child_env(),
         )
         rebase_failed = True
-    except Exception:
+    except Exception:  # includes merge_driver_pins' RuntimeError: rebase not started
         rebase_failed = True
 
     # Restore stashed changes
@@ -222,21 +315,8 @@ async def create_pr_from_task(
             capture_output=True,
             text=True,
             timeout=10,
+            env=child_env(),
         )
-
-    # Authenticate git via the gh credential helper before pushing (#540).
-    # The deployed pod has a gh token but no git credential config, so a raw
-    # `git push` over HTTPS fails with "could not read Username for
-    # https://github.com". `gh auth setup-git` wires gh as the credential
-    # helper — same fix as pr_endgame.create_pr / agent_service. Best-effort:
-    # a failure here surfaces as the existing push error below, not a new mode.
-    subprocess.run(
-        ["gh", "auth", "setup-git"],
-        cwd=worktree_path,
-        capture_output=True,
-        text=True,
-        timeout=15,
-    )
 
     # #1459: same failure as #959/PR #962, on the other door. Under the
     # kubejob/packed build backend the build ran in a k8s Job on an ephemeral
@@ -249,13 +329,15 @@ async def create_pr_from_task(
     # fetch is a harmless no-op — we log and fall through to the existing
     # behaviour.
     try:
-        fetch_result = subprocess.run(  # noqa: S603, ASYNC221, PLW1510
-            ["git", "fetch", "origin", f"{worktree_branch}:{worktree_branch}"],  # noqa: S607
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
+        with github_env(child_env()) as env:
+            fetch_result = subprocess.run(  # noqa: S603, ASYNC221, PLW1510
+                ["git", "fetch", "origin", f"{worktree_branch}:{worktree_branch}"],  # noqa: S607
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env=env,
+            )
         if fetch_result.returncode != 0:
             logger.info(
                 "fetch of %s from origin skipped (%s) - branch may be local "
@@ -279,9 +361,12 @@ async def create_pr_from_task(
             worktree_branch,
         ]
     try:
-        result = subprocess.run(
-            push_cmd, cwd=worktree_path, capture_output=True, text=True, timeout=60
+        pushed = await asyncio.to_thread(
+            _upload_and_push, str(worktree_path), worktree_branch, push_cmd
         )
+        if isinstance(pushed, str):
+            return {"success": False, "error": pushed}
+        result = pushed
         if result.returncode != 0:
             return {
                 "success": False,
@@ -331,8 +416,6 @@ async def create_pr_from_task(
     # is on GitLab or Azure DevOps the gh CLI path can't open the PR (we
     # pushed to the GitLab `origin`, not to a GitHub remote). Only fall back
     # to `gh pr create` when the project is actually a GitHub project.
-    from .github import _get_project_provider, _use_provider_api, run_gh_command
-
     if _use_provider_api(project_id):
         try:
             provider = _get_project_provider(project_id)
@@ -400,6 +483,7 @@ async def create_pr_from_task(
                 capture_output=True,
                 text=True,
                 timeout=5,
+                env=child_env(),
             )
             if origin_url_result.returncode == 0:
                 import re as _re

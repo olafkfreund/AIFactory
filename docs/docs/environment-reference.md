@@ -140,7 +140,10 @@ present. Read mainly in `apps/backend/phase_config.py`, `providers/*`,
 | `OLLAMA_EMBEDDING_MODEL` | `""` | conditional | Ollama embedding model (required for Ollama embeddings). |
 | `OLLAMA_EMBEDDING_DIM` | `0` | conditional | Ollama embedding dimension; must match the model. |
 | `OPENCODE_DEFAULT_MODEL` | `""` | conditional | Model for the OpenCode agentic provider (`providers/opencode_agentic.py`). |
-| `GH_TOKEN` / `GITHUB_TOKEN` | (none) | conditional | GitHub token for PR endgame, workspace fetch, testing (`providers/factory.py`, `runners/github/runner.py`). Required to open/merge PRs. |
+| `GH_TOKEN` / `GITHUB_TOKEN` | (none) | conditional | GitHub token for PR endgame, workspace fetch, testing (`providers/factory.py`, `runners/github/runner.py`). Required to open/merge PRs. With the GitHub App on, the server sets both itself and refuses to start if a PAT is present at boot. |
+| `AIFACTORY_GITHUB_APP_ID` | (none) | no | GitHub App ID (#1671). All three `AIFACTORY_GITHUB_APP_*` vars or none. |
+| `AIFACTORY_GITHUB_APP_INSTALLATION_ID` | (none) | no | Installation ID of the App on the target repos. |
+| `AIFACTORY_GITHUB_APP_PRIVATE_KEY` | (none) | no | App PEM private key. Secret only; popped from the environment at boot. |
 | `GITHUB_BOT_TOKEN` | (none) | no | Separate bot identity for GitHub actions (`runners/github/runner.py`). |
 | `GITHUB_REPO` | (none) | conditional | Target repo for the GitHub runner CLI. |
 
@@ -157,6 +160,7 @@ needs them (cloud/KMS SDKs); they never reach agents.
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` | AWS credentials (boto3 / workspace store / deploy); scrubbed from agents. |
 | `GOOGLE_APPLICATION_CREDENTIALS` | GCP service-account path; scrubbed from agents. |
 | `AZURE_CLIENT_SECRET` | Azure app secret; scrubbed from agents. |
+| `APP_CFACTORY_READ_KEY`, `CONTEXT7_KEY`, `RAPIDAPI_KEY`, `LANGCHAIN_API_KEY`, `OPENAI_COMPATIBLE_API_KEY`, `S3_ACCESS_KEY` | Host keys scrubbed from agents (#1674). `OPENAI_COMPATIBLE_API_KEY` is restored for the runner via `RUNNER_KEEP`; `S3_ACCESS_KEY` is denied to agents and the in-pod runner (kubejob Jobs still receive both for `run.py`). |
 
 Any host var whose name matches `SECRET|PASSWORD|PRIVATE_KEY|CREDENTIAL|_KMS|PASSPHRASE`
 is also blanked generically.
@@ -209,7 +213,7 @@ Read across `apps/backend/` (`routing_policy.py`, `core/model_config.py`,
 | `AIFACTORY_CONTEXT_SUMMARY` | off | no | Enable rolling context summarization (`agents/context_summary.py`). |
 | `AIFACTORY_MUTATION_LEDGER` | off | no | Record agent file mutations to a ledger (`agents/mutation_ledger.py`). |
 | `AIFACTORY_TEST_EVIDENCE_GATE` | on (set to `off`/`0`/`false`/`no` to disable) | no | Honesty gate (`agents/test_evidence.py`). Two checks, both at `update_subtask_status(... "completed")`: (1) #851 — a test/verification subtask needs a real, non-failing test command recorded this build; (2) #1111 — a subtask naming an HTTP path needs at least one Python test mentioning that path which reaches the shipped app (imports an application entrypoint without building its own, or calls a live server), so a suite asserting against a `FastAPI()` built inside the test file no longer counts. Inert when the subtask names no HTTP path or no Python test mentions it. (3) #1123 — one post-merge gate (`agents/route_wiring.py`), run once at the trailing-gate step when every wave has merged, that imports the application entrypoint the repo's own tests name and asserts every HTTP path the plan promised resolves on the real app. No gate at all when the plan promises no HTTP path or no test names an entrypoint; reported `skipped` (never `passed`) when the app cannot be imported. |
-| `AIFACTORY_SELF_HEAL` | off | no | Enable the pre-merge security self-heal gate (`agents/self_heal_integration.py`, `core/worktree.py`). |
+| `AIFACTORY_SELF_HEAL` | off | no | **Off in all deployments today — merges are not security-scanned.** When on, the pre-merge gate blocks a merge with a high-severity finding **or** one that could not be scanned (scanner failure, unreadable diff), and the flag also enables review-tier gating and plan-artifact emission (`agents/self_heal_integration.py`, `core/worktree.py`, #1454). |
 | `AIFACTORY_CLAUDE_ENFORCEMENT_ENABLED` | off | no | Enable per-org Claude enforcement (`core/enforcement.py`). |
 | `AIFACTORY_CLAUDE_ENFORCEMENT_FAILURE_MODE` | `open` | no | `open` (fail-open) or `closed` (fail-closed) when enforcement can't decide. |
 | `AIFACTORY_GRAPHIFY_ENABLED` | off | no | Opt into the Graphify code-graph MCP tool for the coder (`core/client.py`); forwarded to build Jobs. |
@@ -230,18 +234,18 @@ How `run.py` executes and what lets a build schedule on any node. Read in
 
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
-| `AIFACTORY_BUILD_BACKEND` | `subprocess` | no | `subprocess` (in-pod asyncio) or `kubejob` (each build as its own k8s Job). Unknown values fall back to `subprocess`. |
+| `AIFACTORY_BUILD_BACKEND` | `subprocess` | no | `subprocess` (in-pod asyncio) or `kubejob` (each build as its own k8s Job). Unknown values fall back to `subprocess`. Auto-merge is held for every task unless this is `kubejob` and `DATABASE_URL` is set. |
 | `AIFACTORY_IMAGE` | (built-in) | no | Running image; fallback build-Job image when `AIFACTORY_BUILD_IMAGE` unset. |
 | `AIFACTORY_BUILD_IMAGE` | (unset) | no | Override the image for the `kubejob` build Job only. Point at a `:sha-<short>-nix` tag for in-image Nix. |
 | `AIFACTORY_PACK_WORKSPACE` | off | no | Pack `/work` to object storage and unpack in the Job (removes the workspace node-pin). |
-| `AIFACTORY_PACKED_NIX_IN_IMAGE` | off | no | Resolve `/nix` from the build image instead of the Nix-store PVC (removes the last node-pin). |
+| `AIFACTORY_PACKED_NIX_IN_IMAGE` | off | no | Gate Jobs resolve `/nix` from the image instead of the Nix-store PVC (removes the last node-pin). Forwarded into the build Job (#1736). |
 | `WORKSPACE_URI` | `""` | conditional | Object-storage URI the Job unpacks `/work` from (set by the pack path; `core/workspace_fetch.py`). |
 | `AIFACTORY_DATA_ROOT` | `/home/nonroot/.aifactory` | no | Data PVC mount root; used to compute worktree subPaths and sandbox mounts. |
 | `AIFACTORY_SANDBOX_NAMESPACE` | `factory` | no | K8s namespace the build Job runs in. |
 | `AIFACTORY_BUILD_SA` | `aifactory-sandbox` | no | ServiceAccount for the build Job. |
 | `AIFACTORY_BUILD_DEADLINE_SECONDS` | `21600` (6h) | no | Active-deadline for the build Job. |
 | `AIFACTORY_SANDBOX_REPO_PVC` | `aifactory-data` | no | PVC holding the repo/worktree (co-mounted into the Job). |
-| `AIFACTORY_NIX_STORE_PVC` | `""` | no | Warm Nix-store PVC to mount into the Job. Empty on the in-image-Nix path. |
+| `AIFACTORY_NIX_STORE_PVC` | `""` | no | Warm Nix-store PVC that gate Jobs mount (seeded from the image). Forwarded into the build Job; the build Job itself never mounts it (#1736). |
 | `AIFACTORY_CLI_CREDS_SECRET` | `""` | no | K8s Secret name holding CLI credentials mounted into the build Job. |
 | `APP_BACKEND_PATH` | `/home/projects/MagesticAI/apps/backend` | no | Backend path inside the build Job. |
 
@@ -304,6 +308,7 @@ Read in `apps/web-server/server/services/intake_poller.py`,
 ## PR endgame, deploy & Copilot
 
 Read in `apps/web-server/server/services/pr_endgame.py`,
+`services/merger.py`, `server/main.py` (merger sweep startup),
 `services/copilot_dispatch_service.py`, `routes/github.py`. These are commonly
 set per-project in `.aifactory/.env`.
 
@@ -314,6 +319,9 @@ set per-project in `.aifactory/.env`.
 | `AIFACTORY_PR_REVIEWER` | `aifactory` | no | Which review gates merge: `aifactory`, `copilot`, or `any`. |
 | `AIFACTORY_AUTO_DEPLOY` | off | no | Deploy-then-verify to AWS App Runner on a clean build, then tear down. |
 | `AIFACTORY_COPILOT_DISPATCH_ENABLED` | off | no | Enable GitHub Copilot dispatch for reviews. |
+| `AIFACTORY_MERGER_SWEEP` | off | no | Periodic merger sweep: sync task status to PR state and, where `AIFACTORY_AUTO_PR` is on for the project, push and open PRs for finished work with no PR. See `guides/pr-endgame.md`. |
+| `AIFACTORY_MERGER_SWEEP_DRY_RUN` | `true` | no | Report-only unless exactly `false`. |
+| `AIFACTORY_MERGER_SWEEP_INTERVAL_S` | `900` | no | Seconds between sweep ticks. |
 
 ## Completion events & outbox
 
@@ -368,12 +376,13 @@ Read in `apps/web-server/server/services/sandbox.py`,
 |----------|---------|----------|---------|
 | `AIFACTORY_BASH_SANDBOX` | on | no | Gate the bubblewrap syscall sandbox; set off where bwrap can't mount `/proc`. |
 | `AIFACTORY_AGENT_SANDBOX` | `off` | no | OS-level agent sandbox mode (`services/sandbox.py`). |
-| `AIFACTORY_AGENT_SANDBOX_PIDNS` | off | no | Opt into a private PID namespace for the sandbox. |
+| `AIFACTORY_AGENT_SANDBOX_PIDNS` | off | no | Opt into a private PID namespace for the sandbox. It does not make a host count as isolated for auto-merge while `run.py` in the sandbox carries the server's environment (#1680). |
 | `AIFACTORY_SANDBOX_BACKEND` | `docker` | no | Gate-runner sandbox backend (`docker` / `nixjob`). |
 | `AIFACTORY_SANDBOX_GATES` | off | no | Run agent gates inside the sandbox. |
 | `AIFACTORY_SANDBOX_IMAGE` | `""` | no | Image for sandboxed gate runs. |
 | `AIFACTORY_SANDBOX_NETWORK` | `none` | no | Network mode for the sandbox. |
 | `AIFACTORY_SANDBOX_REPO_PVC` | `aifactory-data` | no | Repo PVC for sandboxed gate runs. |
+| `AIFACTORY_REPO_LINT_GATE` | off | no | Run the target repo's CI linters (ruff, flake8, ktlint) as blocking trailing gates and name them in the planner prompt (#1742). |
 | `AIFACTORY_EXTRA_ALLOWED_COMMANDS` | `""` | no | Extend the dynamic command allowlist (`project/models.py`). |
 | `AIFACTORY_EGRESS_POLICY` | `off` | no | Agent egress policy mode (`security/egress.py`). |
 | `AIFACTORY_EGRESS_ALLOWED_HOSTS` | `""` | no | Allowed egress hosts when the egress policy is on. |

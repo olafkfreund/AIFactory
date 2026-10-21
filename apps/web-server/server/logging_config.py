@@ -26,7 +26,7 @@ field and stays readable when the viewer renders it.
 import json
 import logging
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -188,7 +188,7 @@ def get_recent_logs(
     except Exception as e:
         entries.append(
             {
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
                 "level": "ERROR",
                 "logger": "logging_config",
                 "message": f"Failed to read log file: {e}",

@@ -4,10 +4,11 @@ Task execution routes.
 Handles starting, stopping, and monitoring task execution.
 """
 
+import asyncio
 import json
 import logging
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,24 @@ from pydantic import BaseModel, Field
 from server.background import spawn
 from server.error_ref import client_error
 from server.project_registry import load_projects, resolve_project_id
+from server.services.audit_service import (
+    ACTION_TASK_APPLY_CORRECTION,
+    ACTION_TASK_CREATE,
+    ACTION_TASK_DISPATCH,
+    ACTION_TASK_HANDOFF,
+    ACTION_TASK_RECOVER,
+    ACTION_TASK_START,
+    ACTION_TASK_STOP,
+    audit_task_action,
+    audit_task_route,
+)
+from server.services.handback_receipt_store import record as record_handback_receipt
+from server.services.trusted_contract import handoff_contract, resolve_contract
+from server.services.trusted_contract_store import (
+    TrustedContractStore,
+    lookup,
+    spec_key_for_dir,
+)
 from server.specpath import safe_spec_component
 
 from ..services import task_control
@@ -178,6 +197,15 @@ class RecoverTaskRequest(BaseModel):
         "backlog", description="Target status after recovery"
     )
     autoRestart: bool = Field(False, description="Auto-restart the task after recovery")
+    force: bool = Field(
+        False,
+        description=(
+            "Recover even while a build for this task is still running. "
+            "Recovery resets the task's record but does NOT stop the Job, so "
+            "forcing it can leave a live build writing against a reset task "
+            "(#1619)."
+        ),
+    )
 
 
 class CopilotDispatchRequest(BaseModel):
@@ -231,7 +259,7 @@ async def get_task_status(
 ):
     """Get execution status for a specific task."""
     agent_service = get_agent_service()
-    is_running = agent_service.is_running(task_id)
+    is_running = await agent_service.is_running_anywhere(task_id)
 
     return TaskExecutionStatus(
         task_id=task_id,
@@ -246,7 +274,7 @@ async def is_task_running(
 ):
     """Check if a specific task is currently running."""
     agent_service = get_agent_service()
-    is_running = agent_service.is_running(task_id)
+    is_running = await agent_service.is_running_anywhere(task_id)
 
     return {
         "task_id": task_id,
@@ -255,6 +283,7 @@ async def is_task_running(
 
 
 @router.post("/{task_id}/start")
+@audit_task_route(ACTION_TASK_START)
 async def start_task(
     task_id: str,
     request: StartTaskRequest,
@@ -321,7 +350,6 @@ async def start_task(
         from pfactory.taxonomy import classify_requirements
         from pfactory.tfactory_client import (
             build_handoff_payload,
-            load_tfactory_block,
             send_handoff,
         )
 
@@ -334,9 +362,17 @@ async def start_task(
                 # TFactory. Graceful — when TFACTORY_BASE_URL is unset this is a
                 # no-op ("not_configured") and we still record the local marker.
                 _meta = load_pfactory_metadata(spec_dir, _req)
-                # RFC-0002: carry the contract's tfactory test profile so TFactory
-                # plans from declared lanes/frameworks/endpoints, not inference.
-                _tf = load_tfactory_block(spec_dir)
+                # RFC-0002 / #1750: the declared test profile comes only from the
+                # trusted verdict (signed record, or legacy files); hold sends {}.
+                _state, _contract = resolve_contract(spec_dir, await lookup(spec_dir))
+                _tf = _contract.get("tfactory") if isinstance(_contract, dict) else None
+                _tf = _tf if isinstance(_tf, dict) else {}
+                if _state == "hold":
+                    logger.warning(
+                        "[StartTask] %s trusted contract on hold; declared "
+                        "TFactory profile withheld",
+                        sanitize_log(task_id),
+                    )
                 _payload = build_handoff_payload(
                     spec_id,
                     _req,
@@ -418,7 +454,7 @@ async def start_task(
 
     if not implementation_plan.exists() or not plan_is_valid:
         # Need to run spec creation first - read title/description from requirements.json
-        from datetime import datetime
+        from datetime import UTC, datetime
 
         logger.info(
             "[StartTask] No valid implementation plan found, will run spec creation for %s",
@@ -483,7 +519,7 @@ async def start_task(
                         ],
                     }
                 ],
-                "last_updated": datetime.now().isoformat(),
+                "last_updated": datetime.now(UTC).isoformat(),
             }
             implementation_plan.write_text(json.dumps(plan_data, indent=2))
 
@@ -494,7 +530,7 @@ async def start_task(
                     {
                         "approved": True,
                         "approved_by": "auto-simple",
-                        "approved_at": datetime.now().isoformat(),
+                        "approved_at": datetime.now(UTC).isoformat(),
                     },
                     indent=2,
                 )
@@ -660,23 +696,13 @@ async def start_task(
                 sanitize_log(e),
             )
 
-    if agent_service.is_running(task_id):
-        if force_execution:
-            # Plan was approved — clean up stale spec creation process before starting execution
-            logger.info(
-                "[StartTask] Cleaning up stale spec creation process for approved task %s",
-                sanitize_log(task_id),
-            )
-            try:
-                await agent_service.stop_task(task_id)
-            except Exception as stop_err:
-                logger.warning(f"[StartTask] Failed to stop stale process: {stop_err}")
-                agent_service.running_tasks.pop(task_id, None)
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Task is already running",
-            )
+    if force_execution:
+        await agent_service.stop_stale_spec_creation(task_id)
+    if await agent_service.is_running_anywhere(task_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Task is already running",
+        )
 
     # If review is required but not yet approved, set human_review status
     # and return early WITHOUT starting the subprocess (which would just exit)
@@ -903,7 +929,13 @@ async def handoff_to_tfactory(
 
     from pfactory.tfactory_client import build_ingest_payload, send_handoff
 
-    payload = build_ingest_payload(spec_dir, spec_id)
+    # Off the event loop: it pushes the build branch (LFS upload up to 600 s).
+    payload = await asyncio.to_thread(
+        build_ingest_payload,
+        spec_dir,
+        spec_id,
+        contract=handoff_contract(spec_dir, await lookup(spec_dir)),
+    )
     result = await send_handoff(payload)
     try:
         (spec_dir / "tfactory_handoff.json").write_text(json.dumps(result, indent=2))
@@ -913,6 +945,8 @@ async def handoff_to_tfactory(
             sanitize_log(task_id),
             sanitize_log(e),
         )
+    if result.get("sent"):  # send_handoff reports failure, it doesn't raise
+        await audit_task_action(_access, ACTION_TASK_HANDOFF, task_id)
     return {
         **result,
         "tfactory_spec_id": payload.get("spec_id"),
@@ -930,7 +964,7 @@ async def stop_task(
     """Stop a running task."""
     agent_service = get_agent_service()
 
-    if not agent_service.is_running(task_id):
+    if not await agent_service.is_running_anywhere(task_id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Task is not running",
@@ -947,11 +981,39 @@ async def stop_task(
     # Emit status change for real-time frontend update
     await emit_task_status(task_id, "backlog")
 
+    await audit_task_action(_access, ACTION_TASK_STOP, task_id)
     return {
         "success": True,
         "task_id": task_id,
         "message": "Task stopped",
     }
+
+
+async def _refuse_recovery_while_running(
+    task_id: str, agent_service: Any, *, force: bool
+) -> None:
+    """409 when a build for ``task_id`` is still running and ``force`` is unset.
+
+    #1619: recovery resets the task record and never deletes the k8s Job, so
+    recovering a live build leaves the Job writing against a reset task and,
+    with autoRestart, can put a second Job on it. Reads the same
+    ``is_running_anywhere`` the cockpit's card reads, so the refusal and the badge
+    cannot disagree.
+
+    A separate function rather than an inline branch: ``recover_task`` is
+    already at the strict-ruff branch ceiling, and a guard that gets
+    inlined-and-forgotten is how the badge and the refusal drift apart.
+    """
+    if force or not await agent_service.is_running_anywhere(task_id):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=(
+            f"Task {task_id} is still running — recovery would reset its "
+            "record while the build keeps writing. Wait for it to finish, "
+            "or pass force=true if you are certain it is dead."
+        ),
+    )
 
 
 @router.post("/{task_id}/recover")
@@ -1003,6 +1065,14 @@ async def recover_task(
 
     # Clean up from running_tasks if present
     agent_service = get_agent_service()
+
+    # #1619: recovery resets the task's record and does NOT delete the k8s Job,
+    # so recovering a build that is still running leaves a live Job writing
+    # against a reset task — and, with autoRestart, can put a second Job on the
+    # same task. The cockpit offered exactly this over healthy builds while
+    # is_running() could not see them. Expressed against the same predicate the
+    # card reads, so the refusal and the badge can never disagree.
+    await _refuse_recovery_while_running(task_id, agent_service, force=request.force)
     if task_id in agent_service.running_tasks:
         try:
             proc = agent_service.running_tasks[task_id]
@@ -1091,6 +1161,7 @@ async def recover_task(
     await emit_task_status(task_id, reset_status)
 
     # Return wrapped response to match frontend expectations
+    await audit_task_action(_access, ACTION_TASK_RECOVER, task_id)
     return {
         "success": True,
         "data": {
@@ -1145,7 +1216,7 @@ async def create_and_run_task(
     requirements: dict = {
         "title": title,
         "description": description,
-        "created_at": datetime.now().isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
     }
     # Persist upstream provenance (#332) so the PFactory→issue→spec chain is
     # traversable. Optional — omitted entirely when no fields are provided.
@@ -1217,6 +1288,13 @@ async def create_and_run_task(
             detail=client_error(logger, "Failed to start task creation", e),
         )
 
+    await audit_task_action(
+        _access,
+        ACTION_TASK_CREATE,
+        task_id,
+        raw_request,
+        details={"project_id": project_id, "title": title, "via": "create-and-run"},
+    )
     return {
         "success": True,
         "task_id": task_id,
@@ -1330,7 +1408,7 @@ async def create_from_trusted_plan(
     requirements: dict = {
         "title": title,
         "description": description,
-        "created_at": datetime.now().isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
     }
     if request.provenance is not None:
         prov = request.provenance.model_dump(exclude_none=True, exclude_defaults=True)
@@ -1372,6 +1450,21 @@ async def create_from_trusted_plan(
                 "reasons": result.reasons,
             },
         )
+
+    # #1667: keep the signed contract where the coding agent cannot edit it; the
+    # merge gate decides from this row. No record, no build.
+    try:
+        await TrustedContractStore().put(
+            spec_key_for_dir(spec_dir), spec_id, request.plan
+        )
+    except Exception as exc:
+        logger.error(
+            "[InstallPlan] trusted contract record not written; build not started"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Trusted contract record could not be stored",
+        ) from exc
 
     # RFC-0001 correlation: ingest stamped {approved_by, trusted_plan} provenance;
     # also record the GitHub issue number from the contract's correlation_key so
@@ -1441,6 +1534,13 @@ async def create_from_trusted_plan(
             detail=client_error(logger, "Failed to start build from trusted plan", e),
         )
 
+    await audit_task_action(
+        _access,
+        ACTION_TASK_CREATE,
+        task_id,
+        raw_request,
+        details={"project_id": project_id, "title": title, "via": "from-plan"},
+    )
     return {
         "success": True,
         "task_id": task_id,
@@ -1472,6 +1572,16 @@ async def apply_task_correction(
         manifest_hash=request.manifest_hash,
         correlation_key=request.correlation_key,
     )
+    # A confirm=False preview and a rejected triage write nothing: not an action.
+    if result.get("success") and result.get("confirm"):
+        # The QA Fixer can delete the spec-dir receipt; this copy holds the merge.
+        await record_handback_receipt(spec_dir)
+        await audit_task_action(
+            _access,
+            ACTION_TASK_APPLY_CORRECTION,
+            task_id,
+            details={"source": request.source},
+        )
     return {**result, "task_id": task_id, "source": request.source}
 
 
@@ -1576,6 +1686,12 @@ async def dispatch_task_to_copilot(
         )
     )
 
+    await audit_task_action(
+        _access,
+        ACTION_TASK_DISPATCH,
+        task_id,
+        details={"repo": request.repo_full_name, "issue_number": request.issue_number},
+    )
     return {
         "task_id": task_id,
         "dispatched": True,

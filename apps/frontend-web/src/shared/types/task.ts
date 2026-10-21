@@ -19,7 +19,15 @@ export type TaskStatus =
 // - 'errors': Subtasks failed during execution
 // - 'qa_rejected': QA found issues that need fixing
 // - 'plan_review': Spec/plan created and awaiting approval before coding starts
-export type ReviewReason = 'completed' | 'errors' | 'qa_rejected' | 'plan_review';
+export type ReviewReason =
+  | 'completed'
+  | 'errors'
+  | 'qa_rejected'
+  | 'plan_review'
+  // Factory#2586: written by the merger once the task's PR state is known.
+  | 'awaiting_merge'
+  | 'pr_closed'
+  | 'no_work';
 
 export type SubtaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
 
@@ -295,6 +303,7 @@ export interface Task {
   description: string;
   status: TaskStatus;
   reviewReason?: ReviewReason;  // Why task needs human review (only set when status is 'human_review')
+  contractHold?: string;  // Why the task contract was held (#1709); display only
   subtasks: Subtask[];
   qaReport?: QAReport;
   logs: string[];
