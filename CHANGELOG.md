@@ -1,5 +1,50 @@
 ## [Unreleased]
 
+## 3.10.4 - 2026-10-20
+
+### Security
+
+- **aiohttp 3.14.3 -> 3.14.5 (#1836).** Fixes CVE-2026-111064 (no initial
+  request/header timeout) and GHSA-2g87-pp6c-29x5 (unbounded memory and CPU
+  on crafted requests). yarl moves 1.24.5 -> 1.25.1 with it. The Trivy gate
+  on PRs to dev failed until this landed.
+- **Server-side git no longer runs repo filters, and a late baseline is
+  visible (#1832, PR #1837).** `merge_driver_pins` now also pins
+  `filter.<x>.clean`, `.smudge` and `.process` empty for every configured
+  filter, and every server-side `git status`, `git add`, worktree-reading
+  `git diff` and the unforced `git worktree remove` use the pins. A
+  `required` filter is left unpinned, so git exits 128 and the call fails
+  closed; if the pins cannot be read the call refuses and a status probe
+  reports "has changes". The git metadata baseline is now recorded before
+  the spec pipeline's agents and before a build's first agent session, which
+  covers direct mode and builds without workspaces. A baseline taken late
+  still passes, but the build output now prints `WARNING: git metadata
+  baseline taken late for <repo>; changes made before now are not detected`.
+- **Git metadata baseline follow-ups (#1832).** The baseline now also
+  tracks `lfs.customtransfer.*.path`, `lfs.*standalonetransferagent` and
+  `submodule.*.update` set to `!cmd`, so a change to any of them fails the
+  check. With `extensions.worktreeConfig`, each worktree's
+  `config.worktree` is compared with its own baseline, so one worktree's
+  config no longer reads as drift in another, and a change to it is still
+  reported. A project slug of `.git-baselines` is refused, and
+  `resolve_pr_conflicts` removes a baseline file it created for a build
+  clone. A repo whose old baseline holds per-worktree keys reports drift
+  once; rebaseline with `python -m core.git_metadata --rebaseline <path>`.
+
+### Changed
+
+- **Baked agent-CLI pins (#1411):** `@anthropic-ai/claude-code` 2.1.303,
+  `@openai/codex` 0.163.0, `@google/gemini-cli` 0.64.0. PFactory and
+  TFactory pin the same versions.
+- Dependency bumps: GitHub Actions group (#1744: setup-uv 10.3.0,
+  kind-action 1.15.1, setup-node 7.1.0, sbom-action 0.24.3, codeql-action
+  4.39.0, upload-artifact 7.0.2, download-artifact 8.0.2); npm
+  source-map-js 1.2.2 (#1739); and in `/docs` source-map-js 1.2.2 (#1654),
+  shell-quote 1.12.0 (#1653), proxy-addr 2.0.8 (#1655) and compression
+  1.8.2 (#1656).
+
+## 3.10.3 - 2026-10-17
+
 ### Added
 
 - **Opt-in repo lint gate (#1742).** With `AIFACTORY_REPO_LINT_GATE=1`, the
@@ -12,17 +57,6 @@
 
 ### Security
 
-- **Git metadata baseline follow-ups (#1832).** The baseline now also
-  tracks `lfs.customtransfer.*.path`, `lfs.*standalonetransferagent` and
-  `submodule.*.update` set to `!cmd`, so a change to any of them fails the
-  check. With `extensions.worktreeConfig`, each worktree's
-  `config.worktree` is compared with its own baseline, so one worktree's
-  config no longer reads as drift in another, and a change to it is still
-  reported. A project slug of `.git-baselines` is refused, and
-  `resolve_pr_conflicts` removes a baseline file it created for a build
-  clone. A repo whose old baseline holds per-worktree keys reports drift
-  once; rebaseline with `python -m core.git_metadata --rebaseline <path>`.
-
 - **Legacy and from-issue tasks need a real verified green to auto-merge (#1697).**
   Tasks without a signed contract (including MODE 0 from-issue tasks) now
   go through the same merge-time gate as signed ones: auto-merge needs a
@@ -33,6 +67,86 @@
   says. **Breaking for projects without TFactory or without CI:** their
   legacy and from-issue tasks no longer auto-merge. The PR stays open and
   the watcher times out to a human stop.
+- **Agent children can no longer read the parent's secrets through `/proc` or `$HOME` (#1762).**
+  Each agent CLI spawn (Claude SDK paths, codex, copilot, gemini/antigravity,
+  opencode and the tool-loop Bash) gets a private 0700 HOME that holds only
+  that CLI's login file and a `.gitconfig` with `user.*` and `safe.directory`.
+  A refreshed login is written back only if the real file is unchanged. If
+  the private HOME cannot be built the spawn fails; nothing falls back to the
+  real HOME. Agent children also get an env allowlist (#1757), so
+  `SSH_AUTH_SOCK` and other inherited names are dropped. Breaking for
+  operators: agents lose `~/.ssh` and home-folder tool configs; add needed
+  env names with `AIFACTORY_AGENT_ENV_EXTRA`, and name an MCP server's host
+  vars with `env_keys`. On local runners the `/proc` window stays open (#1724).
+- **The merge gate binds the TFactory verdict to the head commit and checks the base branch's required checks (#1766).**
+  A TFactory verdict counts only when its `source_sha` equals the head being
+  merged; a missing, empty or different SHA means not passed. The PR watcher
+  now also stops at its `max_minutes` deadline. Once host CI is green, every
+  required check of the base branch (classic protection and rulesets) must be
+  present and green on the head; red refuses, missing or pending holds, and a
+  token that cannot read them holds the merge. **Breaking until TFactory
+  returns `source_sha` (TFactory#1378):** every gated auto-merge holds
+  (`merge_gate_timeout`). PR #1824.
+- **Server merges, rebases and previews no longer run a planted merge driver (#1761).**
+  Every `merge.*.driver` key is pinned empty (`-c merge.<name>.driver=`) on
+  the `merge-tree` previews and on the real merge and rebase sites, so git
+  reports a conflict instead of running the program. If the keys cannot be
+  read, previews report conflicts and merges do not start. Real merge drivers
+  no longer run on server merges either, so files they would resolve show as
+  conflicts. The `--no-ext-diff` scan now also covers `show`, `blame`,
+  `range-diff` and `stash show -p`. PR #1829.
+- **Server merges are refused when the repo's git metadata changed since its baseline (#1746, #1747).**
+  When a worktree is created, SHA-256 hashes (never values) of the
+  exec-bearing local git config keys (including `merge.*`, `filter.*`,
+  `diff.*`, `core.attributesFile`) and of `info/attributes` are recorded in
+  `~/.aifactory/git-baselines/` (or `AIFACTORY_GIT_BASELINE_DIR`). Every
+  server merge, rebase and preview, and the end of each agent session, checks
+  them and refuses on any change, naming the keys. A human re-baselines with
+  `python -m core.git_metadata --rebaseline <repo>`. A repo without a
+  baseline gets one at its first check, with a warning. PR #1818.
+- **`pnpm`, `yarn`, `bun` and `uv run` check the program they run implicitly (#1812).**
+  A first word that is not a built-in subcommand is checked as a command
+  (`pnpm nc` checks `nc`), `uv run` and `bun run` targets are checked, and
+  `pnpm recursive`, `yarn workspace` and `yarn workspaces foreach` are
+  followed. Unknown global options and options on `uv run`/`bun run` are
+  refused. **Breaking:** script shorthands such as `pnpm build`, `yarn lint`
+  or `bun run dev` are refused unless the name is allowlisted; `pnpm run
+  <script>` and `yarn run <script>` still work. `uv run --frozen …` is
+  refused. PR #1823.
+
+### Fixed
+
+- **Agents see the image's pre-baked npm globals and Playwright browsers again (#1757).**
+  The private agent HOME hid the npm global prefix set in `~/.npmrc` and the
+  browsers under `~/.cache/ms-playwright`, so `npx` MCP servers fetched from
+  the registry again and Playwright reported a missing executable. The agent
+  env now sets `NPM_CONFIG_PREFIX` (the `.npmrc` itself is not copied, as it
+  can hold tokens) and `PLAYWRIGHT_BROWSERS_PATH`, and allows
+  `PLAYWRIGHT_BROWSERS_PATH`, `PLAYWRIGHT_SKIP_*` and `FONTCONFIG_FILE`.
+  PR #1828.
+- **A build has one owner: start and approval no longer stop a running build, and orphans are reaped only on proof (#1704, #1705, #1714).**
+  Start and plan approval answer 409 while the build is running anywhere (or
+  the store read fails) instead of stopping it. Running rows record their
+  pod and boot; another pod's row is failed only when its pod returns 404.
+  The reaper lists task Jobs that no running row names and deletes those
+  older than 10 minutes one at a time, but only logs "would delete" unless
+  `AIFACTORY_JOB_SWEEP_DRY_RUN=false`. A failed Job dispatch holds the
+  credential until the Job is confirmed gone. PR #1819.
+- **A failed gate Job names the pod phase (#1737).**
+  On a non-success result the gate output ends with the pod phase and each
+  container's waiting or terminated reason, e.g. `[pod Pending; runner:
+  waiting ErrImagePull (...)]`, or `[no pod found]`. PR #1831.
+- **The remote MCP router works on mcp 2.x (#1820).**
+  `server/mcp_remote/server.py` uses the mcp 2.x `Server(on_list_tools=,
+  on_call_tool=)` API instead of the removed decorators, so enabling
+  `AIFACTORY_MCP_REMOTE_ENABLED` no longer fails with an `AttributeError`.
+  The web-server now requires `mcp>=2.0`, and the opt-in OpenAPI spec lists
+  `/api/mcp-remote/sse` and `/api/mcp-remote/messages/`. PR #1827.
+
+## 3.10.2 - 2026-10-17
+
+### Security
+
 - **Server git and the web terminal pin the remaining agent-writable git config keys (#1745).**
   `child_env()` now also pins `core.askPass` (empty), `credential.helper`
   (reset, then `!gh auth git-credential` for github.com) and
@@ -98,17 +212,6 @@
   only `echo` checked. Any non-literal command word now fails closed and the
   command is blocked, including a bare `` `cmd` `` or `$(cmd)` used as the
   command.
-- **Agent children can no longer read the parent's secrets through `/proc` or `$HOME` (#1762).**
-  Each agent CLI spawn (Claude SDK paths, codex, copilot, gemini/antigravity,
-  opencode and the tool-loop Bash) gets a private 0700 HOME that holds only
-  that CLI's login file and a `.gitconfig` with `user.*` and `safe.directory`.
-  A refreshed login is written back only if the real file is unchanged. If
-  the private HOME cannot be built the spawn fails; nothing falls back to the
-  real HOME. Agent children also get an env allowlist (#1757), so
-  `SSH_AUTH_SOCK` and other inherited names are dropped. Breaking for
-  operators: agents lose `~/.ssh` and home-folder tool configs; add needed
-  env names with `AIFACTORY_AGENT_ENV_EXTRA`, and name an MCP server's host
-  vars with `env_keys`. On local runners the `/proc` window stays open (#1724).
 - **Project settings moved out of the agent-reachable project clone (#1795).**
   Per-project settings now live in the web-server database (`project_settings`
   table, sealed with the same KMS key material as the other stores) instead of
@@ -125,6 +228,97 @@
   `run_pr_endgame` and at merge time. A failed read holds the merge. The
   existing `handback_received.json` check stays, so a receipt from before the
   upgrade still holds.
+- **Agent runners fail closed when they cannot become non-dumpable (#1762).**
+  `create_client`, `create_simple_client` and `get_provider` now exit when
+  `prctl(PR_SET_DUMPABLE, 0)` fails, as the server already did, instead of
+  only logging a warning. Non-Linux stays a no-op. The child env strip list
+  is now matched case-insensitively. PR #1810.
+
+### Changed
+
+- PR bodies now state the review tier the merge gate decides on (#1698). For
+  a verified trusted task the body says `Effective review tier: <tier> (signed
+  floor <tier>)`, and when the agent-writable `reviewTier` is below the signed
+  tier it adds a "Possible tampering" warning naming both. The merge decision
+  is unchanged. The merger's PR body no longer echoes the raw on-disk tier; it
+  shows a constant label marked "not checked against a signed contract".
+- A held task contract now shows on the task (#1709). The hold reason
+  (e.g. `contract held (digest mismatch); normal build`) is written to the
+  task plan as `contractHold`, returned on the task row and shown as a neutral
+  "Contract held" badge in the task header. It never changes the task's status
+  or review reason, so a hold is not counted as a build failure. A held
+  migration still stops the build with exit 1, as before.
+- Gemini credentials and the TFactory handoff are now checked before a phase
+  is spent (#1646). A new `probe_google` checks `GEMINI_API_KEY` with one
+  generation-free request (key in a header, never the URL or logs), and
+  `gemini*` models use it on the build path. `send_handoff` probes the
+  providers in the contract's `phase_models` before posting (3 s timeout).
+  `AIFACTORY_AUTH_PREFLIGHT=warn` (default) only logs, `enforce` refuses a
+  definite rejection, `off` skips the probe. An inconclusive result never
+  blocks.
+
+### Fixed
+
+- **Pushes now upload Git LFS objects at every push site, and the image ships git-lfs (#1721).**
+  One shared routine uploads the LFS objects the pushed ref points to before
+  the push, at the web-server and backend push sites. It runs only for an
+  `https://github.com/` origin in a repo that uses LFS, so other repos push as
+  before. An upload failure is logged and the push goes ahead. Nothing writes
+  git config; new large files are not converted to LFS pointers.
+- **Gates inside the build Job now use the operator's gate timeout and sandbox network (#1796).**
+  The build Job now forwards `AIFACTORY_GATE_TIMEOUT_SECONDS` and
+  `AIFACTORY_SANDBOX_NETWORK`. `AIFACTORY_DATA_ROOT` is not forwarded: the Job
+  does not mount the data volume at that path.
+
+## 3.10.1 - 2026-10-15
+
+### Security
+
+- **Only allowlisted keys from `.aifactory/.env` reach subprocess environments (#1745).**
+  The review, task and spec-creation launchers now load the project `.env`
+  through one shared loader that copies only the keys the factory writes or
+  reads. Loader, shell and exec variables (`LD_*`, `NODE_OPTIONS`, `PYTHON*`,
+  `PATH`, most `GIT_*` and others) and the operator-only `AIFACTORY_*` security
+  knobs are always refused. Skipped keys are logged by name only. The
+  git-config parts of #1745 remain open.
+- **Simple-client helpers get only their own tool set (#1741).** Helpers run
+  under `bypassPermissions`, so `allowed_tools` restricted nothing and the CLI
+  offered its default tools. Each helper's list is now passed as the SDK base
+  tool set. `insights` and `batch_analysis`, which read untrusted text, lose
+  WebSearch and WebFetch.
+- **A pod can tell a server `legacy` verdict from no server (#1711, #1710).**
+  The server now sends `AIFACTORY_TRUSTED_CONTRACT=legacy`. A pod that gets
+  `legacy` but finds a contract file holds the task, which closes the #1673
+  residual gap. A kubejob test now checks that each verdict reaches the build pod.
+
+### Fixed
+
+- **Completion events use a repo-scoped correlation key, `<repo>#<n>` (#1775).**
+  The repo is read from the spec's provenance or GitHub issue. Needs CFactory
+  with CFactory#487, which accepts both key formats.
+- **A kubejob build stays running when one status poll fails (#1693).** A
+  per-row poll error keeps the row if it was live on the previous tick, so the
+  log streamer, cockpit badge and `/recover` guard keep their answer.
+- **The build Job sees the same nix-store settings as the control plane (#1736).**
+  `AIFACTORY_PACKED_NIX_IN_IMAGE` and `AIFACTORY_NIX_STORE_PVC` are forwarded
+  together, and the build Job no longer mounts the unseeded `/nix/store` PVC.
+- **`apps/backend` writes timezone-aware UTC timestamps (#1740).** Stored naive
+  values are read as host local time, so mixing old and new snapshots no longer
+  raises `TypeError`.
+- **The dev placeholder `GET /` is no longer in the OpenAPI spec (#1731).**
+- **`bump-version.js` also updates `package-lock.json` (#1727, #1631).**
+
+### CI
+
+- TechDocs fails when turning on a feature flag would change the OpenAPI spec (#1729).
+- CI runs the `scripts/` node tests (#1727).
+- New tests pin agent-env blanks before the MCP env merge (#1758) and guard
+  credential names on env passthrough lists (#1759).
+
+## 3.10.0 - 2026-10-15
+
+### Security
+
 - **Tool-loop Bash and Grep commands no longer inherit host secrets in their environment (#1713).**
   The Ollama, Ollama Cloud, OpenAI-compatible and GitHub Models runtimes now
   spawn model-written commands with `child_env()`: every denied secret and
@@ -269,11 +463,6 @@
   `OPENAI_COMPATIBLE_API_KEY` and `S3_ACCESS_KEY` to the Job, where `run.py`
   blanks them for the agent. An operator MCP server that needs `RAPIDAPI_KEY`,
   `LANGCHAIN_API_KEY` or `CONTEXT7_KEY` must declare it in its catalog `env`.
-- **A `human-approval` system gate now clears only on a GitHub review (#1663).**
-  The review must approve the head commit, come from someone other than the PR
-  author, and not be a bot. A contract or `task_metadata.json` can no longer
-  mark its own gates satisfied. Such tasks merge automatically when AIFactory
-  runs as a GitHub App (#1671) and by hand otherwise.
 - **AIFactory can open and merge its PRs as a GitHub App (#1671).** Set
   `AIFACTORY_GITHUB_APP_ID`, `_INSTALLATION_ID` and `_PRIVATE_KEY` (Helm
   `githubApp.*`). The server mints an installation token at boot, refreshes it
@@ -283,6 +472,61 @@
   in its environment or `gh` `hosts.yml`, and the chart refuses the MCP GitHub
   PAT. Unconfigured installs are unchanged, and log a warning when a task waits
   on a human approval. See `docs/docs/concepts/github-app.md`.
+
+### Changed
+
+- Trailing gates now record CI linters that no gate ran (e.g. `ktlint: skipped`)
+  instead of omitting them; reporting only, never blocks (#1627).
+
+### Fixed
+
+- **The stale sweep is no longer skewed by the host's UTC offset (#1624).**
+  Web-server timestamps are now aware UTC (`datetime.now(UTC)`), matching the
+  aware `updated_at` written since #1619, so live work is not reaped on hosts
+  east of UTC. The `DTZ005`/`DTZ006` lint gate is on for the web-server; the
+  backend and `scripts/provider_benchmark.py` are carved out until #1740.
+
+- **OpenAPI generator pins opt-in feature flags off (#1632).** `apps/web-server/openapi.yaml`
+  no longer depends on `.env` or exported flags; output is written as UTF-8.
+
+- **A build that stops, fails, is reaped or pauses for review now reports what it
+  spent (#1633).** The cockpit showed $0.00 for builds that stopped at
+  `human_review` or failed on Kubernetes, because usage was pushed only on
+  success. Every `run.py` exit now pushes usage; the server keeps the higher
+  token count when it fetches it; failed, stopped and reaped kubejob builds
+  send a `failed` usage snapshot; a kubejob build that pauses for review
+  reports `human_review` usage instead of a completion. Usage values are
+  validated (no NaN, negatives, bools or values over the caps; numbers stored
+  as strings are rejected), and per-worker OTel metrics are emitted once, at
+  terminal completion.
+- **A Kubernetes-Job build started by another web-server replica is now
+  seen as running (#1669).** Task status, the running badge, Stop and
+  Recover read the shared job-state store. A store read failure reads as
+  running, so Recover refuses rather than double-starting the build.
+  Start and plan approval are still pod-local; #1704 tracks them.
+- bump-version.js now updates apps/web-server/openapi.yaml info.version in the same commit, and fails before writing if the spec or its info.version is missing (#1631).
+- The packed gate path now honours `AIFACTORY_PACKED_NIX_IN_IMAGE` like
+  the build path. Runtime behaviour does not change, because the build Job
+  inherits neither variable (#1620, follow-ups #1736, #1737).
+
+- Kubernetes builds: if recording a dispatched Job fails, the Job is deleted
+  instead of running untracked (#1677).
+- The kubejob log streamer reads only the active-build set (#1670).
+- A task whose subprocess monitor raises is now recorded as terminal `failed`
+  instead of left running (#1771).
+- `fix-stuck-tasks.py` no longer rewrites a `failed` or unknown plan status to
+  `in_progress`; an unknown status is reported and left unchanged (Factory#3589).
+
+## 3.9.0 - 2026-10-09
+
+### Security
+
+- **A `human-approval` system gate now clears only on a GitHub review (#1663).**
+  The review must approve the head commit, come from someone other than the PR
+  author, and not be a bot, with no other reviewer's change request standing.
+  The merge is bound to that commit. A contract or `task_metadata.json` can no longer
+  mark its own gates satisfied. Until AIFactory has its own bot identity, every
+  such task merges by hand.
 - **The merge gate acts only on the contract PFactory signed (#1667).** The
   signed contract is now stored in the web server's database
   (`trusted_contracts`) at `/from-plan`, and the merge gate verifies it and the
@@ -290,7 +534,9 @@
   coding agent can edit. A trusted task is auto-merged only if its build ran as a
   Job (`kubejob`, with `DATABASE_URL` set), its signature still
   verifies (a retired or removed key holds it), and the spec copy of the
-  contract is unchanged. Trusted tasks no longer honour
+  contract is unchanged. On a host that does not isolate builds, no record
+  counts as verified for the merge, the path floor or the TFactory handoff
+  (#1686). Trusted tasks no longer honour
   `satisfiedSystemGates` in `task_metadata.json`; a human merge clears a
   `system_gates` hold. A held task is handed to TFactory without a contract, so
   TFactory infers.
@@ -303,30 +549,60 @@
   them by hand or re-run `/from-plan`. The release runs an Alembic migration
   that adds `trusted_contracts`.
 
-### Changed
+## 3.8.3 - 2026-10-09
 
-- PR bodies now state the review tier the merge gate decides on (#1698). For
-  a verified trusted task the body says `Effective review tier: <tier> (signed
-  floor <tier>)`, and when the agent-writable `reviewTier` is below the signed
-  tier it adds a "Possible tampering" warning naming both. The merge decision
-  is unchanged. The merger's PR body no longer echoes the raw on-disk tier; it
-  shows a constant label marked "not checked against a signed contract".
-- A held task contract now shows on the task (#1709). The hold reason
-  (e.g. `contract held (digest mismatch); normal build`) is written to the
-  task plan as `contractHold`, returned on the task row and shown as a neutral
-  "Contract held" badge in the task header. It never changes the task's status
-  or review reason, so a hold is not counted as a build failure. A held
-  migration still stops the build with exit 1, as before.
-- Gemini credentials and the TFactory handoff are now checked before a phase
-  is spent (#1646). A new `probe_google` checks `GEMINI_API_KEY` with one
-  generation-free request (key in a header, never the URL or logs), and
-  `gemini*` models use it on the build path. `send_handoff` probes the
-  providers in the contract's `phase_models` before posting (3 s timeout).
-  `AIFACTORY_AUTH_PREFLIGHT=warn` (default) only logs, `enforce` refuses a
-  definite rejection, `off` skips the probe. An inconclusive result never
-  blocks.
-- Trailing gates now record CI linters that no gate ran (e.g. `ktlint: skipped`)
-  instead of omitting them; reporting only, never blocks (#1627).
+### Security
+
+- **Agents in the web-server pod can no longer read the server's secrets
+  through `/proc`.** The server ran dumpable, so any process with its uid,
+  including the in-pod agents with read tools, could read
+  `/proc/1/environ`: `DATABASE_URL`, `JWT_SECRET`, `API_TOKEN` and the
+  trusted-plan keys. The server now sets itself non-dumpable at startup and in
+  the app lifespan, and refuses to start if that fails (#1679). Child
+  processes still inherit the full environment; that is #1680.
+
+### Fixed
+
+- **A kubejob build is marked active from the moment it is dispatched.** A
+  build dispatched between reconcile ticks could be reported as not running,
+  and a racing tick could drop it (#1662).
+
+## 3.8.2 - 2026-10-08
+
+### Security
+
+- **Agents no longer inherit the trusted-plan signing keys or the poller
+  token.** The agent environment scrub missed `AIFACTORY_TRUSTED_PLAN_KEY_*`
+  and `AIFACTORY_TOKEN`, both set in production. An agent running in the
+  web-server process could read the plan HMAC key and re-sign a task contract
+  it had edited, or call the API with the poller token. Kubejob builds pass an
+  explicit environment and were not exposed (#1668, part of #1667).
+- **Simple-client agents get the same scrub.** `create_simple_client` never
+  applied it, so batch analysis, conflict resolution, commit-message and other
+  simple-client agents inherited every host secret, including `API_TOKEN`,
+  `JWT_SECRET` and `DATABASE_URL` (#1676).
+
+### Fixed
+
+- The model picker labels `opus` and `sonnet` with the models they resolve to
+  (Claude Opus 5.5, Claude Sonnet 5) instead of Opus 4.8 and Sonnet 4.6 (#1666).
+
+## 3.8.1 - 2026-10-08
+
+### Fixed
+
+- **The deployment overlay now holds the live merge.** With auto-merge on, a
+  task whose contract declares a production target or a high risk class is held
+  for a human on the live merge path, whether or not the path-floor flag is set;
+  before, the live path applied the overlay only with
+  `AIFACTORY_PATH_RISK_FLOOR_ENFORCE` on. An unreadable task
+  contract (bad JSON, a non-object, deep nesting, non-UTF-8) also holds the
+  merge instead of auto-merging or aborting the PR. The published autonomy
+  matrix now shows hold-blocking in all four B5 rows (#1658, #1664).
+
+## 3.8.0 - 2026-10-08
+
+### Changed
 
 - **Opus 5.5 is the flagship.** The `opus` shorthand now resolves to
   `claude-opus-5-5` everywhere it is read: the phase resolver, the approved-model
@@ -358,55 +634,128 @@
   volume dominates. Per-task `phaseModels` still overrides either, so a task
   that needs Opus to code can say so (RFC-0014 precedence, #1397).
 
+### Added
+
+- **A generated autonomy matrix** (Factory#1962). `scripts/gen_autonomy_matrix.py`
+  calls `merge_policy` over probe inputs and renders what it returns — tiers →
+  disposition, the RFC-0013 overlay, VAL-floor semantics, the path floor, gate
+  determinism and a control-objective mapping — to
+  `docs/docs/compliance/autonomy-matrix.md` and a JSON twin for Fides. The
+  required `autonomy matrix matches the policy` check fails any PR that changes
+  the policy without regenerating. It also states one live gap plainly: the
+  deployment overlay is advisory on the live path (#1658).
+
 ### Fixed
 
-- **Pushes now upload Git LFS objects at every push site, and the image ships git-lfs (#1721).**
-  One shared routine uploads the LFS objects the pushed ref points to before
-  the push, at the web-server and backend push sites. It runs only for an
-  `https://github.com/` origin in a repo that uses LFS, so other repos push as
-  before. An upload failure is logged and the push goes ahead. Nothing writes
-  git config; new large files are not converted to LFS pointers.
+- **Opus 5.5 is callable from the image** (#1661). The API refuses
+  `claude-opus-5-5` from Claude Code older than 2.1.280, and the image ran
+  2.1.235 (bundled with claude-agent-sdk 0.2.140) and 2.1.238 (on PATH). The
+  SDK is now floored at 0.2.164, which bundles 2.1.292, and the PATH CLI is
+  pinned to 2.1.293. Without this, every Opus phase would return 400.
+- The web Auto profile now sends `coding: 'sonnet'`. It used to send `'opus'`,
+  which overrode the backend default, so web tasks never got the Sonnet
+  coding default (#1661).
+- A build row carrying a live Job reference is no longer treated as terminal (#1635).
+- The cockpit reports a running build truthfully (#1629).
+- 11 of 12 npm lockfile CVEs closed, including a shipped DOM XSS (#1643);
+  PyJWT and brace-expansion bumped off their CVEs (#1637).
+- CI: uv's HTTP timeout raised off its 30 s default (#1642); chainguard/python
+  base image bumps.
 
-- **Gates inside the build Job now use the operator's gate timeout and sandbox network (#1796).**
-  The build Job now forwards `AIFACTORY_GATE_TIMEOUT_SECONDS` and
-  `AIFACTORY_SANDBOX_NETWORK`. `AIFACTORY_DATA_ROOT` is not forwarded: the Job
-  does not mount the data volume at that path.
+## 3.7.0 - 2026-09-29
 
-- **The stale sweep is no longer skewed by the host's UTC offset (#1624).**
-  Web-server timestamps are now aware UTC (`datetime.now(UTC)`), matching the
-  aware `updated_at` written since #1619, so live work is not reaped on hosts
-  east of UTC. The `DTZ005`/`DTZ006` lint gate is on for the web-server; the
-  backend and `scripts/provider_benchmark.py` are carved out until #1740.
+### Added
 
-- **OpenAPI generator pins opt-in feature flags off (#1632).** `apps/web-server/openapi.yaml`
-  no longer depends on `.env` or exported flags; output is written as UTF-8.
+- **The operator runtime allowlist is enforced.** RFC-0014's allowlist governed
+  nothing: `get_runtime_provider()` consulted it and had no production caller,
+  while the live path — `infer_provider_from_model` → `get_provider`, from eight
+  call sites — never did, so a `codex:`/`copilot:` model string selected a
+  provider with nothing in the way. It is now enforced at the one point both
+  factory entry points converge on. `claude` is always enabled, so a deployment
+  that names no runtimes is unaffected. Set `AIFACTORY_RUNTIMES` to opt in.
+  (#1607)
 
-- **A build that stops, fails, is reaped or pauses for review now reports what it
-  spent (#1633).** The cockpit showed $0.00 for builds that stopped at
-  `human_review` or failed on Kubernetes, because usage was pushed only on
-  success. Every `run.py` exit now pushes usage; the server keeps the higher
-  token count when it fetches it; failed, stopped and reaped kubejob builds
-  send a `failed` usage snapshot; a kubejob build that pauses for review
-  reports `human_review` usage instead of a completion. Usage values are
-  validated (no NaN, negatives, bools or values over the caps; numbers stored
-  as strings are rejected), and per-worker OTel metrics are emitted once, at
-  terminal completion.
-- **A Kubernetes-Job build started by another web-server replica is now
-  seen as running (#1669).** Task status, the running badge, Stop and
-  Recover read the shared job-state store. A store read failure reads as
-  running, so Recover refuses rather than double-starting the build.
-  Start and plan approval are still pod-local; #1704 tracks them.
-- bump-version.js now updates apps/web-server/openapi.yaml info.version in the same commit, and fails before writing if the spec or its info.version is missing (#1631).
-- The packed gate path now honours `AIFACTORY_PACKED_NIX_IN_IMAGE` like
-  the build path. Runtime behaviour does not change, because the build Job
-  inherits neither variable (#1620, follow-ups #1736, #1737).
+  The gate's vocabulary is now **derived** from the provider registries rather
+  than restated: the two lists had already drifted, and `copilot`,
+  `github-models`, `openai-compatible` and `opencode` were resolvable by
+  `get_provider` and absent from the gate — so enforcing without this would have
+  made them permanently unreachable. Allowlist tokens also normalise through the
+  factory's alias table, so `gemini` enables `antigravity`.
+
+- **GitHub Copilot is selectable as a coder runtime.** Its provider, credential
+  and CLI were already present; only the registry entry was missing. (#790)
+
+- **Build Jobs declare the disk they need.** The Job asked for cpu and memory and
+  said nothing about ephemeral storage, so the scheduler could not refuse a build
+  that would fill the node — the first sign would have been the kubelet evicting
+  arbitrary pods. A 4Gi limit (not a request: a node can advertise far more
+  allocatable ephemeral storage than it really has) now bounds it, with 2Gi on
+  the gate pod. Landed in the Factory hub canonical first (Factory#3207).
+  (#1425)
+
+### Fixed
+
+- **A crashed dispatch no longer leaks a concurrency slot.** Dispatch created the
+  Kubernetes Job and only then wrote `worker_ref`; a crash between the two left a
+  `job_states` row `running` that no reaper could touch, holding a slot against
+  the global cap forever, silently, recoverable only by editing Postgres. The
+  root cause was `admit()` stamping `worker_ref={"kind": "subprocess"}` before any
+  backend had been chosen, which made the leaked row indistinguishable from a live
+  subprocess build. Admission now stamps `pending`, and the reaper rebuilds the
+  deterministic Job name and asks the API rather than assuming the Job is absent.
+  (#1606)
+
+- **Builds no longer re-download the CLIs the image already pins.** An
+  `install-clis` initContainer npm-installed claude-code, codex and gemini-cli
+  into a `/clis` emptyDir and prepended it to `PATH`, shadowing the pinned copies
+  the Dockerfile bakes — 790 MB per pod, unpinned, on the critical path of every
+  build, so two builds an hour apart could run different CLI versions. The
+  control plane dropped the same initContainer under #791; the build path has
+  caught up. `codex` and `gemini` now carry build-time `--version` assertions, so
+  a missing CLI fails the image once in CI rather than every build that needs it.
+  (#1621)
+
+- **CI: four required checks failed on every PR.** MinIO gated its images at
+  every registry, and the S3 step's `docker run` exit took lint and unit tests
+  down with it despite the step's own claim that the tests would skip. Replaced
+  with SeaweedFS, pinned by digest, and the step can no longer fail the job — the
+  tests skip visibly instead, while `main` stays strict. Separately, seven copies
+  of a test helper produced a bare `postgresql://` URL and left the driver to
+  SQLAlchemy, whose default moved from psycopg2 to psycopg v3; the suite now names
+  the driver in one place. (#1612)
+
+### Changed
+
+- A signed Task Contract's `execution.runtime` reaches the executor instead of
+  being silently dropped in translation. (#1607)
+
+## 3.6.85 - 2026-09-23
+
+### Fixed
+
+- **Approve works for kubejob builds whose branch the control plane never
+  fetched.** A kubejob build pushes the task branch from its own pod, so the
+  control-plane checkout may not have the ref, and `create-pr` and `merge`
+  refused with "Could not determine task branch" before reaching the 3.6.84
+  existing-PR and PR-merge paths. Both now resolve with
+  `resolve_task_branch_fetching`, which fetches origin and retries once on a
+  miss. `resolve_work_ref` shares it. (CFactory#457, #1598)
+
+- **CI: SBOMs are uploaded where they are generated.** After the SBOM job
+  split, the `release` job still uploaded SBOM files that only `sbom-attest`
+  creates, which would fail every release and skip attestation. The TechDocs
+  Dependabot write-back also committed the base-branch generator by restoring
+  it from the index. Both fixed. (#1600)
+
+### Changed
+
+- CI: the SBOM attestations retry and are re-runnable (#1583, #1595), and the
+  TechDocs dependencies page is regenerated on a Dependabot PR. (#1588, #1594)
 
 ## 3.6.84 - 2026-09-23
 
 ### Fixed
 
-- Kubernetes builds: if recording a dispatched Job fails, the Job is deleted instead of running
-  untracked (#1677).
 - **Approve works on a task whose PR already exists, and after its worktree
   was cleaned up.** `create-pr` now returns an open or merged PR for the task
   branch (`existing: true`) instead of failing with "already exists", which
