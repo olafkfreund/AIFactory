@@ -73,9 +73,9 @@ async def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     # Resolve at run time: other suites swap sys.modules entries after collection.
     db_engine = importlib.import_module("server.database.engine")
     monkeypatch.setattr(db_engine, "async_session_factory", factory)
-    sandbox._bwrap_works.cache_clear()
+    sandbox._bwrap_cache.clear()
     yield TrustedContractStore(session_factory=factory)
-    sandbox._bwrap_works.cache_clear()
+    sandbox._bwrap_cache.clear()
     await engine.dispose()
 
 
