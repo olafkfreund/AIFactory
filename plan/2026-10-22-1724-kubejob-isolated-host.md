@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1724
 spec: spec/2026-10-22-1724-kubejob-isolated-host.md
 ---
