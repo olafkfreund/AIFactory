@@ -32,12 +32,11 @@ def host_isolated() -> bool:
     from server.services.build_backend import selected_backend  # noqa: PLC0415
     from server.services.job_state_store import store_enabled  # noqa: PLC0415
 
-    # Without DATABASE_URL the kubejob backend falls back to in-pod builds.
-    # D4 narrowed (#1667 review), kept narrow after #1680 (#1760, 2026-10-17):
-    # in a PID-namespaced sandbox run.py and the agent share the uid and the
-    # namespace, so the agent can wait for the per-call GitHub token there,
-    # and the sandbox cannot yet run the backend from /home or /nix. Widen
-    # once the agent runs under its own uid or such a sandbox exists.
+    # Decided policy (#1760, #1724): kubejob with the durable store is the
+    # only isolated host. Without DATABASE_URL kubejob falls back to in-pod
+    # builds. Elsewhere, PID-namespaced sandbox included, the agent shares the
+    # uid and can read the per-call GitHub token in hosts.yml via /proc/<child>.
+    # A separate-uid design would need its own spec.
     return selected_backend() == "kubejob" and store_enabled()
 
 

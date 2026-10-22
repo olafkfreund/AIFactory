@@ -81,7 +81,26 @@ no-guessing fast-path.
 
 ---
 
-## 5. Status
+## 5. Supported isolated host
+
+A trusted-plan build counts as isolated only on the **kubejob** build backend
+with the durable job store (`DATABASE_URL` set). The agent then runs in its own
+Job pod and cannot reach the per-call GitHub token in `hosts.yml`. This is the
+decided policy (#1760, #1724), checked by `host_isolated()` in
+`apps/web-server/server/services/trusted_contract.py`.
+
+On every other host (subprocess, the agent sandbox, the PID-namespaced sandbox)
+the agent runs under the same uid as the process holding the token and could
+read it through `/proc/<child>`. There the signed contract is not trusted:
+TFactory gets an empty test profile and the merge gate and path floor hold the
+task. Use kubejob for trusted plans.
+
+Running agents under a separate uid would remove this limit, but it changes the
+chart and runtime privileges and needs its own spec.
+
+---
+
+## 6. Status
 
 The contract schema and RFC are merged (Factory RFC-0002). Wiring the full
 `execution` + `tfactory` ingest into `trusted_plan` is tracked by the AIFactory
