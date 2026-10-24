@@ -5,9 +5,12 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 _WS = Path(__file__).resolve().parents[1]
 for _p in (str(_WS), str(_WS.parent / "backend")):
@@ -32,9 +35,12 @@ def _sig(**over: object) -> dict[str, object]:
 
 
 def _block(
-    vote: object = VOTE, *, head: str | None = "deadbeefcafe", **over: object
+    vote: Mapping[str, object] | None = VOTE,
+    *,
+    head: str | None = "deadbeefcafe",
+    **over: object,
 ) -> str:
-    return pe.verify_evidence_block(_sig(**over), vote, head=head, allowed=True)  # type: ignore[arg-type]
+    return str(pe.verify_evidence_block(_sig(**over), vote, head=head, allowed=True))
 
 
 def test_block_renders_verdict_votes_and_floor() -> None:
@@ -126,11 +132,12 @@ async def _endgame(
     monkeypatch.setattr(pe, "host_ci_green", host_ci)
     monkeypatch.setattr(pe, "required_checks_green", lambda *_a, **_k: True)
     monkeypatch.setattr(pe, "_pr_head", lambda *_a: "deadbeef")
-    monkeypatch.setattr(
-        pe,
-        "write_verify_evidence",
-        lambda _o, _r, pr, block, **_k: writes.append((pr, block)) or True,
-    )
+
+    def _write(_o: str, _r: str, pr: int, block: str, **_k: object) -> bool:
+        writes.append((pr, block))
+        return True
+
+    monkeypatch.setattr(pe, "write_verify_evidence", _write)
     real = pe.watch_and_finish
 
     async def _watch(**kw: Any) -> dict[str, object]:

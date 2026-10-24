@@ -595,7 +595,10 @@ def verify_evidence_block(
         met = _val_meets_floor(signals.get("achieved_val"), signals.get("val_floor"))
         got = f"VAL-{achieved}" if achieved is not None else "not recorded"
         want = f"VAL-{floor}" if floor is not None else "none declared"
-        yn = lambda v: "yes" if v is True else "no"  # noqa: E731
+
+        def yn(v: object) -> str:
+            return "yes" if v is True else "no"
+
         lines = [
             f"- Verdict: {verdict} (TFactory, model-assisted){at}",
             f"- Votes: {_votes_text(vote)}",
