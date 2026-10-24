@@ -569,9 +569,7 @@ class TestExplicitClassification:
             async def query(self, prompt: str, *a: Any, **k: Any) -> None:
                 seen.append(prompt)
 
-        asyncio.run(
-            wrap_client_outbound_scrub(_Fake(), classification).query(PROMPT)
-        )
+        asyncio.run(wrap_client_outbound_scrub(_Fake(), classification).query(PROMPT))
         return seen[0]
 
     def test_regulated_scrubs_despite_kill_switch_and_unset_env(
