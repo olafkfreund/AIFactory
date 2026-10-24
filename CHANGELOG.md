@@ -1,11 +1,37 @@
 ## [Unreleased]
 
+## 3.10.7 - 2026-10-24
+
+### Fixed
+
+- **Four real CodeQL hygiene alerts (#1853, Factory#813).** The
+  `_refresh_to_remote_base` log lines now pass branch, path and git stderr
+  through `sanitize_log` (log injection), a no-op `terminal_status`
+  self-assignment is gone, and `_WrappedResponseStream._capture` initialises
+  `msg_type` before its `try`, with a regression test.
+
+### Tests
+
+- **A pass verdict cannot merge past a red floor (#1854, Factory#1963).** An
+  end-to-end test through `run_pr_endgame` and the real `watch_and_finish`
+  proves that red host CI, VAL below the floor, or `ci_parity` false never
+  calls `merge_pr`.
+
+### Chores
+
+- follow-redirects 1.16.0 -> 1.16.1 in `/docs` (#1845).
+
+## 3.10.6 - 2026-10-24
+
 ### Security
 
-- **npm-bundled undici 6.29.1 and brotli floors.** The npm vendored-deps
-  overlay moves undici 6.28.1 -> 6.29.1 (CVE-2026-109869) and apk floors pull
-  `libbrotlicommon1`/`libbrotlidec1`/`libbrotlienc1` to 1.2.0-r7
+- **npm-bundled undici 6.29.1 and brotli floors (#1851).** The npm
+  vendored-deps overlay moves undici 6.28.1 -> 6.29.1 (CVE-2026-109869) and apk
+  floors pull `libbrotlicommon1`/`libbrotlidec1`/`libbrotlienc1` to 1.2.0-r7
   (CVE-2026-111497), clearing the new HIGH CVEs the Trivy P0 gate reported.
+- **dompurify 3.4.17 (#1851).** The override floor moves to `^3.4.17`, past
+  GHSA-cg2g-xh64-v4q7 (critical) and GHSA-mrv2-3pqr-j5jr, which failed the
+  Trivy P0 gate on the frontend lockfile.
 
 ## 3.10.5 - 2026-10-22
 
