@@ -636,7 +636,8 @@ def write_verify_evidence(
         if not res.ok:
             return False
         body = res.out
-        start, end = body.find(_EVIDENCE_START), body.find(_EVIDENCE_END)
+        start = body.find(_EVIDENCE_START)
+        end = body.find(_EVIDENCE_END, start) if start >= 0 else -1
         if 0 <= start < end:
             body = body[:start] + block + body[end + len(_EVIDENCE_END) :]
         else:
@@ -1762,6 +1763,8 @@ def _pr_title_body(spec_dir: Path, spec_id: str) -> tuple[str, str]:
         title = str(req.get("title") or spec_id)[:120]
         desc = req.get("description")
         if desc:
+            # The issue text is untrusted: it must not forge the evidence section.
+            desc = str(desc).replace(_EVIDENCE_START, "").replace(_EVIDENCE_END, "")
             body = f"{desc}\n\n---\n🤖 AIFactory auto-PR on a clean, QA-passed build."
         # Origin-issue correlation: from_issue stamps the number on both
         # provenance.issue_number and githubIssue.number.

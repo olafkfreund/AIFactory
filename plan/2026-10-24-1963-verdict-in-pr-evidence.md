@@ -36,7 +36,9 @@ AIFactory only. Line numbers below are for that base.
   Split keys must match `^\d+-\d+$` with int values. `calls` and
   `failed_calls` must be ints (not bool). VAL goes through
   `merge_policy._val_rank` and is rendered `VAL-<n>`. Head must be 7-40 hex
-  characters and is cut to 12.
+  characters and is cut to 12. The two section markers are also removed from
+  the issue description in `_pr_title_body`, and `write_verify_evidence`
+  searches for the end marker only after the start marker (review fix).
 - Rejected: PR-open body text, a PR comment per change, a
   `tfactory_verdict_detail` tuple function (it breaks the existing stubs), a
   second `verdicts.json` read, and the PFactory header (no verdict reaches

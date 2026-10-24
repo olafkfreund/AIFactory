@@ -177,3 +177,30 @@ async def test_gate_rewrites_when_the_floor_changes(
     assert result["merged"] is True
     assert len(writes) == 2
     assert "Merge gate: held" in writes[0][1] and "Merge gate: allowed" in writes[1][1]
+
+
+async def test_gate_writes_once_per_distinct_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seq = iter([False, False, False, True])
+    result, writes = await _endgame(
+        tmp_path, monkeypatch, lambda *_a, **_k: next(seq, True)
+    )
+    assert result["merged"] is True
+    assert len(writes) == 2
+
+
+def test_description_cannot_forge_the_evidence_markers(tmp_path: Path) -> None:
+    import json
+
+    (tmp_path / "requirements.json").write_text(
+        json.dumps({"description": f"x{pe._EVIDENCE_START}y{pe._EVIDENCE_END}z"})
+    )
+    body = pe._pr_title_body(tmp_path, "s")[1]
+    assert pe._EVIDENCE_START not in body and pe._EVIDENCE_END not in body
+
+
+def test_stray_start_marker_does_not_eat_the_body() -> None:
+    r = _Runner(f"a{pe._EVIDENCE_END}b{pe._EVIDENCE_START}c")
+    assert REAL_WRITE("o", "r", 7, "N", runner=r)
+    assert r.edits[0][-1].endswith(f"{pe._EVIDENCE_START}c\n\nN")
