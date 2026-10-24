@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 389
 spec: spec/2026-10-24-389-memory-dup-baseline.md
 ---
