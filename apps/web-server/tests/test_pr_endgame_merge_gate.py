@@ -677,3 +677,76 @@ async def test_1696_merge_time_gate_checks_the_receipt(
         lambda _h: True, _spec(tmp_path), asyncio.get_running_loop()
     )
     assert await asyncio.to_thread(gate, "deadbeef") is expected
+
+
+# --------------------------------------------------------------------------- #
+# #1963: a passing verdict cannot merge past a red deterministic floor
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    ("host_ci", "late_meta", "merges"),
+    [
+        (False, None, False),
+        (True, {"achievedVal": "VAL-1", "valFloor": "VAL-3"}, False),
+        (True, {"ciParity": False}, False),
+        (True, None, True),
+    ],
+    ids=["host_ci_red", "val_below_floor", "ci_parity_false", "all_green"],
+)
+async def test_1963_a_pass_verdict_cannot_merge_past_a_red_floor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    host_ci: bool,
+    late_meta: dict[str, object] | None,
+    merges: bool,
+) -> None:
+    """The permissive model verdict is evidence, and the floor decides (Factory#1963)."""
+    spec = _spec(tmp_path)
+    calls: list[object] = []
+
+    def _merge(*_a: object, **k: object) -> bool:
+        calls.append(k.get("match_head"))
+        return True
+
+    def _create_pr(**_k: object) -> int:
+        if late_meta is not None:
+            (spec / "task_metadata.json").write_text(json.dumps(late_meta))
+        return 42
+
+    monkeypatch.setattr(pe, "merge_pr", _merge)
+    monkeypatch.setattr(pe, "create_pr", _create_pr)
+    monkeypatch.setattr(pe, "_pr_title_body", lambda _d, _s: ("t", "b"))
+    monkeypatch.setattr(
+        "pfactory.tfactory_client.tfactory_verdict", lambda *_a, **_k: "pass"
+    )
+    monkeypatch.setattr(pe, "host_ci_green", lambda *_a, **_k: host_ci)
+    monkeypatch.setattr(pe, "required_checks_green", lambda *_a, **_k: True)
+    monkeypatch.setattr(pe, "_pr_head", lambda *_a: "deadbeef")
+    real = pe.watch_and_finish
+
+    async def _watch(**kw: Any) -> dict[str, object]:
+        out: dict[str, object] = await real(**kw, poll_interval=0, max_minutes=1)
+        return out
+
+    monkeypatch.setattr(pe, "watch_and_finish", _watch)
+
+    result = await pe.run_pr_endgame(
+        spec_dir=spec,
+        spec_id="001-x",
+        worktree=spec,
+        branch="aifactory/001-x",
+        base="main",
+        repo="owner/repo",
+        auto_merge=True,
+        review_tier="auto",
+        reviewer="aifactory",
+        review_fn=lambda: pe.ReviewState("approved"),
+        background=False,
+        trusted=None,
+    )
+    if merges:
+        assert calls == ["deadbeef"]
+        assert result["merged"] is True
+    else:
+        assert calls == []
+        assert result["merged"] is False
+        assert result["reason"] == "merge_gate_timeout"
