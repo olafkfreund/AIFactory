@@ -533,7 +533,7 @@ _EVIDENCE_LINE = (
     "The verdict is recorded as evidence. The deterministic floor decides: "
     "a pass cannot lift a red floor."
 )
-_HEAD_HEX = frozenset("0123456789abcdefABCDEF")
+_HEAD_SHA = re.compile(r"[0-9a-fA-F]{7,40}")
 
 
 def _is_count(n: object) -> bool:
@@ -587,7 +587,7 @@ def verify_evidence_block(
             verdict = "hold"
         at = (
             f" at `{head[:12]}`"
-            if isinstance(head, str) and 7 <= len(head) <= 40 and set(head) <= _HEAD_HEX
+            if isinstance(head, str) and _HEAD_SHA.fullmatch(head)
             else ""
         )
         achieved = _val_rank(signals.get("achieved_val"))

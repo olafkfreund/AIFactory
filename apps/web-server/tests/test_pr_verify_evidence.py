@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -191,8 +192,6 @@ async def test_gate_writes_once_per_distinct_block(
 
 
 def test_description_cannot_forge_the_evidence_markers(tmp_path: Path) -> None:
-    import json
-
     (tmp_path / "requirements.json").write_text(
         json.dumps({"description": f"x{pe._EVIDENCE_START}y{pe._EVIDENCE_END}z"})
     )
