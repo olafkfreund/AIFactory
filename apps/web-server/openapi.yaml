@@ -12838,6 +12838,16 @@ components:
           - type: string
           - type: 'null'
           title: Pr Reviewer
+        data_classification:
+          anyOf:
+          - type: string
+            enum:
+            - public
+            - internal
+            - confidential
+            - regulated
+          - type: 'null'
+          title: Data Classification
       type: object
       title: ProjectSettingsUpdate
       description: 'Model for updating project settings.
