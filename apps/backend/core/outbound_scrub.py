@@ -138,8 +138,9 @@ class _ScrubbingClient:
     -- the provenance contract #1010 established.
     """
 
-    def __init__(self, underlying: Any) -> None:
+    def __init__(self, underlying: Any, classification: str | None = None) -> None:
         self._underlying = underlying
+        self._classification = classification
         # Provenance for callers that want to audit what changed, mirroring
         # the attributes BaseLLMProvider records on adapters.
         self._outbound_prompt_raw: str | None = None
@@ -148,7 +149,7 @@ class _ScrubbingClient:
     async def query(self, prompt: str, *args: Any, **kwargs: Any) -> Any:
         self._outbound_prompt_raw = prompt
         outbound = prompt
-        if scrub_outbound_enabled():
+        if scrub_outbound_enabled(self._classification):
             outbound = scrub_outbound_prompt(
                 prompt, owner=type(self._underlying).__name__
             )
@@ -169,17 +170,18 @@ class _ScrubbingClient:
         return getattr(self._underlying, name)
 
 
-def wrap_client_outbound_scrub(client: Any) -> Any:
+def wrap_client_outbound_scrub(client: Any, classification: str | None = None) -> Any:
     """Wrap a Claude SDK client so its prompts are scrubbed before egress.
 
     Unconditional: the kill-switch is checked per call inside the proxy
     rather than at wrap time, so flipping ``LITELLM_AUDIT_SCRUB_OUTBOUND``
-    does not require restarting long-lived agent sessions. Wrapping twice
+    does not require restarting long-lived agent sessions. ``classification``
+    is the project's class for in-process callers; None reads the env. Wrapping twice
     is harmless (redaction is idempotent) but pointless, so it is skipped.
     """
     if isinstance(client, _ScrubbingClient):
         return client
-    return _ScrubbingClient(underlying=client)
+    return _ScrubbingClient(underlying=client, classification=classification)
 
 
 __all__ = [

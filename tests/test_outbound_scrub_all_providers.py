@@ -549,3 +549,35 @@ class TestAuditSemantics:
         provider = CopilotAgenticProvider(working_dir=tmp_path)
         asyncio.run(provider.query("Add a retry to the client."))
         assert provider._outbound_prompt_scrubbed is False
+
+
+# ---------------------------------------------------------------------------
+# 9. In-process callers pass the project class explicitly (#320)
+# ---------------------------------------------------------------------------
+
+
+class TestExplicitClassification:
+    @staticmethod
+    def _sent(classification: str | None, monkeypatch: Any) -> str:
+        from core.outbound_scrub import wrap_client_outbound_scrub
+
+        monkeypatch.setenv("LITELLM_AUDIT_SCRUB_OUTBOUND", "false")
+        monkeypatch.delenv("AIFACTORY_DATA_CLASSIFICATION", raising=False)
+        seen: list[str] = []
+
+        class _Fake:
+            async def query(self, prompt: str, *a: Any, **k: Any) -> None:
+                seen.append(prompt)
+
+        asyncio.run(
+            wrap_client_outbound_scrub(_Fake(), classification).query(PROMPT)
+        )
+        return seen[0]
+
+    def test_regulated_scrubs_despite_kill_switch_and_unset_env(
+        self, monkeypatch: Any
+    ) -> None:
+        assert self._sent("regulated", monkeypatch) != PROMPT
+
+    def test_internal_keeps_kill_switch_behaviour(self, monkeypatch: Any) -> None:
+        assert self._sent("internal", monkeypatch) == PROMPT
