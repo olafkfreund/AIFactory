@@ -22,6 +22,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import subprocess
 import time
 from collections.abc import Callable, Iterable, Mapping
@@ -524,6 +525,128 @@ def review_tier_note(spec_dir: Path, tier: str | None, *, trusted: object) -> st
     blank = tier is None or not str(tier).strip()
     label = "none (decided as low)" if blank else _describe_tier(tier)
     return f"Review tier: {label} (not checked against a signed contract)."
+
+
+_EVIDENCE_START = "<!-- aifactory:verify-evidence -->"
+_EVIDENCE_END = "<!-- /aifactory:verify-evidence -->"
+_EVIDENCE_LINE = (
+    "The verdict is recorded as evidence. The deterministic floor decides: "
+    "a pass cannot lift a red floor."
+)
+_HEAD_HEX = frozenset("0123456789abcdefABCDEF")
+
+
+def _is_count(n: object) -> bool:
+    return isinstance(n, int) and not isinstance(n, bool)
+
+
+def _votes_text(vote: Mapping[str, object] | None) -> str:
+    """``3-0 x4, 2-1 x1 (3 calls, 0 failed)`` from validated parts, else not reported."""
+    splits = vote.get("splits") if vote else None
+    if not isinstance(splits, dict):
+        return "not reported"
+    keep = sorted(
+        (k, n)
+        for k, n in splits.items()
+        if isinstance(k, str) and re.fullmatch(r"\d+-\d+", k) and _is_count(n)
+    )
+    if not keep:
+        return "not reported"
+    text = ", ".join(f"{k} x{n}" for k, n in keep)
+    calls, failed = vote.get("calls"), vote.get("failed_calls")  # type: ignore[union-attr]
+    if _is_count(calls) and _is_count(failed):
+        text += f" ({calls} calls, {failed} failed)"
+    return text
+
+
+def verify_evidence_block(
+    signals: Mapping[str, object],
+    vote: Mapping[str, object] | None,
+    *,
+    head: str | None,
+    allowed: bool,
+) -> str:
+    """The PR-body section recording the verify verdict, votes and floor (Factory#1963).
+
+    Pure; never raises. Only fixed labels and validated numbers are rendered:
+    TFactory's response and agent-written metadata are never echoed.
+    """
+    try:
+        from merge.merge_policy import (  # noqa: PLC0415
+            _val_meets_floor,
+            _val_rank,
+            _verdict_pass,
+        )
+
+        raw = signals.get("tfactory_verdict")
+        if _verdict_pass(raw):
+            verdict = "pass"
+        elif isinstance(raw, str) and raw.strip().lower() in ("fail", "handback"):
+            verdict = "fail"
+        else:
+            verdict = "hold"
+        at = (
+            f" at `{head[:12]}`"
+            if isinstance(head, str) and 7 <= len(head) <= 40 and set(head) <= _HEAD_HEX
+            else ""
+        )
+        achieved = _val_rank(signals.get("achieved_val"))
+        floor = _val_rank(signals.get("val_floor"))
+        met = _val_meets_floor(signals.get("achieved_val"), signals.get("val_floor"))
+        got = f"VAL-{achieved}" if achieved is not None else "not recorded"
+        want = f"VAL-{floor}" if floor is not None else "none declared"
+        yn = lambda v: "yes" if v is True else "no"  # noqa: E731
+        lines = [
+            f"- Verdict: {verdict} (TFactory, model-assisted){at}",
+            f"- Votes: {_votes_text(vote)}",
+            f"- Floor: host CI green: {yn(signals.get('host_ci_green'))}; "
+            f"VAL: {got} (floor {want}): {'met' if met else 'not met'}; "
+            f"CI parity: {yn(signals.get('ci_parity'))}",
+            f"- Merge gate: {'allowed' if allowed else 'held'}",
+        ]
+    except Exception:  # noqa: BLE001 - a body section must never break the endgame
+        logger.debug("[pr-endgame] verify evidence fell back", exc_info=True)
+        lines = ["- Verdict: hold (TFactory, model-assisted)"]
+    return "\n".join(
+        [_EVIDENCE_START, "### Verify evidence", *lines, _EVIDENCE_LINE, _EVIDENCE_END]
+    )
+
+
+def write_verify_evidence(
+    owner: str, repo: str, pr: int, block: str, *, runner: Runner = _default_runner
+) -> bool:
+    """Put ``block`` in the PR body, replacing the last one. Never raises (#1963)."""
+    try:
+        slug = f"{owner}/{repo}"
+        res = runner(
+            [
+                "gh",
+                "pr",
+                "view",
+                str(pr),
+                "--repo",
+                slug,
+                "--json",
+                "body",
+                "--jq",
+                ".body",
+            ],
+            None,
+        )
+        if not res.ok:
+            return False
+        body = res.out
+        start, end = body.find(_EVIDENCE_START), body.find(_EVIDENCE_END)
+        if 0 <= start < end:
+            body = body[:start] + block + body[end + len(_EVIDENCE_END) :]
+        else:
+            body = f"{body}\n\n{block}"
+        return runner(
+            ["gh", "pr", "edit", str(pr), "--repo", slug, "--body", body], None
+        ).ok
+    except Exception:  # noqa: BLE001
+        logger.debug("[pr-endgame] verify evidence write failed", exc_info=True)
+        return False
 
 
 def merge_disposition(  # noqa: PLR0913 - floor is the legacy path floor (#1697)
@@ -1824,46 +1947,74 @@ def _build_merge_gate(  # noqa: PLR0913 - one-shot builder for run_pr_endgame
     human_approval_required: bool,
     runner: Runner,
     base: str,
+    *,
+    pr: int | None = None,
 ) -> Callable[[str], bool]:
-    """The merge-time gate for every auto-merge task."""
+    """The merge-time gate for every auto-merge task.
+
+    With ``pr``, each poll records the verify verdict as evidence in the PR body
+    (Factory#1963); the verdict never decides, the floor does.
+    """
     owner, name = repo_parts
+    written: list[str] = []  # the last evidence block this gate wrote
 
     def gate(head: str) -> bool:
+        state: dict[str, Any] = {}
+
         def fetch() -> dict[str, object]:
+            vote: dict[str, Any] = {}
             try:
                 from pfactory.tfactory_client import (  # noqa: PLC0415
                     tfactory_verdict,
                 )
 
-                verdict = tfactory_verdict(spec_dir, spec_id, head=head)
+                verdict = tfactory_verdict(spec_dir, spec_id, head=head, vote=vote)
             except ImportError:
                 verdict = None
             ci = host_ci_green(owner, name, head, runner=runner)
             if ci is True:
                 ci = required_checks_green(owner, name, base, head, runner=runner)
-            return {
+            fetched: dict[str, object] = {
                 "tfactory_verdict": verdict,
                 "host_ci_green": ci,
             }
+            state.update(fetched=fetched, vote=vote)
+            return fetched
 
         if human_approval_required:
-            return _clears_with_human_approval(
+            ok = _clears_with_human_approval(
                 spec_dir,
                 review_tier,
                 trusted,
                 fetch_signals=fetch,
                 floor=review_tier_floor,
             )
-        return (
-            merge_disposition(
-                spec_dir,
-                review_tier,
-                trusted=trusted,
-                fetch_signals=fetch,
-                floor=review_tier_floor,
+        else:
+            ok = (
+                merge_disposition(
+                    spec_dir,
+                    review_tier,
+                    trusted=trusted,
+                    fetch_signals=fetch,
+                    floor=review_tier_floor,
+                )
+                == AUTO_MERGE_DISPOSITION
             )
-            == AUTO_MERGE_DISPOSITION
-        )
+        if pr is not None and "fetched" in state:
+            try:
+                block = verify_evidence_block(
+                    merge_gate_signals(spec_dir, fetched=state["fetched"]),
+                    state["vote"],
+                    head=head,
+                    allowed=ok,
+                )
+                if block not in written and write_verify_evidence(
+                    owner, name, pr, block, runner=runner
+                ):
+                    written[:] = [block]
+            except Exception:  # noqa: BLE001 - evidence never changes the gate
+                logger.debug("[pr-endgame] verify evidence skipped", exc_info=True)
+        return ok
 
     return gate
 
@@ -1983,23 +2134,6 @@ async def run_pr_endgame(
         return {"ok": False, "reason": "no_repo", "repo": repo}
     owner, name = parts
 
-    merge_gate = (
-        _build_merge_gate(
-            spec_dir,
-            spec_id,
-            (owner, name),
-            trusted,
-            review_tier,
-            review_tier_floor,
-            human_approval_required,
-            runner,
-            base,
-        )
-        if auto_merge
-        else None
-    )
-    merge_gate = _with_receipt_veto(merge_gate, spec_dir, asyncio.get_running_loop())
-
     title, body = _pr_title_body(spec_dir, spec_id)
     body = f"{body}\n\n{review_tier_note(spec_dir, review_tier, trusted=trusted)}"
     if review_tier_floor:
@@ -2026,6 +2160,24 @@ async def run_pr_endgame(
         return {"ok": False, "reason": "create_pr_error", "error": str(exc)[:300]}
     if pr is None:
         return {"ok": False, "reason": "pr_not_created"}
+
+    merge_gate = (
+        _build_merge_gate(
+            spec_dir,
+            spec_id,
+            (owner, name),
+            trusted,
+            review_tier,
+            review_tier_floor,
+            human_approval_required,
+            runner,
+            base,
+            pr=pr,
+        )
+        if auto_merge
+        else None
+    )
+    merge_gate = _with_receipt_veto(merge_gate, spec_dir, asyncio.get_running_loop())
 
     # Kick off the chosen reviewer now that the PR exists. Copilot is requested
     # via GitHub; the aifactory reviewer is triggered by the caller's

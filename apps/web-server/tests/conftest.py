@@ -56,6 +56,14 @@ def _no_handback_receipt(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_pr_evidence_write(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The verify-evidence PR edit (Factory#1963) must not run a real ``gh``."""
+    monkeypatch.setattr(
+        "server.services.pr_endgame.write_verify_evidence", lambda *_a, **_k: True
+    )
+
+
+@pytest.fixture(autouse=True)
 def _git_baseline_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Isolate git metadata baselines (#1746) from the developer's home dir."""
     monkeypatch.setenv("AIFACTORY_GIT_BASELINE_DIR", str(tmp_path / "git-baselines"))
