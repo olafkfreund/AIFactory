@@ -724,7 +724,8 @@ async def test_1963_a_pass_verdict_cannot_merge_past_a_red_floor(
     real = pe.watch_and_finish
 
     async def _watch(**kw: Any) -> dict[str, object]:
-        return await real(**kw, poll_interval=0, max_minutes=1)
+        out: dict[str, object] = await real(**kw, poll_interval=0, max_minutes=1)
+        return out
 
     monkeypatch.setattr(pe, "watch_and_finish", _watch)
 
