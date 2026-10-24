@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: Factory#1963
 spec: spec/2026-10-24-1963-verify-floor-proof.md
 ---
