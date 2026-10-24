@@ -6,7 +6,7 @@ Prints JSON. Default similarity is a lexical bag-of-words cosine (no model
 call); --embedder uses the Graphiti embedder and falls back to lexical.
 """
 
-# ruff: noqa: T201, BLE001, PLC0415, PLR2004  # one-off CLI: prints JSON, lazy optional imports
+# ruff: noqa: T201, BLE001, PLR2004  # one-off CLI: prints JSON, lazy optional imports
 import argparse
 import asyncio
 import json
@@ -15,6 +15,7 @@ import re
 import sys
 from collections import Counter
 from collections.abc import Iterator
+from importlib import import_module
 from itertools import combinations
 from pathlib import Path
 from typing import Any
@@ -91,10 +92,10 @@ def embed_all(texts: list[str]) -> list[Any] | None:
     """Vectors from the existing Graphiti embedder, or None if unavailable."""
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "apps/backend"))
-        from integrations.graphiti.config import GraphitiConfig  # type: ignore[import-not-found,unused-ignore]
-        from integrations.graphiti.providers_pkg.factory import create_embedder  # type: ignore[import-not-found,unused-ignore]
+        config = import_module("integrations.graphiti.config")
+        factory = import_module("integrations.graphiti.providers_pkg.factory")
 
-        embedder = create_embedder(GraphitiConfig.from_env())
+        embedder = factory.create_embedder(config.GraphitiConfig.from_env())
 
         async def run() -> list[Any]:
             return [await embedder.create(t) for t in texts]
