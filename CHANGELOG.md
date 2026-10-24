@@ -1,5 +1,12 @@
 ## [Unreleased]
 
+### Security
+
+- **npm-bundled undici 6.29.1 and brotli floors.** The npm vendored-deps
+  overlay moves undici 6.28.1 -> 6.29.1 (CVE-2026-109869) and apk floors pull
+  `libbrotlicommon1`/`libbrotlidec1`/`libbrotlienc1` to 1.2.0-r7
+  (CVE-2026-111497), clearing the new HIGH CVEs the Trivy P0 gate reported.
+
 ## 3.10.5 - 2026-10-22
 
 ### Security
