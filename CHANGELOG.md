@@ -1,5 +1,17 @@
 ## [Unreleased]
 
+## 3.10.6 - 2026-10-24
+
+### Security
+
+- **npm-bundled undici 6.29.1 and brotli floors (#1851).** The npm
+  vendored-deps overlay moves undici 6.28.1 -> 6.29.1 (CVE-2026-109869) and apk
+  floors pull `libbrotlicommon1`/`libbrotlidec1`/`libbrotlienc1` to 1.2.0-r7
+  (CVE-2026-111497), clearing the new HIGH CVEs the Trivy P0 gate reported.
+- **dompurify 3.4.17 (#1851).** The override floor moves to `^3.4.17`, past
+  GHSA-cg2g-xh64-v4q7 (critical) and GHSA-mrv2-3pqr-j5jr, which failed the
+  Trivy P0 gate on the frontend lockfile.
+
 ## 3.10.5 - 2026-10-22
 
 ### Security
