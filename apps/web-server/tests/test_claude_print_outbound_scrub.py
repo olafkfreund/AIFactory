@@ -11,6 +11,7 @@ import os
 import stat
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -94,11 +95,11 @@ def fake_cli(tmp_path, monkeypatch):
     return read
 
 
-async def _clarification(tmp_path):
+async def _clarification(tmp_path: Path) -> Any:
     return await generate_clarification_questions(PROMPT, "see description", tmp_path)
 
 
-async def _insights(tmp_path):
+async def _insights(tmp_path: Path) -> Any:
     service = InsightsService()
     session = InsightsSession(
         id="s",
@@ -148,8 +149,8 @@ async def test_internal_default_is_scrubbed(driver, fake_cli, tmp_path):
     assert all(m in argv for m in PII_MARKERS)
 
 
-def _boom(monkeypatch):
-    def raiser(*_a, **_k):
+def _boom(monkeypatch: pytest.MonkeyPatch) -> None:
+    def raiser(*_a: Any, **_k: Any) -> None:
         raise RuntimeError("scrub unavailable")
 
     for mod in ("clarification_service", "insights_service"):
