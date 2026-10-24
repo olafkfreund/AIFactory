@@ -14,6 +14,7 @@ from typing import Any
 from factory_common.logsafe import sanitize_log
 
 from ..config import get_settings
+from . import project_settings_store
 
 logger = logging.getLogger(__name__)
 
@@ -478,6 +479,9 @@ TASK: Intelligently merge both sets of changes into the base.
                     agent_type="merge_resolver",
                     model="claude-sonnet-4-20250514",
                     max_turns=1,
+                    classification=await project_settings_store.data_classification(
+                        self.project_path
+                    ),
                 )
                 response_text = ""
                 async with client:
@@ -612,6 +616,9 @@ Return ONLY the raw file content."""
                     agent_type="merge_resolver",
                     model="claude-sonnet-4-20250514",
                     max_turns=1,
+                    classification=await project_settings_store.data_classification(
+                        self.project_path
+                    ),
                 )
                 response_text = ""
                 async with client:

@@ -172,6 +172,9 @@ async def analyze_issue_with_ai(
             model="claude-sonnet-4-20250514",
             cwd=FilePath(project_path),
             max_turns=1,
+            classification=await project_settings_store.data_classification(
+                project_path
+            ),
         )
 
         response_text = ""

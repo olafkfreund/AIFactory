@@ -379,6 +379,20 @@ async def get_settings(
     return await ProjectSettingsStore(session_factory).get_settings(project_path)
 
 
+async def data_classification(project_path: str | Path) -> str:
+    """Project data class (#320); ``regulated`` if unreadable, so the floor never drops."""
+    try:
+        settings = await get_settings(project_path)
+    except Exception as exc:  # noqa: BLE001 - fail closed to regulated on any read error
+        logger.warning(
+            "data classification unreadable for %s (%s); treating as regulated",
+            sanitize_log(str(project_path)),
+            sanitize_log(str(exc)),
+        )
+        return "regulated"
+    return settings.get("AIFACTORY_DATA_CLASSIFICATION", "internal")
+
+
 async def put_settings(
     project_path: str | Path,
     settings: dict[str, str],

@@ -13,6 +13,7 @@ import server.routes.context as context_routes
 import server.routes.github as github_routes
 import server.routes.projects as projects_routes
 import server.services.project_settings_store as pss
+from pydantic import ValidationError
 from server.crypto import kms
 from server.database.models import Base
 from sqlalchemy.ext.asyncio import (
@@ -90,6 +91,22 @@ async def test_patch_settings_stores_auto_merge_and_creates_no_env_file(
 
     stored = await pss.get_settings(project_dir)
     assert stored.get("AIFACTORY_AUTO_MERGE") == "true"
+
+
+async def test_patch_settings_stores_data_classification(project_dir: Path) -> None:
+    await projects_routes.update_project_settings(
+        project_id="proj-1",
+        settings=projects_routes.ProjectSettingsUpdate(dataClassification="regulated"),
+        _access={"role": "admin"},
+    )
+    stored = await pss.get_settings(project_dir)
+    assert stored.get("AIFACTORY_DATA_CLASSIFICATION") == "regulated"
+    assert await pss.data_classification(project_dir) == "regulated"
+
+
+def test_unknown_data_classification_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        projects_routes.ProjectSettingsUpdate(dataClassification="secret")
 
 
 async def test_patch_env_mcp_fields_round_trip_through_get_env(

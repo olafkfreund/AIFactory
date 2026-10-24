@@ -1126,7 +1126,9 @@ class TestGitDirWriteGuard:
         monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok")
         monkeypatch.setattr(simple_client, "require_auth_token", lambda: "tok")
         monkeypatch.setattr(simple_client, "ClaudeSDKClient", _capture)
-        monkeypatch.setattr(simple_client, "wrap_client_outbound_scrub", lambda c: c)
+        monkeypatch.setattr(
+            simple_client, "wrap_client_outbound_scrub", lambda c, *_: c
+        )
         simple_client.create_simple_client(
             agent_type=agent_type, model="claude-haiku-4-5"
         )
@@ -1148,7 +1150,9 @@ class TestGitDirWriteGuard:
         monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok")
         monkeypatch.setattr(simple_client, "require_auth_token", lambda: "tok")
         monkeypatch.setattr(simple_client, "ClaudeSDKClient", _capture)
-        monkeypatch.setattr(simple_client, "wrap_client_outbound_scrub", lambda c: c)
+        monkeypatch.setattr(
+            simple_client, "wrap_client_outbound_scrub", lambda c, *_: c
+        )
         simple_client.create_simple_client(
             agent_type=agent_type, model="claude-haiku-4-5"
         )
