@@ -1,5 +1,26 @@
 ## [Unreleased]
 
+## 3.10.7 - 2026-10-24
+
+### Fixed
+
+- **Four real CodeQL hygiene alerts (#1853, Factory#813).** The
+  `_refresh_to_remote_base` log lines now pass branch, path and git stderr
+  through `sanitize_log` (log injection), a no-op `terminal_status`
+  self-assignment is gone, and `_WrappedResponseStream._capture` initialises
+  `msg_type` before its `try`, with a regression test.
+
+### Tests
+
+- **A pass verdict cannot merge past a red floor (#1854, Factory#1963).** An
+  end-to-end test through `run_pr_endgame` and the real `watch_and_finish`
+  proves that red host CI, VAL below the floor, or `ci_parity` false never
+  calls `merge_pr`.
+
+### Chores
+
+- follow-redirects 1.16.0 -> 1.16.1 in `/docs` (#1845).
+
 ## 3.10.6 - 2026-10-24
 
 ### Security

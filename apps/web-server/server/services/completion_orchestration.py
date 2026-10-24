@@ -163,7 +163,6 @@ async def run_terminal_completion(
                 project_id = (
                     task_id.split(":", 1)[0] if ":" in task_id else project_path.name
                 )
-                terminal_status = terminal_status
                 _event = emit_terminal_completion(
                     spec_dir,
                     task_id=task_id,
