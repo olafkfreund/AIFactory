@@ -6,6 +6,7 @@ Prints JSON. Default similarity is a lexical bag-of-words cosine (no model
 call); --embedder uses the Graphiti embedder and falls back to lexical.
 """
 
+# ruff: noqa: T201, BLE001, PLC0415, PLR2004  # one-off CLI: prints JSON, lazy optional imports
 import argparse
 import asyncio
 import json
