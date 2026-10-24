@@ -14,8 +14,10 @@ import math
 import re
 import sys
 from collections import Counter
+from collections.abc import Iterator
 from itertools import combinations
 from pathlib import Path
+from typing import Any
 
 THRESHOLD = 0.88
 INSIGHT_KEYS = (
@@ -26,7 +28,7 @@ INSIGHT_KEYS = (
 )
 
 
-def _strings(node):
+def _strings(node: Any) -> Iterator[str]:
     if isinstance(node, str):
         yield node
     elif isinstance(node, list):
@@ -59,11 +61,11 @@ def load_items(memory_dir: Path) -> list[str]:
     return [i.strip() for i in items if len(i.strip()) >= 15]
 
 
-def lexical_vector(text: str) -> Counter:
+def lexical_vector(text: str) -> Counter[str]:
     return Counter(re.findall(r"\w+", text.lower()))
 
 
-def cosine(a, b) -> float:
+def cosine(a: Any, b: Any) -> float:
     if isinstance(a, Counter):
         dot = sum(v * b.get(k, 0) for k, v in a.items())
         na = math.sqrt(sum(v * v for v in a.values()))
@@ -74,7 +76,7 @@ def cosine(a, b) -> float:
     return dot / (na * nb) if na and nb else 0.0
 
 
-def count_pairs(texts: list[str], vectors: list) -> tuple[int, int]:
+def count_pairs(texts: list[str], vectors: list[Any]) -> tuple[int, int]:
     """(exact pairs, near pairs). Near excludes exact; O(n^2), fine at pool size."""
     exact = near = 0
     for i, j in combinations(range(len(texts)), 2):
@@ -85,19 +87,20 @@ def count_pairs(texts: list[str], vectors: list) -> tuple[int, int]:
     return exact, near
 
 
-def embed_all(texts: list[str]) -> list | None:
+def embed_all(texts: list[str]) -> list[Any] | None:
     """Vectors from the existing Graphiti embedder, or None if unavailable."""
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "apps/backend"))
-        from integrations.graphiti.config import GraphitiConfig
-        from integrations.graphiti.providers_pkg.factory import create_embedder
+        from integrations.graphiti.config import GraphitiConfig  # type: ignore[import-not-found,unused-ignore]
+        from integrations.graphiti.providers_pkg.factory import create_embedder  # type: ignore[import-not-found,unused-ignore]
 
         embedder = create_embedder(GraphitiConfig.from_env())
 
-        async def run():
+        async def run() -> list[Any]:
             return [await embedder.create(t) for t in texts]
 
-        return asyncio.run(run())
+        vecs: list[Any] = asyncio.run(run())
+        return vecs
     except Exception as e:  # unconfigured, unreachable, or missing package
         print(
             f"embedder unavailable ({type(e).__name__}); using lexical", file=sys.stderr
