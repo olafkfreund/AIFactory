@@ -236,6 +236,11 @@ class Settings(BaseSettings):
     # bank-pilot image (no bundled rmux binary).
     RMUX_ENABLED: bool = False
 
+    # #1858: when true, apply-correction refuses a hand-back with no `triage`
+    # block (422). Off until TFactory#1430 sends triage on every path.
+    # Override: APP_REQUIRE_CORRECTION_TRIAGE.
+    REQUIRE_CORRECTION_TRIAGE: bool = False
+
     # extra="ignore" (#384): the web-server's environment/.env legitimately
     # carries cross-cutting, non-APP_ vars meant for other components — notably
     # AIFACTORY_COMPLETION_WEBHOOK / _SENTINEL / _WEBHOOK_TIMEOUT, which

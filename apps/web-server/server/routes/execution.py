@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from server.background import spawn
+from server.config import get_settings
 from server.error_ref import client_error
 from server.project_registry import load_projects, resolve_project_id
 from server.services.audit_service import (
@@ -1561,7 +1562,14 @@ async def apply_task_correction(
     Writes ``QA_FIX_REQUEST.md`` onto the original spec and runs the QA Fixer.
     Confirm-first: ``confirm=false`` previews; ``confirm=true`` writes + runs.
     Part of the bidirectional AIFactory ↔ TFactory loop (#317).
+    With APP_REQUIRE_CORRECTION_TRIAGE on, a request without ``triage`` is a 422.
     """
+    if get_settings().REQUIRE_CORRECTION_TRIAGE and request.triage is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="A triage report is required (APP_REQUIRE_CORRECTION_TRIAGE); "
+            "send the structured 'triage' block with the hand-back.",
+        )
     *_, spec_dir = _resolve_task(task_id)
 
     result = await apply_correction(
