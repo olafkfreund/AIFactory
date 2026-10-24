@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: AIFactory#1860
 spec: spec/2026-10-24-1860-claude-print-scrub.md
 ---
