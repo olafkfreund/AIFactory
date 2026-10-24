@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: Factory#813
 intent: intent/2026-10-24-813-aif-codeql-hygiene.md
 ---
