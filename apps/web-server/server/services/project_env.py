@@ -40,6 +40,7 @@ PROJECT_ENV_KEYS = frozenset(
         "DELEGATE_BY_DEFAULT",
         "AIFACTORY_AUTO_PR",
         "AIFACTORY_AUTO_MERGE",
+        "AIFACTORY_DATA_CLASSIFICATION",
         # routes/context.py env
         "CLAUDE_CODE_OAUTH_TOKEN",
         "ANTHROPIC_AUTH_TOKEN",

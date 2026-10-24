@@ -151,6 +151,6 @@ AIFactory **declares** **17** backend, **37** web-server, and **47** frontend ru
 | `tsx` | `^4.20.0` |
 | `typescript` | `^5.9.3` |
 | `typescript-eslint` | `^8.61.1` |
-| `vite` | `^7.3.6` |
-| `vitest` | `^4.1.11` |
+| `vite` | `^7.3.7` |
+| `vitest` | `^4.1.12` |
 

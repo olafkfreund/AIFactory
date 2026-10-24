@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pfactory.tfactory_client as tc
 import pytest
@@ -154,3 +155,26 @@ def test_config_error_never_raises(monkeypatch: pytest.MonkeyPatch) -> None:
         )
         is None
     )
+
+
+def _vote_run(
+    doc: dict[str, Any], task: tuple[int, object] | None = None
+) -> tuple[str | None, dict[str, Any]]:
+    vote: dict[str, Any] = {}
+    routes = {TASK: task or _task(), TASK + "/verdicts.json": (200, doc)}
+    out = tc.tfactory_verdict(
+        Path("spec"), "048-feat", head="abc", getter=lambda u, _h: routes[u], vote=vote
+    )
+    return out, vote
+
+
+def test_vote_summary_is_filled_on_a_trusted_result() -> None:
+    summary = {"splits": {"3-0": 2}}
+    doc = {"verdicts": [{"verdict": "accept"}], "verdict_vote": summary}
+    assert _vote_run(doc) == ("pass", summary)
+
+
+def test_vote_stays_empty_without_a_trusted_result_or_summary() -> None:
+    doc = {"verdicts": [{"verdict": "accept"}], "verdict_vote": {"splits": {}}}
+    assert _vote_run(doc, _task(status="running")) == (None, {})
+    assert _vote_run({"verdicts": [{"verdict": "accept"}]}) == ("pass", {})

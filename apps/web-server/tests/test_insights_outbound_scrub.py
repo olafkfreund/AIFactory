@@ -117,6 +117,22 @@ class _Recorder(BaseHTTPRequestHandler):
         return
 
 
+@pytest.fixture(autouse=True)
+def project_class(monkeypatch):
+    """Pin the project's data class (#320); the real store is unreadable here
+    and would fail closed to ``regulated``. Tests mutate the returned dict."""
+    cls = {"value": "internal"}
+
+    async def _classification(_path):
+        return cls["value"]
+
+    monkeypatch.setattr(
+        "server.services.project_settings_store.data_classification",
+        _classification,
+    )
+    return cls
+
+
 @pytest.fixture
 def recording_endpoint():
     """A real HTTP server standing in for an OpenAI-compatible provider."""
@@ -252,6 +268,22 @@ async def test_the_assertions_observe_the_scrub_and_not_the_stand_in(
         assert value in sent, "kill-switch did not restore the raw prompt"
     for marker in PII_MARKERS:
         assert marker not in sent
+
+
+async def test_regulated_project_ignores_the_kill_switch(
+    recording_endpoint, monkeypatch, project_class
+):
+    """#320: the kill-switch does not lower the floor for a regulated project."""
+    monkeypatch.setenv("LITELLM_AUDIT_SCRUB_OUTBOUND", "false")
+    project_class["value"] = "regulated"
+    base_url, bodies = recording_endpoint
+    await _send_via_openai_compat(base_url)
+
+    sent = bodies[0]
+    for value in PII_VALUES:
+        assert value not in sent
+    for marker in PII_MARKERS:
+        assert marker in sent
 
 
 async def test_a_new_strategy_cannot_opt_out_of_the_scrub():

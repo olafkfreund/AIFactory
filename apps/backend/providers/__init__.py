@@ -164,8 +164,12 @@ class BaseLLMProvider(ABC):
         async def _scrubbing_query(
             self: Any, prompt: str, *args: Any, **kwargs: Any
         ) -> Any:
+            from core.outbound_scrub import (  # noqa: PLC0415
+                scrub_outbound_required,
+            )
+
             enabled = getattr(self, "_scrub_outbound", None)
-            if enabled is None:
+            if enabled is None or scrub_outbound_required():
                 enabled = _env_scrub_outbound_default()
             self._outbound_prompt_raw = prompt
             outbound = self._scrub_outbound_prompt(prompt) if enabled else prompt

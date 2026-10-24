@@ -49,6 +49,7 @@ def create_simple_client(
     org_id: str | None = None,
     user_id: str | None = None,
     allowed_models: list[str] | None = None,
+    classification: str | None = None,
 ) -> ClaudeSDKClient:
     """
     Create a minimal Claude SDK client for single-turn utility operations.
@@ -68,6 +69,7 @@ def create_simple_client(
         system_prompt: Optional custom system prompt (for specialized tasks)
         cwd: Working directory for file operations (optional)
         max_turns: Maximum conversation turns (default: 1 for single-turn)
+        classification: Project data class; 'regulated' forces the outbound scrub (#320)
         max_thinking_tokens: Override thinking budget (None = use agent default from
                             AGENT_CONFIGS, converted using phase_config.THINKING_BUDGET_MAP)
 
@@ -139,4 +141,6 @@ def create_simple_client(
     )
     enforcement.enforce_allowlist()
     # #1128 outbound PII scrub, innermost — see core.client.create_client.
-    return wrap_client_if_enforced(wrap_client_outbound_scrub(bare_client), enforcement)
+    return wrap_client_if_enforced(
+        wrap_client_outbound_scrub(bare_client, classification), enforcement
+    )

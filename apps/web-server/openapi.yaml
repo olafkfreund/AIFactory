@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: AIFactory Web API
   description: Web API for AIFactory — self-hosted AI task management + agent orchestration
-  version: 3.10.7
+  version: 3.10.8
 paths:
   /api/auth/register:
     post:
@@ -4033,7 +4033,9 @@ paths:
 
         Confirm-first: ``confirm=false`` previews; ``confirm=true`` writes + runs.
 
-        Part of the bidirectional AIFactory ↔ TFactory loop (#317).'
+        Part of the bidirectional AIFactory ↔ TFactory loop (#317).
+
+        With APP_REQUIRE_CORRECTION_TRIAGE on, a request without ``triage`` is a 422.'
       operationId: apply_task_correction_api_tasks__task_id__apply_correction_post
       parameters:
       - name: task_id
@@ -12838,6 +12840,16 @@ components:
           - type: string
           - type: 'null'
           title: Pr Reviewer
+        data_classification:
+          anyOf:
+          - type: string
+            enum:
+            - public
+            - internal
+            - confidential
+            - regulated
+          - type: 'null'
+          title: Data Classification
       type: object
       title: ProjectSettingsUpdate
       description: 'Model for updating project settings.

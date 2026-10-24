@@ -76,6 +76,7 @@ def scrub_insights_outbound(
     conversation_history: list[dict[str, Any]] | None,
     *,
     owner: str,
+    classification: str | None = None,
 ) -> tuple[str, list[dict[str, Any]] | None]:
     """Redact built-in PII from everything this call puts on the wire (#1132).
 
@@ -103,7 +104,7 @@ def scrub_insights_outbound(
             "scrubbing)."
         ) from exc
 
-    if not scrub_outbound_enabled():
+    if not scrub_outbound_enabled(classification):
         return message, conversation_history
 
     scrubbed = scrub_outbound_prompt(message, owner=owner)
@@ -156,8 +157,15 @@ class ProviderStrategy(abc.ABC):
             # needs them either: InsightsService persists the raw message to
             # the session before calling the provider, so "the UI keeps what
             # the user typed, only the wire is redacted" already holds.
+            from server.services import project_settings_store  # noqa: PLC0415
+
             outbound, history = scrub_insights_outbound(
-                message, conversation_history, owner=type(self).__name__
+                message,
+                conversation_history,
+                owner=type(self).__name__,
+                classification=await project_settings_store.data_classification(
+                    project_path
+                ),
             )
             result: str = await send_message(
                 self,

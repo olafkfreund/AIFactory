@@ -19,6 +19,7 @@ from server.background import spawn
 
 from ..config import get_settings
 from ..websockets.events import broadcast_event
+from . import project_settings_store
 from .argv_safety import assert_safe_git_ref
 
 
@@ -213,6 +214,10 @@ class ChangelogService:
         from ..utils.subprocess_env import make_subprocess_env
 
         env = make_subprocess_env()
+        # #320: the child reads the class to decide whether the scrub is mandatory.
+        env[
+            "AIFACTORY_DATA_CLASSIFICATION"
+        ] = await project_settings_store.data_classification(project_path)
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
         # Add backend path to PYTHONPATH so imports work

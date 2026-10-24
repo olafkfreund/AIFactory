@@ -1,5 +1,40 @@
 ## [Unreleased]
 
+## 3.10.8 - 2026-10-24
+
+### Security
+
+- **Outbound PII scrub is mandatory for regulated projects (#1862,
+  Factory#320).** A new project setting `dataClassification`
+  (`public|internal|confidential|regulated`) is stored as
+  `AIFACTORY_DATA_CLASSIFICATION`. Projects classified `regulated` now always
+  get outbound PII scrubbing: the `LITELLM_AUDIT_SCRUB_OUTBOUND=false`
+  kill-switch and per-adapter `_scrub_outbound` pins are ignored for them, and
+  an unreadable settings store fails closed to `regulated`. The default
+  classification stays `internal`, and the other tiers are unchanged. A bad
+  value is a 422. Direct `claude --print` spawns are a known gap, tracked in
+  #1860.
+
+### Added
+
+- **Verify verdict and vote split as PR evidence (#1863, Factory#1963).**
+  Auto-merge PRs get a "Verify evidence" section in the body with the verify
+  verdict, TFactory's vote split and the floor signals (host CI, VAL against
+  the floor, CI parity). The verdict is evidence; the deterministic floor still
+  decides, and a write failure never changes the gate result.
+- **Optional `APP_REQUIRE_CORRECTION_TRIAGE` gate (#1861, closes #1858).** When
+  on, `POST /api/tasks/{id}/apply-correction` rejects a request with no
+  `triage` block with a 422 before anything is written. Default off until
+  TFactory skills post a triage block (TFactory#1430).
+- **Memory duplicate-rate baseline (#1856, RFC-0021, #389).**
+  `scripts/memory_dup_baseline.py` and the first measured baseline in
+  `docs/dev/memory-baseline-2026-10.md`.
+
+### Chores
+
+- Weekly CodeQL ratchet caller and baseline (#1857, Factory#813).
+- vite 7.3.6 -> 7.3.7 (#1849); @vitest/mocker and vitest bump (#1850).
+
 ## 3.10.7 - 2026-10-24
 
 ### Fixed
