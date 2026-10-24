@@ -19,6 +19,7 @@ from server.background import spawn
 
 from ..config import get_settings
 from ..websockets.events import broadcast_event
+from . import project_settings_store
 from .argv_safety import assert_safe_git_ref
 
 
@@ -211,7 +212,6 @@ class ChangelogService:
         # Set up environment with PYTHONPATH pointing to backend.
         # Scrub ANTHROPIC_API_KEY (OAuth-only policy — see core/auth.py).
         from ..utils.subprocess_env import make_subprocess_env
-        from . import project_settings_store
 
         env = make_subprocess_env()
         # #320: the child reads the class to decide whether the scrub is mandatory.

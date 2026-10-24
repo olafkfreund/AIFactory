@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
+from pydantic import ValidationError
 import server.routes.context as context_routes
 import server.routes.github as github_routes
 import server.routes.projects as projects_routes
@@ -104,8 +105,6 @@ async def test_patch_settings_stores_data_classification(project_dir: Path) -> N
 
 
 def test_unknown_data_classification_is_rejected() -> None:
-    from pydantic import ValidationError
-
     with pytest.raises(ValidationError):
         projects_routes.ProjectSettingsUpdate(dataClassification="secret")
 

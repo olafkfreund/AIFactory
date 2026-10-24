@@ -878,7 +878,7 @@ class ProjectSettingsUpdate(BaseModel):
     # review engine — no Copilot credits), "copilot", or "any". Default aifactory.
     prReviewer: str | None = Field(default=None, alias="pr_reviewer")
     # #320: data classification; treated as "internal" when unset. A bad value is a 422.
-    dataClassification: DataClassification | None = Field(
+    dataClassification: DataClassification | None = Field(  # noqa: N815
         default=None, alias="data_classification"
     )
 

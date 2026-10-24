@@ -383,7 +383,7 @@ async def data_classification(project_path: str | Path) -> str:
     """Project data class (#320); ``regulated`` if unreadable, so the floor never drops."""
     try:
         settings = await get_settings(project_path)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - fail closed to regulated on any read error
         logger.warning(
             "data classification unreadable for %s (%s); treating as regulated",
             sanitize_log(str(project_path)),
