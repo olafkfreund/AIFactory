@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: Factory#1963
 intent: intent/2026-10-24-1963-verdict-in-pr-evidence.md
 ---
