@@ -176,3 +176,24 @@ def test_all_production_models_in_pricing_table():
         f"_CLAUDE_PRICING is missing entries for: {sorted(missing)}. "
         f"Add the per-million-token rates from the Anthropic pricing page."
     )
+
+
+def test_capture_swallows_error_from_message_type():
+    """A raising ``type`` attribute is logged, not raised (CodeQL 1621)."""
+    from core.enforcement import ClaudeUsageSnapshot, _EnforcedClaudeSDKClient
+
+    class _Parent:
+        _response_text = ""
+
+    wrapped = _EnforcedClaudeSDKClient._WrappedResponseStream(
+        inner=None,
+        usage=ClaudeUsageSnapshot(model="claude-opus-4-7"),
+        parent=_Parent(),
+    )
+
+    class _BadMsg:
+        @property
+        def type(self):
+            raise RuntimeError("boom")
+
+    wrapped._capture(_BadMsg())

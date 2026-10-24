@@ -1035,9 +1035,9 @@ def _refresh_to_remote_base(wt_path: Path, base_branch: str) -> None:
         _log.warning(
             "[build_backend] could not fetch origin/%s to refresh build clone %s "
             "(#960); building against the stale local base: %s",
-            base_branch,
-            wt_path,
-            fetch.stderr.strip() or "no stderr",
+            sanitize_log(base_branch),
+            sanitize_log(wt_path),
+            sanitize_log(fetch.stderr.strip() or "no stderr"),
         )
         return
     # FETCH_HEAD is written by the fetch above to the fetched base tip — the most
@@ -1046,8 +1046,8 @@ def _refresh_to_remote_base(wt_path: Path, base_branch: str) -> None:
     _log.info(
         "[build_backend] refreshed build clone %s to remote %s tip before dispatch "
         "(#960)",
-        wt_path,
-        base_branch,
+        sanitize_log(wt_path),
+        sanitize_log(base_branch),
     )
 
 
