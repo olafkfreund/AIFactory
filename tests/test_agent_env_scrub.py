@@ -241,7 +241,7 @@ def test_simple_client_env_is_scrubbed(clean_env, monkeypatch, tmp_path):
 
     monkeypatch.setattr(simple_client, "require_auth_token", lambda: "tok")
     monkeypatch.setattr(simple_client, "ClaudeSDKClient", _capture)
-    monkeypatch.setattr(simple_client, "wrap_client_outbound_scrub", lambda c: c)
+    monkeypatch.setattr(simple_client, "wrap_client_outbound_scrub", lambda c, *_: c)
     client = simple_client.create_simple_client(
         agent_type="commit_message", model="claude-haiku-4-5", cwd=tmp_path
     )
