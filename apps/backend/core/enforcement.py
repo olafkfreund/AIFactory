@@ -607,6 +607,7 @@ class _EnforcedClaudeSDKClient:
 
         def _capture(self, msg: Any) -> None:
             """Extract tokens + response text from SDK message types."""
+            msg_type: Any = None
             try:
                 # ResultMessage carries the final usage block.
                 msg_type = getattr(msg, "type", None) or type(msg).__name__
