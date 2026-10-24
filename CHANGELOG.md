@@ -1,5 +1,8 @@
 ## [Unreleased]
 
+- apply-correction: optional APP_REQUIRE_CORRECTION_TRIAGE rejects markdown-only
+  hand-backs (422) (#1858)
+
 ## 3.10.7 - 2026-10-24
 
 ### Fixed

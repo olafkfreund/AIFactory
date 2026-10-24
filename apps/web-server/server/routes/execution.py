@@ -39,6 +39,7 @@ from server.services.trusted_contract_store import (
 )
 from server.specpath import safe_spec_component
 
+from ..config import get_settings
 from ..services import task_control
 from ..services.agent_service import get_agent_service
 from ..tenancy import resolve_tenant, stamp_spec_tenant
@@ -1561,7 +1562,14 @@ async def apply_task_correction(
     Writes ``QA_FIX_REQUEST.md`` onto the original spec and runs the QA Fixer.
     Confirm-first: ``confirm=false`` previews; ``confirm=true`` writes + runs.
     Part of the bidirectional AIFactory ↔ TFactory loop (#317).
+    With APP_REQUIRE_CORRECTION_TRIAGE on, a request without ``triage`` is a 422.
     """
+    if get_settings().REQUIRE_CORRECTION_TRIAGE and request.triage is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="A triage report is required (APP_REQUIRE_CORRECTION_TRIAGE); "
+            "send the structured 'triage' block with the hand-back.",
+        )
     *_, spec_dir = _resolve_task(task_id)
 
     result = await apply_correction(
