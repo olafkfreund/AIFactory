@@ -13,6 +13,9 @@ import re
 import shutil
 from pathlib import Path
 
+from . import project_settings_store
+from .insights_providers.base import scrub_insights_outbound
+
 logger = logging.getLogger(__name__)
 
 
@@ -166,9 +169,6 @@ async def generate_clarification_questions(
     prompt = CLARIFICATION_PROMPT.format(title=title, description=description)
 
     # AIFactory#1860: argv is the wire; scrub it like every other LLM path.
-    from . import project_settings_store
-    from .insights_providers.base import scrub_insights_outbound
-
     try:
         prompt = scrub_insights_outbound(
             prompt,
@@ -178,7 +178,7 @@ async def generate_clarification_questions(
                 project_path
             ),
         )[0]
-    except Exception:  # noqa: BLE001 - fail closed: send nothing, never block the user
+    except Exception:  # fail closed: send nothing, never block the user
         logger.error(
             "[ClarificationService] Outbound scrub failed; not sending", exc_info=True
         )

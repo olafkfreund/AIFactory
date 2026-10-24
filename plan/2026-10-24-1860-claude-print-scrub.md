@@ -139,10 +139,10 @@ agent and the review to a fresh Opus agent.
    `/mnt/code/Source-home/GitHub/AIFactory/apps/backend/.venv` if the worktree
    has none). Then mutation: comment out the step 1 block, the clarification
    regulated test must fail; restore; same for step 2.
-   Traps: the monkeypatch for the raise case must target
-   `server.services.insights_providers.base.scrub_insights_outbound` and the
-   services must import it lazily (inside the function) for that to take
-   effect. Synthetic values only; no real provider is contacted. The shebang
+   Traps: deviation (ratchet gate PLC0415/PLR0915): the services import
+   `scrub_insights_outbound` and `project_settings_store` at module level
+   (insights via a small `_scrub_chat_prompt` helper), so the raise-case
+   monkeypatch targets `server.services.<service>.scrub_insights_outbound`. Synthetic values only; no real provider is contacted. The shebang
    needs `python3` on the child's `PATH`, so prepend, never replace, `PATH`.
 
 4. Ship AIFactory: `ruff check` + `ruff format --check` on the three files,

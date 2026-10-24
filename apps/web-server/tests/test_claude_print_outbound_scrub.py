@@ -152,9 +152,8 @@ def _boom(monkeypatch):
     def raiser(*_a, **_k):
         raise RuntimeError("scrub unavailable")
 
-    monkeypatch.setattr(
-        "server.services.insights_providers.base.scrub_insights_outbound", raiser
-    )
+    for mod in ("clarification_service", "insights_service"):
+        monkeypatch.setattr(f"server.services.{mod}.scrub_insights_outbound", raiser)
 
 
 async def test_clarification_fails_closed(fake_cli, tmp_path, monkeypatch):
