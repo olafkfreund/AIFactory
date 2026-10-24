@@ -123,7 +123,11 @@ def main() -> None:
                 "near_pairs": near,
                 "threshold": THRESHOLD,
                 "measure": measure,
-                "specs": len(list(specs.iterdir())) if specs.is_dir() else 0,
+                "specs": len(
+                    [p for p in specs.iterdir() if p.is_dir() and p.name[0] != "."]
+                )
+                if specs.is_dir()
+                else 0,
             }
         )
     )
