@@ -489,6 +489,19 @@ class InsightsService:
             "Respond with ONLY the JSON object, no other text."
         )
 
+        # AIFactory#1860: argv is the wire; scrub it like every other LLM path.
+        from . import project_settings_store
+        from .insights_providers.base import scrub_insights_outbound
+
+        summarization_prompt = scrub_insights_outbound(
+            summarization_prompt,
+            None,
+            owner="InsightsService.generate_task_from_chat",
+            classification=await project_settings_store.data_classification(
+                project_path
+            ),
+        )[0]
+
         # Resolve model
         effective_config = dict(self.DEFAULT_MODEL_CONFIG)
         if session.model_config:
