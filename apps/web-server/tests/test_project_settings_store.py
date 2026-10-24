@@ -547,3 +547,23 @@ def test_git_check_disables_fsmonitor_and_hooks(
     assert pss._is_tracked(project_dir) is False
     assert "core.fsmonitor=false" in seen[0]
     assert "core.hooksPath=/dev/null" in seen[0]
+
+
+async def test_data_classification_default_stored_and_fail_closed(
+    monkeypatch: pytest.MonkeyPatch, project_dir: Path
+) -> None:
+    settings: dict[str, str] = {}
+
+    async def _get(_path: Any) -> dict[str, str]:
+        return settings
+
+    monkeypatch.setattr(pss, "get_settings", _get)
+    assert await pss.data_classification(project_dir) == "internal"
+    settings["AIFACTORY_DATA_CLASSIFICATION"] = "confidential"
+    assert await pss.data_classification(project_dir) == "confidential"
+
+    async def _boom(_path: Any) -> dict[str, str]:
+        raise RuntimeError("store down")
+
+    monkeypatch.setattr(pss, "get_settings", _boom)
+    assert await pss.data_classification(project_dir) == "regulated"

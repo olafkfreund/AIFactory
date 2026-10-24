@@ -211,8 +211,13 @@ class ChangelogService:
         # Set up environment with PYTHONPATH pointing to backend.
         # Scrub ANTHROPIC_API_KEY (OAuth-only policy — see core/auth.py).
         from ..utils.subprocess_env import make_subprocess_env
+        from . import project_settings_store
 
         env = make_subprocess_env()
+        # #320: the child reads the class to decide whether the scrub is mandatory.
+        env[
+            "AIFACTORY_DATA_CLASSIFICATION"
+        ] = await project_settings_store.data_classification(project_path)
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
         # Add backend path to PYTHONPATH so imports work

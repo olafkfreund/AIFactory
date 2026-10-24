@@ -92,6 +92,24 @@ async def test_patch_settings_stores_auto_merge_and_creates_no_env_file(
     assert stored.get("AIFACTORY_AUTO_MERGE") == "true"
 
 
+async def test_patch_settings_stores_data_classification(project_dir: Path) -> None:
+    await projects_routes.update_project_settings(
+        project_id="proj-1",
+        settings=projects_routes.ProjectSettingsUpdate(dataClassification="regulated"),
+        _access={"role": "admin"},
+    )
+    stored = await pss.get_settings(project_dir)
+    assert stored.get("AIFACTORY_DATA_CLASSIFICATION") == "regulated"
+    assert await pss.data_classification(project_dir) == "regulated"
+
+
+def test_unknown_data_classification_is_rejected() -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        projects_routes.ProjectSettingsUpdate(dataClassification="secret")
+
+
 async def test_patch_env_mcp_fields_round_trip_through_get_env(
     project_dir: Path,
 ) -> None:

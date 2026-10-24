@@ -29,7 +29,8 @@ mangle, corrupting the code the model is asked to write. That restraint
 is preserved -- ``build_outbound_redactor()`` passes no extra patterns.
 
 There is also exactly ONE escape hatch, the pre-existing
-``LITELLM_AUDIT_SCRUB_OUTBOUND``. No second flag.
+``LITELLM_AUDIT_SCRUB_OUTBOUND``. No second flag. It does not apply to
+projects classified ``regulated`` (``AIFACTORY_DATA_CLASSIFICATION``).
 """
 
 from __future__ import annotations
@@ -42,14 +43,27 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-def scrub_outbound_enabled() -> bool:
+def scrub_outbound_required(classification: str | None = None) -> bool:
+    """True when the project is ``regulated``: scrub is mandatory (#320)."""
+    raw = (
+        classification
+        if classification is not None
+        else os.environ.get("AIFACTORY_DATA_CLASSIFICATION", "internal")
+    )
+    return raw.strip().lower() == "regulated"
+
+
+def scrub_outbound_enabled(classification: str | None = None) -> bool:
     """Resolve the deployment default for the outbound scrub (#320).
 
     ``LITELLM_AUDIT_SCRUB_OUTBOUND`` is the kill-switch: set it to
     ``false`` / ``0`` / ``no`` / ``off`` to disable outbound scrubbing
     and restore the pre-#320 behaviour (audit-row redaction only). Any
-    other value -- including unset -- leaves scrubbing ON.
+    other value -- including unset -- leaves scrubbing ON. Regulated
+    projects ignore the kill-switch.
     """
+    if scrub_outbound_required(classification):
+        return True
     raw = os.environ.get("LITELLM_AUDIT_SCRUB_OUTBOUND", "").strip().lower()
     # ponytail: kill-switch semantics -- only an explicit falsey value
     # disables; unset means default-on.
@@ -108,7 +122,8 @@ def scrub_outbound_prompt(
             "Outbound PII scrub is enabled but the redactor is "
             "unavailable; refusing to send an unredacted prompt to "
             "the LLM provider (set LITELLM_AUDIT_SCRUB_OUTBOUND=false "
-            "to disable outbound scrubbing)."
+            "to disable outbound scrubbing; not honoured for regulated "
+            "projects)."
         ) from exc
     return scrubbed
 
@@ -171,5 +186,6 @@ __all__ = [
     "build_outbound_redactor",
     "scrub_outbound_enabled",
     "scrub_outbound_prompt",
+    "scrub_outbound_required",
     "wrap_client_outbound_scrub",
 ]

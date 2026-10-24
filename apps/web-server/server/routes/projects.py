@@ -38,6 +38,9 @@ from ..database.engine import DEFAULT_ORG_ID, get_db
 # BUG-1.2-003: Memory backend must be one of these values
 MemoryBackendType = Literal["graphiti", "file"]
 
+# #320: "regulated" makes the outbound PII scrub mandatory.
+DataClassification = Literal["public", "internal", "confidential", "regulated"]
+
 
 from ..tenancy import (
     DEFAULT_TENANT,
@@ -874,6 +877,10 @@ class ProjectSettingsUpdate(BaseModel):
     # Which reviewer gates the auto-merge: "aifactory" (its own Claude/Ollama
     # review engine — no Copilot credits), "copilot", or "any". Default aifactory.
     prReviewer: str | None = Field(default=None, alias="pr_reviewer")
+    # #320: data classification; treated as "internal" when unset. A bad value is a 422.
+    dataClassification: DataClassification | None = Field(
+        default=None, alias="data_classification"
+    )
 
     @field_validator("memoryBackend", mode="before")
     @classmethod
@@ -924,6 +931,7 @@ async def update_project_settings(
             "gitProject": "GIT_PROJECT",
             "gitRepo": "GIT_REPO",
             "prReviewer": "AIFACTORY_PR_REVIEWER",
+            "dataClassification": "AIFACTORY_DATA_CLASSIFICATION",
         }
 
         # Handle boolean settings with "true"/"false" string values

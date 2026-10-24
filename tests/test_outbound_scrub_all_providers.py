@@ -70,6 +70,7 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Default deployment posture: gateway off, kill-switch unset."""
     monkeypatch.delenv("LITELLM_GATEWAY_URL", raising=False)
     monkeypatch.delenv("LITELLM_AUDIT_SCRUB_OUTBOUND", raising=False)
+    monkeypatch.delenv("AIFACTORY_DATA_CLASSIFICATION", raising=False)
 
 
 # ---------------------------------------------------------------------------
@@ -420,6 +421,80 @@ class TestKillSwitch:
         provider = CopilotAgenticProvider(working_dir=tmp_path)
         asyncio.run(provider.query(PROMPT))
         assert FAKE_SSN not in (provider._pending_prompt or "")
+
+    def test_internal_with_kill_switch_stays_raw(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("AIFACTORY_DATA_CLASSIFICATION", "internal")
+        monkeypatch.setenv("LITELLM_AUDIT_SCRUB_OUTBOUND", "false")
+
+        from providers.copilot_agentic import CopilotAgenticProvider
+
+        provider = CopilotAgenticProvider(working_dir=tmp_path)
+        asyncio.run(provider.query(PROMPT))
+        assert FAKE_SSN in (provider._pending_prompt or "")
+
+
+class TestRegulatedClassification:
+    """#320: regulated projects scrub regardless of the kill-switch or pin."""
+
+    @pytest.fixture(autouse=True)
+    def _regulated(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AIFACTORY_DATA_CLASSIFICATION", "regulated")
+        monkeypatch.setenv("LITELLM_AUDIT_SCRUB_OUTBOUND", "false")
+
+    def test_required_predicate(self) -> None:
+        from core.outbound_scrub import scrub_outbound_required
+
+        assert scrub_outbound_required("Regulated")
+        assert scrub_outbound_required()  # env is regulated here
+        assert not scrub_outbound_required("internal")
+        assert not scrub_outbound_required("confidential")
+
+    def test_kill_switch_ignored_on_adapter(self, tmp_path: Path) -> None:
+        from providers.copilot_agentic import CopilotAgenticProvider
+
+        provider = CopilotAgenticProvider(working_dir=tmp_path)
+        asyncio.run(provider.query(PROMPT))
+        assert FAKE_SSN not in (provider._pending_prompt or "")
+
+    def test_adapter_pin_ignored(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from providers.openai_compatible_agentic import (
+            OpenAICompatibleAgenticProvider,
+        )
+
+        captured: list[dict[str, Any]] = []
+
+        def _fake_post(self: Any, url: str, payload: dict[str, Any]) -> dict[str, Any]:
+            captured.append(payload)
+            return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+
+        monkeypatch.setattr(OpenAICompatibleAgenticProvider, "_http_post", _fake_post)
+
+        async def _go() -> None:
+            provider = OpenAICompatibleAgenticProvider(
+                model="gpt-4o-mini",
+                base_url="http://fake.invalid",
+                api_key="sk-test",
+                working_dir=tmp_path,
+            )
+            provider._scrub_outbound = False  # explicit per-adapter opt-out
+            await provider.query(PROMPT)
+            async for _ in provider.receive_response():
+                pass
+
+        asyncio.run(_go())
+        assert captured
+        _assert_scrubbed(json.dumps(captured[0]))
+
+    def test_sdk_client_wrapper_scrubs(self) -> None:
+        from core.outbound_scrub import wrap_client_outbound_scrub
+
+        recorded = _RecordingSDKClient()
+        asyncio.run(wrap_client_outbound_scrub(recorded).query(PROMPT))
+        _assert_scrubbed(recorded.sent[0])
 
 
 # ---------------------------------------------------------------------------
