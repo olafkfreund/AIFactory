@@ -13,8 +13,6 @@ import re
 import shutil
 from pathlib import Path
 
-from factory_common.logsafe import sanitize_log
-
 from . import project_settings_store
 from .insights_providers.base import scrub_insights_outbound
 
@@ -213,7 +211,7 @@ async def generate_clarification_questions(
         )
 
     logger.info(
-        f"[ClarificationService] Generating questions for: {sanitize_log(title[:80])}"
+        "[ClarificationService] Generating questions (%d-char title)", len(title)
     )
 
     try:
