@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: Factory#813
 author: olafkfreund
 ---
