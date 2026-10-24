@@ -4033,7 +4033,9 @@ paths:
 
         Confirm-first: ``confirm=false`` previews; ``confirm=true`` writes + runs.
 
-        Part of the bidirectional AIFactory ↔ TFactory loop (#317).'
+        Part of the bidirectional AIFactory ↔ TFactory loop (#317).
+
+        With APP_REQUIRE_CORRECTION_TRIAGE on, a request without ``triage`` is a 422.'
       operationId: apply_task_correction_api_tasks__task_id__apply_correction_post
       parameters:
       - name: task_id
