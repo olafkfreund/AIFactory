@@ -899,14 +899,20 @@ def _httpx_get(url: str, headers: dict[str, str]) -> tuple[int, object]:
 
 
 def tfactory_verdict(
-    spec_dir: Path, spec_id: str, *, head: str, getter: Getter | None = None
+    spec_dir: Path,
+    spec_id: str,
+    *,
+    head: str,
+    getter: Getter | None = None,
+    vote: dict[str, Any] | None = None,
 ) -> str | None:
     """The verdict TFactory itself recorded for this spec at ``head`` (#1695, #1766).
 
     ``"pass"``, ``"fail"`` or ``None`` (no trusted result: unconfigured,
     unreachable, wrong project, mismatched or missing ``source_sha``, not triaged,
     no or unknown verdicts). Only a ``reject`` fails; ``flag`` does not block.
-    Never raises; logs nothing it fetched.
+    Never raises; logs nothing it fetched. ``vote``, if given, receives TFactory's
+    ``verdict_vote`` summary (Factory#1963).
     """
     try:
         config = tfactory_config()
@@ -950,7 +956,11 @@ def tfactory_verdict(
     # A missing or unknown verdict is not green.
     if not kinds or any(k not in ("accept", "flag", "reject") for k in kinds):
         return None
-    return "fail" if "reject" in kinds else "pass"
+    verdict = "fail" if "reject" in kinds else "pass"
+    summary = doc.get("verdict_vote")
+    if vote is not None and isinstance(summary, dict):
+        vote.update(summary)
+    return verdict
 
 
 def wants_auto_handoff(spec_dir: Path) -> bool:
