@@ -91,3 +91,8 @@ All pass. The existing tests run with the flag off and must not change.
 
 Revert the commit. The flag defaults off, so leaving it unset already restores
 today's behaviour without a deploy.
+
+## Deviation (CI)
+
+- `get_settings` is imported absolutely (`from server.config import ...`) to avoid a new
+  strict-ruff TID252 relative import. `apps/web-server/openapi.yaml` regenerated for the docstring line.

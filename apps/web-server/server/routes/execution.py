@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from server.background import spawn
+from server.config import get_settings
 from server.error_ref import client_error
 from server.project_registry import load_projects, resolve_project_id
 from server.services.audit_service import (
@@ -39,7 +40,6 @@ from server.services.trusted_contract_store import (
 )
 from server.specpath import safe_spec_component
 
-from ..config import get_settings
 from ..services import task_control
 from ..services.agent_service import get_agent_service
 from ..tenancy import resolve_tenant, stamp_spec_tenant
