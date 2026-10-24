@@ -277,3 +277,60 @@ def test_apply_correction_audits_only_a_confirmed_success(
     assert [r["action"] for r in rows] == ["task.apply_correction"] * expected
     # #1696: only a confirmed handback is recorded in the DB.
     assert receipts == [tmp_path] * expected
+
+
+# -- #1858: APP_REQUIRE_CORRECTION_TRIAGE ------------------------------------
+
+
+@pytest.fixture
+def correction_calls(rows, monkeypatch, tmp_path):
+    monkeypatch.setattr(execution, "_resolve_task", lambda _t: (None, None, tmp_path))
+    calls: list[dict] = []
+
+    async def _apply(*_a, **kw):
+        calls.append(kw)
+        return {"success": True, "confirm": True}
+
+    async def _receipt(_spec_dir: Path) -> None:
+        pass
+
+    monkeypatch.setattr(execution, "apply_correction", _apply)
+    monkeypatch.setattr(execution, "record_handback_receipt", _receipt)
+    return calls
+
+
+def _flag(monkeypatch, value: bool):
+    import server.config
+
+    monkeypatch.setattr(server.config.settings, "REQUIRE_CORRECTION_TRIAGE", value)
+
+
+def test_triage_required_rejects_markdown_only(rows, correction_calls, monkeypatch):
+    from fastapi import HTTPException
+
+    _flag(monkeypatch, True)
+    req = execution.ApplyCorrectionRequest(fix_request_md="# fix", confirm=True)
+    with pytest.raises(HTTPException) as exc:
+        _run(execution.apply_task_correction("p:001", req, _access=USER))
+    assert exc.value.status_code == 422
+    assert correction_calls == [] and rows == []
+
+
+def test_triage_not_required_keeps_markdown_only(rows, correction_calls, monkeypatch):
+    _flag(monkeypatch, False)
+    req = execution.ApplyCorrectionRequest(fix_request_md="# fix", confirm=True)
+    _run(execution.apply_task_correction("p:001", req, _access=USER))
+    assert len(correction_calls) == 1
+
+
+@pytest.mark.parametrize("required", [True, False])
+def test_triage_request_passes_either_way(
+    rows, correction_calls, monkeypatch, required
+):
+    _flag(monkeypatch, required)
+    triage = {"contract_version": 1}
+    req = execution.ApplyCorrectionRequest(
+        fix_request_md="# fix", confirm=True, triage=triage
+    )
+    _run(execution.apply_task_correction("p:001", req, _access=USER))
+    assert [c["triage"] for c in correction_calls] == [triage]
