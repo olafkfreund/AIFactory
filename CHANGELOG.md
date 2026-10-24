@@ -1,5 +1,43 @@
 ## [Unreleased]
 
+### Security
+
+- **npm-bundled undici 6.29.1 and brotli floors.** The npm vendored-deps
+  overlay moves undici 6.28.1 -> 6.29.1 (CVE-2026-109869) and apk floors pull
+  `libbrotlicommon1`/`libbrotlidec1`/`libbrotlienc1` to 1.2.0-r7
+  (CVE-2026-111497), clearing the new HIGH CVEs the Trivy P0 gate reported.
+
+## 3.10.5 - 2026-10-22
+
+### Security
+
+- **Runtime image floors (#1841).** apk floors pull `curl` and
+  `libcurl-openssl4` to 8.23.0-r0 and `ca-certificates-bundle` to
+  20260909-r3, and certifi moves to 2026.10.19, clearing the new HIGH CVEs the
+  Trivy P0 gate reported.
+- **`apk del` no longer pretends to remove `py3-pip-wheel` (#1844,
+  TFactory#1350).** python-3.14 depends on it, so apk refused and exited 0. It
+  now ships deliberately, and the build asserts the pip packages that are
+  removed really are gone.
+
+### Fixed
+
+- **An unmeasured value is not a definite answer (#1557).** The merge baseline
+  and the bwrap probe no longer treat a missing measurement as a pass or a
+  fail.
+
+### Documentation
+
+- **Kubejob is the supported isolated host for trusted plans (#1846, closes
+  #1760 and #1724).** `host_isolated()` stays kubejob + durable store only; the
+  PID-namespaced sandbox is not widened, because a same-uid agent could read the
+  per-call GitHub token.
+
+### Chores
+
+- Dependabot ignores `chainguard/python` digests until the CPython 3.15 move
+  (#1843, tracked in #1842).
+
 ## 3.10.4 - 2026-10-20
 
 ### Security
