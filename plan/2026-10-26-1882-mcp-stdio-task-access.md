@@ -1,5 +1,5 @@
 ---
-status: approved
+status: draft
 issue: 1882
 spec: spec/2026-10-26-1882-mcp-stdio-task-access.md
 coders:
@@ -105,3 +105,21 @@ Approved additions (spec "Revision 1"):
    apply-correction proxy to `require_acw_access(TASK_WRITE_SCOPE)`, add it to
    the write parametrisation (`execution.apply_task_correction`).
    → verify by the targeted pytest + ratchets.
+
+## Revision 2: post-deploy verification
+
+Context: live `api_keys` has 0 rows, so all MCP callers use the legacy service
+token and pass the check (spec "Revision 2").
+
+6. After the release containing this PR is deployed, through the `aifactory`
+   MCP server (legacy token, as configured today):
+   - read: `task_list` (optionally with a known `project_id`) → succeeds and
+     returns the same tasks as before the deploy.
+   - write path: `task_stop` on an existing task that is **not** running →
+     the request passes the new authz dependency and reaches the handler,
+     which answers 404 `"Task is not running"`. That is the expected,
+     harmless outcome: nothing is stopped or mutated. A failure would be
+     401/403, or 404 `"Project not found"`, both from the authz layer.
+     (No write proxy is both harmless and 2xx; create-and-run, start,
+     recover, approve-plan and merge all mutate state.)
+   Rollback trigger: either call fails at the authz layer → revert the PR.
