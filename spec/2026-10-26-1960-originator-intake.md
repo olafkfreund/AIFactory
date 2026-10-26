@@ -1,5 +1,5 @@
 ---
-status: approved
+status: draft
 issue: 1960
 intent: intent/2026-10-26-1960-originator-intake.md
 ---
