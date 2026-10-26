@@ -303,9 +303,9 @@ def correction_calls(rows, monkeypatch, tmp_path):
 
 
 def _flag(monkeypatch, value: bool):
-    import server.config
+    from server.config import settings
 
-    monkeypatch.setattr(server.config.settings, "REQUIRE_CORRECTION_TRIAGE", value)
+    monkeypatch.setattr(settings, "REQUIRE_CORRECTION_TRIAGE", value)
 
 
 def test_triage_required_by_default(monkeypatch):
@@ -353,16 +353,16 @@ def test_triage_request_passes_either_way(
 @pytest.fixture
 def mcp_client(monkeypatch):
     """TestClient on the real ``/api/mcp-stdio`` router, legacy admin token."""
-    import server.config
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
+    from server.config import settings
 
     mcp_router = importlib.import_module("server.mcp_stdio.router")
     # It imported the sink by name, so the `rows` patch does not reach it.
     monkeypatch.setattr(
         mcp_router, "log_audit_event_bg", audit_service.log_audit_event_bg
     )
-    monkeypatch.setattr(server.config.settings, "API_TOKEN", "t-1874")
+    monkeypatch.setattr(settings, "API_TOKEN", "t-1874")
     app = FastAPI()
     app.include_router(mcp_router.router)
     return TestClient(app, headers={"Authorization": "Bearer t-1874"})

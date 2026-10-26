@@ -11,8 +11,10 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from runners.github.providers.protocol import ProviderType
 
 _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT / "apps" / "web-server"))
@@ -130,7 +132,7 @@ async def test_labels_override_payload_labels(project):
 
 
 async def test_provider_fetch_path(project, monkeypatch):
-    _, _ = project
+    tmp_path, _ = project
 
     seen = {}
 
@@ -146,6 +148,7 @@ async def test_provider_fetch_path(project, monkeypatch):
             "url": "u",
             "state": "open",
             "labels": ["factory:medium"],
+            "originator": "gitlab:octocat",
         }
 
     monkeypatch.setattr(from_issue, "_fetch_issue_via_provider", _fake_fetch)
@@ -155,8 +158,71 @@ async def test_provider_fetch_path(project, monkeypatch):
     res = await create_from_issue(req)
     assert res["tier"] == "medium"
     assert res["issue_number"] == 42
+    assert _requirements(tmp_path, res["spec_id"])["originator"] == "gitlab:octocat"
     # The declared host reaches the fetch, qualified. It used to be dropped.
     assert seen["repo_ref"] == "gitlab:platform/pipelines"
+
+
+@pytest.mark.parametrize(
+    ("provider_type", "expected"),
+    [
+        (ProviderType.GITLAB, "gitlab:octocat"),
+        (ProviderType.GITHUB, "github:octocat"),
+        (None, None),  # unknown provider: no guessed namespace
+    ],
+)
+async def test_provider_fetch_labels_author_with_fetching_provider(
+    monkeypatch, provider_type, expected
+):
+    from server.routes import github
+
+    async def fetch_issue(_number):
+        return SimpleNamespace(
+            number=42,
+            title="Issue",
+            body="",
+            url="",
+            state="open",
+            labels=[],
+            author="octocat",
+        )
+
+    monkeypatch.setattr(
+        github,
+        "_get_project_provider",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            fetch_issue=fetch_issue, provider_type=provider_type
+        ),
+    )
+    issue = await from_issue._fetch_issue_via_provider("p", 42)
+    assert issue["originator"] == expected
+
+
+@pytest.mark.parametrize(
+    "author",
+    [
+        {"author": {"login": "alice"}},
+        {"user": {"login": "bob"}},
+        {"author": "carol"},
+        {"originator": "github:mallory"},
+        {},
+    ],
+)
+async def test_payload_author_is_not_trusted(project, author):
+    """A caller-supplied payload can name anyone: it never sets the originator."""
+    tmp_path, _ = project
+    # An ownerless acw_ key: the service principal the #1898 access check
+    # passes without a DB query, so the db is a placeholder it never touches.
+    service_key = {"api_key_id": "k1", "is_service": True}
+    raw_request = SimpleNamespace(state=SimpleNamespace(user=service_key))
+    res = await create_from_issue(
+        FromIssueRequest(project_id="p", payload={"title": "Attribution", **author}),
+        raw_request,
+        db=SimpleNamespace(),
+    )
+    requirements = _requirements(tmp_path, res["spec_id"])
+    assert requirements["originator"] is None
+    assert requirements["agent_identity"] == "agent:aifactory/k1"
 
 
 async def test_redelivered_issue_is_deduplicated(project):
