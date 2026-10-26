@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1431
 intent: intent/2026-10-26-1431-correction-triage-default-on.md
 ---
