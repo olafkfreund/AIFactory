@@ -1,5 +1,66 @@
 ## [Unreleased]
 
+## 3.10.10 - 2026-10-26
+
+Two behaviour changes: the stdio-MCP task proxies now enforce project access,
+and an `acw_` key can no longer mint keys.
+One alembic migration (`7a1f3c9e2b50`, adds `api_keys.autonomy_ceiling`).
+
+### Changed
+
+- **MCP task proxies enforce project access (#1885, closes #1882; #1891).**
+  `/api/mcp-stdio/...` routes now check the `acw_` key owner's project role as
+  the REST routes do, after the scope check. Write routes (create-and-run,
+  start, stop, recover, approve-plan, apply-correction, create-pr, merge) need
+  `member`; read routes (task details, status, logs, diff) need `viewer` and
+  return 403/404 for a foreign project. `/projects`, `/tasks` and
+  `/tasks/running` are filtered to the key owner's orgs. The legacy service
+  token and an `acw_` key with no user stay service principals and are
+  unaffected.
+- **An `acw_` key can no longer mint keys (#1887).** `POST /api/keys` with an
+  `acw_` key gets a 403; mint keys with a user session.
+
+### Added
+
+- **Autonomy ceiling and agent identity on `acw_` keys (#1887,
+  Factory#1960 slice 1).** New nullable `ApiKey.autonomy_ceiling`
+  (`low`/`medium`/`hard`, no default) via alembic `7a1f3c9e2b50`, and a derived
+  `agent_identity` (`agent:aifactory/<key_id>`). The key create and list routes
+  accept and return them. Only an org admin can set a ceiling (403
+  otherwise). Not wired into the merge path yet, so no merge
+  decision changes.
+- **MCP `task_apply_correction` passes `triage` through (#1881, closes #1874).**
+  Adds the missing `POST /api/mcp-stdio/tasks/{task_id}/apply-correction`
+  proxy route (gated by `task:write`), so the MCP tool works again under the
+  3.10.9 triage default. A 422 without triage now explains both fixes.
+- **TFactory ingest forwards the pre-overlay signed contract (#1883,
+  TFactory#1432).** Sent as top-level `signed_contract` for signed, non-held
+  contracts; `contract` is unchanged. Warn mode only on the TFactory side.
+
+### Fixed
+
+- **Completion webhook sends `APP_API_TOKEN` to CFactory (#1888,
+  CFactory#501).** Completion and outbox POSTs to `/api/events` carry
+  `Authorization: Bearer $APP_API_TOKEN`, only when the target matches the
+  configured webhook origin. No token, no header. CFactory is in warn mode.
+- **`GET /api/tasks?project_id=<unknown>` returns 404, not 500 (#1890, closes
+  #1889).** Also fixes the MCP `task_list` proxy.
+- **SBOM attestation fits rekor's size limit (#1884, closes #1879).** Each
+  image's SPDX SBOM is attested without file entries (packages kept), after
+  the 3.10.9 -nix attestation exceeded rekor's 24 MiB request limit.
+
+### CI and tests
+
+- P0 acceptance image build is cached in a gha layer cache (#1880, closes
+  #1875).
+- Test pins the provider credentials that reach dispatched Jobs (#1886,
+  Factory#1959).
+
+### Chores
+
+- Baked agent-CLI pins: claude-code 2.1.310, gemini-cli 0.65.0, codex 0.164.0
+  (#1871).
+
 ## 3.10.9 - 2026-10-26
 
 Two behaviour changes: the runtime image moves to CPython 3.15, and
