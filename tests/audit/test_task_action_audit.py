@@ -345,3 +345,54 @@ def test_triage_request_passes_either_way(
     )
     _run(execution.apply_task_correction("p:001", req, _access=USER))
     assert [c["triage"] for c in correction_calls] == [triage]
+
+
+# -- #1874: the stdio-MCP proxy reaches apply-correction ---------------------
+
+
+@pytest.fixture
+def mcp_client(monkeypatch):
+    """TestClient on the real ``/api/mcp-stdio`` router, legacy admin token."""
+    import server.config
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    mcp_router = importlib.import_module("server.mcp_stdio.router")
+    # It imported the sink by name, so the `rows` patch does not reach it.
+    monkeypatch.setattr(
+        mcp_router, "log_audit_event_bg", audit_service.log_audit_event_bg
+    )
+    monkeypatch.setattr(server.config.settings, "API_TOKEN", "t-1874")
+    app = FastAPI()
+    app.include_router(mcp_router.router)
+    return TestClient(app, headers={"Authorization": "Bearer t-1874"})
+
+
+_PROXY_URL = "/api/mcp-stdio/tasks/p:001/apply-correction"
+
+
+def test_proxy_apply_correction_with_triage_reaches_route(
+    rows, correction_calls, mcp_client, monkeypatch
+):
+    _flag(monkeypatch, True)
+    triage = {
+        "contract_version": "handback-triage-1",
+        "source": "triage",
+        "failing_tests": [{"test_id": "t::login", "reason": "HTTP 500"}],
+    }
+    r = mcp_client.post(
+        _PROXY_URL, json={"fix_request_md": "# fix", "confirm": True, "triage": triage}
+    )
+    assert r.status_code == 200, r.text
+    assert [c["triage"] for c in correction_calls] == [triage]
+    assert [row["action"] for row in rows] == ["mcp.task.apply_correction"]
+
+
+def test_proxy_apply_correction_without_triage_is_422(
+    rows, correction_calls, mcp_client, monkeypatch
+):
+    _flag(monkeypatch, True)
+    r = mcp_client.post(_PROXY_URL, json={"fix_request_md": "# fix", "confirm": True})
+    assert r.status_code == 422
+    assert "APP_REQUIRE_CORRECTION_TRIAGE" in r.text
+    assert correction_calls == [] and rows == []
