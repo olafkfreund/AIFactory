@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1903
 intent: intent/2026-10-26-1903-cors-origins-parsing.md
 ---
