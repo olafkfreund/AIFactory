@@ -94,48 +94,61 @@ def load_policy() -> dict[str, Any] | None:
     return data
 
 
+_warned_modes: set[str] = set()
+
+
 def _route_mode() -> str:
     raw = os.environ.get(ROUTE_RESOLUTION_ENV, "").strip().lower() or "off"
     if raw not in _ROUTE_MODES:
-        logger.warning(
-            "%s=%r is not off|shadow|on; treating as off", ROUTE_RESOLUTION_ENV, raw
-        )
+        if raw not in _warned_modes:  # once per process per value, not per call
+            _warned_modes.add(raw)
+            logger.warning(
+                "%s=%r is not off|shadow|on; treating as off", ROUTE_RESOLUTION_ENV, raw
+            )
         return "off"
     return raw
 
 
-def _catalog_model(tier: str, stage: str) -> str | None:
-    """The catalog's model for ``tier`` at ``stage``, or None when inert/no pick.
+def _catalog_picks(tiers: list[str], stage: str) -> dict[str, str | None]:
+    """The catalog's model per route tier at ``stage``; empty when inert.
 
-    Same pick rule as PFactory's cost_router: the hub router over Claude-only,
-    available entries (#779/#826), at the tier's capability class.
+    Loads the catalog once for all ``tiers``. Same pick rule as PFactory's
+    cost_router: the hub router over Claude-only, available entries
+    (#779/#826), at each tier's capability class. Any failure (unreadable file,
+    malformed entry) is inert: the caller keeps its default model.
     """
     path = os.environ.get(CATALOG_PATH_ENV, "").strip()
-    cls = _TIER_CLASS.get(tier)
-    if not path or cls is None:
-        return None
+    if not path:
+        return {}
     # Lazy, only when resolution is enabled: keeps this module stdlib-only for
     # the token-attribution path. import_module because mypy, run from the repo
     # root by the CQ ratchet, cannot resolve backend-local packages.
     crc = importlib.import_module("core.cost_router_core")
-
-    # shortcut: re-read per call (hot reload, no cache); add an mtime cache if it shows in profiles.
-    try:
-        catalog = crc.load_catalog(path)
-    except (OSError, ValueError):
-        logger.warning(
-            "model catalog %r unreadable or invalid; route resolution inert", path
-        )
-        return None
-    candidates = {
-        mid: e
-        for mid, e in catalog.items()
-        if e.get("provider") == "claude" and e.get("available") is not False
-    }
     role = _STAGE_ROLE.get(stage, stage)
-    # Any positive token estimate: only the price ratio orders metered models.
-    pick: str | None = crc.cheapest_capable_model(role, cls, None, (1, 1), candidates)
-    return pick
+    # shortcut: re-read per resolution (hot reload, no cache); add an mtime
+    # cache if it shows in profiles.
+    try:
+        candidates = {
+            mid: e
+            for mid, e in crc.load_catalog(path).items()
+            if e.get("provider") == "claude" and e.get("available") is not False
+        }
+        # Any positive token estimate: only the price ratio orders metered models.
+        return {
+            t: crc.cheapest_capable_model(
+                role, _TIER_CLASS[t], None, (1, 1), candidates
+            )
+            for t in tiers
+            if t in _TIER_CLASS
+        }
+    except Exception as exc:  # noqa: BLE001 - a bad catalog must never break routing
+        # Exception type only: never log catalog contents.
+        logger.warning(
+            "model catalog %r unusable (%s); route resolution inert",
+            path,
+            type(exc).__name__,
+        )
+        return {}
 
 
 def _tier_model(tier: str, stage: str) -> str | None:
@@ -144,7 +157,7 @@ def _tier_model(tier: str, stage: str) -> str | None:
     mode = _route_mode()
     if mode == "off":
         return default
-    picked = _catalog_model(tier, stage)
+    picked = _catalog_picks([tier], stage).get(tier)
     if mode == "shadow":
         logger.info(
             "route resolution (shadow): stage %s tier %s -> catalog %s (using default %s)",
@@ -243,7 +256,9 @@ def contract_route(
 
 
 def tier_for_model(
-    model: str | None, metadata: dict[str, Any] | None = None
+    model: str | None,
+    metadata: dict[str, Any] | None = None,
+    stage: str | None = None,
 ) -> str | None:
     """Reverse lookup: the tier whose model resolves to ``model``.
 
@@ -271,10 +286,10 @@ def tier_for_model(
             # Reverse-map the catalog pick too, so the stamp matches what ran.
             # Strongest first: a floor pick can serve several tiers, and the
             # highest tier it serves is its own class.
-            tiers = {
-                t: _catalog_model(t, "coding") or m
-                for t, m in reversed(DEFAULT_TIERS.items())
-            }
+            # ``stage`` gives the real role; unknown (None) reads as coding.
+            order = list(reversed(DEFAULT_TIERS))
+            picks = _catalog_picks(order, stage or "coding")
+            tiers = {t: picks.get(t) or DEFAULT_TIERS[t] for t in order}
     # Lazy import: phase_config imports this module for resolution, so the
     # shorthand resolver must be imported at call time to avoid a cycle.
     from phase_config import resolve_model_id  # noqa: PLC0415

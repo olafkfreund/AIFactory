@@ -97,3 +97,13 @@ These came up during implementation.
   `scripts/gen_autonomy_matrix.py` regenerated
   `docs/docs/compliance/autonomy-matrix.md` and
   `docs/static/compliance/autonomy-matrix.json` (CI `--check`).
+- **Review fixes (Opus review of #1896).**
+  - `_catalog_model` became `_catalog_picks(tiers, stage)`. It loads the
+    catalog once per resolution. Loading, filtering and picking are all inside
+    one `try/except Exception`, so a malformed entry is inert: the warning
+    names the exception type only, never the catalog contents.
+  - `tier_for_model` takes an optional `stage`. `agents/token_attribution.py`
+    passes the worker's phase, so the reverse map uses the real role.
+  - The unknown-mode warning is logged once per process per value.
+  - New test: a parseable catalog with malformed entries returns the default
+    model in both `shadow` and `on`. It fails against the previous commit.

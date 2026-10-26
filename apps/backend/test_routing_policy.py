@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import routing_policy
 from agents.token_attribution import PromptSegments, TurnUsage, record_turn
 from phase_config import (
     DEFAULT_PHASE_MODELS,
@@ -60,6 +61,7 @@ def _no_ambient_policy(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(ENV_VAR, raising=False)
     monkeypatch.delenv(ROUTE_RESOLUTION_ENV, raising=False)
     monkeypatch.delenv(CATALOG_PATH_ENV, raising=False)
+    monkeypatch.setattr(routing_policy, "_warned_modes", set())
 
 
 # --------------------------------------------------------------------------- #
@@ -628,7 +630,9 @@ def test_route_resolution_on_picks_catalog_model(
     monkeypatch.setenv(ENV_VAR, json.dumps({"stages": {"planning": "frontier"}}))
     assert policy_route("planning") == ("claude-test-frontier", "frontier")
     # The routing_tier stamp still recognises the model that actually ran.
-    assert tier_for_model("claude-test-frontier", _FRONTIER_META) == "frontier"
+    assert (
+        tier_for_model("claude-test-frontier", _FRONTIER_META, "planning") == "frontier"
+    )
 
 
 @pytest.mark.parametrize("catalog", ["", "missing.json", "bad.json"])
@@ -660,3 +664,32 @@ def test_route_resolution_on_policy_tiers_map_wins(
         ENV_VAR, json.dumps({"tiers": {"frontier": "claude-opus-4-8"}, "stages": {}})
     )
     assert contract_route("planning", _FRONTIER_META) == ("claude-opus-4-8", "frontier")
+
+
+@pytest.mark.parametrize("mode", ["shadow", "on"])
+def test_route_resolution_malformed_entry_keeps_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    bad = {
+        "claude-bad": {
+            "provider": "claude",
+            "class": "frontier",
+            "roles": 7,
+            "price": "x",
+        },
+        "claude-bad-rate": {
+            "provider": "claude",
+            "class": "frontier",
+            "roles": ["planning"],
+            "price": {"mode": "metered", "in_per_mtok": "n/a", "out_per_mtok": 1},
+        },
+    }
+    path = tmp_path / "model-catalog.json"
+    path.write_text(json.dumps({"models": bad}))
+    monkeypatch.setenv(CATALOG_PATH_ENV, str(path))
+    monkeypatch.setenv(ROUTE_RESOLUTION_ENV, mode)
+    assert contract_route("planning", _FRONTIER_META) == ("opus", "frontier")
+    assert (
+        get_phase_model(_spec_dir(tmp_path, _FRONTIER_META), "planning")
+        == _DEFAULT_FRONTIER
+    )
