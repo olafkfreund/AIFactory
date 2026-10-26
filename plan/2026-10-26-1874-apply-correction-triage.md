@@ -85,6 +85,11 @@ Approved decisions (from the spec):
    Strict count is back to 80; the repo ruff config still passes. The I001
    at line 25 already existed on `origin/dev` and is not touched: the strict
    and repo configs disagree on it.
+   Deviation 2 (CI on 66e62edd): the mypy --strict ratchet rose 42 -> 44
+   for `router.py`, so the new route is now typed
+   (`key: AuthenticatedKey | _LegacyAdminKey`, `-> dict[str, Any]`); the
+   generated `apps/web-server/openapi.yaml` and `openapi-optin.yaml` are
+   regenerated with `scripts/generate-openapi-spec.py` (base and `--opt-in`).
 5. `tests/audit/test_task_action_audit.py` (end of file): `TestClient` on the
    real mcp-stdio router with the legacy admin token, reusing the
    `rows` / `correction_calls` / `_flag` helpers: valid triage → 200, triage

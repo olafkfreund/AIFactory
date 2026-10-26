@@ -25,6 +25,7 @@ UI-driven actions in the audit log.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 from fastapi import Request as FastAPIRequest
@@ -330,8 +331,8 @@ async def proxy_approve_plan(
 async def proxy_apply_correction(
     task_id: str,
     request: FastAPIRequest,
-    key=_TASK_WRITE,
-):
+    key: AuthenticatedKey | _LegacyAdminKey = _TASK_WRITE,
+) -> dict[str, Any]:
     """Proxy for the MCP ``task_apply_correction`` tool (#1874).
 
     Delegates to the REST route so its triage gate and validation run unchanged.
@@ -346,7 +347,7 @@ async def proxy_apply_correction(
         body = ApplyCorrectionRequest(**await _read_json_body(request))
     except ValidationError as exc:  # a bad body is a 422, not a 500
         raise RequestValidationError(exc.errors()) from exc
-    result = await apply_task_correction(task_id, body)
+    result: dict[str, Any] = await apply_task_correction(task_id, body)
     # Same rule as the REST route: a preview or a rejected triage is not an action.
     if result.get("success") and result.get("confirm"):
         await _audit_mcp_write(
