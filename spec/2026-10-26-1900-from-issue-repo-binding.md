@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1900
 intent: intent/2026-10-26-1900-from-issue-repo-binding.md
 ---
