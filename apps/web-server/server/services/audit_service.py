@@ -103,6 +103,7 @@ ACTION_MCP_TASK_START = "mcp.task.start"
 ACTION_MCP_TASK_STOP = "mcp.task.stop"
 ACTION_MCP_TASK_RECOVER = "mcp.task.recover"
 ACTION_MCP_TASK_APPROVE_PLAN = "mcp.task.approve_plan"
+ACTION_MCP_TASK_APPLY_CORRECTION = "mcp.task.apply_correction"
 ACTION_MCP_TASK_CREATE_PR = "mcp.task.create_pr"
 ACTION_MCP_TASK_MERGE = "mcp.task.merge"
 

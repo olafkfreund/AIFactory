@@ -1,6 +1,6 @@
 """Proxy router for the stdio-MCP control plane (Issue #154).
 
-Re-exposes the 15 operations the stdio MCP client exercises today,
+Re-exposes the 16 operations the stdio MCP client exercises today,
 under ``/api/mcp-stdio/*`` — each route gated by ``acw_`` key + scope.
 
 Every handler delegates to the same service the regular REST routes
@@ -29,15 +29,18 @@ UI-driven actions in the audit log.
 from __future__ import annotations
 
 import json
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
 from fastapi import Request as FastAPIRequest
+from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.database.engine import get_db
 from server.project_registry import load_projects
 from server.routes.project_authz import accessible_org_ids
+from server.services.audit_service import ACTION_MCP_TASK_APPLY_CORRECTION
 
 from ..mcp_remote.auth import AuthenticatedKey
 from ..services.audit_service import (
@@ -63,6 +66,9 @@ from .auth import (
 )
 
 router = APIRouter(prefix="/api/mcp-stdio", tags=["MCP (stdio)"])
+
+# Module-level so the route default is not a call (B008).
+_TASK_WRITE = Depends(require_acw_scope(TASK_WRITE_SCOPE))
 
 
 async def _read_json_body(request: FastAPIRequest) -> dict:
@@ -350,6 +356,40 @@ async def proxy_approve_plan(
         task_id,
         request,
     )
+    return result
+
+
+@router.post("/tasks/{task_id}/apply-correction")
+async def proxy_apply_correction(
+    task_id: str,
+    request: FastAPIRequest,
+    key: AuthenticatedKey | _LegacyAdminKey = _TASK_WRITE,
+) -> dict[str, Any]:
+    """Proxy for the MCP ``task_apply_correction`` tool (#1874).
+
+    Delegates to the REST route so its triage gate and validation run unchanged.
+    """
+    # Lazy, like the sibling proxies: a top-level import is an import cycle.
+    from server.routes.execution import (  # noqa: PLC0415
+        ApplyCorrectionRequest,
+        apply_task_correction,
+    )
+
+    try:
+        body = ApplyCorrectionRequest(**await _read_json_body(request))
+    except ValidationError as exc:  # a bad body is a 422, not a 500
+        raise RequestValidationError(exc.errors()) from exc
+    result: dict[str, Any] = await apply_task_correction(task_id, body)
+    # Same rule as the REST route: a preview or a rejected triage is not an action.
+    if result.get("success") and result.get("confirm"):
+        await _audit_mcp_write(
+            key,
+            ACTION_MCP_TASK_APPLY_CORRECTION,
+            "task",
+            task_id,
+            request,
+            details={"source": body.source},
+        )
     return result
 
 
