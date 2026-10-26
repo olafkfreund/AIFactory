@@ -28,6 +28,7 @@ import json
 import logging
 import os
 import sys
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -132,18 +133,41 @@ def _declared_repo(request: FromIssueRequest) -> str:
     return qualify_repo(provider, project)
 
 
-def _repo_path(value: str | None) -> str:
-    """``owner/repo`` (or ``group/sub/project``) from a repo path or git URL.
+# Hosts whose provider is unambiguous; self-hosted hosts derive nothing.
+_HOST_PROVIDER = {
+    "github.com": "github",
+    "gitlab.com": "gitlab",
+    "dev.azure.com": "azure_devops",
+}
+_PROVIDER_HOST = {v: k for k, v in _HOST_PROVIDER.items()}
 
-    Lowercased, without ``.git``, slashes at either end, or Azure's ``/_git/``.
+
+def _repo_id(value: str | None, base: tuple[str, str] = ("", "")) -> tuple[str, str]:
+    """``(host, path)`` of a repo path or git URL; host is "" for a bare path.
+
+    Lowercased path without ``.git`` or edge slashes. Azure forms collapse to
+    ``dev.azure.com`` + ``org/project/repo``. ``base`` is the project's own
+    ``(host, subpath)``: a self-hosted instance under a subpath drops it.
     """
     raw = (value or "").strip()
+    host = ""
     if "://" in raw:
-        raw = urlparse(raw).path
-    elif "@" in raw and ":" in raw:  # scp-like git@host:owner/repo.git
-        raw = raw.partition(":")[2]
-    path = raw.strip("/").removesuffix(".git").replace("/_git/", "/")
-    return path.lower()
+        url = urlparse(raw)
+        host, raw = url.hostname or "", url.path
+    elif "@" in raw.partition(":")[0]:  # scp-like git@host:owner/repo.git
+        user_host, _, raw = raw.partition(":")
+        host = user_host.rpartition("@")[2]
+    host = host.lower()
+    path = raw.strip("/").removesuffix(".git").lower()
+    if host == "ssh.dev.azure.com" or host.startswith("vs-ssh."):
+        host, path = "dev.azure.com", path.removeprefix("v3/")
+    elif host.endswith(".visualstudio.com"):  # org.visualstudio.com/proj/_git/repo
+        host, path = "dev.azure.com", f"{host.split('.')[0]}/{path}"
+    path = path.replace("/_git/", "/")
+    base_host, base_path = base
+    if base_path and host == base_host:
+        path = path.removeprefix(f"{base_path}/")
+    return host, path
 
 
 def _origin_url(project_path: Path) -> str:
@@ -152,28 +176,59 @@ def _origin_url(project_path: Path) -> str:
     return result.get("output", "") if result["success"] else ""
 
 
-def _project_repos(project_id: str, project_path: Path) -> tuple[str | None, set[str]]:
-    """The project's explicit ``gitProvider`` (or None) and its own repo paths."""
+@dataclass(frozen=True)
+class _OwnRepo:
+    """What a project says its own repository is (#1900)."""
+
+    provider: str | None  # gitProvider, else derived from the own host
+    paths: frozenset[str]
+    hosts: frozenset[str]
+    base: tuple[str, str]  # (host, subpath) of gitBaseUrl
+
+
+def _project_repos(project_id: str, project_path: Path) -> _OwnRepo:
+    """The project's own repo: ``gitRepo``, ``clonedFrom``, then checkout origin."""
     project = project_registry.load_projects().get(project_id) or {}
     settings = project.get("settings") or {}
+    base = _repo_id(settings.get("gitBaseUrl"))
     candidates = (
         settings.get("gitRepo"),
         project.get("clonedFrom"),
         _origin_url(project_path),
     )
-    own = {_repo_path(c) for c in candidates if c}
-    provider = settings.get("gitProvider")
-    return (provider.strip().lower() if provider else None), own - {""}
+    own = [_repo_id(c, base) for c in candidates if c]
+    hosts = [h for h, _ in own if h] + ([base[0]] if base[0] else [])
+    provider = (settings.get("gitProvider") or "").strip().lower() or next(
+        (_HOST_PROVIDER[h] for h in hosts if h in _HOST_PROVIDER),
+        None if hosts else "github",  # nothing hosted: what the provider defaults to
+    )
+    if not hosts and provider in _PROVIDER_HOST:
+        hosts = [_PROVIDER_HOST[provider]]
+    return _OwnRepo(
+        provider=provider,
+        paths=frozenset(p for _, p in own if p),
+        hosts=frozenset(hosts),
+        base=base,
+    )
 
 
 def _check_declared_repo(project_id: str, project_path: Path, repo_ref: str) -> None:
-    """#1900: a declared repo must be the project's own (its gitToken goes there)."""
+    """#1900: a declared repo must be the project's own (its gitToken goes there).
+
+    A declared host must be the project's host; a bare ``owner/repo`` compares
+    by path. The declared provider must match the project's.
+    """
     declared = parse_repo_ref(repo_ref)
     if declared is None:
         return
-    host, path = declared
-    configured, own = _project_repos(project_id, project_path)
-    if _repo_path(path) not in own or (configured and configured != host):
+    prefix, project = declared
+    own = _project_repos(project_id, project_path)
+    host, path = _repo_id(project, own.base)
+    if (
+        path not in own.paths
+        or (host and host not in own.hosts)
+        or (own.provider and prefix != own.provider)
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"repo {repo_ref!r} is not this project's repository",

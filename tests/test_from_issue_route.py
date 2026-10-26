@@ -40,7 +40,12 @@ def project(tmp_path, monkeypatch):
     monkeypatch.setattr(
         from_issue,
         "_project_repos",
-        lambda _pid, _path: (None, {"platform/pipelines", "a/x", "b/y"}),
+        lambda _pid, _path: from_issue._OwnRepo(
+            provider=None,
+            paths=frozenset({"platform/pipelines", "a/x", "b/y"}),
+            hosts=frozenset(),
+            base=("", ""),
+        ),
     )
     return tmp_path, started
 
