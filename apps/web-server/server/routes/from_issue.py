@@ -27,6 +27,7 @@ import contextlib
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -36,6 +37,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
+from server import project_registry
 from server.error_ref import client_error
 from server.services.completion import correlation_key, read_issue_repo
 from server.utils.subprocess_env import child_env
@@ -148,9 +150,12 @@ def _repo_path(value: str | None) -> str:
 
 def _origin_url(project_path: Path) -> str:
     """The checkout's ``origin`` URL; "" when it cannot be read (local, no network)."""
+    git = shutil.which("git")
+    if git is None:
+        return ""
     try:
         result = subprocess.run(
-            ["git", "remote", "get-url", "origin"],
+            [git, "remote", "get-url", "origin"],
             cwd=project_path,
             capture_output=True,
             text=True,
@@ -165,9 +170,7 @@ def _origin_url(project_path: Path) -> str:
 
 def _project_repos(project_id: str, project_path: Path) -> tuple[str | None, set[str]]:
     """The project's explicit ``gitProvider`` (or None) and its own repo paths."""
-    from server.project_registry import load_projects
-
-    project = load_projects().get(project_id) or {}
+    project = project_registry.load_projects().get(project_id) or {}
     settings = project.get("settings") or {}
     candidates = (
         settings.get("gitRepo"),
