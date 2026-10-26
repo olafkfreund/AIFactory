@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: olafkfreund/Factory#312
 intent: intent/2026-10-26-312-wildcard-cors-optin.md
 ---
