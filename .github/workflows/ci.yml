@@ -911,7 +911,8 @@ jobs:
   docker-acceptance:
     name: docker (P0 acceptance)
     runs-on: ubuntu-latest
-    # Above the 1800 s cold image build (tests/docker/helpers.py) plus the scans.
+    # Above a cold-cache image build (~1575 s since CPython 3.15, #1875) plus
+    # the scans. A warm gha cache reuses the py-build stage.
     timeout-minutes: 50
     # Docker is preinstalled on ubuntu-latest runners. Tests opt-in via
     # `-m docker`; all are skipped until P0.1+ implementations land,
@@ -927,6 +928,29 @@ jobs:
         # the test inspects manifests, it doesn't cross-build. Cross-arch
         # building happens in release.yml at tag push time only.
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Same daily cache-bust as image-build.yml (CFactory#440): without it the
+      # cached `apk upgrade` layer never refreshes and Trivy scans stale packages.
+      - name: Compute security-refresh token
+        run: echo "SECURITY_REFRESH=$(date -u +%Y-%m-%d)" >> "$GITHUB_ENV"
+
+      # Build the image the P0 tests (and the Trivy/Syft gates) use, with its own
+      # gha layer cache, so the py-build stage's CPython 3.15 source builds
+      # (lxml, xmlsec, real-ladybug, ...) are not redone every run (#1875).
+      # The fixture reuses this tag only because AIFACTORY_P0_PREBUILT_IMAGE=1.
+      - name: Build P0 image (gha layer cache)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile
+          target: runtime
+          push: false
+          load: true
+          tags: aifactory:p0-test
+          build-args: |
+            SECURITY_REFRESH=${{ env.SECURITY_REFRESH }}
+          cache-from: type=gha,scope=p0-acceptance
+          cache-to: type=gha,mode=max,scope=p0-acceptance
 
       # Trivy is PINNED, not `latest` (Factory#664). `latest` means the scanner
       # changes without a commit, so a scan verdict is not attributable to
@@ -983,5 +1007,6 @@ jobs:
       - name: Pytest docker acceptance
         env:
           CI: "true"
+          AIFACTORY_P0_PREBUILT_IMAGE: "1"
         run: apps/backend/.venv/bin/pytest tests/docker/ -m docker -v
       # Frontend lint is now a dedicated blocking job (frontend-quality, #647).
