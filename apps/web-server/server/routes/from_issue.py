@@ -31,13 +31,16 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.error_ref import client_error
 from server.services.completion import correlation_key, read_issue_repo
 
+from ..database.engine import get_db
 from ..tenancy import resolve_tenant, stamp_spec_tenant
+from .project_authz import authorize_project_for_user
 
 # Add the backend dir to sys.path so backend seams resolve (mirrors execution.py).
 _BACKEND_DIR = Path(__file__).resolve().parents[3] / "backend"
@@ -289,9 +292,18 @@ def _set_task_metadata_flag(spec_dir: Path, key: str, value: object) -> None:
 async def create_from_issue(
     request: FromIssueRequest,
     raw_request: Request = None,  # noqa: RUF013 — FastAPI injects; None lets direct callers omit
+    db: AsyncSession = Depends(get_db),
 ):
     """Ingest a labelled issue and start a tier-driven governed build."""
     from .tasks import get_next_spec_id
+
+    # #1898: project_id is in the body, so require_project_access (path/query)
+    # cannot see it; apply its shared rule here. Service token and auth-disabled
+    # pass; raw_request is None only for in-process callers (#1466).
+    if raw_request is not None:
+        await authorize_project_for_user(
+            getattr(raw_request.state, "user", None), request.project_id, db, "member"
+        )
 
     projects_path = _resolve_project_path(request.project_id)
     if projects_path is None:
