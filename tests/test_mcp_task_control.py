@@ -575,3 +575,54 @@ async def test_apply_correction_posts_to_route(tools_by_name, monkeypatch):
     assert body["fix_request_md"] == "Login returns 500; fix it."
     assert body["source"] == "triage"
     assert body["confirm"] is True
+
+
+async def test_apply_correction_forwards_triage_only_when_given(
+    tools_by_name, monkeypatch
+):
+    captured: list = []
+    _make_request_stub(monkeypatch, {"success": True}, captured)
+    args = {
+        "project_id": "demo",
+        "spec_id": "001-login",
+        "fix_request_md": "Fix login",
+        "confirm": True,
+    }
+    triage = {
+        "contract_version": "handback-triage-1",
+        "source": "triage",
+        "failing_tests": [{"test_id": "login", "reason": "HTTP 500"}],
+        "manifest_hash": "abc",
+        "correlation_key": "run-1",
+    }
+
+    await tools_by_name["task_apply_correction"]({**args, "triage": triage})
+    await tools_by_name["task_apply_correction"](args)
+
+    assert captured[0]["kwargs"]["json"]["triage"] == triage
+    assert "triage" not in captured[1]["kwargs"]["json"]
+
+
+async def test_apply_correction_422_without_triage_explains_requirement(
+    tools_by_name, monkeypatch
+):
+    async def stub(method, path, **kwargs):
+        raise hc.MCPHTTPError(
+            "AIFactory web-server returned HTTP 422: triage report missing"
+        )
+
+    monkeypatch.setattr("agents.tools_pkg.tools.task_control.request", stub)
+    result = await tools_by_name["task_apply_correction"](
+        {
+            "project_id": "demo",
+            "spec_id": "001-login",
+            "fix_request_md": "Fix login",
+            "confirm": True,
+        }
+    )
+
+    assert result["isError"] is True
+    text = _content_text(result)
+    assert "pass triage" in text
+    assert "APP_REQUIRE_CORRECTION_TRIAGE" in text
+    assert "triage report missing" in text
