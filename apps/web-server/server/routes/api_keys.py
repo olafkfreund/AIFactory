@@ -11,6 +11,7 @@ import hashlib
 import logging
 import secrets
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -93,6 +94,10 @@ class CreateApiKeyRequest(BaseModel):
         le=365,
         description="Optional expiration in days from now (max 365)",
     )
+    autonomy_ceiling: Literal["low", "medium", "hard"] | None = Field(
+        default=None,
+        description="Optional most autonomous tier this key's agent may act at",
+    )
 
 
 class ApiKeyResponse(BaseModel):
@@ -104,6 +109,8 @@ class ApiKeyResponse(BaseModel):
     last_used_at: datetime | None
     expires_at: datetime | None
     created_at: datetime
+    autonomy_ceiling: str | None = None
+    agent_identity: str | None = None
 
     class Config:
         from_attributes = True
@@ -176,6 +183,7 @@ async def create_api_key(
         name=body.name,
         scopes=scopes_str,
         expires_at=expires_at,
+        autonomy_ceiling=body.autonomy_ceiling,
     )
     db.add(api_key)
     await db.commit()
@@ -195,6 +203,8 @@ async def create_api_key(
         last_used_at=api_key.last_used_at,
         expires_at=api_key.expires_at,
         created_at=api_key.created_at,
+        autonomy_ceiling=api_key.autonomy_ceiling,
+        agent_identity=api_key.agent_identity,
         raw_key=raw_key,
     )
 
@@ -231,6 +241,8 @@ async def list_api_keys(
             last_used_at=key.last_used_at,
             expires_at=key.expires_at,
             created_at=key.created_at,
+            autonomy_ceiling=key.autonomy_ceiling,
+            agent_identity=key.agent_identity,
         )
         for key in keys
     ]
