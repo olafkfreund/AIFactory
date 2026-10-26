@@ -4845,6 +4845,18 @@ components:
           title: Repo
           description: 'Target repo (owner/name) this task runs against, for cross-portal tracking + visibility
             (W5, Factory #218).'
+        originator:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Originator
+          description: Task originator recorded at intake
+        agent_identity:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Identity
+          description: API key agent identity recorded at intake
       type: object
       required:
       - title

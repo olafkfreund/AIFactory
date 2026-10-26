@@ -28,14 +28,23 @@ import json
 import logging
 import os
 import sys
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Annotated
+from urllib.parse import urlparse
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from server import project_registry
+from server.database.engine import get_db
 from server.error_ref import client_error
+from server.routes.git import run_git_command
+from server.routes.project_authz import authorize_project_for_user
 from server.services.completion import correlation_key, read_issue_repo
+from server.services.originator import issue_originator, principal_attribution
 
 from ..tenancy import resolve_tenant, stamp_spec_tenant
 
@@ -129,6 +138,117 @@ def _declared_repo(request: FromIssueRequest) -> str:
     return qualify_repo(provider, project)
 
 
+# Hosts whose provider is unambiguous; self-hosted hosts derive nothing.
+_HOST_PROVIDER = {
+    "github.com": "github",
+    "gitlab.com": "gitlab",
+    "dev.azure.com": "azure_devops",
+}
+_PROVIDER_HOST = {v: k for k, v in _HOST_PROVIDER.items()}
+
+
+def _repo_id(
+    value: str | None, base: tuple[str, str] = ("", ""), *, fold: bool = True
+) -> tuple[str, str]:
+    """``(host, path)`` of a repo path or git URL; host is "" for a bare path.
+
+    Lowercased path without ``.git`` or edge slashes. Azure forms collapse to
+    ``dev.azure.com`` + ``org/project/repo``. ``base`` is the project's own
+    ``(host, subpath)``: a self-hosted instance under a subpath drops it.
+    """
+    raw = (value or "").strip()
+    host = ""
+    if "://" in raw:
+        url = urlparse(raw)
+        host, raw = url.hostname or "", url.path
+    elif "@" in raw.partition(":")[0]:  # scp-like git@host:owner/repo.git
+        user_host, _, raw = raw.partition(":")
+        host = user_host.rpartition("@")[2]
+    host = host.lower()
+    path = raw.strip("/").removesuffix(".git")
+    path = path.lower() if fold else path  # fold to compare; keep case to store
+    if host in {"ssh.dev.azure.com", "vs-ssh.visualstudio.com"}:
+        host, path = "dev.azure.com", path.removeprefix("v3/")
+    elif host.endswith(".visualstudio.com"):  # org.visualstudio.com/proj/_git/repo
+        host, path = "dev.azure.com", f"{host.split('.')[0]}/{path}"
+    path = path.replace("/_git/", "/")
+    base_host, base_path = base
+    if base_path and host == base_host:
+        path = path.removeprefix(f"{base_path}/")
+    return host, path
+
+
+def _origin_url(project_path: Path) -> str:
+    """The checkout's ``origin`` URL; "" when it cannot be read (local, no network)."""
+    result = run_git_command(["remote", "get-url", "origin"], str(project_path))
+    return result.get("output", "") if result["success"] else ""
+
+
+@dataclass(frozen=True)
+class _OwnRepo:
+    """What a project says its own repository is (#1900)."""
+
+    provider: str | None  # gitProvider, else derived from the own host
+    paths: frozenset[str]
+    hosts: frozenset[str]
+    base: tuple[str, str]  # (host, subpath) of gitBaseUrl
+
+
+def _project_repos(project_id: str, project_path: Path) -> _OwnRepo:
+    """The project's own repo: ``gitRepo``, ``clonedFrom``, then checkout origin."""
+    project = project_registry.load_projects().get(project_id) or {}
+    settings = project.get("settings") or {}
+    base = _repo_id(settings.get("gitBaseUrl"))
+    candidates = (
+        settings.get("gitRepo"),
+        project.get("clonedFrom"),
+        _origin_url(project_path),
+    )
+    own = [_repo_id(c, base) for c in candidates if c]
+    hosts = [h for h, _ in own if h] + ([base[0]] if base[0] else [])
+    provider = (settings.get("gitProvider") or "").strip().lower() or next(
+        (_HOST_PROVIDER[h] for h in hosts if h in _HOST_PROVIDER),
+        None if hosts else "github",  # nothing hosted: what the provider defaults to
+    )
+    if not hosts and provider in _PROVIDER_HOST:
+        hosts = [_PROVIDER_HOST[provider]]
+    return _OwnRepo(
+        provider=provider,
+        paths=frozenset(p for _, p in own if p),
+        hosts=frozenset(hosts),
+        base=base,
+    )
+
+
+def _check_declared_repo(project_id: str, project_path: Path, repo_ref: str) -> str:
+    """#1900: a declared repo must be the project's own (its gitToken goes there).
+
+    A declared host must be the project's host; a bare ``owner/repo`` compares
+    by path. The declared provider must match the project's; when it cannot be
+    derived, a non-GitHub prefix needs ``gitBaseUrl`` so the token never goes
+    to a public default host. Returns the normalised ``[provider:]owner/repo``
+    to store and pass on ("" when nothing is declared).
+    """
+    declared = parse_repo_ref(repo_ref)
+    if declared is None:
+        return ""
+    prefix, project = declared
+    own = _project_repos(project_id, project_path)
+    host, path = _repo_id(project, own.base)
+    provider_ok = (
+        prefix == own.provider
+        if own.provider
+        else prefix == "github" or bool(own.base[0])
+    )
+    if path not in own.paths or (host and host not in own.hosts) or not provider_ok:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"repo {repo_ref!r} is not this project's repository",
+        )
+    normalised: str = qualify_repo(prefix, _repo_id(project, own.base, fold=False)[1])
+    return normalised
+
+
 async def _fetch_issue_via_provider(
     project_id: str, issue_number: int, *, repo_ref: str | None = None
 ) -> dict:
@@ -144,6 +264,8 @@ async def _fetch_issue_via_provider(
 
     provider = _get_project_provider(project_id, repo_ref=repo_ref)
     issue = await provider.fetch_issue(issue_number)
+    kind = getattr(provider, "provider_type", None)
+    kind = getattr(kind, "value", kind)
     return {
         "number": issue.number,
         "title": issue.title,
@@ -151,6 +273,11 @@ async def _fetch_issue_via_provider(
         "url": issue.url,
         "state": issue.state,
         "labels": list(issue.labels),
+        # Trusted only here: the provider read it from the host. A caller's
+        # payload could name anyone, so the payload path records no originator.
+        "originator": issue_originator(
+            kind if isinstance(kind, str) else None, issue.author
+        ),
     }
 
 
@@ -162,6 +289,8 @@ def _write_spec(
     tier_value: str,
     tenant: str = "default",
     repo_ref: str | None = None,
+    principal: object = None,
+    originator: str | None = None,
 ) -> Path:
     """Create the spec dir, write requirements.json + apply the execution profile."""
     specs_dir = project_path / ".aifactory" / "specs"
@@ -189,6 +318,8 @@ def _write_spec(
             "repo": repo_ref or "",
         },
     }
+    requirements.update(principal_attribution(principal))
+    requirements["originator"] = originator
     # RFC-0001 correlation: stamp the issue number on first write so the cockpit
     # threads plan->code->test instead of minting an orphan card.
     number = issue.get("number")
@@ -288,10 +419,21 @@ def _set_task_metadata_flag(spec_dir: Path, key: str, value: object) -> None:
 @router.post("/from-issue")
 async def create_from_issue(
     request: FromIssueRequest,
-    raw_request: Request = None,  # noqa: RUF013 — FastAPI injects; None lets direct callers omit
+    raw_request: Request = None,  # FastAPI injects; None lets direct callers omit
+    db: Annotated[AsyncSession | None, Depends(get_db)] = None,
 ):
     """Ingest a labelled issue and start a tier-driven governed build."""
     from .tasks import get_next_spec_id
+
+    # #1898: project_id is in the body, so require_project_access (path/query)
+    # cannot see it; apply its shared rule here. Service token and auth-disabled
+    # pass; raw_request is None only for in-process callers (#1466).
+    if raw_request is not None:
+        if db is None:  # FastAPI always injects it; never skip authz silently
+            raise HTTPException(status_code=500, detail="Authorization unavailable")
+        await authorize_project_for_user(
+            getattr(raw_request.state, "user", None), request.project_id, db, "member"
+        )
 
     projects_path = _resolve_project_path(request.project_id)
     if projects_path is None:
@@ -299,8 +441,12 @@ async def create_from_issue(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Project {request.project_id} not found",
         )
+    repo_ref = _check_declared_repo(
+        request.project_id, projects_path, _declared_repo(request)
+    )
 
     # 1. Resolve the issue: explicit payload wins; otherwise fetch via provider.
+    originator: str | None = None
     if request.payload is not None:
         issue = _normalize_issue(request.payload, request.issue_number)
     elif request.issue_number is not None:
@@ -308,7 +454,7 @@ async def create_from_issue(
             fetched = await _fetch_issue_via_provider(
                 request.project_id,
                 request.issue_number,
-                repo_ref=_declared_repo(request),
+                repo_ref=repo_ref,
             )
         except Exception as exc:  # noqa: BLE001 — surface a clean 502
             raise HTTPException(
@@ -318,6 +464,7 @@ async def create_from_issue(
                 ),
             ) from exc
         issue = _normalize_issue(fetched)
+        originator = fetched.get("originator")
     else:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -330,7 +477,7 @@ async def create_from_issue(
     issue_number = issue.get("number")
     if isinstance(issue_number, int):
         existing_spec_id = _find_existing_spec(
-            projects_path, issue_number, _declared_repo(request) or None
+            projects_path, issue_number, repo_ref or None
         )
         if existing_spec_id is not None:
             return {
@@ -390,7 +537,9 @@ async def create_from_issue(
         execution,
         tier.value,
         tenant=resolve_tenant(raw_request),
-        repo_ref=_declared_repo(request),
+        repo_ref=repo_ref,
+        principal=getattr(raw_request.state, "user", None) if raw_request else None,
+        originator=originator,
     )
     # Persist the integration branch so the PR endgame targets it too —
     # gather_pr_context reads task_metadata.base_branch; without this a fleet
@@ -416,7 +565,7 @@ async def create_from_issue(
         "execution": execution,
         "issue_number": issue.get("number"),
         "correlation_key": correlation_key(
-            spec_id, issue.get("number"), _declared_repo(request) or None
+            spec_id, issue.get("number"), repo_ref or None
         ),
         "message": f"Ingested issue as {tier.value}-tier build ({execution['model']}).",
     }
