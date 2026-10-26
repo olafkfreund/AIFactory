@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from fastapi import Request
 from pydantic import ValidationError
 
 _WEB_SERVER_DIR = Path(__file__).parent.parent / "apps" / "web-server"
@@ -59,9 +60,8 @@ def client(tmp_path):
     """
     import asyncio
 
-    from fastapi import FastAPI, Request
+    from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    from server.database.engine import get_db
     from server.database.models import Base, Organization, OrgMember, User
     from server.routes import api_keys as api_keys_routes
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -99,7 +99,13 @@ def client(tmp_path):
         async with session_local() as session:
             yield session
 
-    app.dependency_overrides[get_db] = _db
+    async def _user(request: Request):
+        return User(id=request.state.user["id"])
+
+    # Key on the router module's own references: other tests reload server.*
+    # modules, so a freshly imported get_db may not be the one it captured.
+    app.dependency_overrides[api_keys_routes.get_db] = _db
+    app.dependency_overrides[api_keys_routes.get_current_user] = _user
     with TestClient(app) as c:
         yield c
     asyncio.run(engine.dispose())
