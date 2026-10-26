@@ -50,6 +50,7 @@ def test_acw_principal_honors_scoped_service_token_flag(monkeypatch):
         ("/tasks/{task_id}/approve-plan", "tasks", "approve_plan"),
         ("/tasks/{task_id}/worktree/create-pr", "tasks", "create_pr_from_task"),
         ("/tasks/{task_id}/worktree/merge", "tasks", "merge_worktree"),
+        ("/tasks/{task_id}/apply-correction", "execution", "apply_task_correction"),
     ],
 )
 async def test_task_write_requires_project_membership(
@@ -115,7 +116,10 @@ async def test_task_write_requires_project_membership(
         if path == "/tasks/create-and-run":
             url += f"?project_id={project_id}&title=title&description=description"
         return await client.post(
-            url, headers={"Authorization": f"Bearer {token}"}, json={}
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+            # apply-correction's body model requires fix_request_md.
+            json={"fix_request_md": "fix"} if path.endswith("correction") else {},
         )
 
     async with AsyncClient(

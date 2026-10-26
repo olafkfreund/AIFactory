@@ -68,7 +68,7 @@ from .auth import (
 router = APIRouter(prefix="/api/mcp-stdio", tags=["MCP (stdio)"])
 
 # Module-level so the route default is not a call (B008).
-_TASK_WRITE = Depends(require_acw_scope(TASK_WRITE_SCOPE))
+_TASK_WRITE = Depends(require_acw_access(TASK_WRITE_SCOPE))
 
 
 async def _read_json_body(request: FastAPIRequest) -> dict:
