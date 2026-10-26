@@ -103,9 +103,9 @@ class StartTaskRequest(BaseModel):
 class ApplyCorrectionRequest(BaseModel):
     """A correction hand-back from an external test tool (e.g. TFactory, #317).
 
-    Fields below ``confirm`` are the additive #467 typed-handback contract. They
-    are all optional, so the legacy markdown-only POST keeps working untouched
-    until TFactory cuts over to sending the structured ``triage`` block.
+    Fields below ``confirm`` are the #467 typed-handback contract. ``triage`` is
+    required while APP_REQUIRE_CORRECTION_TRIAGE is on (the default since #1872).
+    A markdown-only POST is accepted only when that setting is off.
     """
 
     fix_request_md: str = Field(..., description="QA_FIX_REQUEST.md body to apply")
@@ -115,7 +115,7 @@ class ApplyCorrectionRequest(BaseModel):
     confirm: bool = Field(
         False, description="Required true to write + run the QA Fixer"
     )
-    # Typed handback triage validation (#467) — additive / backward-compatible.
+    # Typed handback triage validation (#467); required by default since #1872.
     triage: dict | None = Field(
         None,
         description="Structured triage report (TFactory#283). When present it is "
