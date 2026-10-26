@@ -1,6 +1,6 @@
 """Proxy router for the stdio-MCP control plane (Issue #154).
 
-Re-exposes the 15 operations the stdio MCP client exercises today,
+Re-exposes the 16 operations the stdio MCP client exercises today,
 under ``/api/mcp-stdio/*`` — each route gated by ``acw_`` key + scope.
 
 Every handler delegates to the same service the regular REST routes
@@ -28,10 +28,13 @@ import json
 
 from fastapi import APIRouter, Depends, Query
 from fastapi import Request as FastAPIRequest
+from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError
 
 from ..mcp_remote.auth import AuthenticatedKey
 from ..services.audit_service import (
     ACTION_MCP_PROJECT_CREATE,
+    ACTION_MCP_TASK_APPLY_CORRECTION,
     ACTION_MCP_TASK_APPROVE_PLAN,
     ACTION_MCP_TASK_CREATE_AND_RUN,
     ACTION_MCP_TASK_CREATE_PR,
@@ -316,6 +319,36 @@ async def proxy_approve_plan(
         task_id,
         request,
     )
+    return result
+
+
+@router.post("/tasks/{task_id}/apply-correction")
+async def proxy_apply_correction(
+    task_id: str,
+    request: FastAPIRequest,
+    key=Depends(require_acw_scope(TASK_WRITE_SCOPE)),
+):
+    """Proxy for the MCP ``task_apply_correction`` tool (#1874).
+
+    Delegates to the REST route so its triage gate and validation run unchanged.
+    """
+    from ..routes.execution import ApplyCorrectionRequest, apply_task_correction
+
+    try:
+        body = ApplyCorrectionRequest(**await _read_json_body(request))
+    except ValidationError as exc:  # a bad body is a 422, not a 500
+        raise RequestValidationError(exc.errors()) from exc
+    result = await apply_task_correction(task_id, body)
+    # Same rule as the REST route: a preview or a rejected triage is not an action.
+    if result.get("success") and result.get("confirm"):
+        await _audit_mcp_write(
+            key,
+            ACTION_MCP_TASK_APPLY_CORRECTION,
+            "task",
+            task_id,
+            request,
+            details={"source": body.source},
+        )
     return result
 
 

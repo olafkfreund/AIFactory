@@ -115,7 +115,7 @@ class ApplyCorrectionRequest(BaseModel):
     confirm: bool = Field(
         False, description="Required true to write + run the QA Fixer"
     )
-    # Typed handback triage validation (#467) — additive / backward-compatible.
+    # Typed handback triage validation (#467); required by default since #1872.
     triage: dict | None = Field(
         None,
         description="Structured triage report (TFactory#283). When present it is "
