@@ -156,6 +156,12 @@ class Task(TaskBase):
         description="Target repo (owner/name) this task runs against, for "
         "cross-portal tracking + visibility (W5, Factory #218).",
     )
+    originator: str | None = Field(
+        None, description="Task originator recorded at intake"
+    )
+    agent_identity: str | None = Field(
+        None, description="API key agent identity recorded at intake"
+    )
 
 
 class TaskList(BaseModel):

@@ -10,6 +10,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -71,10 +72,19 @@ def _specs(tmp_path: Path) -> list[Path]:
     return [d for d in specs.iterdir() if d.is_dir()] if specs.is_dir() else []
 
 
+# Called as over HTTP: the #1898 membership check runs first. The legacy
+# service token passes it without a DB query, so the db is a placeholder.
+_SERVICE = SimpleNamespace(
+    state=SimpleNamespace(user={"id": "default", "role": "user", "is_service": True})
+)
+
+
+async def _call(req: FromIssueRequest):
+    return await create_from_issue(req, _SERVICE, db=SimpleNamespace())
+
+
 async def _create(repo: str | None):
-    return await create_from_issue(
-        FromIssueRequest(project_id="p", repo=repo, issue_number=7)
-    )
+    return await _call(FromIssueRequest(project_id="p", repo=repo, issue_number=7))
 
 
 async def _rejected(repo: str) -> None:
@@ -147,7 +157,7 @@ async def test_explicit_provider_rejects_another_host_prefix(github_checkout, fe
 
 async def test_payload_path_is_bound_too(tmp_path, github_checkout, fetched):
     with pytest.raises(HTTPException) as exc:
-        await create_from_issue(
+        await _call(
             FromIssueRequest(
                 project_id="p", repo="victim/repo", payload={"number": 1, "title": "x"}
             )
