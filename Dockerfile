@@ -85,10 +85,13 @@ RUN apk add --no-cache build-base cmake xmlsec-dev xmlsec-openssl \
         libxml2-dev libxslt-dev pkgconf openssl-dev libtool
 
 # xmlsec's build links -lxmlsec1-openssl; Wolfi ships only the versioned soname.
-RUN ln -sf libxmlsec1-openssl.so.10312 /usr/lib/libxmlsec1-openssl.so \
+# Resolved at build time so a Wolfi xmlsec rev does not break cold builds.
+RUN so="$(cd /usr/lib && ls libxmlsec1-openssl.so.* 2>/dev/null | head -1)" \
+ && [ -n "$so" ] || { echo "no /usr/lib/libxmlsec1-openssl.so.* (xmlsec-openssl)"; exit 1; } \
+ && ln -sf "$so" /usr/lib/libxmlsec1-openssl.so \
  && test -e /usr/lib/libxmlsec1-openssl.so
 
-COPY requirements.lock /tmp/requirements.lock
+COPY requirements.lock requirements-build.lock /tmp/
 
 RUN python3 -m venv /home/projects/MagesticAI/.venv
 
@@ -106,17 +109,33 @@ RUN python3 -m venv /home/projects/MagesticAI/.venv
 # is absent here, the import fails at runtime, and the ci.yml `deps-lock-drift`
 # job is what catches that in review instead.
 #
-# Regeneration command lives in the lockfile header.
+# Regeneration commands live in the lockfile headers.
+#
+# --require-hashes covers only the named files, so the sdist builds below run
+# with --no-build-isolation: otherwise pip fetches each sdist's build backend
+# (setuptools, Cython, setuptools_scm, ...) unhashed. They come from the hashed
+# requirements-build.lock instead and are uninstalled afterwards, except any the
+# runtime lock also needs, so `runtime` does not ship them.
 #
 # --no-binary: xmlsec and real-ladybug have no cp315 wheel; lxml must link the
 # same system libxml2 as xmlsec, or `import xmlsec` fails with "libxml2 library
-# version mismatch". CXXFLAGS: real-ladybug's vendored thrift headers miss
-# <cstdint> under GCC 16; drop it once upstream fixes the include.
-RUN CXXFLAGS="-include cstdint" /home/projects/MagesticAI/.venv/bin/pip install \
-        --no-cache-dir --require-hashes \
-        --no-binary lxml,xmlsec,real-ladybug \
-        -r /tmp/requirements.lock \
- && /home/projects/MagesticAI/.venv/bin/pip uninstall -y pip
+# version mismatch". lxml is installed first because xmlsec compiles against
+# its headers (xmlsec's own build pin, lxml==6.0.2, is not used).
+# CXXFLAGS: real-ladybug's vendored thrift headers miss <cstdint> under GCC 16;
+# drop it once upstream fixes the include.
+RUN set -e; pip=/home/projects/MagesticAI/.venv/bin/pip; cd /tmp; \
+    $pip install --no-cache-dir --require-hashes -r requirements-build.lock; \
+    awk '/^lxml==/{p=1;print;next} p&&/^[^ ]/{exit} p' requirements.lock > lxml.lock; \
+    grep -q '^lxml==' lxml.lock; \
+    $pip install --no-cache-dir --require-hashes --no-build-isolation \
+        --no-binary lxml --no-deps -r lxml.lock; \
+    CXXFLAGS="-include cstdint" $pip install --no-cache-dir --require-hashes \
+        --no-build-isolation --no-binary lxml,xmlsec,real-ladybug \
+        -r requirements.lock; \
+    names() { sed -n 's/^\([A-Za-z0-9._-]*\)==.*/\1/p' "$1" | sort; }; \
+    names requirements-build.lock > build.names; names requirements.lock > run.names; \
+    grep -vxFf run.names build.names | xargs -r $pip uninstall -y; \
+    $pip uninstall -y pip
 
 FROM cgr.dev/chainguard/python:latest-dev@sha256:dde1a2549dd62864f0263dae8e877680837b4e738a7ecc85c671c55c069848ac AS runtime
 
