@@ -1,5 +1,5 @@
 ---
-status: approved
+status: draft
 issue: 1882
 intent: intent/2026-10-26-1882-mcp-stdio-task-access.md
 ---
@@ -76,3 +76,46 @@ what they see today.
   passes.
 - Existing `tests/test_mcp_stdio_*.py` and `tests/test_mcp_task_control.py`
   stay green. ruff + `scripts/ratchet_lint.py` clean on touched files.
+
+## Revision 1 (lead review of #1885): read proxies, apply-correction, principal flag
+
+Scope widened by the lead after the first review. The "read proxies"
+alternative above is no longer rejected.
+
+4. **Read proxies with a task id**: get task (:141), status (:148), logs
+   (:157) and worktree diff (:173) use `require_acw_access(MCP_READ_SCOPE,
+   "viewer")`, matching their REST routes (`routes/tasks.py:194`,
+   `routes/execution.py:259`, `routes/tasks_logs.py:33`,
+   `routes/worktree_merge.py:2253`, all `viewer`).
+5. **List proxies** (projects :108, tasks :123, running :134) have no single
+   target, so they filter instead of refusing, the way REST `list_tasks`
+   does (`routes/tasks.py:146-155`, `accessible_org_ids`). New dependency
+   `require_acw_principal(scope)` runs the scope check and sets
+   `request.state.user` to the key's principal, so `accessible_org_ids`
+   sees it:
+   - `/tasks` forwards `request` and `db` to `list_tasks`, which applies its own
+     org filter. That gives REST parity, including `X-Tenant-Id` under
+     multi-tenant mode.
+   - `/projects` keeps the unfiltered `load_projects()` list for service
+     principals (the #488 `/handover` need) and filters by
+     `accessible_org_ids` for user-bound keys.
+   - `/tasks/running` filters the running task ids by the project's org
+     the same way. REST `/running` has no filter, so the proxy is stricter
+     here. It returns only ids, and leaving them visible would leak other
+     orgs' task names.
+   A foreign key gets an empty or filtered list, not 403. That matches
+   REST list semantics.
+6. **Principal helper** `acw_principal(key)` in `mcp_stdio/auth.py` is shared
+   by both dependencies. It reads `SCOPED_SERVICE_TOKENS_ENABLED` from
+   settings the way `TokenAuthMiddleware` does (`server/auth.py:367-372`)
+   instead of hard-coding `False`. No behaviour change: the flag only adds
+   `scopes`/`scoped_service` keys, which nothing outside `server/auth.py` reads
+   (`is_service_principal` reads `is_service`/`role` only).
+7. **apply-correction** (#1881): after #1881 merges, merge `origin/dev` into
+   the branch (never force-push) and put `require_acw_access(TASK_WRITE_SCOPE)`
+   on it. Its REST route is `require_task_access("member")`
+   (`routes/execution.py:1558`).
+
+Verification (added): per read proxy, a foreign key gets 403 (task-id routes) or
+a filtered result (lists), the owner's key works, and the legacy token works.
+The apply-correction proxy joins the write-proxy parametrisation.
