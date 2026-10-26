@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: AIFactory Web API
   description: Web API for AIFactory — self-hosted AI task management + agent orchestration
-  version: 3.10.9
+  version: 3.10.10
 paths:
   /api/auth/register:
     post:
@@ -8839,6 +8839,39 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp-stdio/tasks/{task_id}/apply-correction:
+    post:
+      tags:
+      - MCP (stdio)
+      summary: Proxy Apply Correction
+      description: 'Proxy for the MCP ``task_apply_correction`` tool (#1874).
+
+
+        Delegates to the REST route so its triage gate and validation run unchanged.'
+      operationId: proxy_apply_correction_api_mcp_stdio_tasks__task_id__apply_correction_post
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Proxy Apply Correction Api Mcp Stdio Tasks  Task Id  Apply Correction
+                  Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/mcp-stdio/tasks/{task_id}/worktree/create-pr:
     post:
       tags:
@@ -10094,6 +10127,16 @@ components:
           type: string
           format: date-time
           title: Created At
+        autonomy_ceiling:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Autonomy Ceiling
+        agent_identity:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Identity
       type: object
       required:
       - id
@@ -10513,11 +10556,11 @@ components:
       description: 'A correction hand-back from an external test tool (e.g. TFactory, #317).
 
 
-        Fields below ``confirm`` are the additive #467 typed-handback contract. They
+        Fields below ``confirm`` are the #467 typed-handback contract. ``triage`` is
 
-        are all optional, so the legacy markdown-only POST keeps working untouched
+        required while APP_REQUIRE_CORRECTION_TRIAGE is on (the default since #1872).
 
-        until TFactory cuts over to sending the structured ``triage`` block.'
+        A markdown-only POST is accepted only when that setting is off.'
     ApprovePlanRequest:
       properties:
         auto_restart:
@@ -11107,6 +11150,16 @@ components:
           - type: 'null'
           title: Expires In Days
           description: Optional expiration in days from now (max 365)
+        autonomy_ceiling:
+          anyOf:
+          - type: string
+            enum:
+            - low
+            - medium
+            - hard
+          - type: 'null'
+          title: Autonomy Ceiling
+          description: Optional most autonomous tier this key's agent may act at
       type: object
       required:
       - name
@@ -11149,6 +11202,16 @@ components:
           type: string
           format: date-time
           title: Created At
+        autonomy_ceiling:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Autonomy Ceiling
+        agent_identity:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Identity
         raw_key:
           type: string
           title: Raw Key

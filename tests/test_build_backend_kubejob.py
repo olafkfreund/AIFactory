@@ -1973,3 +1973,29 @@ def test_ephemeral_storage_is_not_hand_written_as_a_request(
 def test_passthrough_never_carries_a_private_key() -> None:
     """Build Jobs use an allowlist; the GitHub App key must never join it (#1671)."""
     assert not any("PRIVATE_KEY" in v for v in bb._PASSTHROUGH_BUILD_ENV)
+
+
+# Factory#1959 slice 1: the model-provider credentials a dispatched build Job
+# receives. Removing one is a later gateway slice; adding one needs a decision.
+# Update this set deliberately, never to make the test pass.
+_PINNED_JOB_PROVIDER_CREDS = frozenset(
+    {
+        "ANTHROPIC_AUTH_TOKEN",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "OPENAI_API_KEY",
+        "OPENAI_COMPATIBLE_API_KEY",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "OLLAMA_API_KEY",
+    }
+)
+
+
+def test_build_job_env_provider_credentials_are_pinned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for var in (*bb._PASSTHROUGH_BUILD_ENV, "ANTHROPIC_API_KEY"):
+        monkeypatch.setenv(var, "dummy")
+    env = bb.build_job_env("oauth-tok")
+    creds = {n for n in env if n.endswith(("_API_KEY", "_AUTH_TOKEN", "_OAUTH_TOKEN"))}
+    assert creds == _PINNED_JOB_PROVIDER_CREDS
