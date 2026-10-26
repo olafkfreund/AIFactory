@@ -29,3 +29,7 @@ The two files above, plus `scripts/cq_ratchet.py` (ruff and mypy) against `origi
 ## Rollback
 
 Revert the PR; a declared repo goes back to overriding `gitRepo`.
+
+## Deviations
+
+- Step 1: the `origin` read reuses `server.routes.git.run_git_command` instead of a new `subprocess.run`, which the strict ratchet flagged (S603/S607). `project_registry` is imported at module level (PLC0415) and called as `project_registry.load_projects()`, so tests can still patch it.
