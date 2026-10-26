@@ -26,6 +26,7 @@ sys.path.insert(0, str(_ROOT / "apps" / "backend"))
 
 from server import auth as auth_mod  # noqa: E402
 from server.config import (  # noqa: E402
+    Settings,
     cors_allows_credentials,
     enforce_cors_safety,
     enforce_disable_auth_safety,
@@ -107,7 +108,7 @@ class TestCorsSafety:
     """#555 — never combine a wildcard CORS origin with credentialed CORS."""
 
     def _settings(self, origins, **kw) -> SimpleNamespace:
-        base = {"CORS_ORIGINS": origins, "DEBUG": False}
+        base = {"CORS_ORIGINS": origins, "DEBUG": False, "ALLOW_WILDCARD_CORS": False}
         base.update(kw)
         return SimpleNamespace(**base)
 
@@ -127,16 +128,23 @@ class TestCorsSafety:
         # No origins configured is not a wildcard — credentials stay on.
         assert cors_allows_credentials(self._settings([])) is True
 
-    def test_enforce_no_op_for_explicit_allowlist(self):
-        enforce_cors_safety(self._settings(["https://app.example.com"]))
+    @pytest.mark.parametrize("debug", [False, True])
+    def test_enforce_no_op_for_explicit_allowlist(self, debug):
+        enforce_cors_safety(self._settings(["https://app.example.com"], DEBUG=debug))
 
-    def test_enforce_refuses_wildcard_in_production(self):
-        with pytest.raises(SystemExit):
-            enforce_cors_safety(self._settings(["*"], DEBUG=False))
+    @pytest.mark.parametrize("debug", [False, True])
+    def test_enforce_refuses_wildcard_without_opt_in(self, debug):
+        with pytest.raises(SystemExit, match="APP_ALLOW_WILDCARD_CORS"):
+            enforce_cors_safety(self._settings(["*"], DEBUG=debug))
 
-    def test_enforce_allows_wildcard_under_debug(self):
-        # Under DEBUG we warn and run with credentials dropped rather than exit.
-        enforce_cors_safety(self._settings(["*"], DEBUG=True))
+    def test_enforce_allows_wildcard_with_opt_in(self):
+        settings = self._settings(["*"], ALLOW_WILDCARD_CORS=True)
+        enforce_cors_safety(settings)
+        assert cors_allows_credentials(settings) is False
+
+    def test_settings_reads_wildcard_cors_opt_in(self, monkeypatch):
+        monkeypatch.setenv("APP_ALLOW_WILDCARD_CORS", "true")
+        assert Settings().ALLOW_WILDCARD_CORS is True
 
 
 class TestWebSocketTokenExtraction:
