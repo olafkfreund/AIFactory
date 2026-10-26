@@ -27,8 +27,6 @@ import contextlib
 import json
 import logging
 import os
-import shutil
-import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -39,8 +37,8 @@ from pydantic import BaseModel, Field
 
 from server import project_registry
 from server.error_ref import client_error
+from server.routes.git import run_git_command
 from server.services.completion import correlation_key, read_issue_repo
-from server.utils.subprocess_env import child_env
 
 from ..tenancy import resolve_tenant, stamp_spec_tenant
 
@@ -150,22 +148,8 @@ def _repo_path(value: str | None) -> str:
 
 def _origin_url(project_path: Path) -> str:
     """The checkout's ``origin`` URL; "" when it cannot be read (local, no network)."""
-    git = shutil.which("git")
-    if git is None:
-        return ""
-    try:
-        result = subprocess.run(
-            [git, "remote", "get-url", "origin"],
-            cwd=project_path,
-            capture_output=True,
-            text=True,
-            timeout=5,
-            env=child_env(),
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return ""
-    return result.stdout.strip() if result.returncode == 0 else ""
+    result = run_git_command(["remote", "get-url", "origin"], str(project_path))
+    return result.get("output", "") if result["success"] else ""
 
 
 def _project_repos(project_id: str, project_path: Path) -> tuple[str | None, set[str]]:
