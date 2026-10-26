@@ -165,6 +165,7 @@ def test_real_issue_key_is_not_logged(caplog):
 
 def test_webhook_posts_envelope(tmp_path, monkeypatch):
     monkeypatch.setenv("AIFACTORY_COMPLETION_WEBHOOK", "http://hook.test/c")
+    monkeypatch.setenv("APP_API_TOKEN", "test-token")
     monkeypatch.delenv("AIFACTORY_COMPLETION_SENTINEL", raising=False)
     captured = {}
 
@@ -175,6 +176,7 @@ def test_webhook_posts_envelope(tmp_path, monkeypatch):
     def _fake(req, timeout=None):
         captured["url"] = req.full_url
         captured["body"] = json.loads(req.data.decode())
+        captured["authorization"] = req.get_header("Authorization")
         return _Resp()
 
     import urllib.request
@@ -185,6 +187,7 @@ def test_webhook_posts_envelope(tmp_path, monkeypatch):
     notify_completion(ev)
     assert captured["url"] == "http://hook.test/c"
     assert captured["body"]["service"] == "aifactory"
+    assert captured["authorization"] == "Bearer test-token"
 
 
 def test_webhook_failure_is_swallowed(tmp_path, monkeypatch):
@@ -859,6 +862,7 @@ def test_worker_event_validates_against_published_schema():
 def test_emit_worker_completion_posts_via_same_transport(tmp_path, monkeypatch):
     """The live sub-event uses the SAME webhook transport as the terminal event."""
     monkeypatch.setenv("AIFACTORY_COMPLETION_WEBHOOK", "http://hook.test/c")
+    monkeypatch.setenv("APP_API_TOKEN", "test-token")
     monkeypatch.delenv("AIFACTORY_COMPLETION_SENTINEL", raising=False)
     captured = {}
 
@@ -869,6 +873,7 @@ def test_emit_worker_completion_posts_via_same_transport(tmp_path, monkeypatch):
     def _fake(req, timeout=None):
         captured["url"] = req.full_url
         captured["body"] = json.loads(req.data.decode())
+        captured["authorization"] = req.get_header("Authorization")
         return _Resp()
 
     import urllib.request
@@ -887,6 +892,7 @@ def test_emit_worker_completion_posts_via_same_transport(tmp_path, monkeypatch):
     assert captured["body"]["status"] == "worker_done"
     assert captured["body"]["phase"] == "worker"
     assert captured["body"]["worker"]["worker_id"] == "sub-A"
+    assert captured["authorization"] == "Bearer test-token"
     assert ev["worker"]["worker_id"] == "sub-A"
 
 
@@ -1375,6 +1381,7 @@ def test_progress_emit_posts_via_same_transport(tmp_path, monkeypatch):
     """The heartbeat uses the SAME webhook transport as the other events."""
     _reset_progress_throttle()
     monkeypatch.setenv("AIFACTORY_COMPLETION_WEBHOOK", "http://hook.test/c")
+    monkeypatch.setenv("APP_API_TOKEN", "test-token")
     monkeypatch.delenv("AIFACTORY_COMPLETION_SENTINEL", raising=False)
     captured = {}
 
@@ -1385,6 +1392,7 @@ def test_progress_emit_posts_via_same_transport(tmp_path, monkeypatch):
     def _fake(req, timeout=None):
         captured["url"] = req.full_url
         captured["body"] = json.loads(req.data.decode())
+        captured["authorization"] = req.get_header("Authorization")
         return _Resp()
 
     import urllib.request
@@ -1402,6 +1410,7 @@ def test_progress_emit_posts_via_same_transport(tmp_path, monkeypatch):
     assert captured["body"]["status"] == "running"
     assert captured["body"]["phase"] == "worker_progress"
     assert captured["body"]["worker"]["elapsed_ms"] == 4200
+    assert captured["authorization"] == "Bearer test-token"
 
 
 def test_progress_emit_best_effort_on_raising_transport(tmp_path, monkeypatch):

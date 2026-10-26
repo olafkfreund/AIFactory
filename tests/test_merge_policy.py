@@ -11,6 +11,7 @@ from merge.merge_policy import (
     AUTO_MERGE,
     HOLD_ASYNC,
     HOLD_BLOCKING,
+    cap_disposition,
     decide_merge,
 )
 
@@ -114,3 +115,41 @@ def test_no_floor_declared_allows_any_achieved():
 def test_tier_case_insensitive():
     assert decide_merge("LOW", **GREEN) == AUTO_MERGE
     assert decide_merge(" Hard ", **GREEN) == HOLD_BLOCKING
+
+
+# ── autonomy ceiling on an agent identity (Factory#1960) ─────────────────────
+
+
+@pytest.mark.parametrize(
+    ("decision", "ceiling", "expected"),
+    [
+        (AUTO_MERGE, "low", AUTO_MERGE),
+        (AUTO_MERGE, "medium", HOLD_ASYNC),
+        (AUTO_MERGE, "hard", HOLD_BLOCKING),
+        (HOLD_ASYNC, "low", HOLD_ASYNC),
+        (HOLD_ASYNC, "medium", HOLD_ASYNC),
+        (HOLD_ASYNC, "hard", HOLD_BLOCKING),
+        (HOLD_BLOCKING, "low", HOLD_BLOCKING),
+        (HOLD_BLOCKING, "medium", HOLD_BLOCKING),
+        (HOLD_BLOCKING, "hard", HOLD_BLOCKING),
+        (AUTO_MERGE, "async", HOLD_ASYNC),  # review_tier alias
+        (AUTO_MERGE, " Blocking ", HOLD_BLOCKING),
+    ],
+)
+def test_cap_disposition_takes_the_stricter(decision, ceiling, expected):
+    assert cap_disposition(decision, ceiling) == expected
+
+
+@pytest.mark.parametrize("ceiling", [None, "", "   "])
+def test_cap_disposition_without_ceiling_is_unchanged(ceiling):
+    for decision in (AUTO_MERGE, HOLD_ASYNC, HOLD_BLOCKING):
+        assert cap_disposition(decision, ceiling) == decision
+
+
+def test_cap_disposition_unknown_ceiling_fails_closed():
+    assert cap_disposition(AUTO_MERGE, "unlimited") == HOLD_BLOCKING
+
+
+@pytest.mark.parametrize("ceiling", [None, "low", "medium", "hard"])
+def test_cap_disposition_unknown_decision_fails_closed(ceiling):
+    assert cap_disposition("something-new", ceiling) == HOLD_BLOCKING

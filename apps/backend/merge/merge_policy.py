@@ -39,6 +39,7 @@ __all__ = [
     "HOLD_ASYNC",
     "HOLD_BLOCKING",
     "HUMAN_ONLY_GATES",
+    "cap_disposition",
     "decide_merge",
     "deployment_block_reasons",
     "floor_from_paths",
@@ -336,3 +337,36 @@ def tier_permits_auto_merge(tier: str | None) -> bool:
     if tier is None or not str(tier).strip():
         return True
     return _TIER_ALIASES.get(str(tier).strip().lower()) == "low"
+
+
+# Disposition per tier bucket, and how restrictive each disposition is.
+_BUCKET_DISPOSITION: dict[str, str] = {
+    "low": AUTO_MERGE,
+    "medium": HOLD_ASYNC,
+    "hard": HOLD_BLOCKING,
+}
+_DISPOSITION_RANK: dict[str, int] = {AUTO_MERGE: 0, HOLD_ASYNC: 1, HOLD_BLOCKING: 2}
+
+
+def cap_disposition(decision: str, ceiling: str | None) -> str:
+    """The stricter of a :func:`decide_merge` *decision* and an autonomy *ceiling*.
+
+    *ceiling* is the most autonomous tier an agent identity may act at — the
+    ``autonomy_ceiling`` on its ``acw_`` key (Factory#1960) — in the same tier
+    spellings as :func:`decide_merge`. It can only tighten a decision, never
+    loosen one.
+
+    Absent / blank ceiling => a known *decision* unchanged: a key with no
+    ceiling behaves exactly as before. An UNRECOGNISED decision or ceiling =>
+    HOLD_BLOCKING, the same fail-closed rule :func:`decide_merge` applies to
+    an unknown tier (#1158): a value nobody can read is not a licence to merge.
+    """
+    if decision not in _DISPOSITION_RANK:
+        return HOLD_BLOCKING
+    if ceiling is None or not str(ceiling).strip():
+        return decision
+    bucket = _TIER_ALIASES.get(str(ceiling).strip().lower())
+    if bucket is None:
+        return HOLD_BLOCKING
+    cap = _BUCKET_DISPOSITION[bucket]
+    return cap if _DISPOSITION_RANK[cap] > _DISPOSITION_RANK[decision] else decision

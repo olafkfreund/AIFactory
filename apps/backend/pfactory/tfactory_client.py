@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import json
 import logging
 import os
@@ -639,6 +640,23 @@ def _thread_issue(
     return contract
 
 
+def _signed_snapshot(
+    contract: dict[str, Any] | None, held: bool
+) -> dict[str, Any] | None:
+    """Deep copy of an approved contract taken BEFORE any overlay (#1432).
+
+    TFactory verifies the PFactory Ed25519 signature on this copy; the overlay
+    paths below (phase_models, github_issue, correlation) change `contract`.
+    """
+    if (
+        held
+        or not isinstance(contract, dict)
+        or not isinstance(contract.get("approval"), dict)
+    ):
+        return None
+    return copy.deepcopy(contract)
+
+
 def build_ingest_payload(
     spec_dir: Path, spec_id: str, *, contract: dict[str, Any] | None
 ) -> dict:
@@ -649,6 +667,12 @@ def build_ingest_payload(
     from the AIFactory workspace (TFactory carries a matching project),
     overridable via ``TFACTORY_PROJECT_ID``. ``spec_text`` is the finished
     spec.md (falls back to the requirements description). #517.
+
+    ``contract`` is overlaid three ways before sending: ``execution.phase_models``
+    (the build's models), ``provenance.github_issue`` (``_thread_issue``) and
+    the correlation key. When the contract carries ``approval``, the pre-overlay
+    copy is also sent as ``signed_contract`` so TFactory can verify the PFactory
+    signature, which the overlays would otherwise break (#1432).
     """
     spec_dir = Path(spec_dir)
     project_id = os.environ.get("TFACTORY_PROJECT_ID") or _aifactory_project_name(
@@ -691,6 +715,7 @@ def build_ingest_payload(
     # TFactory infers instead of trusting the agent-writable spec copy.
     held = contract is not None and not contract
     contract = load_task_contract(spec_dir) if contract is None else dict(contract)
+    signed = _signed_snapshot(contract, held)
     # Propagate the build's per-phase model choice to TFactory's verify lanes so a
     # non-default (e.g. Ollama) build is VERIFIED on the same provider instead of
     # silently falling back to TFactory's default (sonnet). The choice lives in
@@ -709,6 +734,8 @@ def build_ingest_payload(
         contract = _thread_issue(contract, req)
     if contract:
         payload["contract"] = contract
+    if signed:
+        payload["signed_contract"] = signed  # type: ignore[assignment]  # payload is inferred dict[str, str]
     # PARR seam: hand TFactory the repo + the build branch so it can fetch the
     # ACTUAL built code (separate PVC). Pushes the branch (best-effort) and lets
     # TFactory self-register the project from git_url when it isn't pre-registered.

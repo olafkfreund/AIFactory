@@ -10127,6 +10127,16 @@ components:
           type: string
           format: date-time
           title: Created At
+        autonomy_ceiling:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Autonomy Ceiling
+        agent_identity:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Identity
       type: object
       required:
       - id
@@ -11140,6 +11150,16 @@ components:
           - type: 'null'
           title: Expires In Days
           description: Optional expiration in days from now (max 365)
+        autonomy_ceiling:
+          anyOf:
+          - type: string
+            enum:
+            - low
+            - medium
+            - hard
+          - type: 'null'
+          title: Autonomy Ceiling
+          description: Optional most autonomous tier this key's agent may act at
       type: object
       required:
       - name
@@ -11182,6 +11202,16 @@ components:
           type: string
           format: date-time
           title: Created At
+        autonomy_ceiling:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Autonomy Ceiling
+        agent_identity:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Identity
         raw_key:
           type: string
           title: Raw Key
