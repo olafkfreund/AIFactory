@@ -23,7 +23,8 @@ finer-grained ones for write operations:
 Use ``require_acw_scope(scope)`` as a FastAPI dependency on each
 proxy route. It returns the resolved ``AuthenticatedKey`` (or a
 synthetic legacy key) so handlers can record key_id in audit logs.
-Task write routes also enforce project membership for ``acw_`` keys.
+Task routes enforce project membership for ``acw_`` keys. List routes
+filter results to the key owner's organizations.
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.auth import _acw_principal, _is_legacy_api_token
+from server.config import get_settings
 from server.database.engine import get_db
 from server.error_ref import client_error
 from server.mcp_remote import auth as mcp_remote_auth
@@ -151,6 +153,33 @@ def require_acw_scope(scope: str):
 _AcwKey = mcp_remote_auth.AuthenticatedKey | _LegacyAdminKey
 
 
+def acw_principal(key: _AcwKey) -> dict[str, object]:
+    """Build the principal used by REST authorization for this key."""
+    if isinstance(key, _LegacyAdminKey):
+        return {"id": "default", "role": "user", "is_service": True}
+    return _acw_principal(
+        key,
+        scoped_service_tokens_enabled=getattr(
+            get_settings(), "SCOPED_SERVICE_TOKENS_ENABLED", False
+        ),
+    )
+
+
+def require_acw_principal(scope: str) -> Callable[..., Awaitable[_AcwKey]]:
+    """Require scope and expose the key owner to delegated list handlers."""
+
+    async def _check(
+        request: Request,
+        # Closure-local dependency cannot resolve through Annotated with
+        # postponed annotations.
+        key: _AcwKey = Depends(require_acw_scope(scope)),  # noqa: B008
+    ) -> _AcwKey:
+        request.state.user = acw_principal(key)
+        return key
+
+    return _check
+
+
 def require_acw_access(
     scope: str, minimum_role: str = "member"
 ) -> Callable[..., Awaitable[_AcwKey]]:
@@ -163,11 +192,7 @@ def require_acw_access(
         # ``from __future__ import annotations`` and could not resolve it.
         key: _AcwKey = Depends(require_acw_scope(scope)),  # noqa: B008
     ) -> _AcwKey:
-        principal = (
-            {"id": "default", "role": "user", "is_service": True}
-            if isinstance(key, _LegacyAdminKey)
-            else _acw_principal(key, scoped_service_tokens_enabled=False)
-        )
+        principal = acw_principal(key)
         task_id = request.path_params.get("task_id")
         project_id = (
             task_id.partition(":")[0]
