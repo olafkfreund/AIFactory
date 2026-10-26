@@ -134,6 +134,33 @@ class TestEnforceDisableAuthSafety:
         assert Settings().ALLOW_INSECURE_AUTH is True
 
 
+class TestCorsOriginsParsing:
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("*", ["*"]),
+            ("https://a.com,*", ["https://a.com", "*"]),
+            (" * ", ["*"]),
+            ("https://a.com, https://b.com", ["https://a.com", "https://b.com"]),
+            ('["https://a.com"]', ["https://a.com"]),
+        ],
+    )
+    def test_env_origins_parse(self, monkeypatch, raw, expected):
+        monkeypatch.setenv("APP_CORS_ORIGINS", raw)
+        monkeypatch.setenv("APP_API_TOKEN", "test-token")
+        monkeypatch.setenv("APP_JWT_SECRET", "test-secret")
+        assert Settings().CORS_ORIGINS == expected
+
+    def test_env_wildcard_reaches_boot_guard(self, monkeypatch):
+        # The comma form used to die in pydantic before the guard could speak.
+        monkeypatch.setenv("APP_CORS_ORIGINS", "https://a.com,*")
+        monkeypatch.setenv("APP_API_TOKEN", "test-token")
+        monkeypatch.setenv("APP_JWT_SECRET", "test-secret")
+        monkeypatch.setenv("APP_DEBUG", "false")
+        with pytest.raises(SystemExit, match="Refusing to start"):
+            enforce_cors_safety(Settings())
+
+
 class TestCorsSafety:
     """#555 — never combine a wildcard CORS origin with credentialed CORS."""
 
@@ -154,6 +181,13 @@ class TestCorsSafety:
         s = self._settings(["https://app.example.com", "*"])
         assert cors_allows_credentials(s) is False
 
+    @pytest.mark.parametrize("origins", [["null"], ["https://a.com", "null"]])
+    def test_credentials_dropped_for_null(self, origins):
+        assert cors_allows_credentials(self._settings(origins)) is False
+
+    def test_credentials_dropped_for_padded_mixed_case_null(self):
+        assert cors_allows_credentials(self._settings([" Null "])) is False
+
     def test_empty_origins_allows_credentials(self):
         # No origins configured is not a wildcard — credentials stay on.
         assert cors_allows_credentials(self._settings([])) is True
@@ -164,6 +198,11 @@ class TestCorsSafety:
     def test_enforce_refuses_wildcard_in_production(self):
         with pytest.raises(SystemExit):
             enforce_cors_safety(self._settings(["*"], DEBUG=False))
+
+    @pytest.mark.parametrize("origins", [["null"], ["https://a.com", "null"]])
+    def test_enforce_refuses_null_in_production(self, origins):
+        with pytest.raises(SystemExit):
+            enforce_cors_safety(self._settings(origins))
 
     def test_enforce_allows_wildcard_under_debug(self):
         # Under DEBUG we warn and run with credentials dropped rather than exit.

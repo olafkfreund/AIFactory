@@ -64,7 +64,7 @@ Set via `APP_`-prefixed env (pydantic `Settings`). All read in
 | `APP_MIGRATIONS_AUTO_APPLY` | `true` | no | On boot run `alembic upgrade head`. Set false in K8s where a Helm Job migrates out-of-band. |
 | `APP_PROJECTS_DATA_DIR` / `APP_PROJECTS_DATA_DIR` | data dir | no | Directory for project metadata + SQLite. Also read directly by `routes/copilot_mcp.py`. |
 | `APP_BACKEND_PATH` | `../backend` | no | Path to `apps/backend`. Also the build-Job backend path (`build_backend.py`). |
-| `APP_CORS_ORIGINS` | localhost:3000/3100/3101 | no | Allowed CORS origins (comma-list or JSON array). A wildcard `*` disables credentialed CORS (refuses boot unless `APP_DEBUG`). |
+| `APP_CORS_ORIGINS` | localhost:3000/3100/3101 | no | Allowed CORS origins; comma-separated lists and JSON arrays both parse; an empty value means no origins (unset keeps the defaults). `*` or `null` disables credentialed CORS (refuses boot unless `APP_DEBUG`). |
 | `APP_DEFAULT_SHELL` | `/bin/bash` | no | Shell for the built-in terminal. |
 | `APP_MAX_TERMINALS` | `20` | no | Max concurrent terminal sessions. |
 | `APP_MAX_CONCURRENT_TASKS` | `5` | no | Global cap on concurrently running builds (RFC-0016 admission control); `<= 0` = unlimited. |
