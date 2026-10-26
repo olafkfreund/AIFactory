@@ -19,7 +19,9 @@ from pathlib import Path
 from factory_common.logsafe import sanitize_log
 
 from ..websockets.events import broadcast_event
+from . import project_settings_store
 from .insights_providers import get_provider
+from .insights_providers.base import scrub_insights_outbound
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +98,16 @@ class InsightsSession:
     model_config: dict | None = None
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+
+
+async def _scrub_chat_prompt(prompt: str, project_path: Path) -> str:
+    """AIFactory#1860: argv is the wire; scrub it like every other LLM path."""
+    return scrub_insights_outbound(
+        prompt,
+        None,
+        owner="InsightsService.generate_task_from_chat",
+        classification=await project_settings_store.data_classification(project_path),
+    )[0]
 
 
 class InsightsService:
@@ -487,6 +499,10 @@ class InsightsService:
             "Conversation transcript:\n"
             f"{transcript}\n\n"
             "Respond with ONLY the JSON object, no other text."
+        )
+
+        summarization_prompt = await _scrub_chat_prompt(
+            summarization_prompt, project_path
         )
 
         # Resolve model

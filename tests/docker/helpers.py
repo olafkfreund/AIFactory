@@ -39,7 +39,8 @@ def docker_build(
     tag: str,
     build_args: dict[str, str] | None = None,
     context: Path | None = None,
-    timeout: int = 600,
+    # Cold, uncached build compiles lxml/xmlsec/real-ladybug from source (#1842).
+    timeout: int = 1800,
     target: str | None = None,
 ) -> subprocess.CompletedProcess:
     """Build a docker image. Returns the CompletedProcess for assertion.
