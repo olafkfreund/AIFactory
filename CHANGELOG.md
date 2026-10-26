@@ -1,12 +1,35 @@
 ## [Unreleased]
 
+## 3.10.9 - 2026-10-26
+
+Two behaviour changes: the runtime image moves to CPython 3.15, and
+apply-correction now requires a triage block by default.
+
 ### Changed
 
-- **Apply-correction requires a triage block by default (TFactory#1431).**
-  `APP_REQUIRE_CORRECTION_TRIAGE` now defaults to on: a
-  `POST /api/tasks/{id}/apply-correction` with no `triage` block gets a 422
-  before anything is written. TFactory 0.9.42 sends triage on every handback
-  path (TFactory#1436). Opt out with `APP_REQUIRE_CORRECTION_TRIAGE=false`.
+- **Runtime image moves to CPython 3.15 (#1873, closes #1842).** The image is
+  built on the current `cgr.dev/chainguard/python:latest-dev` digest
+  (CPython 3.15.0). A new `py-build` stage compiles the venv; lxml, xmlsec and
+  real-ladybug build from sdist with `--require-hashes` kept, and `runtime`
+  adds the system `xmlsec`/`libxml2-16`/`libxslt` libraries. The lock is
+  recompiled for 3.15 (pydantic 2.14, asyncpg 0.32, grpcio 1.84.1, uvloop 0.23
+  and others). The CI P0 docker job now allows a 1800 s image build in a
+  50-minute job.
+- **Apply-correction requires a triage block by default (#1872,
+  TFactory#1431).** `APP_REQUIRE_CORRECTION_TRIAGE` now defaults to on: a
+  `POST /api/tasks/{id}/apply-correction` with no `triage` block, including a
+  markdown-only call, gets a 422 before anything is written. TFactory 0.9.42
+  sends triage on every handback path (TFactory#1436). Opt out with
+  `APP_REQUIRE_CORRECTION_TRIAGE=false`. Known gap: the MCP
+  `task_apply_correction` tool has no triage input yet, so it also gets the 422
+  until #1874 lands.
+
+### Security
+
+- **Outbound PII scrub on direct `claude --print` spawns (#1870, closes
+  #1860).** Clarification and insights task-from-chat now scrub the prompt
+  before building argv, honouring the kill-switch and the project data
+  classification as in #1862. Clarification fails closed to its skip default.
 
 ## 3.10.8 - 2026-10-24
 
