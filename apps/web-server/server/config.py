@@ -4,12 +4,14 @@ Configuration settings for AIFactory Web Server.
 Settings are loaded from environment variables with sensible defaults.
 """
 
+import json
 import logging
 import secrets
 from pathlib import Path
+from typing import Annotated
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from server.utils.subprocess_env import child_env
 
@@ -60,15 +62,19 @@ def enforce_disable_auth_safety(settings: "Settings") -> None:
 def cors_allows_credentials(settings: "Settings") -> bool:
     """Whether the CORS layer may safely echo credentials (#555).
 
-    A wildcard origin (``*``) combined with ``allow_credentials=True`` lets any
-    site read authenticated responses cross-origin — the browser only rejects
+    ``*`` permits any origin; ``null`` permits opaque origins that untrusted
+    sites can create. With ``allow_credentials=True``, either can expose
+    authenticated responses cross-origin — the browser only rejects
     the literal ``Access-Control-Allow-Origin: *`` + credentials pairing, not a
     reflected-origin variant some stacks emit. We never want that combination,
     so when ``CORS_ORIGINS`` contains a wildcard we drop credentials rather than
     fail open. Returns ``False`` to signal the caller must set
     ``allow_credentials=False``.
     """
-    return "*" not in (settings.CORS_ORIGINS or [])
+    return not any(
+        origin.strip().lower() in {"*", "null"}
+        for origin in (settings.CORS_ORIGINS or [])
+    )
 
 
 def enforce_cors_safety(settings: "Settings") -> None:
@@ -84,7 +90,7 @@ def enforce_cors_safety(settings: "Settings") -> None:
     if cors_allows_credentials(settings):
         return
     logger.warning(
-        "⚠️  CORS_ORIGINS contains '*' — credentialed CORS will be DISABLED "
+        "⚠️  CORS_ORIGINS contains '*' or 'null' — credentialed CORS will be DISABLED "
         "(allow_credentials=False) to avoid a cross-origin credential-theft "
         "vector. Set APP_CORS_ORIGINS to an explicit allowlist."
     )
@@ -172,7 +178,7 @@ class Settings(BaseSettings):
 
     # CORS — localhost defaults. Override or extend via APP_CORS_ORIGINS env var.
     # Accepts a comma-separated string ("https://a.com,https://b.com") or a JSON list.
-    CORS_ORIGINS: list[str] = [
+    CORS_ORIGINS: Annotated[list[str], NoDecode] = [
         "http://localhost:3100",
         "http://localhost:3000",
         "https://localhost:3100",
@@ -186,8 +192,7 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             stripped = v.strip()
             if stripped.startswith("["):
-                # Let pydantic handle JSON-list form natively
-                return stripped
+                return json.loads(stripped)
             return [s.strip() for s in stripped.split(",") if s.strip()]
         return v
 

@@ -27,6 +27,13 @@ False for `*` or `null` (stripped, case-insensitive); the boot guard follows it.
    Traps: CI runs `ruff format --check`; `git add` named paths only; `Settings()` in tests must
    use monkeypatch.setenv so env does not leak.
 
+## Deviations
+
+- Added `test_env_wildcard_reaches_boot_guard` (env comma form with `*` → the guard's own
+  SystemExit), the end-to-end case the issue names.
+- Docs note that an empty `APP_CORS_ORIGINS` now means no origins (it used to crash boot);
+  unset keeps the defaults. Code unchanged for that case.
+
 ## Tests
 
 `pytest tests/test_auth_hardening.py` green; parse and null tests fail on origin/dev.
