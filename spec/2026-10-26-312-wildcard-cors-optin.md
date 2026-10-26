@@ -1,5 +1,5 @@
 ---
-status: approved
+status: draft
 issue: olafkfreund/Factory#312
 intent: intent/2026-10-26-312-wildcard-cors-optin.md
 ---
@@ -12,9 +12,12 @@ intent: intent/2026-10-26-312-wildcard-cors-optin.md
   next to `CORS_ORIGINS` (env `APP_ALLOW_WILDCARD_CORS`). `enforce_cors_safety`
   raises unless `settings.ALLOW_WILDCARD_CORS`; refusal message and docstring name the
   new flag, not `APP_DEBUG`. The warning and credential drop are unchanged.
+  Review fix (MEDIUM, #1902): when the opt-in lets a wildcard through, log one distinct
+  warning: `wildcard CORS origin allowed because APP_ALLOW_WILDCARD_CORS=true; credentials disabled`.
 - `tests/test_auth_hardening.py` `TestCorsSafety`: debug on + wildcard + no opt-in
   refuses; opt-in + wildcard boots (credentials still dropped); explicit allowlist
-  unchanged with debug on/off; `Settings` reads `APP_ALLOW_WILDCARD_CORS`.
+  unchanged with debug on/off; `Settings` reads `APP_ALLOW_WILDCARD_CORS`; caplog test for
+  the opt-in warning (and its absence for an allowlist).
 - `apps/web-server/.env.example`, `docs/docs/environment-reference.md`: document it.
 
 ## Alternatives rejected
