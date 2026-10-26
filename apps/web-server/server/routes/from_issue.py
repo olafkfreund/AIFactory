@@ -27,15 +27,18 @@ import contextlib
 import json
 import logging
 import os
+import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from server.error_ref import client_error
 from server.services.completion import correlation_key, read_issue_repo
+from server.utils.subprocess_env import child_env
 
 from ..tenancy import resolve_tenant, stamp_spec_tenant
 
@@ -127,6 +130,67 @@ def _declared_repo(request: FromIssueRequest) -> str:
     if provider == "github" and ":" not in (request.repo or ""):
         provider = (request.provider or "github").strip().lower()
     return qualify_repo(provider, project)
+
+
+def _repo_path(value: str | None) -> str:
+    """``owner/repo`` (or ``group/sub/project``) from a repo path or git URL.
+
+    Lowercased, without ``.git``, slashes at either end, or Azure's ``/_git/``.
+    """
+    raw = (value or "").strip()
+    if "://" in raw:
+        raw = urlparse(raw).path
+    elif "@" in raw and ":" in raw:  # scp-like git@host:owner/repo.git
+        raw = raw.partition(":")[2]
+    path = raw.strip("/").removesuffix(".git").replace("/_git/", "/")
+    return path.lower()
+
+
+def _origin_url(project_path: Path) -> str:
+    """The checkout's ``origin`` URL; "" when it cannot be read (local, no network)."""
+    try:
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=project_path,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            env=child_env(),
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _project_repos(project_id: str, project_path: Path) -> tuple[str | None, set[str]]:
+    """The project's explicit ``gitProvider`` (or None) and its own repo paths."""
+    from server.project_registry import load_projects
+
+    project = load_projects().get(project_id) or {}
+    settings = project.get("settings") or {}
+    candidates = (
+        settings.get("gitRepo"),
+        project.get("clonedFrom"),
+        _origin_url(project_path),
+    )
+    own = {_repo_path(c) for c in candidates if c}
+    provider = settings.get("gitProvider")
+    return (provider.strip().lower() if provider else None), own - {""}
+
+
+def _check_declared_repo(project_id: str, project_path: Path, repo_ref: str) -> None:
+    """#1900: a declared repo must be the project's own (its gitToken goes there)."""
+    declared = parse_repo_ref(repo_ref)
+    if declared is None:
+        return
+    host, path = declared
+    configured, own = _project_repos(project_id, project_path)
+    if _repo_path(path) not in own or (configured and configured != host):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"repo {repo_ref!r} is not this project's repository",
+        )
 
 
 async def _fetch_issue_via_provider(
@@ -299,6 +363,7 @@ async def create_from_issue(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Project {request.project_id} not found",
         )
+    _check_declared_repo(request.project_id, projects_path, _declared_repo(request))
 
     # 1. Resolve the issue: explicit payload wins; otherwise fetch via provider.
     if request.payload is not None:
