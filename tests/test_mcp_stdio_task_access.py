@@ -149,7 +149,9 @@ def read_app(monkeypatch):
     monkeypatch.setattr(config.get_settings(), "API_TOKEN", "legacy-test-token")
 
     async def authenticate(header):
-        user_id = "owner" if header == "Bearer acw_owner" else "foreign"
+        user_id = {"Bearer acw_owner": "owner", "Bearer acw_service": None}.get(
+            header, "foreign"
+        )
         return AuthenticatedKey(
             key_id=f"key-{user_id}",
             scopes=frozenset({"mcp:read"}),
@@ -252,14 +254,14 @@ async def test_read_lists_filter_foreign_projects(read_app, monkeypatch, path):
         allowed = await project_authz.accessible_org_ids(request, db)
         return {
             "tasks": [
-                {"id": "p1:001"}
+                {"id": f"{pid}:001"}
                 for pid, project in projects.items()
-                if pid == "p1" and (allowed is None or project["org_id"] in allowed)
+                if allowed is None or project["org_id"] in allowed
             ]
         }
 
     async def get_running_tasks():
-        return execution_route.RunningTasksResponse(tasks=["p1:001"], count=1)
+        return execution_route.RunningTasksResponse(tasks=["p1:001", "p2:001"], count=2)
 
     monkeypatch.setattr(tasks_route, "list_tasks", list_tasks)
     monkeypatch.setattr(execution_route, "get_running_tasks", get_running_tasks)
@@ -276,10 +278,13 @@ async def test_read_lists_filter_foreign_projects(read_app, monkeypatch, path):
             assert response.status_code == 200
             return response.json()
 
-        for token, visible in [
-            ("acw_foreign", False),
-            ("acw_owner", True),
-            ("legacy-test-token", True),
+        # An acw_ key with no user (user_id=None) is a service principal and
+        # sees every project, matching REST (server.auth._acw_principal).
+        for token, expected in [
+            ("acw_foreign", []),
+            ("acw_owner", ["p1"]),
+            ("acw_service", ["p1", "p2"]),
+            ("legacy-test-token", ["p1", "p2"]),
         ]:
             result = await get(token)
             if path == "/projects":
@@ -289,4 +294,4 @@ async def test_read_lists_filter_foreign_projects(read_app, monkeypatch, path):
             else:
                 ids = result["tasks"]
                 assert result["count"] == len(ids)
-            assert (("p1" if path == "/projects" else "p1:001") in ids) is visible
+            assert sorted(i.partition(":")[0] for i in ids) == expected
