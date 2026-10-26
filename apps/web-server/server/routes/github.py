@@ -26,6 +26,7 @@ from server.services import github_app, project_settings_store
 from server.services.gh import run_gh_command  # re-exported: see services/gh.py
 from server.services.git_base_url import safe_git_base_url  # #1360
 from server.services.http_verdict import honest_status
+from server.services.originator import issue_originator
 from server.utils.subprocess_env import child_env, github_token
 
 logger = logging.getLogger(__name__)
@@ -1838,6 +1839,10 @@ async def import_github_issues(projectId: str, request: ImportIssuesRequest):
             "title": issue_data.get("title", f"GitHub Issue #{issue_number}"),
             "description": body,
             "source": "github",
+            # gh read the author from GitHub itself, so the login is trusted.
+            "originator": issue_originator(
+                "github", (issue_data.get("author") or {}).get("login")
+            ),
             "githubIssue": {
                 "number": issue_number,
                 "url": issue_data.get("url", ""),

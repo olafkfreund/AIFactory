@@ -18,6 +18,6 @@ def principal_attribution(principal: object) -> dict[str, str | None]:
     }
 
 
-def issue_originator(provider: str, login: str | None) -> str | None:
-    """Identify an issue author in the provider's namespace."""
-    return f"{provider}:{login}" if login else None
+def issue_originator(provider: str | None, login: str | None) -> str | None:
+    """Identify an issue author in the provider's namespace; null if either is unknown."""
+    return f"{provider}:{login}" if provider and login else None

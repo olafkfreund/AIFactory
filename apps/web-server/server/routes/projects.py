@@ -26,6 +26,7 @@ from server.project_registry import load_projects, save_projects
 from server.services import project_settings_store
 from server.services.audit_service import ACTION_TASK_CREATE, audit_task_action
 from server.services.http_verdict import honest_status
+from server.services.originator import principal_attribution
 from server.specpath import browse_roots, safe_spec_component, within_roots
 from server.utils.subprocess_env import child_env
 
@@ -1288,6 +1289,7 @@ Created via Magestic AI Web UI
         "title": title,
         "description": task_data.description,
         "created_at": datetime.now(UTC).isoformat(),
+        **principal_attribution(_access if isinstance(_access, dict) else None),
     }
     if task_data.metadata:
         requirements["metadata"] = task_data.metadata

@@ -104,10 +104,6 @@ def _normalize_issue(payload: dict | None, issue_number: int | None = None) -> d
         lbl.get("name", "") if isinstance(lbl, dict) else str(lbl) for lbl in raw_labels
     ]
     number = payload.get("number")
-    # gh CLI JSON uses author.login, the REST/webhook payload user.login.
-    author = payload.get("author") or payload.get("user") or ""
-    if isinstance(author, dict):
-        author = author.get("login") or ""
     return {
         "number": issue_number if number is None else number,
         "title": payload.get("title", "") or "",
@@ -115,7 +111,6 @@ def _normalize_issue(payload: dict | None, issue_number: int | None = None) -> d
         "url": payload.get("url", "") or payload.get("htmlUrl", "") or "",
         "state": (payload.get("state", "") or "").lower(),
         "labels": [name for name in label_names if name],
-        "author": author,
     }
 
 
@@ -150,6 +145,8 @@ async def _fetch_issue_via_provider(
 
     provider = _get_project_provider(project_id, repo_ref=repo_ref)
     issue = await provider.fetch_issue(issue_number)
+    kind = getattr(provider, "provider_type", None)
+    kind = getattr(kind, "value", kind)
     return {
         "number": issue.number,
         "title": issue.title,
@@ -157,7 +154,11 @@ async def _fetch_issue_via_provider(
         "url": issue.url,
         "state": issue.state,
         "labels": list(issue.labels),
-        "author": issue.author,
+        # Trusted only here: the provider read it from the host. A caller's
+        # payload could name anyone, so the payload path records no originator.
+        "originator": issue_originator(
+            kind if isinstance(kind, str) else None, issue.author
+        ),
     }
 
 
@@ -170,6 +171,7 @@ def _write_spec(
     tenant: str = "default",
     repo_ref: str | None = None,
     principal: object = None,
+    originator: str | None = None,
 ) -> Path:
     """Create the spec dir, write requirements.json + apply the execution profile."""
     specs_dir = project_path / ".aifactory" / "specs"
@@ -198,9 +200,7 @@ def _write_spec(
         },
     }
     requirements.update(principal_attribution(principal))
-    requirements["originator"] = issue_originator(
-        (parse_repo_ref(repo_ref) or ("github", ""))[0], issue.get("author")
-    )
+    requirements["originator"] = originator
     # RFC-0001 correlation: stamp the issue number on first write so the cockpit
     # threads plan->code->test instead of minting an orphan card.
     number = issue.get("number")
@@ -313,6 +313,7 @@ async def create_from_issue(
         )
 
     # 1. Resolve the issue: explicit payload wins; otherwise fetch via provider.
+    originator: str | None = None
     if request.payload is not None:
         issue = _normalize_issue(request.payload, request.issue_number)
     elif request.issue_number is not None:
@@ -330,6 +331,7 @@ async def create_from_issue(
                 ),
             ) from exc
         issue = _normalize_issue(fetched)
+        originator = fetched.get("originator")
     else:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -404,6 +406,7 @@ async def create_from_issue(
         tenant=resolve_tenant(raw_request),
         repo_ref=_declared_repo(request),
         principal=getattr(raw_request.state, "user", None) if raw_request else None,
+        originator=originator,
     )
     # Persist the integration branch so the PR endgame targets it too —
     # gather_pr_context reads task_metadata.base_branch; without this a fleet
