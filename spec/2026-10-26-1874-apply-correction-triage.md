@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1874
 intent: intent/2026-10-26-1874-apply-correction-triage.md
 ---
