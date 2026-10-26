@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1882
 intent: intent/2026-10-26-1882-mcp-stdio-task-access.md
 ---
