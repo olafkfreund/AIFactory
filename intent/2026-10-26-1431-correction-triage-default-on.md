@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1431
 author: olafkfreund
 predecessor: intent/2026-10-24-1858-correction-triage-gate.md
