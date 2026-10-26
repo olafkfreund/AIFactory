@@ -96,6 +96,10 @@ def enforce_cors_safety(settings: "Settings") -> None:
             "explicit allowlist, or set APP_ALLOW_WILDCARD_CORS=true with "
             "credentialed CORS disabled."
         )
+    logger.warning(
+        "wildcard CORS origin allowed because APP_ALLOW_WILDCARD_CORS=true; "
+        "credentials disabled"
+    )
 
 
 class Settings(BaseSettings):

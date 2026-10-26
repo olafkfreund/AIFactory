@@ -142,6 +142,19 @@ class TestCorsSafety:
         enforce_cors_safety(settings)
         assert cors_allows_credentials(settings) is False
 
+    def test_enforce_opt_in_logs_wildcard_warning(self, caplog):
+        with caplog.at_level("WARNING", logger="server.config"):
+            enforce_cors_safety(self._settings(["*"], ALLOW_WILDCARD_CORS=True))
+        assert (
+            "wildcard CORS origin allowed because APP_ALLOW_WILDCARD_CORS=true; "
+            "credentials disabled" in caplog.text
+        )
+
+    def test_enforce_allowlist_does_not_log_wildcard_warning(self, caplog):
+        with caplog.at_level("WARNING", logger="server.config"):
+            enforce_cors_safety(self._settings(["https://app.example.com"]))
+        assert "wildcard CORS origin allowed" not in caplog.text
+
     def test_settings_reads_wildcard_cors_opt_in(self, monkeypatch):
         monkeypatch.setenv("APP_ALLOW_WILDCARD_CORS", "true")
         assert Settings().ALLOW_WILDCARD_CORS is True
