@@ -23,6 +23,7 @@ finer-grained ones for write operations:
 Use ``require_acw_scope(scope)`` as a FastAPI dependency on each
 proxy route. It returns the resolved ``AuthenticatedKey`` (or a
 synthetic legacy key) so handlers can record key_id in audit logs.
+Task write routes also enforce project membership for ``acw_`` keys.
 """
 
 from __future__ import annotations
@@ -30,11 +31,13 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from fastapi import HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from server.auth import _is_legacy_api_token
+from server.auth import _acw_principal, _is_legacy_api_token
 from server.error_ref import client_error
 
+from ..database.engine import get_db
 from ..mcp_remote import auth as mcp_remote_auth
 
 logger = logging.getLogger(__name__)
@@ -138,6 +141,33 @@ def require_acw_scope(scope: str):
                 ),
             )
 
+        return key
+
+    return _check
+
+
+def require_acw_access(scope: str, minimum_role: str = "member"):
+    """Require the scope and the REST route's project membership check."""
+
+    async def _check(
+        request: Request,
+        key=Depends(require_acw_scope(scope)),
+        db: AsyncSession = Depends(get_db),
+    ):
+        from ..routes.project_authz import authorize_project_for_user
+
+        principal = (
+            {"id": "default", "role": "user", "is_service": True}
+            if isinstance(key, _LegacyAdminKey)
+            else _acw_principal(key, scoped_service_tokens_enabled=False)
+        )
+        task_id = request.path_params.get("task_id")
+        project_id = (
+            task_id.partition(":")[0]
+            if task_id is not None
+            else request.query_params.get("project_id")
+        )
+        await authorize_project_for_user(principal, project_id, db, minimum_role)
         return key
 
     return _check

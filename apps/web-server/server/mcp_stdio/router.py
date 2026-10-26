@@ -8,6 +8,10 @@ use. The proxy adds nothing but auth + audit: no URL rewriting, no
 payload transformation, no extra hop. If a delegated handler raises
 ``HTTPException``, it propagates as-is (and no audit row is written).
 
+``acw_`` keys are user- and org-bound. Task write proxies apply the REST
+route's ``member`` check against the key owner; the legacy token acts as
+a service principal.
+
 Why import-and-call instead of HTTP-forwarding to the existing routes:
 - One process, no extra hop, no risk of an MCP request looping back
   through ``TokenAuthMiddleware`` which would reject the ``acw_`` key
@@ -47,6 +51,7 @@ from .auth import (
     TASK_MERGE_SCOPE,
     TASK_WRITE_SCOPE,
     _LegacyAdminKey,
+    require_acw_access,
     require_acw_scope,
 )
 
@@ -216,7 +221,7 @@ async def proxy_create_and_run_task(
     project_id: str = Query(...),
     title: str = Query(...),
     description: str = Query(...),
-    key=Depends(require_acw_scope(TASK_WRITE_SCOPE)),
+    key=Depends(require_acw_access(TASK_WRITE_SCOPE)),
 ):
     # create_and_run_task expects CreateAndRunRequest (a StartTaskRequest
     # subclass that adds `provenance`, #332) and reads request.provenance.
@@ -244,7 +249,7 @@ async def proxy_create_and_run_task(
 async def proxy_start_task(
     task_id: str,
     request: FastAPIRequest,
-    key=Depends(require_acw_scope(TASK_WRITE_SCOPE)),
+    key=Depends(require_acw_access(TASK_WRITE_SCOPE)),
 ):
     from ..routes.execution import StartTaskRequest, start_task
 
@@ -264,7 +269,7 @@ async def proxy_start_task(
 async def proxy_stop_task(
     task_id: str,
     request: FastAPIRequest,
-    key=Depends(require_acw_scope(TASK_WRITE_SCOPE)),
+    key=Depends(require_acw_access(TASK_WRITE_SCOPE)),
 ):
     from ..routes.execution import stop_task
 
@@ -283,7 +288,7 @@ async def proxy_stop_task(
 async def proxy_recover_task(
     task_id: str,
     request: FastAPIRequest,
-    key=Depends(require_acw_scope(TASK_WRITE_SCOPE)),
+    key=Depends(require_acw_access(TASK_WRITE_SCOPE)),
 ):
     from ..routes.execution import RecoverTaskRequest, recover_task
 
@@ -303,7 +308,7 @@ async def proxy_recover_task(
 async def proxy_approve_plan(
     task_id: str,
     request: FastAPIRequest,
-    key=Depends(require_acw_scope(TASK_WRITE_SCOPE)),
+    key=Depends(require_acw_access(TASK_WRITE_SCOPE)),
 ):
     from ..routes.tasks import ApprovePlanRequest, approve_plan
 
@@ -328,7 +333,7 @@ async def proxy_approve_plan(
 async def proxy_create_pr(
     task_id: str,
     request: FastAPIRequest,
-    key=Depends(require_acw_scope(TASK_MERGE_SCOPE)),
+    key=Depends(require_acw_access(TASK_MERGE_SCOPE)),
 ):
     from ..routes.tasks import CreatePRFromTaskOptions, create_pr_from_task
 
@@ -350,7 +355,7 @@ async def proxy_create_pr(
 async def proxy_merge_worktree(
     task_id: str,
     request: FastAPIRequest,
-    key=Depends(require_acw_scope(TASK_MERGE_SCOPE)),
+    key=Depends(require_acw_access(TASK_MERGE_SCOPE)),
 ):
     from ..routes.tasks import WorktreeMergeOptions, merge_worktree
 
