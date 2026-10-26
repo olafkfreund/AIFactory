@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1898
 spec: spec/2026-10-26-1898-from-issue-project-access.md
 ---
