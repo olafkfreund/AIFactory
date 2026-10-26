@@ -29,16 +29,18 @@ Task write routes also enforce project membership for ``acw_`` keys.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.auth import _acw_principal, _is_legacy_api_token
+from server.database.engine import get_db
 from server.error_ref import client_error
-
-from ..database.engine import get_db
-from ..mcp_remote import auth as mcp_remote_auth
+from server.mcp_remote import auth as mcp_remote_auth
+from server.routes.project_authz import authorize_project_for_user
 
 logger = logging.getLogger(__name__)
 
@@ -146,16 +148,21 @@ def require_acw_scope(scope: str):
     return _check
 
 
-def require_acw_access(scope: str, minimum_role: str = "member"):
+_AcwKey = mcp_remote_auth.AuthenticatedKey | _LegacyAdminKey
+
+
+def require_acw_access(
+    scope: str, minimum_role: str = "member"
+) -> Callable[..., Awaitable[_AcwKey]]:
     """Require the scope and the REST route's project membership check."""
 
     async def _check(
         request: Request,
-        key=Depends(require_acw_scope(scope)),
-        db: AsyncSession = Depends(get_db),
-    ):
-        from ..routes.project_authz import authorize_project_for_user
-
+        db: Annotated[AsyncSession, Depends(get_db)],
+        # Closure-local dependency: Annotated would be a string under
+        # ``from __future__ import annotations`` and could not resolve it.
+        key: _AcwKey = Depends(require_acw_scope(scope)),  # noqa: B008
+    ) -> _AcwKey:
         principal = (
             {"id": "default", "role": "user", "is_service": True}
             if isinstance(key, _LegacyAdminKey)
