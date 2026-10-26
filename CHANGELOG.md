@@ -20,7 +20,9 @@ apply-correction now requires a triage block by default.
   `POST /api/tasks/{id}/apply-correction` with no `triage` block, including a
   markdown-only call, gets a 422 before anything is written. TFactory 0.9.42
   sends triage on every handback path (TFactory#1436). Opt out with
-  `APP_REQUIRE_CORRECTION_TRIAGE=false`. Follow-up: #1874.
+  `APP_REQUIRE_CORRECTION_TRIAGE=false`. Known gap: the MCP
+  `task_apply_correction` tool has no triage input yet, so it also gets the 422
+  until #1874 lands.
 
 ### Security
 
