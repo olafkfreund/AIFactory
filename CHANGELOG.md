@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+### Changed
+
+- **Apply-correction requires a triage block by default (TFactory#1431).**
+  `APP_REQUIRE_CORRECTION_TRIAGE` now defaults to on: a
+  `POST /api/tasks/{id}/apply-correction` with no `triage` block gets a 422
+  before anything is written. TFactory 0.9.42 sends triage on every handback
+  path (TFactory#1436). Opt out with `APP_REQUIRE_CORRECTION_TRIAGE=false`.
+
 ## 3.10.8 - 2026-10-24
 
 ### Security
