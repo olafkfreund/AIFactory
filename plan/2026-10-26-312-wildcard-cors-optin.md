@@ -1,5 +1,5 @@
 ---
-status: approved
+status: draft
 issue: olafkfreund/Factory#312
 spec: spec/2026-10-26-312-wildcard-cors-optin.md
 ---
@@ -26,6 +26,13 @@ change (none set CORS).
    `ruff check` and `ruff format --check` on the two Python files.
    Traps: guard runs only from `main.__main__`; CI runs `ruff format --check`; do not touch
    `mcp_stdio` files; `git add` named paths only.
+
+2. Review fix on #1902. `apps/web-server/server/config.py` `enforce_cors_safety` (~line 99): after
+   the refusal branch, `logger.warning("wildcard CORS origin allowed because
+   APP_ALLOW_WILDCARD_CORS=true; credentials disabled")`. `tests/test_auth_hardening.py`
+   `TestCorsSafety`: caplog test that the opt-in logs it and an allowlist does not.
+   → verify: pytest on the file, `ruff check` + `ruff format --check`.
+   Traps: `git add` named paths only; no force-push.
 
 ## Tests
 
