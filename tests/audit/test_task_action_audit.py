@@ -271,7 +271,10 @@ def test_apply_correction_audits_only_a_confirmed_success(
 
     monkeypatch.setattr(execution, "record_handback_receipt", _receipt)
     req = execution.ApplyCorrectionRequest(
-        fix_request_md="# fix", source="tfactory", confirm=result["confirm"]
+        fix_request_md="# fix",
+        source="tfactory",
+        confirm=result["confirm"],
+        triage={"contract_version": 1},
     )
     _run(execution.apply_task_correction("p:001", req, _access=USER))
     assert [r["action"] for r in rows] == ["task.apply_correction"] * expected
@@ -303,6 +306,14 @@ def _flag(monkeypatch, value: bool):
     import server.config
 
     monkeypatch.setattr(server.config.settings, "REQUIRE_CORRECTION_TRIAGE", value)
+
+
+def test_triage_required_by_default(monkeypatch):
+    # TFactory#1431: on unless APP_REQUIRE_CORRECTION_TRIAGE opts out.
+    from server.config import Settings
+
+    monkeypatch.delenv("APP_REQUIRE_CORRECTION_TRIAGE", raising=False)
+    assert Settings(_env_file=None).REQUIRE_CORRECTION_TRIAGE is True
 
 
 def test_triage_required_rejects_markdown_only(rows, correction_calls, monkeypatch):

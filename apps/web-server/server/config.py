@@ -237,9 +237,9 @@ class Settings(BaseSettings):
     RMUX_ENABLED: bool = False
 
     # #1858: when true, apply-correction refuses a hand-back with no `triage`
-    # block (422). Off until TFactory#1430 sends triage on every path.
-    # Override: APP_REQUIRE_CORRECTION_TRIAGE.
-    REQUIRE_CORRECTION_TRIAGE: bool = False
+    # block (422). On by default since TFactory#1436 sends triage on every
+    # path (TFactory#1431). Opt out: APP_REQUIRE_CORRECTION_TRIAGE=false.
+    REQUIRE_CORRECTION_TRIAGE: bool = True
 
     # extra="ignore" (#384): the web-server's environment/.env legitimately
     # carries cross-cutting, non-APP_ vars meant for other components — notably
