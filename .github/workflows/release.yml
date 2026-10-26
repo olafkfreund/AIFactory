@@ -428,7 +428,9 @@ jobs:
           else
           syft scan "$IMAGE_NIX" -o spdx-json=sbom-nix.spdx.json
           syft scan "$IMAGE_NIX" -o cyclonedx-json=sbom-nix.cyclonedx.json
-          attest spdxjson  sbom-nix.spdx.json      "$IMAGE_NIX"
+          # #1879: rekor.sigstore.dev 502s any body over 24 MiB; the full doc (19 MB, base64 25.2 MB) is over, so attest it without file entries and release the full one.
+          jq -c 'del(.files) | .relationships |= map(select(.relatedSpdxElement | startswith("SPDXRef-File") | not))' sbom-nix.spdx.json > sbom-nix.attest.spdx.json
+          attest spdxjson  sbom-nix.attest.spdx.json "$IMAGE_NIX"
           attest cyclonedx sbom-nix.cyclonedx.json "$IMAGE_NIX"
           fi
 
