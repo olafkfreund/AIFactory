@@ -1,5 +1,5 @@
 ---
-status: approved
+status: draft
 issue: 1882
 spec: spec/2026-10-26-1882-mcp-stdio-task-access.md
 coders:
@@ -73,3 +73,35 @@ Approved decisions (from the spec):
 ## Rollback
 
 Revert the PR commit; the dependency swap is the only behaviour change.
+
+## Revision 1 (lead review of #1885)
+
+Approved additions (spec "Revision 1"):
+
+3. `apps/web-server/server/mcp_stdio/auth.py`: add public `acw_principal(key)`
+   (legacy key → `{"id": "default", "role": "user", "is_service": True}`;
+   else `_acw_principal(key, scoped_service_tokens_enabled=getattr(get_settings(),
+   "SCOPED_SERVICE_TOKENS_ENABLED", False))`, `get_settings` from `server.config`);
+   use it in `require_acw_access`; add `require_acw_principal(scope)` (scope
+   check, then `request.state.user = acw_principal(key)`, return key).
+   `router.py`: task-id read proxies → `require_acw_access(MCP_READ_SCOPE, "viewer")`;
+   `/projects`, `/tasks`, `/tasks/running` → `require_acw_principal(MCP_READ_SCOPE)`
+   plus `request` and `db: Annotated[AsyncSession, Depends(get_db)]`;
+   `/tasks` calls `list_tasks(project_id=..., status=..., request=request, db=db)`;
+   `/projects` and `/tasks/running` filter by `accessible_org_ids(request, db)`
+   (None = all) on the project's `org_id` (running id → project = part before `:`).
+   → verify by the strict ratchets (`scripts/cq_ratchet.py`, ruff and `--tool mypy`, base `origin/dev`)
+   and the targeted pytest.
+   Traps: new imports in router.py must be absolute and top-level, and every new
+   `Depends` default needs `Annotated` (the strict ruff/mypy ratchet counts per
+   file). A closure-local dependency can't go in `Annotated` under
+   `from __future__ import annotations`, so use a default with `# noqa: B008`.
+   `tests/test_mcp_stdio_list_projects.py` pins the unfiltered service list.
+4. `tests/test_mcp_stdio_task_access.py`: parametrise the 4 task-id read proxies
+   (foreign 403, owner 200, unknown 404, legacy 200); list tests: foreign key
+   sees no `p1` project/task/running id, owner and legacy do.
+   → verify by `pytest tests/test_mcp_stdio_task_access.py -q`.
+5. After #1881 shows MERGED: `git merge origin/dev` (no force-push), swap the
+   apply-correction proxy to `require_acw_access(TASK_WRITE_SCOPE)`, add it to
+   the write parametrisation (`execution.apply_task_correction`).
+   → verify by the targeted pytest + ratchets.
