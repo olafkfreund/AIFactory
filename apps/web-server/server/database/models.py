@@ -394,9 +394,17 @@ class ApiKey(Base):
     scopes: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Most autonomous tier (low/medium/hard) this key's agent may act at
+    # (Factory#1960). Null means no ceiling recorded, never a default.
+    autonomy_ceiling: Mapped[str | None] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now()
     )
+
+    @property
+    def agent_identity(self) -> str:
+        """``agent:aifactory/<key_id>``: derived from the key, so it cannot drift."""
+        return f"agent:aifactory/{self.id}"
 
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="api_keys")
