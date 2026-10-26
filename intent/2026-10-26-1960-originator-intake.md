@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1960
 author: olafkfreund
 ---
@@ -38,7 +38,7 @@ AIFactory web-server: task creation routes, MCP proxy, from-issue route, task re
 - Additive only: no change to authentication, scopes or access checks; no lockout, no credential change.
 - No git trailers in this slice.
 - No placeholder identities: unknown is null.
-- Request bodies must not be able to set `originator`; it comes only from the authenticated principal or the provider-fetched issue author.
+- No request field sets `originator` directly. It comes from the authenticated principal, or from the issue's author (provider-fetched, or in the issue payload the caller is already trusted to supply for title, body and labels).
 
 ## Open questions
 
