@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: olafkfreund/Factory#312
 spec: spec/2026-10-26-312-insecure-auth-optin.md
 ---
