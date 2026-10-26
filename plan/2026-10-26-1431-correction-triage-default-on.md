@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1431
 spec: spec/2026-10-26-1431-correction-triage-default-on.md
 ---
