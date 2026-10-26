@@ -88,7 +88,14 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr("server.routes.project_authz._auth_disabled", lambda: False)
     monkeypatch.setattr(
         "server.project_registry.load_projects",
-        lambda: {"p1": {"org_id": "org-1", "name": "p1"}},
+        # clonedFrom: the poller declares o/r, which #1900 binds to the project.
+        lambda: {
+            "p1": {
+                "org_id": "org-1",
+                "name": "p1",
+                "clonedFrom": "https://github.com/o/r.git",
+            }
+        },
     )
     monkeypatch.setattr(from_issue, "_resolve_project_path", lambda _pid: tmp_path)
 

@@ -36,6 +36,20 @@ def project(tmp_path, monkeypatch):
         started.update(kwargs)
 
     monkeypatch.setattr(from_issue, "_start_build", _fake_start)
+    # #1900: a declared repo must be the project's own. Project "p" stands for
+    # every repo these tests declare; the binding itself is tested in
+    # test_from_issue_repo_binding.py.
+    monkeypatch.setattr(
+        from_issue,
+        "_project_repos",
+        lambda _pid, _path: from_issue._OwnRepo(
+            provider=None,
+            paths=frozenset({"platform/pipelines", "a/x", "b/y"}),
+            hosts=frozenset(),
+            # a gitBaseUrl: lets test_provider_fetch_path declare gitlab:
+            base=("git.example.com", ""),
+        ),
+    )
     return tmp_path, started
 
 
