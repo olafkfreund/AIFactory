@@ -136,7 +136,7 @@ async def list_tasks(
     if project_id:
         if project_id not in projects:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
+                status_code=404,  # `status` here is the query param, not the module
                 detail="Project not found",
             )
         project_ids = [project_id]
