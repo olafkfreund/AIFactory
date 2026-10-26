@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1875
 spec: spec/2026-10-26-1875-docker-p0-layer-cache.md
 ---
