@@ -1,5 +1,5 @@
 ---
-status: approved
+status: draft
 issue: olafkfreund/Factory#312
 spec: spec/2026-10-26-312-insecure-auth-optin.md
 ---
@@ -31,6 +31,15 @@ and gitops need no change (verified on origin/dev and factory-gitops origin/main
    `APP_ALLOW_INSECURE_AUTH`; add a commented `# APP_ALLOW_INSECURE_AUTH=false` line and a
    table row for it. → verify by reading the diff.
    Traps: none.
+
+3. Review fixes on #1895. `apps/web-server/server/config.py:21`: drop `""` from
+   `_LOOPBACK_HOSTS`. `config.py:49-57`: after the refusal branch, if the host is not loopback
+   (so the opt-in let it through) `logger.warning("auth disabled on network host %s because
+   APP_ALLOW_INSECURE_AUTH=true", host)`. `tests/test_auth_hardening.py:69`: move `""` from
+   `test_loopback_hosts` to `test_exposed_hosts`; add an empty-host-refuses test and a caplog test
+   for the opt-in warning. → verify: `apps/web-server/.venv/bin/pytest tests/test_auth_hardening.py -q`,
+   `ruff check` + `ruff format --check` on both files.
+   Traps: CI runs `ruff format --check`; `git add` named paths only; no force-push.
 
 ## Tests
 
