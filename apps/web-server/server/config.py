@@ -18,7 +18,8 @@ from .paths import get_data_dir, get_data_file, write_secret_file
 logger = logging.getLogger(__name__)
 
 # Hosts that only accept local connections — DISABLE_AUTH is tolerable here.
-_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost", ""}
+# Not "": uvicorn/asyncio bind an empty host to every interface.
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
 
 
 def host_is_loopback(host: str) -> bool:
@@ -47,7 +48,9 @@ def enforce_disable_auth_safety(settings: "Settings") -> None:
     if not settings.DISABLE_AUTH:
         return
     warn_if_auth_disabled(settings)
-    if not host_is_loopback(settings.HOST) and not settings.ALLOW_INSECURE_AUTH:
+    if host_is_loopback(settings.HOST):
+        return
+    if not settings.ALLOW_INSECURE_AUTH:
         raise SystemExit(
             "Refusing to start: APP_DISABLE_AUTH=true on non-loopback host "
             f"'{settings.HOST}' without APP_ALLOW_INSECURE_AUTH. This would expose an "
@@ -55,6 +58,10 @@ def enforce_disable_auth_safety(settings: "Settings") -> None:
             "127.0.0.1, set APP_ALLOW_INSECURE_AUTH=true to explicitly accept the risk, "
             "or unset APP_DISABLE_AUTH."
         )
+    logger.warning(
+        "auth disabled on network host %s because APP_ALLOW_INSECURE_AUTH=true",
+        settings.HOST,
+    )
 
 
 def cors_allows_credentials(settings: "Settings") -> bool:

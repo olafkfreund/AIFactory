@@ -65,13 +65,12 @@ class TestLegacyApiTokenConstantTime:
 
 
 class TestHostIsLoopback:
-    @pytest.mark.parametrize(
-        "host", ["127.0.0.1", "::1", "localhost", "", "  LocalHost "]
-    )
+    @pytest.mark.parametrize("host", ["127.0.0.1", "::1", "localhost", "  LocalHost "])
     def test_loopback_hosts(self, host):
         assert host_is_loopback(host) is True
 
-    @pytest.mark.parametrize("host", ["0.0.0.0", "::", "192.168.1.5", "10.0.0.2"])
+    # "" binds every interface under uvicorn, so it is exposed, not loopback.
+    @pytest.mark.parametrize("host", ["0.0.0.0", "::", "192.168.1.5", "10.0.0.2", ""])
     def test_exposed_hosts(self, host):
         assert host_is_loopback(host) is False
 
@@ -110,6 +109,25 @@ class TestEnforceDisableAuthSafety:
     def test_refuses_lan_ip_without_opt_in(self):
         with pytest.raises(SystemExit):
             enforce_disable_auth_safety(self._settings(HOST="192.168.1.5"))
+
+    def test_refuses_empty_host_without_opt_in(self):
+        with pytest.raises(SystemExit):
+            enforce_disable_auth_safety(self._settings(HOST=""))
+
+    def test_opt_in_logs_network_host_warning(self, caplog):
+        with caplog.at_level("WARNING", logger="server.config"):
+            enforce_disable_auth_safety(
+                self._settings(HOST="0.0.0.0", ALLOW_INSECURE_AUTH=True)
+            )
+        assert (
+            "auth disabled on network host 0.0.0.0 because "
+            "APP_ALLOW_INSECURE_AUTH=true" in caplog.text
+        )
+
+    def test_loopback_does_not_log_network_host_warning(self, caplog):
+        with caplog.at_level("WARNING", logger="server.config"):
+            enforce_disable_auth_safety(self._settings(HOST="127.0.0.1"))
+        assert "auth disabled on network host" not in caplog.text
 
     def test_opt_in_loads_from_environment(self, monkeypatch):
         monkeypatch.setenv("APP_ALLOW_INSECURE_AUTH", "true")
