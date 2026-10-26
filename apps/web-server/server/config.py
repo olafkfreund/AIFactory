@@ -114,7 +114,9 @@ class Settings(BaseSettings):
     # Authentication
     API_TOKEN: str = Field(default="", repr=False)  # Will generate default if not set
     DISABLE_AUTH: bool = False  # Set to True to disable auth (dev only)
-    ALLOW_INSECURE_AUTH: bool = False  # Explicit opt-in for unauthenticated network binding
+    ALLOW_INSECURE_AUTH: bool = (
+        False  # Explicit opt-in for unauthenticated network binding
+    )
 
     # Scoped service tokens (Factory#312, step 1 — additive, off by default).
     # When true, a scoped ``acw_`` service key (no owning user) is recognised as
