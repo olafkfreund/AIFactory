@@ -92,3 +92,8 @@ These came up during implementation.
   (`reversed(DEFAULT_TIERS.items())`). A floor pick can serve several tiers.
   When it does, the test fixture showed it was stamped `small` instead of its
   own class.
+- **Regenerated the autonomy matrix.** The `import_module` call counts as one
+  more dynamic import for the modules that reach `routing_policy`.
+  `scripts/gen_autonomy_matrix.py` regenerated
+  `docs/docs/compliance/autonomy-matrix.md` and
+  `docs/static/compliance/autonomy-matrix.json` (CI `--check`).
