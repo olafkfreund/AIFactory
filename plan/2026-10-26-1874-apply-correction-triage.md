@@ -1,11 +1,13 @@
 ---
-status: approved
+status: draft
 issue: 1874
 spec: spec/2026-10-26-1874-apply-correction-triage.md
 coders:
   1: codex
   2: codex
   3: codex
+  4: claude
+  5: claude
 ---
 
 # Plan: let the MCP `task_apply_correction` tool send a triage report (#1874)
@@ -28,7 +30,14 @@ Approved decisions (from the spec):
   return an `isError` result that says a triage report is required and to
   pass `triage` or set `APP_REQUIRE_CORRECTION_TRIAGE=false` on the server,
   including the server's text. Other errors use `_format_error` as today.
-- Fix the stale `ApplyCorrectionRequest` docstring.
+- Fix the stale `ApplyCorrectionRequest` docstring and the stale
+  "additive / backward-compatible" comment on its `triage` field.
+- Added in review of #1881: the MCP `http_client` rewrites `/api/...` to
+  `/api/mcp-stdio/...`, and the stdio proxy had no apply-correction route, so
+  every call 404'd. Add `POST /api/mcp-stdio/tasks/{task_id}/apply-correction`
+  (scope `TASK_WRITE_SCOPE`), build `ApplyCorrectionRequest` from the body
+  (bad body: 422), delegate to `routes.execution.apply_task_correction`, and
+  write one `mcp.task.apply_correction` audit row only on a confirmed success.
 
 ## Steps
 
@@ -56,10 +65,31 @@ Approved decisions (from the spec):
    Traps: use the file's existing `tools_by_name` fixture and
    `_content_text` helper; tests are async like their neighbours.
 
+4. `apps/web-server/server/mcp_stdio/router.py` (before the "PR / merge"
+   section) + `apps/web-server/server/services/audit_service.py` (next to
+   `ACTION_MCP_TASK_APPROVE_PLAN`): add `ACTION_MCP_TASK_APPLY_CORRECTION =
+   "mcp.task.apply_correction"` and the `proxy_apply_correction` route as in
+   the decisions above; bump the module docstring's route count to 16.
+   `apps/web-server/server/routes/execution.py:118`: replace the stale comment.
+   → verify by ruff check/format on the three files.
+   Traps: import `routes.execution` inside the handler like the other proxies
+   (import cycle); call `apply_task_correction(task_id, body)` without
+   `_access` so the REST route skips its own audit row.
+5. `tests/audit/test_task_action_audit.py` (end of file): `TestClient` on the
+   real mcp-stdio router with the legacy admin token, reusing the
+   `rows` / `correction_calls` / `_flag` helpers: valid triage → 200, triage
+   reaches `apply_correction`, one `mcp.task.apply_correction` row; no triage →
+   422 naming `APP_REQUIRE_CORRECTION_TRIAGE`, nothing applied, no row.
+   → verify by `apps/backend/.venv/bin/pytest tests/audit/test_task_action_audit.py -q`
+   Traps: patch `log_audit_event_bg` on the router module too (it imported
+   the sink by name).
+
 ## Tests
 
 `apps/backend/.venv/bin/pytest tests/test_mcp_task_control.py -q` passes;
-the two new tests fail against `origin/dev` code. Ruff check and format
+the two new tests fail against `origin/dev` code.
+`apps/backend/.venv/bin/pytest tests/audit/test_task_action_audit.py tests/test_mcp_stdio_proxy.py -q`
+passes; the two proxy tests 404 against `origin/dev`. Ruff check and format
 clean on the three touched files.
 
 ## Rollback
