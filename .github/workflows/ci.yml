@@ -762,7 +762,7 @@ jobs:
       # Flags MUST match the lockfile header's regeneration command; the lock
       # is only valid for the interpreter and platform it was compiled for,
       # which are the runtime image's (chainguard python:latest-dev = CPython
-      # 3.14, and every image build is platforms: linux/amd64).
+      # 3.15, and every image build is platforms: linux/amd64).
       - name: Recompile the lock from the requirements files
         run: |
           # uv takes preferences from the file named by -o, so the committed
@@ -773,7 +773,7 @@ jobs:
           # the same tree, because lxml 6.1.2 published at 04:58Z and uvicorn
           # 0.52.4 alongside it. Nothing in the repo had changed.
           cp requirements.lock /tmp/requirements.recompiled.lock
-          uv pip compile --python-version 3.14 \
+          uv pip compile --python-version 3.15 \
             --python-platform x86_64-unknown-linux-gnu --generate-hashes \
             --no-header \
             apps/web-server/requirements.txt apps/backend/requirements.txt \
