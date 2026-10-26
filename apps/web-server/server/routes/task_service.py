@@ -511,6 +511,8 @@ def load_spec_metadata(spec_dir: Path) -> dict:
         "archivedInVersion": None,
         "reviewReason": None,
         "github_issue": None,
+        "originator": None,
+        "agent_identity": None,
         # #1569: the creation time RECORDED at intake, if this spec has one.
         "created_at": None,
     }
@@ -526,6 +528,8 @@ def load_spec_metadata(spec_dir: Path) -> dict:
                 metadata["description"] = _clean_task_description(
                     requirements["description"]
                 )
+            metadata["originator"] = requirements.get("originator")
+            metadata["agent_identity"] = requirements.get("agent_identity")
             # RFC-0001 correlation: surface the upstream GitHub issue so the
             # cockpit threads this task with its PFactory plan + TFactory test.
             prov = requirements.get("provenance")
@@ -1041,6 +1045,8 @@ def spec_to_task(project_id: str, spec_dir: Path) -> Task:
         metadata=task_metadata,
         review_reason=metadata.get("reviewReason"),
         github_issue=metadata.get("github_issue"),
+        originator=metadata["originator"],
+        agent_identity=metadata["agent_identity"],
     )
 
 
@@ -1314,6 +1320,8 @@ def task_to_dict(task: Task) -> dict:
         "correlationKey": corr_key,
         # W5 (Factory #218): target repo (owner/name) for cross-portal tracking.
         "repo": task.repo,
+        "originator": task.originator,
+        "agentIdentity": task.agent_identity,
         "subtasks": [
             {
                 "id": s.id,

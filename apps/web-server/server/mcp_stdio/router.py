@@ -60,6 +60,7 @@ from .auth import (
     TASK_MERGE_SCOPE,
     TASK_WRITE_SCOPE,
     _LegacyAdminKey,
+    acw_principal,
     require_acw_access,
     require_acw_principal,
     require_acw_scope,
@@ -266,7 +267,11 @@ async def proxy_create_and_run_task(
 
     body = await _read_json_body(request)
     result = await create_and_run_task(
-        project_id, title, description, CreateAndRunRequest(**body)
+        project_id,
+        title,
+        description,
+        CreateAndRunRequest(**body),
+        _access=acw_principal(key),
     )
     task_id = result.get("task_id") if isinstance(result, dict) else None
     await _audit_mcp_write(

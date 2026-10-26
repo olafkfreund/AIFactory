@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -130,7 +131,7 @@ async def test_labels_override_payload_labels(project):
 
 
 async def test_provider_fetch_path(project, monkeypatch):
-    _, _ = project
+    tmp_path, _ = project
 
     seen = {}
 
@@ -146,6 +147,7 @@ async def test_provider_fetch_path(project, monkeypatch):
             "url": "u",
             "state": "open",
             "labels": ["factory:medium"],
+            "author": "octocat",
         }
 
     monkeypatch.setattr(from_issue, "_fetch_issue_via_provider", _fake_fetch)
@@ -155,8 +157,53 @@ async def test_provider_fetch_path(project, monkeypatch):
     res = await create_from_issue(req)
     assert res["tier"] == "medium"
     assert res["issue_number"] == 42
+    assert _requirements(tmp_path, res["spec_id"])["originator"] == "gitlab:octocat"
     # The declared host reaches the fetch, qualified. It used to be dropped.
     assert seen["repo_ref"] == "gitlab:platform/pipelines"
+
+
+async def test_provider_fetch_preserves_author(monkeypatch):
+    from server.routes import github
+
+    async def fetch_issue(_number):
+        return SimpleNamespace(
+            number=42,
+            title="Issue",
+            body="",
+            url="",
+            state="open",
+            labels=[],
+            author="octocat",
+        )
+
+    monkeypatch.setattr(
+        github,
+        "_get_project_provider",
+        lambda *_args, **_kwargs: SimpleNamespace(fetch_issue=fetch_issue),
+    )
+    issue = await from_issue._fetch_issue_via_provider("p", 42)
+    assert issue["author"] == "octocat"
+
+
+@pytest.mark.parametrize(
+    ("author", "expected"),
+    [
+        ({"author": {"login": "alice"}}, "github:alice"),
+        ({"user": {"login": "bob"}}, "github:bob"),
+        ({"author": "carol"}, "github:carol"),
+        ({}, None),
+    ],
+)
+async def test_issue_attribution_from_payload(project, author, expected):
+    tmp_path, _ = project
+    raw_request = SimpleNamespace(state=SimpleNamespace(user={"api_key_id": "k1"}))
+    res = await create_from_issue(
+        FromIssueRequest(project_id="p", payload={"title": "Attribution", **author}),
+        raw_request,
+    )
+    requirements = _requirements(tmp_path, res["spec_id"])
+    assert requirements["originator"] == expected
+    assert requirements["agent_identity"] == "agent:aifactory/k1"
 
 
 async def test_redelivered_issue_is_deduplicated(project):

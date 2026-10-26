@@ -32,6 +32,7 @@ from server.services.audit_service import (
     audit_task_route,
 )
 from server.services.handback_receipt_store import record as record_handback_receipt
+from server.services.originator import principal_attribution
 from server.services.trusted_contract import handoff_contract, resolve_contract
 from server.services.trusted_contract_store import (
     TrustedContractStore,
@@ -1219,6 +1220,9 @@ async def create_and_run_task(
         "description": description,
         "created_at": datetime.now(UTC).isoformat(),
     }
+    requirements.update(
+        principal_attribution(_access if isinstance(_access, dict) else None)
+    )
     # Persist upstream provenance (#332) so the PFactory→issue→spec chain is
     # traversable. Optional — omitted entirely when no fields are provided.
     if request.provenance is not None:

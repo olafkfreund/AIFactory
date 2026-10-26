@@ -36,6 +36,7 @@ from pydantic import BaseModel, Field
 
 from server.error_ref import client_error
 from server.services.completion import correlation_key, read_issue_repo
+from server.services.originator import issue_originator, principal_attribution
 
 from ..tenancy import resolve_tenant, stamp_spec_tenant
 
@@ -103,6 +104,10 @@ def _normalize_issue(payload: dict | None, issue_number: int | None = None) -> d
         lbl.get("name", "") if isinstance(lbl, dict) else str(lbl) for lbl in raw_labels
     ]
     number = payload.get("number")
+    # gh CLI JSON uses author.login, the REST/webhook payload user.login.
+    author = payload.get("author") or payload.get("user") or ""
+    if isinstance(author, dict):
+        author = author.get("login") or ""
     return {
         "number": issue_number if number is None else number,
         "title": payload.get("title", "") or "",
@@ -110,6 +115,7 @@ def _normalize_issue(payload: dict | None, issue_number: int | None = None) -> d
         "url": payload.get("url", "") or payload.get("htmlUrl", "") or "",
         "state": (payload.get("state", "") or "").lower(),
         "labels": [name for name in label_names if name],
+        "author": author,
     }
 
 
@@ -151,6 +157,7 @@ async def _fetch_issue_via_provider(
         "url": issue.url,
         "state": issue.state,
         "labels": list(issue.labels),
+        "author": issue.author,
     }
 
 
@@ -162,6 +169,7 @@ def _write_spec(
     tier_value: str,
     tenant: str = "default",
     repo_ref: str | None = None,
+    principal: object = None,
 ) -> Path:
     """Create the spec dir, write requirements.json + apply the execution profile."""
     specs_dir = project_path / ".aifactory" / "specs"
@@ -189,6 +197,10 @@ def _write_spec(
             "repo": repo_ref or "",
         },
     }
+    requirements.update(principal_attribution(principal))
+    requirements["originator"] = issue_originator(
+        (parse_repo_ref(repo_ref) or ("github", ""))[0], issue.get("author")
+    )
     # RFC-0001 correlation: stamp the issue number on first write so the cockpit
     # threads plan->code->test instead of minting an orphan card.
     number = issue.get("number")
@@ -391,6 +403,7 @@ async def create_from_issue(
         tier.value,
         tenant=resolve_tenant(raw_request),
         repo_ref=_declared_repo(request),
+        principal=getattr(raw_request.state, "user", None) if raw_request else None,
     )
     # Persist the integration branch so the PR endgame targets it too —
     # gather_pr_context reads task_metadata.base_branch; without this a fleet
