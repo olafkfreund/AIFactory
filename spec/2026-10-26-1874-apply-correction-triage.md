@@ -1,5 +1,5 @@
 ---
-status: approved
+status: draft
 issue: 1874
 intent: intent/2026-10-26-1874-apply-correction-triage.md
 ---
@@ -34,6 +34,21 @@ Chosen (user decision): add an optional `triage` argument to
    while `APP_REQUIRE_CORRECTION_TRIAGE` is on (default since #1872), and the
    markdown-only POST only works with it off.
 
+5. **MCP proxy route** (added in review). The MCP `http_client` rewrites
+   `/api/...` to `/api/mcp-stdio/...` (`apps/backend/agents/tools_pkg/http_client.py`),
+   and `apps/web-server/server/mcp_stdio/router.py` had no apply-correction
+   route, so every confirmed call got a 404 with or without triage. Add
+   `POST /api/mcp-stdio/tasks/{task_id}/apply-correction`, gated by
+   `TASK_WRITE_SCOPE` like start/stop/recover. It builds
+   `ApplyCorrectionRequest` from the body (a bad body is a 422, not a 500)
+   and delegates to `routes.execution.apply_task_correction`, so the triage gate
+   and validation run unchanged. It writes one `mcp.task.apply_correction`
+   audit row (new `ACTION_MCP_TASK_APPLY_CORRECTION`) only on a confirmed
+   success, the same rule the REST route uses; the REST route skips its own
+   row for proxied calls.
+6. **Nit.** Drop the stale "additive / backward-compatible" comment on
+   `ApplyCorrectionRequest.triage`.
+
 ## Alternatives rejected
 
 - **Deprecate the tool.** Rejected by the user; the MCP path is still useful
@@ -56,5 +71,9 @@ Chosen (user decision): add an optional `triage` argument to
 - New tests in `tests/test_mcp_task_control.py`: triage passes through
   unchanged; a 422 with no triage returns the clear error naming
   `APP_REQUIRE_CORRECTION_TRIAGE`. Both fail on `origin/dev`.
+- New tests in `tests/audit/test_task_action_audit.py` drive a `TestClient`
+  through the real `/api/mcp-stdio/tasks/{id}/apply-correction` route: valid
+  triage reaches the route (one `mcp.task.apply_correction` row); no triage
+  gets the route's 422. Both 404 on `origin/dev`.
 - `pytest tests/test_mcp_task_control.py`, `ruff check` / `ruff format --check`
   on touched files.
