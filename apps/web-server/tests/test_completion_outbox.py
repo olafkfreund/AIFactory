@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sys
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -96,11 +97,9 @@ def test_default_sender_auth_header(monkeypatch, url, token, expected):
         def read(self):
             return b""
 
-    def _fake(req, timeout=None):
+    def _fake(req, **_kwargs):
         headers.append(req.get_header("Authorization"))
         return _Resp()
-
-    import urllib.request
 
     monkeypatch.setattr(urllib.request, "urlopen", _fake)
     outbox._default_sender(url, "{}")

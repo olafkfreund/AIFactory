@@ -955,7 +955,10 @@ def _webhook_url() -> str | None:
 def _auth_headers(url: str) -> dict[str, str]:
     token = os.environ.get("APP_API_TOKEN")
     target, configured = urlsplit(url), urlsplit(_webhook_url() or "")
-    if not token or (target.scheme, target.netloc) != (configured.scheme, configured.netloc):
+    if not token or (target.scheme, target.netloc) != (
+        configured.scheme,
+        configured.netloc,
+    ):
         return {}
     return {"Authorization": f"Bearer {token}"}
 

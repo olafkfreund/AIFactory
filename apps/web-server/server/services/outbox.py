@@ -175,7 +175,8 @@ def _default_sender(url: str, payload: str) -> None:
     import urllib.error
     import urllib.request
 
-    from .completion import _auth_headers
+    # Lazy: completion imports outbox, so a top-level import would be a cycle.
+    from .completion import _auth_headers  # noqa: PLC0415
 
     timeout = float(os.environ.get("AIFACTORY_COMPLETION_WEBHOOK_TIMEOUT", "5"))
     req = urllib.request.Request(
