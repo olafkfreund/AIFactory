@@ -211,10 +211,14 @@ async def test_provider_fetch_labels_author_with_fetching_provider(
 async def test_payload_author_is_not_trusted(project, author):
     """A caller-supplied payload can name anyone: it never sets the originator."""
     tmp_path, _ = project
-    raw_request = SimpleNamespace(state=SimpleNamespace(user={"api_key_id": "k1"}))
+    # An ownerless acw_ key: the service principal the #1898 access check
+    # passes without a DB query, so the db is a placeholder it never touches.
+    service_key = {"api_key_id": "k1", "is_service": True}
+    raw_request = SimpleNamespace(state=SimpleNamespace(user=service_key))
     res = await create_from_issue(
         FromIssueRequest(project_id="p", payload={"title": "Attribution", **author}),
         raw_request,
+        db=SimpleNamespace(),
     )
     requirements = _requirements(tmp_path, res["spec_id"])
     assert requirements["originator"] is None

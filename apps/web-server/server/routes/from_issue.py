@@ -30,11 +30,15 @@ import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from server.database.engine import get_db
 from server.error_ref import client_error
+from server.routes.project_authz import authorize_project_for_user
 from server.services.completion import correlation_key, read_issue_repo
 from server.services.originator import issue_originator, principal_attribution
 
@@ -300,10 +304,21 @@ def _set_task_metadata_flag(spec_dir: Path, key: str, value: object) -> None:
 @router.post("/from-issue")
 async def create_from_issue(
     request: FromIssueRequest,
-    raw_request: Request = None,  # noqa: RUF013 — FastAPI injects; None lets direct callers omit
+    raw_request: Request = None,  # FastAPI injects; None lets direct callers omit
+    db: Annotated[AsyncSession | None, Depends(get_db)] = None,
 ):
     """Ingest a labelled issue and start a tier-driven governed build."""
     from .tasks import get_next_spec_id
+
+    # #1898: project_id is in the body, so require_project_access (path/query)
+    # cannot see it; apply its shared rule here. Service token and auth-disabled
+    # pass; raw_request is None only for in-process callers (#1466).
+    if raw_request is not None:
+        if db is None:  # FastAPI always injects it; never skip authz silently
+            raise HTTPException(status_code=500, detail="Authorization unavailable")
+        await authorize_project_for_user(
+            getattr(raw_request.state, "user", None), request.project_id, db, "member"
+        )
 
     projects_path = _resolve_project_path(request.project_id)
     if projects_path is None:
