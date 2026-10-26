@@ -31,10 +31,11 @@ from fastapi import Request as FastAPIRequest
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 
+from server.services.audit_service import ACTION_MCP_TASK_APPLY_CORRECTION
+
 from ..mcp_remote.auth import AuthenticatedKey
 from ..services.audit_service import (
     ACTION_MCP_PROJECT_CREATE,
-    ACTION_MCP_TASK_APPLY_CORRECTION,
     ACTION_MCP_TASK_APPROVE_PLAN,
     ACTION_MCP_TASK_CREATE_AND_RUN,
     ACTION_MCP_TASK_CREATE_PR,
@@ -54,6 +55,9 @@ from .auth import (
 )
 
 router = APIRouter(prefix="/api/mcp-stdio", tags=["MCP (stdio)"])
+
+# Module-level so the route default is not a call (B008).
+_TASK_WRITE = Depends(require_acw_scope(TASK_WRITE_SCOPE))
 
 
 async def _read_json_body(request: FastAPIRequest) -> dict:
@@ -326,13 +330,17 @@ async def proxy_approve_plan(
 async def proxy_apply_correction(
     task_id: str,
     request: FastAPIRequest,
-    key=Depends(require_acw_scope(TASK_WRITE_SCOPE)),
+    key=_TASK_WRITE,
 ):
     """Proxy for the MCP ``task_apply_correction`` tool (#1874).
 
     Delegates to the REST route so its triage gate and validation run unchanged.
     """
-    from ..routes.execution import ApplyCorrectionRequest, apply_task_correction
+    # Lazy, like the sibling proxies: a top-level import is an import cycle.
+    from server.routes.execution import (  # noqa: PLC0415
+        ApplyCorrectionRequest,
+        apply_task_correction,
+    )
 
     try:
         body = ApplyCorrectionRequest(**await _read_json_body(request))

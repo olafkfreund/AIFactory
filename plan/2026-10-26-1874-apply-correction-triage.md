@@ -75,6 +75,16 @@ Approved decisions (from the spec):
    Traps: import `routes.execution` inside the handler like the other proxies
    (import cycle); call `apply_task_correction(task_id, body)` without
    `_access` so the REST route skips its own audit row.
+   Deviation (CI ratchet, run 40363959848): copying the siblings raised the
+   strict ruff count for `router.py` from 80 to 86 (B008 +2, PLC0415 +1,
+   TID252 +3). Fixed without touching the siblings: a module-level
+   `_TASK_WRITE = Depends(require_acw_scope(TASK_WRITE_SCOPE))` for the new
+   route only; the handler import stays lazy but absolute
+   (`from server.routes.execution import ...  # noqa: PLC0415`, import cycle);
+   `ACTION_MCP_TASK_APPLY_CORRECTION` imported absolutely on its own line.
+   Strict count is back to 80; the repo ruff config still passes. The I001
+   at line 25 already existed on `origin/dev` and is not touched: the strict
+   and repo configs disagree on it.
 5. `tests/audit/test_task_action_audit.py` (end of file): `TestClient` on the
    real mcp-stdio router with the legacy admin token, reusing the
    `rows` / `correction_calls` / `_flag` helpers: valid triage → 200, triage
@@ -88,7 +98,7 @@ Approved decisions (from the spec):
 
 `apps/backend/.venv/bin/pytest tests/test_mcp_task_control.py -q` passes;
 the two new tests fail against `origin/dev` code.
-`apps/backend/.venv/bin/pytest tests/audit/test_task_action_audit.py tests/test_mcp_stdio_proxy.py -q`
+`apps/backend/.venv/bin/pytest tests/audit/test_task_action_audit.py -q`
 passes; the two proxy tests 404 against `origin/dev`. Ruff check and format
 clean on the three touched files.
 
