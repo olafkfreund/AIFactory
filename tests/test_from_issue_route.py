@@ -44,7 +44,8 @@ def project(tmp_path, monkeypatch):
             provider=None,
             paths=frozenset({"platform/pipelines", "a/x", "b/y"}),
             hosts=frozenset(),
-            base=("", ""),
+            # a gitBaseUrl: lets test_provider_fetch_path declare gitlab:
+            base=("git.example.com", ""),
         ),
     )
     return tmp_path, started

@@ -37,3 +37,8 @@ Revert the PR; a declared repo goes back to overriding `gitRepo`.
 ## Deviations
 
 - Step 1: the `origin` read reuses `server.routes.git.run_git_command` instead of a new `subprocess.run`, which the strict ratchet flagged (S603/S607). `project_registry` is imported at module level (PLC0415) and called as `project_registry.load_projects()`, so tests can still patch it.
+- Step 3, second review of #1901 (code within the approved spec):
+  - When the provider cannot be derived (gitProvider unset, only self-hosted hosts), only `github` or no prefix is accepted. A `gitlab:` or `azure_devops:` prefix then needs `gitBaseUrl`, so the token never defaults to gitlab.com or dev.azure.com.
+  - The Azure ssh host is matched exactly (`vs-ssh.visualstudio.com`), so `vs-ssh.<other>` keeps its own host.
+  - `_check_declared_repo` returns the normalised `[provider:]owner/repo`, and that, not the raw string, is what is fetched, stored and used for dedup and correlation. The path keeps its case (`_repo_id(..., fold=False)`): lowercasing would change CFactory correlation keys (#1775) and miss the dedup of already-stored specs.
+  - The `test_from_issue_route.py` fixture gains a base host so its `gitlab:` declaration stays valid.

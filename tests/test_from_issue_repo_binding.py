@@ -241,3 +241,71 @@ def test_repo_id_strips_the_projects_own_base_path():
         "other.example",
         "gitlab/g/p",
     )
+
+
+# --- second review of #1901 -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("base_url", "repo", "ok"),
+    [
+        (None, "group/proj", True),  # no prefix == github
+        (None, "github:group/proj", True),
+        (None, "gitlab:group/proj", False),  # would send the token to gitlab.com
+        (None, "azure_devops:group/proj", False),
+        ("https://git.example.com", "gitlab:group/proj", True),
+    ],
+)
+async def test_self_hosted_without_provider_needs_base_url_for_other_prefixes(
+    registry, fetched, base_url, repo, ok
+):
+    """gitProvider unset and a self-hosted host: no provider can be derived."""
+    registry["clonedFrom"] = "https://git.example.com/group/proj.git"
+    if base_url:
+        registry["settings"] = {"gitBaseUrl": base_url}
+    if ok:
+        assert (await _create(repo))["success"] is True
+    else:
+        await _rejected(repo)
+        assert fetched == []
+
+
+async def test_vs_ssh_lookalike_host_is_not_azure(registry, fetched):
+    registry["clonedFrom"] = "https://dev.azure.com/org/proj/_git/repo"
+    await _rejected("azure_devops:git@vs-ssh.evil.example:v3/org/proj/repo")
+    assert fetched == []
+
+
+def test_repo_id_only_collapses_the_real_vs_ssh_host():
+    assert from_issue._repo_id("git@vs-ssh.visualstudio.com:v3/o/p/r") == (
+        "dev.azure.com",
+        "o/p/r",
+    )
+    assert from_issue._repo_id("git@vs-ssh.evil.example:v3/o/p/r") == (
+        "vs-ssh.evil.example",
+        "v3/o/p/r",
+    )
+
+
+def _stored_repo(tmp_path: Path) -> str:
+    import json
+
+    (spec,) = _specs(tmp_path)
+    return json.loads((spec / "requirements.json").read_text())["githubIssue"]["repo"]
+
+
+@pytest.mark.parametrize(
+    ("repo", "stored"),
+    [
+        ("owner/repo?x=://evil", "owner/repo"),
+        ("https://github.com/Owner/Repo.git", "Owner/Repo"),
+        # case kept: correlation keys (CFactory, #1775) and dedup compare it
+        ("Owner/Repo", "Owner/Repo"),
+    ],
+)
+async def test_the_normalised_repo_is_what_is_stored_and_fetched(
+    tmp_path, github_checkout, fetched, repo, stored
+):
+    await _create(repo)
+    assert fetched == [stored]
+    assert _stored_repo(tmp_path) == stored

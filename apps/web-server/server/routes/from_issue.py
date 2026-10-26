@@ -142,7 +142,9 @@ _HOST_PROVIDER = {
 _PROVIDER_HOST = {v: k for k, v in _HOST_PROVIDER.items()}
 
 
-def _repo_id(value: str | None, base: tuple[str, str] = ("", "")) -> tuple[str, str]:
+def _repo_id(
+    value: str | None, base: tuple[str, str] = ("", ""), *, fold: bool = True
+) -> tuple[str, str]:
     """``(host, path)`` of a repo path or git URL; host is "" for a bare path.
 
     Lowercased path without ``.git`` or edge slashes. Azure forms collapse to
@@ -158,8 +160,9 @@ def _repo_id(value: str | None, base: tuple[str, str] = ("", "")) -> tuple[str, 
         user_host, _, raw = raw.partition(":")
         host = user_host.rpartition("@")[2]
     host = host.lower()
-    path = raw.strip("/").removesuffix(".git").lower()
-    if host == "ssh.dev.azure.com" or host.startswith("vs-ssh."):
+    path = raw.strip("/").removesuffix(".git")
+    path = path.lower() if fold else path  # fold to compare; keep case to store
+    if host in {"ssh.dev.azure.com", "vs-ssh.visualstudio.com"}:
         host, path = "dev.azure.com", path.removeprefix("v3/")
     elif host.endswith(".visualstudio.com"):  # org.visualstudio.com/proj/_git/repo
         host, path = "dev.azure.com", f"{host.split('.')[0]}/{path}"
@@ -212,27 +215,33 @@ def _project_repos(project_id: str, project_path: Path) -> _OwnRepo:
     )
 
 
-def _check_declared_repo(project_id: str, project_path: Path, repo_ref: str) -> None:
+def _check_declared_repo(project_id: str, project_path: Path, repo_ref: str) -> str:
     """#1900: a declared repo must be the project's own (its gitToken goes there).
 
     A declared host must be the project's host; a bare ``owner/repo`` compares
-    by path. The declared provider must match the project's.
+    by path. The declared provider must match the project's; when it cannot be
+    derived, a non-GitHub prefix needs ``gitBaseUrl`` so the token never goes
+    to a public default host. Returns the normalised ``[provider:]owner/repo``
+    to store and pass on ("" when nothing is declared).
     """
     declared = parse_repo_ref(repo_ref)
     if declared is None:
-        return
+        return ""
     prefix, project = declared
     own = _project_repos(project_id, project_path)
     host, path = _repo_id(project, own.base)
-    if (
-        path not in own.paths
-        or (host and host not in own.hosts)
-        or (own.provider and prefix != own.provider)
-    ):
+    provider_ok = (
+        prefix == own.provider
+        if own.provider
+        else prefix == "github" or bool(own.base[0])
+    )
+    if path not in own.paths or (host and host not in own.hosts) or not provider_ok:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"repo {repo_ref!r} is not this project's repository",
         )
+    normalised: str = qualify_repo(prefix, _repo_id(project, own.base, fold=False)[1])
+    return normalised
 
 
 async def _fetch_issue_via_provider(
@@ -405,7 +414,9 @@ async def create_from_issue(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Project {request.project_id} not found",
         )
-    _check_declared_repo(request.project_id, projects_path, _declared_repo(request))
+    repo_ref = _check_declared_repo(
+        request.project_id, projects_path, _declared_repo(request)
+    )
 
     # 1. Resolve the issue: explicit payload wins; otherwise fetch via provider.
     if request.payload is not None:
@@ -415,7 +426,7 @@ async def create_from_issue(
             fetched = await _fetch_issue_via_provider(
                 request.project_id,
                 request.issue_number,
-                repo_ref=_declared_repo(request),
+                repo_ref=repo_ref,
             )
         except Exception as exc:  # noqa: BLE001 — surface a clean 502
             raise HTTPException(
@@ -437,7 +448,7 @@ async def create_from_issue(
     issue_number = issue.get("number")
     if isinstance(issue_number, int):
         existing_spec_id = _find_existing_spec(
-            projects_path, issue_number, _declared_repo(request) or None
+            projects_path, issue_number, repo_ref or None
         )
         if existing_spec_id is not None:
             return {
@@ -497,7 +508,7 @@ async def create_from_issue(
         execution,
         tier.value,
         tenant=resolve_tenant(raw_request),
-        repo_ref=_declared_repo(request),
+        repo_ref=repo_ref,
     )
     # Persist the integration branch so the PR endgame targets it too —
     # gather_pr_context reads task_metadata.base_branch; without this a fleet
@@ -523,7 +534,7 @@ async def create_from_issue(
         "execution": execution,
         "issue_number": issue.get("number"),
         "correlation_key": correlation_key(
-            spec_id, issue.get("number"), _declared_repo(request) or None
+            spec_id, issue.get("number"), repo_ref or None
         ),
         "message": f"Ingested issue as {tier.value}-tier build ({execution['model']}).",
     }
