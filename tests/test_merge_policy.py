@@ -150,5 +150,6 @@ def test_cap_disposition_unknown_ceiling_fails_closed():
     assert cap_disposition(AUTO_MERGE, "unlimited") == HOLD_BLOCKING
 
 
-def test_cap_disposition_never_loosens_an_unknown_decision():
-    assert cap_disposition("something-new", "low") == "something-new"
+@pytest.mark.parametrize("ceiling", [None, "low", "medium", "hard"])
+def test_cap_disposition_unknown_decision_fails_closed(ceiling):
+    assert cap_disposition("something-new", ceiling) == HOLD_BLOCKING

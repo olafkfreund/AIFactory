@@ -356,18 +356,17 @@ def cap_disposition(decision: str, ceiling: str | None) -> str:
     spellings as :func:`decide_merge`. It can only tighten a decision, never
     loosen one.
 
-    Absent / blank ceiling => *decision* unchanged: a key with no ceiling
-    behaves exactly as before. An UNRECOGNISED ceiling => HOLD_BLOCKING, the
-    same fail-closed rule :func:`decide_merge` applies to an unknown tier
-    (#1158): a limit nobody can read is not a licence to merge.
+    Absent / blank ceiling => a known *decision* unchanged: a key with no
+    ceiling behaves exactly as before. An UNRECOGNISED decision or ceiling =>
+    HOLD_BLOCKING, the same fail-closed rule :func:`decide_merge` applies to
+    an unknown tier (#1158): a value nobody can read is not a licence to merge.
     """
+    if decision not in _DISPOSITION_RANK:
+        return HOLD_BLOCKING
     if ceiling is None or not str(ceiling).strip():
         return decision
     bucket = _TIER_ALIASES.get(str(ceiling).strip().lower())
     if bucket is None:
         return HOLD_BLOCKING
     cap = _BUCKET_DISPOSITION[bucket]
-    # An unrecognised decision ranks as the strictest, so it is never loosened.
-    if _DISPOSITION_RANK[cap] > _DISPOSITION_RANK.get(decision, 2):
-        return cap
-    return decision
+    return cap if _DISPOSITION_RANK[cap] > _DISPOSITION_RANK[decision] else decision

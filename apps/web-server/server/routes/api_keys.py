@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from factory_common.logsafe import sanitize_log
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import ApiKey, OrgMember, User
 from ..database.engine import get_db
 from .auth_routes import get_current_user
+from .organizations import _role_level
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +140,7 @@ class CreateApiKeyResponse(ApiKeyResponse):
 )
 async def create_api_key(
     body: CreateApiKeyRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -160,6 +162,26 @@ async def create_api_key(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You are not a member of this organization",
+        )
+
+    # Keys cannot mint keys: otherwise a key holder could issue itself a new
+    # key without the ceiling its own key carries (Factory#1960).
+    principal = getattr(request.state, "user", None)
+    if isinstance(principal, dict) and principal.get("api_key_id"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="API keys cannot be created with an API key",
+        )
+
+    # Setting a ceiling is an org-admin decision. No ceiling stays open to
+    # members for backward compatibility; slice 2 must close that before the
+    # ceiling gates merges (see the #1960 spec).
+    if body.autonomy_ceiling is not None and _role_level(membership.role) < _role_level(
+        "admin"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Setting an autonomy ceiling requires the 'admin' org role",
         )
 
     # Generate a secure random key with the acw_ prefix
