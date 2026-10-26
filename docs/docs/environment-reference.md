@@ -49,7 +49,7 @@ Set via `APP_`-prefixed env (pydantic `Settings`). All read in
 |----------|---------|----------|---------|
 | `APP_HOST` | `0.0.0.0` | no | Bind address for the web server. |
 | `APP_PORT` | `3101` | no | Listen port. |
-| `APP_DEBUG` | `false` | no (on=debug) | Debug mode; also relaxes the wildcard-CORS boot guard to warn instead of refuse. It does not relax the `APP_DISABLE_AUTH` guard. |
+| `APP_DEBUG` | `false` | no (on=debug) | Debug mode. It does not relax the `APP_DISABLE_AUTH` or wildcard-CORS boot guards; those have their own opt-ins (`APP_ALLOW_INSECURE_AUTH`, `APP_ALLOW_WILDCARD_CORS`). |
 | `APP_API_TOKEN` | auto-generated | no | Admin bearer token. Auto-generated to `~/.aifactory/.token` (0600) on first run if unset. Also read directly as `APP_API_TOKEN` by intake/handoff clients. |
 | `APP_DISABLE_AUTH` | `false` | no (on=bypass) | Bypass auth — every request treated as admin. Local dev only; the server refuses to bind a non-loopback host with this on unless `APP_ALLOW_INSECURE_AUTH`. |
 | `APP_ALLOW_INSECURE_AUTH` | `false` | no (on=insecure) | Explicit opt-in to run `APP_DISABLE_AUTH` on a non-loopback host. Never set in production. Same name as PFactory/TFactory. |
@@ -64,7 +64,8 @@ Set via `APP_`-prefixed env (pydantic `Settings`). All read in
 | `APP_MIGRATIONS_AUTO_APPLY` | `true` | no | On boot run `alembic upgrade head`. Set false in K8s where a Helm Job migrates out-of-band. |
 | `APP_PROJECTS_DATA_DIR` / `APP_PROJECTS_DATA_DIR` | data dir | no | Directory for project metadata + SQLite. Also read directly by `routes/copilot_mcp.py`. |
 | `APP_BACKEND_PATH` | `../backend` | no | Path to `apps/backend`. Also the build-Job backend path (`build_backend.py`). |
-| `APP_CORS_ORIGINS` | localhost:3000/3100/3101 | no | Allowed CORS origins; comma-separated lists and JSON arrays both parse; an empty value means no origins (unset keeps the defaults). `*` or `null` disables credentialed CORS (refuses boot unless `APP_DEBUG`). |
+| `APP_CORS_ORIGINS` | localhost:3000/3100/3101 | no | Allowed CORS origins; comma-separated lists and JSON arrays both parse; an empty value means no origins (unset keeps the defaults). `*` or `null` disables credentialed CORS (refuses boot unless `APP_ALLOW_WILDCARD_CORS`). |
+| `APP_ALLOW_WILDCARD_CORS` | `false` | no | Explicitly permit a `*` or `null` CORS origin; credentialed CORS stays disabled. |
 | `APP_DEFAULT_SHELL` | `/bin/bash` | no | Shell for the built-in terminal. |
 | `APP_MAX_TERMINALS` | `20` | no | Max concurrent terminal sessions. |
 | `APP_MAX_CONCURRENT_TASKS` | `5` | no | Global cap on concurrently running builds (RFC-0016 admission control); `<= 0` = unlimited. |

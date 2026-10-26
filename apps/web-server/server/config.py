@@ -89,10 +89,10 @@ def enforce_cors_safety(settings: "Settings") -> None:
 
     Mirrors ``enforce_disable_auth_safety``: called only from the real server
     entrypoint. A wildcard origin with ``allow_credentials=True`` is a
-    cross-origin credential-theft vector. In production (non-DEBUG) we refuse to
-    boot so the misconfiguration is caught loudly; under ``APP_DEBUG`` we warn
-    and let the app run with credentials dropped (see ``cors_allows_credentials``
-    / the CORS middleware wiring in ``main.create_app``).
+    cross-origin credential-theft vector. Unless ``APP_ALLOW_WILDCARD_CORS`` is
+    set, refuse to boot so the misconfiguration is caught loudly. With the
+    opt-in, run with credentials dropped (see ``cors_allows_credentials`` /
+    the CORS middleware wiring in ``main.create_app``).
     """
     if cors_allows_credentials(settings):
         return
@@ -101,14 +101,18 @@ def enforce_cors_safety(settings: "Settings") -> None:
         "(allow_credentials=False) to avoid a cross-origin credential-theft "
         "vector. Set APP_CORS_ORIGINS to an explicit allowlist."
     )
-    if not settings.DEBUG:
+    if not settings.ALLOW_WILDCARD_CORS:
         raise SystemExit(
             "Refusing to start: APP_CORS_ORIGINS contains a wildcard '*' "
             "origin. Combined with credentialed CORS this exposes "
             "authenticated responses to any site. Set APP_CORS_ORIGINS to an "
-            "explicit allowlist, or set APP_DEBUG=true to run locally with "
+            "explicit allowlist, or set APP_ALLOW_WILDCARD_CORS=true with "
             "credentialed CORS disabled."
         )
+    logger.warning(
+        "wildcard CORS origin allowed because APP_ALLOW_WILDCARD_CORS=true; "
+        "credentials disabled"
+    )
 
 
 class Settings(BaseSettings):
@@ -195,6 +199,8 @@ class Settings(BaseSettings):
         "https://localhost:3000",
         "https://localhost:3101",
     ]
+    # Explicit opt-in to wildcard origins; credentialed CORS stays disabled.
+    ALLOW_WILDCARD_CORS: bool = False
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod

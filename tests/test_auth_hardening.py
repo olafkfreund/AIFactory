@@ -165,7 +165,7 @@ class TestCorsSafety:
     """#555 — never combine a wildcard CORS origin with credentialed CORS."""
 
     def _settings(self, origins, **kw) -> SimpleNamespace:
-        base = {"CORS_ORIGINS": origins, "DEBUG": False}
+        base = {"CORS_ORIGINS": origins, "DEBUG": False, "ALLOW_WILDCARD_CORS": False}
         base.update(kw)
         return SimpleNamespace(**base)
 
@@ -192,21 +192,43 @@ class TestCorsSafety:
         # No origins configured is not a wildcard — credentials stay on.
         assert cors_allows_credentials(self._settings([])) is True
 
-    def test_enforce_no_op_for_explicit_allowlist(self):
-        enforce_cors_safety(self._settings(["https://app.example.com"]))
+    @pytest.mark.parametrize("debug", [False, True])
+    def test_enforce_no_op_for_explicit_allowlist(self, debug):
+        enforce_cors_safety(self._settings(["https://app.example.com"], DEBUG=debug))
 
-    def test_enforce_refuses_wildcard_in_production(self):
-        with pytest.raises(SystemExit):
-            enforce_cors_safety(self._settings(["*"], DEBUG=False))
+    @pytest.mark.parametrize("debug", [False, True])
+    def test_enforce_refuses_wildcard_without_opt_in(self, debug):
+        with pytest.raises(SystemExit, match="APP_ALLOW_WILDCARD_CORS"):
+            enforce_cors_safety(self._settings(["*"], DEBUG=debug))
 
+    # null is treated like * (#1903); debug must not let it through (#1902).
+    @pytest.mark.parametrize("debug", [False, True])
     @pytest.mark.parametrize("origins", [["null"], ["https://a.com", "null"]])
-    def test_enforce_refuses_null_in_production(self, origins):
-        with pytest.raises(SystemExit):
-            enforce_cors_safety(self._settings(origins))
+    def test_enforce_refuses_null_without_opt_in(self, origins, debug):
+        with pytest.raises(SystemExit, match="APP_ALLOW_WILDCARD_CORS"):
+            enforce_cors_safety(self._settings(origins, DEBUG=debug))
 
-    def test_enforce_allows_wildcard_under_debug(self):
-        # Under DEBUG we warn and run with credentials dropped rather than exit.
-        enforce_cors_safety(self._settings(["*"], DEBUG=True))
+    def test_enforce_allows_wildcard_with_opt_in(self):
+        settings = self._settings(["*"], ALLOW_WILDCARD_CORS=True)
+        enforce_cors_safety(settings)
+        assert cors_allows_credentials(settings) is False
+
+    def test_enforce_opt_in_logs_wildcard_warning(self, caplog):
+        with caplog.at_level("WARNING", logger="server.config"):
+            enforce_cors_safety(self._settings(["*"], ALLOW_WILDCARD_CORS=True))
+        assert (
+            "wildcard CORS origin allowed because APP_ALLOW_WILDCARD_CORS=true; "
+            "credentials disabled" in caplog.text
+        )
+
+    def test_enforce_allowlist_does_not_log_wildcard_warning(self, caplog):
+        with caplog.at_level("WARNING", logger="server.config"):
+            enforce_cors_safety(self._settings(["https://app.example.com"]))
+        assert "wildcard CORS origin allowed" not in caplog.text
+
+    def test_settings_reads_wildcard_cors_opt_in(self, monkeypatch):
+        monkeypatch.setenv("APP_ALLOW_WILDCARD_CORS", "true")
+        assert Settings().ALLOW_WILDCARD_CORS is True
 
 
 class TestWebSocketTokenExtraction:
