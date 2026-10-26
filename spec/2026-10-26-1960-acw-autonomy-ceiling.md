@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1960
 intent: https://github.com/olafkfreund/Factory/blob/docs/1960-agent-git-identity/intent/2026-10-26-1960-agent-git-identity.md
 ---
