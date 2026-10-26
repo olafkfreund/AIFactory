@@ -1,5 +1,5 @@
 ---
-status: approved
+status: draft
 issue: olafkfreund/Factory#312
 intent: intent/2026-10-26-312-insecure-auth-optin.md
 ---
@@ -17,10 +17,16 @@ Mirror TFactory (`ALLOW_INSECURE_AUTH` setting, same env name).
     `not settings.ALLOW_INSECURE_AUTH`; the refusal message names
     `APP_ALLOW_INSECURE_AUTH` and no longer suggests `APP_DEBUG`. Docstring updated.
   - `enforce_cors_safety` is untouched.
+  - Review fix (MEDIUM): remove `""` from `_LOOPBACK_HOSTS`. uvicorn/asyncio bind an
+    empty host to all interfaces, so `APP_HOST=` is exposed, not loopback.
+  - Review fix (LOW): when the opt-in lets a non-loopback boot through, log one distinct
+    warning: `auth disabled on network host <host> because APP_ALLOW_INSECURE_AUTH=true`.
 - `tests/test_auth_hardening.py` (`TestEnforceDisableAuthSafety`): base settings gain
   `ALLOW_INSECURE_AUTH=False`; tests cover debug-on-no-opt-in refuses off loopback,
   opt-in boots, loopback unchanged (with and without debug), and that `Settings`
-  reads `APP_ALLOW_INSECURE_AUTH`.
+  reads `APP_ALLOW_INSECURE_AUTH`. `""` moves from the loopback cases to the exposed
+  cases of `TestHostIsLoopback`; an empty host refuses without the opt-in; the opt-in
+  path logs the distinct warning (caplog).
 - `apps/web-server/.env.example` and `docs/docs/environment-reference.md`: document
   the new flag; `APP_DEBUG` no longer described as relaxing the auth guard.
 - PFactory and TFactory: no change; they already use `APP_ALLOW_INSECURE_AUTH` and
@@ -37,6 +43,9 @@ Mirror TFactory (`ALLOW_INSECURE_AUTH` setting, same env name).
   what the rest of AIFactory config uses and is testable with SimpleNamespace.
 
 ## Risks
+
+- `APP_HOST=` (empty) with `APP_DISABLE_AUTH=true` now refuses to boot. That is the
+  intended fix: it bound every interface. No manifest sets an empty host.
 
 - A local developer relying on `APP_DEBUG=true` + `APP_DISABLE_AUTH=true` on
   `0.0.0.0` gets a boot refusal that names the fix.
