@@ -134,3 +134,38 @@ def test_handoff_key_follows_the_event_readers(
         _spec_dir(tmp_path, req), "048-feat", contract=None
     )
     assert payload["contract"]["correlation_key"] == "o/r#382"
+
+
+# ---- #1432: signed_contract is the pre-overlay copy ----------------------------
+
+_SIGNED = {
+    "approval": {"signature": "s"},
+    "execution": {"phase_models": {"coding": "sonnet"}},
+    "provenance": {"repo": "o/r"},
+}
+
+
+def test_signed_contract_is_pre_overlay_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub_git(monkeypatch)
+    monkeypatch.setattr(tc, "_verify_phase_models", lambda *_: {"qa": "ollama"})
+    spec_dir = _spec_dir(tmp_path, {"githubIssue": {"number": 382}})
+    original = json.loads(json.dumps(_SIGNED))
+    payload = tc.build_ingest_payload(spec_dir, "048-feat", contract=_SIGNED)
+    assert payload["signed_contract"] == original
+    assert "github_issue" not in payload["signed_contract"]["provenance"]
+    assert "correlation_key" not in payload["signed_contract"]
+    assert payload["contract"]["provenance"]["github_issue"] == 382
+    assert payload["contract"]["execution"]["phase_models"]["qa"] == "ollama"
+    assert original == _SIGNED  # caller's dict untouched
+
+
+@pytest.mark.parametrize("contract", [{}, {"provenance": {"repo": "o/r"}}])
+def test_no_signed_contract_when_held_or_unsigned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, contract: dict[str, Any]
+) -> None:
+    _stub_git(monkeypatch)
+    spec_dir = _spec_dir(tmp_path, {"githubIssue": {"number": 382}})
+    payload = tc.build_ingest_payload(spec_dir, "048-feat", contract=contract)
+    assert "signed_contract" not in payload
