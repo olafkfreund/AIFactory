@@ -38,7 +38,7 @@ def warn_if_auth_disabled(settings: "Settings") -> None:
 
 def enforce_disable_auth_safety(settings: "Settings") -> None:
     """Refuse to bind an unauthenticated admin API to a non-loopback host
-    unless DEBUG explicitly accepts the risk (#324 H7).
+    unless APP_ALLOW_INSECURE_AUTH explicitly accepts the risk (#324 H7).
 
     Called only from the real server entrypoint (``main.__main__``) — TestClient
     never reaches it, so the test suite (which runs with APP_DISABLE_AUTH=true
@@ -47,13 +47,13 @@ def enforce_disable_auth_safety(settings: "Settings") -> None:
     if not settings.DISABLE_AUTH:
         return
     warn_if_auth_disabled(settings)
-    if not host_is_loopback(settings.HOST) and not settings.DEBUG:
+    if not host_is_loopback(settings.HOST) and not settings.ALLOW_INSECURE_AUTH:
         raise SystemExit(
             "Refusing to start: APP_DISABLE_AUTH=true on non-loopback host "
-            f"'{settings.HOST}' without APP_DEBUG. This would expose an "
+            f"'{settings.HOST}' without APP_ALLOW_INSECURE_AUTH. This would expose an "
             "unauthenticated admin API to the network. Bind APP_HOST to "
-            "127.0.0.1, set APP_DEBUG=true to explicitly accept the risk for "
-            "local development, or unset APP_DISABLE_AUTH."
+            "127.0.0.1, set APP_ALLOW_INSECURE_AUTH=true to explicitly accept the risk, "
+            "or unset APP_DISABLE_AUTH."
         )
 
 
@@ -114,6 +114,7 @@ class Settings(BaseSettings):
     # Authentication
     API_TOKEN: str = Field(default="", repr=False)  # Will generate default if not set
     DISABLE_AUTH: bool = False  # Set to True to disable auth (dev only)
+    ALLOW_INSECURE_AUTH: bool = False  # Explicit opt-in for unauthenticated network binding
 
     # Scoped service tokens (Factory#312, step 1 — additive, off by default).
     # When true, a scoped ``acw_`` service key (no owning user) is recognised as

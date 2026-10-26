@@ -8,8 +8,8 @@ Covers the two self-contained findings in this slice:
 - **M1** — the legacy ``API_TOKEN`` must be compared in constant time
   (``hmac.compare_digest``) and an unset token must never match.
 - **H7** — the server must refuse to bind an unauthenticated admin API
-  (``DISABLE_AUTH``) to a non-loopback host unless ``DEBUG`` explicitly
-  accepts the risk.
+  (``DISABLE_AUTH``) to a non-loopback host unless
+  ``ALLOW_INSECURE_AUTH`` explicitly accepts the risk.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ sys.path.insert(0, str(_ROOT / "apps" / "backend"))
 
 from server import auth as auth_mod  # noqa: E402
 from server.config import (  # noqa: E402
+    Settings,
     cors_allows_credentials,
     enforce_cors_safety,
     enforce_disable_auth_safety,
@@ -79,7 +80,12 @@ class TestEnforceDisableAuthSafety:
     """H7 — refuse to bind an unauthenticated admin API to the network."""
 
     def _settings(self, **kw) -> SimpleNamespace:
-        base = {"DISABLE_AUTH": True, "HOST": "0.0.0.0", "DEBUG": False}
+        base = {
+            "DISABLE_AUTH": True,
+            "HOST": "0.0.0.0",
+            "DEBUG": False,
+            "ALLOW_INSECURE_AUTH": False,
+        }
         base.update(kw)
         return SimpleNamespace(**base)
 
@@ -87,20 +93,27 @@ class TestEnforceDisableAuthSafety:
         # DISABLE_AUTH off → never raises regardless of host.
         enforce_disable_auth_safety(self._settings(DISABLE_AUTH=False, HOST="0.0.0.0"))
 
-    def test_allows_loopback(self):
-        enforce_disable_auth_safety(self._settings(HOST="127.0.0.1"))
+    @pytest.mark.parametrize("debug", [False, True])
+    def test_allows_loopback(self, debug):
+        enforce_disable_auth_safety(self._settings(HOST="127.0.0.1", DEBUG=debug))
 
-    def test_allows_exposed_with_debug_override(self):
-        # DEBUG is the explicit local-dev opt-in for the risky combo.
-        enforce_disable_auth_safety(self._settings(HOST="0.0.0.0", DEBUG=True))
+    def test_allows_exposed_with_explicit_opt_in(self):
+        enforce_disable_auth_safety(
+            self._settings(HOST="0.0.0.0", ALLOW_INSECURE_AUTH=True)
+        )
 
-    def test_refuses_exposed_without_debug(self):
+    @pytest.mark.parametrize("debug", [False, True])
+    def test_refuses_exposed_without_opt_in(self, debug):
+        with pytest.raises(SystemExit, match="APP_ALLOW_INSECURE_AUTH"):
+            enforce_disable_auth_safety(self._settings(HOST="0.0.0.0", DEBUG=debug))
+
+    def test_refuses_lan_ip_without_opt_in(self):
         with pytest.raises(SystemExit):
-            enforce_disable_auth_safety(self._settings(HOST="0.0.0.0", DEBUG=False))
+            enforce_disable_auth_safety(self._settings(HOST="192.168.1.5"))
 
-    def test_refuses_lan_ip_without_debug(self):
-        with pytest.raises(SystemExit):
-            enforce_disable_auth_safety(self._settings(HOST="192.168.1.5", DEBUG=False))
+    def test_opt_in_loads_from_environment(self, monkeypatch):
+        monkeypatch.setenv("APP_ALLOW_INSECURE_AUTH", "true")
+        assert Settings().ALLOW_INSECURE_AUTH is True
 
 
 class TestCorsSafety:
