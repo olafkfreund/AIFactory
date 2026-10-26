@@ -175,11 +175,13 @@ def _default_sender(url: str, payload: str) -> None:
     import urllib.error
     import urllib.request
 
+    from .completion import _auth_headers
+
     timeout = float(os.environ.get("AIFACTORY_COMPLETION_WEBHOOK_TIMEOUT", "5"))
     req = urllib.request.Request(
         url,
         data=payload.encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", **_auth_headers(url)},
         method="POST",
     )
     try:

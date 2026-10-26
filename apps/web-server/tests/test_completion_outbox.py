@@ -11,6 +11,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 _WS = Path(__file__).resolve().parents[1]
 if str(_WS) not in sys.path:
     sys.path.insert(0, str(_WS))
@@ -63,6 +65,46 @@ def test_enqueue_without_id_is_skipped(tmp_path):
 
 
 # ── delivery ─────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("url", "token", "expected"),
+    [
+        ("http://hook.test/other", "test-token", "Bearer test-token"),
+        ("http://elsewhere.test/c", "test-token", None),
+        ("http://hook.test/c", None, None),
+    ],
+)
+def test_default_sender_auth_header(monkeypatch, url, token, expected):
+    monkeypatch.setenv("AIFACTORY_COMPLETION_WEBHOOK", "http://hook.test/c")
+    if token is None:
+        monkeypatch.delenv("APP_API_TOKEN", raising=False)
+    else:
+        monkeypatch.setenv("APP_API_TOKEN", token)
+    headers = []
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            pass
+
+        def getcode(self):
+            return 200
+
+        def read(self):
+            return b""
+
+    def _fake(req, timeout=None):
+        headers.append(req.get_header("Authorization"))
+        return _Resp()
+
+    import urllib.request
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fake)
+    outbox._default_sender(url, "{}")
+    assert headers == [expected]
 
 
 def test_deliver_due_marks_delivered_on_success(tmp_path):
