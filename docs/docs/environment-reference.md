@@ -189,6 +189,8 @@ Read across `apps/backend/` (`routing_policy.py`, `core/model_config.py`,
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
 | `AIFACTORY_ROUTING_POLICY` | `""` | no | Named per-phase model routing policy (`routing_policy.py`). |
+| `AIFACTORY_ROUTE_RESOLUTION` | `off` | no | `off`, `shadow` or `on`. Resolves a contract route tier (`small`/`mid`/`frontier`) to a model from the catalog at `AIFACTORY_MODEL_CATALOG_PATH`, instead of the built-in tier map (Factory#1959). `shadow` logs the catalog pick and keeps the default. An unknown value counts as `off`. An explicit policy `tiers` map still wins. |
+| `AIFACTORY_MODEL_CATALOG_PATH` | `""` | no | Path to an RFC-0014 `model-catalog.json` (for example a mounted ConfigMap). It is re-read on each resolution, so edits apply without a restart. If it is unset, unreadable or invalid, route resolution is inert. |
 | `AIFACTORY_RUNTIMES` | `""` (only `claude`) | no (spend) | RFC-0014 operator allowlist of non-default runtimes — comma-separated (`codex`, `antigravity`, `ollama`, `ollama-cloud`), or `all`. `claude` is always on; the fan-out runtimes `claude-subagents` / `dynamic-workflow` multiply spend and must be named explicitly (never implied by `all`). A runtime also needs the contract's `execution.runtime` opt-in (`core/runtime_gating.py`). |
 | `AIFACTORY_PROVIDER_FAILOVER` | (built-in chain) | no | Comma-separated provider failover order tried when the primary provider errors (`core/provider_failover.py`). Empty = default chain. |
 | `AIFACTORY_PROVIDER_DEADLINE_S` | `900` | no | Total wall-clock budget (seconds) for a phase across all failover attempts (`core/provider_failover.py`). |

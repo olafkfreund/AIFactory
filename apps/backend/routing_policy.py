@@ -26,6 +26,7 @@ Stdlib-only (imported by the pure token-attribution path).
 
 from __future__ import annotations
 
+import importlib
 import json
 import logging
 import os
@@ -52,6 +53,17 @@ _RANK_TIER = {v: k for k, v in _TIER_RANK.items()}
 # tiers impose no floor (None) so an unrecognized signal cannot cheapen OR
 # inflate a task beyond what the routing policy asked for.
 _RFC0011_FLOOR = {"low": "small", "medium": "mid", "hard": "frontier"}
+
+# Factory#1959 slice 5: resolve a route tier to a model from a catalog file read
+# at runtime (a mounted ConfigMap) instead of the baked DEFAULT_TIERS. off|shadow|on,
+# default off; an unknown value counts as off. Unset/unreadable catalog = inert.
+ROUTE_RESOLUTION_ENV = "AIFACTORY_ROUTE_RESOLUTION"
+CATALOG_PATH_ENV = "AIFACTORY_MODEL_CATALOG_PATH"
+_ROUTE_MODES = ("off", "shadow", "on")
+# Contract tier -> RFC-0014 catalog capability class (§2b, see DEFAULT_TIERS).
+_TIER_CLASS = {"small": "cheap", "mid": "balanced", "frontier": "frontier"}
+# AIFactory stage -> catalog role, where the names differ.
+_STAGE_ROLE = {"spec": "planning", "qa_fixer": "qa"}
 
 
 def load_policy() -> dict[str, Any] | None:
@@ -80,6 +92,69 @@ def load_policy() -> dict[str, Any] | None:
         logger.warning("routing policy is not a JSON object; policy ignored")
         return None
     return data
+
+
+def _route_mode() -> str:
+    raw = os.environ.get(ROUTE_RESOLUTION_ENV, "").strip().lower() or "off"
+    if raw not in _ROUTE_MODES:
+        logger.warning(
+            "%s=%r is not off|shadow|on; treating as off", ROUTE_RESOLUTION_ENV, raw
+        )
+        return "off"
+    return raw
+
+
+def _catalog_model(tier: str, stage: str) -> str | None:
+    """The catalog's model for ``tier`` at ``stage``, or None when inert/no pick.
+
+    Same pick rule as PFactory's cost_router: the hub router over Claude-only,
+    available entries (#779/#826), at the tier's capability class.
+    """
+    path = os.environ.get(CATALOG_PATH_ENV, "").strip()
+    cls = _TIER_CLASS.get(tier)
+    if not path or cls is None:
+        return None
+    # Lazy, only when resolution is enabled: keeps this module stdlib-only for
+    # the token-attribution path. import_module because mypy, run from the repo
+    # root by the CQ ratchet, cannot resolve backend-local packages.
+    crc = importlib.import_module("core.cost_router_core")
+
+    # shortcut: re-read per call (hot reload, no cache); add an mtime cache if it shows in profiles.
+    try:
+        catalog = crc.load_catalog(path)
+    except (OSError, ValueError):
+        logger.warning(
+            "model catalog %r unreadable or invalid; route resolution inert", path
+        )
+        return None
+    candidates = {
+        mid: e
+        for mid, e in catalog.items()
+        if e.get("provider") == "claude" and e.get("available") is not False
+    }
+    role = _STAGE_ROLE.get(stage, stage)
+    # Any positive token estimate: only the price ratio orders metered models.
+    pick: str | None = crc.cheapest_capable_model(role, cls, None, (1, 1), candidates)
+    return pick
+
+
+def _tier_model(tier: str, stage: str) -> str | None:
+    """Model for a route ``tier`` when no local policy ``tiers`` map names it."""
+    default = DEFAULT_TIERS.get(tier)
+    mode = _route_mode()
+    if mode == "off":
+        return default
+    picked = _catalog_model(tier, stage)
+    if mode == "shadow":
+        logger.info(
+            "route resolution (shadow): stage %s tier %s -> catalog %s (using default %s)",
+            stage,
+            tier,
+            picked,
+            default,
+        )
+        return default
+    return picked or default
 
 
 def _str_map(policy: dict[str, Any], key: str) -> dict[str, str]:
@@ -112,7 +187,7 @@ def policy_route(
     # left as-is since it has no rank to floor against.
     if tier in _TIER_RANK:
         tier = _floor_tier(tier, difficulty_tier)
-    model = _str_map(policy, "tiers").get(tier) or DEFAULT_TIERS.get(tier)
+    model = _str_map(policy, "tiers").get(tier) or _tier_model(tier, stage)
     if model is None:
         logger.warning(
             "routing policy maps stage %r to unknown tier %r; using default",
@@ -160,8 +235,8 @@ def contract_route(
         return None
     tier = _floor_tier(tier, metadata.get("difficultyTier"))
     policy = load_policy() or {}
-    tiers_map = _str_map(policy, "tiers") or DEFAULT_TIERS
-    model = tiers_map.get(tier)
+    policy_tiers = _str_map(policy, "tiers")
+    model = policy_tiers.get(tier) if policy_tiers else _tier_model(tier, stage)
     if model is None:
         return None
     return model, tier
@@ -192,6 +267,14 @@ def tier_for_model(
         return None
     if not tiers:
         tiers = DEFAULT_TIERS
+        if _route_mode() == "on":
+            # Reverse-map the catalog pick too, so the stamp matches what ran.
+            # Strongest first: a floor pick can serve several tiers, and the
+            # highest tier it serves is its own class.
+            tiers = {
+                t: _catalog_model(t, "coding") or m
+                for t, m in reversed(DEFAULT_TIERS.items())
+            }
     # Lazy import: phase_config imports this module for resolution, so the
     # shorthand resolver must be imported at call time to avoid a cycle.
     from phase_config import resolve_model_id  # noqa: PLC0415

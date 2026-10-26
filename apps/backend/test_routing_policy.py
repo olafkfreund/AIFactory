@@ -23,7 +23,9 @@ from phase_config import (
     resolve_model_id,
 )
 from routing_policy import (
+    CATALOG_PATH_ENV,
     ENV_VAR,
+    ROUTE_RESOLUTION_ENV,
     contract_route,
     load_policy,
     policy_route,
@@ -56,6 +58,8 @@ def _spec_dir(tmp_path: Path, metadata: dict[str, Any] | None = None) -> Path:
 @pytest.fixture(autouse=True)
 def _no_ambient_policy(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(ENV_VAR, raising=False)
+    monkeypatch.delenv(ROUTE_RESOLUTION_ENV, raising=False)
+    monkeypatch.delenv(CATALOG_PATH_ENV, raising=False)
 
 
 # --------------------------------------------------------------------------- #
@@ -548,3 +552,111 @@ class TestTheSiblingResolversAgree:
         spec = self._spec(tmp_path, {"phaseThinking": {"planning": "ultrathink"}})
 
         assert get_phase_thinking(spec, "coding", cli_thinking="think") == "think"
+
+
+# --- Factory#1959 slice 5: route -> model from a mounted catalog -------------
+
+_FRONTIER_META: dict[str, Any] = {"routingRequested": {"planning": "frontier"}}
+_DEFAULT_FRONTIER = resolve_model_id("opus")
+
+
+def _catalog(tmp_path: Path) -> Path:
+    """A catalog whose frontier pick differs from DEFAULT_TIERS' ``opus``."""
+    row = {"provider": "claude", "roles": ["planning", "coding", "qa"]}
+    models = {
+        "claude-test-frontier": {
+            **row,
+            "class": "frontier",
+            "price": {"mode": "metered", "in_per_mtok": 1, "out_per_mtok": 1},
+        },
+        # Cheaper but unavailable, and a cheaper non-Claude: both must be skipped.
+        "claude-retired": {
+            **row,
+            "class": "frontier",
+            "available": False,
+            "price": {"mode": "metered", "in_per_mtok": 0.1, "out_per_mtok": 0.1},
+        },
+        "codex": {
+            **row,
+            "provider": "codex",
+            "class": "frontier",
+            "price": {"mode": "subscription"},
+        },
+    }
+    path = tmp_path / "model-catalog.json"
+    path.write_text(json.dumps({"models": models}))
+    return path
+
+
+@pytest.mark.parametrize("mode", [None, "off", "OFF "])
+def test_route_resolution_off_is_noop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    monkeypatch.setenv(CATALOG_PATH_ENV, str(_catalog(tmp_path)))
+    if mode is not None:
+        monkeypatch.setenv(ROUTE_RESOLUTION_ENV, mode)
+    assert contract_route("planning", _FRONTIER_META) == ("opus", "frontier")
+    assert (
+        get_phase_model(_spec_dir(tmp_path, _FRONTIER_META), "planning")
+        == _DEFAULT_FRONTIER
+    )
+
+
+def test_route_resolution_shadow_logs_and_keeps_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv(CATALOG_PATH_ENV, str(_catalog(tmp_path)))
+    monkeypatch.setenv(ROUTE_RESOLUTION_ENV, "shadow")
+    with caplog.at_level("INFO", logger="routing_policy"):
+        assert (
+            get_phase_model(_spec_dir(tmp_path, _FRONTIER_META), "planning")
+            == _DEFAULT_FRONTIER
+        )
+    assert "claude-test-frontier" in caplog.text
+
+
+def test_route_resolution_on_picks_catalog_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(CATALOG_PATH_ENV, str(_catalog(tmp_path)))
+    monkeypatch.setenv(ROUTE_RESOLUTION_ENV, "on")
+    assert (
+        get_phase_model(_spec_dir(tmp_path, _FRONTIER_META), "planning")
+        == "claude-test-frontier"
+    )
+    # policy_route's DEFAULT_TIERS fallback resolves through the catalog too.
+    monkeypatch.setenv(ENV_VAR, json.dumps({"stages": {"planning": "frontier"}}))
+    assert policy_route("planning") == ("claude-test-frontier", "frontier")
+    # The routing_tier stamp still recognises the model that actually ran.
+    assert tier_for_model("claude-test-frontier", _FRONTIER_META) == "frontier"
+
+
+@pytest.mark.parametrize("catalog", ["", "missing.json", "bad.json"])
+def test_route_resolution_on_missing_catalog_is_inert(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, catalog: str
+) -> None:
+    (tmp_path / "bad.json").write_text("{not json")
+    monkeypatch.setenv(CATALOG_PATH_ENV, str(tmp_path / catalog) if catalog else "")
+    monkeypatch.setenv(ROUTE_RESOLUTION_ENV, "on")
+    assert contract_route("planning", _FRONTIER_META) == ("opus", "frontier")
+
+
+def test_route_resolution_unknown_mode_fails_closed_to_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv(CATALOG_PATH_ENV, str(_catalog(tmp_path)))
+    monkeypatch.setenv(ROUTE_RESOLUTION_ENV, "bogus")
+    with caplog.at_level("WARNING", logger="routing_policy"):
+        assert contract_route("planning", _FRONTIER_META) == ("opus", "frontier")
+    assert "bogus" in caplog.text
+
+
+def test_route_resolution_on_policy_tiers_map_wins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(CATALOG_PATH_ENV, str(_catalog(tmp_path)))
+    monkeypatch.setenv(ROUTE_RESOLUTION_ENV, "on")
+    monkeypatch.setenv(
+        ENV_VAR, json.dumps({"tiers": {"frontier": "claude-opus-4-8"}, "stages": {}})
+    )
+    assert contract_route("planning", _FRONTIER_META) == ("claude-opus-4-8", "frontier")

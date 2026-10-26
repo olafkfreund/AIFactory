@@ -78,3 +78,17 @@ below the handoff threshold, so Claude implements it directly.
 Revert the PR. The flag defaults to `off`, so unsetting
 `AIFACTORY_ROUTE_RESOLUTION` (or setting it to `off`) restores the built-in
 mapping at runtime without a deploy.
+
+## Deviations
+
+These came up during implementation.
+
+- **Step 1, the lazy import.** The core module is loaded with
+  `importlib.import_module("core.cost_router_core")`, not a `from` import. The
+  CQ ratchet runs mypy from the repo root, where backend-local packages don't
+  resolve. A `from` import added an `import-not-found` and a `no-any-return`,
+  which raised `routing_policy.py`'s strict error count above the base.
+- **Step 1, `tier_for_model`.** The reverse map is built strongest tier first
+  (`reversed(DEFAULT_TIERS.items())`). A floor pick can serve several tiers.
+  When it does, the test fixture showed it was stamped `small` instead of its
+  own class.
