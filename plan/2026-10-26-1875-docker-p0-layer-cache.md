@@ -41,6 +41,13 @@ Decisions carried from the approved spec:
    → verify by `actionlint .github/workflows/ci.yml` (if installed) and YAML parse.
    Traps: pin by SHA with version comment; no `continue-on-error` (rule 4.10).
 
+## Deviations
+
+- Step 2, after review: the build step gets `timeout-minutes: 40` (a cold build
+  took 1754 s, so a hang fails before the 50-minute job limit), and `cache-to`
+  gets `ignore-error=true`, so a cache-export error (for example HTTP 429) cannot
+  turn the required job red. A failed export only costs the next run a cold build.
+
 ## Tests
 
 - `pytest tests/docker/test_prebuilt_image.py -q`: passes; fails on dev

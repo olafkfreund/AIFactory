@@ -939,6 +939,8 @@ jobs:
       # (lxml, xmlsec, real-ladybug, ...) are not redone every run (#1875).
       # The fixture reuses this tag only because AIFACTORY_P0_PREBUILT_IMAGE=1.
       - name: Build P0 image (gha layer cache)
+        # Cold cache is ~1754 s; bounds a hung build below the job's 50 min.
+        timeout-minutes: 40
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -950,7 +952,7 @@ jobs:
           build-args: |
             SECURITY_REFRESH=${{ env.SECURITY_REFRESH }}
           cache-from: type=gha,scope=p0-acceptance
-          cache-to: type=gha,mode=max,scope=p0-acceptance
+          cache-to: type=gha,mode=max,scope=p0-acceptance,ignore-error=true
 
       # Trivy is PINNED, not `latest` (Factory#664). `latest` means the scanner
       # changes without a commit, so a scan verdict is not attributable to
