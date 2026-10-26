@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: olafkfreund/Factory#1959
 spec: spec/2026-10-26-1959-catalog-route-resolution.md
 ---
