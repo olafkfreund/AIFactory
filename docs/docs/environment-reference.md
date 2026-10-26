@@ -49,9 +49,10 @@ Set via `APP_`-prefixed env (pydantic `Settings`). All read in
 |----------|---------|----------|---------|
 | `APP_HOST` | `0.0.0.0` | no | Bind address for the web server. |
 | `APP_PORT` | `3101` | no | Listen port. |
-| `APP_DEBUG` | `false` | no (on=debug) | Debug mode; also relaxes the `APP_DISABLE_AUTH` / wildcard-CORS boot guards to warn instead of refuse. |
+| `APP_DEBUG` | `false` | no (on=debug) | Debug mode; also relaxes the wildcard-CORS boot guard to warn instead of refuse. It does not relax the `APP_DISABLE_AUTH` guard. |
 | `APP_API_TOKEN` | auto-generated | no | Admin bearer token. Auto-generated to `~/.aifactory/.token` (0600) on first run if unset. Also read directly as `APP_API_TOKEN` by intake/handoff clients. |
-| `APP_DISABLE_AUTH` | `false` | no (on=bypass) | Bypass auth — every request treated as admin. Local dev only; the server refuses to bind a non-loopback host with this on unless `APP_DEBUG`. |
+| `APP_DISABLE_AUTH` | `false` | no (on=bypass) | Bypass auth — every request treated as admin. Local dev only; the server refuses to bind a non-loopback host with this on unless `APP_ALLOW_INSECURE_AUTH`. |
+| `APP_ALLOW_INSECURE_AUTH` | `false` | no (on=insecure) | Explicit opt-in to run `APP_DISABLE_AUTH` on a non-loopback host. Never set in production. Same name as PFactory/TFactory. |
 | `APP_JWT_SECRET` | auto-generated | no | HMAC secret for JWTs. Persisted to `~/.aifactory/.jwt_secret` if unset so tokens survive restarts. |
 | `APP_JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | `15` | no | Access-token lifetime. |
 | `APP_JWT_REFRESH_TOKEN_EXPIRE_DAYS` | `7` | no | Refresh-token lifetime. |
