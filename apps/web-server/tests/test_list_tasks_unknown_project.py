@@ -13,11 +13,11 @@ from server.routes import tasks as tasks_mod
 
 
 def test_unknown_project_id_is_404():
-    with patch.object(tasks_mod, "load_projects", return_value={"p1": {"path": "/x"}}):
-        with pytest.raises(HTTPException) as exc:
-            asyncio.run(
-                tasks_mod.list_tasks(
-                    project_id="bogus", status=None, request=None, db=None
-                )
-            )
+    with (
+        patch.object(tasks_mod, "load_projects", return_value={"p1": {"path": "/x"}}),
+        pytest.raises(HTTPException) as exc,
+    ):
+        asyncio.run(
+            tasks_mod.list_tasks(project_id="bogus", status=None, request=None, db=None)
+        )
     assert exc.value.status_code == 404
