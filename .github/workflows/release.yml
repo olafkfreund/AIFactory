@@ -400,13 +400,22 @@ jobs:
             return 1
           }
 
+          # #1879: rekor.sigstore.dev 502s any request over 24 MiB; 3.10.9's -nix SPDX
+          # (18.9 MB, 25.2 MB base64) was over. Attest a copy without file entries;
+          # the release still gets the full document.
+          attest_spdx() {  # $1=full SPDX file  $2=image
+            jq -c 'del(.files) | .relationships |= map(select(.relatedSpdxElement | startswith("SPDXRef-File") | not))' \
+              "$1" > "${1%.spdx.json}.attest.spdx.json"
+            attest spdxjson "${1%.spdx.json}.attest.spdx.json" "$2"
+          }
+
           # Bank-pilot image
           if [ -z "${IMAGE:-}" ]; then
             echo "app image not selected; skipping"
           else
           syft scan "$IMAGE" -o spdx-json=sbom.spdx.json
           syft scan "$IMAGE" -o cyclonedx-json=sbom.cyclonedx.json
-          attest spdxjson  sbom.spdx.json      "$IMAGE"
+          attest_spdx sbom.spdx.json "$IMAGE"
           attest cyclonedx sbom.cyclonedx.json "$IMAGE"
 
           fi
@@ -417,7 +426,7 @@ jobs:
           else
           syft scan "$IMAGE_RMUX" -o spdx-json=sbom-rmux.spdx.json
           syft scan "$IMAGE_RMUX" -o cyclonedx-json=sbom-rmux.cyclonedx.json
-          attest spdxjson  sbom-rmux.spdx.json      "$IMAGE_RMUX"
+          attest_spdx sbom-rmux.spdx.json "$IMAGE_RMUX"
           attest cyclonedx sbom-rmux.cyclonedx.json "$IMAGE_RMUX"
 
           fi
@@ -428,7 +437,7 @@ jobs:
           else
           syft scan "$IMAGE_NIX" -o spdx-json=sbom-nix.spdx.json
           syft scan "$IMAGE_NIX" -o cyclonedx-json=sbom-nix.cyclonedx.json
-          attest spdxjson  sbom-nix.spdx.json      "$IMAGE_NIX"
+          attest_spdx sbom-nix.spdx.json "$IMAGE_NIX"
           attest cyclonedx sbom-nix.cyclonedx.json "$IMAGE_NIX"
           fi
 
