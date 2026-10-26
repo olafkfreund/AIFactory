@@ -1,5 +1,5 @@
 ---
-status: approved
+status: draft
 issue: 1882
 intent: intent/2026-10-26-1882-mcp-stdio-task-access.md
 ---
@@ -119,3 +119,15 @@ alternative above is no longer rejected.
 Verification (added): per read proxy, a foreign key gets 403 (task-id routes) or
 a filtered result (lists), the owner's key works, and the legacy token works.
 The apply-correction proxy joins the write-proxy parametrisation.
+
+## Revision 2: deployment reality (lead, 2026-10-26)
+
+Risk, added: the live AIFactory database has **0 rows in `api_keys`**
+(checked read-only by the lead). So every MCP caller today authenticates
+with the legacy `API_TOKEN`, which maps to a service principal and bypasses
+the new check. The change cannot lock out a current caller. Equally, it
+protects nothing in production until someone mints `acw_` keys. The tests
+are what prove the `acw_` path.
+
+Verification, added: one post-deploy smoke test through the MCP server (see plan
+step 6).
