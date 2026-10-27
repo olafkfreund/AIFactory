@@ -1,5 +1,14 @@
 ## [Unreleased]
 
+### Security
+
+- **Authlib 1.9.1 and dnspython 2.9.0.** `requirements.lock` moves Authlib
+  1.7.2 -> 1.9.1 (CVE-2026-96760 CRITICAL, CVE-2026-114615, CVE-2026-114616)
+  and dnspython 2.8.0 -> 2.9.0 (CVE-2026-114605), and the Authlib floor in
+  `apps/web-server/requirements.txt` rises to `>=1.9.1`, clearing the Trivy P0
+  gate. Not reachable in this code: the OIDC client verifies ID tokens with
+  joserfc, and nothing calls `authlib.jose`.
+
 ## 3.10.12 - 2026-10-27
 
 Five behaviour changes: `acw_` API keys authenticate for the first time
