@@ -70,6 +70,7 @@ def check_project_access(
     - service principal / admin      → allow (M2M / dev)
     - project missing                → 404
     - project has no ``org_id``      → 403 (unowned legacy project, admin-only)
+    - API key bound to another org   → 403
     - caller not a member            → 403
     - member role below ``minimum``  → 403
     """
@@ -94,6 +95,12 @@ def check_project_access(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Project is not assigned to an organization",
+        )
+
+    if user.get("api_key_id") and user.get("org_id") != org_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This API key is scoped to another organization",
         )
 
     if membership is None:
@@ -308,7 +315,10 @@ async def accessible_org_ids(
     if minimum_role != "viewer":
         query = query.where(OrgMember.role.in_(_roles_at_or_above(minimum_role)))
     result = await db.execute(query)
-    return set(result.scalars().all())
+    org_ids = set(result.scalars().all())
+    if user.get("api_key_id"):  # a key is bound to its own org (#1913)
+        org_ids &= {user.get("org_id")}
+    return org_ids
 
 
 async def resolve_owner_org_id(request: Request, db: AsyncSession) -> str:
@@ -321,6 +331,8 @@ async def resolve_owner_org_id(request: Request, db: AsyncSession) -> str:
     user = getattr(request.state, "user", None)
     if is_service_principal(user) or not isinstance(user, dict) or not user.get("id"):
         return DEFAULT_ORG_ID
+    if user.get("api_key_id") and user.get("org_id"):
+        return str(user["org_id"])
     result = await db.execute(
         select(OrgMember.org_id).where(OrgMember.user_id == user["id"])
     )

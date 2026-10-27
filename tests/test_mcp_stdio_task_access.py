@@ -295,3 +295,72 @@ async def test_read_lists_filter_foreign_projects(read_app, monkeypatch, path):
                 ids = result["tasks"]
                 assert result["count"] == len(ids)
             assert sorted(i.partition(":")[0] for i in ids) == expected
+
+
+async def test_key_bound_to_its_org_even_if_owner_is_member_of_both(monkeypatch):
+    """An org-a key whose owner is also in org-b cannot reach org-b projects (#1913)."""
+    monkeypatch.setattr(project_authz, "_auth_disabled", lambda: False)
+    projects = {"p1": {"org_id": "org-a"}, "p2": {"org_id": "org-b"}}
+    monkeypatch.setattr(project_registry, "load_projects", lambda: projects)
+    monkeypatch.setattr(stdio_router, "load_projects", lambda: projects)
+    monkeypatch.setattr(
+        projects_route, "project_to_response", lambda pid, _pdata: {"id": pid}
+    )
+
+    async def authenticate(header):
+        return AuthenticatedKey(
+            key_id="key-u",
+            scopes=frozenset({"mcp:read", "task:write"}),
+            user_id="u",
+            org_id="org-a",
+        )
+
+    monkeypatch.setattr(stdio_auth.mcp_remote_auth, "authenticate", authenticate)
+
+    class FakeResult:
+        def scalar_one_or_none(self):
+            return OrgMember(org_id="any", user_id="u", role="owner")
+
+        def scalars(self):
+            return self
+
+        def all(self):
+            return ["org-a", "org-b"]
+
+    class FakeSession(AsyncSession):
+        async def execute(self, statement):
+            return FakeResult()
+
+    async def fake_db():
+        yield FakeSession()
+
+    async def no_audit(*args, **kwargs):
+        pass
+
+    async def delegated(*args, **kwargs):
+        return {"ok": True}
+
+    monkeypatch.setattr(project_authz, "_audit_authz_denial", no_audit)
+    monkeypatch.setattr(stdio_router, "_audit_mcp_write", no_audit)
+    monkeypatch.setattr(execution_route, "start_task", delegated)
+    monkeypatch.setattr(tasks_route, "get_task", delegated)
+    app = FastAPI()
+    app.include_router(stdio_router.router)
+    app.dependency_overrides[get_db] = fake_db
+    headers = {"Authorization": "Bearer acw_u"}
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        base = "/api/mcp-stdio"
+        assert (
+            await client.post(f"{base}/tasks/p2:001/start", headers=headers, json={})
+        ).status_code == 403
+        assert (
+            await client.get(f"{base}/tasks/p2:001", headers=headers)
+        ).status_code == 403
+        assert (
+            await client.post(f"{base}/tasks/p1:001/start", headers=headers, json={})
+        ).status_code == 200
+        listed = await client.get(f"{base}/projects", headers=headers)
+        assert [i["id"] for i in listed.json()] == ["p1"]
