@@ -62,6 +62,7 @@ class SpecCreationMixin:
         _emit_progress: Callable[..., Any]
         _monitor_process: Callable[..., Any]
         _process_output: Callable[..., Any]
+        _marker_nonce_env: Callable[..., dict[str, str]]
         _resolve_claude_token_pooled: Callable[..., Any]
         _kubejob_backend_enabled: Callable[..., bool]
 
@@ -267,6 +268,8 @@ class SpecCreationMixin:
             }
 
         env.update(await project_settings_store.mcp_spawn_env(project_path))
+        # #1929: after make_subprocess_env(), which denies this name.
+        env.update(self._marker_nonce_env(task_id))
 
         # Start subprocess with a pseudo-TTY to prevent "Stream closed" errors
         # Claude Code CLI expects a TTY for permission handling
