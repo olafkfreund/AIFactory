@@ -29,7 +29,7 @@ from types import ModuleType
 from typing import Literal
 
 from core.child_env import child_env, merge_driver_pins
-from core.commit_trailers import commit_trailer_args
+from core.commit_trailers import commit_message_args
 from core.git_credentials import github_env
 from core.git_metadata import record_baseline, record_worktree_baseline
 
@@ -1214,7 +1214,7 @@ class WorktreeManager:
 
         add = self._run_git([*pins, "add", ".", ":!.aifactory"], cwd=worktree_path)
         result = self._run_git(
-            [*pins, "commit", "-m", message, *commit_trailer_args(spec_dir)],
+            [*pins, "commit", *commit_message_args(message, spec_dir)],
             cwd=worktree_path,
         )
 

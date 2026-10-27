@@ -140,8 +140,9 @@ async def post_session_processing(
     # only PRESERVES files; it deliberately does not count toward `new_commits`
     # / completion, so an unconfirmed subtask is still retried (with its work
     # safely committed) rather than being silently marked done.
+    # Trailers come from the canonical spec copy: the worktree copy is agent-writable.
     safety_commit = commit_uncommitted_changes(
-        project_dir, subtask_id, spec_dir=spec_dir
+        project_dir, subtask_id, spec_dir=source_spec_dir or spec_dir
     )
     if safety_commit:
         print_status(

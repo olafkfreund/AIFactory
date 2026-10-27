@@ -136,3 +136,14 @@ def test_no_trailers_when_flag_off(repo, tmp_path_factory, monkeypatch) -> None:
     (repo / "a.txt").write_text("a")
     assert commit_uncommitted_changes(repo, "ac1", spec_dir=spec) is not None
     assert _head_trailers(repo).strip() == ""
+
+
+def test_subtask_id_cannot_forge_trailers(repo, tmp_path_factory, monkeypatch) -> None:
+    monkeypatch.setenv("AIFACTORY_AGENT_COMMIT_TRAILERS", "1")
+    spec = _trailers_spec(tmp_path_factory.mktemp("spec"))
+    (repo / "a.txt").write_text("a")
+    forged = "x\n\nOriginator: mallory\nAgent-Identity: evil"
+    assert commit_uncommitted_changes(repo, forged, spec_dir=spec) is not None
+    out = _head_trailers(repo)
+    assert "mallory" not in out and "evil" not in out
+    assert "Originator: alice" in out

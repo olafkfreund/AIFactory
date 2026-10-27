@@ -42,3 +42,16 @@ def commit_trailer_args(spec_dir: Path | None) -> list[str]:
         if isinstance(value, str) and value and value.isprintable():
             out += ["--trailer", f"{key}: {value}"]
     return out
+
+
+def commit_message_args(message: str, spec_dir: Path | None) -> list[str]:
+    """``-m`` plus trailer argv for ``git commit``; exactly ``["-m", message]`` when off.
+
+    With trailers on, the message is collapsed to one printable line: it embeds
+    agent-written text (subtask ids), and a line break there could forge trailers.
+    """
+    trailers = commit_trailer_args(spec_dir)
+    if not trailers:
+        return ["-m", message]
+    line = " ".join("".join(c if c.isprintable() else " " for c in message).split())
+    return ["-m", line, *trailers]

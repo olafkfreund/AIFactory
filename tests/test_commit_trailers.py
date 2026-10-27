@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps" / "backend"))
 
-from core.commit_trailers import commit_trailer_args  # noqa: E402
+from core.commit_trailers import commit_message_args, commit_trailer_args  # noqa: E402
 
 FULL = {
     "agent_identity": "coder-1",
@@ -68,3 +68,15 @@ def test_unusable_inputs(tmp_path):
     (tmp_path / "requirements.json").write_text("{nope")
     assert commit_trailer_args(tmp_path) == []
     assert commit_trailer_args(_spec(tmp_path, [1, 2])) == []
+
+
+def test_message_unchanged_when_off(tmp_path, monkeypatch):
+    monkeypatch.delenv("AIFACTORY_AGENT_COMMIT_TRAILERS")
+    msg = "x\n\nOriginator: mallory"
+    assert commit_message_args(msg, _spec(tmp_path, FULL)) == ["-m", msg]
+
+
+def test_message_collapsed_when_trailers_on(tmp_path):
+    args = commit_message_args("x\n\nOriginator: mallory\r\x00", _spec(tmp_path, FULL))
+    assert args[:2] == ["-m", "x Originator: mallory"]
+    assert args[2:] == [t for v in TRAILERS.values() for t in v]

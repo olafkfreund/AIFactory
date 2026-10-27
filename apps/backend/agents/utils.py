@@ -14,7 +14,7 @@ from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from core.commit_trailers import commit_trailer_args
+from core.commit_trailers import commit_message_args
 from memory.paths import project_memory_dir, project_memory_dir_from_aifactory
 
 logger = logging.getLogger(__name__)
@@ -123,7 +123,7 @@ def commit_uncommitted_changes(
         if subtask_id:
             msg += f" [{subtask_id}]"
         subprocess.run(
-            ["git", "commit", "-m", msg, *commit_trailer_args(spec_dir)],
+            ["git", "commit", *commit_message_args(msg, spec_dir)],
             cwd=project_dir,
             capture_output=True,
             text=True,
