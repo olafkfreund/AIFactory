@@ -1238,8 +1238,7 @@ async def create_and_run_task(
 
     # Hybrid skill auto-selection (#394) — propose step. With no manual skills,
     # rank relevant skills from the task description and persist them as
-    # suggestedSkills. The planner may refine them into selectedSkills (confirm);
-    # otherwise the build falls back to these proposals (see
+    # suggestedSkills; the build uses them when no selectedSkills are set (see
     # AgentService._write_skill_context). No LLM cost — deterministic matcher.
     if not task_metadata.get("selectedSkills"):
         try:
