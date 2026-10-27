@@ -97,3 +97,15 @@ Expected: all pass. Then ruff check, ruff format --check, and the mypy ratchet v
 ## Rollback
 
 Revert the PR. The hook goes back to reading the file; there is no data migration.
+
+## Deviations
+
+- Step 5a forges `nc`, `ncat` and `socat`, not `curl`/`wget`/`nc`: `curl` and `wget` are in
+  `BASE_COMMANDS`, so detection allows them anyway. The test edits the file detection just
+  wrote, so the old mtime reload would have accepted the forgery; it fails on origin/dev's
+  `security/profile.py`.
+- `tests/test_plan_seed.py`: removed two `reset_profile_cache()` calls made after seeding
+  "to reload from the file". That reload is the behaviour removed here, and the reset would
+  now drop the in-memory grant.
+- `filesystem_validators.py` defines `_PROFILE_FILENAME` locally; importing `ProjectAnalyzer`
+  there would create an import cycle.

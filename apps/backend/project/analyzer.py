@@ -452,10 +452,11 @@ def seed_profile_with_plan_commands(
     etc. This grants the plan's sanitised command NAMES into the profile's
     ``custom_commands``.
 
-    The profile is read/written at ``project_dir/.aifactory/.aifactory-security.json``
-    — the SAME file the Bash hook reads (it calls ``get_security_profile`` with
-    the agent's cwd and no spec_dir). The hook's in-memory cache is mtime-keyed,
-    so this is picked up live, even mid-build.
+    The grant goes into the in-memory profile the Bash hook uses
+    (``get_security_profile`` with the agent's cwd and no spec_dir), so it takes
+    effect live, even mid-build. The file at
+    ``project_dir/.aifactory/.aifactory-security.json`` is written as output only
+    (#1944): the hook never reads it back.
 
     Args:
         project_dir: The agent's working directory / worktree root (== hook cwd).
@@ -486,9 +487,11 @@ def seed_profile_with_plan_commands(
         return []
 
     analyzer = ProjectAnalyzer(project_dir)  # spec_dir=None → enforced profile path
-    profile = analyzer.load_profile()
-    if profile is None:
-        profile = analyzer.analyze()
+    from security.profile import (  # noqa: PLC0415 - security.profile imports this module
+        get_security_profile,
+    )
+
+    profile = get_security_profile(project_dir)
 
     newly = sorted(granted - profile.custom_commands)
     if not newly:
