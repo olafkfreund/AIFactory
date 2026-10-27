@@ -61,3 +61,8 @@ passes. `ruff check` and `ruff format --check` pass on the touched files. Pre-co
 ## Rollback
 
 Revert the PR. No migration, no data change.
+
+## Deviations
+
+- Step 1: the import is absolute, `from server.mcp_remote.auth import MCP_READ_SCOPE`, not
+  relative. The cq-ratchet strict baseline flags new relative parent imports (TID252).

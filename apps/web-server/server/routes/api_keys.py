@@ -19,9 +19,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from server.mcp_remote.auth import MCP_READ_SCOPE
+
 from ..database import ApiKey, OrgMember, User
 from ..database.engine import get_db
-from ..mcp_remote.auth import MCP_READ_SCOPE
 from .auth_routes import get_current_user
 from .organizations import _role_level
 
