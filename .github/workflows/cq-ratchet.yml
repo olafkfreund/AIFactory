@@ -158,7 +158,7 @@ jobs:
       # narrowed. Adding a fifth top-level Python directory means adding it
       # here; tests/test_ruff_scope_covers_the_tree.py fails if one appears.
       - name: Ruff format check (apps/backend, apps/web-server, scripts, tests)
-        run: ruff format --check apps/backend apps/web-server scripts tests
+        run: ruff format --check apps/backend apps/web-server apps/model-gateway scripts tests
 
   config-drift:
     name: shared-baseline drift gate (blocking)

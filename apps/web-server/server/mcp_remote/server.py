@@ -19,6 +19,7 @@ isn't supported in V1; the SDK returns the standard JSON-RPC
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -101,6 +102,12 @@ _mcp_server: Server = Server(
 # the two surfaces independent.
 _sse_transport = SseServerTransport("/api/mcp-remote/messages/")
 
+# SSE session id -> id of the key that opened it, so a message POST must come
+# from the same key the session dispatches as (#1910). The transport generates
+# the id internally; we read it from the ``endpoint`` event it sends.
+_session_keys: dict[str, str] = {}
+_SESSION_ID = re.compile(rb"session_id=([0-9a-f]{32})")
+
 
 # ---------------------------------------------------------------------------
 # FastAPI router — mounted by main.py when ``is_enabled()`` is true
@@ -126,16 +133,29 @@ async def sse_endpoint(request: Request):
             status_code=status.HTTP_401_UNAUTHORIZED,
         )
 
+    session_ids: list[str] = []
+
+    async def send(message: Any) -> None:
+        if not session_ids and message.get("type") == "http.response.body":
+            match = _SESSION_ID.search(message.get("body", b""))
+            if match:
+                session_ids.append(match.group(1).decode())
+                _session_keys[session_ids[0]] = key.key_id
+        await request._send(message)
+
     token = _current_key.set(key)
     try:
-        async with _sse_transport.connect_sse(
-            request.scope, request.receive, request._send
-        ) as (read_stream, write_stream):
+        async with _sse_transport.connect_sse(request.scope, request.receive, send) as (
+            read_stream,
+            write_stream,
+        ):
             await _mcp_server.run(
                 read_stream, write_stream, _mcp_server.create_initialization_options()
             )
     finally:
         _current_key.reset(token)
+        for session_id in session_ids:
+            _session_keys.pop(session_id, None)
 
 
 @router.post("/messages/")
@@ -148,12 +168,19 @@ async def messages_endpoint(request: Request):
     but message posts come on separate HTTP requests.
     """
     try:
-        await authenticate(request.headers.get("Authorization"))
+        key = await authenticate(request.headers.get("Authorization"))
     except MCPAuthError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=client_error(logger, "messages endpoint failed", exc),
         ) from exc
+    # Tools run as the key captured at SSE connect, so only that key may post.
+    session_id = request.query_params.get("session_id", "")
+    if _session_keys.get(session_id) != key.key_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This MCP session belongs to another API key",
+        )
     return await _sse_transport.handle_post_message(
         request.scope, request.receive, request._send
     )

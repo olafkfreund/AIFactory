@@ -22,6 +22,7 @@ from server.services.audit_service import (
     ACTION_TASK_UPDATE,
     audit_task_action,
 )
+from server.services.originator import principal_attribution
 from server.specpath import safe_spec_component
 
 from ..database.engine import get_db
@@ -136,7 +137,7 @@ async def list_tasks(
     if project_id:
         if project_id not in projects:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
+                status_code=404,  # `status` here is the query param, not the module
                 detail="Project not found",
             )
         project_ids = [project_id]
@@ -289,6 +290,11 @@ Created via Magestic AI Web UI
         "description": task.description,
         "created_at": datetime.now(UTC).isoformat(),
     }
+    requirements.update(
+        principal_attribution(
+            getattr(request.state, "user", None) if request is not None else None
+        )
+    )
 
     # Add metadata if provided
     if task.metadata:

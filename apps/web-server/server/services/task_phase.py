@@ -149,7 +149,9 @@ def should_pass_force(spec_dir: Path, force: bool) -> bool:
     what makes unattended builds work) or when the caller explicitly forced it
     (the plan was manually approved via the approve_plan endpoint).
     """
-    return force or not sync_require_review_metadata(spec_dir)
+    # Sync first: a forced fresh spec must still carry the flag into
+    # task_metadata.json, which the post-planner gate reads (#1925).
+    return not sync_require_review_metadata(spec_dir) or force
 
 
 def phase_to_status(phase: TaskPhase) -> str:

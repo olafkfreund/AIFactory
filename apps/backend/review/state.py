@@ -115,14 +115,15 @@ class ReviewState:
 
         Returns False if:
         - Not approved
+        - Approved without a spec_hash (never valid, #1922)
         - spec.md or implementation_plan.json changed since approval
         """
         if not self.approved:
             return False
 
         if not self.spec_hash:
-            # Legacy approval without hash - treat as valid
-            return True
+            # A hash-less approval is not bound to any plan (#1922)
+            return False
 
         current_hash = _compute_spec_hash(spec_dir)
         return self.spec_hash == current_hash

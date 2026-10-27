@@ -4,12 +4,14 @@ Configuration settings for AIFactory Web Server.
 Settings are loaded from environment variables with sensible defaults.
 """
 
+import json
 import logging
 import secrets
 from pathlib import Path
+from typing import Annotated
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from server.utils.subprocess_env import child_env
 
@@ -18,7 +20,8 @@ from .paths import get_data_dir, get_data_file, write_secret_file
 logger = logging.getLogger(__name__)
 
 # Hosts that only accept local connections — DISABLE_AUTH is tolerable here.
-_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost", ""}
+# Not "": uvicorn/asyncio bind an empty host to every interface.
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
 
 
 def host_is_loopback(host: str) -> bool:
@@ -38,7 +41,7 @@ def warn_if_auth_disabled(settings: "Settings") -> None:
 
 def enforce_disable_auth_safety(settings: "Settings") -> None:
     """Refuse to bind an unauthenticated admin API to a non-loopback host
-    unless DEBUG explicitly accepts the risk (#324 H7).
+    unless APP_ALLOW_INSECURE_AUTH explicitly accepts the risk (#324 H7).
 
     Called only from the real server entrypoint (``main.__main__``) — TestClient
     never reaches it, so the test suite (which runs with APP_DISABLE_AUTH=true
@@ -47,28 +50,38 @@ def enforce_disable_auth_safety(settings: "Settings") -> None:
     if not settings.DISABLE_AUTH:
         return
     warn_if_auth_disabled(settings)
-    if not host_is_loopback(settings.HOST) and not settings.DEBUG:
+    if host_is_loopback(settings.HOST):
+        return
+    if not settings.ALLOW_INSECURE_AUTH:
         raise SystemExit(
             "Refusing to start: APP_DISABLE_AUTH=true on non-loopback host "
-            f"'{settings.HOST}' without APP_DEBUG. This would expose an "
+            f"'{settings.HOST}' without APP_ALLOW_INSECURE_AUTH. This would expose an "
             "unauthenticated admin API to the network. Bind APP_HOST to "
-            "127.0.0.1, set APP_DEBUG=true to explicitly accept the risk for "
-            "local development, or unset APP_DISABLE_AUTH."
+            "127.0.0.1, set APP_ALLOW_INSECURE_AUTH=true to explicitly accept the risk, "
+            "or unset APP_DISABLE_AUTH."
         )
+    logger.warning(
+        "auth disabled on network host %s because APP_ALLOW_INSECURE_AUTH=true",
+        settings.HOST,
+    )
 
 
 def cors_allows_credentials(settings: "Settings") -> bool:
     """Whether the CORS layer may safely echo credentials (#555).
 
-    A wildcard origin (``*``) combined with ``allow_credentials=True`` lets any
-    site read authenticated responses cross-origin — the browser only rejects
+    ``*`` permits any origin; ``null`` permits opaque origins that untrusted
+    sites can create. With ``allow_credentials=True``, either can expose
+    authenticated responses cross-origin — the browser only rejects
     the literal ``Access-Control-Allow-Origin: *`` + credentials pairing, not a
     reflected-origin variant some stacks emit. We never want that combination,
     so when ``CORS_ORIGINS`` contains a wildcard we drop credentials rather than
     fail open. Returns ``False`` to signal the caller must set
     ``allow_credentials=False``.
     """
-    return "*" not in (settings.CORS_ORIGINS or [])
+    return not any(
+        origin.strip().lower() in {"*", "null"}
+        for origin in (settings.CORS_ORIGINS or [])
+    )
 
 
 def enforce_cors_safety(settings: "Settings") -> None:
@@ -76,26 +89,30 @@ def enforce_cors_safety(settings: "Settings") -> None:
 
     Mirrors ``enforce_disable_auth_safety``: called only from the real server
     entrypoint. A wildcard origin with ``allow_credentials=True`` is a
-    cross-origin credential-theft vector. In production (non-DEBUG) we refuse to
-    boot so the misconfiguration is caught loudly; under ``APP_DEBUG`` we warn
-    and let the app run with credentials dropped (see ``cors_allows_credentials``
-    / the CORS middleware wiring in ``main.create_app``).
+    cross-origin credential-theft vector. Unless ``APP_ALLOW_WILDCARD_CORS`` is
+    set, refuse to boot so the misconfiguration is caught loudly. With the
+    opt-in, run with credentials dropped (see ``cors_allows_credentials`` /
+    the CORS middleware wiring in ``main.create_app``).
     """
     if cors_allows_credentials(settings):
         return
     logger.warning(
-        "⚠️  CORS_ORIGINS contains '*' — credentialed CORS will be DISABLED "
+        "⚠️  CORS_ORIGINS contains '*' or 'null' — credentialed CORS will be DISABLED "
         "(allow_credentials=False) to avoid a cross-origin credential-theft "
         "vector. Set APP_CORS_ORIGINS to an explicit allowlist."
     )
-    if not settings.DEBUG:
+    if not settings.ALLOW_WILDCARD_CORS:
         raise SystemExit(
             "Refusing to start: APP_CORS_ORIGINS contains a wildcard '*' "
             "origin. Combined with credentialed CORS this exposes "
             "authenticated responses to any site. Set APP_CORS_ORIGINS to an "
-            "explicit allowlist, or set APP_DEBUG=true to run locally with "
+            "explicit allowlist, or set APP_ALLOW_WILDCARD_CORS=true with "
             "credentialed CORS disabled."
         )
+    logger.warning(
+        "wildcard CORS origin allowed because APP_ALLOW_WILDCARD_CORS=true; "
+        "credentials disabled"
+    )
 
 
 class Settings(BaseSettings):
@@ -114,6 +131,9 @@ class Settings(BaseSettings):
     # Authentication
     API_TOKEN: str = Field(default="", repr=False)  # Will generate default if not set
     DISABLE_AUTH: bool = False  # Set to True to disable auth (dev only)
+    ALLOW_INSECURE_AUTH: bool = (
+        False  # Explicit opt-in for unauthenticated network binding
+    )
 
     # Scoped service tokens (Factory#312, step 1 — additive, off by default).
     # When true, a scoped ``acw_`` service key (no owning user) is recognised as
@@ -172,13 +192,15 @@ class Settings(BaseSettings):
 
     # CORS — localhost defaults. Override or extend via APP_CORS_ORIGINS env var.
     # Accepts a comma-separated string ("https://a.com,https://b.com") or a JSON list.
-    CORS_ORIGINS: list[str] = [
+    CORS_ORIGINS: Annotated[list[str], NoDecode] = [
         "http://localhost:3100",
         "http://localhost:3000",
         "https://localhost:3100",
         "https://localhost:3000",
         "https://localhost:3101",
     ]
+    # Explicit opt-in to wildcard origins; credentialed CORS stays disabled.
+    ALLOW_WILDCARD_CORS: bool = False
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
@@ -186,8 +208,7 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             stripped = v.strip()
             if stripped.startswith("["):
-                # Let pydantic handle JSON-list form natively
-                return stripped
+                return json.loads(stripped)
             return [s.strip() for s in stripped.split(",") if s.strip()]
         return v
 
@@ -237,9 +258,9 @@ class Settings(BaseSettings):
     RMUX_ENABLED: bool = False
 
     # #1858: when true, apply-correction refuses a hand-back with no `triage`
-    # block (422). Off until TFactory#1430 sends triage on every path.
-    # Override: APP_REQUIRE_CORRECTION_TRIAGE.
-    REQUIRE_CORRECTION_TRIAGE: bool = False
+    # block (422). On by default since TFactory#1436 sends triage on every
+    # path (TFactory#1431). Opt out: APP_REQUIRE_CORRECTION_TRIAGE=false.
+    REQUIRE_CORRECTION_TRIAGE: bool = True
 
     # extra="ignore" (#384): the web-server's environment/.env legitimately
     # carries cross-cutting, non-APP_ vars meant for other components — notably

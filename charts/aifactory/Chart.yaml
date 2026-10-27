@@ -51,6 +51,9 @@ annotations:
 # See docs/docs/concepts/litellm-gateway.md "Version pin + bump
 # cadence" section for the operator-facing version of this policy.
 dependencies:
+  # DEPRECATED by Factory#1959 in favour of the in-house model gateway (image
+  # ghcr.io/olafkfreund/aifactory:*-gateway). Still functional; removal is a
+  # later slice.
   - name: litellm-helm
     version: "1.86.2"
     repository: oci://ghcr.io/berriai

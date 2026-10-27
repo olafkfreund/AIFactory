@@ -49,9 +49,10 @@ Set via `APP_`-prefixed env (pydantic `Settings`). All read in
 |----------|---------|----------|---------|
 | `APP_HOST` | `0.0.0.0` | no | Bind address for the web server. |
 | `APP_PORT` | `3101` | no | Listen port. |
-| `APP_DEBUG` | `false` | no (on=debug) | Debug mode; also relaxes the `APP_DISABLE_AUTH` / wildcard-CORS boot guards to warn instead of refuse. |
+| `APP_DEBUG` | `false` | no (on=debug) | Debug mode. It does not relax the `APP_DISABLE_AUTH` or wildcard-CORS boot guards; those have their own opt-ins (`APP_ALLOW_INSECURE_AUTH`, `APP_ALLOW_WILDCARD_CORS`). |
 | `APP_API_TOKEN` | auto-generated | no | Admin bearer token. Auto-generated to `~/.aifactory/.token` (0600) on first run if unset. Also read directly as `APP_API_TOKEN` by intake/handoff clients. |
-| `APP_DISABLE_AUTH` | `false` | no (on=bypass) | Bypass auth — every request treated as admin. Local dev only; the server refuses to bind a non-loopback host with this on unless `APP_DEBUG`. |
+| `APP_DISABLE_AUTH` | `false` | no (on=bypass) | Bypass auth — every request treated as admin. Local dev only; the server refuses to bind a non-loopback host with this on unless `APP_ALLOW_INSECURE_AUTH`. |
+| `APP_ALLOW_INSECURE_AUTH` | `false` | no (on=insecure) | Explicit opt-in to run `APP_DISABLE_AUTH` on a non-loopback host. Never set in production. Same name as PFactory/TFactory. |
 | `APP_JWT_SECRET` | auto-generated | no | HMAC secret for JWTs. Persisted to `~/.aifactory/.jwt_secret` if unset so tokens survive restarts. |
 | `APP_JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | `15` | no | Access-token lifetime. |
 | `APP_JWT_REFRESH_TOKEN_EXPIRE_DAYS` | `7` | no | Refresh-token lifetime. |
@@ -63,7 +64,8 @@ Set via `APP_`-prefixed env (pydantic `Settings`). All read in
 | `APP_MIGRATIONS_AUTO_APPLY` | `true` | no | On boot run `alembic upgrade head`. Set false in K8s where a Helm Job migrates out-of-band. |
 | `APP_PROJECTS_DATA_DIR` / `APP_PROJECTS_DATA_DIR` | data dir | no | Directory for project metadata + SQLite. Also read directly by `routes/copilot_mcp.py`. |
 | `APP_BACKEND_PATH` | `../backend` | no | Path to `apps/backend`. Also the build-Job backend path (`build_backend.py`). |
-| `APP_CORS_ORIGINS` | localhost:3000/3100/3101 | no | Allowed CORS origins (comma-list or JSON array). A wildcard `*` disables credentialed CORS (refuses boot unless `APP_DEBUG`). |
+| `APP_CORS_ORIGINS` | localhost:3000/3100/3101 | no | Allowed CORS origins; comma-separated lists and JSON arrays both parse; an empty value means no origins (unset keeps the defaults). `*` or `null` disables credentialed CORS (refuses boot unless `APP_ALLOW_WILDCARD_CORS`). |
+| `APP_ALLOW_WILDCARD_CORS` | `false` | no | Explicitly permit a `*` or `null` CORS origin; credentialed CORS stays disabled. |
 | `APP_DEFAULT_SHELL` | `/bin/bash` | no | Shell for the built-in terminal. |
 | `APP_MAX_TERMINALS` | `20` | no | Max concurrent terminal sessions. |
 | `APP_MAX_CONCURRENT_TASKS` | `5` | no | Global cap on concurrently running builds (RFC-0016 admission control); `<= 0` = unlimited. |
@@ -189,6 +191,8 @@ Read across `apps/backend/` (`routing_policy.py`, `core/model_config.py`,
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
 | `AIFACTORY_ROUTING_POLICY` | `""` | no | Named per-phase model routing policy (`routing_policy.py`). |
+| `AIFACTORY_ROUTE_RESOLUTION` | `off` | no | `off`, `shadow` or `on`. Resolves a contract route tier (`small`/`mid`/`frontier`) to a model from the catalog at `AIFACTORY_MODEL_CATALOG_PATH`, instead of the built-in tier map (Factory#1959). `shadow` logs the catalog pick and keeps the default. An unknown value counts as `off`. An explicit policy `tiers` map still wins. |
+| `AIFACTORY_MODEL_CATALOG_PATH` | `""` | no | Path to an RFC-0014 `model-catalog.json` (for example a mounted ConfigMap). It is re-read on each resolution, so edits apply without a restart. If it is unset, unreadable or invalid, route resolution is inert. |
 | `AIFACTORY_RUNTIMES` | `""` (only `claude`) | no (spend) | RFC-0014 operator allowlist of non-default runtimes — comma-separated (`codex`, `antigravity`, `ollama`, `ollama-cloud`), or `all`. `claude` is always on; the fan-out runtimes `claude-subagents` / `dynamic-workflow` multiply spend and must be named explicitly (never implied by `all`). A runtime also needs the contract's `execution.runtime` opt-in (`core/runtime_gating.py`). |
 | `AIFACTORY_PROVIDER_FAILOVER` | (built-in chain) | no | Comma-separated provider failover order tried when the primary provider errors (`core/provider_failover.py`). Empty = default chain. |
 | `AIFACTORY_PROVIDER_DEADLINE_S` | `900` | no | Total wall-clock budget (seconds) for a phase across all failover attempts (`core/provider_failover.py`). |

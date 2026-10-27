@@ -456,6 +456,16 @@ def create_task_control_tools() -> list[Any]:
                     "type": "string",
                     "description": "Origin, e.g. 'triage' or 'visual_inspection' (optional)",
                 },
+                "triage": {
+                    "type": "object",
+                    "description": "Structured triage report (TFactory#283). When present it is "
+                    "schema-validated before the QA Fixer runs; malformed reports "
+                    "are rejected. Include contract_version, source, failing_tests "
+                    "items with test_id and reason, has_visual_plan, manifest_hash, "
+                    "and correlation_key. The server validates source and requires "
+                    "at least one failing test with test_id and reason, or "
+                    "has_visual_plan: true.",
+                },
                 "confirm": {
                     "type": "boolean",
                     "default": False,
@@ -481,11 +491,20 @@ def create_task_control_tools() -> list[Any]:
             "source": args.get("source"),
             "confirm": True,
         }
+        if args.get("triage") is not None:
+            payload["triage"] = args["triage"]
         try:
             raw = await request(
                 "POST", f"/api/tasks/{task_id}/apply-correction", json=payload
             )
         except MCPHTTPError as exc:
+            if args.get("triage") is None and "HTTP 422" in str(exc):
+                return _format_error(
+                    MCPHTTPError(
+                        "A triage report is required; pass triage or set "
+                        f"APP_REQUIRE_CORRECTION_TRIAGE=false on the server. {exc}"
+                    )
+                )
             return _format_error(exc)
         return _format_json({"correction_applied": True, "details": raw})
 

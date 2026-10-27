@@ -44,7 +44,9 @@ def no_disable_auth(monkeypatch):
 
 
 def test_valid_acw_key_authenticates(no_disable_auth, monkeypatch):
-    key = SimpleNamespace(key_id="k1", user_id="u1", org_id="o1", scopes=frozenset())
+    key = SimpleNamespace(
+        key_id="k1", user_id="u1", org_id="o1", scopes=frozenset({"api"})
+    )
 
     async def fake_authenticate(header):
         assert header == "Bearer acw_validtoken"

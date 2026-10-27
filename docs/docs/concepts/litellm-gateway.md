@@ -5,6 +5,10 @@ sidebar_position: 14
 
 # LiteLLM gateway (Epic #35 #38)
 
+:::warning Deprecated
+Deprecated by Factory#1959 in favour of the in-house model gateway (image `ghcr.io/olafkfreund/aifactory:*-gateway`). The LiteLLM sub-chart is still functional; removal is a later slice.
+:::
+
 > *Centralised budget, rate-limit, model-allowlist, and audit enforcement for every non-Claude LLM call AIFactory makes. Optional Helm sub-chart that operators flip on with one boolean.*
 
 ## When you need this
