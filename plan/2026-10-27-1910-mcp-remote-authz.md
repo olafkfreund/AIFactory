@@ -42,3 +42,12 @@ As above. The Docker/CI suites run on the PR.
 ## Rollback
 
 Revert the PR. Remote MCP is off by default.
+
+## Deviations
+
+- Step 1: no stub fixture in `tests/test_mcp_remote.py`. The suite runs with
+  `APP_DISABLE_AUTH=true` (tests/conftest.py), so `authorize_project_for_user`
+  and `accessible_org_ids` no-op there, and all 47 tests pass unchanged. The
+  new real-DB file sets `_auth_disabled` to False itself.
+- Step 1: `acw_principal` is imported at module level. There is no import cycle,
+  because `server.mcp_remote/__init__` does not import `tools`.
