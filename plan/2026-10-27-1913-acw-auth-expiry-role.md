@@ -137,6 +137,9 @@ Traps for every step:
   POST, GET `?org_id` and DELETE. Test: `tests/test_git_credentials_key_scope.py`.
   `access_review` and the audit export are pre-existing bugs that also hit human users, so
   they are tracked separately.
-- `apps/web-server/tests/test_scoped_service_tokens.py` (co-located; CI's backend job caught
-  it): its stub service key now carries `api`, because REST requires it since step 3. The
-  expected scopes now include it.
+- Steps 2 and 3 apply only to owner-bound keys (`user_id` set). The REST `api`-scope
+  requirement and the empty-effective-scope rejection skip service (M2M) keys
+  (`user_id` None), so scoped service tokens keep their dev behaviour with
+  `SCOPED_SERVICE_TOKENS_ENABLED` on or off. CI's co-located
+  `apps/web-server/tests/test_scoped_service_tokens.py` caught this, and it is unchanged from
+  dev. An earlier commit on this branch loosened that test; it is reverted here.

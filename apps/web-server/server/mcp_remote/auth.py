@@ -121,9 +121,11 @@ async def authenticate_rest(authorization_header: str | None) -> AuthenticatedKe
     """``authenticate`` plus the explicit ``api`` scope REST access needs (#1913).
 
     MCP-only keys (``mcp:read`` etc.) must not act as their owner on REST.
+    Service (M2M) keys have no owner and keep their pre-#1913 REST behaviour
+    (Factory#312 scoped service tokens).
     """
     key = await authenticate(authorization_header)
-    if API_SCOPE not in key.scopes:
+    if key.user_id is not None and API_SCOPE not in key.scopes:
         raise MCPAuthError("API key lacks the 'api' scope")
     return key
 
@@ -158,8 +160,8 @@ async def _lookup_by_digest(session: AsyncSession, digest: str) -> Authenticated
     scopes = frozenset(s.strip() for s in scopes_raw.split(",") if s.strip())
     if row.user_id:
         scopes = await _cap_by_owner_role(session, row, scopes)
-    if not scopes:
-        raise MCPAuthError("API key has no scopes for its owner's current role")
+        if not scopes:
+            raise MCPAuthError("API key has no scopes for its owner's current role")
     return AuthenticatedKey(
         key_id=str(row.id),
         scopes=scopes,
