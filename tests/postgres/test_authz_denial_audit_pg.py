@@ -67,10 +67,14 @@ def test_denial_row_survives_request_rollback(test_postgres_url, monkeypatch) ->
             assert exc.value.status_code == 403
             await s.rollback()
 
-        async with session_local() as s:
-            rows = list((await s.execute(select(AuditLog))).scalars())
-        await engine.dispose()
-        return rows
+        try:
+            async with session_local() as s:
+                return list((await s.execute(select(AuditLog))).scalars())
+        finally:
+            # The downgrade tests look for leftover tables in every schema.
+            async with engine.begin() as conn:
+                await conn.execute(text(f"DROP SCHEMA IF EXISTS {_SCHEMA} CASCADE"))
+            await engine.dispose()
 
     rows = asyncio.run(_go())
     assert [r.action for r in rows] == [ACTION_AUTHZ_DENIED]
