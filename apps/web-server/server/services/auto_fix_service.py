@@ -37,7 +37,6 @@ from factory_common.logsafe import sanitize_log
 
 from server.error_ref import InputRejectedError
 from server.services.git_base_url import safe_git_base_url  # #1360
-from server.services.task_phase import sync_require_review_metadata
 from server.specpath import spec_dir_for
 
 logger = logging.getLogger(__name__)
@@ -504,10 +503,6 @@ async def start_auto_fix(project_id: str, issue_number: int) -> dict[str, Any]:
     # Determine whether to delegate before recording the queue item, so
     # the queue carries the right initial status.
     spec_dir = spec_dir_for(project_path, spec_id)
-    if created:
-        # force=True below skips the sync should_pass_force would do, and the
-        # coder's gate reads task_metadata.json, not requirements.json (#1925).
-        sync_require_review_metadata(spec_dir)
     task_metadata = _read_task_metadata(spec_dir)
     # Delegation works on GitHub (Copilot, V1) and GitLab (Duo Workflow,
     # V1.5 #98). ADO has no autonomous-agent equivalent — the provider's

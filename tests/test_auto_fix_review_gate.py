@@ -113,18 +113,18 @@ def test_write_spec_dir_require_review_metadata(tmp_path):
     assert both["enableDelegation"] is True
 
 
-@pytest.mark.asyncio
-async def test_new_spec_with_require_human_approval_is_gated(tmp_path):
+def test_forced_new_spec_still_syncs_review_flag(tmp_path):
     from server.services import auto_fix_service
+    from server.services.task_phase import should_pass_force
 
-    with patch.object(
-        auto_fix_service,
-        "get_config",
-        return_value={"requireHumanApproval": True},
-    ):
-        await _start(tmp_path)
-    (spec,) = (tmp_path / ".aifactory" / "specs").iterdir()
-    meta = json.loads((spec / "task_metadata.json").read_text())
+    issue = {"number": 7, "title": "x"}
+    spec = tmp_path / ".aifactory" / "specs"
+    name = auto_fix_service._write_spec_dir(
+        tmp_path, issue, "github", require_review=True
+    )
+    # auto-fix starts a spec it just created with force=True
+    assert should_pass_force(spec / name, True) is True
+    meta = json.loads((spec / name / "task_metadata.json").read_text())
     assert meta["requireReviewBeforeCoding"] is True
 
 

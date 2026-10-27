@@ -66,10 +66,15 @@ dir does not exist). Pattern for sys.path: `tests/test_auto_fix_pull_on_poll.py`
    **Deviation (Opus review):** writing the flag to \`requirements.json\` alone
    does nothing for a fresh spec: \`force=True\` short-circuits
    \`should_pass_force\`, so \`sync_require_review_metadata\` never copies it to
-   \`task_metadata.json\`, which is what the coder's gate reads. \`start_auto_fix\`
-   now calls \`sync_require_review_metadata(spec_dir)\` when it created the spec.
-   Test: a fresh spec with \`requireHumanApproval\` on has
-   \`task_metadata.json\` \`requireReviewBeforeCoding: true\` (fails without the sync).
+   \`task_metadata.json\`, which is what the coder's gate reads. Fixed at the
+   root in \`services/task_phase.py\` \`should_pass_force\`: it now always runs
+   the sync and then ORs in \`force\` (\`not sync(...) or force\`), so every
+   forced start keeps the flag. Same return value as before.
+   Test: \`_write_spec_dir(require_review=True)\` then \`should_pass_force(d, True)\`
+   leaves \`task_metadata.json\` \`requireReviewBeforeCoding: true\` (fails
+   without the reorder). The other \`force=True\` callers were checked:
+   \`delegation_runner\` is planner-only, and \`plan_approval\` runs after an
+   approval. Neither loses anything the gate needs.
 
    **Deviation (lead's Opus review of the PR):**
    - PUT config needs \`admin\` (matches PATCH project settings), not \`member\`.
