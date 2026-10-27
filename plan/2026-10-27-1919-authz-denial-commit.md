@@ -31,3 +31,13 @@ coder handoff threshold).
 ## Rollback
 
 Revert the commit.
+
+## Deviations
+
+- Step 2: the SQLite test cannot show the bug. pysqlite emits no BEGIN, so the
+  savepoint's RELEASE commits the row even after the request session rolls back;
+  the SQLite test passed on dev. Added `tests/postgres/test_authz_denial_audit_pg.py`
+  (CI `postgres-acceptance` job): a 403, then the request session rolls back, then
+  exactly one `authz.denied` row. It fails on dev (`[] == ['authz.denied']`) and
+  passes with the fix. The SQLite test keeps its rollback + fresh-session read so
+  it exercises the new own-session path.

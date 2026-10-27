@@ -173,14 +173,13 @@ async def authorize_project_for_user(
                 ACTION_GATE_REJECTED if membership is not None else ACTION_AUTHZ_DENIED
             )
             await _audit_authz_denial(
-                db, action, user, project_id, org_id, minimum_role, exc.detail
+                action, user, project_id, org_id, minimum_role, exc.detail
             )
         raise
     return org_id
 
 
 async def _audit_authz_denial(
-    db: AsyncSession,
     action: str,
     user: dict | None,
     project_id: str | None,
@@ -188,17 +187,20 @@ async def _audit_authz_denial(
     minimum_role: str,
     detail: object,
 ) -> None:
-    """Write a chained authz-denial audit row on the request-scoped session.
+    """Write a chained authz-denial audit row on its own committed session.
 
-    Fail-safe: ``log_audit_event`` already swallows its own errors, but the
+    Not the request-scoped session: nothing commits it after a 403, so the row
+    was rolled back with it (#1919). A denial has no business transaction to
+    share.
+
+    Fail-safe: ``log_audit_event_bg`` already swallows its own errors, but the
     whole emit is additionally guarded so a denial is always re-raised
     unchanged even if audit wiring breaks.
     """
     try:
-        from ..services.audit_service import log_audit_event
+        from ..services.audit_service import log_audit_event_bg
 
-        await log_audit_event(
-            db=db,
+        await log_audit_event_bg(
             action=action,
             resource_type="project",
             resource_id=project_id,
