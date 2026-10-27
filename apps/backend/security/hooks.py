@@ -171,7 +171,10 @@ async def bash_security_hook(
 
     # shortcut: text match only, an obfuscated path gets past it; enforcement no longer
     # reads the file (#1944), so this is defence in depth.
-    if ".aifactory-security.json" in command.casefold():
+    if any(
+        n in command.casefold()
+        for n in (".aifactory-security.json", ".aifactory-allowlist")
+    ):
         return {
             "decision": "block",
             "reason": "Refused: the security profile is managed by AIFactory.",

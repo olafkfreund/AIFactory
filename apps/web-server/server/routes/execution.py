@@ -1427,10 +1427,10 @@ async def create_from_trusted_plan(
     # Install the plan. ingest re-runs the same gate — kept as the authoritative
     # check so the install can never outrun verification even if the pre-check
     # above is moved or removed. Nothing is
-    # built unless the plan is trusted-complete. Passing project_path lets ingest
-    # seed required_commands into the allowlist and apply the v2 execution profile
-    # (model/parallel/workers/complexity/skills) to task_metadata.json (RFC-0002).
-    result = ingest_trusted_plan(spec_dir, request.plan, project_dir=project_path)
+    # built unless the plan is trusted-complete. Ingest also applies the v2
+    # execution profile (model/parallel/workers/complexity/skills) to
+    # task_metadata.json (RFC-0002).
+    result = ingest_trusted_plan(spec_dir, request.plan)
     if not result.ok:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

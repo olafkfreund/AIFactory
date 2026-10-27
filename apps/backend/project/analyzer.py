@@ -469,7 +469,19 @@ def seed_profile_with_plan_commands(
     """
     # Imported here to avoid any import-time coupling between the project and
     # security packages.
-    from security.plan_commands import grantable_commands_from_plan
+    from security.plan_commands import DENY_COMMANDS, grantable_commands_from_plan
+    from security.profile import (  # noqa: PLC0415 - security.profile imports this module
+        get_security_profile,
+    )
+
+    # The profile is frozen in memory (#1944), so re-detect on every seed to pick
+    # up tooling the scaffold added since (e.g. a new Cargo.toml).
+    analyzer = ProjectAnalyzer(project_dir)  # spec_dir=None → enforced profile path
+    profile = get_security_profile(project_dir)
+    fresh = analyzer.analyze(force=True)
+    profile.stack_commands |= fresh.stack_commands - DENY_COMMANDS
+    profile.script_commands |= fresh.script_commands - DENY_COMMANDS
+    profile.custom_commands |= fresh.custom_commands - DENY_COMMANDS
 
     if plan is None:
         try:
@@ -478,27 +490,18 @@ def seed_profile_with_plan_commands(
             logger.warning(
                 "plan-commands seed skipped: cannot read %s (%s)", plan_path, exc
             )
-            return []
+            plan = {}
 
     granted, rejected = grantable_commands_from_plan(plan)
     if rejected:
         logger.info("plan-commands: rejected non-grantable names: %s", rejected)
-    if not granted:
-        return []
-
-    analyzer = ProjectAnalyzer(project_dir)  # spec_dir=None → enforced profile path
-    from security.profile import (  # noqa: PLC0415 - security.profile imports this module
-        get_security_profile,
-    )
-
-    profile = get_security_profile(project_dir)
 
     newly = sorted(granted - profile.custom_commands)
+    profile.custom_commands |= granted
+    # analyze() just overwrote the file with detection alone; write back the full profile.
+    analyzer.save_profile(profile)
     if not newly:
         return []
-
-    profile.custom_commands |= granted
-    analyzer.save_profile(profile)
     logger.info(
         "plan-commands: granted %s into %s allowlist",
         newly,

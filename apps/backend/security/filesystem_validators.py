@@ -195,7 +195,7 @@ def git_metadata_write_refusal(path: str, cwd: str | None) -> str | None:
 
 
 # Same name as ProjectAnalyzer.PROFILE_FILENAME (not imported: avoids an import cycle).
-_PROFILE_FILENAME = ".aifactory-security.json"
+_PROFILE_FILENAMES = (".aifactory-security.json", ".aifactory-allowlist")
 
 
 def protected_write_refusal(path: str, cwd: str | None) -> str | None:
@@ -212,6 +212,6 @@ def protected_write_refusal(path: str, cwd: str | None) -> str | None:
         forms = [Path(os.path.normpath(p)), p.resolve()]
     except (OSError, RuntimeError, ValueError):
         return refusal
-    if any(f.name.casefold() == _PROFILE_FILENAME for f in forms):
+    if any(f.name.casefold() in _PROFILE_FILENAMES for f in forms):
         return refusal
     return None

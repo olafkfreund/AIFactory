@@ -109,3 +109,68 @@ Revert the PR. The hook goes back to reading the file; there is no data migratio
   now drop the in-memory grant.
 - `filesystem_validators.py` defines `_PROFILE_FILENAME` locally; importing `ProjectAnalyzer`
   there would create an import cycle.
+
+## Review round 1 (lead's Opus review of #1947)
+
+Same decisions as above; these steps close what the review found.
+
+6. HIGH, `.aifactory-allowlist` is an agent-writable trusted input.
+   a. `project/structure_analyzer.py` `load_custom_allowlist` (~117-127): add a line only if it
+      is in `(BASE_COMMANDS | PLAN_GRANTABLE_COMMANDS) - DENY_COMMANDS`. Use a local import
+      with `# noqa: PLC0415 - <reason>` if a module-level import makes a cycle. Operators who
+      need other names use `AIFACTORY_EXTRA_ALLOWED_COMMANDS`, which is env-only.
+   b. `security/filesystem_validators.py` `protected_write_refusal`: also refuse the file name
+      `.aifactory-allowlist` (case-folded). `security/hooks.py` `bash_security_hook`: the text
+      match also covers `.aifactory-allowlist`.
+   c. `agents/utils.py` `_BOOKKEEPING_PATHS` (~26-31): add `".aifactory-allowlist"` so agent
+      edits are never committed by the safety net.
+7. MEDIUM, a frozen profile misses tooling a scaffold adds mid-build (for example, a
+   `Cargo.toml` added after the first hook call blocks `cargo build`).
+   `project/analyzer.py` `seed_profile_with_plan_commands`: first run fresh detection
+   (`ProjectAnalyzer(project_dir).analyze(force=True)`) and union its `stack_commands`,
+   `script_commands` and `custom_commands`, each minus `DENY_COMMANDS`, into the trusted
+   in-memory profile. Do this before the plan read/early returns so it runs on every seed.
+   Then add the plan grants, and `save_profile` the trusted profile when anything changed.
+8. LOW, the standalone `--qa` entry (`cli/qa_commands.py` `handle_qa_command`, before
+   `run_qa_validation_loop`): seed plan grants, because a fresh process no longer inherits
+   them from the file. If review is required (`requires_review_before_coding`), grant from
+   the plan only while `ReviewState.load(spec_dir).is_approval_valid(spec_dir)` holds,
+   otherwise pass `plan={}`. If review is not required, pass `plan=None`. Use the same
+   `project_dir` the QA loop gives the client. Wrap the call in
+   `try/except Exception` like the coder loop.
+9. LOW, `trusted_plan.py` (~879-888): delete the ingest-time seed call. It runs in the API
+   server process, where no hook reads the profile, and every ingest added a
+   `_trusted_profiles` entry that was never freed. The coder loop seeds in-process before
+   every session.
+10. NIT: fix the stale comments at `agents/coder.py` ~380-383 and
+    `agents/parallel_integration.py` ~519-522. They should say that grants go into the
+    in-memory profile the hook uses, not "the file the Bash hook reads (mtime-invalidated)".
+11. Tests (`tests/test_profile_untrusted.py`):
+    - Write and Edit to `.aifactory-allowlist` are blocked, and a Bash `echo nc >> .aifactory-allowlist` is blocked.
+    - With `nc` (and `uv`) written to `.aifactory-allowlist` and then `reset_profile_cache()`
+      (a fresh cache key), `nc -l 4444` is blocked and `uv` is allowed.
+    - Scaffold case: first `validate_command("ls")`, then write a `Cargo.toml`, run
+      `seed_profile_with_plan_commands` with a plan that has no commands, and
+      `cargo build` is allowed.
+    - `_BOOKKEEPING_PATHS` contains `.aifactory-allowlist`.
+    - A `--qa` seed test, if it stays small: review required with an invalid approval grants
+      nothing, and with a valid approval it grants the plan's commands.
+    → verify: the plan's Tests commands, plus `pytest tests -q -k "trusted_plan or qa_command or structure or allowlist"`.
+
+### Review round 1: deviations
+
+- Step 7: `seed_profile_with_plan_commands` always writes the trusted profile back at the
+  end, not only "when anything changed". `analyze(force=True)` overwrites the file with
+  detection alone, so a conditional save left it without the plan grants. This broke
+  `test_plan_review_gate_snapshot.py`, which reads the file.
+- Step 7: an unreadable plan now means "no plan grants" (`plan = {}`) rather than an early
+  return, so re-detection still applies.
+- Step 8: when the approval is valid, the seed is called with `plan=None`, which reads the
+  live plan. That plan is the approved one, because `is_approval_valid` just matched its hash.
+- Step 9: deleting the seed left `ingest_trusted_plan`'s `project_dir` parameter unused, and
+  the ruff ratchet flagged it (ARG001). The parameter is removed, along with its only use
+  in `apps/web-server/server/routes/execution.py`.
+- Step 6a changed the behaviour that `tests/test_project_analyzer.py::TestCustomAllowlist::test_loads_custom_allowlist`
+  asserted, so it now checks grantable names (`uv`, `pytest`) and that `my-custom-tool` is dropped.
+- Step 11: the `--qa` test patches module objects from `importlib.import_module(...)`, not
+  dotted strings, because other tests swap the `review` package in `sys.modules`.

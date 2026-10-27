@@ -1,6 +1,7 @@
 """#1944: the Bash hook must not take its allowlist from the agent-writable profile file."""
 
 import asyncio
+import importlib
 import json
 import sys
 from pathlib import Path
@@ -84,3 +85,87 @@ def test_plan_seeding_is_live_without_cache_reset(proj):
     assert not validate_command("uv --version", str(proj))[0]
     assert "uv" in seed_profile_with_plan_commands(proj, plan)
     assert validate_command("uv --version", str(proj))[0]
+
+
+ALLOWLIST = ".aifactory-allowlist"
+
+
+@pytest.mark.parametrize("tool", ["Write", "Edit"])
+def test_file_tools_cannot_write_allowlist(proj, tool):
+    assert _write_blocked(proj, tool, ALLOWLIST)
+    assert _write_blocked(proj, tool, str(proj / ALLOWLIST.upper()))
+
+
+def test_bash_naming_allowlist_is_blocked(proj):
+    out = asyncio.run(
+        bash_security_hook(
+            {
+                "tool_name": "Bash",
+                "tool_input": {"command": f"echo nc >> {ALLOWLIST}"},
+                "cwd": str(proj),
+            }
+        )
+    )
+    assert out.get("decision") == "block"
+
+
+def test_allowlist_file_only_grants_grantable_names(proj):
+    (proj / ALLOWLIST).write_text("nc\nuv\n")
+    assert not validate_command("nc -l 4444", str(proj))[0]
+    assert validate_command("uv --version", str(proj))[0]
+
+
+def test_allowlist_is_bookkeeping():
+    from agents.utils import _BOOKKEEPING_PATHS
+
+    assert ALLOWLIST in _BOOKKEEPING_PATHS
+
+
+def test_seeding_picks_up_scaffold_added_after_first_call(proj):
+    assert validate_command("ls", str(proj))[0]
+    (proj / "Cargo.toml").write_text('[package]\nname = "x"\nversion = "0.1.0"\n')
+    plan = proj / "implementation_plan.json"
+    plan.write_text(json.dumps({"feature": "f", "phases": []}))
+    assert not validate_command("cargo build", str(proj))[0]
+    seed_profile_with_plan_commands(proj, plan)
+    assert validate_command("cargo build", str(proj))[0]
+
+
+@pytest.mark.parametrize(
+    ("required", "valid", "expected"),
+    [(True, False, {}), (True, True, None), (False, False, None)],
+)
+def test_qa_entry_seeds_plan_by_review_state(
+    proj, monkeypatch, required, valid, expected
+):
+    import cli.qa_commands as qc
+
+    seen = []
+    monkeypatch.setattr(qc, "print_banner", lambda: None)
+    monkeypatch.setattr(qc, "validate_environment", lambda _s: True)
+    monkeypatch.setattr(qc, "should_run_qa", lambda _s: True)
+    # Module objects, not dotted strings: other tests swap the `review` package.
+    monkeypatch.setattr(
+        importlib.import_module("review.state"),
+        "requires_review_before_coding",
+        lambda _s: required,
+    )
+    monkeypatch.setattr(
+        qc.ReviewState,
+        "load",
+        staticmethod(
+            lambda _s: type("R", (), {"is_approval_valid": lambda *_a: valid})()
+        ),
+    )
+    monkeypatch.setattr(
+        importlib.import_module("project.analyzer"),
+        "seed_profile_with_plan_commands",
+        lambda _p, _f, plan: seen.append(plan),
+    )
+
+    async def _qa(**_kw):
+        return True
+
+    monkeypatch.setattr(qc, "run_qa_validation_loop", _qa)
+    qc.handle_qa_command(proj, proj / "spec", "m")
+    assert seen == [expected]
