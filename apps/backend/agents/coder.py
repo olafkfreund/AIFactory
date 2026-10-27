@@ -44,7 +44,7 @@ from prompt_generator import (
 from prompts import get_solo_prompt, is_first_run
 from providers.factory import get_provider
 from recovery import RecoveryManager
-from review.state import requires_review_before_coding
+from review.state import ReviewState, requires_review_before_coding
 from solo_mode import is_solo_mode_enabled_for_spec
 from task_logger import (
     LogPhase,
@@ -210,6 +210,9 @@ async def run_autonomous_agent(
     # instead of a dedicated planner session, and the plan-review gate is
     # skipped. Default OFF — the full pipeline is unchanged when disabled.
     solo = is_solo_mode_enabled_for_spec(spec_dir)
+    # Read before any agent session so the planner cannot change the gate (#1922).
+    require_review = not solo and _should_require_human_review(spec_dir)
+    pre_planner_review = ReviewState.load(spec_dir)
 
     # #389: solo collapses plan+implement into one session, which bypasses the
     # wave dispatch. Under --parallel, author the plan first (planner session)
@@ -546,67 +549,58 @@ async def run_autonomous_agent(
                         sync_plan_to_source(spec_dir, source_spec_dir)
                     return
 
-                # Check if human review is required before coding.
-                # Solo mode (#276) is the streamlined single-agent path and
-                # never gates on plan review — the agent self-directs straight
-                # from plan to implementation.
-                require_review = not solo and _should_require_human_review(spec_dir)
-                if require_review:
-                    # Check if already approved
-                    from review import ReviewState
+                # Plan-review gate (#1922): decided from the pre-planner snapshot
+                # (taken before any agent session), never from files the planner
+                # could have rewritten. Solo mode (#276) never gates.
+                if require_review and not pre_planner_review.is_approval_valid(
+                    spec_dir
+                ):
+                    # Pause for human review
+                    logger.info(
+                        "Plan review required - pausing execution for human approval"
+                    )
+                    emit_phase(ExecutionPhase.PLAN_REVIEW, "Waiting for plan approval")
 
-                    review_state = ReviewState.load(spec_dir)
-                    if not review_state.is_approval_valid(spec_dir):
-                        # Pause for human review
-                        logger.info(
-                            "Plan review required - pausing execution for human approval"
+                    # Update implementation_plan.json status
+                    plan_file = spec_dir / "implementation_plan.json"
+                    if plan_file.exists():
+                        try:
+                            plan = json.loads(plan_file.read_text())
+                            plan["status"] = "human_review"
+                            plan["reviewReason"] = "plan_review"
+                            plan_file.write_text(json.dumps(plan, indent=2))
+                        except (json.JSONDecodeError, OSError) as e:
+                            logger.warning(f"Failed to update plan status: {e}")
+
+                    # Also sync to source spec dir if in worktree
+                    if source_spec_dir:
+                        sync_plan_to_source(spec_dir, source_spec_dir)
+
+                    if task_logger:
+                        task_logger.end_phase(
+                            LogPhase.PLANNING,
+                            success=True,
+                            message="Plan created - waiting for human approval",
                         )
-                        emit_phase(
-                            ExecutionPhase.PLAN_REVIEW, "Waiting for plan approval"
+
+                    print()
+                    print(
+                        box(
+                            [
+                                bold(f"{icon(Icons.WARNING)} PLAN REVIEW REQUIRED"),
+                                "",
+                                "The implementation plan has been created and requires your approval.",
+                                "Please review the plan in the web UI and click 'Approve Plan' to continue.",
+                                "",
+                                highlight("Task Status: human_review (plan_review)"),
+                            ],
+                            width=70,
+                            style="heavy",
                         )
+                    )
+                    print()
 
-                        # Update implementation_plan.json status
-                        plan_file = spec_dir / "implementation_plan.json"
-                        if plan_file.exists():
-                            try:
-                                plan = json.loads(plan_file.read_text())
-                                plan["status"] = "human_review"
-                                plan["reviewReason"] = "plan_review"
-                                plan_file.write_text(json.dumps(plan, indent=2))
-                            except (json.JSONDecodeError, OSError) as e:
-                                logger.warning(f"Failed to update plan status: {e}")
-
-                        # Also sync to source spec dir if in worktree
-                        if source_spec_dir:
-                            sync_plan_to_source(spec_dir, source_spec_dir)
-
-                        if task_logger:
-                            task_logger.end_phase(
-                                LogPhase.PLANNING,
-                                success=True,
-                                message="Plan created - waiting for human approval",
-                            )
-
-                        print()
-                        print(
-                            box(
-                                [
-                                    bold(f"{icon(Icons.WARNING)} PLAN REVIEW REQUIRED"),
-                                    "",
-                                    "The implementation plan has been created and requires your approval.",
-                                    "Please review the plan in the web UI and click 'Approve Plan' to continue.",
-                                    "",
-                                    highlight(
-                                        "Task Status: human_review (plan_review)"
-                                    ),
-                                ],
-                                width=70,
-                                style="heavy",
-                            )
-                        )
-                        print()
-
-                        return  # Exit agent loop - task pauses for approval
+                    return  # Exit agent loop - task pauses for approval
 
                 # Continue to coding phase
                 current_log_phase = LogPhase.CODING
