@@ -37,9 +37,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-Viewer = Annotated[dict, Depends(require_project_access("viewer"))]
-Member = Annotated[dict, Depends(require_project_access("member"))]
-Admin = Annotated[dict, Depends(require_project_access("admin"))]
+Viewer = Annotated[dict[str, Any], Depends(require_project_access("viewer"))]
+Member = Annotated[dict[str, Any], Depends(require_project_access("member"))]
+Admin = Annotated[dict[str, Any], Depends(require_project_access("admin"))]
 
 # GET never returns the stored bot token; PUT treats this value (or an omitted
 # field) as "keep the stored token" so a round-tripped config does not wipe it.

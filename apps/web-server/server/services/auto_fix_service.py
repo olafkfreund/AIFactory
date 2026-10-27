@@ -473,7 +473,7 @@ async def start_auto_fix(project_id: str, issue_number: int) -> dict[str, Any]:
     now_iso = datetime.now(UTC).isoformat()
 
     created = spec_id is None
-    if created:
+    if spec_id is None:
         # Fetch the issue and create the spec
         provider = _provider_for(project_id)
         iss = await provider.fetch_issue(issue_number)
