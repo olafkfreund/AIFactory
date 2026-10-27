@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1929
 intent: intent/2026-10-27-1929-control-marker-nonce.md
 ---
