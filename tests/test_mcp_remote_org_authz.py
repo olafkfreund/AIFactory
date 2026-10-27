@@ -53,11 +53,13 @@ async def call(tmp_path, monkeypatch):
         await conn.run_sync(Base.metadata.create_all)
     async with session_local() as s:
         s.add(User(id="u", email="u@x.test", password_hash="x"))
+        s.add(User(id="v", email="v@x.test", password_hash="x"))
         await s.flush()
         for org in ("org-a", "org-b"):
             s.add(Organization(id=org, name=org, slug=org, owner_id="u"))
             await s.flush()
             s.add(OrgMember(org_id=org, user_id="u", role="member"))
+        s.add(OrgMember(org_id="org-a", user_id="v", role="viewer"))
         await s.commit()
 
     async def fake_db():
@@ -76,8 +78,8 @@ async def call(tmp_path, monkeypatch):
     proxied = AsyncMock(return_value=[{"id": "pa"}, {"id": "pb"}])
     monkeypatch.setattr(tools, "_call_internal", proxied)
 
-    async def _call(tool, args):
-        return await tools.dispatch_tool_call(tool, args, KEY_A), proxied
+    async def _call(tool, args, key=KEY_A):
+        return await tools.dispatch_tool_call(tool, args, key), proxied
 
     yield _call
     await engine.dispose()
@@ -111,7 +113,7 @@ async def test_list_projects_hides_other_org(call):
     assert '"pb"' not in result["content"][0]["text"]
 
 
-@pytest.mark.parametrize("task_id", ["pa:1/../../pb:001", "..", "pa:1?x=1", 7])
+@pytest.mark.parametrize("task_id", ["pa:1/../../pb:001", "..", "pa:1?x=1", "pa", 7])
 async def test_unsafe_task_id_refused(call, task_id):
     result, proxied = await call("aifactory.stop_task", {"task_id": task_id})
     assert result.get("isError") is True
@@ -122,3 +124,21 @@ async def test_unknown_project_refused(call):
     result, proxied = await call("aifactory.start_task", {"task_id": "p9:001"})
     assert result.get("isError") is True
     assert proxied.await_count == 0
+
+
+async def test_viewer_cannot_write_even_with_write_scope(call):
+    # The role, not just the scope, gates writes: a key that still says
+    # mcp:write must not act for a viewer.
+    viewer_key = AuthenticatedKey(
+        key_id="key-v",
+        scopes=frozenset({"mcp:read", "mcp:write"}),
+        user_id="v",
+        org_id="org-a",
+    )
+    result, proxied = await call(
+        "aifactory.start_task", {"task_id": "pa:001"}, viewer_key
+    )
+    assert result.get("isError") is True
+    assert proxied.await_count == 0
+    result, _ = await call("aifactory.get_task", {"task_id": "pa:001"}, viewer_key)
+    assert not result.get("isError"), result

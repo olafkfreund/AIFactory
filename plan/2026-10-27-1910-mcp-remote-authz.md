@@ -51,3 +51,28 @@ Revert the PR. Remote MCP is off by default.
   new real-DB file sets `_auth_disabled` to False itself.
 - Step 1: `acw_principal` is imported at module level. There is no import cycle,
   because `server.mcp_remote/__init__` does not import `tools`.
+
+## Review changes (lead's Opus review of PR #1917)
+
+3. `tools.py`: Gate 5 (banned constructs) flagged the `except HTTPException`
+   branch in `dispatch_tool_call`. `_authorize_call` now catches the
+   `HTTPException` from `authorize_project_for_user` and re-raises it as
+   `MCPAuthError(f"{tool_name} denied: {exc.detail}")`, and that branch is
+   gone. No allowlist entry.
+4. `tools.py`: task tools refuse a `task_id` without `:`. The tests in
+   `tests/test_mcp_remote.py` now use `p1:001` instead of `t1`. Added a real-DB
+   test: a viewer whose key still says `mcp:write` is refused `start_task` and
+   allowed `get_task`. `"pa"` is added to the unsafe-id cases.
+5. `server.py`: the SSE session is bound to its key. `sse_endpoint` wraps `send`
+   and reads the session id from the transport's first `endpoint` event
+   (`session_id=<32 hex>`, the wire format clients parse). It records
+   `_session_keys[session_id] = key.key_id` and drops the entry when the stream
+   closes. `messages_endpoint` returns 403 unless the posting key's id equals
+   the session's key id. An unknown session also gets 403.
+   Reading the id from the wire was chosen over the transport's private
+   `_read_stream_writers` (racy between concurrent connects) and over mcp 2.x's
+   own `_session_owners` (only when `scope["user"]` is an `AuthenticatedUser`,
+   and `requirements.txt` only pins `mcp>=2.0`). Test:
+   `apps/web-server/tests/test_mcp_remote_session_key.py`. It passes with mcp
+   2.3.0 and fails against dev's `server.py`.
+6. Filed #1919 (denial audit rows are never committed). It is not fixed here.

@@ -104,12 +104,19 @@ async def _authorize_call(
     if arg not in arguments:
         return  # the tool's KeyError reports the missing argument
     value = arguments[arg]
-    if not isinstance(value, str) or not _SAFE_ID.fullmatch(value):
+    if (
+        not isinstance(value, str)
+        or not _SAFE_ID.fullmatch(value)
+        or (arg == "task_id" and ":" not in value)
+    ):
         raise MCPAuthError(f"invalid {arg}")
     async for db in get_db():
-        await authorize_project_for_user(
-            acw_principal(key), value.partition(":")[0], db, minimum_role
-        )
+        try:
+            await authorize_project_for_user(
+                acw_principal(key), value.partition(":")[0], db, minimum_role
+            )
+        except HTTPException as exc:
+            raise MCPAuthError(f"{tool_name} denied: {exc.detail}") from exc
         return
     raise MCPAuthError("Authorization is temporarily unavailable")
 
@@ -361,8 +368,6 @@ async def dispatch_tool_call(
         )
     except MCPAuthError as exc:
         return _format_error(str(exc))
-    except HTTPException as exc:
-        return _format_error(f"{tool_name} denied: {exc.detail}")
 
     try:
         if tool_name == "aifactory.list_projects":
