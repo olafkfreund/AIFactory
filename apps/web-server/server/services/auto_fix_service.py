@@ -467,7 +467,8 @@ async def start_auto_fix(project_id: str, issue_number: int) -> dict[str, Any]:
 
     now_iso = datetime.now(UTC).isoformat()
 
-    if spec_id is None:
+    created = spec_id is None
+    if created:
         # Fetch the issue and create the spec
         provider = _provider_for(project_id)
         iss = await provider.fetch_issue(issue_number)
@@ -560,7 +561,9 @@ async def start_auto_fix(project_id: str, issue_number: int) -> dict[str, Any]:
             project_path=project_path,
             spec_id=spec_id,
             auto_continue=True,
-            force=True,  # Auto-fix is by definition unattended — bypass approval gate
+            # Only a spec this call created is forced; a reused one may carry a
+            # review gate that run.py's pre-flight must honour (#1925).
+            force=created,
         )
     except ValueError as e:
         # Already running — that's fine
