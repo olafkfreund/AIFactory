@@ -81,10 +81,38 @@ Approved decisions (from the spec):
    Trusted-plan fast path: `skipPlanning: true` in metadata enables solo
    (`solo_mode`), so the solo case covers it; add one case with
    `{"requireReviewBeforeCoding": true, "skipPlanning": true}` asserting not paused.
+   Restart without approval (added after plan approval at the lead's request;
+   no code change, coverage only). On a restart the plan already exists, so no
+   planner runs and the coder gate is not reached. The guard is run.py's
+   pre-flight (`cli/build_commands.handle_build_command`, `ReviewState.load(spec_dir)`
+   on the MAIN spec dir before `setup_workspace`). Restarts that do not pass force
+   (recover route, process_monitor auto-restarts) get no `--force`, because
+   `services/task_phase.should_pass_force` = `force or not require_review`. Add:
+   - `handle_build_command(..., auto_continue=True, force_bypass_approval=False)`
+     with a REAL `ReviewState`, the plan on disk, `requireReviewBeforeCoding: true`,
+     and review_state.json (a) absent, (b) `{"approved": true}` (hash-less),
+     (c) approved for a different plan → `SystemExit(0)` and
+     `agent.run_autonomous_agent` not awaited; (d) a valid approval for the plan
+     on disk → `run_autonomous_agent` awaited (reuse the patch list from
+     `tests/test_solo_mode.py::test_solo_forces_skip_qa_in_build_command`, minus the
+     ReviewState mock);
+   - `should_pass_force(spec_dir, False)` is False when review is required
+     (import from `server.services.task_phase`, web-server on sys.path as in
+     test_solo_mode).
    → verify: `python -m pytest tests/test_plan_review_gate_snapshot.py -q`; then
    revert step 2 locally (`git stash` is NOT allowed — temporarily edit the gate
    back) and confirm the forge/clear cases fail, then restore.
    Traps: `pytest-asyncio` mark as in test_solo_mode; no network; no `git stash`.
+
+Implementation deviations (step 3):
+- An existing plan skips the planner, so the "different plan" / "exact plan"
+  cases approve a plan and then delete it (`_approve_then_remove_plan`) so a
+  planner session runs and the gate is reached.
+- The `skipPlanning` case unsets `AIFACTORY_SOLO_MODE` (the env override beats
+  the metadata flag).
+- The valid-approval restart case patches `build_commands.count_subtasks` to
+  `(1, 1)` so the silent no-op guard does not exit 1 after the mocked agent.
+- Step 2 uses one combined `if` (the cq ratchet rejects the nested form as SIM102).
 
 ## Tests
 
