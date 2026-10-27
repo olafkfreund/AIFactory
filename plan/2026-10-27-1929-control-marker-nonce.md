@@ -122,3 +122,16 @@ Approved decisions (from the spec):
 
 Revert the PR. Control plane and build image ship together; a revert restores
 the old unauthenticated parsing on both sides.
+
+## Deviations (recorded during implementation)
+
+- Step 1: `_patched_parse` checks `getattr(msg, "error", None) == "rate_limit"`
+  instead of `isinstance(AssistantMessage)`; only `AssistantMessage` has `error`.
+- Step 2: an authenticated `__RATE_LIMIT__` line returns after the log emit and
+  `log_writer.process_line` (both still run for every line).
+- Step 3: `_marker_nonce_env` declared in the `TYPE_CHECKING` blocks of the
+  kubejob and spec-creation mixins for mypy. Spec creation and the following
+  build of the same `task_id` share one nonce.
+- Step 4: `tests/conftest.py` mocks `claude_agent_sdk`, so the `_patched_parse`
+  test runs the real patch function against a fake `parse_message`.
+  `scripts/ratchet_lint.py` does not exist in this repo; not run.

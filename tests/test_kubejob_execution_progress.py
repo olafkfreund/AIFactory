@@ -11,7 +11,7 @@ build. The Job writes its own copy inside its /work emptyDir and pushes it back
 only at the END, which is why every phase arrived in one step at completion.
 
 The Job's stdout already reaches the control plane: `KubeJobLogStreamer` follows
-the pod's logs into the cockpit pane. It carries the same `[PHASE_EVENT]` lines
+the pod's logs into the cockpit pane. It carries the same `__EXEC_PHASE__` lines
 the in-pod subprocess emits, and nothing read them. The fix routes those lines
 through the SAME `_handle_output_line` the in-pod path uses.
 
@@ -40,12 +40,12 @@ SPEC_ID = "099-link-shortener-service-python-"
 # emitter, so the fixture cannot drift from what run.py actually prints inside
 # the Job pod and KubeJobLogStreamer actually delivers.
 JOB_STDOUT = [
-    '__EXEC_PHASE__:{"phase": "planning", "message": "Loading trusted plan"}',
+    '__EXEC_PHASE__:n0nce:{"phase": "planning", "message": "Loading trusted plan"}',
     "Read(implementation_plan.json)",
-    '__EXEC_PHASE__:{"phase": "coding", "message": "C1: GET /healthz returns 200",'
+    '__EXEC_PHASE__:n0nce:{"phase": "coding", "message": "C1: GET /healthz returns 200",'
     ' "progress": 10, "subtask": "C1"}',
     "Write(app/routers/health.py)",
-    '__EXEC_PHASE__:{"phase": "coding", "message": "C2: POST /links",'
+    '__EXEC_PHASE__:n0nce:{"phase": "coding", "message": "C2: POST /links",'
     ' "progress": 20, "subtask": "C2"}',
 ]
 
@@ -61,6 +61,9 @@ def _service() -> AgentService:
     service = AgentService()
     service._emit_progress = AsyncMock()
     service._emit_log = AsyncMock()
+    service._task_marker_nonces[TASK_ID] = (
+        "n0nce"  # control plane's per-task nonce (#1929)
+    )
     return service
 
 
@@ -119,7 +122,7 @@ async def test_a_dispatched_job_reports_a_phase_immediately(project):
 
 
 async def test_job_phase_events_move_execution_progress(project):
-    """The real defect: the Job's [PHASE_EVENT] lines were never read."""
+    """The real defect: the Job's __EXEC_PHASE__ lines were never read."""
     project_path, spec_dir = project
     service = _service()
 
@@ -154,7 +157,7 @@ async def test_progress_is_emitted_to_the_cockpit_per_phase_event(project):
     await _dispatch_and_stream(service, project_path, JOB_STDOUT)
 
     emitted = [call.args[0] for call in service._emit_progress.call_args_list]
-    assert len(emitted) == 3, f"expected one per PHASE_EVENT, got {len(emitted)}"
+    assert len(emitted) == 3, f"expected one per phase marker, got {len(emitted)}"
     assert [p.phase for p in emitted] == [
         TaskPhase.PLANNING,
         TaskPhase.CODING,

@@ -121,6 +121,7 @@ class KubejobMixin:
         _task_current_phases: dict[str, Any]
         _task_log_writers: dict[str, Any]
         _handle_output_line: Callable[..., Any]
+        _marker_nonce_env: Callable[..., dict[str, str]]
         backend_path: Path
         _store_enabled: bool
         is_running: Callable[[str], bool]
@@ -457,6 +458,7 @@ class KubejobMixin:
                 force=force,
                 base_branch=base_branch,
                 mode=mode,
+                marker_nonce=self._marker_nonce_env(task_id)["AIFACTORY_MARKER_NONCE"],
             )
         except BaseException:
             # A dispatch raise does not prove no Job exists; wait for its 404.
@@ -556,7 +558,7 @@ class KubejobMixin:
         read from the durable worker_ref the backend just wrote. Wholly
         best-effort — never raises, never blocks dispatch.
         """
-        # #1110: the Job's stdout carries the same [PHASE_EVENT] lines the in-pod
+        # #1110: the Job's stdout carries the same __EXEC_PHASE__ markers the in-pod
         # subprocess emits, and the control plane was throwing all of it at the
         # log pane without reading it. `_spawn_task_execution` is the ONLY place
         # that builds a TaskLogWriter, and the kubejob backend does not go

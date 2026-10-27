@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
+import secrets
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -31,15 +31,21 @@ from .task_phase import (
     scale_progress,
 )
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
 _log = logging.getLogger(__name__)
 
 # Mirrors ``core.phase_event.USAGE_MARKER_PREFIX`` (#1249). Spelled out rather
 # than imported because this package does not depend on the backend package —
 # the phase marker two functions down is duplicated for the same reason.
 _USAGE_MARKER = "__USAGE__:"
+_PHASE_MARKER = "__EXEC_PHASE__:"
+_RATE_LIMIT_MARKER = "__RATE_LIMIT__:"
+
+
+def _tolerant_int(value: Any) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _dedup_signature(payload: dict) -> tuple:
@@ -83,10 +89,10 @@ class EmitMixin:
         _spec_dirs: dict[str, Any]
         _spec_stderr_logs: dict[str, Any]
         _task_current_phases: dict[str, Any]
+        _task_marker_nonces: dict[str, str]
         _task_rate_limits: dict[str, Any]
         _task_sequence_numbers: dict[str, Any]
         _task_start_times: dict[str, Any]
-        _is_rate_limit_line: Callable[..., Any]
 
     async def _emit_log(self, log: TaskLog) -> None:
         """Emit a log to all registered callbacks."""
@@ -337,41 +343,36 @@ class EmitMixin:
                     "[AgentService] progress callback raised (ignored)", exc_info=True
                 )
 
-    def _parse_phase_event(self, line: str) -> dict | None:
-        """Parse phase event from agent output.
+    def _marker_nonce_env(self, task_id: str) -> dict[str, str]:
+        """Env carrying this task's stdout-marker nonce (#1929); minted once per task."""
+        nonce = self._task_marker_nonces.get(task_id)
+        if not nonce:
+            nonce = self._task_marker_nonces[task_id] = secrets.token_hex(16)
+        return {"AIFACTORY_MARKER_NONCE": nonce}
 
-        Supports two formats:
-        1. [PHASE_EVENT] phase=coding message="Starting"
-        2. __EXEC_PHASE__:{"phase":"coding","message":"Starting","progress":50}
+    def _marker_payload(self, task_id: str, line: str, prefix: str) -> str | None:
+        """Payload after ``<prefix><nonce>:`` or None (#1929).
+
+        Anything without the task's own non-empty nonce is plain log text, so
+        agent-authored output that merely looks like a marker is never acted on.
         """
-        # Check for __EXEC_PHASE__: prefix (JSON format from backend)
-        exec_phase_prefix = "__EXEC_PHASE__:"
-        if line.startswith(exec_phase_prefix):
-            try:
-                json_str = line[len(exec_phase_prefix) :]
-                event = json.loads(json_str)
-                # Map 'progress' to 'percentage' for consistency
-                if "progress" in event:
-                    event["percentage"] = event.pop("progress")
-                return event
-            except json.JSONDecodeError:
-                return None
+        nonce = self._task_marker_nonces.get(task_id)
+        if nonce and line.startswith(f"{prefix}{nonce}:"):
+            return line[len(prefix) + len(nonce) + 1 :]
+        return None
 
-        # Check for [PHASE_EVENT] prefix (key=value format)
-        match = re.match(r"\[PHASE_EVENT\]\s*(.+)", line)
-        if not match:
+    def _parse_phase_event(self, payload: str) -> dict | None:
+        """Parse the JSON payload of an authenticated ``__EXEC_PHASE__`` marker."""
+        try:
+            event = json.loads(payload)
+        except json.JSONDecodeError:
             return None
-
-        event_str = match.group(1)
-        event = {}
-
-        # Parse key=value pairs
-        for part in re.findall(r"(\w+)=([^\s]+|\"[^\"]+\")", event_str):
-            key, value = part
-            value = value.strip('"')
-            event[key] = value
-
-        return event if event else None
+        if not isinstance(event, dict):
+            return None
+        # Map 'progress' to 'percentage' for consistency
+        if "progress" in event:
+            event["percentage"] = event.pop("progress")
+        return event
 
     async def _process_output(
         self,
@@ -422,26 +423,33 @@ class EmitMixin:
                     )
 
             line = line_bytes.decode("utf-8", errors="replace").rstrip()
-            current_phase = await self._handle_output_line(
-                task_id,
-                line,
-                current_phase=current_phase,
-                is_stderr=is_stderr,
-                log_writer=log_writer,
-                spec_id=spec_id,
-            )
+            try:
+                current_phase = await self._handle_output_line(
+                    task_id,
+                    line,
+                    current_phase=current_phase,
+                    is_stderr=is_stderr,
+                    log_writer=log_writer,
+                    spec_id=spec_id,
+                )
+            except Exception:  # noqa: BLE001 - one bad line must not stop the stream (#1929)
+                logger.warning(
+                    "[AgentService] Task %s: output line handler raised (line skipped)",
+                    sanitize_log(task_id),
+                    exc_info=True,
+                )
 
         return current_phase
 
-    async def _emit_live_usage(self, task_id: str, spec_id: str, line: str) -> bool:
-        """Turn one ``__USAGE__:`` line into a running-cost event (#1249).
+    async def _emit_live_usage(self, task_id: str, spec_id: str, payload: str) -> bool:
+        """Turn one authenticated ``__USAGE__`` payload into a running-cost event (#1249).
 
         Returns True if an event was emitted. Best-effort throughout: a
         malformed marker, an unknown project or a failed emit must never affect
         the build whose output produced it.
         """
         try:
-            agg = json.loads(line[len(_USAGE_MARKER) :])
+            agg = json.loads(payload)
         except ValueError:
             _log.debug("[AgentService] malformed __USAGE__ marker ignored")
             return False
@@ -542,29 +550,32 @@ class EmitMixin:
         )
         await self._emit_log(log)
 
-        # Detect rate limit messages to trigger failover after exit
-        if self._is_rate_limit_line(line):
+        # Write to task_logs.json for detailed phase logs
+        if log_writer and spec_id and not is_stderr:
+            log_writer.process_line(spec_id, current_phase, line)
+
+        # Rate limit (authenticated marker only, #1929) triggers failover after exit.
+        if self._marker_payload(task_id, line, _RATE_LIMIT_MARKER) is not None:
             self._task_rate_limits[task_id] = True
             logger.warning(
                 "[AgentService] Rate limit detected for task %s (will attempt failover if enabled)",
                 sanitize_log(task_id),
             )
-
-        # Write to task_logs.json for detailed phase logs
-        if log_writer and spec_id and not is_stderr:
-            log_writer.process_line(spec_id, current_phase, line)
+            return current_phase
 
         # Live token usage (__USAGE__:) — #1249. Handled HERE, beside the phase
         # marker, so both build backends report accruing cost identically: the
         # in-pod path used to get it from the worktree-sync loop, which the
         # kubejob path never runs, so cost only ever appeared at completion.
         # Deliberately before the phase branch, which returns early on a match.
-        if spec_id and line.startswith(_USAGE_MARKER):
-            await self._emit_live_usage(task_id, spec_id, line)
+        usage_payload = self._marker_payload(task_id, line, _USAGE_MARKER)
+        if spec_id and usage_payload is not None:
+            await self._emit_live_usage(task_id, spec_id, usage_payload)
             return current_phase
 
-        # Check for phase events (__EXEC_PHASE__: or [PHASE_EVENT])
-        event = self._parse_phase_event(line)
+        # Check for authenticated phase events (__EXEC_PHASE__:<nonce>:)
+        phase_payload = self._marker_payload(task_id, line, _PHASE_MARKER)
+        event = self._parse_phase_event(phase_payload) if phase_payload else None
         if event:
             phase_str = event.get("phase", "")
             phase_map = {
@@ -604,12 +615,8 @@ class EmitMixin:
                 phase=current_phase,
                 message=event.get("message", ""),
                 subtask=event.get("subtask"),
-                subtask_index=int(event["subtask_index"])
-                if "subtask_index" in event
-                else None,
-                subtask_total=int(event["subtask_total"])
-                if "subtask_total" in event
-                else None,
+                subtask_index=_tolerant_int(event.get("subtask_index")),
+                subtask_total=_tolerant_int(event.get("subtask_total")),
                 percentage=event.get("percentage"),  # Include percentage from event
                 data=event,
             )
@@ -618,59 +625,5 @@ class EmitMixin:
                 progress,
                 previous_phase=old_phase if old_phase != current_phase else None,
             )
-
-        # Check for JSON progress data
-        if line.startswith("{"):
-            try:
-                data = json.loads(line)
-                if "phase" in data or "status" in data:
-                    phase_str = data.get("phase", data.get("status", ""))
-                    if phase_str in [
-                        "coding",
-                        "planning",
-                        "qa_review",
-                        "qa_fixing",
-                    ]:
-                        old_phase = current_phase
-                        current_phase = TaskPhase(phase_str)
-
-                        # Track current phase for proper status on task completion
-                        self._task_current_phases[task_id] = current_phase
-
-                        # Update log writer phase status
-                        if log_writer and spec_id:
-                            if old_phase != current_phase:
-                                log_writer.set_phase_status(
-                                    spec_id, old_phase, "completed"
-                                )
-                            log_writer.set_phase_status(
-                                spec_id, current_phase, "active"
-                            )
-
-                    progress = TaskProgress(
-                        task_id=task_id,
-                        phase=current_phase,
-                        message=data.get("message", ""),
-                        subtask=data.get("subtask"),
-                        subtask_index=data.get("subtask_index"),
-                        subtask_total=data.get("subtask_total"),
-                        percentage=data.get("percentage"),
-                        data=data,
-                    )
-                    # Pass previous phase if it changed, so status event can be emitted
-                    await self._emit_progress(
-                        progress,
-                        previous_phase=old_phase
-                        if old_phase != current_phase
-                        else None,
-                    )
-            except json.JSONDecodeError as exc:
-                # Line starts with '{' but isn't complete/valid JSON (e.g. a
-                # truncated write) — not a real error, just not progress data.
-                _log.debug(
-                    "[AgentService] Task %s: line starting '{' was not valid JSON: %s",
-                    sanitize_log(task_id),
-                    exc,
-                )
 
         return current_phase

@@ -50,7 +50,7 @@ def test_marker_is_emitted_and_parseable():
         assert emit_usage(AGG) is True
     line = buf.getvalue().strip()
     assert line.startswith(pe.USAGE_MARKER_PREFIX)
-    assert json.loads(line[len(pe.USAGE_MARKER_PREFIX) :]) == AGG
+    assert json.loads(line[len(pe.USAGE_MARKER_PREFIX) :].split(":", 1)[1]) == AGG
 
 
 def test_throttled_so_a_chatty_build_cannot_flood_the_cockpit():
@@ -121,8 +121,8 @@ async def test_handler_turns_a_marker_into_a_running_cost_event(monkeypatch):
     )
 
     mixin = EmitMixin()
-    line = _USAGE_MARKER + json.dumps(AGG)
-    assert await mixin._emit_live_usage("p1:001-spec", "001-spec", line) is True
+    payload = json.dumps(AGG)
+    assert await mixin._emit_live_usage("p1:001-spec", "001-spec", payload) is True
     assert captured["status"] == "running"
     assert captured["task_id"] == "p1:001-spec"
     assert captured["usage"]["cost_usd"] == pytest.approx(0.0123)
@@ -151,7 +151,7 @@ def test_record_turn_actually_emits_the_marker(tmp_path: Path):
         ln for ln in buf.getvalue().split("\n") if ln.startswith(pe.USAGE_MARKER_PREFIX)
     ]
     assert markers, "record_turn wrote the file but emitted no live usage marker"
-    payload = json.loads(markers[0][len(pe.USAGE_MARKER_PREFIX) :])
+    payload = json.loads(markers[0][len(pe.USAGE_MARKER_PREFIX) :].split(":", 1)[1])
     assert payload["outputTokens"] == 200
     # And the durable file is still written — the marker is additive, not a
     # replacement for the record the push-back carries at completion.
@@ -176,18 +176,16 @@ async def test_the_REAL_handler_routes_a_usage_line(monkeypatch):
         async def _emit_log(self, log):  # noqa: ANN001 - test double
             return None
 
-        async def _emit_live_usage(self, task_id, spec_id, line):  # noqa: ANN001
-            seen.append(line)
+        async def _emit_live_usage(self, task_id, spec_id, payload):  # noqa: ANN001
+            seen.append(payload)
             return True
 
     probe = _Probe()
-    monkeypatch.setattr(
-        probe, "_is_rate_limit_line", lambda _line: False, raising=False
-    )
+    probe._task_marker_nonces = {"p1:001-spec": "n0nce"}
 
     out = await probe._handle_output_line(
         "p1:001-spec",
-        _USAGE_MARKER + json.dumps(AGG),
+        f"{_USAGE_MARKER}n0nce:{json.dumps(AGG)}",
         current_phase=TaskPhase.CODING,
         spec_id="001-spec",
     )
@@ -201,4 +199,4 @@ async def test_handler_survives_a_malformed_marker(monkeypatch):
     from server.services.agent_emit import _USAGE_MARKER, EmitMixin
 
     mixin = EmitMixin()
-    assert await mixin._emit_live_usage("p1:s", "s", _USAGE_MARKER + "{broken") is False
+    assert await mixin._emit_live_usage("p1:s", "s", "{broken") is False

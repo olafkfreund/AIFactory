@@ -62,6 +62,7 @@ class SpecCreationMixin:
         _emit_progress: Callable[..., Any]
         _monitor_process: Callable[..., Any]
         _process_output: Callable[..., Any]
+        _marker_nonce_env: Callable[..., dict[str, str]]
         _resolve_claude_token_pooled: Callable[..., Any]
         _kubejob_backend_enabled: Callable[..., bool]
 
@@ -267,32 +268,8 @@ class SpecCreationMixin:
             }
 
         env.update(await project_settings_store.mcp_spawn_env(project_path))
-
-        # Start subprocess with a pseudo-TTY to prevent "Stream closed" errors
-        # Claude Code CLI expects a TTY for permission handling
-        import pty
-
-        master_fd, slave_fd = pty.openpty()
-
-        # #363: optional OS sandbox — passthrough unless AIFACTORY_AGENT_SANDBOX
-        # is set and bwrap is installed (zero behaviour change by default).
-        from .sandbox import build_sandboxed_command
-
-        cmd = build_sandboxed_command(cmd, project_path)
-
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=slave_fd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(project_path),
-            env=env,
-            # Own session/process group so stop_task can kill the WHOLE tree —
-            # run.py spawns coder subprocesses (Claude SDK, git); without this,
-            # proc.terminate() only signals run.py and the children orphan and
-            # keep running (the stop-resistance bug).
-            start_new_session=True,
-        )
+        # #1929: after make_subprocess_env(), which denies this name.
+        env.update(self._marker_nonce_env(task_id))
 
         # Close slave fd in parent process
         os.close(slave_fd)

@@ -126,6 +126,8 @@ _AGENT_ENV_DENY_EXACT: set[str] = {
     "APP_DATABASE_URL",
     # The intake poller's API token; falls back to APP_API_TOKEN, so treat it the same.
     "AIFACTORY_TOKEN",
+    # #1929: per-task stdout marker nonce; an agent that read it could forge markers.
+    "AIFACTORY_MARKER_NONCE",
     # Provider API keys (the agent authenticates via OAuth, not these).
     "ANTHROPIC_API_KEY",
     "OPENAI_API_KEY",

@@ -17,11 +17,23 @@ from pathlib import Path
 # Add backend to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "apps" / "backend"))
 
+import pytest
 from core.phase_event import (
+    MARKER_NONCE_ENV,
     PHASE_MARKER_PREFIX,
+    RATE_LIMIT_MARKER_PREFIX,
     ExecutionPhase,
     emit_phase,
+    emit_rate_limit,
 )
+
+_NONCE = "abc123"
+_PREFIX = f"{PHASE_MARKER_PREFIX}{_NONCE}:"
+
+
+@pytest.fixture(autouse=True)
+def _nonce(monkeypatch):
+    monkeypatch.setenv(MARKER_NONCE_ENV, _NONCE)
 
 
 class TestExecutionPhaseEnum:
@@ -84,6 +96,30 @@ class TestMarkerFormat:
         assert PHASE_MARKER_PREFIX.endswith(":")
 
 
+class TestNonce:
+    """Markers carry the per-task nonce (#1929)."""
+
+    def test_phase_carries_nonce(self, capsys):
+        emit_phase(ExecutionPhase.CODING, "x")
+        assert capsys.readouterr().out.startswith(f"__EXEC_PHASE__:{_NONCE}:{{")
+
+    def test_rate_limit_marker(self, capsys):
+        emit_rate_limit()
+        assert capsys.readouterr().out == f"{RATE_LIMIT_MARKER_PREFIX}{_NONCE}:\n"
+
+    def test_empty_nonce_when_unset(self, capsys, monkeypatch):
+        monkeypatch.delenv(MARKER_NONCE_ENV)
+        emit_rate_limit()
+        assert capsys.readouterr().out == "__RATE_LIMIT__::\n"
+
+    def test_rate_limit_oserror_swallowed(self, monkeypatch):
+        def boom(*a, **k):
+            raise OSError("Broken pipe")
+
+        monkeypatch.setattr("builtins.print", boom)
+        emit_rate_limit()
+
+
 class TestEmitPhase:
     """Tests for emit_phase function."""
 
@@ -94,7 +130,7 @@ class TestEmitPhase:
 
         assert PHASE_MARKER_PREFIX in captured.out
         # Extract JSON part
-        json_str = captured.out.strip().replace(PHASE_MARKER_PREFIX, "")
+        json_str = captured.out.strip().replace(_PREFIX, "")
         payload = json.loads(json_str)
         assert isinstance(payload, dict)
 
@@ -103,7 +139,7 @@ class TestEmitPhase:
         emit_phase(ExecutionPhase.PLANNING, "Starting")
         captured = capsys.readouterr()
 
-        json_str = captured.out.strip().replace(PHASE_MARKER_PREFIX, "")
+        json_str = captured.out.strip().replace(_PREFIX, "")
         payload = json.loads(json_str)
         assert "phase" in payload
         assert payload["phase"] == "planning"
@@ -113,7 +149,7 @@ class TestEmitPhase:
         emit_phase(ExecutionPhase.CODING, "Building feature")
         captured = capsys.readouterr()
 
-        json_str = captured.out.strip().replace(PHASE_MARKER_PREFIX, "")
+        json_str = captured.out.strip().replace(_PREFIX, "")
         payload = json.loads(json_str)
         assert "message" in payload
         assert payload["message"] == "Building feature"
@@ -123,7 +159,7 @@ class TestEmitPhase:
         emit_phase(ExecutionPhase.CODING, "Working", progress=50)
         captured = capsys.readouterr()
 
-        json_str = captured.out.strip().replace(PHASE_MARKER_PREFIX, "")
+        json_str = captured.out.strip().replace(_PREFIX, "")
         payload = json.loads(json_str)
         assert "progress" in payload
         assert payload["progress"] == 50
@@ -133,7 +169,7 @@ class TestEmitPhase:
         emit_phase(ExecutionPhase.CODING, "Working")
         captured = capsys.readouterr()
 
-        json_str = captured.out.strip().replace(PHASE_MARKER_PREFIX, "")
+        json_str = captured.out.strip().replace(_PREFIX, "")
         payload = json.loads(json_str)
         assert "progress" not in payload
 
@@ -142,7 +178,7 @@ class TestEmitPhase:
         emit_phase(ExecutionPhase.CODING, "Working", subtask="subtask-1")
         captured = capsys.readouterr()
 
-        json_str = captured.out.strip().replace(PHASE_MARKER_PREFIX, "")
+        json_str = captured.out.strip().replace(_PREFIX, "")
         payload = json.loads(json_str)
         assert "subtask" in payload
         assert payload["subtask"] == "subtask-1"
@@ -152,7 +188,7 @@ class TestEmitPhase:
         emit_phase(ExecutionPhase.CODING, "Working")
         captured = capsys.readouterr()
 
-        json_str = captured.out.strip().replace(PHASE_MARKER_PREFIX, "")
+        json_str = captured.out.strip().replace(_PREFIX, "")
         payload = json.loads(json_str)
         assert "subtask" not in payload
 
@@ -161,7 +197,7 @@ class TestEmitPhase:
         emit_phase(ExecutionPhase.QA_REVIEW, "Reviewing")
         captured = capsys.readouterr()
 
-        json_str = captured.out.strip().replace(PHASE_MARKER_PREFIX, "")
+        json_str = captured.out.strip().replace(_PREFIX, "")
         payload = json.loads(json_str)
         assert payload["phase"] == "qa_review"
 
@@ -170,7 +206,7 @@ class TestEmitPhase:
         emit_phase("custom_phase", "Custom")
         captured = capsys.readouterr()
 
-        json_str = captured.out.strip().replace(PHASE_MARKER_PREFIX, "")
+        json_str = captured.out.strip().replace(_PREFIX, "")
         payload = json.loads(json_str)
         assert payload["phase"] == "custom_phase"
 
@@ -190,7 +226,7 @@ class TestEmitPhase:
         )
         captured = capsys.readouterr()
 
-        json_str = captured.out.strip().replace(PHASE_MARKER_PREFIX, "")
+        json_str = captured.out.strip().replace(_PREFIX, "")
         payload = json.loads(json_str)
 
         assert payload["phase"] == "coding"
@@ -207,7 +243,7 @@ class TestEdgeCases:
         emit_phase(ExecutionPhase.CODING, "")
         captured = capsys.readouterr()
 
-        json_str = captured.out.strip().replace(PHASE_MARKER_PREFIX, "")
+        json_str = captured.out.strip().replace(_PREFIX, "")
         payload = json.loads(json_str)
         assert payload["message"] == ""
 
@@ -216,7 +252,7 @@ class TestEdgeCases:
         emit_phase(ExecutionPhase.CODING, "Building 🚀 feature with émojis")
         captured = capsys.readouterr()
 
-        json_str = captured.out.strip().replace(PHASE_MARKER_PREFIX, "")
+        json_str = captured.out.strip().replace(_PREFIX, "")
         payload = json.loads(json_str)
         assert "🚀" in payload["message"]
         assert "émojis" in payload["message"]
@@ -227,7 +263,7 @@ class TestEdgeCases:
         captured = capsys.readouterr()
 
         # Should be valid JSON
-        json_str = captured.out.strip().replace(PHASE_MARKER_PREFIX, "")
+        json_str = captured.out.strip().replace(_PREFIX, "")
         payload = json.loads(json_str)
         assert '"quotes"' in payload["message"]
         assert "\\backslash" in payload["message"]
@@ -241,7 +277,7 @@ class TestEdgeCases:
         lines = captured.out.strip().split("\n")
         assert len(lines) == 1, "Output should be single line"
 
-        json_str = captured.out.strip().replace(PHASE_MARKER_PREFIX, "")
+        json_str = captured.out.strip().replace(_PREFIX, "")
         payload = json.loads(json_str)
         # JSON.loads unescapes the newline
         assert payload["message"] == "Line1\nLine2"
@@ -251,7 +287,7 @@ class TestEdgeCases:
         emit_phase(ExecutionPhase.CODING, "Line1\r\nLine2")
         captured = capsys.readouterr()
 
-        json_str = captured.out.strip().replace(PHASE_MARKER_PREFIX, "")
+        json_str = captured.out.strip().replace(_PREFIX, "")
         payload = json.loads(json_str)
         assert "Line1" in payload["message"]
         assert "Line2" in payload["message"]
@@ -261,7 +297,7 @@ class TestEdgeCases:
         emit_phase(ExecutionPhase.CODING, "Col1\tCol2")
         captured = capsys.readouterr()
 
-        json_str = captured.out.strip().replace(PHASE_MARKER_PREFIX, "")
+        json_str = captured.out.strip().replace(_PREFIX, "")
         payload = json.loads(json_str)
         assert "\t" in payload["message"]
 
@@ -271,7 +307,7 @@ class TestEdgeCases:
         emit_phase(ExecutionPhase.CODING, long_message)
         captured = capsys.readouterr()
 
-        json_str = captured.out.strip().replace(PHASE_MARKER_PREFIX, "")
+        json_str = captured.out.strip().replace(_PREFIX, "")
         payload = json.loads(json_str)
         # Either full message or truncated is acceptable
         assert len(payload["message"]) > 0
@@ -281,7 +317,7 @@ class TestEdgeCases:
         emit_phase(ExecutionPhase.CODING, "Starting", progress=0)
         captured = capsys.readouterr()
 
-        json_str = captured.out.strip().replace(PHASE_MARKER_PREFIX, "")
+        json_str = captured.out.strip().replace(_PREFIX, "")
         payload = json.loads(json_str)
         assert "progress" in payload
         assert payload["progress"] == 0
@@ -291,7 +327,7 @@ class TestEdgeCases:
         emit_phase(ExecutionPhase.COMPLETE, "Done", progress=100)
         captured = capsys.readouterr()
 
-        json_str = captured.out.strip().replace(PHASE_MARKER_PREFIX, "")
+        json_str = captured.out.strip().replace(_PREFIX, "")
         payload = json.loads(json_str)
         assert payload["progress"] == 100
 
@@ -300,7 +336,7 @@ class TestEdgeCases:
         emit_phase(ExecutionPhase.CODING, "Working", subtask="feat/add-login#123")
         captured = capsys.readouterr()
 
-        json_str = captured.out.strip().replace(PHASE_MARKER_PREFIX, "")
+        json_str = captured.out.strip().replace(_PREFIX, "")
         payload = json.loads(json_str)
         assert payload["subtask"] == "feat/add-login#123"
 
@@ -372,11 +408,11 @@ class TestPhaseTransitions:
         assert len(lines) == 2
 
         # First line is planning
-        payload1 = json.loads(lines[0].replace(PHASE_MARKER_PREFIX, ""))
+        payload1 = json.loads(lines[0].replace(_PREFIX, ""))
         assert payload1["phase"] == "planning"
 
         # Second line is coding
-        payload2 = json.loads(lines[1].replace(PHASE_MARKER_PREFIX, ""))
+        payload2 = json.loads(lines[1].replace(_PREFIX, ""))
         assert payload2["phase"] == "coding"
 
     def test_coding_to_qa_review(self, capsys):
@@ -387,7 +423,7 @@ class TestPhaseTransitions:
         captured = capsys.readouterr()
         lines = captured.out.strip().split("\n")
 
-        payload2 = json.loads(lines[1].replace(PHASE_MARKER_PREFIX, ""))
+        payload2 = json.loads(lines[1].replace(_PREFIX, ""))
         assert payload2["phase"] == "qa_review"
 
     def test_qa_review_to_complete(self, capsys):
@@ -398,7 +434,7 @@ class TestPhaseTransitions:
         captured = capsys.readouterr()
         lines = captured.out.strip().split("\n")
 
-        payload2 = json.loads(lines[1].replace(PHASE_MARKER_PREFIX, ""))
+        payload2 = json.loads(lines[1].replace(_PREFIX, ""))
         assert payload2["phase"] == "complete"
 
     def test_qa_review_to_qa_fixing(self, capsys):
@@ -409,7 +445,7 @@ class TestPhaseTransitions:
         captured = capsys.readouterr()
         lines = captured.out.strip().split("\n")
 
-        payload2 = json.loads(lines[1].replace(PHASE_MARKER_PREFIX, ""))
+        payload2 = json.loads(lines[1].replace(_PREFIX, ""))
         assert payload2["phase"] == "qa_fixing"
 
     def test_failed_phase(self, capsys):
@@ -417,7 +453,7 @@ class TestPhaseTransitions:
         emit_phase(ExecutionPhase.FAILED, "Build failed: test error")
 
         captured = capsys.readouterr()
-        json_str = captured.out.strip().replace(PHASE_MARKER_PREFIX, "")
+        json_str = captured.out.strip().replace(_PREFIX, "")
         payload = json.loads(json_str)
 
         assert payload["phase"] == "failed"
@@ -444,7 +480,7 @@ class TestIntegration:
         assert len(lines) == 6
 
         # Verify final phase
-        final = json.loads(lines[-1].replace(PHASE_MARKER_PREFIX, ""))
+        final = json.loads(lines[-1].replace(_PREFIX, ""))
         assert final["phase"] == "complete"
         assert final["progress"] == 100
 
@@ -463,9 +499,7 @@ class TestIntegration:
         assert len(lines) == 6
 
         # Verify we had two QA reviews
-        phases = [
-            json.loads(line.replace(PHASE_MARKER_PREFIX, ""))["phase"] for line in lines
-        ]
+        phases = [json.loads(line.replace(_PREFIX, ""))["phase"] for line in lines]
         assert phases.count("qa_review") == 2
         assert phases.count("qa_fixing") == 1
 
@@ -480,5 +514,5 @@ class TestIntegration:
 
         assert len(lines) == 3
 
-        final = json.loads(lines[-1].replace(PHASE_MARKER_PREFIX, ""))
+        final = json.loads(lines[-1].replace(_PREFIX, ""))
         assert final["phase"] == "failed"
