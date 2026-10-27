@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1922
 intent: intent/2026-10-27-1922-plan-review-gate.md
 ---
