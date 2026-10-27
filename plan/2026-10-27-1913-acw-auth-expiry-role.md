@@ -43,3 +43,6 @@ Revert the PR.
   Behaviour change: acw_ keys start authenticating on AIF REST, stdio and remote MCP.
 - The test file uses real-DB tests for revoked, expired, deactivated-owner, demoted-owner and
   removed-member keys, as the lead asked.
+- The generated autonomy matrix (`docs/docs/compliance/autonomy-matrix.md` and `.json`) was
+  regenerated with `scripts/gen_autonomy_matrix.py`. The new `server.routes.organizations`
+  import raises the `pr_review_service` reach count from 277 to 280. Nothing else changed.
