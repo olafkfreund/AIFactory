@@ -276,6 +276,21 @@ class TestApprovalIgnoresProgress:
         _wave_round_trip(review_spec_dir)  # a second save gives the same file
         assert state.is_approval_valid(review_spec_dir) is True
 
+    def test_model_round_trip_is_idempotent(self, review_spec_dir: Path) -> None:
+        """A second save writes the same second-state hash as the first, so the
+        saved form an approval accepts is stable across any number of saves."""
+        from review.state import _compute_saved_spec_hash
+
+        _rewrite_plan(
+            review_spec_dir,
+            lambda p: p["phases"][0].update(id="phase-1", description="d"),
+        )
+        _wave_round_trip(review_spec_dir)
+        first = _compute_spec_hash(review_spec_dir)
+        assert first == _compute_saved_spec_hash(review_spec_dir)
+        _wave_round_trip(review_spec_dir)
+        assert _compute_spec_hash(review_spec_dir) == first
+
     @pytest.mark.parametrize("round_trip", [False, True], ids=["raw", "after-save"])
     @pytest.mark.parametrize("edit", _CONTENT_EDITS.values(), ids=_CONTENT_EDITS.keys())
     def test_content_edits_invalidate(

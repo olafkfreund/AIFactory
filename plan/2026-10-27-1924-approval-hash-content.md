@@ -92,3 +92,8 @@ Revert the commit; stored hashes computed with the new scheme then read as stale
   `steps`, phase `id`/`description` and unknown-key cases fail on the previous
   head. Also `test_wave_engine_round_trip_keeps_approval_valid` (two saves) and
   `test_chunks_copy_ignored_when_subtasks_present`.
+- Lead approved the two-hash design with `notes` as progress. Added
+  `test_model_round_trip_is_idempotent`: after a first and a second save the file
+  hashes to the same second-state hash, equal to `_compute_saved_spec_hash`. The
+  live per-session plan-command seeding gap the review found is filed as #1940
+  (out of scope here).
