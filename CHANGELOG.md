@@ -1,5 +1,60 @@
 ## [Unreleased]
 
+## 3.10.11 - 2026-10-27
+
+Four behaviour changes: `APP_DEBUG` no longer relaxes the disable-auth or
+wildcard-CORS boot guards (each has its own opt-in), and
+`POST /api/tasks/from-issue` now checks project membership and binds a
+declared repo to the project's own repo.
+Four new env vars: `APP_ALLOW_INSECURE_AUTH`, `APP_ALLOW_WILDCARD_CORS`
+(both default `false`), `AIFACTORY_ROUTE_RESOLUTION` (default `off`) and
+`AIFACTORY_MODEL_CATALOG_PATH` (default unset). No migrations.
+
+### Changed
+
+- **`APP_DISABLE_AUTH` off loopback needs `APP_ALLOW_INSECURE_AUTH` (#1895,
+  Factory#312).** `APP_DEBUG=true` alone no longer lets the server boot with
+  auth disabled on a non-loopback host. Same name as PFactory and TFactory.
+  Never set in production.
+- **A wildcard CORS origin needs `APP_ALLOW_WILDCARD_CORS` (#1902,
+  Factory#312).** `APP_DEBUG=true` alone no longer lets the server boot with
+  `*` in `APP_CORS_ORIGINS`. With the opt-in it still warns and turns off
+  credentialed CORS. An explicit allowlist is unchanged.
+- **`POST /api/tasks/from-issue` requires `member` on the target project
+  (#1899, closes #1898).** A foreign `acw_` key gets 403. The legacy service
+  token (intake poller) is unaffected.
+- **A `repo` declared to `POST /api/tasks/from-issue` must be the project's
+  own repo (#1901, closes #1900).** Host, path and provider are compared
+  against the project's `gitRepo`, `clonedFrom` and checkout `origin`;
+  anything else, or a declaration on a project with no known repo, gets 400.
+  A request without `repo` is unchanged.
+
+### Added
+
+- **Catalog route resolution, off by default (#1896, Factory#1959 slice 5).**
+  `AIFACTORY_ROUTE_RESOLUTION` (`off`/`shadow`/`on`) resolves a contract
+  route tier to a model from the RFC-0014 catalog at
+  `AIFACTORY_MODEL_CATALOG_PATH`, replacing only the built-in `DEFAULT_TIERS`
+  fallback. Run `shadow` first: the catalog must mark superseded models
+  `available: false`.
+- **Task originator recorded at intake (#1897, Factory#1960 slice 2).**
+  `originator` and `agent_identity` are stored in the spec's
+  `requirements.json` for MCP, REST/CLI, project and GitHub-import intake
+  (from-issue only when fetched through the project's provider), and returned
+  by `GET /api/tasks/{id}`. Unknown stays null. No migration.
+
+### Fixed
+
+- **Comma-separated `APP_CORS_ORIGINS` no longer crashes boot; a `null`
+  origin is treated like `*` (#1904, closes #1903).** An empty
+  `APP_CORS_ORIGINS=` now means no origins; unset keeps the localhost
+  defaults.
+
+### CI and tests
+
+- Triage tests import `server.config` one way (#1894, clears a CodeQL note
+  from #1892).
+
 ## 3.10.10 - 2026-10-26
 
 Two behaviour changes: the stdio-MCP task proxies now enforce project access,

@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: AIFactory Web API
   description: Web API for AIFactory — self-hosted AI task management + agent orchestration
-  version: 3.10.10
+  version: 3.10.11
 paths:
   /api/auth/register:
     post:
@@ -13841,6 +13841,18 @@ components:
           title: Repo
           description: 'Target repo (owner/name) this task runs against, for cross-portal tracking + visibility
             (W5, Factory #218).'
+        originator:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Originator
+          description: Task originator recorded at intake
+        agent_identity:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Identity
+          description: API key agent identity recorded at intake
       type: object
       required:
       - title

@@ -420,7 +420,7 @@ def _fold_worker(
     # contract routing block attributes to this worker's model, so the
     # completion envelope carries model + tier. No policy and no contract routing
     # block -> no key -> envelope unchanged.
-    tier = tier_for_model(rec.get("model"), routing_metadata)
+    tier = tier_for_model(rec.get("model"), routing_metadata, rec.get("phase"))
     if tier is not None:
         rec["routing_tier"] = tier
     rec["input_tokens"] = int(rec.get("input_tokens", 0)) + int(input_tokens)
