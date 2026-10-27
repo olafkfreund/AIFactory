@@ -54,7 +54,7 @@ def test_migration_chains_onto_a_single_head():
 def client(tmp_path):
     """The api_keys router on a per-test SQLite DB with one org.
 
-    Users: ``admin-u`` (admin) and ``member-u`` (member). The caller is chosen
+    Users: ``admin-u`` (admin), ``member-u`` (member), ``viewer-u`` (viewer). The caller is chosen
     per request by the ``X-Test-Principal`` header, which a tiny middleware
     turns into ``request.state.user`` the way ``TokenAuthMiddleware`` does.
     """
@@ -73,13 +73,14 @@ def client(tmp_path):
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         async with session_local() as db:
-            for uid in ("admin-u", "member-u"):
+            for uid in ("admin-u", "member-u", "viewer-u"):
                 db.add(User(id=uid, email=f"{uid}@x.test", password_hash="x"))
             await db.flush()
             db.add(Organization(id="org-1", name="o", slug="o", owner_id="admin-u"))
             await db.flush()
             db.add(OrgMember(org_id="org-1", user_id="admin-u", role="admin"))
             db.add(OrgMember(org_id="org-1", user_id="member-u", role="member"))
+            db.add(OrgMember(org_id="org-1", user_id="viewer-u", role="viewer"))
             await db.commit()
 
     asyncio.run(_init())
@@ -125,6 +126,23 @@ def test_route_key_authenticated_caller_cannot_mint_a_key(client):
 
 def test_route_member_cannot_set_a_ceiling(client):
     assert _create(client, "member-u", autonomy_ceiling="low").status_code == 403
+
+
+def test_route_viewer_cannot_mint_write_scope(client):
+    assert _create(client, "viewer-u", scopes=["mcp:write"]).status_code == 403
+
+
+def test_route_viewer_cannot_mix_read_with_other_scopes(client):
+    r = _create(client, "viewer-u", scopes=["mcp:read", "task:write"])
+    assert r.status_code == 403
+
+
+def test_route_viewer_can_mint_read_scope(client):
+    assert _create(client, "viewer-u", scopes=["mcp:read"]).status_code == 201
+
+
+def test_route_member_can_mint_write_scope(client):
+    assert _create(client, "member-u", scopes=["mcp:write"]).status_code == 201
 
 
 def test_route_member_without_ceiling_still_works(client):
