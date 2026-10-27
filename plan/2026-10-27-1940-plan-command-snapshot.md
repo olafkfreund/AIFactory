@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1940
 spec: spec/2026-10-27-1940-plan-command-snapshot.md
 ---
