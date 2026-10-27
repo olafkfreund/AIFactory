@@ -29,6 +29,7 @@ from types import ModuleType
 from typing import Literal
 
 from core.child_env import child_env, merge_driver_pins
+from core.commit_trailers import commit_message_args
 from core.git_credentials import github_env
 from core.git_metadata import record_baseline, record_worktree_baseline
 
@@ -1197,7 +1198,9 @@ class WorktreeManager:
 
         return True
 
-    def commit_in_worktree(self, spec_name: str, message: str) -> bool:
+    def commit_in_worktree(
+        self, spec_name: str, message: str, spec_dir: Path | None = None
+    ) -> bool:
         """Commit all changes in a spec's worktree."""
         worktree_path = self.get_worktree_path(spec_name)
         if not worktree_path.exists():
@@ -1210,7 +1213,10 @@ class WorktreeManager:
             return False
 
         add = self._run_git([*pins, "add", ".", ":!.aifactory"], cwd=worktree_path)
-        result = self._run_git([*pins, "commit", "-m", message], cwd=worktree_path)
+        result = self._run_git(
+            [*pins, "commit", *commit_message_args(message, spec_dir)],
+            cwd=worktree_path,
+        )
 
         if result.returncode == 0:
             return True
