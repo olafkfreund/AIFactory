@@ -361,13 +361,9 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
         # ``acw_`` prefix so JWT/legacy tokens never incur the DB lookup.
         if token.startswith("acw_"):
             try:
-                from .mcp_remote.auth import API_SCOPE
-                from .mcp_remote.auth import authenticate as _authenticate_acw
+                from .mcp_remote.auth import authenticate_rest as _authenticate_acw
 
                 key = await _authenticate_acw(f"Bearer {token}")
-                # REST needs the explicit ``api`` scope; MCP-only keys stop here.
-                if API_SCOPE not in key.scopes:
-                    raise PermissionError("API key lacks the 'api' scope")
                 request.state.user = _acw_principal(
                     key,
                     scoped_service_tokens_enabled=getattr(

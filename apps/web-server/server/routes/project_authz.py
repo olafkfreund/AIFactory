@@ -329,7 +329,7 @@ async def resolve_owner_org_id(request: Request, db: AsyncSession) -> str:
     if is_service_principal(user) or not isinstance(user, dict) or not user.get("id"):
         return DEFAULT_ORG_ID
     if user.get("api_key_id") and user.get("org_id"):
-        return user["org_id"]
+        return str(user["org_id"])
     result = await db.execute(
         select(OrgMember.org_id).where(OrgMember.user_id == user["id"])
     )

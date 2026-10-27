@@ -128,3 +128,7 @@ Traps for every step:
 - Step 5: the PG test creates its tables in its own schema (`apikey_expiry_pg`, set through
   `search_path`) instead of calling `drop_all` on public. The sibling PG tests read the
   alembic-migrated public schema.
+- Step 3: the REST `api` check lives in `mcp_remote/auth.py::authenticate_rest`. Strategy 3
+  imports that instead of `authenticate`, which keeps `TokenAuthMiddleware.dispatch` at its
+  base ruff counts (PLR0912, PLC0415, I001). `resolve_owner_org_id` returns `str(...)`
+  (mypy no-any-return).

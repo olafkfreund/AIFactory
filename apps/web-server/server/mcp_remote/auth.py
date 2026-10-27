@@ -117,6 +117,17 @@ async def authenticate(authorization_header: str | None) -> AuthenticatedKey:
     raise MCPAuthError("Authentication is temporarily unavailable")
 
 
+async def authenticate_rest(authorization_header: str | None) -> AuthenticatedKey:
+    """``authenticate`` plus the explicit ``api`` scope REST access needs (#1913).
+
+    MCP-only keys (``mcp:read`` etc.) must not act as their owner on REST.
+    """
+    key = await authenticate(authorization_header)
+    if API_SCOPE not in key.scopes:
+        raise MCPAuthError("API key lacks the 'api' scope")
+    return key
+
+
 async def _lookup_by_digest(session: AsyncSession, digest: str) -> AuthenticatedKey:
     """DB query helper — separated for unit-test stubbing."""
     # ApiKey stores hashes as ``<8-char-preview>$<sha256-hex>`` (see
