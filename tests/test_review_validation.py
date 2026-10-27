@@ -119,15 +119,15 @@ class TestSpecHashValidation:
 
         assert state.is_approval_valid(review_spec_dir) is False
 
-    def test_is_approval_valid_legacy_no_hash(self, review_spec_dir: Path) -> None:
-        """is_approval_valid() returns True for legacy approvals without hash."""
+    def test_is_approval_valid_rejects_hashless_approval(self, review_spec_dir: Path) -> None:
+        """is_approval_valid() rejects approvals without a spec hash (#1922)."""
         state = ReviewState(
             approved=True,
             approved_by="legacy_user",
             spec_hash="",  # No hash (legacy approval)
         )
 
-        assert state.is_approval_valid(review_spec_dir) is True
+        assert state.is_approval_valid(review_spec_dir) is False
 
     def test_spec_change_detection_accuracy(self, review_spec_dir: Path) -> None:
         """Test that spec change detection works for various types of changes."""
