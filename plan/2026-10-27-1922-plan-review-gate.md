@@ -160,6 +160,18 @@ fixed here.
    start_task_execution; valid approval + Start → started with force; planApproved
    + plan changed (stale hash) + Start → started; auto-simple plan + approval →
    `is_approval_valid` True.
+7b. (Added while implementing; the lead's "every return-to-planning path" rule.)
+   On subprocess, whether the exit path writes `reviewReason=plan_review` depends on
+   process_monitor reading the main `review_state.json`. So the approval is also
+   cleared at the one entry every start path uses:
+   `AgentService.start_task_execution` clears `planApproved` when
+   `prompts_pkg.prompts.is_first_run(main spec_dir)` holds, i.e. a planner is about
+   to run and will replace the approved plan. Tests in
+   `apps/web-server/tests/test_plan_approval_resume.py`.
+   Deviation (step 7): the step 4 function-local `ReviewState` import in
+   `start_task` made the name local to the whole function (UnboundLocalError on
+   the new force check). It is now a module-level import beside the other backend
+   seams.
 8. After #1923 merges: `git merge origin/dev` (no force-push, no rebase), then a
    test showing that a planner-written `review_state.json` / `task_metadata.json`
    in the worktree spec dir is not mirrored to main by the sync, and the next

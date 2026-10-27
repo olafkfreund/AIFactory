@@ -57,6 +57,7 @@ if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
 from qa.correction import apply_correction  # noqa: E402 — needs sys.path above
+from review.state import ReviewState  # noqa: E402 — needs sys.path above (#1922)
 from trusted_plan import (  # noqa: E402 — needs sys.path above (#390)
     DRIFT_ABSENT,
     DRIFT_UNKNOWN,
@@ -526,8 +527,6 @@ async def start_task(
             implementation_plan.write_text(json.dumps(plan_data, indent=2))
 
             # 3. Pre-approve (skip review gate). Hashed, bound to this plan (#1922).
-            from review.state import ReviewState  # noqa: PLC0415 - backend seam
-
             ReviewState().approve(spec_dir, approved_by="auto-simple")
 
             # 4. Set task_metadata for quick mode + reduced thinking
@@ -670,25 +669,19 @@ async def start_task(
 
     agent_service = get_agent_service()
 
-    # Check if plan was manually approved - if so, use --force to bypass review check
-    force_execution = False
-    review_state_file = spec_dir / "review_state.json"
-    if review_state_file.exists():
-        try:
-            review_data = json.loads(review_state_file.read_text())
-            if review_data.get("approved", False):
-                force_execution = True
-                logger.info(
-                    "[StartTask] Plan was manually approved for %s, using --force",
-                    sanitize_log(task_id),
-                )
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning(
-                "[StartTask] Failed to read review_state.json for %s, "
-                "treating as not approved: %s",
-                sanitize_log(task_id),
-                sanitize_log(e),
-            )
+    # --force only on a real approval (#1922): a hash-valid ReviewState, or the
+    # web-server's own planApproved record. The raw `approved` key is not enough:
+    # a hash-less or stale approval would skip run.py's pre-flight and, with the
+    # plan present, no planner runs, so nothing else would gate coding.
+    force_execution = (
+        ReviewState.load(spec_dir).is_approval_valid(spec_dir)
+        or task_control.read_control(spec_dir).get("planApproved") is True
+    )
+    if force_execution:
+        logger.info(
+            "[StartTask] Plan was manually approved for %s, using --force",
+            sanitize_log(task_id),
+        )
 
     if force_execution:
         await agent_service.stop_stale_spec_creation(task_id)

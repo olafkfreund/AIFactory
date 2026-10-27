@@ -42,6 +42,7 @@ from .agent_worktree_sync import WorktreeSyncMixin
 # subprocess_env adds apps/backend to sys.path before this import.
 # isort: split
 from core.auth import is_denied_env_key
+from prompts_pkg.prompts import is_first_run
 
 # Module-level logger for the admission-control paths (RFC-0016 #668). The rest
 # of this (legacy) module still uses local ``import logging`` inside methods.
@@ -839,6 +840,18 @@ class AgentService(
             raise ValueError(f"Task {task_id} is already running")
         if any(q.task_id == task_id for q in self._task_queue):
             raise ValueError(f"Task {task_id} is already queued")
+
+        # #1922: a planner is about to run (no plan with subtasks yet), so any
+        # earlier planApproved is for a plan that will be replaced. Clear it at
+        # the one entry every start path funnels through, so StartTask can never
+        # --force a re-planned task on a stale approval.
+        spec_dir = spec_dir_for(project_path, spec_id)
+        if task_control.read_control(spec_dir).get("planApproved") and is_first_run(
+            spec_dir
+        ):
+            task_control.write_control(
+                spec_dir, plan_approved=False, updated_by="web_server"
+            )
 
         # #376 shipped the parallel harness but left it dark for every caller
         # except the auto-continue monitor, which read task_metadata itself.

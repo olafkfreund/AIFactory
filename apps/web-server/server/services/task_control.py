@@ -113,6 +113,7 @@ def write_control(
     status: str | None = None,
     review_reason: str | None = None,
     clear_review_reason: bool = False,
+    plan_approved: bool | None = None,
     updated_by: str = "web_server",
 ) -> dict[str, Any]:
     """Atomically persist control-plane state for a spec.
@@ -129,6 +130,10 @@ def write_control(
             unless ``clear_review_reason`` is set.
         clear_review_reason: When True, explicitly removes ``reviewReason``
             (used when moving a task out of a human-review column).
+        plan_approved: True records a human plan approval (``planApproved``,
+            ``planApprovedBy``, ``planApprovedAt``); False removes it. Writing
+            ``review_reason="plan_review"`` always removes it too, so every
+            return-to-planning path clears the approval here (#1922).
         updated_by: Audit tag for who/what made the change.
 
     Returns the full control-state dict that was written.
@@ -146,7 +151,16 @@ def write_control(
     elif review_reason is not None:
         current["reviewReason"] = review_reason
 
-    current["updatedAt"] = _now_iso()
+    now = _now_iso()
+    if plan_approved is True and review_reason != "plan_review":
+        current["planApproved"] = True
+        current["planApprovedBy"] = updated_by
+        current["planApprovedAt"] = now
+    elif plan_approved is False or review_reason == "plan_review":
+        for key in ("planApproved", "planApprovedBy", "planApprovedAt"):
+            current.pop(key, None)
+
+    current["updatedAt"] = now
     current["updatedBy"] = updated_by
 
     _atomic_write_json(control_file_path(spec_dir), current)
