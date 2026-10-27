@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1939
 spec: spec/2026-10-27-1939-rmux-audit-commit.md
 ---
