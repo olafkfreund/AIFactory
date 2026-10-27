@@ -53,3 +53,6 @@ Revert the PR.
 - `apps/web-server/openapi.yaml` was regenerated (`APP_DISABLE_AUTH=true python
   scripts/generate-openapi-spec.py`). The access-review route lost its `org` param and the
   export docstring changed, so refresh-and-validate needs the regenerated spec.
+- Merged dev after #1914 landed, so `require_org_role` carries the key-to-org binding. Added
+  `test_key_cannot_stream_another_orgs_roster` (reviewer A2): a key bound to org A gets 403 on
+  B's roster even when its owner is admin of B. It failed before the merge and passes after it.

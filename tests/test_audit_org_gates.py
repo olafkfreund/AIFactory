@@ -97,6 +97,22 @@ def test_access_review_streams_only_the_gated_org(client):
     assert "access-review-A.ndjson" in r.headers["content-disposition"]
 
 
+def test_key_cannot_stream_another_orgs_roster(client):
+    # admin-a is admin of A and B; a key bound to A must not read B's roster
+    # through require_org_role (OrgRoleChecker's key-org binding, #1914).
+    assert (
+        client.get(
+            "/api/admin/access-review?org_id=B", headers={"X-Test-Principal": "admin-a"}
+        ).status_code
+        == 200
+    )
+    r = client.get(
+        "/api/admin/access-review?org_id=B",
+        headers={"X-Test-Principal": "admin-a", "X-Test-Key-Org": "A"},
+    )
+    assert r.status_code == 403
+
+
 def _export(client, principal, query="", **headers):
     return client.get(
         f"/api/audit/export{query}",
