@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1913
 intent: intent/2026-10-27-1913-acw-auth-expiry-role.md
 ---
