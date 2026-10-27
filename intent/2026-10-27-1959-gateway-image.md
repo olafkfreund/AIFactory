@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1959
 repo-issue: olafkfreund/Factory#1959
 author: olafkfreund
