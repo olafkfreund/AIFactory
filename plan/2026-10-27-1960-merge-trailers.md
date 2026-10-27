@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1960
 spec: spec/2026-10-27-1960-merge-trailers.md
 ---
