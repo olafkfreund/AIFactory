@@ -44,3 +44,7 @@ Revert the PR commit; the generic mirror returns.
 - Step 2 test: as approved by the lead, split into one forgery test
   (`task_metadata.json`, `review_state.json`, `COMPLETED.json`, an unlisted
   file) and a parametrized positive test per allowlisted file.
+- Lead review: `injection_scan.json` dropped from the allowlist (now three
+  files). `agents/coder.py:1138-1141` already writes the verdict to the source
+  spec dir, and mirroring let the agent turn `flagged` into `pass` in the
+  completion event. It moved from the positive test to the forgery test.

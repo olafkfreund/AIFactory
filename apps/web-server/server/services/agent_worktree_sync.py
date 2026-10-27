@@ -98,10 +98,11 @@ class WorktreeSyncMixin:
         # seeded with the whole canonical spec dir and the agent can write it,
         # so a generic mirror copied its task_metadata.json, review_state.json,
         # task_control.json, requirements.json, COMPLETED.json, ... back over
-        # the control plane's own copies.
+        # the control plane's own copies. injection_scan.json is deliberately
+        # absent: the build writes its verdict to the source spec dir itself,
+        # and mirroring would let the agent turn "flagged" into "pass".
         extra_files_to_sync = (
             "token_usage.json",
-            "injection_scan.json",
             "guardrail_halt.json",
             "handback_received.json",
         )
