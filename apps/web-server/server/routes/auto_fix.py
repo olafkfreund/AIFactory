@@ -43,7 +43,7 @@ Admin = Annotated[dict, Depends(require_project_access("admin"))]
 
 # GET never returns the stored bot token; PUT treats this value (or an omitted
 # field) as "keep the stored token" so a round-tripped config does not wipe it.
-TOKEN_MASK = "********"
+MASKED = "********"
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +78,7 @@ async def get_auto_fix_config(
     # Strip the queue from the config response (queue has its own endpoint)
     out = {k: v for k, v in cfg.items() if k != "queue"}
     if out.get("botToken"):
-        out["botToken"] = TOKEN_MASK
+        out["botToken"] = MASKED
     return out
 
 
@@ -90,7 +90,7 @@ async def save_auto_fix_config(
 ) -> dict[str, bool]:
     """Save AutoFixConfig. Returns ``{success: bool}``."""
     config = payload.model_dump()
-    if config["botToken"] in (None, TOKEN_MASK):
+    if config["botToken"] in (None, MASKED):
         config["botToken"] = (auto_fix_service.get_config(project_id) or {}).get(
             "botToken", ""
         )
