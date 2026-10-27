@@ -38,6 +38,7 @@ def commit_trailer_args(spec_dir: Path | None) -> list[str]:
         ("Autonomy-Tier", tier),
         ("Originator", data.get("originator")),
     ):
-        if isinstance(value, str) and value and "\n" not in value and "\r" not in value:
+        # isprintable() refuses line breaks (forged trailers) and NUL (argv ValueError).
+        if isinstance(value, str) and value and value.isprintable():
             out += ["--trailer", f"{key}: {value}"]
     return out

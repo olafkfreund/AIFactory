@@ -48,7 +48,7 @@ def test_all_three_in_order(tmp_path):
     ]
 
 
-@pytest.mark.parametrize("bad", [None, 5, "", "a\nb", "a\rb", "MISSING"])
+@pytest.mark.parametrize("bad", [None, 5, "", "a\nb", "a\rb", "a\x00b", "MISSING"])
 @pytest.mark.parametrize("field", ["agent_identity", "tier", "originator"])
 def test_bad_value_omits_only_that_trailer(tmp_path, field, bad):
     data = json.loads(json.dumps(FULL))
