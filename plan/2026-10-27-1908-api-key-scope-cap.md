@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1908
 spec: spec/2026-10-27-1908-api-key-scope-cap.md
 ---
