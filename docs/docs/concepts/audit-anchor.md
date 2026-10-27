@@ -161,7 +161,7 @@ Companion endpoint for SOC2 CC6.2 + ISO 27001 A.9.2.5 quarterly access reviews:
 
 ```bash
 curl -H "Cookie: access_token=<admin-token>" \
-  "https://aifactory.example.com/api/admin/access-review?org=<org-id>" \
+  "https://aifactory.example.com/api/admin/access-review?org_id=<org-id>" \
   > access-review-Q1.ndjson
 ```
 
