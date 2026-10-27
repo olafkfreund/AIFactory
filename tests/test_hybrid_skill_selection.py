@@ -3,7 +3,7 @@
 Tests for hybrid skill auto-selection (#394)
 ============================================
 
-Propose → confirm → fallback:
+Propose → fallback (the planner no longer confirms, #1927):
 - suggest_selected_skills maps the matcher's suggestions to the selectedSkills
   shape the build consumes.
 - create-and-run persists them as suggestedSkills when no manual skills are set.
@@ -140,3 +140,10 @@ class TestCreateAndRunProposes:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_planner_prompt_does_not_ask_for_selected_skills() -> None:
+    """The planner's worktree task_metadata.json never reaches the control plane,
+    so a selectedSkills write there is dropped (#1927)."""
+    prompt = (_ROOT / "apps" / "backend" / "prompts" / "planner.md").read_text()
+    assert "selectedSkills" not in prompt
