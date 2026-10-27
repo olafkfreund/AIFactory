@@ -121,6 +121,7 @@ class KubejobMixin:
         _task_current_phases: dict[str, Any]
         _task_log_writers: dict[str, Any]
         _handle_output_line: Callable[..., Any]
+        _redact_nonce: Callable[[str, str], str]
         _marker_nonce_env: Callable[..., dict[str, str]]
         backend_path: Path
         _store_enabled: bool
@@ -604,7 +605,15 @@ class KubejobMixin:
                 spec_id=spec_id,
             )
 
-        rmux_feed = self._kubejob_rmux_feed()
+        raw_feed = self._kubejob_rmux_feed()
+
+        def _redacting_feed(spec: str, data: bytes) -> None:
+            # #1929: mask the marker nonce, as the in-pod tee does; the pane is shared.
+            shown = self._redact_nonce(task_id, data.decode("utf-8", errors="replace"))
+            raw_feed(spec, shown.encode())
+
+        rmux_feed = _redacting_feed if raw_feed is not None else None
+
         streamer = KubeJobLogStreamer(
             log_sink=_cockpit_sink,
             rmux_feed=rmux_feed,

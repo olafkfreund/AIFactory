@@ -152,3 +152,11 @@ the old unauthenticated parsing on both sides.
   covers it.
 - Regenerated the autonomy matrix (`scripts/gen_autonomy_matrix.py`), because
   the `core/auth.py` line numbers moved.
+
+### Review round 2
+
+- On kubejob, `_start_kubejob_log_stream` now wraps the rmux feed in a closure
+  that masks the nonce, the same way the in-pod tee does. Before this,
+  `KubeJobLogStreamer._fan_out` sent raw lines to the shared rmux pane.
+  `test_nonce_never_reaches_the_kubejob_rmux_feed` drives the real `_fan_out`,
+  and `test_nonce_never_reaches_the_in_pod_rmux_feed` covers the in-pod tee.

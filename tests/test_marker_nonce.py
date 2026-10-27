@@ -299,3 +299,52 @@ async def test_session_exception_rate_limit_emits_marker(
     await session.run_agent_session(_Client(), "m", tmp_path)
     out = capsys.readouterr().out
     assert (f"__RATE_LIMIT__:{NONCE}:" in out) is emitted
+
+
+async def test_nonce_never_reaches_the_kubejob_rmux_feed(tmp_path):
+    """Drive the real ``_fan_out`` with the feed the control plane wires in."""
+    from unittest.mock import patch  # noqa: PLC0415
+
+    from server.services import build_log_stream as bls  # noqa: PLC0415
+
+    fed: list[bytes] = []
+    real_streamer = bls.KubeJobLogStreamer
+    service = AgentService()
+    service._emit_progress = AsyncMock()
+    service._emit_log = AsyncMock()
+    service._kubejob_rmux_feed = lambda: lambda _spec, data: fed.append(data)
+    service._task_marker_nonces[TASK_ID] = NONCE
+
+    class _Streamer(real_streamer):
+        async def stream(self, **_kw):  # noqa: ANN003
+            for line in REAL.values():
+                await self._fan_out(SPEC_ID, line.encode() + b"\n")
+
+    with (
+        patch.object(
+            service, "_kubejob_worker_ref", AsyncMock(return_value=("ns", "job"))
+        ),
+        patch.object(bls, "KubeJobLogStreamer", _Streamer),
+    ):
+        await service._start_kubejob_log_stream(
+            task_id=TASK_ID, project_path=tmp_path, spec_id=SPEC_ID
+        )
+        task = service._kubejob_log_streamers.get(TASK_ID)
+        if task is not None:
+            await task
+    assert len(fed) == len(REAL)
+    assert not any(NONCE.encode() in b for b in fed)
+    assert service._task_rate_limits == {TASK_ID: True}  # still parsed
+
+
+async def test_nonce_never_reaches_the_in_pod_rmux_feed(monkeypatch):
+    from server.rmux import integration  # noqa: PLC0415
+
+    fed: list[bytes] = []
+    monkeypatch.setattr(integration, "is_enabled", lambda: True)
+    monkeypatch.setattr(integration, "feed_if_enabled", lambda _s, d: fed.append(d))
+    probe = _Probe()
+    await _feed(probe, list(REAL.values()))
+    assert len(fed) == len(REAL)
+    assert not any(NONCE.encode() in b for b in fed)
+    assert probe._task_rate_limits == {TASK_ID: True}
