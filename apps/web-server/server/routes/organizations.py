@@ -17,7 +17,7 @@ import logging
 from datetime import datetime
 
 from factory_common.logsafe import sanitize_log
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -173,9 +173,20 @@ class OrgRoleChecker:
     async def __call__(
         self,
         org_id: str,
+        request: Request,
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db),
     ) -> OrgMember:
+        principal = getattr(request.state, "user", None)
+        if (
+            isinstance(principal, dict)
+            and principal.get("api_key_id")
+            and principal.get("org_id") != org_id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This API key is scoped to another organization",
+            )
         # Verify the organization exists
         result = await db.execute(select(Organization).where(Organization.id == org_id))
         org = result.scalar_one_or_none()

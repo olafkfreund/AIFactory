@@ -26,6 +26,7 @@ from server.services import (  # noqa: E402
     audit_service,
     build_backend,
     job_state_store,
+    task_control,
 )
 
 TASK = "proj-uuid:022-some-spec"
@@ -49,6 +50,7 @@ async def replicas(tmp_path, monkeypatch):
         spec_dir.mkdir(parents=True)
         (spec_dir / "implementation_plan.json").write_text('{"phases": []}')
         (spec_dir / "review_state.json").write_text('{"approved": true}')
+        task_control.record_plan_approval(spec_dir, "web_user")  # StartTask --force
 
         def projects():
             return {"proj-uuid": {"path": str(tmp_path / "proj")}}

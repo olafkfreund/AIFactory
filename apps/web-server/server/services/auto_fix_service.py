@@ -282,6 +282,7 @@ def _write_spec_dir(
     provider_type: str,
     *,
     delegate_by_default: bool = False,
+    require_review: bool = False,
 ) -> str:
     """Create ``.aifactory/specs/NNN-{prefix}{N}-{slug}/`` with
     requirements.json + spec.md.  Returns the spec id (dir name).
@@ -294,6 +295,9 @@ def _write_spec_dir(
             ``requirements.json`` carries ``metadata.enableDelegation = true``
             so the subsequent ``start_auto_fix`` call takes the delegation
             branch. Closes gap #2 from issue #144.
+        require_review: When True (auto-fix config ``requireHumanApproval``),
+            writes ``metadata.requireReviewBeforeCoding = true`` so the build
+            pauses for plan approval instead of running unattended (#1925).
     """
     specs_dir = project_path / ".aifactory" / "specs"
     specs_dir.mkdir(parents=True, exist_ok=True)
@@ -326,10 +330,11 @@ def _write_spec_dir(
         # Note also the issue number under metadata so the wizard task-start
         # path (which doesn't have an explicit issue_number param) can find
         # it via task_metadata.githubIssueNumber.
-        requirements["metadata"] = {
-            "enableDelegation": True,
-            "githubIssueNumber": issue_number,
-        }
+        requirements.setdefault("metadata", {}).update(
+            {"enableDelegation": True, "githubIssueNumber": issue_number}
+        )
+    if require_review:
+        requirements.setdefault("metadata", {})["requireReviewBeforeCoding"] = True
     (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
 
     spec_md = f"# {title}\n\n"
@@ -467,6 +472,7 @@ async def start_auto_fix(project_id: str, issue_number: int) -> dict[str, Any]:
 
     now_iso = datetime.now(UTC).isoformat()
 
+    created = spec_id is None
     if spec_id is None:
         # Fetch the issue and create the spec
         provider = _provider_for(project_id)
@@ -489,6 +495,9 @@ async def start_auto_fix(project_id: str, issue_number: int) -> dict[str, Any]:
             issue_dict,
             provider_type,
             delegate_by_default=delegate_default,
+            require_review=bool(
+                (get_config(project_id) or {}).get("requireHumanApproval")
+            ),
         )
 
     # Determine whether to delegate before recording the queue item, so
@@ -560,7 +569,9 @@ async def start_auto_fix(project_id: str, issue_number: int) -> dict[str, Any]:
             project_path=project_path,
             spec_id=spec_id,
             auto_continue=True,
-            force=True,  # Auto-fix is by definition unattended — bypass approval gate
+            # Only a spec this call created is forced; a reused one may carry a
+            # review gate that run.py's pre-flight must honour (#1925).
+            force=created,
         )
     except ValueError as e:
         # Already running — that's fine

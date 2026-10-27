@@ -11,7 +11,7 @@ import logging
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import desc, func, select
@@ -20,8 +20,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import AuditLog, OrgMember, User
 from ..database.engine import get_db
 from ..services.audit_export import stream_csv, stream_json
+from . import project_authz
 from .auth_routes import get_current_user
-from .organizations import require_org_role
+from .organizations import _role_level, require_org_role
+from .project_authz import is_service_principal
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +174,7 @@ export_router = APIRouter(prefix="/api/audit", tags=["Audit"])
     summary="Stream audit logs as JSON (NDJSON) or CSV",
 )
 async def export_audit_logs(
+    request: Request,
     format: Literal["json", "csv"] = Query("json"),
     org_id: str | None = Query(None, description="Filter to a single org"),
     from_ts: datetime | None = Query(None, alias="from"),
@@ -187,12 +190,40 @@ async def export_audit_logs(
     re-check the chain against the exported dump (see
     ``python -m server.audit verify-chain``).
 
-    Permission gate: any authenticated user can export their own
-    audit trail. Filtering by ``org_id`` requires the caller to be
-    a member of that org (enforced by the route's depend chain
-    when called via the gateway — for now we keep the gate light,
-    matching the existing /api/orgs/{org_id}/audit route).
+    Permission gate: a service principal (or auth-disabled dev) may export
+    anything. Otherwise ``org_id`` is required and the caller must be an
+    admin (or owner) of that org; an API key only for its own org. No role
+    claim on the token is trusted; membership is read from the DB.
     """
+    principal = getattr(request.state, "user", None)
+    if not (is_service_principal(principal) or project_authz._auth_disabled()):
+        if org_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Unscoped audit export requires a service principal",
+            )
+        membership = (
+            await db.execute(
+                select(OrgMember).where(
+                    OrgMember.org_id == org_id,
+                    OrgMember.user_id == current_user.id,
+                )
+            )
+        ).scalar_one_or_none()
+        key_elsewhere = (
+            isinstance(principal, dict)
+            and principal.get("api_key_id")
+            and principal.get("org_id") != org_id
+        )
+        if (
+            key_elsewhere
+            or membership is None
+            or _role_level(membership.role) < _role_level("admin")
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Audit export requires admin role in the organization",
+            )
     if format == "csv":
         return StreamingResponse(
             stream_csv(db, org_id=org_id, from_ts=from_ts, to_ts=to_ts),
