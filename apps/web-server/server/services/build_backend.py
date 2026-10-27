@@ -1205,6 +1205,7 @@ class KubeJobBuildBackend:
         force: bool = False,
         base_branch: str | None = None,
         mode: str | None = None,
+        marker_nonce: str | None = None,
     ) -> str:
         """Create the run.py Job and record its worker_ref. Returns the Job name.
 
@@ -1257,6 +1258,8 @@ class KubeJobBuildBackend:
 
         extra_env.update(await spawn_env(spec_dir_for(project_path, spec_id)))
         extra_env.update(await project_settings_store.mcp_spawn_env(project_path))
+        if marker_nonce:
+            extra_env["AIFACTORY_MARKER_NONCE"] = marker_nonce  # #1929
 
         manifest = build_run_py_job_manifest(
             task_id=task_id,

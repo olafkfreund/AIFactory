@@ -1,0 +1,10 @@
+# Build backends for the sdists the Dockerfile's py-build stage compiles
+# (lxml, xmlsec, real-ladybug, tree-sitter, pyyaml), taken from each sdist's
+# [build-system].requires (#1842). Installed with --require-hashes so the
+# source builds pull nothing unpinned. xmlsec's `lxml==6.0.2` build pin is
+# deliberately absent: it builds against the locked lxml from requirements.lock.
+setuptools==80.9.0  # xmlsec pins this exact version
+wheel
+setuptools-scm[toml]>=3.4
+pkgconfig>=1.5.1
+Cython>=3.2.4

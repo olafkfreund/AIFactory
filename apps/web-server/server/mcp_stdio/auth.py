@@ -23,19 +23,26 @@ finer-grained ones for write operations:
 Use ``require_acw_scope(scope)`` as a FastAPI dependency on each
 proxy route. It returns the resolved ``AuthenticatedKey`` (or a
 synthetic legacy key) so handlers can record key_id in audit logs.
+Task routes enforce project membership for ``acw_`` keys. List routes
+filter results to the key owner's organizations.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Annotated
 
-from fastapi import HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from server.auth import _is_legacy_api_token
+from server.auth import _acw_principal, _is_legacy_api_token
+from server.config import get_settings
+from server.database.engine import get_db
 from server.error_ref import client_error
-
-from ..mcp_remote import auth as mcp_remote_auth
+from server.mcp_remote import auth as mcp_remote_auth
+from server.routes.project_authz import authorize_project_for_user
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +145,61 @@ def require_acw_scope(scope: str):
                 ),
             )
 
+        return key
+
+    return _check
+
+
+_AcwKey = mcp_remote_auth.AuthenticatedKey | _LegacyAdminKey
+
+
+def acw_principal(key: _AcwKey) -> dict[str, object]:
+    """Build the principal used by REST authorization for this key."""
+    if isinstance(key, _LegacyAdminKey):
+        return {"id": "default", "role": "user", "is_service": True}
+    return _acw_principal(
+        key,
+        scoped_service_tokens_enabled=getattr(
+            get_settings(), "SCOPED_SERVICE_TOKENS_ENABLED", False
+        ),
+    )
+
+
+def require_acw_principal(scope: str) -> Callable[..., Awaitable[_AcwKey]]:
+    """Require scope and expose the key owner to delegated list handlers."""
+
+    async def _check(
+        request: Request,
+        # Closure-local dependency cannot resolve through Annotated with
+        # postponed annotations.
+        key: _AcwKey = Depends(require_acw_scope(scope)),  # noqa: B008
+    ) -> _AcwKey:
+        request.state.user = acw_principal(key)
+        return key
+
+    return _check
+
+
+def require_acw_access(
+    scope: str, minimum_role: str = "member"
+) -> Callable[..., Awaitable[_AcwKey]]:
+    """Require the scope and the REST route's project membership check."""
+
+    async def _check(
+        request: Request,
+        db: Annotated[AsyncSession, Depends(get_db)],
+        # Closure-local dependency: Annotated would be a string under
+        # ``from __future__ import annotations`` and could not resolve it.
+        key: _AcwKey = Depends(require_acw_scope(scope)),  # noqa: B008
+    ) -> _AcwKey:
+        principal = acw_principal(key)
+        task_id = request.path_params.get("task_id")
+        project_id = (
+            task_id.partition(":")[0]
+            if task_id is not None
+            else request.query_params.get("project_id")
+        )
+        await authorize_project_for_user(principal, project_id, db, minimum_role)
         return key
 
     return _check

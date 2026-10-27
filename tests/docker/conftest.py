@@ -15,8 +15,8 @@ import pytest
 
 from tests.docker.helpers import (
     DOCKERFILE_PATH,
+    build_or_reuse,
     docker_available,
-    docker_build,
     docker_kill,
 )
 
@@ -38,8 +38,11 @@ def built_image() -> str:
 
     # Pin the runtime stage: the Dockerfile's last stage is now ``build-runtime``
     # (the -nix variant), but P0 acceptance asserts on the deployed image.
-    result = docker_build(DOCKERFILE_PATH, IMAGE_TAG, target="runtime")
-    if result.returncode != 0:
+    try:
+        result = build_or_reuse(DOCKERFILE_PATH, IMAGE_TAG, target="runtime")
+    except RuntimeError as exc:
+        pytest.fail(str(exc))
+    if result is not None and result.returncode != 0:
         pytest.fail(
             f"docker build failed (exit {result.returncode}):\n"
             f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"

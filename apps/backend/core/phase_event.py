@@ -1,7 +1,12 @@
 """
 Execution phase event protocol for frontend synchronization.
 
-Protocol: __EXEC_PHASE__:{"phase":"coding","message":"Starting"}
+Protocol: __EXEC_PHASE__:<nonce>:{"phase":"coding","message":"Starting"}
+
+Every control marker on stdout carries the per-task nonce the control plane put
+in AIFACTORY_MARKER_NONCE at spawn (#1929). The control plane only honours a
+marker bearing its nonce, so agent-authored text (tool output, file contents)
+that merely looks like a marker is plain log text.
 """
 
 import json
@@ -12,7 +17,15 @@ from enum import Enum
 from typing import Any
 
 PHASE_MARKER_PREFIX = "__EXEC_PHASE__:"
+MARKER_NONCE_ENV = "AIFACTORY_MARKER_NONCE"
+# Authenticated rate-limit signal: __RATE_LIMIT__:<nonce>: (no payload).
+RATE_LIMIT_MARKER_PREFIX = "__RATE_LIMIT__:"
 _DEBUG = os.environ.get("DEBUG", "").lower() in ("1", "true", "yes")
+
+
+def _marker_nonce() -> str:
+    # Read per call: the SDK child's copy is blanked, this process's is not.
+    return os.environ.get(MARKER_NONCE_ENV, "")
 
 
 class ExecutionPhase(str, Enum):
@@ -51,13 +64,16 @@ def emit_phase(
         payload["subtask"] = subtask
 
     try:
-        print(f"{PHASE_MARKER_PREFIX}{json.dumps(payload, default=str)}", flush=True)
+        print(
+            f"{PHASE_MARKER_PREFIX}{_marker_nonce()}:{json.dumps(payload, default=str)}",
+            flush=True,
+        )
     except (OSError, UnicodeEncodeError) as e:
         if _DEBUG:
             print(f"[phase_event] emit failed: {e}", file=sys.stderr, flush=True)
 
 
-# Live token-usage protocol: __USAGE__:{"totalInputTokens":…,"outputTokens":…}
+# Live token-usage protocol: __USAGE__:<nonce>:{"totalInputTokens":…,"outputTokens":…}
 #
 # Same channel and same reasoning as the phase marker above (#1229): under the
 # kubejob backend the build runs in a Job whose /work is an ephemeral emptyDir,
@@ -93,7 +109,7 @@ def emit_usage(aggregate: dict[str, Any], *, force: bool = False) -> bool:
         return False
     try:
         print(  # noqa: T201 - stdout IS the transport for this protocol
-            f"{USAGE_MARKER_PREFIX}{json.dumps(aggregate, default=str)}",
+            f"{USAGE_MARKER_PREFIX}{_marker_nonce()}:{json.dumps(aggregate, default=str)}",
             flush=True,
         )
     except (OSError, UnicodeEncodeError, TypeError, ValueError) as e:
@@ -106,3 +122,18 @@ def emit_usage(aggregate: dict[str, Any], *, force: bool = False) -> bool:
     # cheaply rather than starting a 15s dead window.
     _last_usage_emit = now
     return True
+
+
+def emit_rate_limit() -> None:
+    """Tell the control plane the CLI reported a rate limit (best-effort)."""
+    try:
+        print(  # noqa: T201 - stdout IS the transport for this protocol
+            f"{RATE_LIMIT_MARKER_PREFIX}{_marker_nonce()}:", flush=True
+        )
+    except (OSError, UnicodeEncodeError) as e:
+        if _DEBUG:
+            print(  # noqa: T201 - debug-only, matches emit_phase above
+                f"[phase_event] rate-limit emit failed: {e}",
+                file=sys.stderr,
+                flush=True,
+            )
