@@ -40,3 +40,13 @@ As above.
 ## Rollback
 
 Revert the PR.
+
+## Deviations
+
+- Step 2: `_auth_disabled` is called as `project_authz._auth_disabled()` so the test patch
+  applies.
+- The service principal (and auth-disabled dev) bypass the gate for scoped exports as well as
+  unscoped ones. The spec only covered unscoped exports, but M2M bypasses org checks everywhere else.
+- An `acw_` key principal may export only its own org. This matches the key/org binding in
+  AIFactory #1914.
+- Tests added for both.
