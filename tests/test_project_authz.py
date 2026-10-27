@@ -59,6 +59,47 @@ def test_auth_disabled_admin_allowed():
     check_project_access({"role": "admin", "id": "default"}, None, None, "owner")
 
 
+# ── API keys are bound to their own org (#1913) ────────────────────────────
+
+
+def test_key_principal_other_org_is_403_even_when_member():
+    user = {"id": "u1", "role": "user", "api_key_id": "k", "org_id": "org-2"}
+    _denied(403, user=user, project=_PROJECT, membership=_member("owner"))
+
+
+def test_key_principal_own_org_allowed():
+    user = {"id": "u1", "role": "user", "api_key_id": "k", "org_id": "org-1"}
+    check_project_access(user, _PROJECT, _member("member"), "viewer")  # no raise
+
+
+def _request(user):
+    return SimpleNamespace(state=SimpleNamespace(user=user))
+
+
+class _Db:
+    async def execute(self, _stmt):
+        return SimpleNamespace(
+            scalars=lambda: SimpleNamespace(
+                all=lambda: ["org-1", "org-2"], first=lambda: "org-2"
+            )
+        )
+
+
+def test_accessible_org_ids_and_owner_org_bound_to_key(monkeypatch):
+    import asyncio
+
+    from server.routes import project_authz as pa
+
+    monkeypatch.setattr(pa, "_auth_disabled", lambda: False)
+    key = {"id": "u1", "role": "user", "api_key_id": "k", "org_id": "org-1"}
+    human = {"id": "u1", "role": "user"}
+    run = asyncio.run
+    assert run(pa.accessible_org_ids(_request(key), _Db())) == {"org-1"}
+    assert run(pa.accessible_org_ids(_request(human), _Db())) == {"org-1", "org-2"}
+    assert run(pa.resolve_owner_org_id(_request(key), _Db())) == "org-1"
+    assert run(pa.resolve_owner_org_id(_request(human), _Db())) == "org-2"
+
+
 # ── unauthenticated ────────────────────────────────────────────────────────
 
 

@@ -79,6 +79,7 @@ def env(tmp_path, monkeypatch):
             DISABLE_AUTH=False, API_TOKEN="legacy-xyz", JWT_SECRET="s"
         ),
     )
+    monkeypatch.setattr("server.routes.project_authz._auth_disabled", lambda: False)
     monkeypatch.setattr("server.auth._try_decode_jwt", lambda token: None)
     monkeypatch.setattr("server.auth._is_legacy_api_token", lambda token: False)
     monkeypatch.setattr(
@@ -135,7 +136,6 @@ def test_deleted_org_key_gets_401(env):
     assert client.get("/api/whoami", headers=HEADERS).status_code == 401
 
 
-@pytest.mark.xfail(strict=True, reason="org binding lands in step 4")
 def test_other_org_key_gets_403_on_project_route(env):
     client, _ = env
     assert client.get("/api/projects/p2/x", headers=HEADERS).status_code == 403
