@@ -137,3 +137,6 @@ Traps for every step:
   POST, GET `?org_id` and DELETE. Test: `tests/test_git_credentials_key_scope.py`.
   `access_review` and the audit export are pre-existing bugs that also hit human users, so
   they are tracked separately.
+- `apps/web-server/tests/test_scoped_service_tokens.py` (co-located; CI's backend job caught
+  it): its stub service key now carries `api`, because REST requires it since step 3. The
+  expected scopes now include it.

@@ -82,7 +82,8 @@ def _dispatch(token: str, *, scoped_flag: bool, key: AuthenticatedKey | None):
 
 _SERVICE_KEY = AuthenticatedKey(
     key_id="key-123",
-    scopes=frozenset({"tasks:read", "deploy:read"}),
+    # REST needs the explicit ``api`` scope (#1913).
+    scopes=frozenset({"api", "tasks:read", "deploy:read"}),
     user_id=None,  # no owning user => a service (M2M) key
     org_id="org-pfactory",
 )
@@ -94,7 +95,11 @@ def test_scoped_service_token_carries_only_its_scopes():
     assert result == "OK"
     assert user["is_service"] is True
     assert user["scoped_service"] is True
-    assert user["scopes"] == ["deploy:read", "tasks:read"]  # sorted, only its own
+    assert user["scopes"] == [
+        "api",
+        "deploy:read",
+        "tasks:read",
+    ]  # sorted, only its own
     assert user["org_id"] == "org-pfactory"
     assert user["api_key_id"] == "key-123"
 
