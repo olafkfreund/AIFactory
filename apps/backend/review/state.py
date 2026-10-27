@@ -11,6 +11,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 # State file name
 REVIEW_STATE_FILE = "review_state.json"
@@ -28,8 +29,8 @@ def _compute_file_hash(file_path: Path) -> str:
 
 
 # Runtime progress keys the approve route, the coder, QA, recovery and the
-# contract gate rewrite. They are not what a reviewer approves, so they are left
-# out of the approval hash (#1924).
+# contract gate write. They are not what a reviewer approves, so they are left
+# out of the approval hash (#1924). Everything else stays bound, at any depth.
 _PLAN_PROGRESS_KEYS = frozenset(
     {
         "status",
@@ -38,13 +39,19 @@ _PLAN_PROGRESS_KEYS = frozenset(
         "recoveryNote",
         "contractHold",
         "qa_signoff",
+        "qa_iteration_history",
+        "qa_stats",
+        "last_updated",
         "created_at",
         "updated_at",
+        "phase",
     }
 )
 _SUBTASK_PROGRESS_KEYS = frozenset(
     {
         "status",
+        "notes",
+        "updated_at",
         "started_at",
         "completed_at",
         "actual_output",
@@ -53,44 +60,90 @@ _SUBTASK_PROGRESS_KEYS = frozenset(
 )
 
 
-def _compute_plan_hash(plan_file: Path) -> str:
-    """Hash implementation_plan.json as the plan model sees it, minus progress keys.
+def _strip_progress(plan: dict[str, Any]) -> dict[str, Any]:
+    """The plan without its progress keys.
 
-    Canonicalised through ``ImplementationPlan`` because the wave engine and
-    recovery round-trip the plan with ``load()``/``save()``, which drops keys the
-    model does not carry and adds its defaults. Hashing the model's view keeps a
-    round-trip from invalidating the approval; a key the model drops is gone
-    after the first save anyway. Falls back to the raw file hash when the plan
-    does not parse, so a broken plan still invalidates on any change.
+    ``chunks`` is ignored when ``subtasks`` is present: the plan model reads
+    ``subtasks`` first and every save rewrites ``chunks`` as a copy of it.
     """
-    from implementation_plan.plan import ImplementationPlan  # noqa: PLC0415 - cycle
-
-    try:
-        data = json.loads(plan_file.read_text(encoding="utf-8"))
-        plan = ImplementationPlan.from_dict(data).to_dict()
-    except Exception:  # noqa: BLE001 - any unparseable plan hashes raw
-        return _compute_file_hash(plan_file)
-
     content = {k: v for k, v in plan.items() if k not in _PLAN_PROGRESS_KEYS}
-    for phase in content["phases"]:
+    phases = content.get("phases")
+    if not isinstance(phases, list):
+        return content
+    stripped = []
+    for raw_phase in phases:
+        if not isinstance(raw_phase, dict):
+            stripped.append(raw_phase)
+            continue
+        phase = dict(raw_phase)
+        if isinstance(phase.get("subtasks"), list):
+            phase.pop("chunks", None)
         for key in ("subtasks", "chunks"):
-            phase[key] = [
-                {k: v for k, v in st.items() if k not in _SUBTASK_PROGRESS_KEYS}
-                for st in phase[key]
-            ]
-    canonical = json.dumps(content, sort_keys=True)
-    return hashlib.md5(canonical.encode("utf-8"), usedforsecurity=False).hexdigest()
+            if isinstance(phase.get(key), list):
+                phase[key] = [
+                    {k: v for k, v in st.items() if k not in _SUBTASK_PROGRESS_KEYS}
+                    if isinstance(st, dict)
+                    else st
+                    for st in phase[key]
+                ]
+        stripped.append(phase)
+    content["phases"] = stripped
+    return content
+
+
+def _md5(text: str) -> str:
+    return hashlib.md5(text.encode("utf-8"), usedforsecurity=False).hexdigest()
+
+
+def _read_plan(spec_dir: Path) -> dict[str, Any] | None:
+    try:
+        data = json.loads(
+            (spec_dir / "implementation_plan.json").read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _combine(spec_dir: Path, plan_hash: str) -> str:
+    return _md5(f"{_compute_file_hash(spec_dir / 'spec.md')}:{plan_hash}")
 
 
 def _compute_spec_hash(spec_dir: Path) -> str:
     """
     Compute a combined hash of spec.md and implementation_plan.json.
     Used to detect changes after approval.
+
+    The plan is hashed as it is on disk minus progress keys; a plan that is not a
+    JSON object is hashed byte for byte.
     """
-    spec_hash = _compute_file_hash(spec_dir / "spec.md")
-    plan_hash = _compute_plan_hash(spec_dir / "implementation_plan.json")
-    combined = f"{spec_hash}:{plan_hash}"
-    return hashlib.md5(combined.encode("utf-8"), usedforsecurity=False).hexdigest()
+    plan = _read_plan(spec_dir)
+    if plan is None:
+        plan_hash = _compute_file_hash(spec_dir / "implementation_plan.json")
+    else:
+        plan_hash = _md5(json.dumps(_strip_progress(plan), sort_keys=True))
+    return _combine(spec_dir, plan_hash)
+
+
+def _compute_saved_spec_hash(spec_dir: Path) -> str:
+    """:func:`_compute_spec_hash` of the plan after an ``ImplementationPlan`` save.
+
+    The wave engine and recovery round-trip the plan through
+    ``ImplementationPlan.load()``/``save()``, which drops keys the model does not
+    carry and adds its defaults (#1924). An approval also accepts exactly that
+    derived file, so a round-trip does not invalidate it while any edit made
+    after approval, at any depth, still does. "" when the plan does not load.
+    """
+    from implementation_plan.plan import ImplementationPlan  # noqa: PLC0415 - cycle
+
+    plan = _read_plan(spec_dir)
+    if plan is None:
+        return ""
+    try:
+        saved = ImplementationPlan.from_dict(plan).to_dict()
+    except Exception:  # noqa: BLE001 - a plan the model cannot load has no saved form
+        return ""
+    return _combine(spec_dir, _md5(json.dumps(_strip_progress(saved), sort_keys=True)))
 
 
 @dataclass
@@ -104,6 +157,7 @@ class ReviewState:
         approved_at: ISO timestamp of approval
         feedback: List of feedback comments from review sessions
         spec_hash: Hash of spec files at time of approval (for change detection)
+        saved_spec_hash: The same hash after an ImplementationPlan save (#1924)
         review_count: Number of review sessions conducted
     """
 
@@ -112,6 +166,7 @@ class ReviewState:
     approved_at: str = ""
     feedback: list[str] = field(default_factory=list)
     spec_hash: str = ""
+    saved_spec_hash: str = ""
     review_count: int = 0
 
     def to_dict(self) -> dict:
@@ -122,6 +177,7 @@ class ReviewState:
             "approved_at": self.approved_at,
             "feedback": self.feedback,
             "spec_hash": self.spec_hash,
+            "saved_spec_hash": self.saved_spec_hash,
             "review_count": self.review_count,
         }
 
@@ -134,6 +190,7 @@ class ReviewState:
             approved_at=data.get("approved_at", ""),
             feedback=data.get("feedback", []),
             spec_hash=data.get("spec_hash", ""),
+            saved_spec_hash=data.get("saved_spec_hash", ""),
             review_count=data.get("review_count", 0),
         )
 
@@ -181,7 +238,7 @@ class ReviewState:
             return False
 
         current_hash = _compute_spec_hash(spec_dir)
-        return self.spec_hash == current_hash
+        return current_hash in (self.spec_hash, self.saved_spec_hash)
 
     def approve(
         self,
@@ -201,6 +258,7 @@ class ReviewState:
         self.approved_by = approved_by
         self.approved_at = datetime.now(UTC).isoformat()
         self.spec_hash = _compute_spec_hash(spec_dir)
+        self.saved_spec_hash = _compute_saved_spec_hash(spec_dir)
         self.review_count += 1
 
         if auto_save:
@@ -218,6 +276,7 @@ class ReviewState:
         self.approved_by = ""
         self.approved_at = ""
         self.spec_hash = ""
+        self.saved_spec_hash = ""
         self.review_count += 1
 
         if auto_save:
@@ -256,6 +315,7 @@ class ReviewState:
         self.approved = False
         self.approved_at = ""
         self.spec_hash = ""
+        self.saved_spec_hash = ""
         # Keep approved_by and feedback as history
 
         if auto_save:
@@ -270,16 +330,16 @@ def get_review_status_summary(spec_dir: Path) -> dict:
         Dictionary with status information
     """
     state = ReviewState.load(spec_dir)
-    current_hash = _compute_spec_hash(spec_dir)
+    valid = state.is_approval_valid(spec_dir)
 
     return {
         "approved": state.approved,
-        "valid": state.is_approval_valid(spec_dir),
+        "valid": valid,
         "approved_by": state.approved_by,
         "approved_at": state.approved_at,
         "review_count": state.review_count,
         "feedback_count": len(state.feedback),
-        "spec_changed": state.spec_hash != current_hash if state.spec_hash else False,
+        "spec_changed": not valid if state.spec_hash else False,
     }
 
 

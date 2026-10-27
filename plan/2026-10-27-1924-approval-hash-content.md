@@ -60,3 +60,35 @@ Revert the commit; stored hashes computed with the new scheme then read as stale
   entry). Step 2 adds `test_wave_engine_round_trip_keeps_approval_valid` (fails on
   the previous head) and swaps the phase-`status` invalidation case, which the model
   drops, for a phase `name` change.
+- Re-review (lead, Opus): hashing the plan model's view was a regression against
+  dev. Keys the model drops were no longer bound but still drive execution:
+  `security/plan_commands._collect_strings` grants `required_commands`/`command`/
+  `run` from the raw plan at any depth, and the coder reads the raw file. The
+  lead's suggestion (make the model round-trip lossless, then hash raw) still
+  goes stale on the first save, because `to_dict` adds defaults
+  (`services_involved`, `final_acceptance`, `spec_file`, `created_at`, phase
+  `name`/`type`, `feature` from `title`). It would also change every `save()`
+  output repo-wide.
+  Chosen instead, proposed to the lead: the approval stores two hashes, of the
+  raw plan as approved (`spec_hash`) and of `ImplementationPlan.from_dict(raw).to_dict()`
+  (`saved_spec_hash`). Both are taken after stripping progress keys, at the
+  levels they live, with `chunks` ignored when `subtasks` is present.
+  `is_approval_valid` hashes the raw current file and accepts either. Any
+  post-approval edit at any depth matches neither. A wave round-trip yields
+  exactly the saved form, so it stays valid. No model change.
+  Denylist back to the writers found on dev: plan `status`, `planStatus`,
+  `reviewReason`, `recoveryNote`, `contractHold`, `qa_signoff`,
+  `qa_iteration_history`, `qa_stats`, `last_updated`, `created_at`,
+  `updated_at`, `phase`; subtask `status`, `notes`, `updated_at`, `started_at`,
+  `completed_at`, `actual_output`, `critique_result`. `notes` stays progress
+  because `update_subtask_status` and `session.py` write it on every update;
+  binding it would bring back the mid-build invalidation this task fixes
+  (flagged to the lead). `get_review_status_summary.spec_changed` now uses the
+  same validity check.
+  Tests: `test_content_edits_invalidate` covers 12 edits, each on the approved
+  file and after a wave save: subtask `required_commands`, `steps`, `files`,
+  description, verification `run`, new subtask, phase `id`/`name`/`description`,
+  `feature`, plan `required_commands`, unknown plan key. The `required_commands`,
+  `steps`, phase `id`/`description` and unknown-key cases fail on the previous
+  head. Also `test_wave_engine_round_trip_keeps_approval_valid` (two saves) and
+  `test_chunks_copy_ignored_when_subtasks_present`.
