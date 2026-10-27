@@ -124,7 +124,7 @@ def make_server(config: Config, host: str, port: int) -> ThreadingHTTPServer:
                 status, ctype = err.code, err.headers.get("Content-Type")
             except (urllib.error.URLError, OSError):
                 return self._error(502, "upstream unreachable")
-            self._reply(status, body, ctype or "application/json")
+            return self._reply(status, body, ctype or "application/json")
 
         def log_message(self, fmt, *args):
             pass
