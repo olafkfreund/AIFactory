@@ -317,16 +317,6 @@ class CredentialMixin:
             logger.warning(f"[AgentService] Failed to read auto-switch settings: {e}")
             return False
 
-    def _is_rate_limit_line(self, line: str) -> bool:
-        """Detect rate limit messages in agent output."""
-        text = line.lower()
-        patterns = [
-            "you've hit your limit",
-            "you’ve hit your limit",  # curly apostrophe
-            "youve hit your limit",
-        ]
-        return any(p in text for p in patterns)
-
     async def _emit_profile_switch(
         self,
         task_id: str,
