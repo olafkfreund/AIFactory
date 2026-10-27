@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import ApiKey, OrgMember, User
 from ..database.engine import get_db
+from ..mcp_remote.auth import MCP_READ_SCOPE
 from .auth_routes import get_current_user
 from .organizations import _role_level
 
@@ -171,6 +172,16 @@ async def create_api_key(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="API keys cannot be created with an API key",
+        )
+
+    # A viewer may only read; remote MCP gates write tools on the key's scope
+    # alone, so a viewer must not mint a write scope (#1908, Factory#312).
+    if _role_level(membership.role) < _role_level("member") and set(
+        body.scopes or ()
+    ) - {MCP_READ_SCOPE}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Scopes beyond 'mcp:read' require the 'member' org role",
         )
 
     # Setting a ceiling is an org-admin decision. No ceiling stays open to
