@@ -125,3 +125,6 @@ Traps for every step:
 - Never `git add -A`.
 - Run the cq ratchets and `scripts/gen_autonomy_matrix.py --check`, and regenerate if an
   import changed.
+- Step 5: the PG test creates its tables in its own schema (`apikey_expiry_pg`, set through
+  `search_path`) instead of calling `drop_all` on public. The sibling PG tests read the
+  alembic-migrated public schema.
