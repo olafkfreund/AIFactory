@@ -128,9 +128,9 @@ def sync_spec_file_from_worktree(
     ``completion_orchestration.run_terminal_completion``).
 
     ``qa_review_cycle.json`` is authored by the running build into its
-    WORKTREE spec dir. On the subprocess backend the generic worktree-sync
-    loop (``_sync_worktree_files``) copies the whole spec dir to main every
-    tick, so this file already lands there. Under
+    WORKTREE spec dir. The subprocess worktree-sync loop
+    (``_sync_worktree_files``) copies only an allowlist and never this
+    control file (Factory#1960, #1921). Under
     ``AIFACTORY_BUILD_BACKEND=kubejob`` that loop never runs at all (#1249) —
     across a live cluster the file existed in zero main spec dirs and seven
     worktree ones. Rather than reanimate the generic per-tick copy of every
