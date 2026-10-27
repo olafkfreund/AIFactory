@@ -48,13 +48,14 @@ def _auth_disabled() -> bool:
 def is_service_principal(user: dict | None) -> bool:
     """Whether the caller is a machine/dev principal that bypasses per-org authz.
 
-    True for the legacy ``API_TOKEN`` service identity (``is_service``) and the
-    auth-disabled global admin. These are trusted M2M/local callers (Factory
-    siblings + the local UI), not multi-tenant human users.
+    True for the legacy ``API_TOKEN`` identity and the auth-disabled dev
+    principal, both marked ``is_service``; a role claim never counts. These are
+    trusted M2M/local callers (Factory siblings + the local UI), not
+    multi-tenant human users.
     """
     if not isinstance(user, dict):
         return False
-    return bool(user.get("is_service")) or user.get("role") == "admin"
+    return bool(user.get("is_service"))
 
 
 def check_project_access(
@@ -229,7 +230,9 @@ class ProjectAccessChecker:
         # Auth disabled (dev mode) → allow, like the middleware.
         if _auth_disabled():
             return (
-                user if isinstance(user, dict) else {"id": "default", "role": "admin"}
+                user
+                if isinstance(user, dict)
+                else {"id": "default", "role": "admin", "is_service": True}
             )
 
         # Shared rule (also used by the rmux WS bridge, #322).

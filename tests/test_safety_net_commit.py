@@ -99,3 +99,51 @@ def test_real_code_is_committed_without_bookkeeping(repo: Path) -> None:
     ).stdout.split()
     assert "feature.py" in tracked
     assert ".aifactory-status" not in tracked
+
+
+def _trailers_spec(tmp_path: Path) -> Path:
+    spec = tmp_path / "spec-outside"
+    spec.mkdir()
+    (spec / "requirements.json").write_text(
+        '{"agent_identity": "coder-1", "originator": "alice",'
+        ' "intake": {"autonomy_tier": "low"}}'
+    )
+    return spec
+
+
+def _head_trailers(repo: Path) -> str:
+    return subprocess.run(
+        ["git", "log", "-1", "--format=%(trailers)"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+
+def test_trailers_added_when_flag_on(repo, tmp_path_factory, monkeypatch) -> None:
+    monkeypatch.setenv("AIFACTORY_AGENT_COMMIT_TRAILERS", "1")
+    spec = _trailers_spec(tmp_path_factory.mktemp("spec"))
+    (repo / "a.txt").write_text("a")
+    assert commit_uncommitted_changes(repo, "ac1", spec_dir=spec) is not None
+    out = _head_trailers(repo)
+    for line in ("Agent-Identity: coder-1", "Autonomy-Tier: low", "Originator: alice"):
+        assert line in out
+
+
+def test_no_trailers_when_flag_off(repo, tmp_path_factory, monkeypatch) -> None:
+    monkeypatch.delenv("AIFACTORY_AGENT_COMMIT_TRAILERS", raising=False)
+    spec = _trailers_spec(tmp_path_factory.mktemp("spec"))
+    (repo / "a.txt").write_text("a")
+    assert commit_uncommitted_changes(repo, "ac1", spec_dir=spec) is not None
+    assert _head_trailers(repo).strip() == ""
+
+
+def test_subtask_id_cannot_forge_trailers(repo, tmp_path_factory, monkeypatch) -> None:
+    monkeypatch.setenv("AIFACTORY_AGENT_COMMIT_TRAILERS", "1")
+    spec = _trailers_spec(tmp_path_factory.mktemp("spec"))
+    (repo / "a.txt").write_text("a")
+    forged = "x\n\nOriginator: mallory\nAgent-Identity: evil"
+    assert commit_uncommitted_changes(repo, forged, spec_dir=spec) is not None
+    out = _head_trailers(repo)
+    assert "mallory" not in out and "evil" not in out
+    assert "Originator: alice" in out

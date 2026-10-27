@@ -24,11 +24,11 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Attest an already-released version instead of releasing, e.g. 3.6.83 (resolves v<version>, -rmux and -nix tags)"
+        description: "Attest an already-released version instead of releasing, e.g. 3.6.83 (resolves v<version>, -rmux, -nix and -gateway tags)"
         type: string
         required: true
       images:
-        description: "Which images to attest: all (default), or a comma list of app,rmux,nix. Attesting one that already has an attestation ADDS a second one -- the transparency log is append-only -- so backfill only what is missing (#1583)."
+        description: "Which images to attest: all (default), or a comma list of app,rmux,nix,gateway. Attesting one that already has an attestation ADDS a second one -- the transparency log is append-only -- so backfill only what is missing (#1583)."
         type: string
         required: false
         default: all
@@ -55,6 +55,7 @@ jobs:
       app: ${{ steps.build.outputs.digest }}
       rmux: ${{ steps.build_rmux.outputs.digest }}
       nix: ${{ steps.build_nix.outputs.digest }}
+      gateway: ${{ steps.build_gateway.outputs.digest }}
     steps:
       - name: Checkout with parent commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -252,11 +253,33 @@ jobs:
           provenance: mode=max
           sbom: true
 
+      # Factory#1959 -- fourth variant: the stdlib-only model gateway
+      # (Dockerfile ``gateway`` stage). Tagged ``:vX-gateway``.
+      - name: Build + push -gateway image (model gateway, amd64-only)
+        if: steps.detect.outputs.should_release == 'true'
+        id: build_gateway
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile
+          target: gateway
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/aifactory:v${{ steps.detect.outputs.new }}-gateway
+            ghcr.io/${{ github.repository_owner }}/aifactory:latest-gateway
+          build-args: |
+            SECURITY_REFRESH=${{ env.SECURITY_REFRESH }}
+          cache-from: type=gha,scope=aifactory-gateway
+          cache-to: type=gha,mode=max,scope=aifactory-gateway
+          provenance: mode=max
+          sbom: true
+
       - name: Install cosign
         if: steps.detect.outputs.should_release == 'true'
         uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
 
-      - name: Sign both images (cosign keyless via Sigstore + GitHub OIDC)
+      - name: Sign all images (cosign keyless via Sigstore + GitHub OIDC)
         if: steps.detect.outputs.should_release == 'true'
         env:
           COSIGN_EXPERIMENTAL: "1"
@@ -264,15 +287,18 @@ jobs:
           IMAGE="ghcr.io/${{ github.repository_owner }}/aifactory@${{ steps.build.outputs.digest }}"
           IMAGE_RMUX="ghcr.io/${{ github.repository_owner }}/aifactory@${{ steps.build_rmux.outputs.digest }}"
           IMAGE_NIX="ghcr.io/${{ github.repository_owner }}/aifactory@${{ steps.build_nix.outputs.digest }}"
+          IMAGE_GATEWAY="ghcr.io/${{ github.repository_owner }}/aifactory@${{ steps.build_gateway.outputs.digest }}"
           cosign sign --yes "$IMAGE"
           cosign sign --yes "$IMAGE_RMUX"
           cosign sign --yes "$IMAGE_NIX"
+          cosign sign --yes "$IMAGE_GATEWAY"
 
           # Proves the CLUSTER can read these, not just cosign. Factory#804.
           repo="ghcr.io/${{ github.repository_owner }}/aifactory"
           ./.github/scripts/assert-signature-location.sh "$repo" "${{ steps.build.outputs.digest }}"
           ./.github/scripts/assert-signature-location.sh "$repo" "${{ steps.build_rmux.outputs.digest }}"
           ./.github/scripts/assert-signature-location.sh "$repo" "${{ steps.build_nix.outputs.digest }}"
+          ./.github/scripts/assert-signature-location.sh "$repo" "${{ steps.build_gateway.outputs.digest }}"
 
       - name: Verify signature (release self-test)
         if: steps.detect.outputs.should_release == 'true'
@@ -288,7 +314,7 @@ jobs:
   # #1583: SBOMs + attestation, split out of `release` on purpose.
   #
   # Both 2026-09-18 releases went RED here while the tag, the GitHub release and
-  # all three images had already been created -- so "released, evidence missing"
+  # all four images had already been created -- so "released, evidence missing"
   # was indistinguishable from "release failed", at ~33 min per run to find out.
   # Six `cosign attest` calls ran with no retry against rekor.sigstore.dev, a
   # public service: one bad response failed the release.
@@ -335,7 +361,7 @@ jobs:
       # On a push the digests come from the release job. On a dispatch they are
       # RESOLVED from the release's own tags, so a version that was never
       # released fails here rather than attesting the wrong thing.
-      - name: Resolve the three image digests
+      - name: Resolve the four image digests
         id: refs
         env:
           EVENT: ${{ github.event_name }}
@@ -345,16 +371,24 @@ jobs:
           APP: ${{ needs.release.outputs.app }}
           RMUX: ${{ needs.release.outputs.rmux }}
           NIX: ${{ needs.release.outputs.nix }}
+          GATEWAY: ${{ needs.release.outputs.gateway }}
         run: |
           set -euo pipefail
           repo="ghcr.io/${OWNER}/aifactory"
           if [ "${EVENT}" = "workflow_dispatch" ]; then
             want="${IMAGES:-all}"
-            for pair in "app:v${VERSION}" "rmux:v${VERSION}-rmux" "nix:v${VERSION}-nix"; do
+            for pair in "app:v${VERSION}" "rmux:v${VERSION}-rmux" "nix:v${VERSION}-nix" "gateway:v${VERSION}-gateway"; do
               name="${pair%%:*}"; tag="${pair#*:}"
               # Skip anything not selected: re-attesting adds a duplicate.
               if [ "${want}" != "all" ] && ! printf '%s' ",${want}," | grep -q ",${name},"; then
                 echo "skipping ${name} (not in images=${want})"
+                continue
+              fi
+              # Releases cut before #1959 have no -gateway tag: skip it under
+              # `all`; an explicit images=gateway still fails below.
+              if [ "${name}" = gateway ] && [ "${want}" = all ] \
+                 && ! docker buildx imagetools inspect "${repo}:${tag}" > /dev/null 2>&1; then
+                echo "::notice::no ${repo}:${tag} (release predates the gateway image); skipping"
                 continue
               fi
               digest=$(docker buildx imagetools inspect --format '{{json .Manifest.Digest}}' "${repo}:${tag}" | tr -d '"')
@@ -370,15 +404,17 @@ jobs:
               echo "app=${repo}@${APP}"
               echo "rmux=${repo}@${RMUX}"
               echo "nix=${repo}@${NIX}"
+              echo "gateway=${repo}@${GATEWAY}"
             } >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Generate SBOMs + attest all three images
+      - name: Generate SBOMs + attest all four images
         env:
           COSIGN_EXPERIMENTAL: "1"
           IMAGE: ${{ steps.refs.outputs.app }}
           IMAGE_RMUX: ${{ steps.refs.outputs.rmux }}
           IMAGE_NIX: ${{ steps.refs.outputs.nix }}
+          IMAGE_GATEWAY: ${{ steps.refs.outputs.gateway }}
         run: |
           set -euo pipefail
 
@@ -441,6 +477,16 @@ jobs:
           attest cyclonedx sbom-nix.cyclonedx.json "$IMAGE_NIX"
           fi
 
+          # Model gateway image (Factory#1959)
+          if [ -z "${IMAGE_GATEWAY:-}" ]; then
+            echo "gateway image not selected; skipping"
+          else
+          syft scan "$IMAGE_GATEWAY" -o spdx-json=sbom-gateway.spdx.json
+          syft scan "$IMAGE_GATEWAY" -o cyclonedx-json=sbom-gateway.cyclonedx.json
+          attest_spdx sbom-gateway.spdx.json "$IMAGE_GATEWAY"
+          attest cyclonedx sbom-gateway.cyclonedx.json "$IMAGE_GATEWAY"
+          fi
+
       # The SBOM files exist only in THIS job since #1583 moved syft here; the
       # upload used to stay behind in `release`, which then failed on every
       # release looking for files it no longer generated.
@@ -458,7 +504,8 @@ jobs:
           files=()
           for f in sbom.spdx.json sbom.cyclonedx.json \
                    sbom-rmux.spdx.json sbom-rmux.cyclonedx.json \
-                   sbom-nix.spdx.json sbom-nix.cyclonedx.json; do
+                   sbom-nix.spdx.json sbom-nix.cyclonedx.json \
+                   sbom-gateway.spdx.json sbom-gateway.cyclonedx.json; do
             [ -f "$f" ] && files+=("$f")
           done
           if [ ${#files[@]} -eq 0 ]; then
@@ -473,10 +520,11 @@ jobs:
           IMAGE: ${{ steps.refs.outputs.app }}
           IMAGE_RMUX: ${{ steps.refs.outputs.rmux }}
           IMAGE_NIX: ${{ steps.refs.outputs.nix }}
+          IMAGE_GATEWAY: ${{ steps.refs.outputs.gateway }}
         run: |
           {
             echo "### SBOM attestations"
-            for i in "$IMAGE" "$IMAGE_RMUX" "$IMAGE_NIX"; do
+            for i in "$IMAGE" "$IMAGE_RMUX" "$IMAGE_NIX" "$IMAGE_GATEWAY"; do
               [ -n "${i}" ] && echo "- \`${i}\`"
             done
           } >> "$GITHUB_STEP_SUMMARY"
