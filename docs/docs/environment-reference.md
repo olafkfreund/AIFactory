@@ -238,7 +238,7 @@ How `run.py` executes and what lets a build schedule on any node. Read in
 
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
-| `AIFACTORY_BUILD_BACKEND` | `subprocess` | no | `subprocess` (in-pod asyncio) or `kubejob` (each build as its own k8s Job). Unknown values fall back to `subprocess`. Auto-merge is held for every task unless this is `kubejob` and `DATABASE_URL` is set. |
+| `AIFACTORY_BUILD_BACKEND` | `subprocess` | no | `subprocess` (in-pod asyncio) or `kubejob` (each build as its own k8s Job). Unknown values, and `kubejob` without `DATABASE_URL`, refuse agent launches (the server logs an error at startup). Unset in-cluster (`KUBERNETES_SERVICE_HOST` set) logs a warning that agents run unisolated. Auto-merge is held for every task unless this is `kubejob` and `DATABASE_URL` is set. |
 | `AIFACTORY_IMAGE` | (built-in) | no | Running image; fallback build-Job image when `AIFACTORY_BUILD_IMAGE` unset. |
 | `AIFACTORY_BUILD_IMAGE` | (unset) | no | Override the image for the `kubejob` build Job only. Point at a `:sha-<short>-nix` tag for in-image Nix. |
 | `AIFACTORY_PACK_WORKSPACE` | off | no | Pack `/work` to object storage and unpack in the Job (removes the workspace node-pin). |

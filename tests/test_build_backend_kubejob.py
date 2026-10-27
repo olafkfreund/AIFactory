@@ -529,6 +529,59 @@ def test_backend_unknown_falls_back_to_subprocess(
     assert bb.kubejob_enabled() is False
 
 
+@pytest.mark.parametrize(
+    ("value", "store", "expected"),
+    [
+        (None, False, None),
+        ("", False, None),
+        ("subprocess", False, None),
+        ("kubejob", True, None),
+        ("kubejob", False, "DATABASE_URL"),
+        ("lambda", True, "'lambda'"),
+    ],
+)
+def test_backend_config_error(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str | None,
+    store: bool,
+    expected: str | None,
+) -> None:
+    if value is None:
+        monkeypatch.delenv("AIFACTORY_BUILD_BACKEND", raising=False)
+    else:
+        monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", value)
+    msg = bb.backend_config_error(store)
+    if expected is None:
+        assert msg is None
+    else:
+        assert msg is not None
+        assert expected in msg
+
+
+def test_log_backend_config(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    log = logging.getLogger("test_log_backend_config")
+    monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)
+    monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "kubejob")
+    with caplog.at_level(logging.INFO, logger=log.name):
+        bb.log_backend_config(log, False)
+    assert [r.levelno for r in caplog.records] == [logging.ERROR]
+    assert "DATABASE_URL" in caplog.text
+
+    caplog.clear()
+    monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "subprocess")
+    with caplog.at_level(logging.INFO, logger=log.name):
+        bb.log_backend_config(log, False)
+    assert caplog.records == []
+
+    monkeypatch.setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+    with caplog.at_level(logging.INFO, logger=log.name):
+        bb.log_backend_config(log, False)
+    assert [r.levelno for r in caplog.records] == [logging.WARNING]
+    assert "#1932" in caplog.text
+
+
 # --------------------------------------------------------------------------- #
 # 3. Dispatch records the k8s-job worker_ref
 # --------------------------------------------------------------------------- #

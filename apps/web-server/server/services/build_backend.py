@@ -11,6 +11,10 @@ Default OFF. The backend is selected by ``AIFACTORY_BUILD_BACKEND``:
   * ``subprocess`` (default) — today's in-pod behaviour, unchanged.
   * ``kubejob``               — dispatch a k8s Job that runs ``run.py``.
 
+An unknown value, or ``kubejob`` without ``DATABASE_URL``, refuses agent
+launches (``BuildBackendUnavailableError``, #1932) instead of running them
+in-pod.
+
 Design (apis/concurrency-conventions.md §3 + the proven ``kube_sandbox`` shape):
 
 * Before the Job is created, the control plane POPULATES the per-task worktree
@@ -370,22 +374,59 @@ def build_job_env(oauth_token: str | None) -> dict[str, str]:
 _TERMINAL_STATES = ("done", "failed", "stuck", "review")
 
 
+class BuildBackendUnavailableError(RuntimeError):
+    """Agent launches are refused: the build backend config can't run (#1932)."""
+
+
+def _raw_backend() -> str:
+    return (os.environ.get(_ENV_BACKEND) or "").strip().lower() or _DEFAULT_BACKEND
+
+
 def selected_backend() -> str:
     """Return the configured build backend, normalised + validated.
 
-    Unknown values fall back to ``subprocess`` (fail safe — never silently
-    route builds to an unimplemented backend) and log a warning.
+    Unknown values return ``subprocess`` (read-side paths stay safe) and log a
+    warning; ``backend_config_error`` is what refuses the launch.
     """
-    raw = (os.environ.get(_ENV_BACKEND, _DEFAULT_BACKEND) or "").strip().lower()
+    raw = _raw_backend()
     if raw in (BACKEND_SUBPROCESS, BACKEND_KUBEJOB):
         return raw
     _log.warning(
-        "[build_backend] unknown %s=%r — falling back to %r",
+        "[build_backend] unknown %s=%r — agent launches are refused",
         _ENV_BACKEND,
         raw,
-        BACKEND_SUBPROCESS,
     )
     return BACKEND_SUBPROCESS
+
+
+def backend_config_error(store_enabled: bool) -> str | None:
+    """Why agent launches must be refused, or None when the config can run (#1932)."""
+    raw = _raw_backend()
+    if raw == BACKEND_SUBPROCESS:
+        return None
+    if raw != BACKEND_KUBEJOB:
+        return (
+            f"unknown {_ENV_BACKEND}={raw!r}; valid values are "
+            f"{BACKEND_SUBPROCESS!r} and {BACKEND_KUBEJOB!r}"
+        )
+    if not store_enabled:
+        return f"{_ENV_BACKEND}=kubejob requires DATABASE_URL, which is not set"
+    return None
+
+
+def log_backend_config(logger: logging.Logger, store_enabled: bool) -> None:
+    """Startup log of an unrunnable backend config, or unisolated in-cluster agents."""
+    problem = backend_config_error(store_enabled)
+    if problem:
+        logger.error("[build_backend] agent launches are refused: %s", problem)
+    elif _raw_backend() == BACKEND_SUBPROCESS and os.environ.get(
+        "KUBERNETES_SERVICE_HOST"
+    ):
+        logger.warning(
+            "[build_backend] in-cluster with the subprocess backend: agents run "
+            "unisolated in this pod; set %s=kubejob and DATABASE_URL (#1932)",
+            _ENV_BACKEND,
+        )
 
 
 def kubejob_enabled() -> bool:
