@@ -123,5 +123,36 @@ def test_extra_has_no_reserved_logrecord_keys():
     assert used.isdisjoint(reserved), f"reserved keys in extra: {used & reserved}"
 
 
+def _record_commit_argv(mgr, monkeypatch, tmp_path):
+    calls = []
+
+    def run(args, **_k):
+        calls.append(args)
+        return subprocess.CompletedProcess(["git"], 0, "", "")
+
+    monkeypatch.setattr(mgr, "get_worktree_path", lambda spec: tmp_path)
+    monkeypatch.setattr(mgr, "_run_git", run)
+    return calls
+
+
+def test_commit_appends_trailers_when_flag_on(tmp_path, monkeypatch):
+    monkeypatch.setenv("AIFACTORY_AGENT_COMMIT_TRAILERS", "1")
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    (spec / "requirements.json").write_text('{"originator": "alice"}')
+    mgr = _mgr(tmp_path)
+    calls = _record_commit_argv(mgr, monkeypatch, tmp_path)
+    assert mgr.commit_in_worktree("spec", "msg", spec_dir=spec) is True
+    assert calls[-1] == ["commit", "-m", "msg", "--trailer", "Originator: alice"]
+
+
+def test_commit_argv_unchanged_without_spec_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("AIFACTORY_AGENT_COMMIT_TRAILERS", "1")
+    mgr = _mgr(tmp_path)
+    calls = _record_commit_argv(mgr, monkeypatch, tmp_path)
+    assert mgr.commit_in_worktree("spec", "msg") is True
+    assert calls[-1] == ["commit", "-m", "msg"]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

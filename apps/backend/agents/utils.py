@@ -14,6 +14,7 @@ from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from core.commit_trailers import commit_trailer_args
 from memory.paths import project_memory_dir, project_memory_dir_from_aifactory
 
 logger = logging.getLogger(__name__)
@@ -61,7 +62,7 @@ def get_commit_count(project_dir: Path) -> int:
 
 
 def commit_uncommitted_changes(
-    project_dir: Path, subtask_id: str | None = None
+    project_dir: Path, subtask_id: str | None = None, spec_dir: Path | None = None
 ) -> str | None:
     """Safety-net commit of any uncommitted agent-written changes (#611 g).
 
@@ -70,6 +71,8 @@ def commit_uncommitted_changes(
     worktree teardown) can lose that work — the 2026-06-18 demo nearly lost
     ``app/main.py`` this way. This stages everything in the worktree and commits
     it so the work survives regardless of what bookkeeping does next.
+
+    ``spec_dir`` (optional) supplies the opt-in agent commit trailers (#1960).
 
     Fully defensive: returns the new commit hash, or ``None`` when there was
     nothing to commit or the commit could not be made (never raises).
@@ -120,7 +123,7 @@ def commit_uncommitted_changes(
         if subtask_id:
             msg += f" [{subtask_id}]"
         subprocess.run(
-            ["git", "commit", "-m", msg],
+            ["git", "commit", "-m", msg, *commit_trailer_args(spec_dir)],
             cwd=project_dir,
             capture_output=True,
             text=True,

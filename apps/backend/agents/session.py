@@ -140,7 +140,9 @@ async def post_session_processing(
     # only PRESERVES files; it deliberately does not count toward `new_commits`
     # / completion, so an unconfirmed subtask is still retried (with its work
     # safely committed) rather than being silently marked done.
-    safety_commit = commit_uncommitted_changes(project_dir, subtask_id)
+    safety_commit = commit_uncommitted_changes(
+        project_dir, subtask_id, spec_dir=spec_dir
+    )
     if safety_commit:
         print_status(
             f"Safety-net committed uncommitted agent changes: {safety_commit[:8]}",

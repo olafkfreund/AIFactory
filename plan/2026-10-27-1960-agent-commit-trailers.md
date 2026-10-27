@@ -30,7 +30,7 @@ Approved decisions (from the spec):
    → verify: `pytest tests/test_safety_net_commit.py -q` passes.
    Traps: keep the existing `try/except (CalledProcessError, OSError)` untouched; the safety net must never raise. Put the spec dir in `tmp_path` outside the repo, or it becomes staged content.
 
-4. Checks for touched files: `ruff check` and `ruff format --check` on the five Python files, and the mypy ratchet `python scripts/ratchet_lint.py` (or the repo's documented invocation) shows no new errors.
+4. Checks for touched files: `ruff check` and `ruff format --check` on the five Python files, and the ratchet `scripts/cq_ratchet.py` (ruff and mypy, `--paths` limited to the touched files) shows no regressions. Deviation: the plan first named `scripts/ratchet_lint.py`, which does not exist in AIFactory.
    → verify: all clean.
    Traps: never `git add -A`; stage named paths only.
 
