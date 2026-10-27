@@ -39,6 +39,7 @@ from functools import wraps
 from typing import Any
 
 from factory_common.logsafe import sanitize_log
+from sqlalchemy import func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import AuditLog, engine
@@ -113,18 +114,52 @@ ACTION_MCP_TASK_MERGE = "mcp.task.merge"
 # ---------------------------------------------------------------------------
 
 
+# Serialises chain-head read + insert across writers and replicas (#1919).
+_AUDIT_CHAIN_LOCK_KEY = 0x0A1FAC701919
+
+
+def _is_postgres(session: AsyncSession) -> bool:
+    return session.bind.dialect.name == "postgresql"
+
+
+def _chain_row_time(session: AsyncSession) -> dict[str, Any]:
+    """``created_at`` for a chained row, read after the chain lock is held.
+
+    The column defaults to ``now()``, the transaction START: a writer that waited
+    on the lock would sort before rows inserted while it waited, and the next
+    head read would fork the chain. No-op on SQLite (single writer).
+    """
+    return {"created_at": func.clock_timestamp()} if _is_postgres(session) else {}
+
+
+async def _bound_lock_wait(session: AsyncSession) -> None:
+    """Own-session writers wait at most 5s for the chain lock.
+
+    If the same request already holds it through :func:`log_audit_event` (held
+    to that request's transaction end), the wait would never end; a timeout
+    turns that into a logged, swallowed audit failure instead of a hang.
+    """
+    if _is_postgres(session):
+        await session.execute(text("SET LOCAL lock_timeout = '5s'"))
+
+
 async def _next_prev_hash(session: AsyncSession) -> str:
     """Return the ``prev_hash`` a new row should carry: the chained hash of the
     current chain head, or ``GENESIS`` for an empty log.
 
-    Epic #26 P5.2 concurrency note: parallel writers across sessions can race so
-    two rows share a prev_hash. v1.0 mitigates via the single-replica
-    constraint; a SELECT FOR UPDATE on the head lands with multi-replica.
+    On Postgres it first takes a transaction advisory lock, so concurrent
+    writers (on any replica) read the head and insert one at a time; the lock
+    is released when the writer's transaction ends. Insert with
+    :func:`_chain_row_time`. SQLite has no advisory locks and one writer.
     """
     from sqlalchemy import select as _select
 
     from .audit_chain import GENESIS, compute_hash, row_as_mapping
 
+    if _is_postgres(session):
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(:k)"), {"k": _AUDIT_CHAIN_LOCK_KEY}
+        )
     last = await session.execute(
         _select(AuditLog).order_by(AuditLog.created_at.desc()).limit(1)
     )
@@ -220,6 +255,7 @@ async def log_audit_event(
                 ip=ip,
                 retention_until=_default_retention_until(),
                 prev_hash=prev_hash_value,
+                **_chain_row_time(db),
             )
             db.add(entry)
             await db.flush()
@@ -271,6 +307,7 @@ async def log_audit_event_bg(
     """
     try:
         async with engine.async_session_factory() as session:
+            await _bound_lock_wait(session)
             prev_hash_value = await _next_prev_hash(session)
             entry = AuditLog(
                 user_id=user_id,
@@ -282,6 +319,7 @@ async def log_audit_event_bg(
                 ip=ip,
                 retention_until=_default_retention_until(),
                 prev_hash=prev_hash_value,
+                **_chain_row_time(session),
             )
             session.add(entry)
             await session.commit()

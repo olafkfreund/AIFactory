@@ -41,3 +41,24 @@ Revert the commit.
   exactly one `authz.denied` row. It fails on dev (`[] == ['authz.denied']`) and
   passes with the fix. The SQLite test keeps its rollback + fresh-session read so
   it exercises the new own-session path.
+- Review (lead, Opus), HIGH: each 403 held two pooled connections (the
+  membership SELECT autobegins and keeps the request's connection while
+  `log_audit_event_bg` takes a second), so a burst of denials could starve the
+  pool. `authorize_project_for_user` now rolls the request session back before the
+  audit write. Safe for every caller, checked on dev: `ProjectAccessChecker`
+  (REST dependency), `mcp_stdio/auth.require_acw_access`, `mcp_remote/tools.py`,
+  `rmux/bridge._authorize_console` (attach, detach, WS) and `from_issue` all
+  authorize on a fresh session before any write. Test: after the 403 the request
+  session is not in a transaction.
+- Review, MEDIUM: the chain could fork under concurrent writers, and denials make
+  the volume attacker-controlled. `_next_prev_hash` takes
+  `pg_advisory_xact_lock` (no-op on SQLite) before reading the head, held to the
+  writer's transaction end. Rows get `created_at = clock_timestamp()` on Postgres
+  (`_chain_row_time`): the `now()` default is the transaction start, so a writer
+  that waited would sort before the rows inserted while it waited. Own-session
+  writers set `lock_timeout = '5s'` (`_bound_lock_wait`), so a request that already
+  holds the lock through `log_audit_event` gets a logged audit failure instead
+  of hanging. `services/llm_audit_hook.py` had its own copy of the head read; it
+  now uses the same helpers. Test: 20 concurrent `log_audit_event_bg` writers
+  give 20 distinct `prev_hash` values and a chain that verifies. On the previous
+  head all 20 chained off GENESIS.

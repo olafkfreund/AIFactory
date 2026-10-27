@@ -16,6 +16,8 @@ The decision is split in two so it can be unit-tested without a database:
 
 from __future__ import annotations
 
+import contextlib
+
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -172,6 +174,11 @@ async def authorize_project_for_user(
             action = (
                 ACTION_GATE_REJECTED if membership is not None else ACTION_AUTHZ_DENIED
             )
+            # Hand the request's connection back before the audit write takes a
+            # second one, so a 403 never holds two pooled connections (#1919).
+            # Safe: every caller authorizes before writing anything.
+            with contextlib.suppress(Exception):
+                await db.rollback()
             await _audit_authz_denial(
                 action, user, project_id, org_id, minimum_role, exc.detail
             )
