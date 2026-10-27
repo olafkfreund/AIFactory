@@ -27,11 +27,10 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from server.database.engine import get_db
+from server.database.models import ApiKey, OrgMember, User
 from server.error_ref import InputRejectedError
 from server.routes.organizations import _role_level
-
-from ..database.engine import get_db
-from ..database.models import ApiKey, OrgMember, User
 
 MCP_READ_SCOPE = "mcp:read"
 MCP_WRITE_SCOPE = "mcp:write"
