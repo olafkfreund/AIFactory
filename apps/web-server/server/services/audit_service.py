@@ -119,7 +119,7 @@ _AUDIT_CHAIN_LOCK_KEY = 0x0A1FAC701919
 
 
 def _is_postgres(session: AsyncSession) -> bool:
-    return session.bind.dialect.name == "postgresql"
+    return session.get_bind().dialect.name == "postgresql"
 
 
 def _chain_row_time(session: AsyncSession) -> dict[str, Any]:
