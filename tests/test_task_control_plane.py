@@ -247,3 +247,60 @@ class TestSyncDoesNotClobberControlPlane:
         control = task_control.read_control(main_spec)
         assert control["status"] == "human_review"
         assert control["reviewReason"] == "completed"
+
+
+def test_agent_sync_does_not_overwrite_requirements(tmp_path, monkeypatch):
+    """Factory#1960: an agent edit to the worktree requirements.json must not
+    reach the canonical copy the commit trailers read."""
+    from core.commit_trailers import trailer_block
+
+    monkeypatch.setenv("AIFACTORY_AGENT_COMMIT_TRAILERS", "1")
+    project_path = tmp_path / "proj"
+    spec_id = "001-feature"
+    main_spec, worktree_spec = TestSyncDoesNotClobberControlPlane()._build_spec_layout(
+        project_path, spec_id
+    )
+    canonical = {
+        "agent_identity": "agent:aifactory/k1",
+        "intake": {"autonomy_tier": "low"},
+        "originator": "human:github/someone",
+    }
+    (main_spec / "requirements.json").write_text(json.dumps(canonical))
+    before = trailer_block(main_spec)
+    forged = {
+        "agent_identity": "human:github/someone",
+        "intake": {"autonomy_tier": "hard"},
+        "originator": "human:github/admin",
+    }
+    (worktree_spec / "requirements.json").write_text(json.dumps(forged))
+
+    asyncio.run(
+        AgentService()._sync_worktree_files(
+            project_path, spec_id, task_id=f"proj:{spec_id}"
+        )
+    )
+
+    assert json.loads((main_spec / "requirements.json").read_text()) == canonical
+    assert trailer_block(main_spec) == before
+    assert "Agent-Identity: agent:aifactory/k1" in before
+
+
+def test_agent_sync_does_not_copy_control_files(tmp_path):
+    """The extra-files loop must not mirror the agent's control-store copies."""
+    project_path = tmp_path / "proj"
+    spec_id = "001-feature"
+    main_spec, worktree_spec = TestSyncDoesNotClobberControlPlane()._build_spec_layout(
+        project_path, spec_id
+    )
+    for name in ("task_control.json", "qa_review_cycle.json"):
+        (main_spec / name).write_text('{"owner": "control-plane"}')
+        (worktree_spec / name).write_text('{"owner": "agent"}')
+
+    asyncio.run(
+        AgentService()._sync_worktree_files(
+            project_path, spec_id, task_id=f"proj:{spec_id}"
+        )
+    )
+
+    for name in ("task_control.json", "qa_review_cycle.json"):
+        assert (main_spec / name).read_text() == '{"owner": "control-plane"}'

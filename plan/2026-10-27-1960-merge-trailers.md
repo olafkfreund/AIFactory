@@ -112,6 +112,24 @@ Approved decisions (from the spec):
    → verify: all clean.
    Traps: never `git add -A`; stage named paths only; never `--no-verify`.
 
+6. Deviation after the lead's review (2026-10-27, HIGH):
+   `apps/web-server/server/services/agent_worktree_sync.py` `_sync_worktree_files`
+   mirrored the agent's worktree `requirements.json` over the canonical copy every
+   few seconds, so the agent could set the trailer values (and #1907's). Fix (a):
+   drop `requirements.json` from `files_to_sync` and skip it, `task_control.json`
+   and `qa_review_cycle.json` by name in the extra-files loop, which copied every
+   other worktree file (so the existing "never synced" note on the two control
+   files was not true). Chosen over (b) a separate snapshot file because no
+   build-phase code writes the worktree `requirements.json`: the spec phases
+   write the main copy before `copy_spec_to_worktree`, and the packed path never
+   brings it back. The mirror also overwrote web-server writes to the canonical
+   copy. Tests: `test_agent_sync_does_not_overwrite_requirements` and
+   `test_agent_sync_does_not_copy_control_files` in
+   `tests/test_task_control_plane.py`. Both fail without the fix. The lead's
+   LOW: `test_endgame_hands_the_canonical_trailer_block_to_the_watcher` in
+   `apps/web-server/tests/test_pr_endgame_merge_gate.py`.
+   → verify: `pytest tests/test_task_control_plane.py tests/test_agent_worktree_sync_mixin.py tests/test_sync_merge.py -q`
+
 ## Tests
 
 - `pytest tests/test_commit_trailers.py tests/test_worktree_merge_dirty.py tests/test_worktree_security_gate.py tests/test_workspace.py -q`
