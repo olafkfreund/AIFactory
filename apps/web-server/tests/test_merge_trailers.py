@@ -30,11 +30,12 @@ def argv(monkeypatch, tmp_path):
     )
     seen: list[list[str]] = []
     monkeypatch.setattr(approval, "_open_pr", lambda *_: (7, "OPEN"))
-    monkeypatch.setattr(
-        approval,
-        "run_gh_command",
-        lambda a, **_: seen.append(a) or {"success": True},
-    )
+
+    def fake_gh(argv: list[str], **_: object) -> dict[str, bool]:
+        seen.append(argv)
+        return {"success": True}
+
+    monkeypatch.setattr(approval, "run_gh_command", fake_gh)
     return seen
 
 

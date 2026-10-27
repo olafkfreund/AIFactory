@@ -1020,7 +1020,7 @@ def test_merge_pr_argv_unchanged_without_body():
 
 
 def test_watch_and_finish_forwards_merge_body(monkeypatch):
-    seen: dict = {}
+    seen: dict[str, object] = {}
     monkeypatch.setattr(pe, "merge_pr", lambda *_a, **k: seen.update(k) or True)
     r = FakeRunner({"reviews": _reviews(("APPROVED", COPILOT))})
     asyncio.run(
