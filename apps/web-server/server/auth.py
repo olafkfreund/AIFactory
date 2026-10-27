@@ -284,6 +284,7 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
                 "id": "default",
                 "email": "default@localhost",
                 "role": "admin",
+                "is_service": True,
             }
             return await call_next(request)
 

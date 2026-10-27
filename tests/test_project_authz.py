@@ -41,7 +41,7 @@ def _denied(code: int, **kwargs):
 
 def test_service_principal_detection():
     assert is_service_principal({"is_service": True}) is True
-    assert is_service_principal({"role": "admin"}) is True
+    assert is_service_principal({"role": "admin"}) is False
     assert is_service_principal({"role": "user", "id": "u1"}) is False
     assert is_service_principal(None) is False
     assert is_service_principal("nope") is False
@@ -56,7 +56,19 @@ def test_service_principal_allowed_without_membership():
 
 
 def test_auth_disabled_admin_allowed():
-    check_project_access({"role": "admin", "id": "default"}, None, None, "owner")
+    check_project_access(
+        {"role": "admin", "id": "default", "is_service": True}, None, None, "owner"
+    )
+
+
+def test_role_admin_claim_is_not_a_service_principal():
+    _denied(
+        403,
+        user={"id": "u1", "role": "admin"},
+        project={"org_id": "o"},
+        membership=None,
+        minimum_role="viewer",
+    )
 
 
 # ── unauthenticated ────────────────────────────────────────────────────────
