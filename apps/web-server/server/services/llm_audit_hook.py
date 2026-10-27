@@ -224,11 +224,9 @@ async def write_llm_call_audit(
     try:
         # Lazy import: keeps this module loadable in tests that
         # haven't initialised the SQLAlchemy engine yet.
-        from sqlalchemy import select as _select
-
         from ..database import AuditLog
         from ..database.engine import async_session_factory
-        from .audit_chain import GENESIS, compute_hash, row_as_mapping
+        from .audit_service import _bound_lock_wait, _chain_row_time, _next_prev_hash
 
         redactor = _build_redactor(_get_extra_patterns())
 
@@ -284,16 +282,9 @@ async def write_llm_call_audit(
             )
 
         async with async_session_factory() as session:
-            # Hash-chain wiring per audit_service.log_audit_event.
-            last = await session.execute(
-                _select(AuditLog).order_by(AuditLog.created_at.desc()).limit(1),
-            )
-            last_row = last.scalar_one_or_none()
-            prev_hash_value = (
-                compute_hash(last_row.prev_hash, row_as_mapping(last_row))
-                if last_row is not None
-                else GENESIS
-            )
+            # Same chain lock and row time as audit_service's writers (#1919).
+            await _bound_lock_wait(session)
+            prev_hash_value = await _next_prev_hash(session)
 
             entry = AuditLog(
                 user_id=user_id,
@@ -309,6 +300,7 @@ async def write_llm_call_audit(
                 # confidential-tier (the LLM has seen secret data in
                 # the worst case, even if we redacted on the way out).
                 classification="confidential",
+                **_chain_row_time(session),
             )
             session.add(entry)
             await session.commit()
