@@ -26,7 +26,7 @@ async def test_post_from_another_key_is_refused(monkeypatch):
     seen = {}
 
     @asynccontextmanager
-    async def connect_sse(scope, receive, send):
+    async def connect_sse(_scope, _receive, send):
         await send({"type": "http.response.start", "status": 200, "headers": []})
         body = f"event: endpoint\r\ndata: /m/?session_id={SID}\r\n\r\n"
         await send({"type": "http.response.body", "body": body.encode()})
@@ -38,7 +38,7 @@ async def test_post_from_another_key_is_refused(monkeypatch):
 
     delivered = []
 
-    async def handle_post_message(scope, receive, send):
+    async def handle_post_message(scope, _receive, _send):
         delivered.append(scope["query_string"])
 
     monkeypatch.setattr(srv, "authenticate", authenticate)
