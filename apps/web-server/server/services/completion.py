@@ -42,7 +42,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 from factory_common.logsafe import sanitize_log
 
@@ -846,7 +846,7 @@ def _notify_worker(event: dict, *, spec_dir: Path | None) -> None:
         req = urllib.request.Request(
             url,
             data=json.dumps(event).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", **_auth_headers(url)},
             method="POST",
         )
         urllib.request.urlopen(req, timeout=timeout).close()  # noqa: S310
@@ -940,7 +940,7 @@ def _notify_worker_progress(event: dict, *, spec_dir: Path | None) -> None:
         req = urllib.request.Request(
             url,
             data=json.dumps(event).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", **_auth_headers(url)},
             method="POST",
         )
         urllib.request.urlopen(req, timeout=timeout).close()  # noqa: S310
@@ -950,6 +950,17 @@ def _notify_worker_progress(event: dict, *, spec_dir: Path | None) -> None:
 
 def _webhook_url() -> str | None:
     return (os.environ.get("AIFACTORY_COMPLETION_WEBHOOK") or "").strip() or None
+
+
+def _auth_headers(url: str) -> dict[str, str]:
+    token = os.environ.get("APP_API_TOKEN")
+    target, configured = urlsplit(url), urlsplit(_webhook_url() or "")
+    if not token or (target.scheme, target.netloc) != (
+        configured.scheme,
+        configured.netloc,
+    ):
+        return {}
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _sentinel_enabled() -> bool:
@@ -1004,7 +1015,7 @@ def notify_completion(event: dict, *, spec_dir: Path | None = None) -> bool:
         req = urllib.request.Request(
             url,
             data=json.dumps(event).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", **_auth_headers(url)},
             method="POST",
         )
         urllib.request.urlopen(req, timeout=timeout).close()  # noqa: S310

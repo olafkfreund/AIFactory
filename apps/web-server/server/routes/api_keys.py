@@ -11,16 +11,20 @@ import hashlib
 import logging
 import secrets
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 from factory_common.logsafe import sanitize_log
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from server.mcp_remote.auth import MCP_READ_SCOPE
+
 from ..database import ApiKey, OrgMember, User
 from ..database.engine import get_db
 from .auth_routes import get_current_user
+from .organizations import _role_level
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +97,10 @@ class CreateApiKeyRequest(BaseModel):
         le=365,
         description="Optional expiration in days from now (max 365)",
     )
+    autonomy_ceiling: Literal["low", "medium", "hard"] | None = Field(
+        default=None,
+        description="Optional most autonomous tier this key's agent may act at",
+    )
 
 
 class ApiKeyResponse(BaseModel):
@@ -104,6 +112,8 @@ class ApiKeyResponse(BaseModel):
     last_used_at: datetime | None
     expires_at: datetime | None
     created_at: datetime
+    autonomy_ceiling: str | None = None
+    agent_identity: str | None = None
 
     class Config:
         from_attributes = True
@@ -132,6 +142,7 @@ class CreateApiKeyResponse(ApiKeyResponse):
 )
 async def create_api_key(
     body: CreateApiKeyRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -155,13 +166,46 @@ async def create_api_key(
             detail="You are not a member of this organization",
         )
 
+    # Keys cannot mint keys: otherwise a key holder could issue itself a new
+    # key without the ceiling its own key carries (Factory#1960).
+    principal = getattr(request.state, "user", None)
+    if isinstance(principal, dict) and principal.get("api_key_id"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="API keys cannot be created with an API key",
+        )
+
+    # A viewer may only read; remote MCP gates write tools on the key's scope
+    # alone, so a viewer must not mint a write scope (#1908, Factory#312).
+    if _role_level(membership.role) < _role_level("member") and set(
+        body.scopes or ()
+    ) - {MCP_READ_SCOPE}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Scopes beyond 'mcp:read' require the 'member' org role",
+        )
+
+    # Setting a ceiling is an org-admin decision. No ceiling stays open to
+    # members for backward compatibility; slice 2 must close that before the
+    # ceiling gates merges (see the #1960 spec).
+    if body.autonomy_ceiling is not None and _role_level(membership.role) < _role_level(
+        "admin"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Setting an autonomy ceiling requires the 'admin' org role",
+        )
+
     # Generate a secure random key with the acw_ prefix
     raw_key = f"{KEY_PREFIX}{secrets.token_urlsafe(32)}"
 
     # Compute expiration if requested
     expires_at: datetime | None = None
     if body.expires_in_days is not None:
-        expires_at = datetime.now(UTC) + timedelta(days=body.expires_in_days)
+        # Naive UTC: the column is a naive DateTime and asyncpg rejects aware values.
+        expires_at = (datetime.now(UTC) + timedelta(days=body.expires_in_days)).replace(
+            tzinfo=None
+        )
 
     # Serialize scopes as comma-separated string for storage
     scopes_str: str | None = None
@@ -176,6 +220,7 @@ async def create_api_key(
         name=body.name,
         scopes=scopes_str,
         expires_at=expires_at,
+        autonomy_ceiling=body.autonomy_ceiling,
     )
     db.add(api_key)
     await db.commit()
@@ -195,6 +240,8 @@ async def create_api_key(
         last_used_at=api_key.last_used_at,
         expires_at=api_key.expires_at,
         created_at=api_key.created_at,
+        autonomy_ceiling=api_key.autonomy_ceiling,
+        agent_identity=api_key.agent_identity,
         raw_key=raw_key,
     )
 
@@ -231,6 +278,8 @@ async def list_api_keys(
             last_used_at=key.last_used_at,
             expires_at=key.expires_at,
             created_at=key.created_at,
+            autonomy_ceiling=key.autonomy_ceiling,
+            agent_identity=key.agent_identity,
         )
         for key in keys
     ]

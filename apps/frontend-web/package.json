@@ -1,6 +1,6 @@
 {
   "name": "aifactory-web",
-  "version": "3.10.7",
+  "version": "3.10.12",
   "type": "module",
   "description": "Web UI for AIFactory autonomous coding framework",
   "scripts": {

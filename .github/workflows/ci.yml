@@ -81,7 +81,7 @@ jobs:
       # the other's violation, and the directory that holds the RATCHET ITSELF
       # could not be added here while that was true.
       - name: Ruff lint
-        run: apps/backend/.venv/bin/ruff check apps/backend apps/web-server scripts tests
+        run: apps/backend/.venv/bin/ruff check apps/backend apps/web-server apps/model-gateway scripts tests
 
       # An S3 server for the workspace integration tests (Epic #35 #40
       # half-B). Started as a regular ``docker run`` rather than a service
@@ -762,7 +762,7 @@ jobs:
       # Flags MUST match the lockfile header's regeneration command; the lock
       # is only valid for the interpreter and platform it was compiled for,
       # which are the runtime image's (chainguard python:latest-dev = CPython
-      # 3.14, and every image build is platforms: linux/amd64).
+      # 3.15, and every image build is platforms: linux/amd64).
       - name: Recompile the lock from the requirements files
         run: |
           # uv takes preferences from the file named by -o, so the committed
@@ -773,22 +773,30 @@ jobs:
           # the same tree, because lxml 6.1.2 published at 04:58Z and uvicorn
           # 0.52.4 alongside it. Nothing in the repo had changed.
           cp requirements.lock /tmp/requirements.recompiled.lock
-          uv pip compile --python-version 3.14 \
+          uv pip compile --python-version 3.15 \
             --python-platform x86_64-unknown-linux-gnu --generate-hashes \
             --no-header \
             apps/web-server/requirements.txt apps/backend/requirements.txt \
             -o /tmp/requirements.recompiled.lock
+          # The py-build stage's hashed build backends (#1842), same flags.
+          cp requirements-build.lock /tmp/requirements-build.recompiled.lock
+          uv pip compile --python-version 3.15 \
+            --python-platform x86_64-unknown-linux-gnu --generate-hashes \
+            --no-header requirements-build.in \
+            -o /tmp/requirements-build.recompiled.lock
 
       - name: Fail if the committed lock differs
         run: |
-          grep -v '^#' requirements.lock > /tmp/committed.body
-          grep -v '^#' /tmp/requirements.recompiled.lock > /tmp/recompiled.body
-          if ! diff -u /tmp/committed.body /tmp/recompiled.body; then
-            echo "::error::requirements.lock is out of sync with the requirements.txt files."
-            echo "Regenerate it with the command in the requirements.lock header and commit the result."
-            exit 1
-          fi
-          echo "requirements.lock is in sync."
+          for lock in requirements requirements-build; do
+            grep -v '^#' "$lock.lock" > /tmp/committed.body
+            grep -v '^#' "/tmp/$lock.recompiled.lock" > /tmp/recompiled.body
+            if ! diff -u /tmp/committed.body /tmp/recompiled.body; then
+              echo "::error::$lock.lock is out of sync with its inputs."
+              echo "Regenerate it with the command in the $lock.lock header and commit the result."
+              exit 1
+            fi
+            echo "$lock.lock is in sync."
+          done
 
   frontend-typecheck:
     name: frontend (typecheck)
@@ -903,7 +911,9 @@ jobs:
   docker-acceptance:
     name: docker (P0 acceptance)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Above a cold-cache image build (~1575 s since CPython 3.15, #1875) plus
+    # the scans. A warm gha cache reuses the py-build stage.
+    timeout-minutes: 50
     # Docker is preinstalled on ubuntu-latest runners. Tests opt-in via
     # `-m docker`; all are skipped until P0.1+ implementations land,
     # so this job is green from day 1 and turns red the moment an
@@ -918,6 +928,31 @@ jobs:
         # the test inspects manifests, it doesn't cross-build. Cross-arch
         # building happens in release.yml at tag push time only.
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Same daily cache-bust as image-build.yml (CFactory#440): without it the
+      # cached `apk upgrade` layer never refreshes and Trivy scans stale packages.
+      - name: Compute security-refresh token
+        run: echo "SECURITY_REFRESH=$(date -u +%Y-%m-%d)" >> "$GITHUB_ENV"
+
+      # Build the image the P0 tests (and the Trivy/Syft gates) use, with its own
+      # gha layer cache, so the py-build stage's CPython 3.15 source builds
+      # (lxml, xmlsec, real-ladybug, ...) are not redone every run (#1875).
+      # The fixture reuses this tag only because AIFACTORY_P0_PREBUILT_IMAGE=1.
+      - name: Build P0 image (gha layer cache)
+        # Cold cache is ~1754 s; bounds a hung build below the job's 50 min.
+        timeout-minutes: 40
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile
+          target: runtime
+          push: false
+          load: true
+          tags: aifactory:p0-test
+          build-args: |
+            SECURITY_REFRESH=${{ env.SECURITY_REFRESH }}
+          cache-from: type=gha,scope=p0-acceptance
+          cache-to: type=gha,mode=max,scope=p0-acceptance,ignore-error=true
 
       # Trivy is PINNED, not `latest` (Factory#664). `latest` means the scanner
       # changes without a commit, so a scan verdict is not attributable to
@@ -974,5 +1009,6 @@ jobs:
       - name: Pytest docker acceptance
         env:
           CI: "true"
+          AIFACTORY_P0_PREBUILT_IMAGE: "1"
         run: apps/backend/.venv/bin/pytest tests/docker/ -m docker -v
       # Frontend lint is now a dedicated blocking job (frontend-quality, #647).

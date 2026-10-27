@@ -1016,6 +1016,10 @@ audit:
 # ---------------------------------------------------------------------------
 # LiteLLM gateway (Epic #35 #38 PR-3).
 #
+# DEPRECATED by Factory#1959 in favour of the in-house model gateway (image
+# ghcr.io/olafkfreund/aifactory:*-gateway). Still functional; removal is a
+# later slice.
+#
 # Optional sub-chart from upstream berriai/litellm-helm. When enabled,
 # a single in-cluster LiteLLM Service mediates every OpenAI-compatible
 # LLM call AIFactory makes (OpenAI, Codex CLI, Gemini, Ollama,

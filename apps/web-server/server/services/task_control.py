@@ -53,6 +53,7 @@ CONTROL_FILE_NAME = "task_control.json"
 # must be stripped from any agent-synced artifact so a worktree copy can't
 # reset them.
 CONTROL_FIELDS = ("status", "reviewReason")
+_PLAN_APPROVAL_KEYS = ("planApproved", "planApprovedBy", "planApprovedAt")
 
 
 def control_file_path(spec_dir: Path) -> Path:
@@ -129,6 +130,8 @@ def write_control(
             unless ``clear_review_reason`` is set.
         clear_review_reason: When True, explicitly removes ``reviewReason``
             (used when moving a task out of a human-review column).
+        (Writing ``review_reason="plan_review"`` also removes the plan approval,
+        so every return-to-planning path clears it in one place, #1922.)
         updated_by: Audit tag for who/what made the change.
 
     Returns the full control-state dict that was written.
@@ -146,11 +149,47 @@ def write_control(
     elif review_reason is not None:
         current["reviewReason"] = review_reason
 
+    if review_reason == "plan_review":
+        for key in _PLAN_APPROVAL_KEYS:
+            current.pop(key, None)
+
     current["updatedAt"] = _now_iso()
     current["updatedBy"] = updated_by
 
     _atomic_write_json(control_file_path(spec_dir), current)
     return current
+
+
+def record_plan_approval(spec_dir: Path, approved_by: str) -> dict[str, Any]:
+    """Record a human plan approval (#1922). Only the web-server calls this.
+
+    Out of reach of kubejob build agents. NOT of in-pod agents (subprocess
+    builds, spec creation): they share the server's uid and can write this file
+    (#1932). The approval survives plan edits during coding (subtask status
+    updates) and is cleared by reject-plan or any ``plan_review`` write.
+    """
+    current = read_control(spec_dir)
+    current.pop("_migratedFromPlan", None)
+    now = _now_iso()
+    current.update(
+        planApproved=True,
+        planApprovedBy=approved_by,
+        planApprovedAt=now,
+        updatedAt=now,
+        updatedBy=approved_by,
+    )
+    _atomic_write_json(control_file_path(spec_dir), current)
+    return current
+
+
+def clear_plan_approval(spec_dir: Path) -> None:
+    """Remove any recorded plan approval."""
+    current = read_control(spec_dir)
+    current.pop("_migratedFromPlan", None)
+    if any(k in current for k in _PLAN_APPROVAL_KEYS):
+        for key in _PLAN_APPROVAL_KEYS:
+            current.pop(key, None)
+        _atomic_write_json(control_file_path(spec_dir), current)
 
 
 def strip_control_fields(plan: dict[str, Any]) -> dict[str, Any]:

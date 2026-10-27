@@ -32,6 +32,7 @@ from server.services.audit_service import (
     audit_task_route,
 )
 from server.services.handback_receipt_store import record as record_handback_receipt
+from server.services.originator import principal_attribution
 from server.services.trusted_contract import handoff_contract, resolve_contract
 from server.services.trusted_contract_store import (
     TrustedContractStore,
@@ -56,6 +57,7 @@ if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
 from qa.correction import apply_correction  # noqa: E402 — needs sys.path above
+from review.state import ReviewState  # noqa: E402 — needs sys.path above (#1922)
 from trusted_plan import (  # noqa: E402 — needs sys.path above (#390)
     DRIFT_ABSENT,
     DRIFT_UNKNOWN,
@@ -103,9 +105,9 @@ class StartTaskRequest(BaseModel):
 class ApplyCorrectionRequest(BaseModel):
     """A correction hand-back from an external test tool (e.g. TFactory, #317).
 
-    Fields below ``confirm`` are the additive #467 typed-handback contract. They
-    are all optional, so the legacy markdown-only POST keeps working untouched
-    until TFactory cuts over to sending the structured ``triage`` block.
+    Fields below ``confirm`` are the #467 typed-handback contract. ``triage`` is
+    required while APP_REQUIRE_CORRECTION_TRIAGE is on (the default since #1872).
+    A markdown-only POST is accepted only when that setting is off.
     """
 
     fix_request_md: str = Field(..., description="QA_FIX_REQUEST.md body to apply")
@@ -115,7 +117,7 @@ class ApplyCorrectionRequest(BaseModel):
     confirm: bool = Field(
         False, description="Required true to write + run the QA Fixer"
     )
-    # Typed handback triage validation (#467) — additive / backward-compatible.
+    # Typed handback triage validation (#467); required by default since #1872.
     triage: dict | None = Field(
         None,
         description="Structured triage report (TFactory#283). When present it is "
@@ -524,18 +526,8 @@ async def start_task(
             }
             implementation_plan.write_text(json.dumps(plan_data, indent=2))
 
-            # 3. Pre-approve (skip review gate)
-            review_state_file = spec_dir / "review_state.json"
-            review_state_file.write_text(
-                json.dumps(
-                    {
-                        "approved": True,
-                        "approved_by": "auto-simple",
-                        "approved_at": datetime.now(UTC).isoformat(),
-                    },
-                    indent=2,
-                )
-            )
+            # 3. Pre-approve (skip review gate). Hashed, bound to this plan (#1922).
+            ReviewState().approve(spec_dir, approved_by="auto-simple")
 
             # 4. Set task_metadata for quick mode + reduced thinking
             task_metadata_file = spec_dir / "task_metadata.json"
@@ -677,25 +669,19 @@ async def start_task(
 
     agent_service = get_agent_service()
 
-    # Check if plan was manually approved - if so, use --force to bypass review check
-    force_execution = False
-    review_state_file = spec_dir / "review_state.json"
-    if review_state_file.exists():
-        try:
-            review_data = json.loads(review_state_file.read_text())
-            if review_data.get("approved", False):
-                force_execution = True
-                logger.info(
-                    "[StartTask] Plan was manually approved for %s, using --force",
-                    sanitize_log(task_id),
-                )
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning(
-                "[StartTask] Failed to read review_state.json for %s, "
-                "treating as not approved: %s",
-                sanitize_log(task_id),
-                sanitize_log(e),
-            )
+    # --force only on a real approval (#1922): a hash-valid ReviewState, or the
+    # web-server's own planApproved record. The raw `approved` key is not enough:
+    # a hash-less or stale approval would skip run.py's pre-flight and, with the
+    # plan present, no planner runs, so nothing else would gate coding.
+    force_execution = (
+        ReviewState.load(spec_dir).is_approval_valid(spec_dir)
+        or task_control.read_control(spec_dir).get("planApproved") is True
+    )
+    if force_execution:
+        logger.info(
+            "[StartTask] Plan was manually approved for %s, using --force",
+            sanitize_log(task_id),
+        )
 
     if force_execution:
         await agent_service.stop_stale_spec_creation(task_id)
@@ -1219,6 +1205,9 @@ async def create_and_run_task(
         "description": description,
         "created_at": datetime.now(UTC).isoformat(),
     }
+    requirements.update(
+        principal_attribution(_access if isinstance(_access, dict) else None)
+    )
     # Persist upstream provenance (#332) so the PFactory→issue→spec chain is
     # traversable. Optional — omitted entirely when no fields are provided.
     if request.provenance is not None:

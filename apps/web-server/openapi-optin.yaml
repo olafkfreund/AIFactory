@@ -852,6 +852,16 @@ components:
           type: string
           format: date-time
           title: Created At
+        autonomy_ceiling:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Autonomy Ceiling
+        agent_identity:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Identity
       type: object
       required:
       - id
@@ -1271,11 +1281,11 @@ components:
       description: 'A correction hand-back from an external test tool (e.g. TFactory, #317).
 
 
-        Fields below ``confirm`` are the additive #467 typed-handback contract. They
+        Fields below ``confirm`` are the #467 typed-handback contract. ``triage`` is
 
-        are all optional, so the legacy markdown-only POST keeps working untouched
+        required while APP_REQUIRE_CORRECTION_TRIAGE is on (the default since #1872).
 
-        until TFactory cuts over to sending the structured ``triage`` block.'
+        A markdown-only POST is accepted only when that setting is off.'
     ApprovePlanRequest:
       properties:
         auto_restart:
@@ -1457,7 +1467,6 @@ components:
           - type: string
           - type: 'null'
           title: Bottoken
-          default: ''
         model:
           type: string
           title: Model
@@ -1918,6 +1927,16 @@ components:
           - type: 'null'
           title: Expires In Days
           description: Optional expiration in days from now (max 365)
+        autonomy_ceiling:
+          anyOf:
+          - type: string
+            enum:
+            - low
+            - medium
+            - hard
+          - type: 'null'
+          title: Autonomy Ceiling
+          description: Optional most autonomous tier this key's agent may act at
       type: object
       required:
       - name
@@ -1960,6 +1979,16 @@ components:
           type: string
           format: date-time
           title: Created At
+        autonomy_ceiling:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Autonomy Ceiling
+        agent_identity:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Identity
         raw_key:
           type: string
           title: Raw Key
@@ -4815,6 +4844,18 @@ components:
           title: Repo
           description: 'Target repo (owner/name) this task runs against, for cross-portal tracking + visibility
             (W5, Factory #218).'
+        originator:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Originator
+          description: Task originator recorded at intake
+        agent_identity:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Identity
+          description: API key agent identity recorded at intake
       type: object
       required:
       - title

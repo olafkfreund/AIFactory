@@ -1,12 +1,16 @@
 """Proxy router for the stdio-MCP control plane (Issue #154).
 
-Re-exposes the 15 operations the stdio MCP client exercises today,
+Re-exposes the 16 operations the stdio MCP client exercises today,
 under ``/api/mcp-stdio/*`` — each route gated by ``acw_`` key + scope.
 
 Every handler delegates to the same service the regular REST routes
 use. The proxy adds nothing but auth + audit: no URL rewriting, no
 payload transformation, no extra hop. If a delegated handler raises
 ``HTTPException``, it propagates as-is (and no audit row is written).
+
+``acw_`` keys are user- and org-bound. Task write proxies apply the REST
+route's ``member`` check against the key owner; the legacy token acts as
+a service principal.
 
 Why import-and-call instead of HTTP-forwarding to the existing routes:
 - One process, no extra hop, no risk of an MCP request looping back
@@ -25,9 +29,18 @@ UI-driven actions in the audit log.
 from __future__ import annotations
 
 import json
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
 from fastapi import Request as FastAPIRequest
+from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from server.database.engine import get_db
+from server.project_registry import load_projects
+from server.routes.project_authz import accessible_org_ids
+from server.services.audit_service import ACTION_MCP_TASK_APPLY_CORRECTION
 
 from ..mcp_remote.auth import AuthenticatedKey
 from ..services.audit_service import (
@@ -47,10 +60,16 @@ from .auth import (
     TASK_MERGE_SCOPE,
     TASK_WRITE_SCOPE,
     _LegacyAdminKey,
+    acw_principal,
+    require_acw_access,
+    require_acw_principal,
     require_acw_scope,
 )
 
 router = APIRouter(prefix="/api/mcp-stdio", tags=["MCP (stdio)"])
+
+# Module-level so the route default is not a call (B008).
+_TASK_WRITE = Depends(require_acw_access(TASK_WRITE_SCOPE))
 
 
 async def _read_json_body(request: FastAPIRequest) -> dict:
@@ -106,40 +125,62 @@ async def _audit_mcp_write(
 
 
 @router.get("/projects")
-async def proxy_list_projects(_=Depends(require_acw_scope(MCP_READ_SCOPE))):
-    # M2M / admin proxy: return ALL registered projects (service-principal
-    # behaviour). The route-level `list_projects` is org-scoped (#319) and
-    # yields [] for the acw/legacy principal (no accessible orgs), which broke
-    # `/handover`'s project lookup. Build the unfiltered list directly — the
-    # stdio MCP proxy is already gated by `require_acw_scope(MCP_READ_SCOPE)`.
-    # (Earlier #488 forwarded request+db to list_projects, which fixed the 500
-    # but returned an empty list for this principal.)
-    from ..routes.projects import load_projects, project_to_response
+async def proxy_list_projects(
+    request: FastAPIRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: Annotated[object, Depends(require_acw_principal(MCP_READ_SCOPE))],
+):
+    from ..routes.projects import project_to_response
 
     projects = load_projects()
-    return [project_to_response(pid, pdata) for pid, pdata in projects.items()]
+    allowed = await accessible_org_ids(request, db)
+    return [
+        project_to_response(pid, pdata)
+        for pid, pdata in projects.items()
+        if allowed is None or pdata.get("org_id") in allowed
+    ]
 
 
 @router.get("/tasks")
 async def proxy_list_tasks(
+    request: FastAPIRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: Annotated[object, Depends(require_acw_principal(MCP_READ_SCOPE))],
     project_id: str | None = Query(default=None),
     status: str | None = Query(default=None),
-    _=Depends(require_acw_scope(MCP_READ_SCOPE)),
 ):
     from ..routes.tasks import list_tasks
 
-    return await list_tasks(project_id=project_id, status=status)
+    return await list_tasks(
+        project_id=project_id, status=status, request=request, db=db
+    )
 
 
 @router.get("/tasks/running")
-async def proxy_get_running_tasks(_=Depends(require_acw_scope(MCP_READ_SCOPE))):
+async def proxy_get_running_tasks(
+    request: FastAPIRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: Annotated[object, Depends(require_acw_principal(MCP_READ_SCOPE))],
+):
     from ..routes.execution import get_running_tasks
 
-    return await get_running_tasks()
+    result = await get_running_tasks()
+    allowed = await accessible_org_ids(request, db)
+    if allowed is not None:
+        projects = load_projects()
+        result.tasks = [
+            task_id
+            for task_id in result.tasks
+            if projects.get(task_id.partition(":")[0], {}).get("org_id") in allowed
+        ]
+        result.count = len(result.tasks)
+    return result
 
 
 @router.get("/tasks/{task_id}")
-async def proxy_get_task(task_id: str, _=Depends(require_acw_scope(MCP_READ_SCOPE))):
+async def proxy_get_task(
+    task_id: str, _=Depends(require_acw_access(MCP_READ_SCOPE, "viewer"))
+):
     from ..routes.tasks import get_task
 
     return await get_task(task_id)
@@ -147,7 +188,7 @@ async def proxy_get_task(task_id: str, _=Depends(require_acw_scope(MCP_READ_SCOP
 
 @router.get("/tasks/{task_id}/status")
 async def proxy_get_task_status(
-    task_id: str, _=Depends(require_acw_scope(MCP_READ_SCOPE))
+    task_id: str, _=Depends(require_acw_access(MCP_READ_SCOPE, "viewer"))
 ):
     from ..routes.execution import get_task_status
 
@@ -158,7 +199,7 @@ async def proxy_get_task_status(
 async def proxy_get_task_logs(
     task_id: str,
     tail: int = Query(default=100),
-    _=Depends(require_acw_scope(MCP_READ_SCOPE)),
+    _=Depends(require_acw_access(MCP_READ_SCOPE, "viewer")),
 ):
     from ..routes.tasks import get_task_logs
 
@@ -172,7 +213,7 @@ async def proxy_get_task_logs(
 
 @router.get("/tasks/{task_id}/worktree/diff")
 async def proxy_get_worktree_diff(
-    task_id: str, _=Depends(require_acw_scope(MCP_READ_SCOPE))
+    task_id: str, _=Depends(require_acw_access(MCP_READ_SCOPE, "viewer"))
 ):
     from ..routes.tasks import get_worktree_diff
 
@@ -216,7 +257,7 @@ async def proxy_create_and_run_task(
     project_id: str = Query(...),
     title: str = Query(...),
     description: str = Query(...),
-    key=Depends(require_acw_scope(TASK_WRITE_SCOPE)),
+    key=Depends(require_acw_access(TASK_WRITE_SCOPE)),
 ):
     # create_and_run_task expects CreateAndRunRequest (a StartTaskRequest
     # subclass that adds `provenance`, #332) and reads request.provenance.
@@ -226,7 +267,11 @@ async def proxy_create_and_run_task(
 
     body = await _read_json_body(request)
     result = await create_and_run_task(
-        project_id, title, description, CreateAndRunRequest(**body)
+        project_id,
+        title,
+        description,
+        CreateAndRunRequest(**body),
+        _access=acw_principal(key),
     )
     task_id = result.get("task_id") if isinstance(result, dict) else None
     await _audit_mcp_write(
@@ -244,7 +289,7 @@ async def proxy_create_and_run_task(
 async def proxy_start_task(
     task_id: str,
     request: FastAPIRequest,
-    key=Depends(require_acw_scope(TASK_WRITE_SCOPE)),
+    key=Depends(require_acw_access(TASK_WRITE_SCOPE)),
 ):
     from ..routes.execution import StartTaskRequest, start_task
 
@@ -264,7 +309,7 @@ async def proxy_start_task(
 async def proxy_stop_task(
     task_id: str,
     request: FastAPIRequest,
-    key=Depends(require_acw_scope(TASK_WRITE_SCOPE)),
+    key=Depends(require_acw_access(TASK_WRITE_SCOPE)),
 ):
     from ..routes.execution import stop_task
 
@@ -283,7 +328,7 @@ async def proxy_stop_task(
 async def proxy_recover_task(
     task_id: str,
     request: FastAPIRequest,
-    key=Depends(require_acw_scope(TASK_WRITE_SCOPE)),
+    key=Depends(require_acw_access(TASK_WRITE_SCOPE)),
 ):
     from ..routes.execution import RecoverTaskRequest, recover_task
 
@@ -303,7 +348,7 @@ async def proxy_recover_task(
 async def proxy_approve_plan(
     task_id: str,
     request: FastAPIRequest,
-    key=Depends(require_acw_scope(TASK_WRITE_SCOPE)),
+    key=Depends(require_acw_access(TASK_WRITE_SCOPE)),
 ):
     from ..routes.tasks import ApprovePlanRequest, approve_plan
 
@@ -319,6 +364,40 @@ async def proxy_approve_plan(
     return result
 
 
+@router.post("/tasks/{task_id}/apply-correction")
+async def proxy_apply_correction(
+    task_id: str,
+    request: FastAPIRequest,
+    key: AuthenticatedKey | _LegacyAdminKey = _TASK_WRITE,
+) -> dict[str, Any]:
+    """Proxy for the MCP ``task_apply_correction`` tool (#1874).
+
+    Delegates to the REST route so its triage gate and validation run unchanged.
+    """
+    # Lazy, like the sibling proxies: a top-level import is an import cycle.
+    from server.routes.execution import (  # noqa: PLC0415
+        ApplyCorrectionRequest,
+        apply_task_correction,
+    )
+
+    try:
+        body = ApplyCorrectionRequest(**await _read_json_body(request))
+    except ValidationError as exc:  # a bad body is a 422, not a 500
+        raise RequestValidationError(exc.errors()) from exc
+    result: dict[str, Any] = await apply_task_correction(task_id, body)
+    # Same rule as the REST route: a preview or a rejected triage is not an action.
+    if result.get("success") and result.get("confirm"):
+        await _audit_mcp_write(
+            key,
+            ACTION_MCP_TASK_APPLY_CORRECTION,
+            "task",
+            task_id,
+            request,
+            details={"source": body.source},
+        )
+    return result
+
+
 # =============================================================================
 # PR / merge — task:merge (higher blast radius)
 # =============================================================================
@@ -328,7 +407,7 @@ async def proxy_approve_plan(
 async def proxy_create_pr(
     task_id: str,
     request: FastAPIRequest,
-    key=Depends(require_acw_scope(TASK_MERGE_SCOPE)),
+    key=Depends(require_acw_access(TASK_MERGE_SCOPE)),
 ):
     from ..routes.tasks import CreatePRFromTaskOptions, create_pr_from_task
 
@@ -350,7 +429,7 @@ async def proxy_create_pr(
 async def proxy_merge_worktree(
     task_id: str,
     request: FastAPIRequest,
-    key=Depends(require_acw_scope(TASK_MERGE_SCOPE)),
+    key=Depends(require_acw_access(TASK_MERGE_SCOPE)),
 ):
     from ..routes.tasks import WorktreeMergeOptions, merge_worktree
 

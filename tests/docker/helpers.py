@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import shutil
 import subprocess
 import time
@@ -39,7 +40,8 @@ def docker_build(
     tag: str,
     build_args: dict[str, str] | None = None,
     context: Path | None = None,
-    timeout: int = 600,
+    # Cold, uncached build compiles lxml/xmlsec/real-ladybug from source (#1842).
+    timeout: int = 1800,
     target: str | None = None,
 ) -> subprocess.CompletedProcess:
     """Build a docker image. Returns the CompletedProcess for assertion.
@@ -56,6 +58,25 @@ def docker_build(
         args += ["--build-arg", f"{key}={value}"]
     args.append(str(context or REPO_ROOT))
     return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+
+
+def image_exists(tag: str) -> bool:
+    """Return whether a docker image with this tag is available locally."""
+    result = subprocess.run(
+        ["docker", "image", "inspect", tag], capture_output=True, timeout=10
+    )
+    return result.returncode == 0
+
+
+def build_or_reuse(
+    dockerfile: Path, tag: str, target: str
+) -> subprocess.CompletedProcess | None:
+    """Reuse a prebuilt image only when explicitly requested by CI."""
+    if os.environ.get("AIFACTORY_P0_PREBUILT_IMAGE") == "1":
+        if image_exists(tag):
+            return None
+        raise RuntimeError(f"Prebuilt docker image {tag} is missing")
+    return docker_build(dockerfile, tag, target=target)
 
 
 def docker_run(
