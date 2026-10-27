@@ -122,6 +122,26 @@ def test_demoted_owner_key_loses_write(db):
     assert _scopes(db) == {"mcp:read"}
 
 
-def test_removed_member_key_has_no_scopes(db):
+def test_removed_member_key_fails(db):
     _exec(db, delete(OrgMember))
-    assert _scopes(db) == frozenset()
+    with pytest.raises(MCPAuthError, match="no scopes"):
+        _scopes(db)
+
+
+def test_deleted_org_key_fails(db):
+    _exec(db, update(Organization).values(deleted_at=datetime.now(UTC)))
+    with pytest.raises(MCPAuthError, match="organization is deleted"):
+        _scopes(db)
+
+
+def test_empty_stored_scopes_fail(db):
+    _exec(db, update(ApiKey).values(scopes=""))
+    with pytest.raises(MCPAuthError, match="no scopes"):
+        _scopes(db)
+
+
+def test_viewer_with_only_api_scope_fails(db):
+    _exec(db, update(OrgMember).values(role="viewer"))
+    _exec(db, update(ApiKey).values(scopes="api"))
+    with pytest.raises(MCPAuthError, match="no scopes"):
+        _scopes(db)

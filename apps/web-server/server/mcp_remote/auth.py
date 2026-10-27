@@ -28,12 +28,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.database.engine import get_db
-from server.database.models import ApiKey, OrgMember, User
+from server.database.models import ApiKey, Organization, OrgMember, User
 from server.error_ref import InputRejectedError
 from server.routes.organizations import _role_level
 
 MCP_READ_SCOPE = "mcp:read"
 MCP_WRITE_SCOPE = "mcp:write"
+API_SCOPE = "api"
 
 
 @dataclass(frozen=True)
@@ -89,6 +90,8 @@ async def authenticate(authorization_header: str | None) -> AuthenticatedKey:
     - Non-Bearer scheme
     - Unknown key (hash doesn't match any row)
     - Key whose owner is missing or deactivated
+    - Key whose organization is missing or deleted
+    - Key with no scopes left after capping by the owner's current role
     - Expired key (``expires_at`` in the past)
 
     Scope enforcement is the CALLER's job — this function only proves
@@ -130,6 +133,10 @@ async def _lookup_by_digest(session: AsyncSession, digest: str) -> Authenticated
         owner = await session.get(User, row.user_id)
         if owner is None or not owner.is_active:
             raise MCPAuthError("API key owner is deactivated")
+    if row.org_id:
+        org = await session.get(Organization, row.org_id)
+        if org is None or org.deleted_at is not None:
+            raise MCPAuthError("API key organization is deleted")
     # SQLite hands back naive datetimes; they are stored as UTC.
     if row.expires_at is not None and row.expires_at.replace(
         tzinfo=row.expires_at.tzinfo or UTC
@@ -140,6 +147,8 @@ async def _lookup_by_digest(session: AsyncSession, digest: str) -> Authenticated
     scopes = frozenset(s.strip() for s in scopes_raw.split(",") if s.strip())
     if row.user_id:
         scopes = await _cap_by_owner_role(session, row, scopes)
+    if not scopes:
+        raise MCPAuthError("API key has no scopes for its owner's current role")
     return AuthenticatedKey(
         key_id=str(row.id),
         scopes=scopes,

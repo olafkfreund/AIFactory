@@ -46,3 +46,82 @@ Revert the PR.
 - The generated autonomy matrix (`docs/docs/compliance/autonomy-matrix.md` and `.json`) was
   regenerated with `scripts/gen_autonomy_matrix.py`. The new `server.routes.organizations`
   import raises the `pr_review_service` reach count from 277 to 280. Nothing else changed.
+
+## Review changes (lead's Opus review of PR #1914)
+
+Once keys work, REST and stdio key access ignores the key's scopes and its org. These steps
+close that before merge. Decisions:
+- REST needs the explicit scope `api` (`API_SCOPE`, mirroring PFactory). With the existing cap
+  (below member, only `mcp:read`), `api` requires member or above. The #1911 mint cap already
+  refuses it for viewers, so the mapping does not change.
+- A key whose effective (capped) scopes are empty fails authentication everywhere.
+- A key principal (`api_key_id` set) is bound to `key.org_id` for project authz, list
+  filters, project-create ownership and org-role routes.
+- A key whose org is missing or has `deleted_at` set fails authentication.
+- Minting stores `expires_at` as naive UTC. Verified locally that asyncpg rejects an aware
+  datetime in the naive `DateTime` column with "can't subtract offset-naive and offset-aware".
+
+2. `apps/web-server/server/mcp_remote/auth.py`:
+   - Add `API_SCOPE = "api"` next to `MCP_READ_SCOPE` / `MCP_WRITE_SCOPE`.
+   - In `_lookup_by_digest`, after the owner check, load `session.get(Organization, row.org_id)`.
+     A missing org or `deleted_at` set raises `MCPAuthError("API key organization is deleted")`.
+   - After the role cap, empty scopes raise
+     `MCPAuthError("API key has no scopes for its owner's current role")`.
+   - Update the `authenticate` docstring bullets.
+   - Update `tests/test_acw_key_lookup.py`:
+     - the removed-member test now expects that error;
+     - add a deleted org (`deleted_at` set) failing;
+     - add stored scopes `""` failing;
+     - add a viewer with only `api` failing (capped to empty).
+   → verify: `pytest tests/test_acw_key_lookup.py -q`
+
+3. `apps/web-server/server/auth.py` Strategy 3 (around lines 362-373): after
+   `_authenticate_acw`, if `API_SCOPE not in key.scopes`, do not authenticate. Fall through
+   to the same 401 as an invalid key.
+   Add real-DB REST middleware tests in a new `tests/test_acw_rest_scope.py`. Use
+   `TokenAuthMiddleware` on a tiny app, monkeypatch `server.mcp_remote.auth.get_db` to yield
+   a SQLite session, and use the `no_disable_auth` pattern from `tests/test_auth_acw_main_api.py`.
+   Cases:
+   - an `api`-scoped member key gets 200;
+   - an `mcp:read`-only key gets 401;
+   - an empty-scope key gets 401;
+   - a deleted-org key gets 401;
+   - an other-org key gets 403 on a project route guarded by `require_project_access()`
+     (monkeypatch `server.project_registry.load_projects` so a project belongs to org-2,
+     where the owner is also a member).
+   → verify: `pytest tests/test_acw_rest_scope.py tests/test_auth_acw_main_api.py -q`
+
+4. Bind key principals to `key.org_id`:
+   - `apps/web-server/server/routes/project_authz.py`:
+     - `check_project_access`: after the project-org check, if `user.get("api_key_id")` and
+       `user.get("org_id") != org_id`, raise 403 "This API key is scoped to another
+       organization" (before the membership check).
+     - `accessible_org_ids`: for a key principal, intersect the result with `{user["org_id"]}`.
+     - `resolve_owner_org_id`: for a key principal, return `user["org_id"]`.
+   - `apps/web-server/server/routes/organizations.py` `OrgRoleChecker.__call__`: add
+     `request: Request` and the same 403 when a key principal's org is not the path org.
+   Tests:
+   - pure tests in `tests/test_project_authz.py`;
+   - a stdio test in `tests/test_mcp_stdio_task_access.py`: a member of both orgs using an
+     org-1 key gets 403 on an org-2 project task write and on a read, and org-2 projects are
+     filtered out of list results.
+   → verify: `pytest tests/test_project_authz.py tests/test_mcp_stdio_*.py tests/rmux -q`
+   Not covered: `git_credentials._verify_org_membership` and `access_review` take a `User`,
+   not the principal, so they stay unbound. That goes in the follow-up issue; key creation
+   with a key is already refused.
+
+5. `apps/web-server/server/routes/api_keys.py` around line 193: store
+   `(datetime.now(UTC) + timedelta(days=...)).replace(tzinfo=None)`, with a one-line why
+   comment. Add `tests/postgres/test_api_key_expiry_pg.py`, marked `postgres` and `slow`
+   like its siblings and using the `test_postgres_url` fixture. It mints with
+   `expires_in_days=1` through the api_keys router on PG and gets 201, and
+   `_lookup_by_digest` accepts the key. With `expires_at` set to the past, the lookup
+   rejects it.
+   → verify: `TEST_POSTGRES_URL=postgresql+asyncpg://pgtest@127.0.0.1:55432/t pytest tests/postgres/test_api_key_expiry_pg.py -m postgres -q`
+   (a local throwaway PG is running on 55432).
+
+Traps for every step:
+- Use absolute `server.` imports (TID252).
+- Never `git add -A`.
+- Run the cq ratchets and `scripts/gen_autonomy_matrix.py --check`, and regenerate if an
+  import changed.
