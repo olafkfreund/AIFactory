@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1921
 spec: spec/2026-10-27-1921-sync-allowlist.md
 ---
