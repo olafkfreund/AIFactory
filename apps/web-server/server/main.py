@@ -232,13 +232,8 @@ async def lifespan(app: FastAPI):
 
     # Reconcile kubejob builds and reap orphaned subprocess rows when the
     # durable store is enabled (#671, #1705).
-    from .services.build_backend import (
-        kubejob_enabled as _kubejob_enabled,
-        log_backend_config,
-    )
+    from .services.build_backend import kubejob_enabled as _kubejob_enabled
     from .services.job_state_store import store_enabled  # noqa: PLC0415
-
-    log_backend_config(logger, store_enabled())
 
     app.state.kubejob_reconcile_stop = None
     app.state.kubejob_reconcile_task = None
@@ -251,6 +246,11 @@ async def lifespan(app: FastAPI):
         logger.info("RFC-0016 #671/#1705 build reconcile loop started")
     else:
         logger.info("RFC-0016 #671 kubejob build backend disabled (subprocess default)")
+
+    # #1932: say at startup when agent launches will be refused, or run unisolated.
+    from .services.build_backend import log_backend_config  # noqa: PLC0415
+
+    log_backend_config(logger, store_enabled())
 
     # #1064: sweep tasks whose worker died and left them looking active. Runs
     # here rather than as a CronJob because the spec tree lives on a RWO
