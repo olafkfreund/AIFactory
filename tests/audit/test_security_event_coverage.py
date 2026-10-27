@@ -73,8 +73,9 @@ def test_auth_failure_writes_chained_audit(fresh_db, monkeypatch) -> None:
 @pytest.mark.audit
 def test_authz_denial_writes_chained_audit(fresh_db, monkeypatch) -> None:
     """A human user denied access to a project (403) writes a chained
-    ``authz.denied`` row on the request-scoped session."""
+    ``authz.denied`` row that survives the request session's rollback (#1919)."""
     from fastapi import HTTPException
+    from server.database import engine as db_engine
     from server.database.models import AuditLog
     from server.routes import project_authz
     from server.services import audit_service
@@ -82,6 +83,8 @@ def test_authz_denial_writes_chained_audit(fresh_db, monkeypatch) -> None:
     from sqlalchemy import select
 
     _engine, SessionLocal = fresh_db
+    # The denial is written on its own session (log_audit_event_bg).
+    monkeypatch.setattr(db_engine, "async_session_factory", SessionLocal)
 
     # The test suite runs with auth disabled (dev mode); force it ON so the
     # real authz rule runs instead of the DISABLE_AUTH short-circuit.
@@ -107,9 +110,11 @@ def test_authz_denial_writes_chained_audit(fresh_db, monkeypatch) -> None:
             except HTTPException as exc:
                 raised = True
                 _require(exc.status_code == 403, f"expected 403, got {exc.status_code}")
-            await s.commit()
+            # No handler commits after a denial; get_db closes, which rolls back.
+            await s.rollback()
             _require(raised, "authz denial did not raise 403")
 
+        async with SessionLocal() as s:
             result = await s.execute(
                 select(AuditLog).order_by(AuditLog.created_at.asc())
             )

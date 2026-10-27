@@ -441,6 +441,8 @@ class ProjectAnalyzer:
 def seed_profile_with_plan_commands(
     project_dir: Path,
     plan_path: Path,
+    *,
+    plan: dict[str, object] | None = None,
 ) -> list[str]:
     """Merge a plan's declared verification commands into the enforced allowlist.
 
@@ -458,6 +460,8 @@ def seed_profile_with_plan_commands(
     Args:
         project_dir: The agent's working directory / worktree root (== hook cwd).
         plan_path: Path to ``implementation_plan.json``.
+        plan: Callers pass this to grant from a snapshot instead of the live,
+            agent-writable file (#1940).
 
     Returns:
         Sorted list of newly-granted command names (empty if none / on error).
@@ -466,13 +470,14 @@ def seed_profile_with_plan_commands(
     # security packages.
     from security.plan_commands import grantable_commands_from_plan
 
-    try:
-        plan = json.loads(Path(plan_path).read_text())
-    except (OSError, json.JSONDecodeError) as exc:
-        logger.warning(
-            "plan-commands seed skipped: cannot read %s (%s)", plan_path, exc
-        )
-        return []
+    if plan is None:
+        try:
+            plan = json.loads(Path(plan_path).read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning(
+                "plan-commands seed skipped: cannot read %s (%s)", plan_path, exc
+            )
+            return []
 
     granted, rejected = grantable_commands_from_plan(plan)
     if rejected:

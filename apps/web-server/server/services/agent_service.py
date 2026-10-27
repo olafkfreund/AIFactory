@@ -878,7 +878,7 @@ class AgentService(
             # cap <= 0 => unlimited (back-compat). Otherwise admit immediately
             # only when strictly below the cap.
             if cap <= 0 or len(self.running_tasks) < cap:
-                return await self._spawn_task_execution(
+                return await self._start_build_unit(  # type: ignore[no-any-return]
                     task_id=task_id,
                     project_path=project_path,
                     spec_id=spec_id,

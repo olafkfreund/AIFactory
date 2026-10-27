@@ -437,6 +437,7 @@ async def run_parallel_coding_phase(
     source_spec_dir: Path | None = None,
     remote_control_session: str | None = None,
     recovery_manager: Any = None,
+    approved_plan: dict[str, object] | None = None,
 ) -> PhaseRunResult:
     """Run one ``parallel_safe`` phase's subtasks concurrently in waves.
 
@@ -525,7 +526,10 @@ async def run_parallel_coding_phase(
                 _child_plan = child_spec_dir / "implementation_plan.json"
                 if _child_plan.exists():
                     await asyncio.to_thread(
-                        seed_profile_with_plan_commands, child_path, _child_plan
+                        seed_profile_with_plan_commands,
+                        child_path,
+                        _child_plan,
+                        plan=approved_plan,
                     )
             except Exception:
                 pass  # never let allowlist seeding break a parallel subtask
