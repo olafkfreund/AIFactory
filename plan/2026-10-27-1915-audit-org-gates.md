@@ -50,3 +50,6 @@ Revert the PR.
 - An `acw_` key principal may export only its own org. This matches the key/org binding in
   AIFactory #1914.
 - Tests added for both.
+- `apps/web-server/openapi.yaml` was regenerated (`APP_DISABLE_AUTH=true python
+  scripts/generate-openapi-spec.py`). The access-review route lost its `org` param and the
+  export docstring changed, so refresh-and-validate needs the regenerated spec.

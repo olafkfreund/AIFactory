@@ -843,15 +843,13 @@ paths:
         ``python -m server.audit verify-chain``).
 
 
-        Permission gate: any authenticated user can export their own
+        Permission gate: a service principal (or auth-disabled dev) may export
 
-        audit trail. Filtering by ``org_id`` requires the caller to be
+        anything. Otherwise ``org_id`` is required and the caller must be an
 
-        a member of that org (enforced by the route''s depend chain
+        admin (or owner) of that org; an API key only for its own org. No role
 
-        when called via the gateway — for now we keep the gate light,
-
-        matching the existing /api/orgs/{org_id}/audit route).'
+        claim on the token is trusted; membership is read from the DB.'
       operationId: export_audit_logs_api_audit_export_get
       parameters:
       - name: format
@@ -947,14 +945,6 @@ paths:
         queries for membership history.'
       operationId: export_access_review_api_admin_access_review_get
       parameters:
-      - name: org
-        in: query
-        required: true
-        schema:
-          type: string
-          description: Organization ID to review
-          title: Org
-        description: Organization ID to review
       - name: org_id
         in: query
         required: true
