@@ -695,7 +695,7 @@ async def run_parallel_coding_phase(
                 wt_mgr.commit_in_worktree,
                 child_name,
                 f"aifactory: {subtask.id} (parallel wave)",
-                spec_dir=spec_dir,
+                spec_dir=source_spec_dir or spec_dir,
             )
 
             # --- memory WRITE: extract insights (concurrent) then save (serialized) ---
