@@ -81,7 +81,7 @@ jobs:
       # the other's violation, and the directory that holds the RATCHET ITSELF
       # could not be added here while that was true.
       - name: Ruff lint
-        run: apps/backend/.venv/bin/ruff check apps/backend apps/web-server scripts tests
+        run: apps/backend/.venv/bin/ruff check apps/backend apps/web-server apps/model-gateway scripts tests
 
       # An S3 server for the workspace integration tests (Epic #35 #40
       # half-B). Started as a regular ``docker run`` rather than a service

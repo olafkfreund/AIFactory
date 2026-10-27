@@ -15,7 +15,7 @@ flag.
   the change history.
 
 - **One org per call.** No multi-tenant access review in v1.1; the
-  ``?org`` query parameter is required.
+  ``?org_id`` query parameter is required.
 
 - **NDJSON output.** Matches the audit-export pattern so reviewers
   can stream into their existing audit pipelines.
@@ -32,7 +32,7 @@ import json
 import logging
 from typing import AsyncIterator
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -57,8 +57,7 @@ router = APIRouter(prefix="/api/admin", tags=["Admin"])
     ),
 )
 async def export_access_review(
-    org: str = Query(..., description="Organization ID to review"),
-    membership: OrgMember = Depends(require_org_role("admin")),  # noqa: ARG001
+    membership: OrgMember = Depends(require_org_role("admin")),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     """Stream the current OrgMember roster as NDJSON.
@@ -68,11 +67,11 @@ async def export_access_review(
     doesn't materialise everything in memory.
     """
     return StreamingResponse(
-        _stream_review(db, org_id=org),
+        _stream_review(db, org_id=membership.org_id),
         media_type="application/x-ndjson",
         headers={
             "Content-Disposition": (
-                f'attachment; filename="access-review-{org}.ndjson"'
+                f'attachment; filename="access-review-{membership.org_id}.ndjson"'
             ),
         },
     )

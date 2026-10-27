@@ -19,6 +19,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from server.mcp_remote.auth import MCP_READ_SCOPE
+
 from ..database import ApiKey, OrgMember, User
 from ..database.engine import get_db
 from .auth_routes import get_current_user
@@ -173,6 +175,16 @@ async def create_api_key(
             detail="API keys cannot be created with an API key",
         )
 
+    # A viewer may only read; remote MCP gates write tools on the key's scope
+    # alone, so a viewer must not mint a write scope (#1908, Factory#312).
+    if _role_level(membership.role) < _role_level("member") and set(
+        body.scopes or ()
+    ) - {MCP_READ_SCOPE}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Scopes beyond 'mcp:read' require the 'member' org role",
+        )
+
     # Setting a ceiling is an org-admin decision. No ceiling stays open to
     # members for backward compatibility; slice 2 must close that before the
     # ceiling gates merges (see the #1960 spec).
@@ -190,7 +202,10 @@ async def create_api_key(
     # Compute expiration if requested
     expires_at: datetime | None = None
     if body.expires_in_days is not None:
-        expires_at = datetime.now(UTC) + timedelta(days=body.expires_in_days)
+        # Naive UTC: the column is a naive DateTime and asyncpg rejects aware values.
+        expires_at = (datetime.now(UTC) + timedelta(days=body.expires_in_days)).replace(
+            tzinfo=None
+        )
 
     # Serialize scopes as comma-separated string for storage
     scopes_str: str | None = None

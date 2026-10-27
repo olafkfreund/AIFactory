@@ -123,6 +123,9 @@ async def approve_plan(
     # Approve the plan
     review_state = ReviewState.load(spec_dir)
     review_state.approve(spec_dir, approved_by="web_user")
+    # Control-plane record of the human approval; StartTask trusts this, not
+    # the agent-writable review_state.json (#1922).
+    task_control.record_plan_approval(spec_dir, "web_user")
 
     # Update implementation_plan.json status back to in_progress
     plan_file = spec_dir / "implementation_plan.json"
@@ -270,6 +273,7 @@ async def reject_plan(
 
     review_state = ReviewState.load(spec_dir)
     review_state.reject(spec_dir)
+    task_control.clear_plan_approval(spec_dir)
     if request.feedback:
         review_state.add_feedback(request.feedback, spec_dir=spec_dir)
 

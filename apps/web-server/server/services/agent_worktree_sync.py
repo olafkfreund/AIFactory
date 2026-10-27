@@ -91,13 +91,21 @@ class WorktreeSyncMixin:
             "qa_report.md",
             "QA_FIX_REQUEST.md",
             "spec.md",
-            "requirements.json",
         ]
 
-        # NOTE: task_control.json and qa_review_cycle.json are deliberately
-        # ABSENT from files_to_sync. Both are authoritative state owned outside
-        # the agent's worktree (control-plane #259, QA review-cycle #260) and a
-        # worktree copy must never reset or replay them.
+        # Other build-written files the control plane reads from the main spec
+        # dir (#1921). An ALLOWLIST, never "everything else": the worktree is
+        # seeded with the whole canonical spec dir and the agent can write it,
+        # so a generic mirror copied its task_metadata.json, review_state.json,
+        # task_control.json, requirements.json, COMPLETED.json, ... back over
+        # the control plane's own copies. injection_scan.json is deliberately
+        # absent: the build writes its verdict to the source spec dir itself,
+        # and mirroring would let the agent turn "flagged" into "pass".
+        extra_files_to_sync = (
+            "token_usage.json",
+            "guardrail_halt.json",
+            "handback_received.json",
+        )
 
         # Directories to sync (merged into the destination, see below).
         #
@@ -218,23 +226,16 @@ class WorktreeSyncMixin:
                 except Exception as e:
                     logger.warning(f"[AgentService] Failed to sync {filename}: {e}")
 
-        # Sync any additional files created by the agent (e.g., plan .md files)
-        # that aren't in the hardcoded list
-        try:
-            known_files = set(files_to_sync)
-            for src_file in worktree_spec.iterdir():
-                if src_file.is_file() and src_file.name not in known_files:
-                    try:
-                        shutil.copy2(src_file, main_spec / src_file.name)
-                        synced_count += 1
-                    except Exception as e:
-                        logger.warning(
-                            f"[AgentService] Failed to sync extra file {src_file.name}: {e}"
-                        )
-        except OSError as e:
-            logger.warning(
-                f"[AgentService] Failed to scan worktree spec dir for extra files: {e}"
-            )
+        for filename in extra_files_to_sync:
+            src = worktree_spec / filename
+            if src.is_file():
+                try:
+                    shutil.copy2(src, main_spec / filename)
+                    synced_count += 1
+                except Exception as e:
+                    logger.warning(
+                        f"[AgentService] Failed to sync extra file {filename}: {e}"
+                    )
 
         # Sync directories — MERGE, never replace (#1033).
         #

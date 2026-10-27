@@ -556,6 +556,28 @@ ENTRYPOINT []
 CMD ["/home/projects/MagesticAI/.venv/bin/python", "-m", "server.main"]
 
 # ---------------------------------------------------------------------------
+# Stage: gateway (the ``-gateway`` image tag) -- Factory#1959
+# ---------------------------------------------------------------------------
+# Stdlib-only model gateway: one file, no venv, no app code. Built with
+# ``--target gateway``; same pinned base and security refresh as ``runtime``.
+FROM cgr.dev/chainguard/python:latest-dev@sha256:dde1a2549dd62864f0263dae8e877680837b4e738a7ecc85c671c55c069848ac AS gateway
+
+USER root
+
+ARG SECURITY_REFRESH=0
+RUN echo "security refresh: ${SECURITY_REFRESH}" \
+    && apk upgrade --no-cache
+
+# COPY creates /app without the execute bit here, so the nonroot user cannot
+# traverse it; create it explicitly.
+RUN mkdir -m 0755 /app
+COPY --chmod=0644 apps/model-gateway/gateway.py /app/gateway.py
+
+USER 65532
+EXPOSE 8080
+ENTRYPOINT ["python", "/app/gateway.py"]
+
+# ---------------------------------------------------------------------------
 # Stage 3: build-runtime (the ``-nix`` variant) — runtime image + baked Nix
 # ---------------------------------------------------------------------------
 # RFC-0017 #190: packed (multi-node) build Jobs must NOT mount the warm-store
