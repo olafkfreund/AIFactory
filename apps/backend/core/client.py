@@ -57,7 +57,17 @@ def _patch_sdk_message_parser() -> None:
 
         def _patched_parse(data):
             try:
-                return _original_parse(data)
+                parsed = _original_parse(data)
+                if getattr(parsed, "error", None) == "rate_limit":
+                    try:
+                        from core.phase_event import (  # noqa: PLC0415 - parse hot path stays import-light
+                            emit_rate_limit,
+                        )
+
+                        emit_rate_limit()
+                    except Exception:  # noqa: BLE001 - must never break parsing
+                        logger.debug("rate-limit marker emit failed", exc_info=True)
+                return parsed
             except MessageParseError as e:
                 msg = str(e)
                 if "Unknown message type" in msg:
