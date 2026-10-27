@@ -30,3 +30,16 @@ Above, plus the stdio MCP tests (`tests/ -k mcp_stdio`).
 ## Rollback
 
 Revert the PR.
+
+## Deviations
+
+- Step 1: `_lookup_by_digest` checked `row.is_active`, but `ApiKey` has no such column. Every
+  real key raised AttributeError, so acw_ keys never authenticated on dev: REST returned 401,
+  stdio and remote MCP returned 500. The lead decided to replace that dead check with an owner
+  check: a missing owner or `User.is_active` False raises "API key owner is deactivated". This
+  matches PFactory's REST path and covers SCIM soft-deprovisioning.
+  Before the change I confirmed that revoke hard-deletes the row and that `api_keys` never had
+  an `is_active` or soft-delete column.
+  Behaviour change: acw_ keys start authenticating on AIF REST, stdio and remote MCP.
+- The test file uses real-DB tests for revoked, expired, deactivated-owner, demoted-owner and
+  removed-member keys, as the lead asked.

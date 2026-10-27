@@ -22,14 +22,16 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.error_ref import InputRejectedError
+from server.routes.organizations import _role_level
 
 from ..database.engine import get_db
-from ..database.models import ApiKey
+from ..database.models import ApiKey, OrgMember, User
 
 MCP_READ_SCOPE = "mcp:read"
 MCP_WRITE_SCOPE = "mcp:write"
@@ -87,7 +89,8 @@ async def authenticate(authorization_header: str | None) -> AuthenticatedKey:
     - Missing ``Authorization`` header
     - Non-Bearer scheme
     - Unknown key (hash doesn't match any row)
-    - Disabled key (``is_active=False``)
+    - Key whose owner is missing or deactivated
+    - Expired key (``expires_at`` in the past)
 
     Scope enforcement is the CALLER's job — this function only proves
     the key exists and is enabled. Use ``require_scope()`` after to
@@ -122,17 +125,51 @@ async def _lookup_by_digest(session: AsyncSession, digest: str) -> Authenticated
     row = result.scalar_one_or_none()
     if row is None:
         raise MCPAuthError("Invalid API key")
-    if not row.is_active:
-        raise MCPAuthError("API key has been revoked")
+    # Revoke hard-deletes the row (no is_active on ApiKey); a SCIM-deprovisioned
+    # owner is soft-deleted instead, so their keys must stop here (#1913).
+    if row.user_id:
+        owner = await session.get(User, row.user_id)
+        if owner is None or not owner.is_active:
+            raise MCPAuthError("API key owner is deactivated")
+    # SQLite hands back naive datetimes; they are stored as UTC.
+    if row.expires_at is not None and row.expires_at.replace(
+        tzinfo=row.expires_at.tzinfo or UTC
+    ) <= datetime.now(UTC):
+        raise MCPAuthError("API key has expired")
 
     scopes_raw = row.scopes or ""
     scopes = frozenset(s.strip() for s in scopes_raw.split(",") if s.strip())
+    if row.user_id:
+        scopes = await _cap_by_owner_role(session, row, scopes)
     return AuthenticatedKey(
         key_id=str(row.id),
         scopes=scopes,
         user_id=str(row.user_id) if row.user_id else None,
         org_id=str(row.org_id) if row.org_id else None,
     )
+
+
+async def _cap_by_owner_role(
+    session: AsyncSession, row: ApiKey, scopes: frozenset[str]
+) -> frozenset[str]:
+    """Cap stored scopes by the owner's CURRENT role in the key's org (#1913).
+
+    Same mapping as the mint-time cap (#1908): below member only ``mcp:read``,
+    no membership no scopes. A demotion or removal therefore takes effect on
+    the next call instead of surviving in the stored scopes.
+    """
+    role = (
+        await session.execute(
+            select(OrgMember.role).where(
+                OrgMember.org_id == row.org_id, OrgMember.user_id == row.user_id
+            )
+        )
+    ).scalar_one_or_none()
+    if role is None:
+        return frozenset()
+    if _role_level(role) < _role_level("member"):
+        return scopes & {MCP_READ_SCOPE}
+    return scopes
 
 
 def require_scope(key: AuthenticatedKey, scope: str) -> None:
