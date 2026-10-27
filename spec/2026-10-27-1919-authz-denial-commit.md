@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1919
 intent: intent/2026-10-27-1919-authz-denial-commit.md
 ---
