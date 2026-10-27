@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1927
 spec: spec/2026-10-27-1927-planner-selected-skills.md
 ---
