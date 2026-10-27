@@ -20,6 +20,9 @@ from urllib.parse import urlparse
 
 MAX_BODY = 10 * 1024 * 1024
 UPSTREAM_TIMEOUT = 120
+# Per-socket inbound timeout: without it a silent or short-body client holds a
+# handler thread forever (slowloris, and rfile.read on a short body).
+CLIENT_TIMEOUT = 30
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -55,6 +58,8 @@ def load_config(env) -> Config:
 
 def make_server(config: Config, host: str, port: int) -> ThreadingHTTPServer:
     class Handler(BaseHTTPRequestHandler):
+        timeout = CLIENT_TIMEOUT
+
         def _reply(self, status, body=b"", ctype="application/json"):
             self.send_response(status)
             self.send_header("Content-Type", ctype)
@@ -110,11 +115,13 @@ def make_server(config: Config, host: str, port: int) -> ThreadingHTTPServer:
                         resp.read(),
                     )
             except urllib.error.HTTPError as err:
-                status, ctype, body = (
-                    err.code,
-                    err.headers.get("Content-Type"),
-                    err.read(),
-                )
+                # Upstream error bodies are passed through as-is; some providers
+                # quote a masked form of the key in them.
+                try:
+                    body = err.read()
+                except OSError:
+                    return self._error(502, "upstream unreachable")
+                status, ctype = err.code, err.headers.get("Content-Type")
             except (urllib.error.URLError, OSError):
                 return self._error(502, "upstream unreachable")
             self._reply(status, body, ctype or "application/json")

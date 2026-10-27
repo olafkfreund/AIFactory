@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import socket
 import sys
 import threading
 import urllib.error
@@ -170,3 +171,15 @@ def test_redirect_is_not_followed(upstream):
     server.shutdown()
     redirector.shutdown()
     redirector.server_close()
+
+
+def test_silent_client_is_disconnected(monkeypatch):
+    monkeypatch.setattr(gateway, "CLIENT_TIMEOUT", 1)
+    server, _ = _gateway({})
+    sock = socket.create_connection(server.server_address, timeout=5)
+    try:
+        assert sock.recv(1) == b""  # gateway closed the idle socket
+    finally:
+        sock.close()
+        server.shutdown()
+        server.server_close()
