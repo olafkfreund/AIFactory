@@ -35,3 +35,12 @@ The pytest command in step 2: all pass.
 ## Rollback
 
 Revert the PR commit; the generic mirror returns.
+
+## Deviations
+
+- `apps/web-server/server/services/review_redrive_service.py`: the
+  `sync_spec_file_from_worktree` docstring said the subprocess sync copies the
+  whole spec dir; corrected to say it copies an allowlist. Docstring only.
+- Step 2 test: as approved by the lead, split into one forgery test
+  (`task_metadata.json`, `review_state.json`, `COMPLETED.json`, an unlisted
+  file) and a parametrized positive test per allowlisted file.
