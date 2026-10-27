@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1944
 intent: intent/2026-10-27-1944-untrusted-profile.md
 ---
