@@ -1005,8 +1005,17 @@ def test_merge_pr_argv_unchanged_without_body():
     r = FakeRunner({})
     pe.merge_pr("o", "r", 5, match_head="abc", runner=r)
     assert r.calls == [
-        ["gh", "pr", "merge", "5", "--squash", "--repo", "o/r"]
-        + ["--match-head-commit", "abc"]
+        [
+            "gh",
+            "pr",
+            "merge",
+            "5",
+            "--squash",
+            "--repo",
+            "o/r",
+            "--match-head-commit",
+            "abc",
+        ]
     ]
 
 
