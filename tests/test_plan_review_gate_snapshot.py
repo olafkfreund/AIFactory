@@ -126,6 +126,19 @@ def _paused(spec_dir: Path, session_mock: AsyncMock) -> bool:
     )
 
 
+def _proceeded(spec_dir: Path, session_mock: AsyncMock) -> bool:
+    """The gate let the build through: the planner's plan was never stamped.
+
+    get_next_subtask is mocked to None, so no coder session follows the gate.
+    """
+    plan = json.loads((spec_dir / "implementation_plan.json").read_text())
+    return (
+        "status" not in plan
+        and "reviewReason" not in plan
+        and session_mock.await_count == 1
+    )
+
+
 def _approve_then_remove_plan(spec_dir: Path, plan: dict) -> None:
     """Pre-planner approval bound to ``plan``; the plan is gone so a planner runs."""
     _write_plan(spec_dir, plan)
@@ -186,7 +199,7 @@ class TestPostPlannerGate:
         spec_dir = _make_spec(tmp_path)
         _approve_then_remove_plan(spec_dir, PLAN_A)
         m = await _drive(spec_dir, tmp_path, _planner(PLAN_A))
-        assert not _paused(spec_dir, m)
+        assert _proceeded(spec_dir, m)
 
     async def test_planner_enabling_review_does_not_pause(self, tmp_path):
         spec_dir = _make_spec(tmp_path, {"requireReviewBeforeCoding": False})
@@ -198,13 +211,13 @@ class TestPostPlannerGate:
                 lambda d: _write_meta(d, {"requireReviewBeforeCoding": True}),
             ),
         )
-        assert not _paused(spec_dir, m)
+        assert _proceeded(spec_dir, m)
 
     async def test_solo_on_not_paused(self, tmp_path, monkeypatch):
         monkeypatch.setenv("AIFACTORY_SOLO_MODE", "true")
         spec_dir = _make_spec(tmp_path)
         m = await _drive(spec_dir, tmp_path, _planner(PLAN_A))
-        assert not _paused(spec_dir, m)
+        assert _proceeded(spec_dir, m)
 
     async def test_skip_planning_fast_path_not_paused(self, tmp_path, monkeypatch):
         monkeypatch.delenv("AIFACTORY_SOLO_MODE")  # the env override wins over metadata
@@ -212,17 +225,16 @@ class TestPostPlannerGate:
             tmp_path, {"requireReviewBeforeCoding": True, "skipPlanning": True}
         )
         m = await _drive(spec_dir, tmp_path, _planner(PLAN_A))
-        assert not _paused(spec_dir, m)
+        assert _proceeded(spec_dir, m)
 
 
 # ---------------------------------------------------------------------------
 # Restart without approval: the plan exists, so no planner runs and the coder
 # gate is not reached. run.py's pre-flight is the guard.
 # ---------------------------------------------------------------------------
-def _run_build(spec_dir: Path, tmp_path: Path) -> AsyncMock:
+def _run_build(spec_dir: Path, tmp_path: Path, agent_mock: AsyncMock) -> None:
     from cli import build_commands
 
-    agent_mock = AsyncMock(return_value=None)
     patches = [
         patch("agent.run_autonomous_agent", new=agent_mock),
         patch("agent.sync_plan_to_source", MagicMock(return_value=False)),
@@ -257,7 +269,6 @@ def _run_build(spec_dir: Path, tmp_path: Path) -> AsyncMock:
             skip_qa=True,
             force_bypass_approval=False,
         )
-    return agent_mock
 
 
 class TestRestartWithoutApproval:
@@ -272,9 +283,11 @@ class TestRestartWithoutApproval:
             ReviewState().approve(spec_dir)
             _write_plan(spec_dir, PLAN_B)
 
+        agent_mock = AsyncMock(return_value=None)
         with pytest.raises(SystemExit) as exc:
-            _run_build(spec_dir, tmp_path)
+            _run_build(spec_dir, tmp_path, agent_mock)
         assert exc.value.code == 0
+        agent_mock.assert_not_awaited()
 
     def test_valid_approval_restart_runs_agent(self, tmp_path, monkeypatch):
         monkeypatch.setenv("AIFACTORY_SOLO_MODE", "off")
@@ -282,7 +295,8 @@ class TestRestartWithoutApproval:
         _write_plan(spec_dir, PLAN_A)
         ReviewState().approve(spec_dir)
 
-        agent_mock = _run_build(spec_dir, tmp_path)
+        agent_mock = AsyncMock(return_value=None)
+        _run_build(spec_dir, tmp_path, agent_mock)
         agent_mock.assert_awaited()
 
     def test_should_pass_force_false_when_review_required(self, tmp_path):

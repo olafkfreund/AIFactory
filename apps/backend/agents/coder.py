@@ -1149,8 +1149,6 @@ def _injection_scan_blocks(
         )
         return False
 
-    from review import ReviewState  # noqa: PLC0415 - deferred, mirrors gate above
-
     if ReviewState.load(spec_dir).is_approval_valid(spec_dir):
         print_status(
             "Injection scan flagged, but a human approved this task - continuing",
@@ -1215,10 +1213,9 @@ def _should_require_human_review(spec_dir: Path) -> bool:
     run.py pre-flight gate must answer this question the SAME way the coder
     does, so there is exactly one definition of it.
 
-    Imported at module scope, unlike the two deferred ``review`` imports in the
-    injection gate above: ``review`` reaches no further than ``ui``, which this
-    module already imports at module scope, so deferring it bought nothing
-    (#1192).
+    Imported at module scope: ``review`` reaches no further than ``ui``, which
+    this module already imports at module scope, so deferring it bought
+    nothing (#1192).
     """
     # bool(): the ratchet type-checks this file on its own, so `review.state` is
     # outside the import graph and the call is Any whatever mypy_path says. The

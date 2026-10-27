@@ -113,6 +113,10 @@ Implementation deviations (step 3):
 - The valid-approval restart case patches `build_commands.count_subtasks` to
   `(1, 1)` so the silent no-op guard does not exit 1 after the mocked agent.
 - Step 2 uses one combined `if` (the cq ratchet rejects the nested form as SIM102).
+- After the Opus review: restart-blocked cases also assert the agent was not
+  awaited; "not paused" cases assert the plan was never stamped (`_proceeded`)
+  instead of `not _paused`; the now-redundant deferred `ReviewState` import in
+  `_injection_scan_blocks` and its stale docstring reference were removed.
 
 ## Tests
 
