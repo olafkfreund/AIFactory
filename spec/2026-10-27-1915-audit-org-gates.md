@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1915
 intent: intent/2026-10-27-1915-audit-org-gates.md
 ---
