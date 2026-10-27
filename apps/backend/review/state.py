@@ -13,6 +13,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from plan_progress import strip_plan_progress
+
 # State file name
 REVIEW_STATE_FILE = "review_state.json"
 
@@ -26,69 +28,6 @@ def _compute_file_hash(file_path: Path) -> str:
         return hashlib.md5(content.encode("utf-8"), usedforsecurity=False).hexdigest()
     except (OSError, UnicodeDecodeError):
         return ""
-
-
-# Runtime progress keys the approve route, the coder, QA, recovery and the
-# contract gate write. They are not what a reviewer approves, so they are left
-# out of the approval hash (#1924). Everything else stays bound, at any depth.
-_PLAN_PROGRESS_KEYS = frozenset(
-    {
-        "status",
-        "planStatus",
-        "reviewReason",
-        "recoveryNote",
-        "contractHold",
-        "qa_signoff",
-        "qa_iteration_history",
-        "qa_stats",
-        "last_updated",
-        "created_at",
-        "updated_at",
-        "phase",
-    }
-)
-_SUBTASK_PROGRESS_KEYS = frozenset(
-    {
-        "status",
-        "notes",
-        "updated_at",
-        "started_at",
-        "completed_at",
-        "actual_output",
-        "critique_result",
-    }
-)
-
-
-def _strip_progress(plan: dict[str, Any]) -> dict[str, Any]:
-    """The plan without its progress keys.
-
-    ``chunks`` is ignored when ``subtasks`` is present: the plan model reads
-    ``subtasks`` first and every save rewrites ``chunks`` as a copy of it.
-    """
-    content = {k: v for k, v in plan.items() if k not in _PLAN_PROGRESS_KEYS}
-    phases = content.get("phases")
-    if not isinstance(phases, list):
-        return content
-    stripped = []
-    for raw_phase in phases:
-        if not isinstance(raw_phase, dict):
-            stripped.append(raw_phase)
-            continue
-        phase = dict(raw_phase)
-        if isinstance(phase.get("subtasks"), list):
-            phase.pop("chunks", None)
-        for key in ("subtasks", "chunks"):
-            if isinstance(phase.get(key), list):
-                phase[key] = [
-                    {k: v for k, v in st.items() if k not in _SUBTASK_PROGRESS_KEYS}
-                    if isinstance(st, dict)
-                    else st
-                    for st in phase[key]
-                ]
-        stripped.append(phase)
-    content["phases"] = stripped
-    return content
 
 
 def _md5(text: str) -> str:
@@ -121,7 +60,7 @@ def _compute_spec_hash(spec_dir: Path) -> str:
     if plan is None:
         plan_hash = _compute_file_hash(spec_dir / "implementation_plan.json")
     else:
-        plan_hash = _md5(json.dumps(_strip_progress(plan), sort_keys=True))
+        plan_hash = _md5(json.dumps(strip_plan_progress(plan), sort_keys=True))
     return _combine(spec_dir, plan_hash)
 
 
@@ -143,7 +82,9 @@ def _compute_saved_spec_hash(spec_dir: Path) -> str:
         saved = ImplementationPlan.from_dict(plan).to_dict()
     except Exception:  # noqa: BLE001 - a plan the model cannot load has no saved form
         return ""
-    return _combine(spec_dir, _md5(json.dumps(_strip_progress(saved), sort_keys=True)))
+    return _combine(
+        spec_dir, _md5(json.dumps(strip_plan_progress(saved), sort_keys=True))
+    )
 
 
 @dataclass

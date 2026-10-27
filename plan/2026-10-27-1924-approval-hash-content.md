@@ -97,3 +97,17 @@ Revert the commit; stored hashes computed with the new scheme then read as stale
   hashes to the same second-state hash, equal to `_compute_saved_spec_hash`. The
   live per-session plan-command seeding gap the review found is filed as #1940
   (out of scope here).
+- Final review (lead, Opus), HIGH: `security/plan_commands._collect_strings`
+  walked every key, including those the hash strips. An edit to only stripped keys
+  kept the approval valid and granted its command. The PoCs were subtask `notes`,
+  `chunks` beside `subtasks`, `qa_signoff`, `critique_result` and `recoveryNote`.
+  The key sets and the stripper moved to one shared module,
+  `apps/backend/plan_progress.py` (`strip_plan_progress`, `PLAN_PROGRESS_KEYS`,
+  `SUBTASK_PROGRESS_KEYS`). It is imported by `review/state.py` and by
+  `security/plan_commands.extract_command_names`, which now walks the stripped
+  plan. Tests: `test_commands_in_progress_keys_are_not_granted` (the 5 PoCs:
+  approval still valid, `seed_profile_with_plan_commands` grants nothing; all 5
+  fail on the previous head) and
+  `test_required_commands_edit_is_granted_only_with_invalid_approval`.
+  MEDIUM, accepted risk: free text in ignored keys reaches the coder prompt
+  unbound. Recorded in the spec's Risks, with #1940 and #1932.

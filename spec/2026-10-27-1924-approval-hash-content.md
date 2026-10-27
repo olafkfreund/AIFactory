@@ -47,7 +47,18 @@ rewrite is now correct. This fits #1926: StartTask still forces only on
 - An ignored key that does carry reviewed meaning would let that change pass. The
   list holds only status/progress/timestamp/output keys written by the runtime.
 - Existing stored hashes (raw bytes) no longer match: those tasks pause once for
-  re-approval, or resume through `planApproved`. Fail closed.
+  re-approval, or resume through `planApproved`. Fail closed. Release note: old
+  approvals need re-approval once after deploy.
+- Commands in ignored keys (added in review): `security/plan_commands` walked every
+  key, so a command placed only in a progress key was granted while the approval
+  stayed valid. Both now use one definition, `apps/backend/plan_progress.py`, so the
+  allowlist reads exactly what the approval binds.
+- Accepted risk (added in review): free text in the ignored keys (`notes`,
+  `recoveryNote`, `critique_result`, ...) still reaches the coder's prompt without
+  being bound by the approval. The agent writes these fields itself during the
+  run, so binding them would cancel every approval mid-build, which is the bug
+  this task fixes. Related: #1940 (the allowlist re-reads the live plan every
+  session) and #1932.
 
 ## Verification
 

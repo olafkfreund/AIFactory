@@ -246,6 +246,24 @@ _CONTENT_EDITS = {
 }
 
 
+# Commands placed only in keys the approval hash skips (#1924 final review PoC).
+_PROGRESS_KEY_COMMANDS = {
+    "subtask notes": lambda p: _subtask(p).update(
+        notes={"required_commands": ["make", "npm"]}
+    ),
+    "chunks beside subtasks": lambda p: p["phases"][0].update(
+        chunks=[{"run": "cargo build"}]
+    ),
+    "qa_signoff": lambda p: p.update(
+        qa_signoff={"verification": {"command": "just ship"}}
+    ),
+    "critique_result": lambda p: _subtask(p).update(
+        critique_result={"test_command": "gradle run"}
+    ),
+    "recoveryNote": lambda p: p.update(recoveryNote={"run": "mvn exec"}),
+}
+
+
 class TestApprovalIgnoresProgress:
     """An approval binds the reviewed plan content, not its progress (#1924)."""
 
@@ -305,6 +323,52 @@ class TestApprovalIgnoresProgress:
         _rewrite_plan(review_spec_dir, edit)
 
         assert state.is_approval_valid(review_spec_dir) is False
+
+    @pytest.mark.parametrize(
+        "edit",
+        _PROGRESS_KEY_COMMANDS.values(),
+        ids=_PROGRESS_KEY_COMMANDS.keys(),
+    )
+    def test_commands_in_progress_keys_are_not_granted(
+        self, review_spec_dir: Path, tmp_path: Path, edit
+    ) -> None:
+        """A key the approval hash skips must not feed the plan-command allowlist,
+        or an edit there grants a command while the approval stays valid."""
+        from project.analyzer import seed_profile_with_plan_commands
+
+        plan_file = review_spec_dir / "implementation_plan.json"
+        project = tmp_path / "worktree"
+        project.mkdir()
+        state = ReviewState()
+        state.approve(review_spec_dir, approved_by="web_user", auto_save=False)
+        _wave_round_trip(review_spec_dir)
+        seed_profile_with_plan_commands(project, plan_file)
+
+        _rewrite_plan(review_spec_dir, edit)
+
+        assert state.is_approval_valid(review_spec_dir) is True
+        assert seed_profile_with_plan_commands(project, plan_file) == []
+
+    def test_required_commands_edit_is_granted_only_with_invalid_approval(
+        self, review_spec_dir: Path, tmp_path: Path
+    ) -> None:
+        from project.analyzer import seed_profile_with_plan_commands
+
+        plan_file = review_spec_dir / "implementation_plan.json"
+        project = tmp_path / "worktree"
+        project.mkdir()
+        state = ReviewState()
+        state.approve(review_spec_dir, approved_by="web_user", auto_save=False)
+        _wave_round_trip(review_spec_dir)
+        seed_profile_with_plan_commands(project, plan_file)
+
+        _rewrite_plan(
+            review_spec_dir,
+            lambda p: _subtask(p).update(required_commands=["make"]),
+        )
+
+        assert state.is_approval_valid(review_spec_dir) is False
+        assert seed_profile_with_plan_commands(project, plan_file) == ["make"]
 
     def test_chunks_copy_ignored_when_subtasks_present(
         self, review_spec_dir: Path
