@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1924
 spec: spec/2026-10-27-1924-approval-hash-content.md
 ---
