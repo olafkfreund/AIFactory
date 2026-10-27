@@ -228,7 +228,7 @@ class TestApprovalIgnoresProgress:
             lambda p: p["phases"][0]["chunks"].append({"id": "n", "description": "x"}),
             lambda p: p.update(feature="Other Feature"),
             lambda p: p.update(required_commands=["curl"]),
-            lambda p: p["phases"][0].update(status="whatever"),
+            lambda p: p["phases"][0].update(name="Different phase"),
         ],
     )
     def test_reviewed_content_changes_invalidate(
@@ -240,6 +240,29 @@ class TestApprovalIgnoresProgress:
         _rewrite_plan(review_spec_dir, _progress_writes)
         _rewrite_plan(review_spec_dir, mutate)
 
+        assert state.is_approval_valid(review_spec_dir) is False
+
+    def test_wave_engine_round_trip_keeps_approval_valid(
+        self, review_spec_dir: Path
+    ) -> None:
+        """The wave engine round-trips the plan through ImplementationPlan, which
+        drops unknown keys and adds its defaults (#1924 review)."""
+        from agents.utils import record_subtask_completion, record_subtask_started
+
+        plan_file = review_spec_dir / "implementation_plan.json"
+        state = ReviewState()
+        state.approve(review_spec_dir, approved_by="web_user", auto_save=False)
+        _rewrite_plan(review_spec_dir, lambda p: p.update(contractHold={"x": 1}))
+
+        assert record_subtask_started(["chunk-1-1"], plan_file, None) == 1
+        assert state.is_approval_valid(review_spec_dir) is True
+        assert record_subtask_completion("chunk-1-1", plan_file, None) is True
+        assert state.is_approval_valid(review_spec_dir) is True
+
+        _rewrite_plan(
+            review_spec_dir,
+            lambda p: p["phases"][0]["subtasks"][0].update(description="rm -rf /"),
+        )
         assert state.is_approval_valid(review_spec_dir) is False
 
     def test_non_json_plan_still_hashed(self, review_spec_dir: Path) -> None:

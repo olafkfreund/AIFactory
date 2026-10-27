@@ -27,28 +27,24 @@ def _compute_file_hash(file_path: Path) -> str:
         return ""
 
 
-# Runtime progress keys the approve route, the coder, QA and recovery rewrite. They
-# are not what a reviewer approves, so they are left out of the approval hash
-# (#1924). A denylist: any other key, including a new one, still invalidates.
+# Runtime progress keys the approve route, the coder, QA, recovery and the
+# contract gate rewrite. They are not what a reviewer approves, so they are left
+# out of the approval hash (#1924).
 _PLAN_PROGRESS_KEYS = frozenset(
     {
         "status",
         "planStatus",
         "reviewReason",
         "recoveryNote",
+        "contractHold",
         "qa_signoff",
-        "qa_iteration_history",
-        "qa_stats",
-        "last_updated",
+        "created_at",
         "updated_at",
-        "phase",
     }
 )
 _SUBTASK_PROGRESS_KEYS = frozenset(
     {
         "status",
-        "notes",
-        "updated_at",
         "started_at",
         "completed_at",
         "actual_output",
@@ -58,38 +54,30 @@ _SUBTASK_PROGRESS_KEYS = frozenset(
 
 
 def _compute_plan_hash(plan_file: Path) -> str:
-    """Hash implementation_plan.json without its runtime progress keys.
+    """Hash implementation_plan.json as the plan model sees it, minus progress keys.
 
-    Falls back to the raw file hash when the plan is not a JSON object.
+    Canonicalised through ``ImplementationPlan`` because the wave engine and
+    recovery round-trip the plan with ``load()``/``save()``, which drops keys the
+    model does not carry and adds its defaults. Hashing the model's view keeps a
+    round-trip from invalidating the approval; a key the model drops is gone
+    after the first save anyway. Falls back to the raw file hash when the plan
+    does not parse, so a broken plan still invalidates on any change.
     """
+    from implementation_plan.plan import ImplementationPlan  # noqa: PLC0415 - cycle
+
     try:
-        plan = json.loads(plan_file.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return _compute_file_hash(plan_file)
-    if not isinstance(plan, dict):
+        data = json.loads(plan_file.read_text(encoding="utf-8"))
+        plan = ImplementationPlan.from_dict(data).to_dict()
+    except Exception:  # noqa: BLE001 - any unparseable plan hashes raw
         return _compute_file_hash(plan_file)
 
     content = {k: v for k, v in plan.items() if k not in _PLAN_PROGRESS_KEYS}
-    phases = content.get("phases")
-    if isinstance(phases, list):
-        content["phases"] = [
-            {
-                **phase,
-                **{
-                    key: [
-                        {k: v for k, v in st.items() if k not in _SUBTASK_PROGRESS_KEYS}
-                        if isinstance(st, dict)
-                        else st
-                        for st in phase[key]
-                    ]
-                    for key in ("subtasks", "chunks")
-                    if isinstance(phase.get(key), list)
-                },
-            }
-            if isinstance(phase, dict)
-            else phase
-            for phase in phases
-        ]
+    for phase in content["phases"]:
+        for key in ("subtasks", "chunks"):
+            phase[key] = [
+                {k: v for k, v in st.items() if k not in _SUBTASK_PROGRESS_KEYS}
+                for st in phase[key]
+            ]
     canonical = json.dumps(content, sort_keys=True)
     return hashlib.md5(canonical.encode("utf-8"), usedforsecurity=False).hexdigest()
 
