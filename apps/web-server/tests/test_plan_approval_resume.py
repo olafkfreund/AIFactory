@@ -208,3 +208,35 @@ def test_start_with_plan_keeps_approval(tmp_path):
     except RuntimeError:
         pass
     assert task_control.read_control(spec_dir)["planApproved"] is True
+
+
+# -- step 8: a planner forgery in the worktree never changes the next Start ---
+def test_worktree_forgery_does_not_reach_main_or_change_start(tmp_path):
+    from server.services.agent_service import AgentService
+
+    spec_dir = _spec(tmp_path)  # main: review required, plan, no approval
+    worktree_spec = (
+        (tmp_path / "repo" / ".aifactory" / "worktrees" / "tasks" / "001-x")
+        / ".aifactory"
+        / "specs"
+        / "001-x"
+    )
+    worktree_spec.mkdir(parents=True)
+    (worktree_spec / "implementation_plan.json").write_text(json.dumps(PLAN))
+    (worktree_spec / "task_metadata.json").write_text("{}")  # flag cleared
+    ReviewState().approve(worktree_spec)  # correctly hashed forged approval
+    (worktree_spec / "token_usage.json").write_text("{}")  # proves the sync ran
+
+    asyncio.run(
+        AgentService()._sync_worktree_files(
+            tmp_path / "repo", "001-x", task_id="p:001-x"
+        )
+    )
+
+    assert (spec_dir / "token_usage.json").exists()
+    assert not (spec_dir / "review_state.json").exists()
+    assert json.loads((spec_dir / "task_metadata.json").read_text()) == {
+        "requireReviewBeforeCoding": True
+    }
+    result, start = _start(tmp_path)
+    _assert_held(tmp_path, spec_dir, result, start)
