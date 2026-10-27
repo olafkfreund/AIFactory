@@ -26,6 +26,8 @@ from server.specpath import spec_dir_for
 
 from .build_backend import (
     _TERMINAL_STATES,
+    BuildBackendUnavailableError,
+    backend_config_error,
     kubejob_enabled,
     orphaned_worktree_registrations,
 )
@@ -147,8 +149,8 @@ class KubejobMixin:
         Env-gated, default OFF (``AIFACTORY_BUILD_BACKEND=subprocess``). The
         kubejob backend requires the durable store (it reconciles by polling
         Postgres + reaps via worker_ref), so when it is requested WITHOUT a
-        DATABASE_URL we log loudly and fall back to the in-pod subprocess rather
-        than silently stranding builds with no reconcile loop.
+        DATABASE_URL this returns False and ``_start_build_unit`` refuses the
+        launch (#1932) rather than running the agent in-pod.
         """
         from .build_backend import kubejob_enabled
 
@@ -158,7 +160,7 @@ class KubejobMixin:
             _log.warning(
                 "[AgentService] AIFACTORY_BUILD_BACKEND=kubejob requires the "
                 "durable job-state store (DATABASE_URL) for reconcile/reap — "
-                "it is unset; falling back to the in-pod subprocess backend."
+                "it is unset; agent launches are refused."
             )
             return False
         return True
@@ -514,7 +516,12 @@ class KubejobMixin:
         was promoted. The drain paths previously called ``_spawn_task_execution``
         directly, so a queued/drained build silently ran in-pod even with the
         flip on (the flip was a no-op for everything that went through admission).
+
+        An unrunnable backend config refuses the launch (#1932) instead of
+        falling back to the in-pod subprocess.
         """
+        if problem := backend_config_error(self._store_enabled):
+            raise BuildBackendUnavailableError(f"Builds refused: {problem}")
         if self._kubejob_backend_enabled():
             await self._dispatch_build_job(
                 task_id=task_id,

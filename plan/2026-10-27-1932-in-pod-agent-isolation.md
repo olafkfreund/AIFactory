@@ -52,7 +52,7 @@ Approved decisions carried over from the spec:
    Traps: `_log` is the module logger. Keep the existing unknown-value test
    passing.
 
-2. `apps/web-server/server/services/agent_kubejob.py`
+2. `apps/web-server/server/services/agent_kubejob.py` and `agent_service.py`
    - `_start_build_unit` (~491): the first statement raises
      `BuildBackendUnavailableError(f"Builds refused: {problem}")` when
      `backend_config_error(self._store_enabled)` returns a message.
@@ -67,6 +67,9 @@ Approved decisions carried over from the spec:
      `test_default_backend_still_spawns_subprocess` does). Rename
      `test_kubejob_falls_back_to_subprocess_without_store` to
      `test_kubejob_without_store_reports_not_enabled`, keeping its assertion.
+   - Deviation: the in-memory admit path (`agent_service.py` ~881) bypassed
+     `_start_build_unit`, so it now routes through it (same kwargs). The call
+     carries `# type: ignore[no-any-return]`, as the durable path's call (~980) does.
    → verify by `.venv/bin/pytest ../../tests/test_agent_service_kubejob_backend.py ../../tests/test_agent_kubejob_mixin.py -q`
    Traps: AgentService reads `_store_enabled` from env at init, so tests set
    it on the instance after construction. The mixin declares sibling attrs in
@@ -93,7 +96,7 @@ Approved decisions carried over from the spec:
    Traps: main.py imports inside the lifespan use `# noqa: PLC0415`.
 
 5. Whole-change checks: `ruff check` and `ruff format --check` on the touched
-   files, `python scripts/ratchet_lint.py` (mypy ratchet), and grep the tests
+   files, `scripts/cq_ratchet.py` (ruff and mypy ratchet; the repo has no `ratchet_lint.py`), and grep the tests
    for other `AIFACTORY_BUILD_BACKEND", "kubejob"` setups that expect an
    in-pod spawn without a store. Fix any that encode the old fallback.
    → verify by the commands above, all clean.

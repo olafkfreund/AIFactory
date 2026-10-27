@@ -232,8 +232,13 @@ async def lifespan(app: FastAPI):
 
     # Reconcile kubejob builds and reap orphaned subprocess rows when the
     # durable store is enabled (#671, #1705).
-    from .services.build_backend import kubejob_enabled as _kubejob_enabled
+    from .services.build_backend import (
+        kubejob_enabled as _kubejob_enabled,
+        log_backend_config,
+    )
     from .services.job_state_store import store_enabled  # noqa: PLC0415
+
+    log_backend_config(logger, store_enabled())
 
     app.state.kubejob_reconcile_stop = None
     app.state.kubejob_reconcile_task = None

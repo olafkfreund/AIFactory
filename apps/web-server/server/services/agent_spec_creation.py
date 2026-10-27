@@ -25,6 +25,7 @@ from server.specpath import spec_dir_for
 from ..utils.subprocess_env import make_subprocess_env
 from . import project_settings_store
 from .agent_task_models import TaskProgress
+from .build_backend import BuildBackendUnavailableError, backend_config_error
 from .task_phase import TaskPhase
 
 if TYPE_CHECKING:
@@ -53,6 +54,7 @@ class SpecCreationMixin:
         # sibling mixins; declared so mypy resolves the self.* refs (#703 pattern).
         backend_path: Any
         running_tasks: dict[str, Any]
+        _store_enabled: bool
         _spec_creation_procs: dict[str, Any]
         _spec_dirs: dict[str, Any]
         _task_profiles: dict[str, Any]
@@ -81,6 +83,9 @@ class SpecCreationMixin:
         logger = logging.getLogger(__name__)
         if task_id in self.running_tasks:
             raise ValueError(f"Task {task_id} is already running")
+        # #1932: kubejob without a store drops --no-build, so refuse before the spawn.
+        if problem := backend_config_error(self._store_enabled):
+            raise BuildBackendUnavailableError(f"Spec creation refused: {problem}")
 
         # Parse spec_id from task_id (format: "project_id:spec_id")
         if ":" in task_id:

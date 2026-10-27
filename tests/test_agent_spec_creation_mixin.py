@@ -53,3 +53,22 @@ def test_spec_creation_uses_the_chain_helper_not_a_literal():
     assert "build_chain_args(self._kubejob_backend_enabled())" in src
     # And the result must reach the argv.
     assert "cmd.extend(chain_args)" in src
+
+
+async def test_unrunnable_backend_config_refuses_spec_creation(tmp_path, monkeypatch):
+    """#1932: kubejob without a store must not spawn spec_runner in-pod."""
+    from unittest.mock import AsyncMock
+
+    import pytest
+    from server.services import agent_spec_creation as sc
+    from server.services.agent_service import AgentService
+    from server.services.build_backend import BuildBackendUnavailableError
+
+    spawned = AsyncMock()
+    monkeypatch.setattr(sc.asyncio, "create_subprocess_exec", spawned)
+    monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "kubejob")
+    svc = AgentService()
+    svc._store_enabled = False
+    with pytest.raises(BuildBackendUnavailableError):
+        await svc.start_spec_creation("p:s1", tmp_path, "t", "d")
+    spawned.assert_not_called()
