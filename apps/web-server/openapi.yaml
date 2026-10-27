@@ -8912,20 +8912,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-  /api/projects/{projectId}/auto-fix/config:
+  /api/projects/{project_id}/auto-fix/config:
     get:
       tags:
       - Auto-Fix
       summary: Get Auto Fix Config
       description: Return AutoFixConfig for the project, or null if no project.
-      operationId: get_auto_fix_config_api_projects__projectId__auto_fix_config_get
+      operationId: get_auto_fix_config_api_projects__project_id__auto_fix_config_get
       parameters:
-      - name: projectId
+      - name: project_id
         in: path
         required: true
         schema:
           type: string
-          title: Projectid
+          title: Project Id
       responses:
         '200':
           description: Successful Response
@@ -8936,7 +8936,7 @@ paths:
                 - type: object
                   additionalProperties: true
                 - type: 'null'
-                title: Response Get Auto Fix Config Api Projects  Projectid  Auto Fix Config Get
+                title: Response Get Auto Fix Config Api Projects  Project Id  Auto Fix Config Get
         '422':
           description: Validation Error
           content:
@@ -8948,14 +8948,14 @@ paths:
       - Auto-Fix
       summary: Save Auto Fix Config
       description: 'Save AutoFixConfig. Returns ``{success: bool}``.'
-      operationId: save_auto_fix_config_api_projects__projectId__auto_fix_config_put
+      operationId: save_auto_fix_config_api_projects__project_id__auto_fix_config_put
       parameters:
-      - name: projectId
+      - name: project_id
         in: path
         required: true
         schema:
           type: string
-          title: Projectid
+          title: Project Id
       requestBody:
         required: true
         content:
@@ -8971,27 +8971,27 @@ paths:
                 type: object
                 additionalProperties:
                   type: boolean
-                title: Response Save Auto Fix Config Api Projects  Projectid  Auto Fix Config Put
+                title: Response Save Auto Fix Config Api Projects  Project Id  Auto Fix Config Put
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-  /api/projects/{projectId}/auto-fix/queue:
+  /api/projects/{project_id}/auto-fix/queue:
     get:
       tags:
       - Auto-Fix
       summary: Get Auto Fix Queue
       description: Return the AutoFix queue items.
-      operationId: get_auto_fix_queue_api_projects__projectId__auto_fix_queue_get
+      operationId: get_auto_fix_queue_api_projects__project_id__auto_fix_queue_get
       parameters:
-      - name: projectId
+      - name: project_id
         in: path
         required: true
         schema:
           type: string
-          title: Projectid
+          title: Project Id
       responses:
         '200':
           description: Successful Response
@@ -9002,14 +9002,14 @@ paths:
                 items:
                   type: object
                   additionalProperties: true
-                title: Response Get Auto Fix Queue Api Projects  Projectid  Auto Fix Queue Get
+                title: Response Get Auto Fix Queue Api Projects  Project Id  Auto Fix Queue Get
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-  /api/projects/{projectId}/auto-fix/check-new:
+  /api/projects/{project_id}/auto-fix/check-new:
     post:
       tags:
       - Auto-Fix
@@ -9031,14 +9031,14 @@ paths:
         server-side cron.  This endpoint is the polling primitive both
 
         invocations share.'
-      operationId: check_new_issues_api_projects__projectId__auto_fix_check_new_post
+      operationId: check_new_issues_api_projects__project_id__auto_fix_check_new_post
       parameters:
-      - name: projectId
+      - name: project_id
         in: path
         required: true
         schema:
           type: string
-          title: Projectid
+          title: Project Id
       responses:
         '200':
           description: Successful Response
@@ -9047,27 +9047,27 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
-                title: Response Check New Issues Api Projects  Projectid  Auto Fix Check New Post
+                title: Response Check New Issues Api Projects  Project Id  Auto Fix Check New Post
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-  /api/projects/{projectId}/auto-fix/{issueNumber}/start:
+  /api/projects/{project_id}/auto-fix/{issueNumber}/start:
     post:
       tags:
       - Auto-Fix
       summary: Start Auto Fix One
       description: Import + start the agent on a single issue.
-      operationId: start_auto_fix_one_api_projects__projectId__auto_fix__issueNumber__start_post
+      operationId: start_auto_fix_one_api_projects__project_id__auto_fix__issueNumber__start_post
       parameters:
-      - name: projectId
+      - name: project_id
         in: path
         required: true
         schema:
           type: string
-          title: Projectid
+          title: Project Id
       - name: issueNumber
         in: path
         required: true
@@ -9082,7 +9082,7 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
-                title: Response Start Auto Fix One Api Projects  Projectid  Auto Fix  Issuenumber  Start
+                title: Response Start Auto Fix One Api Projects  Project Id  Auto Fix  Issuenumber  Start
                   Post
         '422':
           description: Validation Error
@@ -10712,7 +10712,6 @@ components:
           - type: string
           - type: 'null'
           title: Bottoken
-          default: ''
         model:
           type: string
           title: Model
