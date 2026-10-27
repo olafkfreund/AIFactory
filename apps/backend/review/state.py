@@ -27,13 +27,80 @@ def _compute_file_hash(file_path: Path) -> str:
         return ""
 
 
+# Runtime progress keys the approve route, the coder, QA and recovery rewrite. They
+# are not what a reviewer approves, so they are left out of the approval hash
+# (#1924). A denylist: any other key, including a new one, still invalidates.
+_PLAN_PROGRESS_KEYS = frozenset(
+    {
+        "status",
+        "planStatus",
+        "reviewReason",
+        "recoveryNote",
+        "qa_signoff",
+        "qa_iteration_history",
+        "qa_stats",
+        "last_updated",
+        "updated_at",
+        "phase",
+    }
+)
+_SUBTASK_PROGRESS_KEYS = frozenset(
+    {
+        "status",
+        "notes",
+        "updated_at",
+        "started_at",
+        "completed_at",
+        "actual_output",
+        "critique_result",
+    }
+)
+
+
+def _compute_plan_hash(plan_file: Path) -> str:
+    """Hash implementation_plan.json without its runtime progress keys.
+
+    Falls back to the raw file hash when the plan is not a JSON object.
+    """
+    try:
+        plan = json.loads(plan_file.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return _compute_file_hash(plan_file)
+    if not isinstance(plan, dict):
+        return _compute_file_hash(plan_file)
+
+    content = {k: v for k, v in plan.items() if k not in _PLAN_PROGRESS_KEYS}
+    phases = content.get("phases")
+    if isinstance(phases, list):
+        content["phases"] = [
+            {
+                **phase,
+                **{
+                    key: [
+                        {k: v for k, v in st.items() if k not in _SUBTASK_PROGRESS_KEYS}
+                        if isinstance(st, dict)
+                        else st
+                        for st in phase[key]
+                    ]
+                    for key in ("subtasks", "chunks")
+                    if isinstance(phase.get(key), list)
+                },
+            }
+            if isinstance(phase, dict)
+            else phase
+            for phase in phases
+        ]
+    canonical = json.dumps(content, sort_keys=True)
+    return hashlib.md5(canonical.encode("utf-8"), usedforsecurity=False).hexdigest()
+
+
 def _compute_spec_hash(spec_dir: Path) -> str:
     """
     Compute a combined hash of spec.md and implementation_plan.json.
     Used to detect changes after approval.
     """
     spec_hash = _compute_file_hash(spec_dir / "spec.md")
-    plan_hash = _compute_file_hash(spec_dir / "implementation_plan.json")
+    plan_hash = _compute_plan_hash(spec_dir / "implementation_plan.json")
     combined = f"{spec_hash}:{plan_hash}"
     return hashlib.md5(combined.encode("utf-8"), usedforsecurity=False).hexdigest()
 

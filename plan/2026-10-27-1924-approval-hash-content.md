@@ -36,3 +36,9 @@ route and the #1926 gate are unchanged. Two steps, implemented by the session mo
 
 Revert the commit; stored hashes computed with the new scheme then read as stale
 (fail closed) until re-approved.
+
+## Deviations
+
+- Step 2 also edits `tests/test_review_integration.py:230`: it held a second copy of
+  the "subtask status change invalidates" assertion; it now changes the subtask
+  description, as in `test_review_validation.py`.

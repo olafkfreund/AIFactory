@@ -9,8 +9,10 @@ Tests for hash computation and spec change detection:
 - Approval validation based on hash comparison
 """
 
+import json
 from pathlib import Path
 
+import pytest
 from review import ReviewState
 from review.state import _compute_file_hash, _compute_spec_hash
 
@@ -155,7 +157,7 @@ class TestSpecHashValidation:
         plan_file = review_spec_dir / "implementation_plan.json"
         plan_content = plan_file.read_text()
         plan = json.loads(plan_content)
-        plan["phases"][0]["chunks"][0]["status"] = "completed"
+        plan["phases"][0]["chunks"][0]["description"] = "Something else"
         plan_file.write_text(json.dumps(plan, indent=2))
         assert not state.is_approval_valid(review_spec_dir)
 
@@ -181,3 +183,71 @@ class TestSpecHashValidation:
         # 4. Re-approve with new hash
         state.approve(review_spec_dir, approved_by="user")
         assert state.is_approval_valid(review_spec_dir)
+
+
+def _rewrite_plan(spec_dir: Path, mutate) -> None:
+    plan_file = spec_dir / "implementation_plan.json"
+    plan = json.loads(plan_file.read_text())
+    mutate(plan)
+    plan_file.write_text(json.dumps(plan, indent=2))
+
+
+def _progress_writes(plan: dict) -> None:
+    # What approve-plan, the coder's update_subtask_status and QA write (#1924).
+    plan["status"] = "in_progress"
+    plan["planStatus"] = "in_progress"
+    plan.pop("reviewReason", None)
+    plan["last_updated"] = "2026-10-27T00:00:00+00:00"
+    plan["qa_signoff"] = {"status": "approved"}
+    plan["phases"][0]["chunks"][0].update(
+        status="completed",
+        notes="done",
+        updated_at="2026-10-27T00:00:00+00:00",
+        started_at="2026-10-27T00:00:00+00:00",
+        completed_at="2026-10-27T00:00:00+00:00",
+        actual_output="ok",
+    )
+
+
+class TestApprovalIgnoresProgress:
+    """An approval binds the reviewed plan content, not its progress (#1924)."""
+
+    def test_progress_writes_keep_approval_valid(self, review_spec_dir: Path) -> None:
+        state = ReviewState()
+        state.approve(review_spec_dir, approved_by="web_user", auto_save=False)
+
+        _rewrite_plan(review_spec_dir, _progress_writes)
+
+        assert state.is_approval_valid(review_spec_dir) is True
+
+    @pytest.mark.parametrize(
+        "mutate",
+        [
+            lambda p: p["phases"][0]["chunks"][0].update(description="rm -rf /"),
+            lambda p: p["phases"][0]["chunks"][0].update(files_to_modify=["x.py"]),
+            lambda p: p["phases"][0]["chunks"].append({"id": "n", "description": "x"}),
+            lambda p: p.update(feature="Other Feature"),
+            lambda p: p.update(required_commands=["curl"]),
+            lambda p: p["phases"][0].update(status="whatever"),
+        ],
+    )
+    def test_reviewed_content_changes_invalidate(
+        self, review_spec_dir: Path, mutate
+    ) -> None:
+        state = ReviewState()
+        state.approve(review_spec_dir, approved_by="web_user", auto_save=False)
+
+        _rewrite_plan(review_spec_dir, _progress_writes)
+        _rewrite_plan(review_spec_dir, mutate)
+
+        assert state.is_approval_valid(review_spec_dir) is False
+
+    def test_non_json_plan_still_hashed(self, review_spec_dir: Path) -> None:
+        plan_file = review_spec_dir / "implementation_plan.json"
+        plan_file.write_text("not json")
+        state = ReviewState()
+        state.approve(review_spec_dir, approved_by="web_user", auto_save=False)
+
+        plan_file.write_text("still not json")
+
+        assert state.is_approval_valid(review_spec_dir) is False
