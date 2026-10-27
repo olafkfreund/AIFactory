@@ -247,6 +247,11 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("RFC-0016 #671 kubejob build backend disabled (subprocess default)")
 
+    # #1932: say at startup when agent launches will be refused, or run unisolated.
+    from .services.build_backend import log_backend_config  # noqa: PLC0415
+
+    log_backend_config(logger, store_enabled())
+
     # #1064: sweep tasks whose worker died and left them looking active. Runs
     # here rather than as a CronJob because the spec tree lives on a RWO
     # local-path PVC -- a separate pod scheduled off-node would find nothing,
