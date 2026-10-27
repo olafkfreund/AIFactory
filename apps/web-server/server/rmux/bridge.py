@@ -35,6 +35,7 @@ sequences correctly.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import uuid
 from pathlib import Path
@@ -58,7 +59,7 @@ from ..routes.project_authz import (
     authorize_project_for_user,
     is_service_principal,
 )
-from ..services.audit_service import log_audit_event
+from ..services.audit_service import log_audit_event_bg
 from .session import SessionState, get_registry
 from .wrapper import RmuxError
 
@@ -276,8 +277,11 @@ async def attach(
     # signal something went wrong.  The audit_service helper already
     # wraps writes in try/except for exactly this reason.
     if db is not None:
-        await log_audit_event(
-            db,
+        # Own committed session: nothing commits the request session (#1939).
+        # Release it first so it holds no connection or chain lock meanwhile.
+        with contextlib.suppress(Exception):
+            await db.rollback()
+        await log_audit_event_bg(
             user_id=user_id,
             org_id=org_id,
             action="console.attach",
@@ -321,8 +325,9 @@ async def detach(
             released = True
 
     if released and db is not None:
-        await log_audit_event(
-            db,
+        with contextlib.suppress(Exception):
+            await db.rollback()
+        await log_audit_event_bg(
             user_id=user_id,
             org_id=org_id,
             action="console.detach",
