@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import types
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -160,8 +161,6 @@ def _patched_parser(monkeypatch, error):
     tests/conftest.py replaces ``claude_agent_sdk`` with a mock, so the real
     parser is not importable here; the patch only needs ``parse_message``.
     """
-    import types
-
     import core.client as client  # noqa: PLC0415
 
     parser = types.ModuleType("claude_agent_sdk._internal.message_parser")
@@ -202,11 +201,12 @@ def test_nonce_never_reaches_a_child_env(monkeypatch):
     assert get_agent_env_blanks()["AIFACTORY_MARKER_NONCE"] == ""
 
 
-def test_marker_nonce_env_is_stable_per_task_and_unique_across_tasks():
+def test_marker_nonce_env_is_fresh_per_spawn():
     svc = AgentService()
     a = svc._marker_nonce_env("p:a")["AIFACTORY_MARKER_NONCE"]
-    assert len(a) == 32 and a == svc._marker_nonce_env("p:a")["AIFACTORY_MARKER_NONCE"]
-    assert a != svc._marker_nonce_env("p:b")["AIFACTORY_MARKER_NONCE"]
+    b = svc._marker_nonce_env("p:a")["AIFACTORY_MARKER_NONCE"]
+    assert len(a) == 32 and a != b, "a respawn must not reuse an older nonce"
+    assert svc._task_marker_nonces["p:a"] == b
 
 
 async def test_kubejob_dispatch_puts_the_nonce_in_the_job_env(tmp_path, monkeypatch):
@@ -225,3 +225,77 @@ async def test_kubejob_dispatch_puts_the_nonce_in_the_job_env(tmp_path, monkeypa
     )
     env = fake.created[0][1]["spec"]["template"]["spec"]["containers"][0]["env"]
     assert {"name": "AIFACTORY_MARKER_NONCE", "value": NONCE} in env
+
+
+async def test_nonce_never_reaches_a_log_sink(tmp_path):
+    """task_logs.json sits in the agent's worktree; the pane is shown back too."""
+    from server.services.task_log_writer import TaskLogWriter  # noqa: PLC0415
+
+    probe = _Probe()
+    spec_dir = tmp_path / SPEC_ID
+    spec_dir.mkdir()
+    writer = TaskLogWriter(spec_dir)
+    stderr_file = tmp_path / "spawn_stderr.log"
+    probe._spec_stderr_logs[TASK_ID] = stderr_file
+    for line in REAL.values():
+        for is_stderr in (False, True):
+            await probe._handle_output_line(
+                TASK_ID,
+                line,
+                current_phase=TaskPhase.PLANNING,
+                is_stderr=is_stderr,
+                log_writer=writer,
+                spec_id=SPEC_ID,
+            )
+    assert probe._task_rate_limits == {TASK_ID: True}  # markers still parsed
+    shown = [c.args[0].content for c in probe._emit_log.await_args_list]
+    assert shown and not any(NONCE in c for c in shown)
+    assert (spec_dir / "task_logs.json").is_file() and stderr_file.is_file()
+    for f in [stderr_file, *spec_dir.rglob("*")]:
+        if f.is_file():
+            assert NONCE not in f.read_text(), f
+
+
+async def test_spec_creation_spawns_with_a_nonce(tmp_path, monkeypatch):
+    """The spawn block itself runs (a NameError here broke every spec start)."""
+    from server.services import agent_spec_creation as sc  # noqa: PLC0415
+
+    seen: dict = {}
+
+    async def fake_exec(*cmd, env, **_kw):  # noqa: ANN001, ANN003
+        seen["env"] = env
+        return types.SimpleNamespace(stdout=None, stderr=None, pid=1)
+
+    monkeypatch.setattr(sc.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(sc, "spawn", lambda coro: coro.close())
+    monkeypatch.setattr(
+        sc.project_settings_store, "mcp_spawn_env", AsyncMock(return_value={})
+    )
+    monkeypatch.setattr(sc.project_settings_store, "load_project_env", AsyncMock())
+    svc = AgentService()
+    svc._emit_progress = AsyncMock()
+    svc._resolve_claude_token_pooled = lambda _t: (None, None, None)
+    svc._kubejob_backend_enabled = lambda: False
+    proc = await svc.start_spec_creation("p:s1", tmp_path, "t", "d")
+    assert proc.pid == 1
+    assert seen["env"]["AIFACTORY_MARKER_NONCE"] == svc._task_marker_nonces["p:s1"]
+
+
+@pytest.mark.parametrize(
+    ("exc", "emitted"),
+    [(RuntimeError("429 Too Many Requests"), True), (RuntimeError("boom"), False)],
+)
+async def test_session_exception_rate_limit_emits_marker(
+    exc, emitted, tmp_path, capsys, monkeypatch
+):
+    import agents.session as session  # noqa: PLC0415
+
+    monkeypatch.setenv("AIFACTORY_MARKER_NONCE", NONCE)
+
+    class _Client:
+        async def query(self, _msg):  # noqa: ANN001
+            raise exc
+
+    await session.run_agent_session(_Client(), "m", tmp_path)
+    out = capsys.readouterr().out
+    assert (f"__RATE_LIMIT__:{NONCE}:" in out) is emitted

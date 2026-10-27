@@ -39,6 +39,7 @@ _log = logging.getLogger(__name__)
 _USAGE_MARKER = "__USAGE__:"
 _PHASE_MARKER = "__EXEC_PHASE__:"
 _RATE_LIMIT_MARKER = "__RATE_LIMIT__:"
+_NONCE_MASK = "<nonce>"
 
 
 def _tolerant_int(value: Any) -> int | None:
@@ -344,11 +345,18 @@ class EmitMixin:
                 )
 
     def _marker_nonce_env(self, task_id: str) -> dict[str, str]:
-        """Env carrying this task's stdout-marker nonce (#1929); minted once per task."""
-        nonce = self._task_marker_nonces.get(task_id)
-        if not nonce:
-            nonce = self._task_marker_nonces[task_id] = secrets.token_hex(16)
+        """Env carrying a fresh stdout-marker nonce for this spawn (#1929).
+
+        New per spawn, so a nonce that ever leaked does not carry over to the
+        next run. Respawns reuse the spawn env, and so the current nonce.
+        """
+        nonce = self._task_marker_nonces[task_id] = secrets.token_hex(16)
         return {"AIFACTORY_MARKER_NONCE": nonce}
+
+    def _redact_nonce(self, task_id: str, line: str) -> str:
+        """``line`` with the task's nonce masked: every log sink is agent-readable."""
+        nonce = self._task_marker_nonces.get(task_id)
+        return line.replace(nonce, _NONCE_MASK) if nonce else line
 
     def _marker_payload(self, task_id: str, line: str, prefix: str) -> str | None:
         """Payload after ``<prefix><nonce>:`` or None (#1929).
@@ -415,7 +423,10 @@ class EmitMixin:
             # Mirror raw bytes to the Live Console (xterm needs CRLF).
             if _rmux_feed is not None:
                 try:
-                    _rmux_feed(_rmux_spec, line_bytes.replace(b"\n", b"\r\n"))
+                    shown = self._redact_nonce(
+                        task_id, line_bytes.decode("utf-8", errors="replace")
+                    )
+                    _rmux_feed(_rmux_spec, shown.encode().replace(b"\n", b"\r\n"))
                 except Exception:  # noqa: BLE001 - Live Console mirror is best-effort
                     logger.debug(
                         "[AgentService] rmux Live Console feed raised (ignored)",
@@ -520,11 +531,13 @@ class EmitMixin:
         Returns the phase after this line.
         """
         logger = _log
+        # Parse markers from `line`; every sink below gets `shown` (#1929).
+        shown = self._redact_nonce(task_id, line)
 
         # Log stderr to server logs for debugging
         if is_stderr and line:
             logger.warning(
-                f"[AgentService] Task {sanitize_log(task_id)} stderr: {sanitize_log(line)}"
+                f"[AgentService] Task {sanitize_log(task_id)} stderr: {sanitize_log(shown)}"
             )
             # Also mirror stderr to a per-spec file so post-mortem
             # debugging works even when the subprocess dies before
@@ -533,7 +546,7 @@ class EmitMixin:
             if stderr_file is not None:
                 try:
                     with stderr_file.open("a", encoding="utf-8") as fh:
-                        fh.write(line + "\n")
+                        fh.write(shown + "\n")
                 except OSError as exc:
                     logger.warning(
                         "[AgentService] Task %s: could not mirror stderr to file: %s",
@@ -544,7 +557,7 @@ class EmitMixin:
         # Create log entry
         log = TaskLog(
             task_id=task_id,
-            content=line,
+            content=shown,
             source="stderr" if is_stderr else "stdout",
             level="error" if is_stderr else "info",
         )
@@ -552,7 +565,7 @@ class EmitMixin:
 
         # Write to task_logs.json for detailed phase logs
         if log_writer and spec_id and not is_stderr:
-            log_writer.process_line(spec_id, current_phase, line)
+            log_writer.process_line(spec_id, current_phase, shown)
 
         # Rate limit (authenticated marker only, #1929) triggers failover after exit.
         if self._marker_payload(task_id, line, _RATE_LIMIT_MARKER) is not None:

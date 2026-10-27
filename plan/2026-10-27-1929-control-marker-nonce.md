@@ -135,3 +135,20 @@ the old unauthenticated parsing on both sides.
 - Step 4: `tests/conftest.py` mocks `claude_agent_sdk`, so the `_patched_parse`
   test runs the real patch function against a fake `parse_message`.
   `scripts/ratchet_lint.py` does not exist in this repo; not run.
+
+### Review round 1 (lead's Opus review of #1938)
+
+- Restored the spec-creation spawn block in `agent_spec_creation.py`, which
+  the step 3 style fix had deleted. Only the `env.update` line is added ahead
+  of it. `test_spec_creation_spawns_with_a_nonce` runs that spawn.
+- The nonce is masked as `<nonce>` before every sink: the TaskLog / WebSocket
+  pane, `task_logs.json` (it sits in the agent's worktree), the stderr mirror
+  and the rmux Live Console feed. Markers are parsed from the raw line.
+  `test_nonce_never_reaches_a_log_sink` covers this.
+- `_marker_nonce_env` mints a fresh nonce on every spawn instead of reusing one
+  per task. Respawns reuse the spawn env and therefore the current nonce.
+- `agents/session.py` calls `emit_rate_limit()` on the exception path when
+  `is_rate_limit_error` matches. `test_session_exception_rate_limit_emits_marker`
+  covers it.
+- Regenerated the autonomy matrix (`scripts/gen_autonomy_matrix.py`), because
+  the `core/auth.py` line numbers moved.

@@ -179,7 +179,8 @@ async def test_the_log_pane_still_receives_every_line(project):
     await _dispatch_and_stream(service, project_path, JOB_STDOUT)
 
     forwarded = [call.args[0].content for call in service._emit_log.call_args_list]
-    assert forwarded == JOB_STDOUT
+    # The nonce is masked before any sink (#1929); the lines are otherwise intact.
+    assert forwarded == [ln.replace("n0nce", "<nonce>") for ln in JOB_STDOUT]
 
 
 async def test_a_build_that_never_streams_still_has_a_readable_phase(project):
