@@ -174,3 +174,14 @@ Same decisions as above; these steps close what the review found.
   asserted, so it now checks grantable names (`uv`, `pytest`) and that `my-custom-tool` is dropped.
 - Step 11: the `--qa` test patches module objects from `importlib.import_module(...)`, not
   dotted strings, because other tests swap the `review` package in `sys.modules`.
+
+## Review round 2
+
+12. `core/worktree.py` `commit_in_worktree` (~1221): `git add . ':!.aifactory' ':!.aifactory-allowlist'`.
+    On the parallel path (`parallel_integration.py` ~699), a child could otherwise commit an edited
+    allowlist into the task branch, and later tasks would inherit grantable names without a plan
+    declaring them. Test: `tests/test_worktree_commit_logging.py::test_commit_never_stages_allowlist`.
+
+Accepted, not changed: `_trusted_profiles` is unbounded. It holds one entry per worktree per
+build process, and since step 9 the web-server never calls `get_security_profile`, so its
+size is bounded by the worktrees one build touches.
