@@ -11,15 +11,18 @@ Refs olafkfreund/Factory#1960.
 ## Problem
 
 `apps/backend/prompts/planner.md` step 1.1b (#394) tells the planner to write a
-`selectedSkills` array into its spec dir's `task_metadata.json`. That write never
-takes effect:
+`selectedSkills` array into its spec dir's `task_metadata.json`. That write has no
+effect on the build it runs in:
 
 - The only reader, `_write_skill_context` (`apps/web-server/server/services/agent_skill_context.py`),
   reads the canonical `task_metadata.json` once at dispatch, before the planner runs.
 - Nothing in `apps/backend` reads `selectedSkills`.
-- The planner writes the worktree copy. Since #1921/#1923 the worktree sync mirrors
-  only an allowlist that excludes `task_metadata.json`; on kubejob it never reached
-  the canonical copy.
+- In a worktree build the planner writes the worktree copy. Since #1921/#1923 the
+  worktree sync mirrors only an allowlist that excludes `task_metadata.json`, and on
+  kubejob it never reached the canonical copy. Without a worktree the write lands in
+  the canonical file, but only after `skill_context.md` was written, so at most it
+  changes a later run's skills, and it is an agent writing a control-plane-owned
+  file (#1921, #1922).
 
 So the planner spends tokens on a step that is dropped, and two code comments still
 describe the planner "refining" the proposals.

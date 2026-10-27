@@ -138,12 +138,12 @@ class TestCreateAndRunProposes:
         assert meta["suggestedSkills"][0]["id"] == "quality/clean-code"
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
-
-
 def test_planner_prompt_does_not_ask_for_selected_skills() -> None:
-    """The planner's worktree task_metadata.json never reaches the control plane,
-    so a selectedSkills write there is dropped (#1927)."""
+    """_write_skill_context reads selectedSkills at dispatch, before the planner
+    runs, so a planner write there never affects its own build (#1927)."""
     prompt = (_ROOT / "apps" / "backend" / "prompts" / "planner.md").read_text()
     assert "selectedSkills" not in prompt
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
