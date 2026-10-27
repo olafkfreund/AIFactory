@@ -195,11 +195,13 @@ class TestPostPlannerGate:
         m = await _drive(spec_dir, tmp_path, _planner(PLAN_B))
         assert _paused(spec_dir, m)
 
-    async def test_approval_for_exact_plan_not_paused(self, tmp_path):
+    async def test_approval_for_exact_plan_still_paused(self, tmp_path):
+        # No on-disk approval is trusted after the planner runs: a human cannot
+        # have approved a plan written seconds ago.
         spec_dir = _make_spec(tmp_path)
         _approve_then_remove_plan(spec_dir, PLAN_A)
         m = await _drive(spec_dir, tmp_path, _planner(PLAN_A))
-        assert _proceeded(spec_dir, m)
+        assert _paused(spec_dir, m)
 
     async def test_planner_enabling_review_does_not_pause(self, tmp_path):
         spec_dir = _make_spec(tmp_path, {"requireReviewBeforeCoding": False})

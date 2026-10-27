@@ -181,6 +181,46 @@ Not changed: process_monitor's raw `approved` reads (:327, :428). They only
 decide whether an exit is shown as "awaiting review" or "failed", and never
 pass force.
 
+## Round 3: lead re-review of PR #1926, decision (a)
+
+Finding: in-pod agents (subprocess builds and spec creation, which is in-pod on
+every backend) share the web-server's uid. They can write the main `.aifactory`
+(client.py Write/Edit grants, bash unsandboxed on k3d), and they can read
+`~/.aifactory/.token`, `.jwt_secret` and `/proc/<server pid>/environ`.
+
+The lead first chose (b): an HMAC'd planApproved. It was dropped for (a),
+because the signing key is readable by the same agents, so no record or key on
+that side can be agent-proof. Scope of this PR: agent-proof against BUILD agents
+on kubejob, and against in-run tampering on subprocess. Spec-creation agents and
+subprocess builds are tracked in #1932 (with #1930 and #1931).
+
+9. `apps/backend/agents/coder.py`: after a planner session, `require_review`
+   (snapshotted before any agent turn) ALWAYS pauses. The pre-planner
+   `ReviewState` snapshot is removed. No approval can exist for a plan written in
+   this process, and the main spec dir is agent-writable across runs on
+   subprocess. Test: the exact-plan case now expects paused.
+10. `task_control.py`: `write_control` loses the `plan_approved` keyword (the CI
+    ratchet flagged PLR0913). It is replaced by `record_plan_approval(spec_dir,
+    approved_by)` and `clear_plan_approval(spec_dir)`. The `plan_review` clear rule
+    stays in `write_control`. The docstring records that the approval survives
+    plan edits and is not out of reach of in-pod agents.
+11. Step 7b is REVERTED (the dispatch-time `is_first_run` clear in
+    `agent_service.start_task_execution`). It added a module-level import that
+    broke the autonomy-matrix CI check, and it bought nothing: after a re-plan,
+    the post-planner gate always pauses, and the kubejob review pause writes
+    `plan_review`, which clears planApproved.
+12. CI: strict-ruff fixes in `apps/web-server/tests/test_plan_approval_resume.py`.
+    `tests/test_kubejob_build_ownership.py`'s fixture seeds
+    `record_plan_approval` (it relied on a hash-less approval forcing a start).
+    The autonomy matrix is regenerated (a line reference moved).
+
+Not changed, with reasons:
+- F2, process_monitor's raw `approved` reads (:327, :428). They only classify an
+  exit or a finished spec creation for display. With the post-planner gate
+  always pausing, a forged approval there cannot start coding.
+- The run.py pre-flight still reads hashed `review_state.json`. On subprocess
+  that file is as writable as any other (#1932).
+
 ## Tests
 
 `python -m pytest tests/test_review_validation.py tests/test_solo_mode.py tests/test_solo_parallel_waves.py tests/test_plan_review_gate_snapshot.py tests/test_injection_ssrf.py -q` → all pass.

@@ -19,6 +19,7 @@ if _BACKEND not in sys.path:
 from review.state import ReviewState  # noqa: E402
 from server.routes import execution, plan_approval  # noqa: E402
 from server.services import task_control  # noqa: E402
+from server.services.agent_service import AgentService  # noqa: E402
 
 PLAN = {
     "feature": "x",
@@ -41,7 +42,7 @@ def _spec(tmp_path, meta=None):
 
 # -- step 5: task_control.write_control ---------------------------------------
 def test_plan_approved_set_and_clear(tmp_path):
-    task_control.write_control(tmp_path, plan_approved=True, updated_by="web_user")
+    task_control.record_plan_approval(tmp_path, "web_user")
     c = task_control.read_control(tmp_path)
     assert c["planApproved"] is True
     assert c["planApprovedBy"] == "web_user"
@@ -52,22 +53,15 @@ def test_plan_approved_set_and_clear(tmp_path):
     )  # unrelated write keeps it
     assert task_control.read_control(tmp_path)["planApproved"] is True
 
-    task_control.write_control(tmp_path, plan_approved=False)
+    task_control.clear_plan_approval(tmp_path)
     c = task_control.read_control(tmp_path)
     assert not {"planApproved", "planApprovedBy", "planApprovedAt"} & set(c)
 
 
 def test_plan_review_reason_clears_approval(tmp_path):
-    task_control.write_control(tmp_path, plan_approved=True)
+    task_control.record_plan_approval(tmp_path, "web_user")
     task_control.write_control(
         tmp_path, status="human_review", review_reason="plan_review"
-    )
-    assert "planApproved" not in task_control.read_control(tmp_path)
-
-
-def test_plan_review_reason_wins_over_plan_approved_true(tmp_path):
-    task_control.write_control(
-        tmp_path, review_reason="plan_review", plan_approved=True
     )
     assert "planApproved" not in task_control.read_control(tmp_path)
 
@@ -94,7 +88,7 @@ def test_approve_plan_records_plan_approved_even_without_plan_file(tmp_path):
 
 def test_reject_plan_clears_plan_approved(tmp_path):
     spec_dir = _spec(tmp_path)
-    task_control.write_control(spec_dir, plan_approved=True)
+    task_control.record_plan_approval(spec_dir, "web_user")
     _route(plan_approval.reject_plan, tmp_path, plan_approval.RejectPlanRequest())
     assert "planApproved" not in task_control.read_control(spec_dir)
 
@@ -112,20 +106,17 @@ def _start(tmp_path):
         patch.object(execution, "get_agent_service", return_value=svc),
         patch.object(execution, "emit_task_status", new=AsyncMock()),
     ):
-        try:
-            result = asyncio.run(
-                execution.start_task(
-                    "p:001-x",
-                    execution.StartTaskRequest(),
-                    SimpleNamespace(state=SimpleNamespace()),
-                )
+        result = asyncio.run(
+            execution.start_task(
+                "p:001-x",
+                execution.StartTaskRequest(),
+                SimpleNamespace(state=SimpleNamespace()),
             )
-        except Exception as exc:  # post-start bookkeeping is out of scope here
-            result = exc
+        )
     return result, svc.start_task_execution
 
 
-def _assert_held(tmp_path, spec_dir, result, start):
+def _assert_held(spec_dir, result, start):
     assert not start.called
     assert result["status"] == "human_review"
     assert task_control.read_control(spec_dir)["reviewReason"] == "plan_review"
@@ -135,7 +126,7 @@ def test_hashless_approval_does_not_resume(tmp_path):
     spec_dir = _spec(tmp_path)
     (spec_dir / "review_state.json").write_text(json.dumps({"approved": True}))
     result, start = _start(tmp_path)
-    _assert_held(tmp_path, spec_dir, result, start)
+    _assert_held(spec_dir, result, start)
 
 
 def test_valid_approval_resumes_with_force(tmp_path):
@@ -152,13 +143,13 @@ def test_stale_hash_without_plan_approved_does_not_resume(tmp_path):
         json.dumps({**PLAN, "feature": "changed"})
     )
     result, start = _start(tmp_path)
-    _assert_held(tmp_path, spec_dir, result, start)
+    _assert_held(spec_dir, result, start)
 
 
 def test_plan_approved_resumes_even_with_stale_hash(tmp_path):
     spec_dir = _spec(tmp_path)
     ReviewState().approve(spec_dir)
-    task_control.write_control(spec_dir, plan_approved=True)
+    task_control.record_plan_approval(spec_dir, "web_user")
     (spec_dir / "implementation_plan.json").write_text(
         json.dumps({**PLAN, "feature": "changed"})
     )
@@ -172,48 +163,8 @@ def test_auto_simple_approval_is_valid(tmp_path):
     assert ReviewState.load(spec_dir).is_approval_valid(spec_dir)
 
 
-# -- dispatch: a planner about to run clears a stale approval ------------------
-def _service():
-    from server.services.agent_service import AgentService
-
-    svc = AgentService.__new__(AgentService)
-    svc.running_tasks = {}
-    svc._task_queue = []
-    svc._read_parallel_opts = MagicMock(side_effect=RuntimeError("stop"))
-    return svc
-
-
-def test_start_with_no_plan_clears_stale_approval(tmp_path):
-    spec_dir = _spec(tmp_path)
-    (spec_dir / "implementation_plan.json").unlink()  # the planner will run
-    task_control.write_control(spec_dir, plan_approved=True, updated_by="web_user")
-
-    try:
-        asyncio.run(
-            _service().start_task_execution("p:001-x", tmp_path / "repo", "001-x")
-        )
-    except RuntimeError:
-        pass  # stopped right after the approval check
-    assert "planApproved" not in task_control.read_control(spec_dir)
-
-
-def test_start_with_plan_keeps_approval(tmp_path):
-    spec_dir = _spec(tmp_path)
-    task_control.write_control(spec_dir, plan_approved=True, updated_by="web_user")
-
-    try:
-        asyncio.run(
-            _service().start_task_execution("p:001-x", tmp_path / "repo", "001-x")
-        )
-    except RuntimeError:
-        pass
-    assert task_control.read_control(spec_dir)["planApproved"] is True
-
-
 # -- step 8: a planner forgery in the worktree never changes the next Start ---
 def test_worktree_forgery_does_not_reach_main_or_change_start(tmp_path):
-    from server.services.agent_service import AgentService
-
     spec_dir = _spec(tmp_path)  # main: review required, plan, no approval
     worktree_spec = (
         (tmp_path / "repo" / ".aifactory" / "worktrees" / "tasks" / "001-x")
@@ -239,4 +190,4 @@ def test_worktree_forgery_does_not_reach_main_or_change_start(tmp_path):
         "requireReviewBeforeCoding": True
     }
     result, start = _start(tmp_path)
-    _assert_held(tmp_path, spec_dir, result, start)
+    _assert_held(spec_dir, result, start)

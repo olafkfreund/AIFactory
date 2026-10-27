@@ -212,7 +212,6 @@ async def run_autonomous_agent(
     solo = is_solo_mode_enabled_for_spec(spec_dir)
     # Read before any agent session so the planner cannot change the gate (#1922).
     require_review = not solo and _should_require_human_review(spec_dir)
-    pre_planner_review = ReviewState.load(spec_dir)
 
     # #389: solo collapses plan+implement into one session, which bypasses the
     # wave dispatch. Under --parallel, author the plan first (planner session)
@@ -549,12 +548,12 @@ async def run_autonomous_agent(
                         sync_plan_to_source(spec_dir, source_spec_dir)
                     return
 
-                # Plan-review gate (#1922): decided from the pre-planner snapshot
-                # (taken before any agent session), never from files the planner
-                # could have rewritten. Solo mode (#276) never gates.
-                if require_review and not pre_planner_review.is_approval_valid(
-                    spec_dir
-                ):
+                # Plan-review gate (#1922): when review is required (snapshot
+                # taken before any agent session), ALWAYS pause after the planner.
+                # A human cannot have approved a plan written seconds ago, and the
+                # spec dir is agent-writable, so no on-disk approval is trusted
+                # here. Solo mode (#276) never gates.
+                if require_review:
                     # Pause for human review
                     logger.info(
                         "Plan review required - pausing execution for human approval"
