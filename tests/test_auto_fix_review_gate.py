@@ -92,3 +92,22 @@ def test_start_route_requires_member_role(monkeypatch):
     assert r.status_code == 403
     assert roles == ["member"]
     start.assert_not_called()
+
+
+def test_write_spec_dir_require_review_metadata(tmp_path):
+    from server.services.auto_fix_service import _write_spec_dir
+
+    issue = {"number": 7, "title": "x", "body": "b", "state": "open", "url": "u"}
+
+    def meta(name, **kw):
+        sid = _write_spec_dir(tmp_path / name, issue, "github", **kw)
+        req = tmp_path / name / ".aifactory" / "specs" / sid / "requirements.json"
+        return json.loads(req.read_text())
+
+    assert meta("a", require_review=True)["metadata"] == {
+        "requireReviewBeforeCoding": True
+    }
+    assert "metadata" not in meta("b")
+    both = meta("c", require_review=True, delegate_by_default=True)["metadata"]
+    assert both["requireReviewBeforeCoding"] is True
+    assert both["enableDelegation"] is True
