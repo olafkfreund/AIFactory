@@ -751,8 +751,8 @@ class SkillsService:
         The hybrid skill flow's *propose* step: the deterministic matcher ranks
         skills for a task, mapped to the ``{id, name, category, source}`` shape
         the build's ``_write_skill_context`` consumes. Written to task_metadata
-        as ``suggestedSkills``; the planner may refine them into ``selectedSkills``
-        (confirm), and the build falls back to the proposals if it doesn't.
+        as ``suggestedSkills``; the build uses them when no ``selectedSkills`` are
+        set (#1927: the planner no longer confirms them).
         """
         return [
             suggestion_to_selected(s)

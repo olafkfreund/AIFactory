@@ -3,7 +3,7 @@
 Tests for hybrid skill auto-selection (#394)
 ============================================
 
-Propose → confirm → fallback:
+Propose → fallback (the planner no longer confirms, #1927):
 - suggest_selected_skills maps the matcher's suggestions to the selectedSkills
   shape the build consumes.
 - create-and-run persists them as suggestedSkills when no manual skills are set.
@@ -136,6 +136,13 @@ class TestCreateAndRunProposes:
             ).read_text()
         )
         assert meta["suggestedSkills"][0]["id"] == "quality/clean-code"
+
+
+def test_planner_prompt_does_not_ask_for_selected_skills() -> None:
+    """_write_skill_context reads selectedSkills at dispatch, before the planner
+    runs, so a planner write there never affects its own build (#1927)."""
+    prompt = (_ROOT / "apps" / "backend" / "prompts" / "planner.md").read_text()
+    assert "selectedSkills" not in prompt
 
 
 if __name__ == "__main__":

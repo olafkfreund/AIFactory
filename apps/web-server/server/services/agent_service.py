@@ -211,6 +211,8 @@ class AgentService(
         self._token_pool_build_lock = threading.Lock()
         # Track rate limit detection per task to allow reactive failover
         self._task_rate_limits: dict[str, bool] = {}
+        # Per-task nonce authenticating build stdout control markers (#1929)
+        self._task_marker_nonces: dict[str, str] = {}
         # Track previous subtask statuses per task for granular change detection
         # Format: {task_id: {subtask_id: status_string}}
         self._task_subtask_states: dict[str, dict[str, str]] = {}
@@ -1286,6 +1288,8 @@ class AgentService(
 
         env.update(await spawn_env(spec_dir))
         env.update(await project_settings_store.mcp_spawn_env(project_path))
+        # #1929: after make_subprocess_env(), which denies this name.
+        env.update(self._marker_nonce_env(task_id))
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -1536,6 +1540,7 @@ class AgentService(
         # #670: return the pooled Claude credential AND pop _task_profiles.
         self._release_task_credential(task_id)
         self._task_rate_limits.pop(task_id, None)
+        self._task_marker_nonces.pop(task_id, None)
         self._task_user_ids.pop(task_id, None)
 
         # RFC-0016 #668: free the durable slot for a user-stopped build. The
