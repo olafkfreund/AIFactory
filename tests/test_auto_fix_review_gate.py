@@ -126,3 +126,59 @@ async def test_new_spec_with_require_human_approval_is_gated(tmp_path):
     (spec,) = (tmp_path / ".aifactory" / "specs").iterdir()
     meta = json.loads((spec / "task_metadata.json").read_text())
     assert meta["requireReviewBeforeCoding"] is True
+
+
+def _config_client(monkeypatch, stored, allow=True):
+    from fastapi import FastAPI, HTTPException
+    from fastapi.testclient import TestClient
+    from server.database.engine import get_db
+    from server.routes import auto_fix, project_authz
+    from server.services import auto_fix_service
+
+    roles: list[str] = []
+
+    async def authz(user, project_id, db, minimum_role="viewer"):
+        roles.append(minimum_role)
+        if not allow:
+            raise HTTPException(status_code=403, detail="forbidden")
+
+    saved: dict = {}
+    monkeypatch.setattr(project_authz, "_auth_disabled", lambda: False)
+    monkeypatch.setattr(project_authz, "authorize_project_for_user", authz)
+    monkeypatch.setattr(auto_fix_service, "get_config", lambda pid: dict(stored))
+    monkeypatch.setattr(
+        auto_fix_service, "save_config", lambda pid, cfg: saved.update(cfg) or True
+    )
+    app = FastAPI()
+    app.include_router(auto_fix.router, prefix="/api/projects")
+    app.dependency_overrides[get_db] = lambda: None
+    return TestClient(app), roles, saved
+
+
+def test_get_config_masks_bot_token(monkeypatch):
+    client, _, _ = _config_client(monkeypatch, {"botToken": "ghp_secret"})
+    body = client.get("/api/projects/p1/auto-fix/config").json()
+    assert body["botToken"] == "********"
+
+
+@pytest.mark.parametrize("sent", [{"botToken": "********"}, {}])
+def test_put_config_keeps_stored_token_for_mask_or_omitted(monkeypatch, sent):
+    client, roles, saved = _config_client(monkeypatch, {"botToken": "ghp_secret"})
+    r = client.put("/api/projects/p1/auto-fix/config", json={"enabled": True, **sent})
+    assert r.status_code == 200
+    assert saved["botToken"] == "ghp_secret"
+    assert roles == ["admin"]
+
+
+def test_put_config_replaces_token_when_new_one_sent(monkeypatch):
+    client, _, saved = _config_client(monkeypatch, {"botToken": "ghp_old"})
+    client.put("/api/projects/p1/auto-fix/config", json={"botToken": "ghp_new"})
+    assert saved["botToken"] == "ghp_new"
+
+
+def test_put_config_denied_below_admin(monkeypatch):
+    client, roles, saved = _config_client(monkeypatch, {}, allow=False)
+    r = client.put("/api/projects/p1/auto-fix/config", json={"enabled": True})
+    assert r.status_code == 403
+    assert roles == ["admin"]
+    assert not saved

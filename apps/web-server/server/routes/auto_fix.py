@@ -22,7 +22,7 @@ hook in ``useAutoFix.ts``.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Annotated, Any
 
 from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, Depends, HTTPException
@@ -37,6 +37,14 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+Viewer = Annotated[dict, Depends(require_project_access("viewer"))]
+Member = Annotated[dict, Depends(require_project_access("member"))]
+Admin = Annotated[dict, Depends(require_project_access("admin"))]
+
+# GET never returns the stored bot token; PUT treats this value (or an omitted
+# field) as "keep the stored token" so a round-tripped config does not wipe it.
+TOKEN_MASK = "********"
+
 
 # ---------------------------------------------------------------------------
 # Request / response schemas
@@ -49,7 +57,7 @@ class AutoFixConfigPayload(BaseModel):
     enabled: bool = False
     labels: list[str] = Field(default_factory=list)
     requireHumanApproval: bool = False
-    botToken: str | None = Field(default="", repr=False)
+    botToken: str | None = Field(default=None, repr=False)
     model: str = "sonnet"
     thinkingLevel: str = "none"
 
@@ -61,41 +69,45 @@ class AutoFixConfigPayload(BaseModel):
 
 @router.get("/{project_id}/auto-fix/config")
 async def get_auto_fix_config(
-    project_id: str, _access: dict = Depends(require_project_access("member"))
+    project_id: str, _access: Member
 ) -> dict[str, Any] | None:
     """Return AutoFixConfig for the project, or null if no project."""
     cfg = auto_fix_service.get_config(project_id)
     if cfg is None:
         raise HTTPException(status_code=404, detail="Project not found")
     # Strip the queue from the config response (queue has its own endpoint)
-    return {k: v for k, v in cfg.items() if k != "queue"}
+    out = {k: v for k, v in cfg.items() if k != "queue"}
+    if out.get("botToken"):
+        out["botToken"] = TOKEN_MASK
+    return out
 
 
 @router.put("/{project_id}/auto-fix/config")
 async def save_auto_fix_config(
     project_id: str,
     payload: AutoFixConfigPayload,
-    _access: dict = Depends(require_project_access("member")),
+    _access: Admin,
 ) -> dict[str, bool]:
     """Save AutoFixConfig. Returns ``{success: bool}``."""
-    ok = auto_fix_service.save_config(project_id, payload.model_dump())
+    config = payload.model_dump()
+    if config["botToken"] in (None, TOKEN_MASK):
+        config["botToken"] = (auto_fix_service.get_config(project_id) or {}).get(
+            "botToken", ""
+        )
+    ok = auto_fix_service.save_config(project_id, config)
     if not ok:
         raise HTTPException(status_code=404, detail="Project not found")
     return {"success": True}
 
 
 @router.get("/{project_id}/auto-fix/queue")
-async def get_auto_fix_queue(
-    project_id: str, _access: dict = Depends(require_project_access("viewer"))
-) -> list[dict[str, Any]]:
+async def get_auto_fix_queue(project_id: str, _access: Viewer) -> list[dict[str, Any]]:
     """Return the AutoFix queue items."""
     return auto_fix_service.get_queue(project_id)
 
 
 @router.post("/{project_id}/auto-fix/check-new")
-async def check_new_issues(
-    project_id: str, _access: dict = Depends(require_project_access("member"))
-) -> dict[str, Any]:
+async def check_new_issues(project_id: str, _access: Member) -> dict[str, Any]:
     """Manually trigger a poll: find new issues + start each one.
 
     This is what the frontend's "Poll now" / refresh button calls,
@@ -126,7 +138,7 @@ async def check_new_issues(
 async def start_auto_fix_one(
     project_id: str,
     issueNumber: int,
-    _access: dict = Depends(require_project_access("member")),
+    _access: Member,
 ) -> dict[str, Any]:
     """Import + start the agent on a single issue."""
     try:

@@ -71,6 +71,19 @@ dir does not exist). Pattern for sys.path: `tests/test_auto_fix_pull_on_poll.py`
    Test: a fresh spec with \`requireHumanApproval\` on has
    \`task_metadata.json\` \`requireReviewBeforeCoding: true\` (fails without the sync).
 
+   **Deviation (lead's Opus review of the PR):**
+   - PUT config needs \`admin\` (matches PATCH project settings), not \`member\`.
+   - GET config returns \`botToken\` as \`********\`. PUT keeps the stored
+     token when the field is the mask or omitted (payload default \`None\`);
+     any other value replaces it, and \`""\` still clears it.
+   - Dependencies use \`Annotated[dict, Depends(...)]\` aliases
+     (\`Viewer\`/\`Member\`/\`Admin\`), as \`routes/from_issue.py\` does, because
+     the strict ratchet counts B008 on \`= Depends(...)\` defaults.
+   - Tests cover GET masking, PUT keeping the token for the mask or an
+     omitted field, PUT replacing it, and PUT denied below admin.
+   - Not done: a per-issue start lock (the lead marked it optional; the
+     existing "already running" ValueError covers the same-task double start).
+
 ## Tests
 
 `pytest tests/test_auto_fix_review_gate.py tests/test_delegation_v1_gaps.py tests/test_delegation_v1b.py tests/test_auto_fix_pull_on_poll.py -q` all pass;
