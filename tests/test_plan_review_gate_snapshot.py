@@ -58,7 +58,10 @@ def _make_spec(tmp_path: Path, meta: dict | None = None) -> Path:
 
 
 async def _drive(
-    spec_dir: Path, tmp_path: Path, planner: Callable[[Path], None]
+    spec_dir: Path,
+    tmp_path: Path,
+    planner: Callable[[Path], None],
+    next_subtask: dict | None = None,
 ) -> AsyncMock:
     """Run run_autonomous_agent; ``planner`` acts as the first agent session."""
     import agents.coder as coder
@@ -80,7 +83,9 @@ async def _drive(
         "run_session_guarded": session_mock,
         "check_git_metadata": MagicMock(),
         "get_graphiti_context": AsyncMock(return_value=""),
-        "RecoveryManager": MagicMock(),
+        "RecoveryManager": MagicMock(
+            return_value=MagicMock(get_attempt_count=MagicMock(return_value=0))
+        ),
         "StatusManager": MagicMock(),
         "get_task_logger": MagicMock(return_value=None),
         "debug_memory_system_status": MagicMock(),
@@ -97,7 +102,7 @@ async def _drive(
             return_value={"completed": 0, "total": 1, "in_progress": 0}
         ),
         "get_current_phase": MagicMock(return_value=None),
-        "get_next_subtask": MagicMock(return_value=None),
+        "get_next_subtask": MagicMock(return_value=next_subtask),
         "get_latest_commit": MagicMock(return_value="abc"),
         "get_commit_count": MagicMock(return_value=0),
         "infer_provider_from_model": MagicMock(return_value="claude"),
@@ -307,3 +312,39 @@ class TestRestartWithoutApproval:
         spec_dir = _make_spec(tmp_path)
         assert should_pass_force(spec_dir, False) is False
         assert should_pass_force(spec_dir, True) is True
+
+
+# ---------------------------------------------------------------------------
+# Plan-command grants (#1940): an approved continuation run grants only the
+# commands of the plan it started with, not ones the agent adds mid-run.
+# ---------------------------------------------------------------------------
+def _profile_commands(project_dir: Path) -> set[str]:
+    p = project_dir / ".aifactory" / ".aifactory-security.json"
+    return set(json.loads(p.read_text()).get("custom_commands", []))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("require_review", [True, False])
+async def test_mid_run_plan_edit_grants_only_when_review_not_required(
+    tmp_path, require_review
+):
+    from security.main import reset_profile_cache
+
+    reset_profile_cache()
+    spec_dir = _make_spec(tmp_path, {"requireReviewBeforeCoding": require_review})
+    _write_plan(spec_dir, {**PLAN_A, "required_commands": ["uv"]})
+    ReviewState().approve(spec_dir)
+
+    def coder_session(d: Path) -> None:
+        plan = json.loads((d / "implementation_plan.json").read_text())
+        plan["required_commands"] = ["uv", "npx"]
+        _write_plan(d, plan)
+
+    m = await _drive(
+        spec_dir, tmp_path, coder_session, next_subtask={"id": "1", "description": "d"}
+    )
+
+    assert m.await_count == 2  # the second session was seeded after the edit
+    granted = _profile_commands(tmp_path)
+    assert "uv" in granted
+    assert ("npx" in granted) is not require_review
