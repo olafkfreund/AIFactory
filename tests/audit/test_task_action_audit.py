@@ -271,7 +271,10 @@ def test_apply_correction_audits_only_a_confirmed_success(
 
     monkeypatch.setattr(execution, "record_handback_receipt", _receipt)
     req = execution.ApplyCorrectionRequest(
-        fix_request_md="# fix", source="tfactory", confirm=result["confirm"]
+        fix_request_md="# fix",
+        source="tfactory",
+        confirm=result["confirm"],
+        triage={"contract_version": 1},
     )
     _run(execution.apply_task_correction("p:001", req, _access=USER))
     assert [r["action"] for r in rows] == ["task.apply_correction"] * expected
@@ -300,9 +303,17 @@ def correction_calls(rows, monkeypatch, tmp_path):
 
 
 def _flag(monkeypatch, value: bool):
-    import server.config
+    from server.config import settings
 
-    monkeypatch.setattr(server.config.settings, "REQUIRE_CORRECTION_TRIAGE", value)
+    monkeypatch.setattr(settings, "REQUIRE_CORRECTION_TRIAGE", value)
+
+
+def test_triage_required_by_default(monkeypatch):
+    # TFactory#1431: on unless APP_REQUIRE_CORRECTION_TRIAGE opts out.
+    from server.config import Settings
+
+    monkeypatch.delenv("APP_REQUIRE_CORRECTION_TRIAGE", raising=False)
+    assert Settings(_env_file=None).REQUIRE_CORRECTION_TRIAGE is True
 
 
 def test_triage_required_rejects_markdown_only(rows, correction_calls, monkeypatch):
@@ -334,3 +345,54 @@ def test_triage_request_passes_either_way(
     )
     _run(execution.apply_task_correction("p:001", req, _access=USER))
     assert [c["triage"] for c in correction_calls] == [triage]
+
+
+# -- #1874: the stdio-MCP proxy reaches apply-correction ---------------------
+
+
+@pytest.fixture
+def mcp_client(monkeypatch):
+    """TestClient on the real ``/api/mcp-stdio`` router, legacy admin token."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from server.config import settings
+
+    mcp_router = importlib.import_module("server.mcp_stdio.router")
+    # It imported the sink by name, so the `rows` patch does not reach it.
+    monkeypatch.setattr(
+        mcp_router, "log_audit_event_bg", audit_service.log_audit_event_bg
+    )
+    monkeypatch.setattr(settings, "API_TOKEN", "t-1874")
+    app = FastAPI()
+    app.include_router(mcp_router.router)
+    return TestClient(app, headers={"Authorization": "Bearer t-1874"})
+
+
+_PROXY_URL = "/api/mcp-stdio/tasks/p:001/apply-correction"
+
+
+def test_proxy_apply_correction_with_triage_reaches_route(
+    rows, correction_calls, mcp_client, monkeypatch
+):
+    _flag(monkeypatch, True)
+    triage = {
+        "contract_version": "handback-triage-1",
+        "source": "triage",
+        "failing_tests": [{"test_id": "t::login", "reason": "HTTP 500"}],
+    }
+    r = mcp_client.post(
+        _PROXY_URL, json={"fix_request_md": "# fix", "confirm": True, "triage": triage}
+    )
+    assert r.status_code == 200, r.text
+    assert [c["triage"] for c in correction_calls] == [triage]
+    assert [row["action"] for row in rows] == ["mcp.task.apply_correction"]
+
+
+def test_proxy_apply_correction_without_triage_is_422(
+    rows, correction_calls, mcp_client, monkeypatch
+):
+    _flag(monkeypatch, True)
+    r = mcp_client.post(_PROXY_URL, json={"fix_request_md": "# fix", "confirm": True})
+    assert r.status_code == 422
+    assert "APP_REQUIRE_CORRECTION_TRIAGE" in r.text
+    assert correction_calls == [] and rows == []

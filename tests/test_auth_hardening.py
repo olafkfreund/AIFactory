@@ -8,8 +8,8 @@ Covers the two self-contained findings in this slice:
 - **M1** — the legacy ``API_TOKEN`` must be compared in constant time
   (``hmac.compare_digest``) and an unset token must never match.
 - **H7** — the server must refuse to bind an unauthenticated admin API
-  (``DISABLE_AUTH``) to a non-loopback host unless ``DEBUG`` explicitly
-  accepts the risk.
+  (``DISABLE_AUTH``) to a non-loopback host unless
+  ``ALLOW_INSECURE_AUTH`` explicitly accepts the risk.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ sys.path.insert(0, str(_ROOT / "apps" / "backend"))
 
 from server import auth as auth_mod  # noqa: E402
 from server.config import (  # noqa: E402
+    Settings,
     cors_allows_credentials,
     enforce_cors_safety,
     enforce_disable_auth_safety,
@@ -64,13 +65,12 @@ class TestLegacyApiTokenConstantTime:
 
 
 class TestHostIsLoopback:
-    @pytest.mark.parametrize(
-        "host", ["127.0.0.1", "::1", "localhost", "", "  LocalHost "]
-    )
+    @pytest.mark.parametrize("host", ["127.0.0.1", "::1", "localhost", "  LocalHost "])
     def test_loopback_hosts(self, host):
         assert host_is_loopback(host) is True
 
-    @pytest.mark.parametrize("host", ["0.0.0.0", "::", "192.168.1.5", "10.0.0.2"])
+    # "" binds every interface under uvicorn, so it is exposed, not loopback.
+    @pytest.mark.parametrize("host", ["0.0.0.0", "::", "192.168.1.5", "10.0.0.2", ""])
     def test_exposed_hosts(self, host):
         assert host_is_loopback(host) is False
 
@@ -79,7 +79,12 @@ class TestEnforceDisableAuthSafety:
     """H7 — refuse to bind an unauthenticated admin API to the network."""
 
     def _settings(self, **kw) -> SimpleNamespace:
-        base = {"DISABLE_AUTH": True, "HOST": "0.0.0.0", "DEBUG": False}
+        base = {
+            "DISABLE_AUTH": True,
+            "HOST": "0.0.0.0",
+            "DEBUG": False,
+            "ALLOW_INSECURE_AUTH": False,
+        }
         base.update(kw)
         return SimpleNamespace(**base)
 
@@ -87,27 +92,80 @@ class TestEnforceDisableAuthSafety:
         # DISABLE_AUTH off → never raises regardless of host.
         enforce_disable_auth_safety(self._settings(DISABLE_AUTH=False, HOST="0.0.0.0"))
 
-    def test_allows_loopback(self):
-        enforce_disable_auth_safety(self._settings(HOST="127.0.0.1"))
+    @pytest.mark.parametrize("debug", [False, True])
+    def test_allows_loopback(self, debug):
+        enforce_disable_auth_safety(self._settings(HOST="127.0.0.1", DEBUG=debug))
 
-    def test_allows_exposed_with_debug_override(self):
-        # DEBUG is the explicit local-dev opt-in for the risky combo.
-        enforce_disable_auth_safety(self._settings(HOST="0.0.0.0", DEBUG=True))
+    def test_allows_exposed_with_explicit_opt_in(self):
+        enforce_disable_auth_safety(
+            self._settings(HOST="0.0.0.0", ALLOW_INSECURE_AUTH=True)
+        )
 
-    def test_refuses_exposed_without_debug(self):
+    @pytest.mark.parametrize("debug", [False, True])
+    def test_refuses_exposed_without_opt_in(self, debug):
+        with pytest.raises(SystemExit, match="APP_ALLOW_INSECURE_AUTH"):
+            enforce_disable_auth_safety(self._settings(HOST="0.0.0.0", DEBUG=debug))
+
+    def test_refuses_lan_ip_without_opt_in(self):
         with pytest.raises(SystemExit):
-            enforce_disable_auth_safety(self._settings(HOST="0.0.0.0", DEBUG=False))
+            enforce_disable_auth_safety(self._settings(HOST="192.168.1.5"))
 
-    def test_refuses_lan_ip_without_debug(self):
+    def test_refuses_empty_host_without_opt_in(self):
         with pytest.raises(SystemExit):
-            enforce_disable_auth_safety(self._settings(HOST="192.168.1.5", DEBUG=False))
+            enforce_disable_auth_safety(self._settings(HOST=""))
+
+    def test_opt_in_logs_network_host_warning(self, caplog):
+        with caplog.at_level("WARNING", logger="server.config"):
+            enforce_disable_auth_safety(
+                self._settings(HOST="0.0.0.0", ALLOW_INSECURE_AUTH=True)
+            )
+        assert (
+            "auth disabled on network host 0.0.0.0 because "
+            "APP_ALLOW_INSECURE_AUTH=true" in caplog.text
+        )
+
+    def test_loopback_does_not_log_network_host_warning(self, caplog):
+        with caplog.at_level("WARNING", logger="server.config"):
+            enforce_disable_auth_safety(self._settings(HOST="127.0.0.1"))
+        assert "auth disabled on network host" not in caplog.text
+
+    def test_opt_in_loads_from_environment(self, monkeypatch):
+        monkeypatch.setenv("APP_ALLOW_INSECURE_AUTH", "true")
+        assert Settings().ALLOW_INSECURE_AUTH is True
+
+
+class TestCorsOriginsParsing:
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("*", ["*"]),
+            ("https://a.com,*", ["https://a.com", "*"]),
+            (" * ", ["*"]),
+            ("https://a.com, https://b.com", ["https://a.com", "https://b.com"]),
+            ('["https://a.com"]', ["https://a.com"]),
+        ],
+    )
+    def test_env_origins_parse(self, monkeypatch, raw, expected):
+        monkeypatch.setenv("APP_CORS_ORIGINS", raw)
+        monkeypatch.setenv("APP_API_TOKEN", "test-token")
+        monkeypatch.setenv("APP_JWT_SECRET", "test-secret")
+        assert Settings().CORS_ORIGINS == expected
+
+    def test_env_wildcard_reaches_boot_guard(self, monkeypatch):
+        # The comma form used to die in pydantic before the guard could speak.
+        monkeypatch.setenv("APP_CORS_ORIGINS", "https://a.com,*")
+        monkeypatch.setenv("APP_API_TOKEN", "test-token")
+        monkeypatch.setenv("APP_JWT_SECRET", "test-secret")
+        monkeypatch.setenv("APP_DEBUG", "false")
+        with pytest.raises(SystemExit, match="Refusing to start"):
+            enforce_cors_safety(Settings())
 
 
 class TestCorsSafety:
     """#555 — never combine a wildcard CORS origin with credentialed CORS."""
 
     def _settings(self, origins, **kw) -> SimpleNamespace:
-        base = {"CORS_ORIGINS": origins, "DEBUG": False}
+        base = {"CORS_ORIGINS": origins, "DEBUG": False, "ALLOW_WILDCARD_CORS": False}
         base.update(kw)
         return SimpleNamespace(**base)
 
@@ -123,20 +181,54 @@ class TestCorsSafety:
         s = self._settings(["https://app.example.com", "*"])
         assert cors_allows_credentials(s) is False
 
+    @pytest.mark.parametrize("origins", [["null"], ["https://a.com", "null"]])
+    def test_credentials_dropped_for_null(self, origins):
+        assert cors_allows_credentials(self._settings(origins)) is False
+
+    def test_credentials_dropped_for_padded_mixed_case_null(self):
+        assert cors_allows_credentials(self._settings([" Null "])) is False
+
     def test_empty_origins_allows_credentials(self):
         # No origins configured is not a wildcard — credentials stay on.
         assert cors_allows_credentials(self._settings([])) is True
 
-    def test_enforce_no_op_for_explicit_allowlist(self):
-        enforce_cors_safety(self._settings(["https://app.example.com"]))
+    @pytest.mark.parametrize("debug", [False, True])
+    def test_enforce_no_op_for_explicit_allowlist(self, debug):
+        enforce_cors_safety(self._settings(["https://app.example.com"], DEBUG=debug))
 
-    def test_enforce_refuses_wildcard_in_production(self):
-        with pytest.raises(SystemExit):
-            enforce_cors_safety(self._settings(["*"], DEBUG=False))
+    @pytest.mark.parametrize("debug", [False, True])
+    def test_enforce_refuses_wildcard_without_opt_in(self, debug):
+        with pytest.raises(SystemExit, match="APP_ALLOW_WILDCARD_CORS"):
+            enforce_cors_safety(self._settings(["*"], DEBUG=debug))
 
-    def test_enforce_allows_wildcard_under_debug(self):
-        # Under DEBUG we warn and run with credentials dropped rather than exit.
-        enforce_cors_safety(self._settings(["*"], DEBUG=True))
+    # null is treated like * (#1903); debug must not let it through (#1902).
+    @pytest.mark.parametrize("debug", [False, True])
+    @pytest.mark.parametrize("origins", [["null"], ["https://a.com", "null"]])
+    def test_enforce_refuses_null_without_opt_in(self, origins, debug):
+        with pytest.raises(SystemExit, match="APP_ALLOW_WILDCARD_CORS"):
+            enforce_cors_safety(self._settings(origins, DEBUG=debug))
+
+    def test_enforce_allows_wildcard_with_opt_in(self):
+        settings = self._settings(["*"], ALLOW_WILDCARD_CORS=True)
+        enforce_cors_safety(settings)
+        assert cors_allows_credentials(settings) is False
+
+    def test_enforce_opt_in_logs_wildcard_warning(self, caplog):
+        with caplog.at_level("WARNING", logger="server.config"):
+            enforce_cors_safety(self._settings(["*"], ALLOW_WILDCARD_CORS=True))
+        assert (
+            "wildcard CORS origin allowed because APP_ALLOW_WILDCARD_CORS=true; "
+            "credentials disabled" in caplog.text
+        )
+
+    def test_enforce_allowlist_does_not_log_wildcard_warning(self, caplog):
+        with caplog.at_level("WARNING", logger="server.config"):
+            enforce_cors_safety(self._settings(["https://app.example.com"]))
+        assert "wildcard CORS origin allowed" not in caplog.text
+
+    def test_settings_reads_wildcard_cors_opt_in(self, monkeypatch):
+        monkeypatch.setenv("APP_ALLOW_WILDCARD_CORS", "true")
+        assert Settings().ALLOW_WILDCARD_CORS is True
 
 
 class TestWebSocketTokenExtraction:

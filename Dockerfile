@@ -73,7 +73,71 @@ RUN mkdir -p apps/web-server/static \
 # digest as frontend-build, so both move together in one Dependabot bump.
 FROM docker.io/node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS node-runtime
 
-FROM cgr.dev/chainguard/python:latest-dev@sha256:894aed3297d91283e1fc4c542f5374a4b5f3726134fda7c94eaa539342be1e05 AS runtime
+# ---------------------------------------------------------------------------
+# py-build: compiles the Python venv (#1842). Compilers and -dev headers stay
+# here; only the finished venv is copied into `runtime`.
+# ---------------------------------------------------------------------------
+FROM cgr.dev/chainguard/python:latest-dev@sha256:dde1a2549dd62864f0263dae8e877680837b4e738a7ecc85c671c55c069848ac AS py-build
+
+USER root
+
+RUN apk add --no-cache build-base cmake xmlsec-dev xmlsec-openssl \
+        libxml2-dev libxslt-dev pkgconf openssl-dev libtool
+
+# xmlsec's build links -lxmlsec1-openssl; Wolfi ships only the versioned soname.
+# Resolved at build time so a Wolfi xmlsec rev does not break cold builds.
+RUN so="$(cd /usr/lib && ls libxmlsec1-openssl.so.* 2>/dev/null | head -1)" \
+ && [ -n "$so" ] || { echo "no /usr/lib/libxmlsec1-openssl.so.* (xmlsec-openssl)"; exit 1; } \
+ && ln -sf "$so" /usr/lib/libxmlsec1-openssl.so \
+ && test -e /usr/lib/libxmlsec1-openssl.so
+
+COPY requirements.lock requirements-build.lock /tmp/
+
+RUN python3 -m venv /home/projects/MagesticAI/.venv
+
+# Install from the hash-pinned lock, NOT from the two requirements.txt files
+# (#1284). Those declare `>=` floors, so installing from them made every image
+# build resolve whatever PyPI served that minute and recorded nothing about what
+# landed — the only class of external reference in this repo that was still
+# mutable, in the one process that holds the agent's credentials.
+#
+# requirements.lock is the compiled closure of exactly those two files, so the
+# declared floors are unchanged; --require-hashes is what makes it load-bearing.
+# Without that flag pip would happily accept a substituted artifact, and the file
+# would be documentation rather than a control. It also makes pip fail closed on
+# an out-of-date lock: a dependency added to requirements.txt but not compiled in
+# is absent here, the import fails at runtime, and the ci.yml `deps-lock-drift`
+# job is what catches that in review instead.
+#
+# Regeneration commands live in the lockfile headers.
+#
+# --require-hashes covers only the named files, so the sdist builds below run
+# with --no-build-isolation: otherwise pip fetches each sdist's build backend
+# (setuptools, Cython, setuptools_scm, ...) unhashed. They come from the hashed
+# requirements-build.lock instead and are uninstalled afterwards, except any the
+# runtime lock also needs, so `runtime` does not ship them.
+#
+# --no-binary: xmlsec and real-ladybug have no cp315 wheel; lxml must link the
+# same system libxml2 as xmlsec, or `import xmlsec` fails with "libxml2 library
+# version mismatch". lxml is installed first because xmlsec compiles against
+# its headers (xmlsec's own build pin, lxml==6.0.2, is not used).
+# CXXFLAGS: real-ladybug's vendored thrift headers miss <cstdint> under GCC 16;
+# drop it once upstream fixes the include.
+RUN set -e; pip=/home/projects/MagesticAI/.venv/bin/pip; cd /tmp; \
+    $pip install --no-cache-dir --require-hashes -r requirements-build.lock; \
+    awk '/^lxml==/{p=1;print;next} p&&/^[^ ]/{exit} p' requirements.lock > lxml.lock; \
+    grep -q '^lxml==' lxml.lock; \
+    $pip install --no-cache-dir --require-hashes --no-build-isolation \
+        --no-binary lxml --no-deps -r lxml.lock; \
+    CXXFLAGS="-include cstdint" $pip install --no-cache-dir --require-hashes \
+        --no-build-isolation --no-binary lxml,xmlsec,real-ladybug \
+        -r requirements.lock; \
+    names() { sed -n 's/^\([A-Za-z0-9._-]*\)==.*/\1/p' "$1" | sort; }; \
+    names requirements-build.lock > build.names; names requirements.lock > run.names; \
+    grep -vxFf run.names build.names | xargs -r $pip uninstall -y; \
+    $pip uninstall -y pip
+
+FROM cgr.dev/chainguard/python:latest-dev@sha256:dde1a2549dd62864f0263dae8e877680837b4e738a7ecc85c671c55c069848ac AS runtime
 
 USER root
 
@@ -198,6 +262,9 @@ RUN apk add --no-cache \
         gnupg \
         socat \
         "wget>=1.25.0-r15"
+
+# Shared libs the venv's source-built lxml/xmlsec link against (see py-build).
+RUN apk add --no-cache xmlsec xmlsec-openssl libxml2-16 libxslt
 
 # The Wolfi package writes system-wide filter.lfs.* (smudge on, required=true),
 # which would turn every repo's LFS files into pointers we may have no endpoint
@@ -324,9 +391,9 @@ RUN mkdir -p /home/nonroot/.npm-global \
 # that needs it. The `antigravity` symlink is asserted through gemini, which it
 # points at.
 RUN npm install -g \
-        @anthropic-ai/claude-code@2.1.303 \
-        @openai/codex@0.163.0 \
-        @google/gemini-cli@0.64.0 \
+        @anthropic-ai/claude-code@2.1.310 \
+        @openai/codex@0.164.0 \
+        @google/gemini-cli@0.65.0 \
  && node /home/nonroot/.npm-global/lib/node_modules/@anthropic-ai/claude-code/install.cjs \
  && /home/nonroot/.npm-global/bin/claude --version \
  && /home/nonroot/.npm-global/bin/codex --version \
@@ -403,24 +470,9 @@ RUN set -eux; \
 # cache, not part of the scanned image.
 
 # Single Python venv shared by web-server and backend scripts (matches
-# agent_service.py's sys.executable expectations)
-RUN python3 -m venv /home/projects/MagesticAI/.venv
-
-# Install from the hash-pinned lock, NOT from the two requirements.txt files
-# (#1284). Those declare `>=` floors, so installing from them made every image
-# build resolve whatever PyPI served that minute and recorded nothing about what
-# landed — the only class of external reference in this repo that was still
-# mutable, in the one process that holds the agent's credentials.
+# agent_service.py's sys.executable expectations). Built in `py-build` from the
+# hash-pinned lock (#1284); copied after the source COPY so it is not clobbered.
 #
-# requirements.lock is the compiled closure of exactly those two files, so the
-# declared floors are unchanged; --require-hashes is what makes it load-bearing.
-# Without that flag pip would happily accept a substituted artifact, and the file
-# would be documentation rather than a control. It also makes pip fail closed on
-# an out-of-date lock: a dependency added to requirements.txt but not compiled in
-# is absent here, the import fails at runtime, and the ci.yml `deps-lock-drift`
-# job is what catches that in review instead.
-#
-# Regeneration command lives in the lockfile header.
 # pip is removed from the venv in the same layer that finishes using it, and
 # the base copies are apk-deleted below. Ported from PFactory#679, which hit
 # and solved this first; TFactory#1277 is the same two findings here.
@@ -439,18 +491,16 @@ RUN python3 -m venv /home/projects/MagesticAI/.venv
 # egress allows apk + npm only, so an in-pod `pip install` could not reach PyPI
 # anyway. The later `build-runtime` stage provisions via nix + apk + npm and
 # never calls pip, so removing it here does not affect the -nix image.
-RUN /home/projects/MagesticAI/.venv/bin/pip install --no-cache-dir \
-        --require-hashes \
-        -r /home/projects/MagesticAI/requirements.lock \
- && /home/projects/MagesticAI/.venv/bin/pip uninstall -y pip
+COPY --from=py-build --chown=nonroot:nonroot \
+    /home/projects/MagesticAI/.venv /home/projects/MagesticAI/.venv
 
 # Remove the base image's pip too (same findings, second copy).
-# py3-pip-wheel ships deliberately: python-3.14 depends on it, so apk refuses to
+# py3-pip-wheel ships deliberately: python-3.15 depends on it, so apk refuses to
 # drop it (warns, exits 0). Its CVEs ride base-digest bumps. The apk info
 # checks fail the build if the removal ever silently no-ops.
 USER root
-RUN apk del --no-cache py3.14-pip py3.14-pip-base \
- && ! apk info -e py3.14-pip && ! apk info -e py3.14-pip-base
+RUN apk del --no-cache py3.15-pip py3.15-pip-base \
+ && ! apk info -e py3.15-pip && ! apk info -e py3.15-pip-base
 USER nonroot
 
 # Git identity for in-container worktree operations
@@ -504,6 +554,28 @@ WORKDIR /home/projects/MagesticAI/apps/web-server
 # Absolute path to the venv python so we never depend on PATH ordering.
 ENTRYPOINT []
 CMD ["/home/projects/MagesticAI/.venv/bin/python", "-m", "server.main"]
+
+# ---------------------------------------------------------------------------
+# Stage: gateway (the ``-gateway`` image tag) -- Factory#1959
+# ---------------------------------------------------------------------------
+# Stdlib-only model gateway: one file, no venv, no app code. Built with
+# ``--target gateway``; same pinned base and security refresh as ``runtime``.
+FROM cgr.dev/chainguard/python:latest-dev@sha256:dde1a2549dd62864f0263dae8e877680837b4e738a7ecc85c671c55c069848ac AS gateway
+
+USER root
+
+ARG SECURITY_REFRESH=0
+RUN echo "security refresh: ${SECURITY_REFRESH}" \
+    && apk upgrade --no-cache
+
+# COPY creates /app without the execute bit here, so the nonroot user cannot
+# traverse it; create it explicitly.
+RUN mkdir -m 0755 /app
+COPY --chmod=0644 apps/model-gateway/gateway.py /app/gateway.py
+
+USER 65532
+EXPOSE 8080
+ENTRYPOINT ["python", "/app/gateway.py"]
 
 # ---------------------------------------------------------------------------
 # Stage 3: build-runtime (the ``-nix`` variant) — runtime image + baked Nix

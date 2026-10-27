@@ -17,6 +17,10 @@ from server.services.gh import run_gh_command
 from server.services.task_status import write_status
 from server.specpath import spec_dir_for
 
+# server.services.gh (via subprocess_env) puts apps/backend on sys.path first.
+# isort: split
+from core.commit_trailers import trailer_block
+
 
 def approved(
     project_path: Path, spec_id: str, message: str, **extra: object
@@ -118,7 +122,9 @@ def _open_pr(project_path: Path, branch: str) -> tuple[int, str] | None:
     return (found[0], found[1]) if found else None
 
 
-def merge_pull_request(project_path: Path, branch: str) -> tuple[bool, str]:
+def merge_pull_request(
+    project_path: Path, branch: str, spec_dir: Path | None = None
+) -> tuple[bool, str]:
     """Merge the open PR for *branch*. Returns ``(merged, detail)``.
 
     ``(True, detail)``  -- merged now, or ALREADY merged. Idempotent on
@@ -126,6 +132,8 @@ def merge_pull_request(project_path: Path, branch: str) -> tuple[bool, str]:
                            merged it first, or because it is clicked twice.
     ``(False, detail)`` -- a PR exists and could not be merged; detail says why.
     ``(False, "")``     -- no PR for this branch; the caller may fall back.
+
+    ``spec_dir`` is the canonical spec dir; its agent trailers become the squash body.
     """
     found = _open_pr(project_path, branch)
     if found is None:
@@ -137,9 +145,10 @@ def merge_pull_request(project_path: Path, branch: str) -> tuple[bool, str]:
     if state == "CLOSED":
         return False, f"pull request #{number} is closed; reopen it to merge"
 
-    merged = run_gh_command(
-        ["pr", "merge", str(number), "--squash"], cwd=str(project_path)
-    )
+    argv = ["pr", "merge", str(number), "--squash"]
+    if body := trailer_block(spec_dir):
+        argv += ["--body", body]
+    merged = run_gh_command(argv, cwd=str(project_path))
     if merged.get("success"):
         return True, f"merged pull request #{number}"
     # The gh stderr is LOGGED, not returned: it can carry command lines, paths

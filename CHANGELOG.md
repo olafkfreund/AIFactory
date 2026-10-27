@@ -1,7 +1,272 @@
 ## [Unreleased]
 
-- apply-correction: optional APP_REQUIRE_CORRECTION_TRIAGE rejects markdown-only
-  hand-backs (422) (#1858)
+## 3.10.12 - 2026-10-27
+
+Five behaviour changes: `acw_` API keys authenticate for the first time
+(with expiry, owner status, a live role cap and org binding), viewers can
+no longer mint write-scoped keys, a JWT `role=admin` no longer bypasses org
+checks, `GET /api/admin/access-review` takes only `?org_id`, and
+`GET /api/audit/export` needs org admin. Remote MCP now authorizes each call
+as the calling key; it stays off by default (`AIFACTORY_MCP_REMOTE_ENABLED`).
+A task needing plan review now always pauses after its planner, and
+auto-fix routes need project roles. One new env var:
+`AIFACTORY_AGENT_COMMIT_TRAILERS` (default off). The model
+gateway ships as a separate `-gateway` image that nothing deploys. No
+migrations.
+
+### Changed
+
+- **`acw_` keys authenticate (#1914, closes #1913).** Before, every real key
+  failed (REST 401, stdio and remote MCP 500). The lookup now refuses a key
+  whose owner is missing or deactivated, a key past `expires_at`, a key whose
+  org is deleted, and a key with no effective scopes. Effective scopes follow
+  the owner's current role in `key.org_id` (below member: `mcp:read` only; no
+  membership: none). REST needs the explicit `api` scope. Key principals are
+  bound to `key.org_id` for project access, list filters, project create,
+  org-role routes and git-credential routes. Mint with `expires_in_days` now
+  works on Postgres.
+- **Viewers cannot mint write-scoped keys (#1911, closes #1908).**
+  `POST /api/keys` gives a caller below `member` a 403 for any scope other
+  than `mcp:read`. Existing keys are not revoked (#1914 caps them live).
+- **`is_service_principal` trusts only `is_service` (#1911, closes #1909).**
+  A JWT with `role=admin` no longer bypasses org checks. Auth-disabled dev
+  principals are marked `is_service`, so dev mode is unchanged.
+- **`GET /api/admin/access-review` streams only the gated org (#1916, closes
+  #1915).** It takes only `?org_id`; `?org` is gone. Before,
+  `?org_id=A&org=B` let an admin of A read B's roster.
+- **`GET /api/audit/export` requires org admin (#1916).** Non-service callers
+  must pass `org_id` and hold `admin` in it (read from the DB). An `acw_` key
+  can export only its own org. Service principals are unchanged.
+- **Remote MCP authorizes each tool call as the calling key (#1917, closes
+  #1910).** Read tools need viewer and write tools need member on the
+  project the call proxies to; `list_projects` is filtered to the key's org;
+  ids are validated against path escapes; an SSE session accepts messages
+  only from the key that opened it. Remote MCP stays off unless
+  `AIFACTORY_MCP_REMOTE_ENABLED` is set; it is not set in factory-gitops.
+- **Plan-review gate decided from pre-planner state (#1926, closes #1922).**
+  A task that needs plan review always pauses after its planner session; a
+  planner clearing the flag or forging `review_state.json` has no effect.
+  An approval without `spec_hash` no longer counts. Start passes `--force`
+  only on a hash-valid approval or the server's `task_control.planApproved`
+  record (set by approve-plan, cleared by reject-plan and any plan-review
+  pause); otherwise the task is held in plan review.
+- **Auto-fix routes need project roles; reused specs are not forced past
+  review (#1928, closes #1925).** GET queue needs `viewer`; GET config,
+  check-new and `{N}/start` need `member`; PUT config needs `admin`. GET
+  config returns the bot token masked (`********`); PUT keeps the stored
+  token on the mask or a missing field, and `""` clears it. Starting an
+  issue whose spec already exists no longer forces past plan review.
+  `requireHumanApproval` now sets `requireReviewBeforeCoding` on created
+  specs.
+- **Worktree spec sync mirrors only allowlisted build files (#1923, closes
+  #1921).** On the subprocess backend an agent could overwrite canonical
+  `task_metadata.json`, `review_state.json`, `COMPLETED.json` and others
+  from its worktree. Only `token_usage.json`, `guardrail_halt.json` and
+  `handback_received.json` are mirrored now. Kubejob builds never ran this
+  sync.
+
+### Added
+
+- **Agent commit trailers, off by default (#1907, Factory#1960 slice 3).**
+  `AIFACTORY_AGENT_COMMIT_TRAILERS` adds `Agent-Identity`, `Autonomy-Tier`
+  and `Originator` trailers to AIFactory's parallel-wave and safety-net
+  commits. Off leaves the commit argv unchanged. With the flag on, the
+  local `merge --no-ff`, the Approve squash and the PR-endgame auto-merge
+  carry them too, and the squash body becomes only the trailer block
+  (#1918).
+- **Model gateway image (#1912, Factory#1959 stage 0a).**
+  `ghcr.io/olafkfreund/aifactory:{sha-*,latest,v*}-gateway`, built and
+  Trivy-scanned on PRs, cosign-signed by digest on deploy and release, and
+  SBOM-attested on release. Its own env vars (`GATEWAY_UPSTREAM_URL`,
+  `GATEWAY_UPSTREAM_API_KEY`, `GATEWAY_CLIENT_TOKEN`, `GATEWAY_PORT`) apply
+  to the gateway container only. Nothing deploys it.
+
+### Deprecated
+
+- **The LiteLLM sub-chart (#1912).** Chart comments and a docs admonition
+  only; removal is a later slice.
+
+## 3.10.11 - 2026-10-27
+
+Four behaviour changes: `APP_DEBUG` no longer relaxes the disable-auth or
+wildcard-CORS boot guards (each has its own opt-in), and
+`POST /api/tasks/from-issue` now checks project membership and binds a
+declared repo to the project's own repo.
+Four new env vars: `APP_ALLOW_INSECURE_AUTH`, `APP_ALLOW_WILDCARD_CORS`
+(both default `false`), `AIFACTORY_ROUTE_RESOLUTION` (default `off`) and
+`AIFACTORY_MODEL_CATALOG_PATH` (default unset). No migrations.
+
+### Changed
+
+- **`APP_DISABLE_AUTH` off loopback needs `APP_ALLOW_INSECURE_AUTH` (#1895,
+  Factory#312).** `APP_DEBUG=true` alone no longer lets the server boot with
+  auth disabled on a non-loopback host. Same name as PFactory and TFactory.
+  Never set in production.
+- **A wildcard CORS origin needs `APP_ALLOW_WILDCARD_CORS` (#1902,
+  Factory#312).** `APP_DEBUG=true` alone no longer lets the server boot with
+  `*` in `APP_CORS_ORIGINS`. With the opt-in it still warns and turns off
+  credentialed CORS. An explicit allowlist is unchanged.
+- **`POST /api/tasks/from-issue` requires `member` on the target project
+  (#1899, closes #1898).** A foreign `acw_` key gets 403. The legacy service
+  token (intake poller) is unaffected.
+- **A `repo` declared to `POST /api/tasks/from-issue` must be the project's
+  own repo (#1901, closes #1900).** Host, path and provider are compared
+  against the project's `gitRepo`, `clonedFrom` and checkout `origin`;
+  anything else, or a declaration on a project with no known repo, gets 400.
+  A request without `repo` is unchanged.
+
+### Added
+
+- **Catalog route resolution, off by default (#1896, Factory#1959 slice 5).**
+  `AIFACTORY_ROUTE_RESOLUTION` (`off`/`shadow`/`on`) resolves a contract
+  route tier to a model from the RFC-0014 catalog at
+  `AIFACTORY_MODEL_CATALOG_PATH`, replacing only the built-in `DEFAULT_TIERS`
+  fallback. Run `shadow` first: the catalog must mark superseded models
+  `available: false`.
+- **Task originator recorded at intake (#1897, Factory#1960 slice 2).**
+  `originator` and `agent_identity` are stored in the spec's
+  `requirements.json` for MCP, REST/CLI, project and GitHub-import intake
+  (from-issue only when fetched through the project's provider), and returned
+  by `GET /api/tasks/{id}`. Unknown stays null. No migration.
+
+### Fixed
+
+- **Comma-separated `APP_CORS_ORIGINS` no longer crashes boot; a `null`
+  origin is treated like `*` (#1904, closes #1903).** An empty
+  `APP_CORS_ORIGINS=` now means no origins; unset keeps the localhost
+  defaults.
+
+### CI and tests
+
+- Triage tests import `server.config` one way (#1894, clears a CodeQL note
+  from #1892).
+
+## 3.10.10 - 2026-10-26
+
+Two behaviour changes: the stdio-MCP task proxies now enforce project access,
+and an `acw_` key can no longer mint keys.
+One alembic migration (`7a1f3c9e2b50`, adds `api_keys.autonomy_ceiling`).
+
+### Changed
+
+- **MCP task proxies enforce project access (#1885, closes #1882; #1891).**
+  `/api/mcp-stdio/...` routes now check the `acw_` key owner's project role as
+  the REST routes do, after the scope check. Write routes (create-and-run,
+  start, stop, recover, approve-plan, apply-correction, create-pr, merge) need
+  `member`; read routes (task details, status, logs, diff) need `viewer` and
+  return 403/404 for a foreign project. `/projects`, `/tasks` and
+  `/tasks/running` are filtered to the key owner's orgs. The legacy service
+  token and an `acw_` key with no user stay service principals and are
+  unaffected.
+- **An `acw_` key can no longer mint keys (#1887).** `POST /api/keys` with an
+  `acw_` key gets a 403; mint keys with a user session.
+
+### Added
+
+- **Autonomy ceiling and agent identity on `acw_` keys (#1887,
+  Factory#1960 slice 1).** New nullable `ApiKey.autonomy_ceiling`
+  (`low`/`medium`/`hard`, no default) via alembic `7a1f3c9e2b50`, and a derived
+  `agent_identity` (`agent:aifactory/<key_id>`). The key create and list routes
+  accept and return them. Only an org admin can set a ceiling (403
+  otherwise). Not wired into the merge path yet, so no merge
+  decision changes.
+- **MCP `task_apply_correction` passes `triage` through (#1881, closes #1874).**
+  Adds the missing `POST /api/mcp-stdio/tasks/{task_id}/apply-correction`
+  proxy route (gated by `task:write`), so the MCP tool works again under the
+  3.10.9 triage default. A 422 without triage now explains both fixes.
+- **TFactory ingest forwards the pre-overlay signed contract (#1883,
+  TFactory#1432).** Sent as top-level `signed_contract` for signed, non-held
+  contracts; `contract` is unchanged. Warn mode only on the TFactory side.
+
+### Fixed
+
+- **Completion webhook sends `APP_API_TOKEN` to CFactory (#1888,
+  CFactory#501).** Completion and outbox POSTs to `/api/events` carry
+  `Authorization: Bearer $APP_API_TOKEN`, only when the target matches the
+  configured webhook origin. No token, no header. CFactory is in warn mode.
+- **`GET /api/tasks?project_id=<unknown>` returns 404, not 500 (#1890, closes
+  #1889).** Also fixes the MCP `task_list` proxy.
+- **SBOM attestation fits rekor's size limit (#1884, closes #1879).** Each
+  image's SPDX SBOM is attested without file entries (packages kept), after
+  the 3.10.9 -nix attestation exceeded rekor's 24 MiB request limit.
+
+### CI and tests
+
+- P0 acceptance image build is cached in a gha layer cache (#1880, closes
+  #1875).
+- Test pins the provider credentials that reach dispatched Jobs (#1886,
+  Factory#1959).
+
+### Chores
+
+- Baked agent-CLI pins: claude-code 2.1.310, gemini-cli 0.65.0, codex 0.164.0
+  (#1871).
+
+## 3.10.9 - 2026-10-26
+
+Two behaviour changes: the runtime image moves to CPython 3.15, and
+apply-correction now requires a triage block by default.
+
+### Changed
+
+- **Runtime image moves to CPython 3.15 (#1873, closes #1842).** The image is
+  built on the current `cgr.dev/chainguard/python:latest-dev` digest
+  (CPython 3.15.0). A new `py-build` stage compiles the venv; lxml, xmlsec and
+  real-ladybug build from sdist with `--require-hashes` kept, and `runtime`
+  adds the system `xmlsec`/`libxml2-16`/`libxslt` libraries. The lock is
+  recompiled for 3.15 (pydantic 2.14, asyncpg 0.32, grpcio 1.84.1, uvloop 0.23
+  and others). The CI P0 docker job now allows a 1800 s image build in a
+  50-minute job.
+- **Apply-correction requires a triage block by default (#1872,
+  TFactory#1431).** `APP_REQUIRE_CORRECTION_TRIAGE` now defaults to on: a
+  `POST /api/tasks/{id}/apply-correction` with no `triage` block, including a
+  markdown-only call, gets a 422 before anything is written. TFactory 0.9.42
+  sends triage on every handback path (TFactory#1436). Opt out with
+  `APP_REQUIRE_CORRECTION_TRIAGE=false`. Known gap: the MCP
+  `task_apply_correction` tool has no triage input yet, so it also gets the 422
+  until #1874 lands.
+
+### Security
+
+- **Outbound PII scrub on direct `claude --print` spawns (#1870, closes
+  #1860).** Clarification and insights task-from-chat now scrub the prompt
+  before building argv, honouring the kill-switch and the project data
+  classification as in #1862. Clarification fails closed to its skip default.
+
+## 3.10.8 - 2026-10-24
+
+### Security
+
+- **Outbound PII scrub is mandatory for regulated projects (#1862,
+  Factory#320).** A new project setting `dataClassification`
+  (`public|internal|confidential|regulated`) is stored as
+  `AIFACTORY_DATA_CLASSIFICATION`. Projects classified `regulated` now always
+  get outbound PII scrubbing: the `LITELLM_AUDIT_SCRUB_OUTBOUND=false`
+  kill-switch and per-adapter `_scrub_outbound` pins are ignored for them, and
+  an unreadable settings store fails closed to `regulated`. The default
+  classification stays `internal`, and the other tiers are unchanged. A bad
+  value is a 422. Direct `claude --print` spawns are a known gap, tracked in
+  #1860.
+
+### Added
+
+- **Verify verdict and vote split as PR evidence (#1863, Factory#1963).**
+  Auto-merge PRs get a "Verify evidence" section in the body with the verify
+  verdict, TFactory's vote split and the floor signals (host CI, VAL against
+  the floor, CI parity). The verdict is evidence; the deterministic floor still
+  decides, and a write failure never changes the gate result.
+- **Optional `APP_REQUIRE_CORRECTION_TRIAGE` gate (#1861, closes #1858).** When
+  on, `POST /api/tasks/{id}/apply-correction` rejects a request with no
+  `triage` block with a 422 before anything is written. Default off until
+  TFactory skills post a triage block (TFactory#1430).
+- **Memory duplicate-rate baseline (#1856, RFC-0021, #389).**
+  `scripts/memory_dup_baseline.py` and the first measured baseline in
+  `docs/dev/memory-baseline-2026-10.md`.
+
+### Chores
+
+- Weekly CodeQL ratchet caller and baseline (#1857, Factory#813).
+- vite 7.3.6 -> 7.3.7 (#1849); @vitest/mocker and vitest bump (#1850).
 
 ## 3.10.7 - 2026-10-24
 

@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field, SecretStr
 from sqlalchemy import delete as sql_delete
 from sqlalchemy import select
@@ -94,9 +94,19 @@ class GitCredentialResponse(BaseModel):
 
 
 async def _verify_org_membership(
-    db: AsyncSession, user: User, org_id: str
+    db: AsyncSession, user: User, org_id: str, request: Request
 ) -> OrgMember:
-    """Raise 403 unless the user belongs to the org."""
+    """Raise 403 unless the user belongs to the org (and an API key is bound to it)."""
+    principal = getattr(request.state, "user", None)
+    if (
+        isinstance(principal, dict)
+        and principal.get("api_key_id")
+        and principal.get("org_id") != org_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This API key is scoped to another organization",
+        )
     result = await db.execute(
         select(OrgMember).where(
             OrgMember.org_id == org_id,
@@ -125,10 +135,11 @@ async def _verify_org_membership(
 )
 async def create_git_credential(
     body: CreateGitCredentialRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    await _verify_org_membership(db, current_user, body.org_id)
+    await _verify_org_membership(db, current_user, body.org_id, request)
 
     if body.kind != "pat":
         raise HTTPException(
@@ -169,10 +180,11 @@ async def create_git_credential(
 )
 async def list_git_credentials(
     org_id: str,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    await _verify_org_membership(db, current_user, org_id)
+    await _verify_org_membership(db, current_user, org_id, request)
     result = await db.execute(
         select(GitCredential)
         .where(GitCredential.org_id == org_id)
@@ -188,6 +200,7 @@ async def list_git_credentials(
 )
 async def delete_git_credential(
     cred_id: str,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -200,7 +213,7 @@ async def delete_git_credential(
         )
     # Either the creator OR an org admin can delete. v1.0 keeps this
     # permissive; tighter ACL in Epic #35.
-    await _verify_org_membership(db, current_user, cred.org_id)
+    await _verify_org_membership(db, current_user, cred.org_id, request)
     await db.execute(sql_delete(GitCredential).where(GitCredential.id == cred_id))
     await db.commit()
     logger.info(

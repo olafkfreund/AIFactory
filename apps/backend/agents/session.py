@@ -21,6 +21,7 @@ from core.error_utils import (
     is_tool_concurrency_error,
     safe_receive_messages,
 )
+from core.phase_event import emit_rate_limit
 from debug import debug, debug_detailed, debug_error, debug_section, debug_success
 from insight_extractor import extract_session_insights
 from progress import (
@@ -140,7 +141,10 @@ async def post_session_processing(
     # only PRESERVES files; it deliberately does not count toward `new_commits`
     # / completion, so an unconfirmed subtask is still retried (with its work
     # safely committed) rather than being silently marked done.
-    safety_commit = commit_uncommitted_changes(project_dir, subtask_id)
+    # Trailers come from the canonical spec copy: the worktree copy is agent-writable.
+    safety_commit = commit_uncommitted_changes(
+        project_dir, subtask_id, spec_dir=source_spec_dir or spec_dir
+    )
     if safety_commit:
         print_status(
             f"Safety-net committed uncommitted agent changes: {safety_commit[:8]}",
@@ -781,6 +785,7 @@ async def run_agent_session(
             print("   Claude API limits concurrent tool use in a single request")
             print(f"   Error: {sanitized_error[:200]}\n")
         elif is_rate_limit:
+            emit_rate_limit()  # #1929: authenticated failover signal
             print("\n  Rate limit reached")
             print("   API usage quota exceeded - waiting for reset")
             print(f"   Error: {sanitized_error[:200]}\n")

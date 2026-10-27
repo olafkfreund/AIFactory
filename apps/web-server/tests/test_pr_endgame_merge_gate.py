@@ -750,3 +750,41 @@ async def test_1963_a_pass_verdict_cannot_merge_past_a_red_floor(
         assert calls == []
         assert result["merged"] is False
         assert result["reason"] == "merge_gate_timeout"
+
+
+def test_endgame_hands_the_canonical_trailer_block_to_the_watcher(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Factory#1960: the squash body comes from the canonical spec dir."""
+    monkeypatch.setenv("AIFACTORY_AGENT_COMMIT_TRAILERS", "1")
+    spec = _spec(tmp_path)
+    (spec / "requirements.json").write_text(
+        json.dumps({"agent_identity": "agent:aifactory/k1", "originator": "human:x"})
+    )
+    captured: dict[str, object] = {}
+
+    async def _fake_watch(**kwargs: object) -> dict[str, object]:
+        captured["merge_body"] = kwargs.get("merge_body")
+        return {"merged": False, "reason": "stub"}
+
+    monkeypatch.setattr(pe, "watch_and_finish", _fake_watch)
+    monkeypatch.setattr(pe, "create_pr", lambda **_k: 42)
+    monkeypatch.setattr(pe, "request_copilot_review", lambda *_a, **_k: True)
+    monkeypatch.setattr(pe, "_pr_title_body", lambda _d, _s: ("t", "b"))
+    asyncio.run(
+        pe.run_pr_endgame(
+            spec_dir=spec,
+            spec_id="001-x",
+            worktree=tmp_path / "wt",
+            branch="aifactory/001-x",
+            base="main",
+            repo="owner/repo",
+            auto_merge=True,
+            reviewer="copilot",
+            background=False,
+            trusted=None,
+        )
+    )
+    assert captured["merge_body"] == (
+        "Agent-Identity: agent:aifactory/k1\nOriginator: human:x"
+    )

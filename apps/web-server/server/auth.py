@@ -284,6 +284,7 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
                 "id": "default",
                 "email": "default@localhost",
                 "role": "admin",
+                "is_service": True,
             }
             return await call_next(request)
 
@@ -361,7 +362,7 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
         # ``acw_`` prefix so JWT/legacy tokens never incur the DB lookup.
         if token.startswith("acw_"):
             try:
-                from .mcp_remote.auth import authenticate as _authenticate_acw
+                from .mcp_remote.auth import authenticate_rest as _authenticate_acw
 
                 key = await _authenticate_acw(f"Bearer {token}")
                 request.state.user = _acw_principal(

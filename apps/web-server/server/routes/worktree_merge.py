@@ -1959,7 +1959,9 @@ async def merge_worktree(
     # The PR is the artefact the button's own label refers to, exists for both
     # build backends, and merging it is visible to everyone rather than to one
     # pod's filesystem.
-    pr_merged, pr_detail = merge_pull_request(project_path, worktree_branch)
+    pr_merged, pr_detail = merge_pull_request(
+        project_path, worktree_branch, spec_dir=spec_dir
+    )
     if pr_merged:
         return approved(project_path, spec_id, pr_detail)
     if pr_detail:
