@@ -1467,7 +1467,6 @@ components:
           - type: string
           - type: 'null'
           title: Bottoken
-          default: ''
         model:
           type: string
           title: Model
