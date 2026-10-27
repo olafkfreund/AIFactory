@@ -525,18 +525,10 @@ async def start_task(
             }
             implementation_plan.write_text(json.dumps(plan_data, indent=2))
 
-            # 3. Pre-approve (skip review gate)
-            review_state_file = spec_dir / "review_state.json"
-            review_state_file.write_text(
-                json.dumps(
-                    {
-                        "approved": True,
-                        "approved_by": "auto-simple",
-                        "approved_at": datetime.now(UTC).isoformat(),
-                    },
-                    indent=2,
-                )
-            )
+            # 3. Pre-approve (skip review gate). Hashed, bound to this plan (#1922).
+            from review.state import ReviewState  # noqa: PLC0415 - backend seam
+
+            ReviewState().approve(spec_dir, approved_by="auto-simple")
 
             # 4. Set task_metadata for quick mode + reduced thinking
             task_metadata_file = spec_dir / "task_metadata.json"

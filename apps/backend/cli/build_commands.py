@@ -383,9 +383,10 @@ def handle_build_command(
             # (requires_review_before_coding), so the two cannot drift.
             if requires_review_before_coding(spec_dir):
                 # A real requirement, deliberately bypassed here. Be precise
-                # about scope: --force only skips THIS pre-flight check; the
-                # coder re-checks approval before writing code and will still
-                # pause (agents/coder.py), so this is not a free pass.
+                # about scope: the coder gates on approval only right after a
+                # planner session (agents/coder.py). When the plan already
+                # exists, no planner runs and this pre-flight is the ONLY gate,
+                # so --force must come from a real approval (#1922).
                 print()
                 print(
                     warning(
@@ -395,8 +396,8 @@ def handle_build_command(
                 print(
                     muted(
                         "This spec requires review before coding and has not been "
-                        "approved. --force skips this pre-flight check only — the "
-                        "coder still gates on approval before writing code."
+                        "approved. --force skips this pre-flight check; the coder "
+                        "gates again only if a planner session runs."
                     )
                 )
                 print()

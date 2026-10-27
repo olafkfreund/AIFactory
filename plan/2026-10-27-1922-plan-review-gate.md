@@ -118,6 +118,57 @@ Implementation deviations (step 3):
   instead of `not _paused`; the now-redundant deferred `ReviewState` import in
   `_injection_scan_blocks` and its stale docstring reference were removed.
 
+## Steps added after the lead's review of PR #1926 (resume path)
+
+The decision (lead, 2026-10-27): StartTask (`apps/web-server/server/routes/execution.py`)
+must pass `--force` only on a real approval. Its current check, the raw `approved`
+key of main `review_state.json` at ~681-690, lets a hash-less or stale approval
+resume straight into coding: `--force` skips run.py's pre-flight, and with the plan
+present no planner runs, so the coder gate is never reached.
+
+The lead first proposed a "coding started" marker. It was rejected because it is
+forgeable: the only signal for it is the stdout phase marker `__EXEC_PHASE__:`,
+which `agent_emit._parse_phase_event` accepts unauthenticated. The model's text
+is printed to stdout (`agents/session.py:525`). This is a separate issue, not
+fixed here.
+
+4. Done by me (no coder):
+   - `routes/execution.py` auto-simple fast path writes a hashed approval
+     (`ReviewState().approve(spec_dir, approved_by="auto-simple")`).
+   - `cli/build_commands.py` pre-flight comment and warning no longer claim the
+     coder re-checks approval.
+   - `ruff format tests/test_review_validation.py`.
+5. `apps/web-server/server/services/task_control.py` `write_control`: add
+   keyword `plan_approved: bool | None = None`. True sets `planApproved: true`,
+   `planApprovedBy` (= `updated_by`) and `planApprovedAt`; False removes all
+   three. Rule inside `write_control`: writing `review_reason="plan_review"`
+   always removes them, so every return-to-planning path clears the approval
+   in one place.
+   → verify: unit test in `apps/web-server/tests/` for set / clear / cleared by plan_review.
+6. `apps/web-server/server/routes/plan_approval.py`: `approve_plan` calls
+   `task_control.write_control(spec_dir, plan_approved=True, updated_by="web_user")`.
+   Do it unconditionally, right after `review_state.approve(...)`, NOT inside the
+   `if plan_file.exists()` try (keep the existing status write where it is).
+   `reject_plan` calls `write_control(spec_dir, plan_approved=False, ...)`.
+   → verify: route tests (existing approve/reject tests plus asserts on task_control).
+7. `apps/web-server/server/routes/execution.py` StartTask (~681-690):
+   `force_execution = ReviewState.load(spec_dir).is_approval_valid(spec_dir) or
+   task_control.read_control(spec_dir).get("planApproved") is True`. Keep the
+   log line. The backend is on sys.path (line ~56), so
+   `from review.state import ReviewState` works.
+   → verify tests: hash-less approval + Start → human_review and no
+   start_task_execution; valid approval + Start → started with force; planApproved
+   + plan changed (stale hash) + Start → started; auto-simple plan + approval →
+   `is_approval_valid` True.
+8. After #1923 merges: `git merge origin/dev` (no force-push, no rebase), then a
+   test showing that a planner-written `review_state.json` / `task_metadata.json`
+   in the worktree spec dir is not mirrored to main by the sync, and the next
+   StartTask decision is unchanged.
+
+Not changed: process_monitor's raw `approved` reads (:327, :428). They only
+decide whether an exit is shown as "awaiting review" or "failed", and never
+pass force.
+
 ## Tests
 
 `python -m pytest tests/test_review_validation.py tests/test_solo_mode.py tests/test_solo_parallel_waves.py tests/test_plan_review_gate_snapshot.py tests/test_injection_ssrf.py -q` → all pass.

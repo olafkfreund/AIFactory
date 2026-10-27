@@ -119,7 +119,9 @@ class TestSpecHashValidation:
 
         assert state.is_approval_valid(review_spec_dir) is False
 
-    def test_is_approval_valid_rejects_hashless_approval(self, review_spec_dir: Path) -> None:
+    def test_is_approval_valid_rejects_hashless_approval(
+        self, review_spec_dir: Path
+    ) -> None:
         """is_approval_valid() rejects approvals without a spec hash (#1922)."""
         state = ReviewState(
             approved=True,
