@@ -132,3 +132,8 @@ Traps for every step:
   imports that instead of `authenticate`, which keeps `TokenAuthMiddleware.dispatch` at its
   base ruff counts (PLR0912, PLC0415, I001). `resolve_owner_org_id` returns `str(...)`
   (mypy no-any-return).
+- Step 6 (lead's re-review): `routes/git_credentials.py::_verify_org_membership` now takes the
+  `Request` and refuses a key principal outside its org with the same 403. This covers
+  POST, GET `?org_id` and DELETE. Test: `tests/test_git_credentials_key_scope.py`.
+  `access_review` and the audit export are pre-existing bugs that also hit human users, so
+  they are tracked separately.
