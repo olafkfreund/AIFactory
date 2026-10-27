@@ -42,6 +42,10 @@ from server.utils.subprocess_env import (
     merge_driver_pins,
 )
 
+# subprocess_env above puts apps/backend on sys.path.
+# isort: split
+from core.commit_trailers import trailer_block
+
 logger = logging.getLogger(__name__)
 
 # Copilot's code-review reviewer slug (GitHub's automated PR reviewer). Requesting
@@ -1304,10 +1308,12 @@ def merge_pr(  # noqa: PLR0913 - match_head binds the merge to the approved comm
     method: str = "squash",
     runner: Runner = _default_runner,
     match_head: str | None = None,
+    body: str | None = None,
 ) -> bool:
     """Merge the PR. Returns True on success. Never force-merges past a conflict.
 
     ``match_head`` pins the merge to the commit a human approved (#1663).
+    ``body`` replaces GitHub's squash body (agent trailers, #1960).
 
     On a non-clean merge (branch behind base — the common sequential case where
     an earlier auto-merge advanced main), update the PR branch from base once and
@@ -1319,6 +1325,8 @@ def merge_pr(  # noqa: PLR0913 - match_head binds the merge to the approved comm
     )
     full = f"{owner}/{repo}"
     extra = ["--match-head-commit", match_head] if match_head else []
+    if body:
+        extra += ["--body", body]
     res = runner(["gh", "pr", "merge", str(pr), flag, "--repo", full, *extra], None)
     if res.ok:
         return True
@@ -1544,6 +1552,7 @@ async def watch_and_finish(  # noqa: PLR0911, PLR0915 - merge-gate human-stop (#
     max_minutes: int = _MAX_POLL_MINUTES,
     human_approval_required: bool = False,
     merge_gate: Callable[[str], bool] | None = None,
+    merge_body: str | None = None,
 ) -> dict:
     """Poll the PR's reviews and merge only on a CLEAN Copilot approval.
 
@@ -1674,7 +1683,13 @@ async def watch_and_finish(  # noqa: PLR0911, PLR0915 - merge-gate human-stop (#
                     gate_held = True
                     continue
             merged = await asyncio.to_thread(
-                merge_pr, owner, repo, pr, runner=runner, match_head=match_head
+                merge_pr,
+                owner,
+                repo,
+                pr,
+                runner=runner,
+                match_head=match_head,
+                body=merge_body,
             )
             # #543: an approved PR that won't merge is usually behind a true
             # line-level conflict. When a conflict_fixer is wired, rebase onto
@@ -2220,6 +2235,7 @@ async def run_pr_endgame(
         runner=runner,
         human_approval_required=human_approval_required,
         merge_gate=merge_gate,
+        merge_body=trailer_block(spec_dir) or None,
     )
     if background:
         # A strong reference, held until the watcher finishes. The event loop

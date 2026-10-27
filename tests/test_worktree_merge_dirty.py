@@ -8,6 +8,7 @@ uncommitted base-tree changes before the merge (the worktree branch is the
 source of truth) and drops the stash on success.
 """
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -52,3 +53,50 @@ def test_merge_succeeds_with_dirty_gitignore_in_base(temp_git_repo: Path):
     # Tree is clean after the merge (stash was dropped, not left dangling).
     stashes = _git(temp_git_repo, "stash", "list").stdout
     assert "aifactory pre-merge" not in stashes, "pre-merge stash should be dropped"
+
+
+def _merge_with_spec(repo: Path):
+    mgr = WorktreeManager(repo, base_branch="main")
+    info = mgr.create_worktree("001-feature")
+    wt = Path(info.path)
+    (wt / "f.txt").write_text("x\n")
+    _git(wt, "add", "f.txt")
+    _git(wt, "commit", "-m", "feature")
+    spec = repo / ".aifactory" / "specs" / "001-feature"
+    spec.mkdir(parents=True)
+    (spec / "requirements.json").write_text(
+        json.dumps(
+            {
+                "agent_identity": "coder-1",
+                "originator": "alice",
+                "intake": {"autonomy_tier": "medium"},
+            }
+        )
+    )
+    assert mgr.merge_worktree("001-feature", delete_after=False, no_commit=False)
+    return info.branch
+
+
+def test_merge_commit_carries_trailers_when_flag_on(temp_git_repo, monkeypatch):
+    monkeypatch.setenv("AIFACTORY_AGENT_COMMIT_TRAILERS", "1")
+    branch = _merge_with_spec(temp_git_repo)
+    assert (
+        _git(temp_git_repo, "log", "-1", "--format=%s").stdout.strip()
+        == f"aifactory: Merge {branch}"
+    )
+    assert _git(temp_git_repo, "log", "-1", "--format=%(trailers:only)").stdout.split(
+        "\n"
+    )[:3] == [
+        "Agent-Identity: coder-1",
+        "Autonomy-Tier: medium",
+        "Originator: alice",
+    ]
+
+
+def test_merge_commit_has_no_trailers_when_flag_off(temp_git_repo, monkeypatch):
+    monkeypatch.delenv("AIFACTORY_AGENT_COMMIT_TRAILERS", raising=False)
+    branch = _merge_with_spec(temp_git_repo)
+    assert (
+        _git(temp_git_repo, "log", "-1", "--format=%B").stdout.strip()
+        == f"aifactory: Merge {branch}"
+    )

@@ -91,13 +91,16 @@ class WorktreeSyncMixin:
             "qa_report.md",
             "QA_FIX_REQUEST.md",
             "spec.md",
-            "requirements.json",
         ]
 
         # NOTE: task_control.json and qa_review_cycle.json are deliberately
         # ABSENT from files_to_sync. Both are authoritative state owned outside
         # the agent's worktree (control-plane #259, QA review-cycle #260) and a
-        # worktree copy must never reset or replay them.
+        # worktree copy must never reset or replay them. requirements.json too
+        # (Factory#1960): the canonical copy is written at intake and holds the
+        # agent identity, tier and originator that commit trailers read.
+        # The extra-files loop below skips them by name, or it would copy them.
+        never_sync = {"requirements.json", "task_control.json", "qa_review_cycle.json"}
 
         # Directories to sync (merged into the destination, see below).
         #
@@ -221,7 +224,7 @@ class WorktreeSyncMixin:
         # Sync any additional files created by the agent (e.g., plan .md files)
         # that aren't in the hardcoded list
         try:
-            known_files = set(files_to_sync)
+            known_files = set(files_to_sync) | never_sync
             for src_file in worktree_spec.iterdir():
                 if src_file.is_file() and src_file.name not in known_files:
                     try:

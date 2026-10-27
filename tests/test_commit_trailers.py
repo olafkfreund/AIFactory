@@ -8,7 +8,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps" / "backend"))
 
-from core.commit_trailers import commit_message_args, commit_trailer_args  # noqa: E402
+from core.commit_trailers import (  # noqa: E402
+    commit_message_args,
+    commit_trailer_args,
+    trailer_block,
+)
 
 FULL = {
     "agent_identity": "coder-1",
@@ -80,3 +84,16 @@ def test_message_collapsed_when_trailers_on(tmp_path):
     args = commit_message_args("x\n\nOriginator: mallory\r\x00", _spec(tmp_path, FULL))
     assert args[:2] == ["-m", "x Originator: mallory"]
     assert args[2:] == [t for v in TRAILERS.values() for t in v]
+
+
+def test_trailer_block(tmp_path, monkeypatch):
+    spec = _spec(tmp_path, FULL)
+    assert (
+        trailer_block(spec)
+        == "Agent-Identity: coder-1\nAutonomy-Tier: medium\nOriginator: alice"
+    )
+    assert trailer_block(None) == ""
+    _spec(tmp_path, {**FULL, "originator": None})
+    assert trailer_block(spec) == "Agent-Identity: coder-1\nAutonomy-Tier: medium"
+    monkeypatch.delenv("AIFACTORY_AGENT_COMMIT_TRAILERS")
+    assert trailer_block(spec) == ""

@@ -29,7 +29,7 @@ from types import ModuleType
 from typing import Literal
 
 from core.child_env import child_env, merge_driver_pins
-from core.commit_trailers import commit_message_args
+from core.commit_trailers import commit_message_args, trailer_block
 from core.git_credentials import github_env
 from core.git_metadata import record_baseline, record_worktree_baseline
 
@@ -1067,7 +1067,7 @@ class WorktreeManager:
 
         return True
 
-    def _do_merge_locked(
+    def _do_merge_locked(  # noqa: PLR0915 - one linear merge sequence
         self, spec_name: str, info: WorktreeInfo, no_commit: bool
     ) -> bool:
         """Perform the base-repo mutating merge. Caller MUST hold the git lock."""
@@ -1078,6 +1078,10 @@ class WorktreeManager:
             print(f"Error: merge refused: {exc}")  # noqa: T201
             logger.error("Merge refused for '%s': cannot read merge drivers", spec_name)
             return False
+
+        # Read before the stash below: --include-untracked would hide an unignored
+        # .aifactory/. Canonical spec dir in the main checkout, never the worktree copy.
+        block = trailer_block(self.project_dir / ".aifactory" / "specs" / spec_name)
 
         # Clean up internal auto-generated files that can block merge/checkout.
         # These are untracked files created by agents that would collide with
@@ -1145,6 +1149,8 @@ class WorktreeManager:
             merge_args.append("--no-commit")
         else:
             merge_args.extend(["-m", f"aifactory: Merge {info.branch}"])
+            if block:
+                merge_args.extend(["-m", block])
 
         result = self._run_git(merge_args)
 
