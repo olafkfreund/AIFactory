@@ -8,11 +8,11 @@ Contract is defined by the AutoFixConfig + AutoFixQueueItem types at
 ``apps/frontend-web/src/shared/types/github-api.ts``.
 
 Endpoints:
-  - GET  /api/projects/{projectId}/auto-fix/config       — load config
-  - PUT  /api/projects/{projectId}/auto-fix/config       — save config
-  - GET  /api/projects/{projectId}/auto-fix/queue        — list queue items
-  - POST /api/projects/{projectId}/auto-fix/check-new    — manual poll
-  - POST /api/projects/{projectId}/auto-fix/{N}/start    — single-issue start
+  - GET  /api/projects/{project_id}/auto-fix/config       — load config
+  - PUT  /api/projects/{project_id}/auto-fix/config       — save config
+  - GET  /api/projects/{project_id}/auto-fix/queue        — list queue items
+  - POST /api/projects/{project_id}/auto-fix/check-new    — manual poll
+  - POST /api/projects/{project_id}/auto-fix/{N}/start    — single-issue start
 
 Returns are RAW dicts (not wrapped in ``{success, data}``) — the
 frontend's api-adapter expects the schema directly per the existing
@@ -25,12 +25,13 @@ import logging
 from typing import Any
 
 from factory_common.logsafe import sanitize_log
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from server.error_ref import client_error
 
 from ..services import auto_fix_service
+from .project_authz import require_project_access
 
 logger = logging.getLogger(__name__)
 
@@ -58,35 +59,43 @@ class AutoFixConfigPayload(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-@router.get("/{projectId}/auto-fix/config")
-async def get_auto_fix_config(projectId: str) -> dict[str, Any] | None:
+@router.get("/{project_id}/auto-fix/config")
+async def get_auto_fix_config(
+    project_id: str, _access: dict = Depends(require_project_access("member"))
+) -> dict[str, Any] | None:
     """Return AutoFixConfig for the project, or null if no project."""
-    cfg = auto_fix_service.get_config(projectId)
+    cfg = auto_fix_service.get_config(project_id)
     if cfg is None:
         raise HTTPException(status_code=404, detail="Project not found")
     # Strip the queue from the config response (queue has its own endpoint)
     return {k: v for k, v in cfg.items() if k != "queue"}
 
 
-@router.put("/{projectId}/auto-fix/config")
+@router.put("/{project_id}/auto-fix/config")
 async def save_auto_fix_config(
-    projectId: str, payload: AutoFixConfigPayload
+    project_id: str,
+    payload: AutoFixConfigPayload,
+    _access: dict = Depends(require_project_access("member")),
 ) -> dict[str, bool]:
     """Save AutoFixConfig. Returns ``{success: bool}``."""
-    ok = auto_fix_service.save_config(projectId, payload.model_dump())
+    ok = auto_fix_service.save_config(project_id, payload.model_dump())
     if not ok:
         raise HTTPException(status_code=404, detail="Project not found")
     return {"success": True}
 
 
-@router.get("/{projectId}/auto-fix/queue")
-async def get_auto_fix_queue(projectId: str) -> list[dict[str, Any]]:
+@router.get("/{project_id}/auto-fix/queue")
+async def get_auto_fix_queue(
+    project_id: str, _access: dict = Depends(require_project_access("viewer"))
+) -> list[dict[str, Any]]:
     """Return the AutoFix queue items."""
-    return auto_fix_service.get_queue(projectId)
+    return auto_fix_service.get_queue(project_id)
 
 
-@router.post("/{projectId}/auto-fix/check-new")
-async def check_new_issues(projectId: str) -> dict[str, Any]:
+@router.post("/{project_id}/auto-fix/check-new")
+async def check_new_issues(
+    project_id: str, _access: dict = Depends(require_project_access("member"))
+) -> dict[str, Any]:
     """Manually trigger a poll: find new issues + start each one.
 
     This is what the frontend's "Poll now" / refresh button calls,
@@ -99,7 +108,7 @@ async def check_new_issues(projectId: str) -> dict[str, Any]:
     invocations share.
     """
     try:
-        result = await auto_fix_service.check_new_and_start_all(projectId)
+        result = await auto_fix_service.check_new_and_start_all(project_id)
     except ValueError as e:
         # auto_fix_service raises InputRejectedError for "project not found",
         # returned verbatim; any other ValueError gets a reference.
@@ -113,11 +122,15 @@ async def check_new_issues(projectId: str) -> dict[str, Any]:
     return result
 
 
-@router.post("/{projectId}/auto-fix/{issueNumber}/start")
-async def start_auto_fix_one(projectId: str, issueNumber: int) -> dict[str, Any]:
+@router.post("/{project_id}/auto-fix/{issueNumber}/start")
+async def start_auto_fix_one(
+    project_id: str,
+    issueNumber: int,
+    _access: dict = Depends(require_project_access("member")),
+) -> dict[str, Any]:
     """Import + start the agent on a single issue."""
     try:
-        return await auto_fix_service.start_auto_fix(projectId, issueNumber)
+        return await auto_fix_service.start_auto_fix(project_id, issueNumber)
     except ValueError as e:
         raise HTTPException(
             status_code=404, detail=client_error(logger, "Project not found", e)
@@ -125,7 +138,7 @@ async def start_auto_fix_one(projectId: str, issueNumber: int) -> dict[str, Any]
     except Exception as e:
         logger.exception(
             "[auto_fix] start_auto_fix failed project=%s issue=%s",
-            sanitize_log(projectId),
+            sanitize_log(project_id),
             sanitize_log(issueNumber),
         )
         raise HTTPException(

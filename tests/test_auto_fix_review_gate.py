@@ -64,3 +64,31 @@ def test_should_pass_force_follows_review_flag(tmp_path):
     other.mkdir()
     (other / "requirements.json").write_text(json.dumps({}))
     assert should_pass_force(other, False) is True
+
+
+def test_start_route_requires_member_role(monkeypatch):
+    from fastapi import FastAPI, HTTPException
+    from fastapi.testclient import TestClient
+    from server.database.engine import get_db
+    from server.routes import auto_fix, project_authz
+    from server.services import auto_fix_service
+
+    roles: list[str] = []
+
+    async def deny(user, project_id, db, minimum_role="viewer"):
+        roles.append(minimum_role)
+        raise HTTPException(status_code=403, detail="forbidden")
+
+    monkeypatch.setattr(project_authz, "_auth_disabled", lambda: False)
+    monkeypatch.setattr(project_authz, "authorize_project_for_user", deny)
+    start = AsyncMock()
+    monkeypatch.setattr(auto_fix_service, "start_auto_fix", start)
+
+    app = FastAPI()
+    app.include_router(auto_fix.router, prefix="/api/projects")
+    app.dependency_overrides[get_db] = lambda: None
+    r = TestClient(app).post("/api/projects/p1/auto-fix/7/start")
+
+    assert r.status_code == 403
+    assert roles == ["member"]
+    start.assert_not_called()
