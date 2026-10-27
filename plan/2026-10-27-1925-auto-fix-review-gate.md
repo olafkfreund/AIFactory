@@ -63,6 +63,14 @@ dir does not exist). Pattern for sys.path: `tests/test_auto_fix_pull_on_poll.py`
    → verify: `pytest tests/test_auto_fix_review_gate.py tests/test_delegation_v1_gaps.py tests/test_delegation_v1b.py tests/test_auto_fix_pull_on_poll.py -q`
    Traps: `test_write_spec_dir_omits_delegation_when_default_off` may assert no metadata — keep it passing.
 
+   **Deviation (Opus review):** writing the flag to \`requirements.json\` alone
+   does nothing for a fresh spec: \`force=True\` short-circuits
+   \`should_pass_force\`, so \`sync_require_review_metadata\` never copies it to
+   \`task_metadata.json\`, which is what the coder's gate reads. \`start_auto_fix\`
+   now calls \`sync_require_review_metadata(spec_dir)\` when it created the spec.
+   Test: a fresh spec with \`requireHumanApproval\` on has
+   \`task_metadata.json\` \`requireReviewBeforeCoding: true\` (fails without the sync).
+
 ## Tests
 
 `pytest tests/test_auto_fix_review_gate.py tests/test_delegation_v1_gaps.py tests/test_delegation_v1b.py tests/test_auto_fix_pull_on_poll.py -q` all pass;

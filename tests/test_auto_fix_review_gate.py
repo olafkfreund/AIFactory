@@ -111,3 +111,18 @@ def test_write_spec_dir_require_review_metadata(tmp_path):
     both = meta("c", require_review=True, delegate_by_default=True)["metadata"]
     assert both["requireReviewBeforeCoding"] is True
     assert both["enableDelegation"] is True
+
+
+@pytest.mark.asyncio
+async def test_new_spec_with_require_human_approval_is_gated(tmp_path):
+    from server.services import auto_fix_service
+
+    with patch.object(
+        auto_fix_service,
+        "get_config",
+        return_value={"requireHumanApproval": True},
+    ):
+        await _start(tmp_path)
+    (spec,) = (tmp_path / ".aifactory" / "specs").iterdir()
+    meta = json.loads((spec / "task_metadata.json").read_text())
+    assert meta["requireReviewBeforeCoding"] is True
