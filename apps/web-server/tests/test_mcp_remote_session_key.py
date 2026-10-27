@@ -11,7 +11,7 @@ from server.mcp_remote.auth import AuthenticatedKey
 SID = "0123456789abcdef0123456789abcdef"
 
 
-def _key(key_id):
+def _key(key_id: str) -> AuthenticatedKey:
     return AuthenticatedKey(
         key_id=key_id, scopes=frozenset({"mcp:write"}), user_id="u", org_id="o"
     )

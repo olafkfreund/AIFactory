@@ -165,8 +165,7 @@ async def messages_endpoint(request: Request):
     SseServerTransport's ``handle_post_message`` does the body parsing
     and delivery into the active SSE session. We authenticate per-call
     here too because the SSE session's auth context is per-connection
-    but message posts come on separate HTTP requests, and require the
-    posting key to be the one that opened the session.
+    but message posts come on separate HTTP requests.
     """
     try:
         key = await authenticate(request.headers.get("Authorization"))
