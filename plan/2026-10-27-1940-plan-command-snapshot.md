@@ -73,3 +73,11 @@ Expected: all pass.
 ## Rollback
 
 Revert the PR. Seeding returns to reading the live plan; no data migration.
+
+## Deviations
+
+- Step 4 also adds `tests/test_plan_review_gate_snapshot.py::test_mid_run_plan_edit_grants_only_when_review_not_required`
+  (drives `run_autonomous_agent`; the agent edits its plan in session 1, session 2's seeding is checked).
+  The step-4 unit tests call the seeder directly, so they did not fail when the `coder.py`
+  wiring was reverted; this one does. `_drive` gained a `next_subtask` parameter and its
+  `RecoveryManager` mock returns an int attempt count so a coder session can run.
