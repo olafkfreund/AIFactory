@@ -993,6 +993,42 @@ class _SeqRunner:
         return any(n in c for c in self.calls)
 
 
+def test_merge_pr_body_on_every_gh_merge_call():
+    r = FakeRunner({"pr merge": CmdResult(1, "", "head is behind")})
+    pe.merge_pr("o", "r", 5, body="Agent-Identity: x", runner=r)
+    merges = [c for c in r.calls if c[1:3] == ["pr", "merge"]]
+    assert len(merges) == 2
+    assert all(c[-2:] == ["--body", "Agent-Identity: x"] for c in merges)
+
+
+def test_merge_pr_argv_unchanged_without_body():
+    r = FakeRunner({})
+    pe.merge_pr("o", "r", 5, match_head="abc", runner=r)
+    assert r.calls == [
+        ["gh", "pr", "merge", "5", "--squash", "--repo", "o/r"]
+        + ["--match-head-commit", "abc"]
+    ]
+
+
+def test_watch_and_finish_forwards_merge_body(monkeypatch):
+    seen: dict = {}
+    monkeypatch.setattr(pe, "merge_pr", lambda *_a, **k: seen.update(k) or True)
+    r = FakeRunner({"reviews": _reviews(("APPROVED", COPILOT))})
+    asyncio.run(
+        pe.watch_and_finish(
+            owner="o",
+            repo="r",
+            pr=5,
+            auto_merge=True,
+            runner=r,
+            poll_interval=0,
+            max_minutes=1,
+            merge_body="Agent-Identity: x",
+        )
+    )
+    assert seen["body"] == "Agent-Identity: x"
+
+
 def test_merge_behind_updates_branch_then_merges():
     r = _SeqRunner(update_ok=True)
     assert pe.merge_pr("o", "r", 20, runner=r) is True

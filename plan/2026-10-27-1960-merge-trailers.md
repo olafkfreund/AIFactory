@@ -52,6 +52,10 @@ Approved decisions (from the spec):
    base contains the three lines and the subject is still
    `aifactory: Merge <branch>`; flag off (`delenv`) with the same file → no
    trailers and the full message is exactly `aifactory: Merge <branch>`.
+   Deviation (coder, step 2): `block` is computed before the pre-merge
+   `stash push --include-untracked`, which otherwise stashes an unignored
+   `.aifactory/` away and leaves the block empty; it is only used in the
+   `else` branch as planned.
    → verify: `pytest tests/test_worktree_merge_dirty.py tests/test_worktree_security_gate.py tests/test_workspace.py -q`
    Traps: do not touch `pins`, the stash logic or the `no_commit` branch. If
    `.aifactory/` is not ignored in the fixture repo, make sure the untracked
@@ -73,6 +77,9 @@ Approved decisions (from the spec):
    `["pr", "merge", "7", "--squash"]`.
    → verify: `cd apps/web-server && pytest tests/test_merge_trailers.py tests/test_worktree_branch_as_truth.py -q` (use the repo's usual web-server pytest invocation)
    Traps: approval.py imports lazily in places; keep module conventions.
+   Deviation (coder, step 3): the `core.commit_trailers` import sits after the
+   `server.services.gh` import behind `# isort: split`, because that import is
+   what puts `apps/backend` on `sys.path`.
 
 4. `apps/web-server/server/services/pr_endgame.py`:
    `merge_pr` (line 1299) gains keyword `body: str | None = None`; add
@@ -96,6 +103,12 @@ Approved decisions (from the spec):
    autonomy-matrix check fails because of the new imports, regenerate with
    `scripts/gen_autonomy_matrix.py` (as #1907 did) and commit the two generated
    files.
+   Deviation (step 5): step 2's lines took `_do_merge_locked` in
+   `core/worktree.py` over PLR0915 (50 → 53 statements); it carries
+   `# noqa: PLR0915 - one linear merge sequence`, the same idiom as
+   `watch_and_finish`. Step 4's tests went into `test_pr_endgame.py` (its
+   fixtures); `test_merge_trailers.py` holds step 3's. The autonomy-matrix
+   check passed without regeneration.
    → verify: all clean.
    Traps: never `git add -A`; stage named paths only; never `--no-verify`.
 

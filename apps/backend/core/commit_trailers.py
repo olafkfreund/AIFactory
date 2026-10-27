@@ -44,6 +44,11 @@ def commit_trailer_args(spec_dir: Path | None) -> list[str]:
     return out
 
 
+def trailer_block(spec_dir: Path | None) -> str:
+    """Trailer lines joined by newlines for a ``-m``/``--body`` text; ``""`` when none."""
+    return "\n".join(commit_trailer_args(spec_dir)[1::2])
+
+
 def commit_message_args(message: str, spec_dir: Path | None) -> list[str]:
     """``-m`` plus trailer argv for ``git commit``; exactly ``["-m", message]`` when off.
 
