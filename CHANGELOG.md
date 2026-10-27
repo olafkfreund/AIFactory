@@ -1,5 +1,91 @@
 ## [Unreleased]
 
+## 3.10.12 - 2026-10-27
+
+Five behaviour changes: `acw_` API keys authenticate for the first time
+(with expiry, owner status, a live role cap and org binding), viewers can
+no longer mint write-scoped keys, a JWT `role=admin` no longer bypasses org
+checks, `GET /api/admin/access-review` takes only `?org_id`, and
+`GET /api/audit/export` needs org admin. Remote MCP now authorizes each call
+as the calling key; it stays off by default (`AIFACTORY_MCP_REMOTE_ENABLED`).
+A task needing plan review now always pauses after its planner, and
+auto-fix routes need project roles. One new env var:
+`AIFACTORY_AGENT_COMMIT_TRAILERS` (default off). The model
+gateway ships as a separate `-gateway` image that nothing deploys. No
+migrations.
+
+### Changed
+
+- **`acw_` keys authenticate (#1914, closes #1913).** Before, every real key
+  failed (REST 401, stdio and remote MCP 500). The lookup now refuses a key
+  whose owner is missing or deactivated, a key past `expires_at`, a key whose
+  org is deleted, and a key with no effective scopes. Effective scopes follow
+  the owner's current role in `key.org_id` (below member: `mcp:read` only; no
+  membership: none). REST needs the explicit `api` scope. Key principals are
+  bound to `key.org_id` for project access, list filters, project create,
+  org-role routes and git-credential routes. Mint with `expires_in_days` now
+  works on Postgres.
+- **Viewers cannot mint write-scoped keys (#1911, closes #1908).**
+  `POST /api/keys` gives a caller below `member` a 403 for any scope other
+  than `mcp:read`. Existing keys are not revoked (#1914 caps them live).
+- **`is_service_principal` trusts only `is_service` (#1911, closes #1909).**
+  A JWT with `role=admin` no longer bypasses org checks. Auth-disabled dev
+  principals are marked `is_service`, so dev mode is unchanged.
+- **`GET /api/admin/access-review` streams only the gated org (#1916, closes
+  #1915).** It takes only `?org_id`; `?org` is gone. Before,
+  `?org_id=A&org=B` let an admin of A read B's roster.
+- **`GET /api/audit/export` requires org admin (#1916).** Non-service callers
+  must pass `org_id` and hold `admin` in it (read from the DB). An `acw_` key
+  can export only its own org. Service principals are unchanged.
+- **Remote MCP authorizes each tool call as the calling key (#1917, closes
+  #1910).** Read tools need viewer and write tools need member on the
+  project the call proxies to; `list_projects` is filtered to the key's org;
+  ids are validated against path escapes; an SSE session accepts messages
+  only from the key that opened it. Remote MCP stays off unless
+  `AIFACTORY_MCP_REMOTE_ENABLED` is set; it is not set in factory-gitops.
+- **Plan-review gate decided from pre-planner state (#1926, closes #1922).**
+  A task that needs plan review always pauses after its planner session; a
+  planner clearing the flag or forging `review_state.json` has no effect.
+  An approval without `spec_hash` no longer counts. Start passes `--force`
+  only on a hash-valid approval or the server's `task_control.planApproved`
+  record (set by approve-plan, cleared by reject-plan and any plan-review
+  pause); otherwise the task is held in plan review.
+- **Auto-fix routes need project roles; reused specs are not forced past
+  review (#1928, closes #1925).** GET queue needs `viewer`; GET config,
+  check-new and `{N}/start` need `member`; PUT config needs `admin`. GET
+  config returns the bot token masked (`********`); PUT keeps the stored
+  token on the mask or a missing field, and `""` clears it. Starting an
+  issue whose spec already exists no longer forces past plan review.
+  `requireHumanApproval` now sets `requireReviewBeforeCoding` on created
+  specs.
+- **Worktree spec sync mirrors only allowlisted build files (#1923, closes
+  #1921).** On the subprocess backend an agent could overwrite canonical
+  `task_metadata.json`, `review_state.json`, `COMPLETED.json` and others
+  from its worktree. Only `token_usage.json`, `guardrail_halt.json` and
+  `handback_received.json` are mirrored now. Kubejob builds never ran this
+  sync.
+
+### Added
+
+- **Agent commit trailers, off by default (#1907, Factory#1960 slice 3).**
+  `AIFACTORY_AGENT_COMMIT_TRAILERS` adds `Agent-Identity`, `Autonomy-Tier`
+  and `Originator` trailers to AIFactory's parallel-wave and safety-net
+  commits. Off leaves the commit argv unchanged. With the flag on, the
+  local `merge --no-ff`, the Approve squash and the PR-endgame auto-merge
+  carry them too, and the squash body becomes only the trailer block
+  (#1918).
+- **Model gateway image (#1912, Factory#1959 stage 0a).**
+  `ghcr.io/olafkfreund/aifactory:{sha-*,latest,v*}-gateway`, built and
+  Trivy-scanned on PRs, cosign-signed by digest on deploy and release, and
+  SBOM-attested on release. Its own env vars (`GATEWAY_UPSTREAM_URL`,
+  `GATEWAY_UPSTREAM_API_KEY`, `GATEWAY_CLIENT_TOKEN`, `GATEWAY_PORT`) apply
+  to the gateway container only. Nothing deploys it.
+
+### Deprecated
+
+- **The LiteLLM sub-chart (#1912).** Chart comments and a docs admonition
+  only; removal is a later slice.
+
 ## 3.10.11 - 2026-10-27
 
 Four behaviour changes: `APP_DEBUG` no longer relaxes the disable-auth or
