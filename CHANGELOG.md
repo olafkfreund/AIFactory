@@ -8,7 +8,9 @@ no longer mint write-scoped keys, a JWT `role=admin` no longer bypasses org
 checks, `GET /api/admin/access-review` takes only `?org_id`, and
 `GET /api/audit/export` needs org admin. Remote MCP now authorizes each call
 as the calling key; it stays off by default (`AIFACTORY_MCP_REMOTE_ENABLED`).
-One new env var: `AIFACTORY_AGENT_COMMIT_TRAILERS` (default off). The model
+A task needing plan review now always pauses after its planner, and
+auto-fix routes need project roles. One new env var:
+`AIFACTORY_AGENT_COMMIT_TRAILERS` (default off). The model
 gateway ships as a separate `-gateway` image that nothing deploys. No
 migrations.
 
@@ -41,13 +43,37 @@ migrations.
   ids are validated against path escapes; an SSE session accepts messages
   only from the key that opened it. Remote MCP stays off unless
   `AIFACTORY_MCP_REMOTE_ENABLED` is set; it is not set in factory-gitops.
+- **Plan-review gate decided from pre-planner state (#1926, closes #1922).**
+  A task that needs plan review always pauses after its planner session; a
+  planner clearing the flag or forging `review_state.json` has no effect.
+  An approval without `spec_hash` no longer counts. Start passes `--force`
+  only on a hash-valid approval or the server's `task_control.planApproved`
+  record (set by approve-plan, cleared by reject-plan and any plan-review
+  pause); otherwise the task is held in plan review.
+- **Auto-fix routes need project roles; reused specs are not forced past
+  review (#1928, closes #1925).** GET queue needs `viewer`; GET config,
+  check-new and `{N}/start` need `member`; PUT config needs `admin`. GET
+  config returns the bot token masked (`********`); PUT keeps the stored
+  token on the mask or a missing field, and `""` clears it. Starting an
+  issue whose spec already exists no longer forces past plan review.
+  `requireHumanApproval` now sets `requireReviewBeforeCoding` on created
+  specs.
+- **Worktree spec sync mirrors only allowlisted build files (#1923, closes
+  #1921).** On the subprocess backend an agent could overwrite canonical
+  `task_metadata.json`, `review_state.json`, `COMPLETED.json` and others
+  from its worktree. Only `token_usage.json`, `guardrail_halt.json` and
+  `handback_received.json` are mirrored now. Kubejob builds never ran this
+  sync.
 
 ### Added
 
 - **Agent commit trailers, off by default (#1907, Factory#1960 slice 3).**
   `AIFACTORY_AGENT_COMMIT_TRAILERS` adds `Agent-Identity`, `Autonomy-Tier`
   and `Originator` trailers to AIFactory's parallel-wave and safety-net
-  commits. Off leaves the commit argv unchanged.
+  commits. Off leaves the commit argv unchanged. With the flag on, the
+  local `merge --no-ff`, the Approve squash and the PR-endgame auto-merge
+  carry them too, and the squash body becomes only the trailer block
+  (#1918).
 - **Model gateway image (#1912, Factory#1959 stage 0a).**
   `ghcr.io/olafkfreund/aifactory:{sha-*,latest,v*}-gateway`, built and
   Trivy-scanned on PRs, cosign-signed by digest on deploy and release, and
