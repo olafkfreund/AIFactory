@@ -8,8 +8,10 @@ approval; StartTask trusts it or a hash-valid review_state.json, never the raw
 import asyncio
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 _BACKEND = str(Path(__file__).resolve().parents[2] / "backend")
@@ -29,7 +31,7 @@ PLAN = {
 }
 
 
-def _spec(tmp_path, meta=None):
+def _spec(tmp_path: Path, meta: dict[str, Any] | None = None) -> Path:
     spec_dir = tmp_path / "repo" / ".aifactory" / "specs" / "001-x"
     spec_dir.mkdir(parents=True)
     (spec_dir / "spec.md").write_text("# x\n")
@@ -41,7 +43,7 @@ def _spec(tmp_path, meta=None):
 
 
 # -- step 5: task_control.write_control ---------------------------------------
-def test_plan_approved_set_and_clear(tmp_path):
+def test_plan_approved_set_and_clear(tmp_path: Path) -> None:
     task_control.record_plan_approval(tmp_path, "web_user")
     c = task_control.read_control(tmp_path)
     assert c["planApproved"] is True
@@ -58,7 +60,7 @@ def test_plan_approved_set_and_clear(tmp_path):
     assert not {"planApproved", "planApprovedBy", "planApprovedAt"} & set(c)
 
 
-def test_plan_review_reason_clears_approval(tmp_path):
+def test_plan_review_reason_clears_approval(tmp_path: Path) -> None:
     task_control.record_plan_approval(tmp_path, "web_user")
     task_control.write_control(
         tmp_path, status="human_review", review_reason="plan_review"
@@ -67,7 +69,7 @@ def test_plan_review_reason_clears_approval(tmp_path):
 
 
 # -- step 6: approve / reject routes -------------------------------------------
-def _route(fn, tmp_path, *args):
+def _route(fn: Callable[..., Any], tmp_path: Path, *args: Any) -> Any:
     projects = {"p": {"path": str(tmp_path / "repo")}}
     with (
         patch.object(plan_approval, "load_projects", return_value=projects),
@@ -77,7 +79,9 @@ def _route(fn, tmp_path, *args):
         return asyncio.run(fn("p:001-x", *args, {}))
 
 
-def test_approve_plan_records_plan_approved_even_without_plan_file(tmp_path):
+def test_approve_plan_records_plan_approved_even_without_plan_file(
+    tmp_path: Path,
+) -> None:
     spec_dir = _spec(tmp_path)
     (spec_dir / "implementation_plan.json").unlink()
     req = plan_approval.ApprovePlanRequest(auto_restart=False)
@@ -86,7 +90,7 @@ def test_approve_plan_records_plan_approved_even_without_plan_file(tmp_path):
     assert c["planApproved"] is True and c["planApprovedBy"] == "web_user"
 
 
-def test_reject_plan_clears_plan_approved(tmp_path):
+def test_reject_plan_clears_plan_approved(tmp_path: Path) -> None:
     spec_dir = _spec(tmp_path)
     task_control.record_plan_approval(spec_dir, "web_user")
     _route(plan_approval.reject_plan, tmp_path, plan_approval.RejectPlanRequest())
@@ -94,7 +98,7 @@ def test_reject_plan_clears_plan_approved(tmp_path):
 
 
 # -- step 7: StartTask force decision -----------------------------------------
-def _start(tmp_path):
+def _start(tmp_path: Path) -> tuple[Any, AsyncMock]:
     """Run start_task; return (response-or-None, start_task_execution mock)."""
     svc = MagicMock()
     svc.stop_stale_spec_creation = AsyncMock()
@@ -116,27 +120,28 @@ def _start(tmp_path):
     return result, svc.start_task_execution
 
 
-def _assert_held(spec_dir, result, start):
+def _assert_held(spec_dir: Path, result: Any, start: AsyncMock) -> None:
     assert not start.called
     assert result["status"] == "human_review"
     assert task_control.read_control(spec_dir)["reviewReason"] == "plan_review"
 
 
-def test_hashless_approval_does_not_resume(tmp_path):
+def test_hashless_approval_does_not_resume(tmp_path: Path) -> None:
     spec_dir = _spec(tmp_path)
     (spec_dir / "review_state.json").write_text(json.dumps({"approved": True}))
     result, start = _start(tmp_path)
     _assert_held(spec_dir, result, start)
 
 
-def test_valid_approval_resumes_with_force(tmp_path):
+def test_valid_approval_resumes_with_force(tmp_path: Path) -> None:
     spec_dir = _spec(tmp_path)
     ReviewState().approve(spec_dir)
     _, start = _start(tmp_path)
+    assert start.await_args is not None
     assert start.await_args.kwargs["force"] is True
 
 
-def test_stale_hash_without_plan_approved_does_not_resume(tmp_path):
+def test_stale_hash_without_plan_approved_does_not_resume(tmp_path: Path) -> None:
     spec_dir = _spec(tmp_path)
     ReviewState().approve(spec_dir)
     (spec_dir / "implementation_plan.json").write_text(
@@ -146,7 +151,7 @@ def test_stale_hash_without_plan_approved_does_not_resume(tmp_path):
     _assert_held(spec_dir, result, start)
 
 
-def test_plan_approved_resumes_even_with_stale_hash(tmp_path):
+def test_plan_approved_resumes_even_with_stale_hash(tmp_path: Path) -> None:
     spec_dir = _spec(tmp_path)
     ReviewState().approve(spec_dir)
     task_control.record_plan_approval(spec_dir, "web_user")
@@ -154,17 +159,18 @@ def test_plan_approved_resumes_even_with_stale_hash(tmp_path):
         json.dumps({**PLAN, "feature": "changed"})
     )
     _, start = _start(tmp_path)
+    assert start.await_args is not None
     assert start.await_args.kwargs["force"] is True
 
 
-def test_auto_simple_approval_is_valid(tmp_path):
+def test_auto_simple_approval_is_valid(tmp_path: Path) -> None:
     spec_dir = _spec(tmp_path)
     ReviewState().approve(spec_dir, approved_by="auto-simple")
     assert ReviewState.load(spec_dir).is_approval_valid(spec_dir)
 
 
 # -- step 8: a planner forgery in the worktree never changes the next Start ---
-def test_worktree_forgery_does_not_reach_main_or_change_start(tmp_path):
+def test_worktree_forgery_does_not_reach_main_or_change_start(tmp_path: Path) -> None:
     spec_dir = _spec(tmp_path)  # main: review required, plan, no approval
     worktree_spec = (
         (tmp_path / "repo" / ".aifactory" / "worktrees" / "tasks" / "001-x")
