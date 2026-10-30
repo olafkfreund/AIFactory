@@ -31,6 +31,7 @@ def _event(event_id="11111111-1111-4111-8111-111111111111", status="done"):
         spec_id="spec-9",
         status=status,
         issue_number=412,
+        repo="o/r",
         event_id=event_id,
     )
 
@@ -117,7 +118,7 @@ def test_deliver_due_marks_delivered_on_success(tmp_path):
     assert res == {"delivered": 1, "failed": 0, "abandoned": 0, "remaining": 0}
     assert outbox.pending_count(path=db) == 0
     assert sent[0][0] == "http://hook.test/c"
-    assert json.loads(sent[0][1])["correlation_key"] == "412"
+    assert json.loads(sent[0][1])["correlation_key"] == "o/r#412"
 
 
 def test_failed_delivery_stays_pending_and_backs_off(tmp_path):
