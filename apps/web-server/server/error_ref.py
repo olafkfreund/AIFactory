@@ -36,8 +36,15 @@ import secrets
 
 from factory_common.client_errors import InputRejectedError
 from factory_common.logsafe import sanitize_log
+from fastapi import Request
+from fastapi.responses import JSONResponse
 
-__all__ = ["InputRejectedError", "client_error", "error_reference"]
+__all__ = [
+    "InputRejectedError",
+    "build_backend_unavailable",
+    "client_error",
+    "error_reference",
+]
 
 
 # THE class, not a same-named local one (#1361).
@@ -113,3 +120,8 @@ def client_error(logger: logging.Logger, context: str, exc: BaseException | str)
         # client_message, whereas str() renders whatever wrote args.
         return exc.client_message
     return f"{context} (reference {error_reference(logger, context, exc)})"
+
+
+async def build_backend_unavailable(request: Request, exc: Exception) -> JSONResponse:
+    """Return 503 with the developer-written reason why launches are refused."""
+    return JSONResponse(status_code=503, content={"detail": str(exc)})

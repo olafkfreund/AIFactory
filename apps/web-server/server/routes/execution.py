@@ -31,6 +31,7 @@ from server.services.audit_service import (
     audit_task_action,
     audit_task_route,
 )
+from server.services.build_backend import BuildBackendUnavailableError
 from server.services.handback_receipt_store import record as record_handback_receipt
 from server.services.originator import principal_attribution
 from server.services.trusted_contract import handoff_contract, resolve_contract
@@ -599,6 +600,8 @@ async def start_task(
                     "task_id": task_id,
                     "message": "Spec creation started (no implementation plan found)",
                 }
+            except BuildBackendUnavailableError:
+                raise
             except Exception as e:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -788,6 +791,8 @@ async def start_task(
                 issue_number=int(issue_number),
                 provider=provider,
             )
+        except BuildBackendUnavailableError:
+            raise
         except Exception as e:
             logger.exception(
                 f"[StartTask] Delegation failed for {sanitize_log(task_id)}"
@@ -826,6 +831,8 @@ async def start_task(
             parallel=effective_parallel,
             workers=effective_workers,
         )
+    except BuildBackendUnavailableError:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1271,6 +1278,8 @@ async def create_and_run_task(
             complexity=request.complexity,
             auto_continue=request.auto_continue,
         )
+    except BuildBackendUnavailableError:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1517,6 +1526,8 @@ async def create_from_trusted_plan(
             workers=eff_workers,
         )
         await emit_task_status(task_id, "in_progress")
+    except BuildBackendUnavailableError:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
