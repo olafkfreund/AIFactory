@@ -181,7 +181,8 @@ async def messages_endpoint(request: Request):
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This MCP session belongs to another API key",
         )
-    # mcp 2.x gives each message the POSTer's contextvars, so tools read the session owner's key here.
+    # mcp 2.x gives each message the POSTer's contextvars, so tools read the
+    # session owner's key from here.
     token = _current_key.set(key)
     try:
         return await _sse_transport.handle_post_message(
