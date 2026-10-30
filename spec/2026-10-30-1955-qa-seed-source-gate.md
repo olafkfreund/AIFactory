@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1955
 intent: intent/2026-10-30-1955-qa-seed-source-gate.md
 ---
