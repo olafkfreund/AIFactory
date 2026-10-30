@@ -246,3 +246,26 @@ def test_qa_entry_worktree_without_source_seeds_nothing(proj, monkeypatch):
 def test_qa_entry_approved_source_seeds_live_plan(proj, monkeypatch):
     source, _ = _source_and_worktree(proj)
     assert _qa_seed_seen(proj, source, monkeypatch) == [None]
+
+
+def test_qa_entry_worktree_root_rejects_flipped_review(proj, monkeypatch):
+    _, worktree = _source_and_worktree(proj)
+    (worktree / "task_metadata.json").write_text(
+        json.dumps({"requireReviewBeforeCoding": False})
+    )
+    (worktree / "implementation_plan.json").write_text(
+        json.dumps({"required_commands": ["uv", "npx"]})
+    )
+    assert _qa_seed_seen(worktree.parents[2], worktree, monkeypatch) == [{}]
+
+
+def test_qa_entry_worktree_root_accepts_approved_source(proj, monkeypatch):
+    _, worktree = _source_and_worktree(proj)
+    assert _qa_seed_seen(worktree.parents[2], worktree, monkeypatch) == [None]
+
+
+def test_qa_entry_rejects_deeper_worktree_project_dir(proj, monkeypatch):
+    _, worktree = _source_and_worktree(proj)
+    nested = worktree.parents[2] / "sub"
+    nested.mkdir()
+    assert _qa_seed_seen(nested, worktree, monkeypatch) == [{}]
