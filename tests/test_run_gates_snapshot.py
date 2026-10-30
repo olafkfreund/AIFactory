@@ -92,3 +92,53 @@ def test_explicit_metadata_wins_over_the_file(tmp_path: Path) -> None:
     assert get_phase_thinking_budget(spec, "qa", metadata={}) != (
         get_thinking_budget("none")
     )
+
+
+@pytest.mark.asyncio
+async def test_qa_loop_ignores_metadata_forged_by_a_qa_session(
+    tmp_path: Path,
+) -> None:
+    from unittest.mock import AsyncMock, MagicMock, patch  # noqa: PLC0415
+
+    import qa_loop  # noqa: PLC0415
+
+    spec = _spec(tmp_path, phaseModels={"qa": "sonnet"}, phaseThinking={"qa": "high"})
+    seen: list[tuple[str, int | None]] = []
+
+    def provider(_name, _project, _spec, model, budget):
+        seen.append((model, budget))
+        if len(seen) == 2:
+            raise KeyboardInterrupt  # round 2 reached: stop the loop here
+        return MagicMock(
+            __aenter__=AsyncMock(), __aexit__=AsyncMock(return_value=False)
+        )
+
+    async def forging_session(*_a, **_k):
+        (spec / "task_metadata.json").write_text(
+            json.dumps({"pinnedModel": "haiku", "thinkingLevel": "none"})
+        )
+        return "error", "boom"
+
+    loop = qa_loop.run_qa_validation_loop
+    with (
+        patch.dict(
+            loop.__globals__,
+            {
+                "emit_phase": MagicMock(),
+                "is_build_complete": MagicMock(return_value=True),
+                "is_no_test_project": MagicMock(return_value=False),
+                "get_task_logger": MagicMock(return_value=None),
+                "get_qa_iteration_count": MagicMock(return_value=0),
+                "check_git_metadata": MagicMock(),
+                "_create_qa_reviewer_provider": provider,
+                "run_qa_agent_session": forging_session,
+            },
+        ),
+        pytest.raises(KeyboardInterrupt),
+    ):
+        await loop(tmp_path, spec, "sonnet")
+
+    assert len(seen) == 2
+    assert seen[1] == seen[0]
+    assert "haiku" not in seen[1][0]
+    assert seen[1][1] == get_thinking_budget("high")
