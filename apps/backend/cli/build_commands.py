@@ -620,6 +620,7 @@ def handle_build_command(
                         spec_dir=spec_dir,
                         model=model,
                         verbose=verbose,
+                        source_spec_dir=source_spec_dir,
                     )
                 )
                 _check_qa_git_metadata(working_dir)
