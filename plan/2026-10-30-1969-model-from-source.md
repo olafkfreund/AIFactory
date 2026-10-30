@@ -84,6 +84,25 @@ All paths below are relative to the repo root. Python:
    → check: `cd apps/backend && .venv/bin/python -m pytest ../../tests/test_qa_model_from_source.py ../../tests/test_profile_untrusted.py ../../tests/test_git_metadata_baseline.py ../../tests/test_qa_loop.py -q`;
    the new test must fail with the `qa/loop.py` edits reverted.
 
+3. Review follow-up (independent Opus review of #1980; done by the lead).
+   - Tests so each fixed read fails on its own when reverted:
+     `tests/test_qa_model_from_source.py` drives fixer-first, reviewer reject,
+     the in-loop fixer and a second reviewer; a separate test drives a
+     failover (`MAX_CONSECUTIVE_ERRORS=1`, `next_provider` stops); one test
+     covers `run_parallel_coding_phase`; one asserts `handle_build_command`
+     (isolated) passes `source_spec_dir` to `run_qa_validation_loop`.
+     `tests/test_profile_untrusted.py` asserts `handle_qa_command` passes the
+     source dir (from the project or the worktree root) and `os.devnull` for a
+     deeper worktree path.
+   - `cli/qa_commands.py`: supersedes step 2's deviation. The
+     `get_specs_dir` import and `root`/`gate_dir` move above the seed `try`
+     (multi-line import, `noqa` on the `from` line), so a failed seed import
+     no longer drops the source dir in direct mode; test
+     `test_qa_entry_keeps_source_when_seed_import_fails`. The `os.devnull`
+     default for no source stays.
+   → check: each of the 10 fixed reads, reverted alone, fails
+   `tests/test_qa_model_from_source.py`; `tests/test_profile_untrusted.py` green.
+
 ## Tests
 
 Each step's check; ruff 0.14.10 check + format on touched files; the cq ratchet

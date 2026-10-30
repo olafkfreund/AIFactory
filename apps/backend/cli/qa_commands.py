@@ -133,7 +133,15 @@ def handle_qa_command(
 
     # A fresh process no longer inherits plan grants from the profile file (#1944),
     # so seed them here, from the plan only while a required review is still valid.
-    gate_dir: Path | None = None
+    # Before the seed try: an import failure there must not drop the user's
+    # metadata model choice, which QA reads from the same source dir (#1969).
+    from spec.pipeline import (  # noqa: PLC0415 - match the coder loop's local import
+        get_specs_dir,
+    )
+
+    # #1955: gate worktree plans against the source spec, never an agent-writable copy.
+    root = _source_project_dir(project_dir)
+    gate_dir = root and get_specs_dir(root) / spec_dir.name
     try:
         from project.analyzer import (  # noqa: PLC0415 - match the coder loop's local import
             seed_profile_with_plan_commands,
@@ -141,12 +149,8 @@ def handle_qa_command(
         from review.state import (  # noqa: PLC0415 - same
             requires_review_before_coding,
         )
-        from spec.pipeline import get_specs_dir  # noqa: PLC0415 - same
 
         # An approval valid now means the live plan is the approved one.
-        # #1955: gate worktree plans against the source spec, never an agent-writable copy.
-        root = _source_project_dir(project_dir)
-        gate_dir = root and get_specs_dir(root) / spec_dir.name
         plan: dict[str, object] | None = (
             None
             if gate_dir

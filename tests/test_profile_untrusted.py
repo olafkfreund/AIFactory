@@ -200,7 +200,7 @@ def _source_and_worktree(proj):
     return source, worktree
 
 
-def _qa_seed_seen(proj, spec_dir, monkeypatch):
+def _qa_seed_seen(proj, spec_dir, monkeypatch, loop_kwargs=None):
     qc = importlib.import_module("cli.qa_commands")
     seen = []
     monkeypatch.setattr(qc, "print_banner", lambda: None)
@@ -212,7 +212,9 @@ def _qa_seed_seen(proj, spec_dir, monkeypatch):
         lambda _p, _f, plan: seen.append(plan),
     )
 
-    async def _qa(**_kw):
+    async def _qa(**kw):
+        if loop_kwargs is not None:
+            loop_kwargs.append(kw)
         return True
 
     monkeypatch.setattr(qc, "run_qa_validation_loop", _qa)
@@ -269,3 +271,33 @@ def test_qa_entry_rejects_deeper_worktree_project_dir(proj, monkeypatch):
     nested = worktree.parents[2] / "sub"
     nested.mkdir()
     assert _qa_seed_seen(nested, worktree, monkeypatch) == [{}]
+
+
+@pytest.mark.parametrize("from_root", [False, True])
+def test_qa_entry_passes_source_spec_dir_to_loop(proj, monkeypatch, from_root):
+    """#1969: QA model/thinking come from the source spec dir, not the worktree."""
+    source, worktree = _source_and_worktree(proj)
+    kwargs = []
+    project_dir = worktree.parents[2] if from_root else proj
+    _qa_seed_seen(project_dir, worktree, monkeypatch, kwargs)
+    assert kwargs[0]["source_spec_dir"] == source
+
+
+def test_qa_entry_deeper_worktree_reads_no_metadata(proj, monkeypatch):
+    import os
+
+    _, worktree = _source_and_worktree(proj)
+    nested = worktree.parents[2] / "sub"
+    nested.mkdir()
+    kwargs = []
+    _qa_seed_seen(nested, worktree, monkeypatch, kwargs)
+    assert kwargs[0]["source_spec_dir"] == Path(os.devnull)
+
+
+def test_qa_entry_keeps_source_when_seed_import_fails(proj, monkeypatch):
+    """A failed seed import must not drop the source dir in direct mode (#1969)."""
+    source, _ = _source_and_worktree(proj)
+    monkeypatch.setitem(sys.modules, "review.state", None)
+    kwargs = []
+    _qa_seed_seen(proj, source, monkeypatch, kwargs)
+    assert kwargs[0]["source_spec_dir"] == source
