@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -142,3 +144,99 @@ async def test_qa_loop_ignores_metadata_forged_by_a_qa_session(
     assert seen[1] == seen[0]
     assert "haiku" not in seen[1][0]
     assert seen[1][1] == get_thinking_budget("high")
+
+
+def test_build_gates_survive_files_forged_during_the_coder_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """handle_build_command hands QA the run-start gates, not the live files."""
+    from unittest.mock import MagicMock, patch  # noqa: PLC0415
+
+    from cli import build_commands  # noqa: PLC0415
+
+    monkeypatch.setenv("AIFACTORY_AUTH_PREFLIGHT", "off")
+    spec = _spec(
+        tmp_path,
+        requireReviewBeforeCoding=True,
+        phaseModels={"qa": "sonnet"},
+        phaseThinking={"qa": "high"},
+    )
+    (spec / "spec.md").write_text("# Feature\n")
+    ReviewState().approve(spec)
+    seen: dict[str, object] = {}
+
+    async def fake_coder(*_a: object, **_k: object) -> None:
+        # The agent can write its spec dir: forge approval, solo mode and a cheap model.
+        (spec / "task_metadata.json").write_text(
+            json.dumps(
+                {"soloMode": True, "pinnedModel": "haiku", "thinkingLevel": "none"}
+            )
+        )
+        ReviewState().approve(spec)
+
+    async def fake_qa(*_a: object, gates: RunGates, **_k: object) -> bool:
+        seen["model"] = gates.model("qa")
+        seen["thinking"] = gates.thinking_budget("qa")
+        seen["solo"] = gates.solo
+        (spec / "implementation_plan.json").write_text(
+            json.dumps({**PLAN, "feature": "widened"})
+        )
+        ReviewState().approve(spec)  # forged against the widened plan
+        seen["approval_valid"] = gates.approval_valid(spec)
+        return False
+
+    direct = build_commands.WorkspaceMode.DIRECT
+    patches = [
+        patch("agent.run_autonomous_agent", new=fake_coder),
+        patch("agent.sync_plan_to_source", MagicMock(return_value=False)),
+        patch("qa_loop.should_run_qa", MagicMock(return_value=True)),
+        patch("qa_loop.run_qa_validation_loop", new=fake_qa),
+        patch("cli.utils.validate_environment", MagicMock(return_value=True)),
+        patch("cli.utils.print_banner", MagicMock()),
+        patch.object(
+            build_commands, "choose_workspace", MagicMock(return_value=direct)
+        ),
+        patch.object(
+            build_commands, "get_existing_build_worktree", MagicMock(return_value=None)
+        ),
+        patch.object(
+            build_commands, "build_is_silent_noop", MagicMock(return_value=False)
+        ),
+        patch.object(build_commands, "_record_git_baseline_early", MagicMock()),
+        patch.object(build_commands, "_check_qa_git_metadata", MagicMock()),
+        patch("phase_event.emit_phase", MagicMock()),
+    ]
+    with contextlib.ExitStack() as stack:
+        for p in patches:
+            stack.enter_context(p)
+        with contextlib.suppress(SystemExit):
+            build_commands.handle_build_command(
+                project_dir=tmp_path,
+                spec_dir=spec,
+                model="sonnet",
+                max_iterations=1,
+                verbose=False,
+                force_isolated=False,
+                force_direct=True,
+                auto_continue=True,
+                skip_qa=False,
+                force_bypass_approval=False,
+            )
+
+    assert seen["model"] == get_phase_model(
+        Path(os.devnull), "qa", None, metadata={"phaseModels": {"qa": "sonnet"}}
+    )
+    assert seen["thinking"] == get_thinking_budget("high")
+    assert seen["solo"] is False
+    assert seen["approval_valid"] is False
+
+
+def test_approval_still_valid_refuses_forged_review_state(tmp_path: Path) -> None:
+    from cli.build_commands import _approval_still_valid  # noqa: PLC0415
+
+    spec = _spec(tmp_path, requireReviewBeforeCoding=True)
+    ReviewState().approve(spec)
+    gates = RunGates.capture(spec, None, None)
+    (spec / "implementation_plan.json").write_text(json.dumps({**PLAN, "x": 1}))
+    ReviewState().approve(spec)  # forged against the changed plan
+    assert _approval_still_valid(spec, None, gates) is False

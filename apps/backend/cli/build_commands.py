@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 # Heavy imports are lazy-loaded in functions to avoid import errors
 from progress import count_subtasks, print_paused_banner
 from review import ReviewState, requires_review_before_coding
+from run_gates import RunGates  # noqa: E402 - needs the sys.path insert above
 from ui import (
     BuildState,
     Icons,
@@ -523,6 +524,10 @@ def handle_build_command(
 
     _record_git_baseline_early(working_dir)
 
+    # #1983: gate values read once, before any agent session; the spec dirs are
+    # agent-writable after it.
+    gates = RunGates.capture(spec_dir, source_spec_dir, model)
+
     try:
         debug("run.py", "Starting agent execution")
 
@@ -538,6 +543,7 @@ def handle_build_command(
                 remote_control_session=remote_control_session,
                 parallel=parallel,
                 workers=workers,
+                gates=gates,
             )
         )
         debug_success("run.py", "Agent execution completed")
@@ -620,6 +626,7 @@ def handle_build_command(
                         spec_dir=spec_dir,
                         model=model,
                         verbose=verbose,
+                        gates=gates,
                     )
                 )
                 _check_qa_git_metadata(working_dir)
@@ -759,6 +766,7 @@ def handle_build_command(
             max_iterations=max_iterations,
             verbose=verbose,
             source_spec_dir=source_spec_dir,
+            gates=gates,
         )
     except Exception as e:
         print(f"\nFatal error: {e}")
@@ -778,6 +786,7 @@ def _handle_build_interrupt(
     max_iterations: int | None,
     verbose: bool,
     source_spec_dir: Path | None = None,
+    gates: RunGates | None = None,
 ) -> None:
     """
     Handle keyboard interrupt during build.
@@ -791,6 +800,7 @@ def _handle_build_interrupt(
         max_iterations: Maximum iterations
         verbose: Verbose mode flag
         source_spec_dir: Canonical spec dir when spec_dir is a worktree copy
+        gates: Run-start gate snapshot (#1983)
     """
     from agent import run_autonomous_agent
 
@@ -886,7 +896,7 @@ def _handle_build_interrupt(
             print_status("No instructions provided.", "info")
 
         # If 'skip' was selected, actually resume the build
-        if choice == "skip" and _approval_still_valid(spec_dir, source_spec_dir):
+        if choice == "skip" and _approval_still_valid(spec_dir, source_spec_dir, gates):
             print()
             print_status("Resuming build...", "info")
             status_manager.update(state=BuildState.RUNNING)
@@ -898,6 +908,7 @@ def _handle_build_interrupt(
                     max_iterations=max_iterations,
                     verbose=verbose,
                     source_spec_dir=source_spec_dir,
+                    gates=gates,
                 )
             )
             # Build completed or was interrupted again - exit
@@ -928,17 +939,19 @@ def _handle_build_interrupt(
     print()
 
 
-def _approval_still_valid(spec_dir: Path, source_spec_dir: Path | None) -> bool:
+def _approval_still_valid(
+    spec_dir: Path, source_spec_dir: Path | None, gates: RunGates | None = None
+) -> bool:
     """Whether a Ctrl+C resume may start the agent again (#1946).
 
     The resumed agent snapshots the plan again (#1940), so it needs the run.py
     pre-flight's approval check; when refused, the caller shows TO RESUME.
     The gate files come from the source dir: the worktree copy is agent-writable.
+    #1983: approval uses the run-start snapshot, so a forged review_state.json
+    written during the run cannot approve a changed plan.
     """
-    gate_dir = source_spec_dir or spec_dir
-    if not requires_review_before_coding(gate_dir) or ReviewState.load(
-        gate_dir
-    ).is_approval_valid(spec_dir):
+    gates = gates or RunGates.capture(spec_dir, source_spec_dir, None)
+    if gates.approval_valid(spec_dir):
         return True
     print_status("Plan changed since approval; re-approve, then resume.", "warning")
     return False
