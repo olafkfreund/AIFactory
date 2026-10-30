@@ -43,6 +43,7 @@ from server.database.engine import get_db
 from server.error_ref import client_error
 from server.routes.git import run_git_command
 from server.routes.project_authz import authorize_project_for_user
+from server.services.build_backend import BuildBackendUnavailableError
 from server.services.completion import correlation_key, read_issue_repo
 from server.services.originator import issue_originator, principal_attribution
 
@@ -608,6 +609,8 @@ async def _start_build(
             force=skip_planning,
         )
         await emit_task_status(task_id, "in_progress")
+    except BuildBackendUnavailableError:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
