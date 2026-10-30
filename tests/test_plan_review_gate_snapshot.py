@@ -107,11 +107,15 @@ async def _drive(
         "get_latest_commit": MagicMock(return_value="abc"),
         "get_commit_count": MagicMock(return_value=0),
         "infer_provider_from_model": MagicMock(return_value="claude"),
-        "get_phase_model": MagicMock(return_value="claude-sonnet-4-5"),
-        "get_phase_thinking_budget": MagicMock(return_value=None),
         "AUTO_CONTINUE_DELAY_SECONDS": 0,
     }
     with contextlib.ExitStack() as stack:
+        stack.enter_context(
+            patch("run_gates.get_phase_model", return_value="claude-sonnet-4-5")
+        )
+        stack.enter_context(
+            patch("run_gates.get_phase_thinking_budget", return_value=None)
+        )
         for name, repl in patchers.items():
             stack.enter_context(patch.object(coder, name, repl))
         await coder.run_autonomous_agent(

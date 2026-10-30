@@ -19,8 +19,6 @@ from core.error_utils import (
 )
 from core.git_metadata import GitMetadataChangedError, check_git_metadata
 from phase_config import (
-    get_phase_model,
-    get_phase_thinking_budget,
     get_provider_extra_kwargs,
     infer_provider_from_model,
 )
@@ -45,8 +43,8 @@ from prompts import get_solo_prompt, is_first_run
 from providers.factory import get_provider
 from recovery import RecoveryManager
 from review.state import ReviewState, requires_review_before_coding
-from run_gates import RunGates, _approved_plan_snapshot  # noqa: F401
-from solo_mode import is_solo_mode_enabled_for_spec
+from run_gates import RunGates
+from run_gates import _approved_plan_snapshot  # noqa: F401  (re-export for tests)
 from task_logger import (
     LogPhase,
     get_task_logger,
@@ -130,6 +128,7 @@ async def run_autonomous_agent(
     remote_control_session: str | None = None,
     parallel: bool = False,
     workers: int | None = None,
+    gates: RunGates | None = None,
 ) -> None:
     """
     Run the autonomous agent loop with automatic memory management.
@@ -144,6 +143,7 @@ async def run_autonomous_agent(
         max_iterations: Maximum number of iterations (None for unlimited)
         verbose: Whether to show detailed output
         source_spec_dir: Original spec directory in main project (for syncing from worktree)
+        gates: run-start gate snapshot (#1983); captured here when None
         stop_after_planning: Return as soon as the planner phase finishes
             writing implementation_plan.json. Used by the Copilot delegation
             flow — AIFactory enriches the plan locally then hands the issue
@@ -210,13 +210,14 @@ async def run_autonomous_agent(
     # the solo prompt (and coder tools, which include update_subtask_status)
     # instead of a dedicated planner session, and the plan-review gate is
     # skipped. Default OFF — the full pipeline is unchanged when disabled.
-    # Both gates are read before any agent session (#1922), from the source
-    # copy, which the agent in a worktree cannot edit (#1946, #1958).
-    gate_dir = source_spec_dir or spec_dir
-    solo = is_solo_mode_enabled_for_spec(gate_dir)
-    require_review = not solo and _should_require_human_review(gate_dir)
+    # Both gates come from the run-start snapshot, read before any agent session
+    # (#1922) from the source copy, which the agent in a worktree cannot edit
+    # (#1946, #1958, #1983).
+    gates = gates or RunGates.capture(spec_dir, source_spec_dir, model)
+    solo = gates.solo
+    require_review = not solo and gates.requires_review
     # #1940: grants come only from the plan the start gate saw, not the live file.
-    approved_plan = _approved_plan_snapshot(spec_dir, require_review)
+    approved_plan = gates.approved_plan
 
     # #389: solo collapses plan+implement into one session, which bypasses the
     # wave dispatch. Under --parallel, author the plan first (planner session)
@@ -455,8 +456,8 @@ async def run_autonomous_agent(
         # Get the phase-specific model and thinking level (respects task_metadata.json configuration)
         # first_run means we're in planning phase, otherwise coding phase
         current_phase = "planning" if first_run else "coding"
-        phase_model = get_phase_model(spec_dir, current_phase, model)
-        phase_thinking_budget = get_phase_thinking_budget(spec_dir, current_phase)
+        phase_model = gates.model(current_phase)
+        phase_thinking_budget = gates.thinking_budget(current_phase)
 
         # Per-subtask model override (#376 right-sizing): a coding subtask may
         # declare its own model (e.g. "haiku" for mechanical scaffolding) to run
@@ -661,7 +662,7 @@ async def run_autonomous_agent(
                         status_manager=status_manager,
                         disabled_phases=parallel_disabled_phases,
                         recovery_manager=recovery_manager,
-                        approved_plan=approved_plan,
+                        gates=gates,
                     )
                 except GitMetadataChangedError as exc:
                     _fail_on_git_metadata(exc, status_manager)
@@ -1455,7 +1456,7 @@ async def _maybe_run_parallel_phase(
     status_manager: StatusManager,
     disabled_phases: set[int],
     recovery_manager: RecoveryManager | None = None,
-    approved_plan: dict[str, object] | None = None,
+    gates: RunGates | None = None,
 ) -> bool:
     """Run the subtask's phase as parallel waves if it is eligible (#376).
 
@@ -1503,7 +1504,7 @@ async def _maybe_run_parallel_phase(
             source_spec_dir=source_spec_dir,
             remote_control_session=remote_control_session,
             recovery_manager=recovery_manager,
-            approved_plan=approved_plan,
+            gates=gates,
         )
 
         # A stalled phase (cycle / unresolved deps / merge failures) drops to the
