@@ -1,5 +1,5 @@
 ---
-status: approved
+status: draft
 issue: 1946
 spec: spec/2026-10-30-1946-resume-approval.md
 coders: [agy]
@@ -9,11 +9,12 @@ coders: [agy]
 
 Approved decisions (from the spec):
 
-- Re-check with `requires_review_before_coding(spec_dir)` and
-  `ReviewState.load(spec_dir).is_approval_valid(spec_dir)` on the `spec_dir`
-  the handler already has (the copy the resume snapshots from).
+- Re-check with `requires_review_before_coding(gate_dir)` and
+  `ReviewState.load(gate_dir).is_approval_valid(spec_dir)`, where
+  `gate_dir = source_spec_dir or spec_dir` (revised after review: the worktree
+  copy of the gate files is agent-writable).
 - Invalid → warning, no resume, fall through to the existing "TO RESUME" box.
-- No new parameters; no snapshot passing.
+- `_handle_build_interrupt` gains `source_spec_dir`; no snapshot passing.
 
 ## Steps
 
@@ -33,6 +34,14 @@ Approved decisions (from the spec):
    because an extra branch in `_handle_build_interrupt` tripped the strict-ruff
    ratchet (PLR0912).
    → verify: `cd apps/backend && python -m pytest ../../tests/test_build_interrupt_resume_approval.py ../../tests/test_plan_review_gate_snapshot.py -q` and `ruff check` + `ruff format --check` on both files.
+
+2. (Revision after the lead's review; lead.) Pass `source_spec_dir` from
+   `handle_build` into `_handle_build_interrupt` and `_approval_still_valid`;
+   read the gate files from `source_spec_dir or spec_dir`. Tests: forged
+   worktree `review_state.json` → no resume; flipped worktree
+   `task_metadata.json` → no resume; approved source + unchanged worktree
+   plan → resumes.
+   → verify: as step 1.
 
 ## Rollback
 
