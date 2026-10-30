@@ -81,7 +81,7 @@ async def issue_tenant_anchor_key(
     existing = await _active_key_for_org(db, org_id)
     if existing is not None:
         logger.debug(
-            "per-tenant anchor key already exists for org=%s (v%d); skipping issuance",
+            "per-tenant anchor key already exists for org=%s (v%s); skipping issuance",
             org_id,
             existing.version,
         )
@@ -99,7 +99,7 @@ async def issue_tenant_anchor_key(
     # key_row.version is now set by the DB autoincrement.
 
     logger.info(
-        "per-tenant anchor key issued: org=%s version=%d",
+        "per-tenant anchor key issued: org=%s version=%s",
         org_id,
         key_row.version,
     )

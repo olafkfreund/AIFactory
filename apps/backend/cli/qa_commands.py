@@ -33,6 +33,28 @@ from ui import (
 from .utils import print_banner, validate_environment
 
 
+def _source_project_dir(project_dir: Path) -> Path | None:
+    """The project owning ``project_dir`` (#1955).
+
+    A task worktree root maps to its source project; any other path under
+    ``.aifactory/worktrees`` maps to None, so the caller fails closed.
+    """
+    parts = project_dir.resolve().parts
+    index = next(
+        (
+            i
+            for i in range(len(parts) - 1)
+            if parts[i : i + 2] == (".aifactory", "worktrees")
+        ),
+        None,
+    )
+    if index is None:
+        return project_dir
+    if len(parts) == index + 4 and parts[index + 2] == "tasks":
+        return Path(*parts[:index])
+    return None
+
+
 def handle_qa_status_command(spec_dir: Path) -> None:
     """
     Handle the --qa-status command.
@@ -117,13 +139,21 @@ def handle_qa_command(
         from review.state import (  # noqa: PLC0415 - same
             requires_review_before_coding,
         )
+        from spec.pipeline import get_specs_dir  # noqa: PLC0415 - same
 
         # An approval valid now means the live plan is the approved one.
+        # #1955: gate worktree plans against the source spec, never an agent-writable copy.
+        root = _source_project_dir(project_dir)
+        gate_dir = root and get_specs_dir(root) / spec_dir.name
         plan: dict[str, object] | None = (
-            {}
-            if requires_review_before_coding(spec_dir)
-            and not ReviewState.load(spec_dir).is_approval_valid(spec_dir)
-            else None
+            None
+            if gate_dir
+            and gate_dir.is_dir()
+            and (
+                not requires_review_before_coding(gate_dir)
+                or ReviewState.load(gate_dir).is_approval_valid(spec_dir)
+            )
+            else {}
         )
         seed_profile_with_plan_commands(
             project_dir, spec_dir / "implementation_plan.json", plan=plan
