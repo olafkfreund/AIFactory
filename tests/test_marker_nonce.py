@@ -282,6 +282,28 @@ async def test_spec_creation_spawns_with_a_nonce(tmp_path, monkeypatch):
     assert seen["env"]["AIFACTORY_MARKER_NONCE"] == svc._task_marker_nonces["p:s1"]
 
 
+async def test_build_spawn_env_carries_the_task_id(tmp_path, monkeypatch):
+    """#1972: the build subprocess learns the project-scoped task id from env."""
+    from server.services import agent_service as agent_mod  # noqa: PLC0415
+
+    seen: dict = {}
+
+    async def fake_exec(*_cmd, env, **_kw):  # noqa: ANN002, ANN003
+        seen["env"] = env
+        raise RuntimeError("stop after spawn")
+
+    monkeypatch.setattr(agent_mod.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(
+        agent_mod.project_settings_store,
+        "mcp_spawn_env",
+        AsyncMock(return_value={}),
+    )
+    svc = AgentService()
+    with pytest.raises(RuntimeError, match="stop after spawn"):
+        await svc._spawn_task_execution("p:001-x", tmp_path / "proj", "001-x")
+    assert seen["env"]["AIFACTORY_TASK_ID"] == "p:001-x"
+
+
 @pytest.mark.parametrize(
     ("exc", "emitted"),
     [(RuntimeError("429 Too Many Requests"), True), (RuntimeError("boom"), False)],

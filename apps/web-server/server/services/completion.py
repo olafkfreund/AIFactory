@@ -7,8 +7,8 @@ event so the cockpit (CFactory) can thread the unit of work end to end:
 Conforms to the Factory correlation-key RFC (olafkfreund/Factory#4 / RFC-0001):
 ``{correlation_key, service, task_id, status, phase, updated_at}`` + an optional
 ``correlation`` chain block. The shared key is ``<repo>#<issue number>`` when the
-task knows its repo (RFC-0001 §2, #1775), the bare issue number otherwise, with a
-synthetic ``af-<task_id>`` fallback so it is never null.
+task knows its repo (RFC-0001 §2, #1775), else a synthetic ``af-<task_id>``
+fallback. An over-long synthetic key is absent and the event is then not sent.
 
 Additive envelope upgrade (#466) — every field below rides *alongside* the
 existing ones; nothing is removed, so existing consumers (CFactory) keep working
@@ -832,12 +832,23 @@ def emit_worker_completion(
         return None
 
 
+def _skip_keyless(event: dict[str, Any]) -> bool:
+    """True (after a warning) when the event has no correlation key: CFactory
+    requires one, so sending would only retry for a day and then abandon."""
+    if event.get("correlation_key"):
+        return False
+    logger.warning("completion event has no correlation key; not sending")
+    return True
+
+
 def _notify_worker(event: dict, *, spec_dir: Path | None) -> None:
     """Best-effort live sub-event transport: opt-in sentinel + opt-in webhook.
 
     Mirrors :func:`notify_completion` (same env-gated webhook + sentinel), but
     the sentinel lands in a per-worker file so concurrent workers and the
     terminal ``COMPLETED.json`` never collide. Never raises."""
+    if _skip_keyless(event):
+        return
     if _sentinel_enabled() and spec_dir is not None:
         try:
             spec_dir.mkdir(parents=True, exist_ok=True)
@@ -930,6 +941,8 @@ def _notify_worker_progress(event: dict, *, spec_dir: Path | None) -> None:
     ``WORKER.<id>.progress.json`` (overwritten each heartbeat) so it never
     collides with the worker's final ``WORKER.<id>.json`` or the terminal
     ``COMPLETED.json``. Never raises."""
+    if _skip_keyless(event):
+        return
     if _sentinel_enabled() and spec_dir is not None:
         try:
             spec_dir.mkdir(parents=True, exist_ok=True)
@@ -991,8 +1004,11 @@ def notify_completion(event: dict, *, spec_dir: Path | None = None) -> bool:
 
     True also when there is no webhook configured and when the outbox accepted
     the event: in both cases this function did everything asked of it. False
-    means the POST was tried and failed.
+    means the POST was tried and failed. A keyless event (over-long synthetic
+    key, #1972) is skipped and counts as handled: a retry cannot help.
     """
+    if _skip_keyless(event):
+        return True
     if _sentinel_enabled() and spec_dir is not None:
         try:
             spec_dir.mkdir(parents=True, exist_ok=True)

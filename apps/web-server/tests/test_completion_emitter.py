@@ -65,9 +65,14 @@ def test_read_issue_absent_is_none(tmp_path):
 # ── correlation key + envelope ───────────────────────────────────────────────
 
 
-def test_correlation_key_issue_vs_synthetic():
-    assert correlation_key("proj:spec-9", 412) == "af-proj:spec-9"
-    assert correlation_key("proj:spec-9", None) == "af-proj:spec-9"
+def test_correlation_key_issue_vs_synthetic() -> None:
+    # Through the event builder: the key follows the event's task id, not its
+    # spec id, and an issue number without a repo is still synthetic.
+    for number in (412, None):
+        ev = build_completion_event(
+            task_id="proj:spec-9", spec_id="spec-9", status="done", issue_number=number
+        )
+        assert ev["correlation_key"] == "af-proj:spec-9"
 
 
 def _spec_with(tmp_path: Path, name: str, requirements: dict[str, object]) -> Path:
@@ -786,7 +791,7 @@ def test_old_consumer_ignores_new_usage_fields_still_validates(tmp_path):
 # ── #45 P1: LIVE per-worker sub-event (build_worker_event / emit_worker_*) ─────
 
 
-def _sample_worker(**overrides):
+def _sample_worker(**overrides: object) -> dict[str, object]:
     rec = {
         "worker_id": "sub-A",
         "subtask_id": "sub-A",
@@ -1518,14 +1523,20 @@ def test_tfactory_handoff_sets_no_synthetic_key_without_task_id() -> None:
     assert _event_correlation_key({"githubIssue": {"number": 7}}, None) is None
 
 
-def test_synthetic_key_differs_across_projects():
-    # #1972: spec ids repeat across projects; the synthetic key must not.
-    assert correlation_key("p1:003-x", None) != correlation_key("p2:003-x", None)
-    assert correlation_key("p1:003-x", None) == "af-p1:003-x"
-    assert correlation_key("p2:003-x", None) == "af-p2:003-x"
+def test_synthetic_key_differs_across_projects() -> None:
+    # #1972: the same spec id in two projects must not share a key.
+    keys = {
+        build_completion_event(
+            task_id=f"{pid}:003-x", spec_id="003-x", status="done", issue_number=None
+        )["correlation_key"]
+        for pid in ("p1", "p2")
+    }
+    assert keys == {"af-p1:003-x", "af-p2:003-x"}
 
 
-def test_overlong_synthetic_key_is_none_with_warning(caplog):
+def test_overlong_synthetic_key_is_none_with_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     # #1972: over the 128-char column -> no key, never a truncated one.
     task_id = "p:" + "x" * 130
     with caplog.at_level("WARNING"):
@@ -1538,3 +1549,40 @@ def test_overlong_synthetic_key_is_none_with_warning(caplog):
     from pfactory.tfactory_client import _event_correlation_key  # noqa: PLC0415
 
     assert _event_correlation_key({"githubIssue": {"number": 7}}, task_id) is None
+
+
+def test_keyless_events_are_skipped_not_sent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # #1972: CFactory requires a key; a None key is dropped, not retried for a day.
+    import urllib.request
+
+    monkeypatch.setenv("AIFACTORY_COMPLETION_WEBHOOK", "http://hook.test/c")
+    monkeypatch.delenv("AIFACTORY_COMPLETION_SENTINEL", raising=False)
+    posts: list[object] = []
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: posts.append(a))
+    long_id = "p:" + "x" * 130
+    spec = _spec_with_issue(tmp_path)
+
+    with caplog.at_level("WARNING"):
+        ev = build_completion_event(
+            task_id=long_id, spec_id="s", status="done", issue_number=None
+        )
+        assert ev["correlation_key"] is None
+        assert notify_completion(ev, spec_dir=spec) is True  # fire-once marker ok
+        emit_worker_completion(
+            spec_dir=spec,
+            task_id=long_id,
+            spec_id="s",
+            project_id="p",
+            worker=_sample_worker(),
+        )
+        emit_worker_progress(
+            spec_dir=spec,
+            task_id=long_id,
+            spec_id="s",
+            project_id="p",
+            worker=_sample_worker(),
+        )
+    assert posts == []
+    assert "no correlation key" in caplog.text

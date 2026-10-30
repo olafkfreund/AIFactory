@@ -139,6 +139,49 @@ a throwaway venv with the repo's pinned deps.
 CFactory sets no key without `task_id`; over-long synthetic keys log and
 are dropped, never truncated. Spec updated in the same commit.
 
+## Review follow-ups (Opus review of AIF#1978, TF#1477, CF#509)
+
+R1 (HIGH, TFactory) `apps/backend/agents/triager.py` `_synthetic_key`:
+   the project id comes from a layout-independent source:
+   `status.get("project_id") or source.get("project_id")`, falling back to
+   `spec_dir.parent.parent.name` only for the workspaces layout
+   (`spec_dir.parent.name == "specs"` and `spec_dir.parent.parent.parent.name == "workspaces"`).
+   Any other layout with no id (registered project `<path>/.tfactory/specs/<sid>`,
+   a worktree copy) gives no key, with a warning, never `tf-.tfactory:<sid>`.
+   `handback/send.py` passes the spec dir's `read_status(spec_dir)` and its
+   source.json. Trace: every emitter today (verify stages via
+   `verify_pipeline --spec <workspace>`, `routes/handback.py:173`,
+   `routes/tfactory_tasks.py` under the workspace root) runs on the
+   workspaces layout. Tests: workspaces layout, `.tfactory/specs` with status
+   `project_id`, worktree path with source `project_id`, two projects with the
+   same spec id giving distinct keys, `.tfactory/specs` without an id giving `None`.
+R2 (MEDIUM, AIFactory + TFactory) A `None` key is skipped, not sent
+   (CFactory requires `correlation_key: str`, so the outbox would retry for
+   about a day and then abandon). AIFactory `services/completion.py`:
+   `notify_completion`, `_notify_worker` and `_notify_worker_progress` log a
+   warning and do not POST or enqueue when the event has no key
+   (`notify_completion` returns True so the fire-once marker is written:
+   a retry cannot help). TFactory `triager.py` `_notify_completion` and
+   `emit_usage_snapshot`: the same rule before enqueue or POST. One test each.
+R3 (MEDIUM, AIFactory) Test that the subprocess spawn env
+   (`agent_service.py` near the nonce, `env["AIFACTORY_TASK_ID"]`) carries the
+   task id, next to the existing nonce spawn tests in `tests/test_marker_nonce.py`.
+R4 (MEDIUM) Deviations recorded below (TFactory extras).
+R5 (LOW) Stale docs: AIFactory `completion.py:11` ("never null"; now may be
+   absent and is then not sent), `routes/from_issue.py:106`; TFactory
+   `handback/send.py:90`, `triager.py:842`.
+R6 (LOW) Replace tests that pass on the base: AIFactory
+   `test_synthetic_key_differs_across_projects` and
+   `test_correlation_key_issue_vs_synthetic` exercise a caller that builds the
+   task id (e.g. `build_completion_event` with two `project_id`s / task ids,
+   or `task_to_dict` for two projects). TFactory
+   `test_triager_completion_webhook.py:264` uses an explicit project id
+   (status or a `workspaces/<pid>/specs/<sid>` tree), not one derived from
+   `tmp_path`.
+R7 (LOW) Log ids safely: CFactory `card_intake.py` uses `sanitize_log`
+   (`factory_common.logsafe`); TFactory backend has no `factory_common`, so the
+   triager warning logs only the key length, with no untrusted text.
+
 ## Deviations
 
 - Step 3b: `build_completion_event`'s `event` dict is annotated
@@ -146,6 +189,20 @@ are dropped, never truncated. Spec updated in the same commit.
   mypy ratchet counted one new error in `completion.py`.
 - Step 3: new `tests/test_parallel_integration_task_id.py`; the kubejob env
   assert went into `tests/test_marker_nonce.py`.
+
+- Step 4 (TFactory): `completion_envelope.CompletionEnvelope.correlation_key`
+  widened to `str | None`; `docs_emit_trigger` skips the docs emit on `None`;
+  `routes/tfactory_tasks.py` omits `correlation_key` when `None`.
+- Step 5 (CFactory): the `spec_id` condition on the AIFactory branch is kept,
+  so a body with only `task_id` still uses the generic loop (existing tests).
+  A 128-char guard was added to `_upstream_key` too.
+- R6 (AIFactory): `_sample_worker` in `test_completion_emitter.py` is typed so
+  the new typed tests add no mypy errors.
+- R1 (TFactory): `tests/test_handback_283.py` and the shared `spec` fixture in
+  `tests/test_correlation_sync.py` use a workspaces-layout tree, since a bare
+  `tmp_path` now correctly gives no key. R5 also updated the
+  `correlation_key` description in
+  `apps/backend/contracts/handback-triage-contract.v1.schema.json`.
 
 ## Rollback
 

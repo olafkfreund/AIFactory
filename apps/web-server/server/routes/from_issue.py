@@ -103,7 +103,7 @@ def _normalize_issue(payload: dict | None, issue_number: int | None = None) -> d
     ``issue_number`` is the request's own field, used only when the payload
     carries no number of its own. A caller that sends BOTH a pre-fetched payload
     and the number it fetched it by used to lose the number here, and a spec
-    written without one correlates on the synthetic ``af-<spec_id>`` key that
+    written without one correlates on the synthetic ``af-<task_id>`` key that
     nothing else joins on — which is how a build's whole token spend landed on
     an orphan work item and the cockpit reported $0.00 (#1418).
     """

@@ -14,9 +14,11 @@ intent: intent/2026-10-30-1972-project-scoped-synthetic-key.md
 - AIFactory: `af-<project_id>:<spec_id>`, i.e. `af-<task_id>`. `project_id` is
   the project's UUID (`routes/projects.py` `uuid4()`), the same value every
   web-server path already uses to build `task_id`.
-- TFactory: `tf-<project_id>:<spec_id>`, where `project_id` is the TFactory
-  workspace directory (`workspaces/<project_id>/specs/<spec_id>`, see
-  `task_control._spec_dir`), i.e. `spec_dir.parent.parent.name`.
+- TFactory: `tf-<project_id>:<spec_id>`, where `project_id` is the task's
+  `project_id` from status.json or source.json, falling back to the workspace
+  directory only in the workspaces layout (`workspaces/<project_id>/specs/<spec_id>`).
+  A registered-project layout (`<path>/.tfactory/specs/<spec_id>`) or a
+  worktree copy without an id gives no key (revision 2).
 
 **AIFactory.**
 
@@ -42,7 +44,8 @@ intent: intent/2026-10-30-1972-project-scoped-synthetic-key.md
 
 **TFactory.** `agents/triager.py` `_correlation_key` and
 `agents/handback/send.py` `_correlation_key_for` return
-`tf-<spec_dir.parent.parent.name>:<spec_id>` in the synthetic case.
+`tf-<project_id>:<spec_id>` in the synthetic case, with `project_id` as above
+(one helper, `triager._synthetic_key`).
 Contract, handoff and `<repo>#<n>` precedence is unchanged.
 
 **CFactory.** `card_intake._upstream_key`: for an AIFactory body without
@@ -62,6 +65,10 @@ synthetic key is `None`. It is never truncated, because truncating could make
 two keys collide. This applies to AIFactory's `correlation_key` (return type
 becomes `str | None`), the handoff mirror, and TFactory's synthetic key (one
 helper shared by the triager and the hand-back). Each gets a test.
+
+**Revision 2 (2026-10-30, Opus review).** The TFactory project id comes
+from a layout-independent source. A `None` key is never sent: producers log a
+warning and skip the emit, because CFactory requires the field.
 
 **Revision 1 (2026-10-30, lead review).** Two changes: CFactory sets no key
 without a `task_id`, and an over-long key logs and is dropped. Both are
