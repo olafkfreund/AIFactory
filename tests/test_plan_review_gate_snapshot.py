@@ -228,6 +228,20 @@ class TestPostPlannerGate:
         m = await _drive(spec_dir, tmp_path, _planner(PLAN_A))
         assert _proceeded(spec_dir, m)
 
+    async def test_resume_solo_comes_from_source_not_worktree_metadata(
+        self, tmp_path, monkeypatch
+    ):
+        import shutil
+
+        monkeypatch.delenv("AIFACTORY_SOLO_MODE")
+        source = _make_spec(tmp_path, {"requireReviewBeforeCoding": False})
+        worktree = shutil.copytree(source, tmp_path / "worktree")
+        _write_meta(worktree, {"soloMode": True})
+
+        m = await _drive(worktree, tmp_path, _planner(PLAN_A), source_spec_dir=source)
+
+        assert m.await_args_list[0].args[1] == "PLANNER_PROMPT"
+
     async def test_skip_planning_fast_path_not_paused(self, tmp_path, monkeypatch):
         monkeypatch.delenv("AIFACTORY_SOLO_MODE")  # the env override wins over metadata
         spec_dir = _make_spec(
