@@ -1,3 +1,14 @@
+## [Unreleased]
+
+### Security
+
+- **joserfc 1.7.5.** `requirements.lock` moves joserfc 1.7.4 -> 1.7.5
+  (CVE-2026-119283 HIGH, GHSA-jpxq-7h8p-2q76), and
+  `apps/web-server/requirements.txt` gains a `joserfc>=1.7.5` floor next to
+  Authlib, clearing the Trivy P0 gate. Not reachable in this code: the flaw is
+  in `joserfc.jwe.decrypt_json` (JWE General JSON), and the OIDC client only
+  verifies compact JWS ID tokens through `joserfc.jwt.decode`.
+
 ## 3.10.15 - 2026-10-30
 
 Postgres pools are capped so the factory fleet fits the shared database,
