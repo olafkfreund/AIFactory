@@ -883,7 +883,7 @@ def _handle_build_interrupt(
             print_status("No instructions provided.", "info")
 
         # If 'skip' was selected, actually resume the build
-        if choice == "skip":
+        if choice == "skip" and _approval_still_valid(spec_dir):
             print()
             print_status("Resuming build...", "info")
             status_manager.update(state=BuildState.RUNNING)
@@ -922,3 +922,17 @@ def _handle_build_interrupt(
         content.append(muted("Your build is in a separate workspace and is safe."))
     print(box(content, width=70, style="light"))
     print()
+
+
+def _approval_still_valid(spec_dir: Path) -> bool:
+    """Whether a Ctrl+C resume may start the agent again (#1946).
+
+    The resumed agent snapshots the plan again (#1940), so it needs the run.py
+    pre-flight's approval check; when refused, the caller shows TO RESUME.
+    """
+    if not requires_review_before_coding(spec_dir) or ReviewState.load(
+        spec_dir
+    ).is_approval_valid(spec_dir):
+        return True
+    print_status("Plan changed since approval; re-approve, then resume.", "warning")
+    return False

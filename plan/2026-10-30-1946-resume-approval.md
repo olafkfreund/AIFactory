@@ -28,6 +28,10 @@ Approved decisions (from the spec):
    (`ReviewState().approve(spec_dir)`), then widen the plan (add
    `required_commands`) → mock not awaited, no SystemExit. Case B: approved,
    unchanged → mock awaited once, SystemExit(0).
+   Deviation (lead, step 1): the check moved into a predicate
+   `_approval_still_valid(spec_dir)` joined to the existing `if choice == "skip"`,
+   because an extra branch in `_handle_build_interrupt` tripped the strict-ruff
+   ratchet (PLR0912).
    → verify: `cd apps/backend && python -m pytest ../../tests/test_build_interrupt_resume_approval.py ../../tests/test_plan_review_gate_snapshot.py -q` and `ruff check` + `ruff format --check` on both files.
 
 ## Rollback
