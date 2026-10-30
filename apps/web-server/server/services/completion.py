@@ -230,10 +230,12 @@ def read_issue_repo(spec_dir: Path) -> str | None:
 def correlation_key(
     spec_id: str, issue_number: int | None, repo: str | None = None
 ) -> str:
-    """RFC-0001 §2: ``<repo>#<n>``, else bare issue#, else synthetic ``af-<spec_id>``."""
-    if issue_number is None:
-        return f"af-{spec_id}"
-    return f"{repo}#{issue_number}" if repo else str(issue_number)
+    """RFC-0001 §2: ``<repo>#<n>`` when the repo is known, else synthetic ``af-<spec_id>`` (never a bare number, #1960)."""
+    return (
+        f"{repo}#{issue_number}"
+        if issue_number is not None and repo
+        else f"af-{spec_id}"
+    )
 
 
 class _BadUsageError(Exception):

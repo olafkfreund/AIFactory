@@ -66,7 +66,7 @@ def test_read_issue_absent_is_none(tmp_path):
 
 
 def test_correlation_key_issue_vs_synthetic():
-    assert correlation_key("spec-9", 412) == "412"
+    assert correlation_key("spec-9", 412) == "af-spec-9"
     assert correlation_key("spec-9", None) == "af-spec-9"
 
 
@@ -97,7 +97,7 @@ def test_key_is_scoped_to_the_repo(tmp_path: Path) -> None:
     assert keys == ["a/x#7", "b/y#7"]
 
 
-def test_read_issue_repo_parses_the_issue_url_and_falls_back_to_bare(
+def test_read_issue_repo_parses_the_issue_url_and_falls_back_to_synthetic(
     tmp_path: Path,
 ) -> None:
     d = _spec_with(
@@ -108,7 +108,7 @@ def test_read_issue_repo_parses_the_issue_url_and_falls_back_to_bare(
     assert read_issue_repo(d) == "o/r"
     bare = _spec_with(tmp_path, "s2", {"githubIssue": {"number": 7}})
     assert read_issue_repo(bare) is None
-    assert correlation_key("s2", 7, read_issue_repo(bare)) == "7"
+    assert correlation_key("s2", 7, read_issue_repo(bare)) == "af-s2"
 
 
 def test_envelope_has_rfc_core_fields():
@@ -121,7 +121,7 @@ def test_envelope_has_rfc_core_fields():
     )
     assert _RFC_CORE <= set(ev)
     assert ev["service"] == SERVICE_NAME == "aifactory"
-    assert ev["correlation_key"] == "412"
+    assert ev["correlation_key"] == "af-spec-9"
     assert ev["task_id"] == "proj:spec-9"
     assert ev["correlation"]["issue_number"] == 412
 
@@ -211,7 +211,9 @@ def test_sentinel_written_when_enabled(tmp_path, monkeypatch):
     spec = tmp_path / "spec"
     ev = build_completion_event(task_id="t", spec_id="s", status="done", issue_number=1)
     notify_completion(ev, spec_dir=spec)
-    assert json.loads((spec / "COMPLETED.json").read_text())["correlation_key"] == "1"
+    assert (
+        json.loads((spec / "COMPLETED.json").read_text())["correlation_key"] == "af-s"
+    )
 
 
 # ── end-to-end ───────────────────────────────────────────────────────────────
@@ -232,7 +234,7 @@ def test_failed_terminal_emits_failed_status(tmp_path, monkeypatch):
     assert _RFC_CORE <= set(ev)
     assert ev["service"] == "aifactory"
     assert ev["status"] == "failed"
-    assert ev["correlation_key"] == "412"
+    assert ev["correlation_key"] == "af-spec-9"
 
 
 def test_emit_fetches_the_jobs_gate_marker(tmp_path, monkeypatch):
@@ -263,7 +265,7 @@ def test_emit_terminal_completion_builds_from_spec(tmp_path, monkeypatch):
         status="done",
     )
     assert ev["service"] == "aifactory"
-    assert ev["correlation_key"] == "412"
+    assert ev["correlation_key"] == "af-spec-9"
     assert ev["status"] == "done"
     assert ev["task_id"] == "proj:spec-9"
 
@@ -798,7 +800,7 @@ def test_build_worker_event_exact_shape():
     )
     assert _RFC_CORE <= set(ev)
     assert ev["service"] == "aifactory"
-    assert ev["correlation_key"] == "412"
+    assert ev["correlation_key"] == "af-spec-9"
     assert ev["task_id"] == "proj:spec-9"
     assert ev["specversion"] == "1.0"
     assert ev["status"] == "worker_done"
@@ -1001,7 +1003,7 @@ def test_terminal_event_unchanged_and_serial_main_worker_subevent_fires(
     worker_post = next(p for p in posts if p["status"] == "worker_done")
     assert worker_post["phase"] == "worker"
     assert worker_post["worker"]["worker_id"] == "main"
-    assert worker_post["correlation_key"] == ev["correlation_key"] == "412"
+    assert worker_post["correlation_key"] == ev["correlation_key"] == "af-spec-9"
 
 
 def test_terminal_event_no_serial_subevent_for_multiple_workers(tmp_path, monkeypatch):
@@ -1229,7 +1231,7 @@ def test_build_worker_progress_event_exact_shape():
     )
     assert _RFC_CORE <= set(ev)
     assert ev["service"] == "aifactory"
-    assert ev["correlation_key"] == "412"
+    assert ev["correlation_key"] == "af-spec-9"
     assert ev["task_id"] == "proj:spec-9"
     assert ev["specversion"] == "1.0"
     assert ev["status"] == "running"
@@ -1487,4 +1489,4 @@ def test_tfactory_handoff_key_matches_the_event_key(
 
     d = _spec_with(tmp_path, "s", requirements)
     expected = correlation_key("s", read_issue_number(d), read_issue_repo(d))
-    assert _event_correlation_key(requirements) == expected
+    assert _event_correlation_key(requirements, "s") == expected

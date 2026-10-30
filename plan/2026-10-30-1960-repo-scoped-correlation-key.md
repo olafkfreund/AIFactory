@@ -36,3 +36,9 @@ ruff clean on touched files.
 ## Rollback
 
 Revert the PR commit; keys go back to bare numbers.
+
+## Deviations
+
+- Step 1 also updated seven more asserts in `apps/web-server/tests/test_completion_emitter.py`
+  that expected a bare key for a spec with no repo (`"412"`, `"1"`); they now
+  expect `af-spec-9` / `af-s`.
