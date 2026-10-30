@@ -1504,8 +1504,18 @@ def test_tfactory_handoff_key_matches_the_event_key(
     from pfactory.tfactory_client import _event_correlation_key  # noqa: PLC0415
 
     d = _spec_with(tmp_path, "s", requirements)
-    expected = correlation_key("s", read_issue_number(d), read_issue_repo(d))
-    assert _event_correlation_key(requirements, "s") == expected
+    expected = correlation_key("p:s", read_issue_number(d), read_issue_repo(d))
+    assert _event_correlation_key(requirements, "p:s") == expected
+
+
+def test_tfactory_handoff_sets_no_synthetic_key_without_task_id() -> None:
+    # #1972: no task id -> no key (never a spec-only `af-<spec_id>`).
+    backend = str(Path(__file__).resolve().parents[2] / "backend")
+    if backend not in sys.path:
+        sys.path.insert(0, backend)
+    from pfactory.tfactory_client import _event_correlation_key  # noqa: PLC0415
+
+    assert _event_correlation_key({"githubIssue": {"number": 7}}, None) is None
 
 
 def test_synthetic_key_differs_across_projects():
