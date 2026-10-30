@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1948
 intent: intent/2026-10-30-1948-indirect-exec-boundary.md
 ---
