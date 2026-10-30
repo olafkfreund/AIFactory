@@ -160,3 +160,4 @@ def test_approved_source_resumes_unchanged_worktree(
         _interrupt(tmp_path, worktree, source)
 
     agent_mock.assert_awaited_once()
+    assert agent_mock.await_args.kwargs["source_spec_dir"] == source

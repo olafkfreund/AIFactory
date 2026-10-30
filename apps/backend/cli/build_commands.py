@@ -897,6 +897,7 @@ def _handle_build_interrupt(
                     model=model,
                     max_iterations=max_iterations,
                     verbose=verbose,
+                    source_spec_dir=source_spec_dir,
                 )
             )
             # Build completed or was interrupted again - exit
