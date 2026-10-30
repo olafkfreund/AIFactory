@@ -117,13 +117,19 @@ def handle_qa_command(
         from review.state import (  # noqa: PLC0415 - same
             requires_review_before_coding,
         )
+        from spec.pipeline import get_specs_dir  # noqa: PLC0415 - same
 
         # An approval valid now means the live plan is the approved one.
+        # #1955: the worktree copy is agent-writable; no source means no grants.
+        gate_dir = get_specs_dir(project_dir) / spec_dir.name
         plan: dict[str, object] | None = (
-            {}
-            if requires_review_before_coding(spec_dir)
-            and not ReviewState.load(spec_dir).is_approval_valid(spec_dir)
-            else None
+            None
+            if gate_dir.is_dir()
+            and (
+                not requires_review_before_coding(gate_dir)
+                or ReviewState.load(gate_dir).is_approval_valid(spec_dir)
+            )
+            else {}
         )
         seed_profile_with_plan_commands(
             project_dir, spec_dir / "implementation_plan.json", plan=plan
