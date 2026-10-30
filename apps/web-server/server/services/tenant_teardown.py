@@ -55,6 +55,8 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from server.db_pool import pool_kwargs
+
 logger = logging.getLogger(__name__)
 
 
@@ -156,7 +158,11 @@ async def _run() -> int:
 
     # Mirror the web pod's async-engine setup. expire_on_commit=False
     # so we can read attributes after the implicit transaction closes.
-    engine = create_async_engine(database_url, future=True)
+    engine = create_async_engine(
+        database_url,
+        future=True,
+        **pool_kwargs(database_url, "TEARDOWN_DB", 1, 0),
+    )
     SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
     now = _utcnow()

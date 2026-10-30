@@ -183,6 +183,10 @@ async def authorize_project_for_user(
                 action, user, project_id, org_id, minimum_role, exc.detail
             )
         raise
+    # Allowed: release the connection too, so the caller's push/gh/dispatch
+    # work never holds it idle-in-transaction (#1963).
+    with contextlib.suppress(Exception):
+        await db.rollback()
     return org_id
 
 

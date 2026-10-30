@@ -61,6 +61,11 @@ Set via `APP_`-prefixed env (pydantic `Settings`). All read in
 | `APP_SSL_CERTFILE` | `""` | no | Path to SSL certificate (with `APP_SSL_ENABLED`). |
 | `APP_SSL_KEYFILE` | `""` | no | Path to SSL private key (with `APP_SSL_ENABLED`). |
 | `DATABASE_URL` / `APP_DATABASE_URL` | `sqlite+aiosqlite:///<data>/data.db` | no | Primary database URL. Set Postgres here for multi-replica. Read directly in `server/database/engine.py`, `database/alembic/env.py`, `services/tenant_teardown.py`, `services/job_state_store.py`, `crypto/__main__.py`. |
+| `DB_POOL_SIZE` | `2` | no | Main Postgres engine pool size; ignored for SQLite. |
+| `DB_MAX_OVERFLOW` | `2` | no | Main Postgres engine connections above the pool size; ignored for SQLite. |
+| `TEARDOWN_DB_POOL_SIZE` | `1` | no | Tenant teardown Postgres engine pool size; ignored for SQLite. |
+| `TEARDOWN_DB_MAX_OVERFLOW` | `0` | no | Tenant teardown Postgres engine connections above the pool size; ignored for SQLite. |
+| `DB_POOL_TIMEOUT` | `10` | no | Seconds both Postgres engines wait for a pooled connection; ignored for SQLite. |
 | `APP_MIGRATIONS_AUTO_APPLY` | `true` | no | On boot run `alembic upgrade head`. Set false in K8s where a Helm Job migrates out-of-band. |
 | `APP_PROJECTS_DATA_DIR` / `APP_PROJECTS_DATA_DIR` | data dir | no | Directory for project metadata + SQLite. Also read directly by `routes/copilot_mcp.py`. |
 | `APP_BACKEND_PATH` | `../backend` | no | Path to `apps/backend`. Also the build-Job backend path (`build_backend.py`). |
