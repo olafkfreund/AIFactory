@@ -155,9 +155,25 @@ def test_real_issue_key_is_not_logged(caplog):
     """The correlated path stays quiet — this fires on every terminal event."""
     with caplog.at_level("INFO", logger=_completion_mod.logger.name):
         build_completion_event(
-            task_id="proj:spec-9", spec_id="spec-9", status="done", issue_number=412
+            task_id="proj:spec-9",
+            spec_id="spec-9",
+            status="done",
+            issue_number=412,
+            repo="o/r",
         )
     assert not any("synthetic key" in r.getMessage() for r in caplog.records)
+
+
+def test_issue_without_repo_logs_the_synthetic_key(caplog):
+    """An issue with no repo also falls back to af-<spec_id> (#1960): say so."""
+    with caplog.at_level("INFO", logger=_completion_mod.logger.name):
+        build_completion_event(
+            task_id="proj:spec-9", spec_id="spec-9", status="done", issue_number=412
+        )
+    assert any(
+        "no issue repo" in r.getMessage() and "af-spec-9" in r.getMessage()
+        for r in caplog.records
+    ), caplog.text
 
 
 # ── transport (best-effort) ──────────────────────────────────────────────────

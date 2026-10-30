@@ -42,3 +42,7 @@ Revert the PR commit; keys go back to bare numbers.
 - Step 1 also updated seven more asserts in `apps/web-server/tests/test_completion_emitter.py`
   that expected a bare key for a spec with no repo (`"412"`, `"1"`); they now
   expect `af-spec-9` / `af-s`.
+- Review follow-up (lead): wrapped the `correlation_key` docstring (ratchet
+  E501), and the #1418 synthetic-key log in `build_completion_event` now also
+  fires for an issue with no repo (`test_issue_without_repo_logs_the_synthetic_key`;
+  `test_real_issue_key_is_not_logged` now passes a repo).

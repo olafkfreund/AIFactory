@@ -230,7 +230,8 @@ def read_issue_repo(spec_dir: Path) -> str | None:
 def correlation_key(
     spec_id: str, issue_number: int | None, repo: str | None = None
 ) -> str:
-    """RFC-0001 §2: ``<repo>#<n>`` when the repo is known, else synthetic ``af-<spec_id>`` (never a bare number, #1960)."""
+    """RFC-0001 §2: ``<repo>#<n>`` when the repo is known, else the synthetic
+    ``af-<spec_id>`` (never a bare number, #1960)."""
     return (
         f"{repo}#{issue_number}"
         if issue_number is not None and repo
@@ -579,11 +580,12 @@ def build_completion_event(
     # key no poller and no rollup joins on, so the cockpit reads $0.00 while the
     # spend sits in an orphan row. Say so once per build, on the event that
     # matters, rather than leaving the degradation silent.
-    if issue_number is None:
+    if issue_number is None or not repo:
         logger.info(
-            "completion event for spec %s has no issue number; correlating on the "
+            "completion event for spec %s has no issue %s; correlating on the "
             "synthetic key %s (no cross-service join)",
             sanitize_log(spec_id),
+            "number" if issue_number is None else "repo",
             sanitize_log(correlation_key(spec_id, None)),
         )
     event = {
