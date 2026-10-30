@@ -1218,7 +1218,11 @@ class WorktreeManager:
             logger.error("Commit refused for '%s': %s", spec_name, exc)
             return False
 
-        add = self._run_git([*pins, "add", ".", ":!.aifactory"], cwd=worktree_path)
+        # The allowlist is agent-writable; never commit it into the task branch (#1944).
+        add = self._run_git(
+            [*pins, "add", ".", ":!.aifactory", ":!.aifactory-allowlist"],
+            cwd=worktree_path,
+        )
         result = self._run_git(
             [*pins, "commit", *commit_message_args(message, spec_dir)],
             cwd=worktree_path,

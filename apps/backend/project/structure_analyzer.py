@@ -10,6 +10,7 @@ command allowlists.
 import re
 from pathlib import Path
 
+from .command_registry import BASE_COMMANDS
 from .config_parser import ConfigParser
 from .models import CustomScripts
 
@@ -120,8 +121,16 @@ class StructureAnalyzer:
         if not content:
             return
 
+        # #1944: the file is agent-writable, so only already-grantable names count.
+        # Other names go through AIFACTORY_EXTRA_ALLOWED_COMMANDS (env-only).
+        from security.plan_commands import (  # noqa: PLC0415 - security imports project
+            DENY_COMMANDS,
+            PLAN_GRANTABLE_COMMANDS,
+        )
+
+        allowed = (BASE_COMMANDS | PLAN_GRANTABLE_COMMANDS) - DENY_COMMANDS
         for line in content.splitlines():
             line = line.strip()
             # Skip comments and empty lines
-            if line and not line.startswith("#"):
+            if line and not line.startswith("#") and line in allowed:
                 self.custom_commands.add(line)

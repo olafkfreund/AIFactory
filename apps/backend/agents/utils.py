@@ -28,6 +28,7 @@ _BOOKKEEPING_PATHS = (
     "aifactory/specs/",
     ".aifactory-status",
     ".aifactory-security.json",
+    ".aifactory-allowlist",
 )
 
 

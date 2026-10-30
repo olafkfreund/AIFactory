@@ -36,6 +36,7 @@ from server.services import (  # noqa: E402
     task_control,
 )
 from server.services.agent_service import AgentService  # noqa: E402
+from server.services.build_backend import BuildBackendUnavailableError  # noqa: E402
 from server.services.job_state_store import JobStateStore, SpawnArgs  # noqa: E402
 
 _ENGINES: list = []
@@ -130,14 +131,44 @@ async def test_default_backend_still_spawns_subprocess(
     assert dispatched == []
 
 
-async def test_kubejob_falls_back_to_subprocess_without_store(
+async def test_kubejob_without_store_reports_not_enabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # kubejob requested but no durable store → fall back (no reconcile loop).
+    # kubejob requested but no durable store → not enabled (no reconcile loop).
     monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", "kubejob")
     service = AgentService()
     service._store_enabled = False
     assert service._kubejob_backend_enabled() is False
+
+
+@pytest.mark.parametrize("backend", ["kubejob", "lambda"])
+async def test_unrunnable_backend_config_refuses_launch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    backend: str,
+) -> None:
+    # #1932: kubejob without a store, or an unknown backend, must not fall back
+    # to running the agent in-pod.
+    monkeypatch.setenv("AIFACTORY_BUILD_BACKEND", backend)
+    service = AgentService()
+    service._store_enabled = False
+
+    calls: list[str] = []
+
+    async def fake_spawn(*, task_id: str, **_kw: Any) -> Any:
+        calls.append(task_id)
+
+    async def fake_dispatch(*, task_id: str, **_kw: Any) -> None:
+        calls.append(task_id)
+
+    monkeypatch.setattr(service, "_spawn_task_execution", fake_spawn)
+    monkeypatch.setattr(service, "_dispatch_build_job", fake_dispatch)
+
+    with pytest.raises(BuildBackendUnavailableError):
+        await service.start_task_execution(
+            task_id="p:s3", project_path=tmp_path, spec_id="s3"
+        )
+    assert calls == []
 
 
 async def test_dispatch_build_job_forwards_pooled_oauth_token(

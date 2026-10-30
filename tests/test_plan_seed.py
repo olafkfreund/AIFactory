@@ -17,6 +17,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps" / "backend"))
 
+from agents.coder import _approved_plan_snapshot  # noqa: E402
 from project.analyzer import seed_profile_with_plan_commands  # noqa: E402
 from security.hooks import validate_command  # noqa: E402
 
@@ -73,7 +74,6 @@ def test_seeded_commands_pass_real_enforcement(tmp_path):
     )
 
     seed_profile_with_plan_commands(project_dir, plan_path)
-    reset_profile_cache()  # force reload from the freshly-written file
 
     # `uv run` targets are checked too (#1812), so pytest must be granted.
     ok_uv, _ = validate_command("uv run pytest", project_dir)
@@ -105,7 +105,6 @@ def test_non_python_toolchain_granted_without_floor_fix(tmp_path):
     plan_path = _write_plan(project_dir / "spec", ["cargo"])
 
     seed_profile_with_plan_commands(project_dir, plan_path)
-    reset_profile_cache()
     ok, _ = validate_command("cargo test", project_dir)
     assert ok is True
 
@@ -127,6 +126,53 @@ def test_missing_plan_returns_empty(tmp_path):
     project_dir = tmp_path / "proj"
     project_dir.mkdir()
     assert seed_profile_with_plan_commands(project_dir, project_dir / "nope.json") == []
+
+
+def test_review_required_grants_only_from_start_snapshot(tmp_path):
+    reset_profile_cache()
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+    spec = project_dir / "spec"
+    plan_path = _write_plan(spec, ["uv", "pytest"])
+    snapshot = _approved_plan_snapshot(spec, True)
+
+    _write_plan(spec, ["uv", "pytest", "npx"])  # agent edits the live plan
+    granted = seed_profile_with_plan_commands(project_dir, plan_path, plan=snapshot)
+    reset_profile_cache()
+
+    assert set(granted) == {"uv", "pytest"}
+    ok, _ = validate_command("npx foo", project_dir)
+    assert ok is False
+
+
+def test_review_required_without_plan_grants_nothing(tmp_path):
+    reset_profile_cache()
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+    snapshot = _approved_plan_snapshot(project_dir / "spec", True)
+    assert snapshot == {}
+    assert (
+        seed_profile_with_plan_commands(
+            project_dir,
+            project_dir / "spec" / "implementation_plan.json",
+            plan=snapshot,
+        )
+        == []
+    )
+
+
+def test_review_not_required_seeds_from_live_plan(tmp_path):
+    reset_profile_cache()
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+    spec = project_dir / "spec"
+    plan_path = _write_plan(spec, ["uv"])
+    snapshot = _approved_plan_snapshot(spec, False)
+    assert snapshot is None
+
+    _write_plan(spec, ["uv", "npx"])
+    granted = seed_profile_with_plan_commands(project_dir, plan_path, plan=snapshot)
+    assert "npx" in granted
 
 
 if __name__ == "__main__":

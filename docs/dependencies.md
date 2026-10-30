@@ -35,7 +35,7 @@ AIFactory **declares** **17** backend, **37** web-server, and **47** frontend ru
 | `aiosqlite` | `>=0.20.0` |
 | `alembic` | `>=1.13.0` |
 | `asyncpg` | `>=0.30.0` |
-| `authlib` | `>=1.3.0` |
+| `authlib` | `>=1.9.1` |
 | `azure-identity` | `>=1.20.0` |
 | `azure-keyvault-keys` | `>=4.10.0` |
 | `bashlex` | `>=0.18` |

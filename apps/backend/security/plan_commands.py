@@ -37,6 +37,8 @@ import re
 from collections.abc import Iterable
 from contextlib import suppress
 
+from plan_progress import strip_plan_progress
+
 from .ast_parser import UnparseableCommand, extract_commands_ast
 from .ast_parser import is_available as _ast_available
 from .parser import extract_commands
@@ -219,7 +221,9 @@ def extract_command_names(plan: dict) -> set[str]:
     if not isinstance(plan, dict):
         return set()
     strings: list[str] = []
-    _collect_strings(plan, strings)
+    # Only the reviewed content: progress keys can change after approval
+    # without invalidating it, so a command in them would be granted unreviewed.
+    _collect_strings(strip_plan_progress(plan), strings)
     names: set[str] = set()
     for s in strings:
         names |= _names_from_command_string(s)

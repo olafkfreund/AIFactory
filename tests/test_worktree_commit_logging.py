@@ -154,5 +154,12 @@ def test_commit_argv_unchanged_without_spec_dir(tmp_path, monkeypatch):
     assert calls[-1] == ["commit", "-m", "msg"]
 
 
+def test_commit_never_stages_allowlist(tmp_path, monkeypatch):
+    mgr = _mgr(tmp_path)
+    calls = _record_commit_argv(mgr, monkeypatch, tmp_path)
+    mgr.commit_in_worktree("spec", "msg")
+    assert calls[0] == ["add", ".", ":!.aifactory", ":!.aifactory-allowlist"]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

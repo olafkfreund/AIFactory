@@ -227,7 +227,7 @@ class TestFullReviewWorkflowIntegration:
         plan_file = complete_spec_dir / "implementation_plan.json"
         plan_content = plan_file.read_text()
         plan = json.loads(plan_content)
-        plan["phases"][0]["chunks"][0]["status"] = "completed"
+        plan["phases"][0]["chunks"][0]["description"] = "Something else"
         plan_file.write_text(json.dumps(plan, indent=2))
         assert not state.is_approval_valid(complete_spec_dir)
 

@@ -441,6 +441,8 @@ class ProjectAnalyzer:
 def seed_profile_with_plan_commands(
     project_dir: Path,
     plan_path: Path,
+    *,
+    plan: dict[str, object] | None = None,
 ) -> list[str]:
     """Merge a plan's declared verification commands into the enforced allowlist.
 
@@ -450,47 +452,56 @@ def seed_profile_with_plan_commands(
     etc. This grants the plan's sanitised command NAMES into the profile's
     ``custom_commands``.
 
-    The profile is read/written at ``project_dir/.aifactory/.aifactory-security.json``
-    — the SAME file the Bash hook reads (it calls ``get_security_profile`` with
-    the agent's cwd and no spec_dir). The hook's in-memory cache is mtime-keyed,
-    so this is picked up live, even mid-build.
+    The grant goes into the in-memory profile the Bash hook uses
+    (``get_security_profile`` with the agent's cwd and no spec_dir), so it takes
+    effect live, even mid-build. The file at
+    ``project_dir/.aifactory/.aifactory-security.json`` is written as output only
+    (#1944): the hook never reads it back.
 
     Args:
         project_dir: The agent's working directory / worktree root (== hook cwd).
         plan_path: Path to ``implementation_plan.json``.
+        plan: Callers pass this to grant from a snapshot instead of the live,
+            agent-writable file (#1940).
 
     Returns:
         Sorted list of newly-granted command names (empty if none / on error).
     """
     # Imported here to avoid any import-time coupling between the project and
     # security packages.
-    from security.plan_commands import grantable_commands_from_plan
+    from security.plan_commands import DENY_COMMANDS, grantable_commands_from_plan
+    from security.profile import (  # noqa: PLC0415 - security.profile imports this module
+        get_security_profile,
+    )
 
-    try:
-        plan = json.loads(Path(plan_path).read_text())
-    except (OSError, json.JSONDecodeError) as exc:
-        logger.warning(
-            "plan-commands seed skipped: cannot read %s (%s)", plan_path, exc
-        )
-        return []
+    # The profile is frozen in memory (#1944), so re-detect on every seed to pick
+    # up tooling the scaffold added since (e.g. a new Cargo.toml).
+    analyzer = ProjectAnalyzer(project_dir)  # spec_dir=None → enforced profile path
+    profile = get_security_profile(project_dir)
+    fresh = analyzer.analyze(force=True)
+    profile.stack_commands |= fresh.stack_commands - DENY_COMMANDS
+    profile.script_commands |= fresh.script_commands - DENY_COMMANDS
+    profile.custom_commands |= fresh.custom_commands - DENY_COMMANDS
+
+    if plan is None:
+        try:
+            plan = json.loads(Path(plan_path).read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning(
+                "plan-commands seed skipped: cannot read %s (%s)", plan_path, exc
+            )
+            plan = {}
 
     granted, rejected = grantable_commands_from_plan(plan)
     if rejected:
         logger.info("plan-commands: rejected non-grantable names: %s", rejected)
-    if not granted:
-        return []
-
-    analyzer = ProjectAnalyzer(project_dir)  # spec_dir=None → enforced profile path
-    profile = analyzer.load_profile()
-    if profile is None:
-        profile = analyzer.analyze()
 
     newly = sorted(granted - profile.custom_commands)
+    profile.custom_commands |= granted
+    # analyze() just overwrote the file with detection alone; write back the full profile.
+    analyzer.save_profile(profile)
     if not newly:
         return []
-
-    profile.custom_commands |= granted
-    analyzer.save_profile(profile)
     logger.info(
         "plan-commands: granted %s into %s allowlist",
         newly,

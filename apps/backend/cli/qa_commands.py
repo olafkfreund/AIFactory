@@ -108,6 +108,29 @@ def handle_qa_command(
     if has_human_feedback:
         print("\n📝 Human feedback detected - processing fix request...")
 
+    # A fresh process no longer inherits plan grants from the profile file (#1944),
+    # so seed them here, from the plan only while a required review is still valid.
+    try:
+        from project.analyzer import (  # noqa: PLC0415 - match the coder loop's local import
+            seed_profile_with_plan_commands,
+        )
+        from review.state import (  # noqa: PLC0415 - same
+            requires_review_before_coding,
+        )
+
+        # An approval valid now means the live plan is the approved one.
+        plan: dict[str, object] | None = (
+            {}
+            if requires_review_before_coding(spec_dir)
+            and not ReviewState.load(spec_dir).is_approval_valid(spec_dir)
+            else None
+        )
+        seed_profile_with_plan_commands(
+            project_dir, spec_dir / "implementation_plan.json", plan=plan
+        )
+    except Exception as exc:  # noqa: BLE001 - never let allowlist seeding break QA
+        print(f"plan-commands seed skipped: {exc}")  # noqa: T201 - console UX
+
     try:
         approved = asyncio.run(
             run_qa_validation_loop(

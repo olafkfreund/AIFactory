@@ -26,6 +26,8 @@ from server.specpath import spec_dir_for
 
 from .build_backend import (
     _TERMINAL_STATES,
+    BuildBackendUnavailableError,
+    backend_config_error,
     kubejob_enabled,
     orphaned_worktree_registrations,
 )
@@ -121,6 +123,8 @@ class KubejobMixin:
         _task_current_phases: dict[str, Any]
         _task_log_writers: dict[str, Any]
         _handle_output_line: Callable[..., Any]
+        _redact_nonce: Callable[[str, str], str]
+        _marker_nonce_env: Callable[..., dict[str, str]]
         backend_path: Path
         _store_enabled: bool
         is_running: Callable[[str], bool]
@@ -145,8 +149,8 @@ class KubejobMixin:
         Env-gated, default OFF (``AIFACTORY_BUILD_BACKEND=subprocess``). The
         kubejob backend requires the durable store (it reconciles by polling
         Postgres + reaps via worker_ref), so when it is requested WITHOUT a
-        DATABASE_URL we log loudly and fall back to the in-pod subprocess rather
-        than silently stranding builds with no reconcile loop.
+        DATABASE_URL this returns False and ``_start_build_unit`` refuses the
+        launch (#1932) rather than running the agent in-pod.
         """
         from .build_backend import kubejob_enabled
 
@@ -156,7 +160,7 @@ class KubejobMixin:
             _log.warning(
                 "[AgentService] AIFACTORY_BUILD_BACKEND=kubejob requires the "
                 "durable job-state store (DATABASE_URL) for reconcile/reap — "
-                "it is unset; falling back to the in-pod subprocess backend."
+                "it is unset; agent launches are refused."
             )
             return False
         return True
@@ -457,6 +461,7 @@ class KubejobMixin:
                 force=force,
                 base_branch=base_branch,
                 mode=mode,
+                marker_nonce=self._marker_nonce_env(task_id)["AIFACTORY_MARKER_NONCE"],
             )
         except BaseException:
             # A dispatch raise does not prove no Job exists; wait for its 404.
@@ -511,7 +516,12 @@ class KubejobMixin:
         was promoted. The drain paths previously called ``_spawn_task_execution``
         directly, so a queued/drained build silently ran in-pod even with the
         flip on (the flip was a no-op for everything that went through admission).
+
+        An unrunnable backend config refuses the launch (#1932) instead of
+        falling back to the in-pod subprocess.
         """
+        if problem := backend_config_error(self._store_enabled):
+            raise BuildBackendUnavailableError(f"Builds refused: {problem}")
         if self._kubejob_backend_enabled():
             await self._dispatch_build_job(
                 task_id=task_id,
@@ -556,7 +566,7 @@ class KubejobMixin:
         read from the durable worker_ref the backend just wrote. Wholly
         best-effort — never raises, never blocks dispatch.
         """
-        # #1110: the Job's stdout carries the same [PHASE_EVENT] lines the in-pod
+        # #1110: the Job's stdout carries the same __EXEC_PHASE__ markers the in-pod
         # subprocess emits, and the control plane was throwing all of it at the
         # log pane without reading it. `_spawn_task_execution` is the ONLY place
         # that builds a TaskLogWriter, and the kubejob backend does not go
@@ -602,7 +612,15 @@ class KubejobMixin:
                 spec_id=spec_id,
             )
 
-        rmux_feed = self._kubejob_rmux_feed()
+        raw_feed = self._kubejob_rmux_feed()
+
+        def _redacting_feed(spec: str, data: bytes) -> None:
+            # #1929: mask the marker nonce, as the in-pod tee does; the pane is shared.
+            shown = self._redact_nonce(task_id, data.decode("utf-8", errors="replace"))
+            raw_feed(spec, shown.encode())
+
+        rmux_feed = _redacting_feed if raw_feed is not None else None
+
         streamer = KubeJobLogStreamer(
             log_sink=_cockpit_sink,
             rmux_feed=rmux_feed,

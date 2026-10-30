@@ -212,6 +212,8 @@ async def run_autonomous_agent(
     solo = is_solo_mode_enabled_for_spec(spec_dir)
     # Read before any agent session so the planner cannot change the gate (#1922).
     require_review = not solo and _should_require_human_review(spec_dir)
+    # #1940: grants come only from the plan the start gate saw, not the live file.
+    approved_plan = _approved_plan_snapshot(spec_dir, require_review)
 
     # #389: solo collapses plan+implement into one session, which bypasses the
     # wave dispatch. Under --parallel, author the plan first (planner session)
@@ -376,14 +378,17 @@ async def run_autonomous_agent(
         # and misses tooling the scaffold adds later, so without this a
         # from-scratch build is blocked running its own checks. Idempotent and
         # cheap; only grants sanitised, grant-listed command names. project_dir
-        # here is the task worktree root == the agent's cwd == the file the Bash
-        # hook reads (mtime-invalidated, so it applies immediately).
+        # here is the task worktree root == the agent's cwd; grants go into the
+        # in-memory profile the Bash hook uses, so they apply immediately. When review
+        # is required, grants come from the run-start snapshot (#1940).
         plan_file = spec_dir / "implementation_plan.json"
         if plan_file.exists():
             try:
                 from project.analyzer import seed_profile_with_plan_commands
 
-                seed_profile_with_plan_commands(project_dir, plan_file)
+                seed_profile_with_plan_commands(
+                    project_dir, plan_file, plan=approved_plan
+                )
             except Exception as exc:  # never let allowlist seeding break a build
                 print(f"plan-commands seed skipped: {exc}")
 
@@ -653,6 +658,7 @@ async def run_autonomous_agent(
                         status_manager=status_manager,
                         disabled_phases=parallel_disabled_phases,
                         recovery_manager=recovery_manager,
+                        approved_plan=approved_plan,
                     )
                 except GitMetadataChangedError as exc:
                     _fail_on_git_metadata(exc, status_manager)
@@ -1205,6 +1211,23 @@ def _injection_scan_blocks(
     return True
 
 
+def _approved_plan_snapshot(
+    spec_dir: Path, require_review: bool
+) -> dict[str, object] | None:
+    """Parse the plan once at run start when review gates coding (#1940).
+
+    None when review is not required (callers seed from the live plan); ``{}``
+    when the plan is missing/unreadable, which grants nothing.
+    """
+    if not require_review:
+        return None
+    try:
+        plan = json.loads((spec_dir / "implementation_plan.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return plan if isinstance(plan, dict) else {}
+
+
 def _should_require_human_review(spec_dir: Path) -> bool:
     """Whether human review is required before coding (this agent's gate).
 
@@ -1446,6 +1469,7 @@ async def _maybe_run_parallel_phase(
     status_manager: StatusManager,
     disabled_phases: set[int],
     recovery_manager: RecoveryManager | None = None,
+    approved_plan: dict[str, object] | None = None,
 ) -> bool:
     """Run the subtask's phase as parallel waves if it is eligible (#376).
 
@@ -1493,6 +1517,7 @@ async def _maybe_run_parallel_phase(
             source_spec_dir=source_spec_dir,
             remote_control_session=remote_control_session,
             recovery_manager=recovery_manager,
+            approved_plan=approved_plan,
         )
 
         # A stalled phase (cycle / unresolved deps / merge failures) drops to the
