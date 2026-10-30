@@ -237,6 +237,8 @@ RUN want="$(tr -dc '0-9.' < /tmp/.nvmrc | cut -d. -f1)" \
 #                        20260909-r3.
 #   libbrotlicommon1 / libbrotlidec1 / libbrotlienc1 1.2.0-r5 — CVE-2026-111497
 #                        (HIGH), fixed in 1.2.0-r7. Named together: same origin.
+#   py3-pip-wheel 26.2.2-r0 — CVE-2026-114613 (HIGH, vendored msgpack), fixed
+#                        in 26.2.2-r1. Also floored in the gateway stage.
 # Floors rather than == pins, so the build stays green as Wolfi revs further
 # (1.38.0-r1 and later already exist); drop each once the base digest ships it.
 # Verified present in the Wolfi x86_64 APKINDEX, then confirmed against the
@@ -254,6 +256,7 @@ RUN apk add --no-cache \
         "libbrotlicommon1>=1.2.0-r7" \
         "libbrotlidec1>=1.2.0-r7" \
         "libbrotlienc1>=1.2.0-r7" \
+        "py3-pip-wheel>=26.2.2-r1" \
         "curl>=8.23.0-r0" \
         "libcurl-openssl4>=8.23.0-r0" \
         git \
@@ -496,7 +499,8 @@ COPY --from=py-build --chown=nonroot:nonroot \
 
 # Remove the base image's pip too (same findings, second copy).
 # py3-pip-wheel ships deliberately: python-3.15 depends on it, so apk refuses to
-# drop it (warns, exits 0). Its CVEs ride base-digest bumps. The apk info
+# drop it (warns, exits 0). Its CVEs ride base-digest bumps, or a floor in the
+# runtime apk block when the digest lags. The apk info
 # checks fail the build if the removal ever silently no-ops.
 USER root
 RUN apk del --no-cache py3.15-pip py3.15-pip-base \
@@ -565,8 +569,13 @@ FROM cgr.dev/chainguard/python:latest-dev@sha256:dde1a2549dd62864f0263dae8e87768
 USER root
 
 ARG SECURITY_REFRESH=0
+# Stdlib-only, so pip goes as in runtime; py3-pip-wheel stays (python depends on
+# it) with the CVE-2026-114613 floor from the runtime apk block.
 RUN echo "security refresh: ${SECURITY_REFRESH}" \
-    && apk upgrade --no-cache
+    && apk upgrade --no-cache \
+    && apk add --no-cache "py3-pip-wheel>=26.2.2-r1" \
+    && apk del --no-cache py3.15-pip py3.15-pip-base \
+    && ! apk info -e py3.15-pip && ! apk info -e py3.15-pip-base
 
 # COPY creates /app without the execute bit here, so the nonroot user cannot
 # traverse it; create it explicitly.
