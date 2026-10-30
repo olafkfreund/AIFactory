@@ -1,13 +1,94 @@
-## [Unreleased]
+## 3.10.13 - 2026-10-30
+
+Security hardening of the build path, with seven behaviour changes. Plan
+approvals stored before this release read as stale once and may need
+re-approval. Build stdout control markers need a per-task nonce. Agent
+launches are refused when the build backend cannot run. When review is
+required, plan-command grants come only from the run-start plan. The Bash
+hook no longer trusts the agent-writable security profile or
+`.aifactory-allowlist`. Authz denials and rmux console attach/detach audit
+rows are now committed on Postgres. Trivy P0 CVEs are cleared in Authlib,
+dnspython and the images' py3-pip-wheel. No new operator env vars, no
+migrations.
 
 ### Security
 
-- **Authlib 1.9.1 and dnspython 2.9.0.** `requirements.lock` moves Authlib
-  1.7.2 -> 1.9.1 (CVE-2026-96760 CRITICAL, CVE-2026-114615, CVE-2026-114616)
-  and dnspython 2.8.0 -> 2.9.0 (CVE-2026-114605), and the Authlib floor in
-  `apps/web-server/requirements.txt` rises to `>=1.9.1`, clearing the Trivy P0
-  gate. Not reachable in this code: the OIDC client verifies ID tokens with
-  joserfc, and nothing calls `authlib.jose`.
+- **Authlib 1.9.1 and dnspython 2.9.0 (#1949).** `requirements.lock` moves
+  Authlib 1.7.2 -> 1.9.1 (CVE-2026-96760 CRITICAL, CVE-2026-114615,
+  CVE-2026-114616) and dnspython 2.8.0 -> 2.9.0 (CVE-2026-114605), and the
+  Authlib floor in `apps/web-server/requirements.txt` rises to `>=1.9.1`,
+  clearing the Trivy P0 gate. Not reachable in this code: the OIDC client
+  verifies ID tokens with joserfc, and nothing calls `authlib.jose`.
+- **py3-pip-wheel 26.2.2-r1 floor (#1951).** CVE-2026-114613 (HIGH,
+  pip's vendored msgpack) in the pinned Chainguard base; floored in the
+  runtime and gateway images. The gateway image also drops `py3.15-pip` and
+  `py3.15-pip-base`, as runtime already did.
+- **Build stdout control markers are authenticated (#1938, closes #1929).**
+  The control plane accepts `__EXEC_PHASE__`, `__USAGE__` and the new
+  `__RATE_LIMIT__` markers only with the build's per-task nonce
+  (`<marker>:<nonce>:{json}`), passed to the build as
+  `AIFACTORY_MARKER_NONCE` and stripped from every agent child env. A line
+  with a missing or wrong nonce is plain log text. The `[PHASE_EVENT] k=v`
+  and bare `{"phase"|"status"}` JSON parsers are removed, and so is the
+  free-text rate-limit match: failover now triggers only on the SDK's
+  `error == "rate_limit"`. Builds in flight during the rollout lose live
+  phase and cost updates until they finish; completion is unaffected.
+- **Agent launches fail closed when the build backend cannot run (#1942,
+  refs #1932).** An unknown `AIFACTORY_BUILD_BACKEND`, or `kubejob` without
+  `DATABASE_URL`, makes start, both drains and spec creation raise
+  `BuildBackendUnavailableError` instead of running agents in the
+  web-server pod. At startup such a config logs an ERROR and the server
+  keeps serving the UI; in-cluster `subprocess` logs a WARNING. Unset is
+  still `subprocess` for local dev. Prod (`kubejob` with `DATABASE_URL`)
+  is unchanged.
+- **Plan-command grants come from the run-start plan when review is
+  required (#1945, closes #1940).** The coder loop and parallel wave
+  children no longer re-read the live, agent-writable
+  `implementation_plan.json` before each session. Runs that do not require
+  review behave as before.
+- **The Bash hook no longer trusts the agent-writable profile (#1947,
+  closes #1944).** The command allowlist is built in memory from fresh
+  detection once per process and worktree, plus in-process plan grants;
+  `.aifactory/.aifactory-security.json` is now output only. Write/Edit and
+  Bash commands that name the profile are refused. `.aifactory-allowlist`
+  is limited to `(BASE_COMMANDS | PLAN_GRANTABLE_COMMANDS) - DENY_COMMANDS`
+  and is write-protected; other names need the env-only
+  `AIFACTORY_EXTRA_ALLOWED_COMMANDS`. Grants that `trusted_plan.py` writes
+  to the file at ingest are no longer read (the coder loop re-seeds them
+  in-process).
+
+### Changed
+
+- **Plan approval binds plan content, not raw bytes (#1934, closes #1924).**
+  The approval hash ignores progress keys (status, notes, timestamps, QA
+  fields, `chunks` beside `subtasks`) and also accepts the plan model's
+  saved form, so progress writes and wave-engine saves no longer make an
+  approval stale. Any content edit still invalidates it. The plan-command
+  allowlist reads the same content, so commands placed only in progress
+  keys are no longer granted. **After deploy:** approvals stored before
+  this release read as stale once (fail closed). Tasks with
+  `task_control.planApproved` still resume via start; others need
+  re-approval.
+
+### Fixed
+
+- **Authz denials are committed (#1936, closes #1919).** `authz.denied` and
+  `gate.rejected` rows were rolled back with the request session on
+  Postgres; they are now written on their own session. The audit chain
+  head is read under `pg_advisory_xact_lock`, with
+  `created_at = clock_timestamp()` on Postgres, so concurrent writers keep
+  one linear chain. The 403 is unchanged.
+- **rmux console attach/detach audit rows are committed (#1941, closes
+  #1939).** Same fix as #1936.
+- **Planner prompt no longer asks for `selectedSkills` (#1937, closes
+  #1927).** The step never affected its own build. No runtime change.
+
+### Dependencies
+
+- GitHub Actions group (#1877): setup-python 7.1.0, setup-uv 10.3.2,
+  docker/login-action 4.7.0, codeql-action 4.39.1.
+- Docs site (#1865, #1866, #1867, #1868): dompurify 3.4.17, fast-uri
+  3.1.9, launch-editor 2.14.2, body-parser 1.20.9.
 
 ## 3.10.12 - 2026-10-27
 
