@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -1555,12 +1556,10 @@ def test_keyless_events_are_skipped_not_sent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     # #1972: CFactory requires a key; a None key is dropped, not retried for a day.
-    import urllib.request
-
     monkeypatch.setenv("AIFACTORY_COMPLETION_WEBHOOK", "http://hook.test/c")
     monkeypatch.delenv("AIFACTORY_COMPLETION_SENTINEL", raising=False)
     posts: list[object] = []
-    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: posts.append(a))
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **_k: posts.append(a))
     long_id = "p:" + "x" * 130
     spec = _spec_with_issue(tmp_path)
 

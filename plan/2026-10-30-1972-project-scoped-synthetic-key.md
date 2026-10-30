@@ -204,6 +204,12 @@ R7 (LOW) Log ids safely: CFactory `card_intake.py` uses `sanitize_log`
   `correlation_key` description in
   `apps/backend/contracts/handback-triage-contract.v1.schema.json`.
 
+- R3 (CI fix): the spawn-env test also stubs
+  `project_settings_store.load_project_env`, as the sibling spawn test does;
+  the P1 Postgres suite reached the real settings DB and failed before the
+  spawn. Ruff ratchet: `urllib.request` moved to the module imports and an
+  unused lambda kwarg renamed in `test_completion_emitter.py`.
+
 ## Rollback
 
 Revert each PR. Cards created under the new keys stay; old keys were never

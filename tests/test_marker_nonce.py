@@ -298,6 +298,10 @@ async def test_build_spawn_env_carries_the_task_id(tmp_path, monkeypatch):
         "mcp_spawn_env",
         AsyncMock(return_value={}),
     )
+    # The settings store reads the DB; the P1 suite runs against Postgres.
+    monkeypatch.setattr(
+        agent_mod.project_settings_store, "load_project_env", AsyncMock()
+    )
     svc = AgentService()
     with pytest.raises(RuntimeError, match="stop after spawn"):
         await svc._spawn_task_execution("p:001-x", tmp_path / "proj", "001-x")
