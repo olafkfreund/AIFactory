@@ -46,3 +46,6 @@ Revert the PR commit; keys go back to bare numbers.
   E501), and the #1418 synthetic-key log in `build_completion_event` now also
   fires for an issue with no repo (`test_issue_without_repo_logs_the_synthetic_key`;
   `test_real_issue_key_is_not_logged` now passes a repo).
+- Review follow-up (lead): `apps/web-server/tests/test_completion_outbox.py`
+  `_event()` now carries `repo="o/r"` and the delivery test expects `o/r#412`;
+  the test covers payload delivery, so it keeps an issue-backed key.
