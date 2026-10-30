@@ -45,6 +45,7 @@ from prompts import get_solo_prompt, is_first_run
 from providers.factory import get_provider
 from recovery import RecoveryManager
 from review.state import ReviewState, requires_review_before_coding
+from run_gates import RunGates, _approved_plan_snapshot  # noqa: F401
 from solo_mode import is_solo_mode_enabled_for_spec
 from task_logger import (
     LogPhase,
@@ -1211,23 +1212,6 @@ def _injection_scan_blocks(
     )
     print()  # noqa: T201 - console UX, same as the plan-review gate
     return True
-
-
-def _approved_plan_snapshot(
-    spec_dir: Path, require_review: bool
-) -> dict[str, object] | None:
-    """Parse the plan once at run start when review gates coding (#1940).
-
-    None when review is not required (callers seed from the live plan); ``{}``
-    when the plan is missing/unreadable, which grants nothing.
-    """
-    if not require_review:
-        return None
-    try:
-        plan = json.loads((spec_dir / "implementation_plan.json").read_text())
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return plan if isinstance(plan, dict) else {}
 
 
 def _should_require_human_review(spec_dir: Path) -> bool:
