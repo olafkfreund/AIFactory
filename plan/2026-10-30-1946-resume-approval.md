@@ -1,5 +1,5 @@
 ---
-status: approved
+status: draft
 issue: 1946
 spec: spec/2026-10-30-1946-resume-approval.md
 coders: [agy]
@@ -41,6 +41,17 @@ Approved decisions (from the spec):
    worktree `review_state.json` → no resume; flipped worktree
    `task_metadata.json` → no resume; approved source + unchanged worktree
    plan → resumes.
+   → verify: as step 1.
+
+3. (Second revision after review; lead.) `agents/coder.py`
+   `run_autonomous_agent`: compute `require_review` from
+   `gate_dir = source_spec_dir or spec_dir` (solo flag and review flag), with
+   the snapshot still from `spec_dir`. `_handle_build_interrupt` passes
+   `source_spec_dir` to the resumed call. Tests: in
+   `tests/test_plan_review_gate_snapshot.py`, `_drive` takes `source_spec_dir`;
+   source approved with review required, worktree metadata flipped, mid-run
+   `npx` added → not granted. In the resume test, assert the resumed call gets
+   `source_spec_dir`.
    → verify: as step 1.
 
 ## Rollback

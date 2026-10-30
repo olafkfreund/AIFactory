@@ -1,5 +1,5 @@
 ---
-status: approved
+status: draft
 issue: 1946
 intent: intent/2026-10-30-1946-resume-approval.md
 ---
@@ -27,6 +27,17 @@ unkeyed MD5, so the agent could re-approve its widened plan there or set
   `source_spec_dir or spec_dir`; `is_approval_valid` still hashes the worktree
   `spec_dir`, the plan the resumed agent snapshots.
 
+Second revision after review: the resumed `run_autonomous_agent` read
+`require_review` (and solo) from the worktree `task_metadata.json`, so a
+flipped flag with an unchanged plan passed the resume check and then ran with
+no snapshot, granting any later mid-run `required_commands` addition (#1940
+again). `run_autonomous_agent` now reads that gate from
+`source_spec_dir or spec_dir`, and the resume passes `source_spec_dir`. The
+snapshot is still parsed from the worktree plan at entry, which the resume
+check has just matched to the source approval. No new parameter: the resume
+call gains the `source_spec_dir` the first call already passes. A first run
+is unchanged (the copy equals the source at setup).
+
 ## Alternatives rejected
 
 - Pass the original run's snapshot into the resumed call: needs a new
@@ -49,4 +60,6 @@ approved, then plan widened → choosing "skip" does not call
 `run_autonomous_agent`; unchanged approved plan → it is called once; with a
 separate source dir, a worktree `review_state.json` re-approving the widened
 plan → no resume; worktree `task_metadata.json` flipped to no review → no
-resume.
+resume; `run_autonomous_agent` with flipped worktree metadata and an approved
+source → a mid-run `required_commands` addition is not granted; the resume
+passes `source_spec_dir`.
