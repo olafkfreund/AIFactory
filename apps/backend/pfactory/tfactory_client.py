@@ -583,13 +583,13 @@ def _issue_from_requirements(req: dict[str, Any]) -> int | None:
 _ISSUE_URL_PATH = re.compile(r"^/([^/]+/[^/]+)/issues/\d+$")
 
 
-def _event_correlation_key(req: dict[str, Any]) -> str | None:
+def _event_correlation_key(req: dict[str, Any], spec_id: str) -> str | None:
     """The key AIFactory's own completion events carry for this spec (#1775).
 
     Mirrors ``server/services/completion.py`` ``read_issue_number`` +
     ``read_issue_repo`` + ``correlation_key`` (that module is stdlib-only and
     lives in the web server); a web-server test pins the two together. None
-    when the spec has no issue: the synthetic key stays service-local.
+    when the spec has no issue; ``af-<spec_id>`` when the issue's repo is unknown (#1960).
     """
     raw = None
     if isinstance(req.get("metadata"), dict):
@@ -610,11 +610,11 @@ def _event_correlation_key(req: dict[str, Any]) -> str | None:
     url = gh.get("url") if isinstance(gh, dict) else None
     if isinstance(url, str) and (m := _ISSUE_URL_PATH.match(urlparse(url).path)):
         return f"{m.group(1)}#{number}"
-    return str(number)
+    return f"af-{spec_id}"
 
 
 def _thread_issue(
-    contract: dict[str, Any] | None, req: dict[str, Any]
+    contract: dict[str, Any] | None, req: dict[str, Any], spec_id: str
 ) -> dict[str, Any] | None:
     """Thread the origin issue onto the contract TFactory receives.
 
@@ -622,8 +622,8 @@ def _thread_issue(
     build + plan; the label-driven fast path carries no PFactory plan, so it is
     backfilled from requirements.json (#964). ``correlation_key`` is the key
     AIFactory's own events carry: AIFactory sends TFactory no issue repo, so
-    without it TFactory falls back to a bare issue number and its work item
-    splits from the build's (#1775). A PFactory contract's own key wins.
+    without it TFactory's work item splits from the build's (#1775); the key is
+    never a bare number (#1960). A PFactory contract's own key wins.
     """
     issue_no = _issue_from_requirements(req)
     if issue_no is not None:
@@ -633,7 +633,7 @@ def _thread_issue(
         contract["provenance"] = prov
     # Not gated on issue_no: the event readers also accept metadata.githubIssueNumber
     # and string numbers, and the key must follow the events, not the #964 block.
-    key = _event_correlation_key(req)
+    key = _event_correlation_key(req, spec_id)
     if key:
         contract = dict(contract or {})
         contract.setdefault("correlation_key", key)
@@ -731,7 +731,7 @@ def build_ingest_payload(
         execution["phase_models"] = merged
         contract["execution"] = execution
     if not held:
-        contract = _thread_issue(contract, req)
+        contract = _thread_issue(contract, req, spec_id)
     if contract:
         payload["contract"] = contract
     if signed:
