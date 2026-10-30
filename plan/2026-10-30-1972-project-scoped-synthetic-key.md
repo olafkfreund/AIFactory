@@ -17,9 +17,11 @@ Decisions (approved spec):
   (never `af-<spec_id>`).
 - TFactory synthetic key `tf-<spec_dir.parent.parent.name>:<spec_id>`
   (TFactory layout `workspaces/<project_id>/specs/<spec_id>`).
-- CFactory `_upstream_key` AIFactory fallback: `af-<task_id>`, else `af-<spec_id>`.
+- CFactory `_upstream_key` AIFactory fallback: `af-<task_id>`; no `task_id` → no key
+  (revision 1; never `af-<spec_id>`).
 - PFactory: no change. No migration (prod: 0 `af-` rows; 13 `tf-` work items,
-  none in flight). No truncation (keys about 75 chars, column 128).
+  none in flight). No truncation: a synthetic key over 128 chars logs a
+  warning and is `None` (revision 1), with a test per repo.
 
 Repos and branches: AIFactory `fix/1972-project-scoped-key` → `dev`;
 TFactory `fix/1972-project-scoped-key` → `dev`; CFactory
@@ -85,25 +87,44 @@ TFactory `fix/1972-project-scoped-key` → `dev`; CFactory
    Traps: `AIFACTORY_TASK_ID` is not a secret; do not add it to
    `core/auth.py` deny lists.
 
+3b. (revision 1) AIFactory length guard:
+   - `apps/web-server/server/services/completion.py` `correlation_key` returns
+     `str | None`: when the synthetic `af-<task_id>` is over 128 chars,
+     `logger.warning(...)` (sanitize_log the task id) and return `None`.
+     `<repo>#<n>` is not guarded. Keep callers type-clean (the event builders,
+     `from_issue`, `task_service` already tolerate a None value at runtime).
+   - `apps/backend/pfactory/tfactory_client.py` `_event_correlation_key`: same
+     rule for its `af-<task_id>` (log warning, return `None`).
+   - Tests: `correlation_key("p:" + "x" * 130, None) is None` with a warning in
+     caplog; the mirror returns `None` for the same task id.
+   → verify by step 1 and 2 pytest commands; ruff and the mypy ratchet on
+   touched files (`scripts/cq_ratchet.py --tool mypy` as CI runs it).
+   Traps: never truncate.
+
 4. TFactory `apps/backend/agents/triager.py:759-760` and
    `apps/backend/agents/handback/send.py:116`: synthetic
    `f"tf-{spec_dir.parent.parent.name}:{spec_id}"` (send.py: `spec_id =
-   source.get('spec_id') or spec_dir.name`). Docstrings say
+   source.get('spec_id') or spec_dir.name`). Build it in one helper
+   `_synthetic_key(spec_dir, spec_id) -> str | None` in `triager.py`, used by
+   both (send.py already imports from triager): over 128 chars → log warning,
+   return `None` (revision 1). `_correlation_key` return type becomes
+   `str | None`. Docstrings say
    `tf-<project_id>:<spec_id>` (#1972, AIFactory#1972).
    Tests: `tests/test_correlation_sync.py:57,80,92,105` and
    `tests/test_triager_completion_webhook.py:264` expect the new form; add
    `test_synthetic_key_differs_across_projects` with spec dirs
    `tmp/workspaces/p1/specs/003-x` and `tmp/workspaces/p2/specs/003-x` for
-   both functions.
+   both functions, and an over-128 key test returning `None`.
    → verify by `python -m pytest tests/test_correlation_sync.py tests/test_triager_completion_webhook.py tests/test_docs_emit_341.py -q`.
    Traps: none known.
 
 5. CFactory `apps/backend/cfactory/card_intake.py:514-515`: AIFactory body
    without `correlation_key` → `f"af-{body['task_id']}"` when `task_id`, else
-   `f"af-{body['spec_id']}"` when `spec_id`. Docstring `:506-510`.
+   `None` (revision 1: no synthetic key, never `af-<spec_id>`). Docstring `:506-510`.
    Test: `tests/test_card_stage_actions.py:189` parametrize becomes
    `(None, "af-proj-1:003-x")`; add a unit test of `_upstream_key` for two
-   bodies with the same `spec_id` and different `task_id` giving distinct keys.
+   bodies with the same `spec_id` and different `task_id` giving distinct keys,
+   and a body with only `spec_id` giving `None`.
    → verify by `python -m pytest tests/test_card_stage_actions.py tests/test_card_intake.py -q`.
    Traps: none known.
 
@@ -112,6 +133,11 @@ TFactory `fix/1972-project-scoped-key` → `dev`; CFactory
 Per step above; then each repo's pre-commit hook and CI. Ratchet locally as CI
 does (`scripts/ratchet_lint.py` where present, ruff, mypy on touched files) in
 a throwaway venv with the repo's pinned deps.
+
+## Revision 1 (2026-10-30, lead review)
+
+CFactory sets no key without `task_id`; over-long synthetic keys log and
+are dropped, never truncated. Spec updated in the same commit.
 
 ## Rollback
 

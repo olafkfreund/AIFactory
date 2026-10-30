@@ -47,15 +47,25 @@ Contract, handoff and `<repo>#<n>` precedence is unchanged.
 
 **CFactory.** `card_intake._upstream_key`: for an AIFactory body without
 `correlation_key`, return `af-<task_id>` (from-issue answers
-`task_id = <project>:<spec>`). Fall back to `af-<spec_id>` only when the body
-has no `task_id`.
+`task_id = <project>:<spec>`). With no `task_id` it returns no key, the same
+as the mirror (revision 1). The event is then matched by its issue key or opens
+a new card. It never falls back to `af-<spec_id>`, which would bring back the
+collision.
 
 **PFactory.** No change: `pf-<session_id>` is globally unique.
 
 **Length.** UUID 36 + `:` + spec id. Web-server spec ids are
 `NNN-<slug[:30]>` (`task_service.get_next_spec_id`), so AIFactory keys are
-about 75 characters. TFactory project ids are workspace names. No truncation is
-added; a key over 128 would need a hashing rule, which no current id reaches.
+about 75 characters. TFactory project ids are workspace names. A synthetic key
+over 128 characters fails loudly (revision 1): it logs a warning and the
+synthetic key is `None`. It is never truncated, because truncating could make
+two keys collide. This applies to AIFactory's `correlation_key` (return type
+becomes `str | None`), the handoff mirror, and TFactory's synthetic key (one
+helper shared by the triager and the hand-back). Each gets a test.
+
+**Revision 1 (2026-10-30, lead review).** Two changes: CFactory sets no key
+without a `task_id`, and an over-long key logs and is dropped. Both are
+recorded above.
 
 **Existing rows.** Prod check (read-only, aggregate) on 2026-10-30: 0 `af-`
 work items and 0 `af-` cards; 13 `tf-` work items, newest 2026-10-23, none in
