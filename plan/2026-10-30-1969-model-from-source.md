@@ -34,12 +34,12 @@ All paths below are relative to the repo root. Python:
      `_make_spec(tmp_path, {"requireReviewBeforeCoding": False})`, worktree =
      `shutil.copytree(source, tmp_path / "worktree")` then
      `_write_meta(worktree, {"requireReviewBeforeCoding": False,
-     "pinnedModel": "haiku", "thinkingLevel": "ultrathink"})`; `extra` wraps the
+     "pinnedModel": "haiku", "thinkingLevel": "low"})` (deviation: `ultrathink` is not a valid level; `low` differs from the planning/coding defaults); `extra` wraps the
      real `phase_config.get_phase_model` / `get_phase_thinking_budget` in
      `MagicMock(side_effect=...)` that records return values; drive with
      `next_subtask={"id": "1", "description": "d"}` and
      `source_spec_dir=source`; assert `resolve_model_id("haiku")` is not among
-     recorded models and `get_thinking_budget("ultrathink")` is not among
+     recorded models and `get_thinking_budget("low")` is not among
      recorded budgets. `monkeypatch.delenv("AIFACTORY_FALLBACK_MODEL",
      raising=False)` and `AIFACTORY_ROUTING_POLICY` likewise.
    → check: `cd apps/backend && .venv/bin/python -m pytest ../../tests/test_plan_review_gate_snapshot.py -q`
