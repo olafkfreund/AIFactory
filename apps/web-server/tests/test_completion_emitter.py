@@ -1523,3 +1523,18 @@ def test_synthetic_key_differs_across_projects():
     assert correlation_key("p1:003-x", None) != correlation_key("p2:003-x", None)
     assert correlation_key("p1:003-x", None) == "af-p1:003-x"
     assert correlation_key("p2:003-x", None) == "af-p2:003-x"
+
+
+def test_overlong_synthetic_key_is_none_with_warning(caplog):
+    # #1972: over the 128-char column -> no key, never a truncated one.
+    task_id = "p:" + "x" * 130
+    with caplog.at_level("WARNING"):
+        assert correlation_key(task_id, None) is None
+    assert any("exceeds" in r.getMessage() for r in caplog.records)
+    assert correlation_key(task_id, 5, "o/r") == "o/r#5"  # repo key unguarded
+    backend = str(Path(__file__).resolve().parents[2] / "backend")
+    if backend not in sys.path:
+        sys.path.insert(0, backend)
+    from pfactory.tfactory_client import _event_correlation_key  # noqa: PLC0415
+
+    assert _event_correlation_key({"githubIssue": {"number": 7}}, task_id) is None

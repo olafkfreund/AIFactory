@@ -225,6 +225,7 @@ async def test_kubejob_dispatch_puts_the_nonce_in_the_job_env(tmp_path, monkeypa
     )
     env = fake.created[0][1]["spec"]["template"]["spec"]["containers"][0]["env"]
     assert {"name": "AIFACTORY_MARKER_NONCE", "value": NONCE} in env
+    assert {"name": "AIFACTORY_TASK_ID", "value": "p:s1"} in env  # #1972
 
 
 async def test_nonce_never_reaches_a_log_sink(tmp_path):

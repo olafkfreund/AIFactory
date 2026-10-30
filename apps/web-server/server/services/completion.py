@@ -227,17 +227,27 @@ def read_issue_repo(spec_dir: Path) -> str | None:
     return None
 
 
+_MAX_KEY_LEN = 128  # CFactory's correlation_key column width
+
+
 def correlation_key(
     task_id: str, issue_number: int | None, repo: str | None = None
-) -> str:
+) -> str | None:
     """RFC-0001 §2: ``<repo>#<n>`` when the repo is known, else the synthetic
     ``af-<project_id>:<spec_id>`` (never a bare number, #1960; project-scoped
     because spec ids repeat across projects, #1972)."""
-    return (
-        f"{repo}#{issue_number}"
-        if issue_number is not None and repo
-        else f"af-{task_id}"
-    )
+    if issue_number is not None and repo:
+        return f"{repo}#{issue_number}"
+    key = f"af-{task_id}"
+    if len(key) > _MAX_KEY_LEN:
+        # Never truncate: a cut key could collide across projects (#1972).
+        logger.warning(
+            "synthetic correlation key for %s exceeds %d chars; sending none",
+            sanitize_log(task_id),
+            _MAX_KEY_LEN,
+        )
+        return None
+    return key
 
 
 class _BadUsageError(Exception):
@@ -589,7 +599,7 @@ def build_completion_event(
             "number" if issue_number is None else "repo",
             sanitize_log(correlation_key(task_id, None)),
         )
-    event = {
+    event: dict[str, Any] = {
         "correlation_key": correlation_key(task_id, issue_number, repo),
         "service": SERVICE_NAME,
         "task_id": task_id,

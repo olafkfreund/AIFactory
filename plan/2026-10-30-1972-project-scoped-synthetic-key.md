@@ -139,6 +139,14 @@ a throwaway venv with the repo's pinned deps.
 CFactory sets no key without `task_id`; over-long synthetic keys log and
 are dropped, never truncated. Spec updated in the same commit.
 
+## Deviations
+
+- Step 3b: `build_completion_event`'s `event` dict is annotated
+  `dict[str, Any]`; the `str | None` return widened its inferred type and the
+  mypy ratchet counted one new error in `completion.py`.
+- Step 3: new `tests/test_parallel_integration_task_id.py`; the kubejob env
+  assert went into `tests/test_marker_nonce.py`.
+
 ## Rollback
 
 Revert each PR. Cards created under the new keys stay; old keys were never

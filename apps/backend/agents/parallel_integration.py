@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -189,15 +190,17 @@ def emit_worker_live_event(
 
     ``spec_id`` / ``task_id`` / ``project_id`` are reconstructed the same way the
     web-server's terminal emit derives them (``spec_id = spec_dir.name``,
-    ``project_id = project_dir.name``, ``task_id = project_id:spec_id``) so the
-    live sub-event shares the terminal event's correlation key.
+    ``task_id`` from env ``AIFACTORY_TASK_ID``, falling back to
+    ``<project_dir.name>:<spec_id>``) so the live sub-event shares the terminal
+    event's correlation key (#1972).
     """
     try:
         mod = _load_completion_emitter()
         if mod is None:
             return
         spec_id = spec_dir.name
-        project_id = project_dir.name
+        task_id = os.environ.get("AIFACTORY_TASK_ID") or f"{project_dir.name}:{spec_id}"
+        project_id = task_id.split(":", 1)[0]
         worker_rec = {
             "worker_id": worker_id,
             "subtask_id": subtask_id,
@@ -212,7 +215,7 @@ def emit_worker_live_event(
         }
         mod.emit_worker_completion(
             spec_dir=spec_dir,
-            task_id=f"{project_id}:{spec_id}",
+            task_id=task_id,
             spec_id=spec_id,
             project_id=project_id,
             worker=worker_rec,
@@ -254,7 +257,8 @@ def emit_worker_progress_heartbeat(
         if mod is None or not hasattr(mod, "emit_worker_progress"):
             return
         spec_id = spec_dir.name
-        project_id = project_dir.name
+        task_id = os.environ.get("AIFACTORY_TASK_ID") or f"{project_dir.name}:{spec_id}"
+        project_id = task_id.split(":", 1)[0]
         worker_rec = {
             "worker_id": worker_id,
             "subtask_id": subtask_id,
@@ -267,7 +271,7 @@ def emit_worker_progress_heartbeat(
         }
         mod.emit_worker_progress(
             spec_dir=spec_dir,
-            task_id=f"{project_id}:{spec_id}",
+            task_id=task_id,
             spec_id=spec_id,
             project_id=project_id,
             worker=worker_rec,

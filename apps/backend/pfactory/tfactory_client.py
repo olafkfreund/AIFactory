@@ -35,6 +35,7 @@ from urllib.parse import quote, urlparse
 from core import auth_preflight
 from core.child_env import child_env, lfs_upload
 from core.git_credentials import authed_push_url
+from factory_common.logsafe import sanitize_log
 
 _log = logging.getLogger(__name__)
 
@@ -581,6 +582,7 @@ def _issue_from_requirements(req: dict[str, Any]) -> int | None:
 
 
 _ISSUE_URL_PATH = re.compile(r"^/([^/]+/[^/]+)/issues/\d+$")
+_MAX_KEY_LEN = 128  # CFactory correlation_key column width (#1972)
 
 
 def _event_correlation_key(req: dict[str, Any], task_id: str | None) -> str | None:
@@ -611,7 +613,14 @@ def _event_correlation_key(req: dict[str, Any], task_id: str | None) -> str | No
     url = gh.get("url") if isinstance(gh, dict) else None
     if isinstance(url, str) and (m := _ISSUE_URL_PATH.match(urlparse(url).path)):
         return f"{m.group(1)}#{number}"
-    return f"af-{task_id}" if task_id else None
+    key = f"af-{task_id}" if task_id else None
+    if key and len(key) > _MAX_KEY_LEN:  # never truncate (#1972)
+        _log.warning(
+            "synthetic correlation key for %s exceeds 128 chars; sending none",
+            sanitize_log(task_id),
+        )
+        key = None
+    return key
 
 
 def _thread_issue(
