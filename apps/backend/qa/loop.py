@@ -154,6 +154,7 @@ async def run_qa_validation_loop(
     spec_dir: Path,
     model: str,
     verbose: bool = False,
+    source_spec_dir: Path | None = None,
 ) -> bool:
     """
     Run the full QA validation loop.
@@ -174,10 +175,13 @@ async def run_qa_validation_loop(
         spec_dir: Spec directory
         model: Claude model to use
         verbose: Whether to show detailed output
+        source_spec_dir: Canonical spec dir when spec_dir is a worktree copy;
+            model/thinking come from it (#1969)
 
     Returns:
         True if QA approved, False otherwise
     """
+    model_dir = source_spec_dir or spec_dir
     debug_section("qa_loop", "QA Validation Loop")
     debug(
         "qa_loop",
@@ -229,8 +233,8 @@ async def run_qa_validation_loop(
         print("\n📝 Human feedback detected. Running QA Fixer first...")
 
         # Get model and thinking budget for fixer (uses qa_fixer phase config)
-        qa_model = get_phase_model(spec_dir, "qa_fixer", model)
-        fixer_thinking_budget = get_phase_thinking_budget(spec_dir, "qa_fixer")
+        qa_model = get_phase_model(model_dir, "qa_fixer", model)
+        fixer_thinking_budget = get_phase_thinking_budget(model_dir, "qa_fixer")
         fixer_provider = infer_provider_from_model(qa_model)
 
         if fixer_provider == "claude":
@@ -332,8 +336,8 @@ async def run_qa_validation_loop(
         )
 
         # Run QA reviewer with phase-specific model and thinking budget
-        qa_model = get_phase_model(spec_dir, "qa", model)
-        qa_thinking_budget = get_phase_thinking_budget(spec_dir, "qa")
+        qa_model = get_phase_model(model_dir, "qa", model)
+        qa_thinking_budget = get_phase_thinking_budget(model_dir, "qa")
         qa_provider_name = qa_provider_override or infer_provider_from_model(qa_model)
         if qa_provider_override:
             failover_used.add(qa_provider_override)
@@ -538,8 +542,8 @@ async def run_qa_validation_loop(
                 break
 
             # Run fixer with phase-specific model and thinking budget
-            fixer_model = get_phase_model(spec_dir, "qa_fixer", model)
-            fixer_thinking_budget = get_phase_thinking_budget(spec_dir, "qa_fixer")
+            fixer_model = get_phase_model(model_dir, "qa_fixer", model)
+            fixer_thinking_budget = get_phase_thinking_budget(model_dir, "qa_fixer")
             fixer_provider_name = infer_provider_from_model(fixer_model)
             debug(
                 "qa_loop",
@@ -632,7 +636,7 @@ async def run_qa_validation_loop(
                 # (not auth/model/quota faults a different provider can't fix)
                 # and only while the overall deadline holds.
                 current_provider = qa_provider_override or infer_provider_from_model(
-                    get_phase_model(spec_dir, "qa", model)
+                    get_phase_model(model_dir, "qa", model)
                 )
                 failover_used.add(current_provider)
                 candidate = next_provider(current_provider, failover_used, gated=True)
