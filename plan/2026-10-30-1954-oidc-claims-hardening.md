@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1954
 spec: spec/2026-10-30-1954-oidc-claims-hardening.md
 coders:
