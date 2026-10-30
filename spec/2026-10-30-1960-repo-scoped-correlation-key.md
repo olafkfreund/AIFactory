@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1960
 intent: intent/2026-10-30-1960-repo-scoped-correlation-key.md
 ---
