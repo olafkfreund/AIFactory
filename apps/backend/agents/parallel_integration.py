@@ -39,8 +39,6 @@ from core.client import create_client
 from core.git_metadata import GitMetadataChangedError, check_git_metadata
 from implementation_plan.plan import ImplementationPlan
 from phase_config import (
-    get_phase_model,
-    get_phase_thinking_budget,
     get_provider_extra_kwargs,
     infer_provider_from_model,
 )
@@ -50,6 +48,7 @@ from prompt_generator import (
     load_subtask_context,
 )
 from providers.factory import get_provider
+from run_gates import RunGates
 from task_logger import LogPhase, TaskLogger
 
 from .completion_gate import completion_refusal
@@ -441,7 +440,7 @@ async def run_parallel_coding_phase(
     source_spec_dir: Path | None = None,
     remote_control_session: str | None = None,
     recovery_manager: Any = None,
-    approved_plan: dict[str, object] | None = None,
+    gates: RunGates | None = None,
 ) -> PhaseRunResult:
     """Run one ``parallel_safe`` phase's subtasks concurrently in waves.
 
@@ -459,8 +458,9 @@ async def run_parallel_coding_phase(
 
     plan_path = spec_dir / "implementation_plan.json"
     base_branch = _task_branch(project_dir)
-    phase_model = get_phase_model(source_spec_dir or spec_dir, "coding", model)
-    thinking_budget = get_phase_thinking_budget(source_spec_dir or spec_dir, "coding")
+    gates = gates or RunGates.capture(spec_dir, source_spec_dir, model)
+    phase_model = gates.model("coding")
+    thinking_budget = gates.thinking_budget("coding")
 
     # One manager for the phase; `git worktree add` is serialized via this lock
     # so concurrent subtasks don't race the repo during the (fast) setup step.
@@ -533,7 +533,7 @@ async def run_parallel_coding_phase(
                         seed_profile_with_plan_commands,
                         child_path,
                         _child_plan,
-                        plan=approved_plan,
+                        plan=gates.approved_plan,
                     )
             except Exception:
                 pass  # never let allowlist seeding break a parallel subtask

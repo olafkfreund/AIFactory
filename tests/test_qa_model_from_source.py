@@ -82,10 +82,11 @@ async def _drive_qa(
     recorders, seen = _recorders()
     loop_globals = qa_loop.run_qa_validation_loop.__globals__
     with (
+        # Model/thinking resolve through the run-start snapshot (#1983).
+        patch.dict(sys.modules["run_gates"].__dict__, recorders),
         patch.dict(
             loop_globals,
             {
-                **recorders,
                 "is_build_complete": MagicMock(return_value=True),
                 "is_qa_approved": MagicMock(return_value=False),
                 "is_no_test_project": MagicMock(return_value=False),
@@ -160,8 +161,7 @@ async def test_parallel_coder_model_comes_from_source(tmp_path: Path) -> None:
 
     budget.side_effect = budget_then_stop
     with (
-        patch.object(wave, "get_phase_model", recorders["get_phase_model"]),
-        patch.object(wave, "get_phase_thinking_budget", budget),
+        patch.dict(sys.modules["run_gates"].__dict__, recorders),
         patch.object(wave, "_task_branch", MagicMock(return_value="main")),
         pytest.raises(_StopError),
     ):

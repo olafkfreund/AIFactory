@@ -418,6 +418,8 @@ def get_phase_model(
     spec_dir: Path,
     phase: Phase,
     cli_model: str | None = None,
+    *,
+    metadata: TaskMetadataConfig | None = None,
 ) -> str:
     """Resolve a stage's model, then assert it against the approved-model registry.
 
@@ -425,8 +427,10 @@ def get_phase_model(
     precedence). The registry assertion is advisory by default (warn), a no-op
     when ``AIFACTORY_MODEL_REGISTRY_ENFORCE=off``, and only blocks in ``deny``
     mode — so with the default flag this returns exactly what resolution picked.
+
+    metadata: pre-read task metadata (run-start snapshot, #1983); None reads spec_dir.
     """
-    model = _resolve_phase_model(spec_dir, phase, cli_model)
+    model = _resolve_phase_model(spec_dir, phase, cli_model, metadata=metadata)
     # Lazy import avoids a module-load cycle (model_registry imports this module).
     from model_registry import enforce_model_registry  # noqa: PLC0415
 
@@ -438,6 +442,8 @@ def _resolve_phase_model(
     spec_dir: Path,
     phase: Phase,
     cli_model: str | None = None,
+    *,
+    metadata: TaskMetadataConfig | None = None,
 ) -> str:
     """
     Get the resolved model ID for a specific execution phase.
@@ -457,6 +463,7 @@ def _resolve_phase_model(
         spec_dir: Path to the spec directory
         phase: Execution phase (spec, planning, coding, qa)
         cli_model: Model from CLI argument (optional)
+        metadata: pre-read task metadata (run-start snapshot, #1983); None reads spec_dir
 
     Returns:
         Resolved full model ID
@@ -473,7 +480,8 @@ def _resolve_phase_model(
     # model. (Without this, e.g. coding always falls back to the CLI's
     # 'sonnet' default and never routes to Ollama/qwen3 even when the user
     # selected ollama:qwen3:14b for the coding phase.)
-    metadata = load_task_metadata(spec_dir)
+    if metadata is None:
+        metadata = load_task_metadata(spec_dir)
 
     # Contract-pinned model wins over everything (RFC-0014 routing block).
     if metadata and metadata.get("pinnedModel"):
@@ -588,6 +596,8 @@ def get_phase_thinking(
     spec_dir: Path,
     phase: Phase,
     cli_thinking: str | None = None,
+    *,
+    metadata: TaskMetadataConfig | None = None,
 ) -> str:
     """
     Get the thinking level for a specific execution phase.
@@ -602,12 +612,14 @@ def get_phase_thinking(
         spec_dir: Path to the spec directory
         phase: Execution phase (spec, planning, coding, qa)
         cli_thinking: Thinking level from CLI argument (optional)
+        metadata: pre-read task metadata (run-start snapshot, #1983); None reads spec_dir
 
     Returns:
         Thinking level string
     """
     # Same precedence as get_phase_model: auto profile metadata wins over CLI.
-    metadata = load_task_metadata(spec_dir)
+    if metadata is None:
+        metadata = load_task_metadata(spec_dir)
 
     # `phaseThinking` carried the same undocumented `isAutoProfile` requirement
     # as `phaseModels` did (#1397): supplied on its own it was silently ignored.
@@ -632,6 +644,8 @@ def get_phase_thinking_budget(
     spec_dir: Path,
     phase: Phase,
     cli_thinking: str | None = None,
+    *,
+    metadata: TaskMetadataConfig | None = None,
 ) -> int | None:
     """
     Get the thinking budget tokens for a specific execution phase.
@@ -640,11 +654,14 @@ def get_phase_thinking_budget(
         spec_dir: Path to the spec directory
         phase: Execution phase (spec, planning, coding, qa)
         cli_thinking: Thinking level from CLI argument (optional)
+        metadata: pre-read task metadata (run-start snapshot, #1983); None reads spec_dir
 
     Returns:
         Token budget or None for no extended thinking
     """
-    thinking_level = get_phase_thinking(spec_dir, phase, cli_thinking)
+    thinking_level = get_phase_thinking(
+        spec_dir, phase, cli_thinking, metadata=metadata
+    )
     return get_thinking_budget(thinking_level)
 
 

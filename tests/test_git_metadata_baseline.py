@@ -420,10 +420,14 @@ async def test_coder_metadata_change_in_final_session_ends_in_error(
         "get_latest_commit": MagicMock(return_value="abc"),
         "get_commit_count": MagicMock(return_value=0),
         "infer_provider_from_model": MagicMock(return_value="claude"),
-        "get_phase_model": MagicMock(return_value="claude-sonnet-4-5"),
-        "get_phase_thinking_budget": MagicMock(return_value=None),
     }
     with contextlib.ExitStack() as stack:
+        stack.enter_context(
+            patch("run_gates.get_phase_model", return_value="claude-sonnet-4-5")
+        )
+        stack.enter_context(
+            patch("run_gates.get_phase_thinking_budget", return_value=None)
+        )
         for name, repl in patchers.items():
             stack.enter_context(patch.object(coder, name, repl))
         # The caller (cli/build_commands.py) must see the tamper, or it runs QA
@@ -494,10 +498,12 @@ async def test_parallel_child_metadata_change_raises_after_phase(
     monkeypatch.setattr(
         sys.modules["core.worktree"], "WorktreeManager", MagicMock(return_value=wt)
     )
+    monkeypatch.setattr(
+        "run_gates.get_phase_model", lambda *a, **k: "claude-sonnet-4-5"
+    )
+    monkeypatch.setattr("run_gates.get_phase_thinking_budget", lambda *a, **k: None)
     for name, repl in {
         "_task_branch": MagicMock(return_value="main"),
-        "get_phase_model": MagicMock(return_value="claude-sonnet-4-5"),
-        "get_phase_thinking_budget": MagicMock(return_value=None),
         "create_client": MagicMock(),
         "generate_subtask_prompt": MagicMock(return_value="p"),
         "load_subtask_context": MagicMock(return_value={}),
@@ -576,8 +582,6 @@ async def test_coder_parallel_metadata_change_ends_build_in_error(
     patchers = {
         "create_client": MagicMock(return_value=client),
         "infer_provider_from_model": MagicMock(return_value="claude"),
-        "get_phase_model": MagicMock(return_value="claude-sonnet-4-5"),
-        "get_phase_thinking_budget": MagicMock(return_value=None),
         "run_session_guarded": session,
         "emit_phase": emit,
         "get_graphiti_context": AsyncMock(return_value=""),
@@ -594,6 +598,12 @@ async def test_coder_parallel_metadata_change_ends_build_in_error(
         "get_commit_count": MagicMock(return_value=0),
     }
     with contextlib.ExitStack() as stack:
+        stack.enter_context(
+            patch("run_gates.get_phase_model", return_value="claude-sonnet-4-5")
+        )
+        stack.enter_context(
+            patch("run_gates.get_phase_thinking_budget", return_value=None)
+        )
         for name, repl in patchers.items():
             stack.enter_context(patch.object(coder, name, repl))
         stack.enter_context(
