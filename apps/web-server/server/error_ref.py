@@ -40,6 +40,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 __all__ = [
+    "BUILD_BACKEND_UNAVAILABLE",
     "InputRejectedError",
     "build_backend_unavailable",
     "client_error",
@@ -122,6 +123,13 @@ def client_error(logger: logging.Logger, context: str, exc: BaseException | str)
     return f"{context} (reference {error_reference(logger, context, exc)})"
 
 
-async def build_backend_unavailable(request: Request, exc: Exception) -> JSONResponse:
-    """Return 503 with the developer-written reason why launches are refused."""
-    return JSONResponse(status_code=503, content={"detail": str(exc)})
+# Fixed text: the exception may carry config values, so it stays in the log (#1943).
+BUILD_BACKEND_UNAVAILABLE = (
+    "Build backend unavailable: set AIFACTORY_BUILD_BACKEND to 'subprocess', "
+    "or to 'kubejob' with DATABASE_URL set"
+)
+
+
+async def build_backend_unavailable(_request: Request, _exc: Exception) -> JSONResponse:
+    """Map ``BuildBackendUnavailableError`` to 503 with a fixed reason (#1943)."""
+    return JSONResponse(status_code=503, content={"detail": BUILD_BACKEND_UNAVAILABLE})
