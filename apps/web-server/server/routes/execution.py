@@ -1172,9 +1172,9 @@ async def recover_task(
 
 def _create_and_run_metadata(
     request: CreateAndRunRequest, title: str, description: str
-) -> dict:
+) -> dict[str, Any]:
     """Build create-and-run's task_metadata.json (#392, #394); keeps the route under PLR0915."""
-    task_metadata: dict = {}
+    task_metadata: dict[str, Any] = {}
     if request.parallel is not None:
         task_metadata["parallel"] = request.parallel
     if request.workers is not None:
