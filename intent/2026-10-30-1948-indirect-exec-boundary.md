@@ -1,5 +1,5 @@
 ---
-status: approved
+status: draft
 issue: 1948
 author: olafkfreund
 ---
@@ -22,7 +22,7 @@ a fresh repo with a `Makefile` and a `package.json`:
 
 | Command | Allowed |
 | --- | --- |
-| `./evil.sh` (untracked) | no in that probe; yes once detection lists it |
+| `./evil.sh` | no: the parser passes `evil.sh`, so the `./` branch in `project/__init__.py:93` is not reached |
 | `bash evil.sh`, `sh evil.sh` | **yes**: `bash`/`sh` are `BASE_COMMANDS` |
 | `make test`, `npm run test`, `npm test` | yes |
 | `curl http://x` | yes: egress policy defaults to `off` |
