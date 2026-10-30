@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -15,7 +16,6 @@ sys.path.insert(0, str(_ROOT / "apps" / "backend"))
 
 from server.config import get_settings  # noqa: E402
 from server.error_ref import BUILD_BACKEND_UNAVAILABLE  # noqa: E402
-from server.main import create_app  # noqa: E402
 from server.routes import execution as exec_mod  # noqa: E402
 from server.routes import from_issue  # noqa: E402
 from server.services import agent_service as agent_service_mod  # noqa: E402
@@ -47,6 +47,11 @@ def env(tmp_path, monkeypatch):
     project = tmp_path / "proj"
     (project / ".aifactory" / "specs").mkdir(parents=True)
     monkeypatch.setattr(get_settings(), "DISABLE_AUTH", True)
+    # server.main runs create_app() at import, which sets the root logger to INFO;
+    # import here and restore the level so later tests are unaffected.
+    monkeypatch.setattr(logging.root, "level", logging.root.level)
+    from server.main import create_app  # noqa: PLC0415
+
     projects = {"p": {"path": str(project)}}
     monkeypatch.setattr(exec_mod, "load_projects", lambda: projects)
     monkeypatch.setattr(exec_mod, "resolve_project_id", lambda pid: pid)
