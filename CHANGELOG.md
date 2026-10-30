@@ -1,3 +1,39 @@
+## 3.10.14 - 2026-10-30
+
+OIDC ID-token hardening now actually applies, with one operator-facing
+behaviour change: the ID token's `iss` must match `APP_OIDC_ISSUER_URL`.
+The Ctrl+C resume re-checks plan approval, and a refused build-backend
+launch returns 503 instead of 500. No new env vars, no migrations.
+
+### Security
+
+- **OIDC ID-token claims are enforced (#1957, closes #1954).** The #324
+  `claims_options` and asymmetric-only alg list were passed to
+  `oauth.register()`, where Authlib never reads them. The callback now
+  pins `id_token_signing_alg_values_supported` to RS/ES/PS 256-512 and
+  validates `iss` (essential, `APP_OIDC_ISSUER_URL` with or without a
+  trailing slash), `aud` (essential, the client id) and `exp`. HS256 and
+  `alg=none` are refused even when discovery advertises them.
+  **Behaviour change:** `iss` must match the configured issuer, not just
+  the discovery document. Azure AD v1 setups using
+  `login.microsoftonline.com/<tid>` must switch `APP_OIDC_ISSUER_URL` to
+  the v2.0 issuer.
+- **The Ctrl+C resume re-checks plan approval (#1952, closes #1946).**
+  "Continue without instructions" re-runs the approval check before
+  restarting the agent, reading `review_state.json` and
+  `task_metadata.json` from the source spec dir rather than the
+  agent-writable worktree copy. When the approval no longer matches, it
+  warns and shows the TO RESUME box instead of resuming. The coder's solo
+  and review-required gate also reads the source spec dir.
+
+### Fixed
+
+- **A refused build-backend launch returns 503 (#1953, closes #1943).**
+  `BuildBackendUnavailableError` (#1942) was swallowed into an opaque 500.
+  `/start`, `/create-and-run`, `/from-plan` and `/from-issue` now return
+  503 with the fixed reason `BUILD_BACKEND_UNAVAILABLE`; neither the
+  exception text nor the raw env value reaches the caller.
+
 ## 3.10.13 - 2026-10-30
 
 Security hardening of the build path, with seven behaviour changes. Plan
