@@ -517,8 +517,8 @@ async def run_parallel_coding_phase(
                 child_spec_dir = _seed_child_spec(spec_dir, child_spec_dir)
 
             # Plan-driven allowlist: grant the plan's declared verification
-            # commands into THIS child worktree's security profile (its cwd ==
-            # the file the Bash hook reads). Without it, a from-scratch parallel
+            # commands into THIS child worktree's in-memory security profile (its
+            # cwd == the hook's project_dir). Without it, a from-scratch parallel
             # coder is blocked running uv/pytest/ruff/mypy. Idempotent; sanitised.
             try:
                 from project.analyzer import seed_profile_with_plan_commands

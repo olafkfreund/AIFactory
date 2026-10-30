@@ -437,16 +437,19 @@ class TestCustomAllowlist:
     def test_loads_custom_allowlist(self, temp_dir: Path):
         """Loads commands from .aifactory-allowlist."""
         allowlist = """# Custom commands
+uv
+pytest
 my-custom-tool
-another-command
 """
         (temp_dir / ".aifactory-allowlist").write_text(allowlist)
 
         analyzer = ProjectAnalyzer(temp_dir)
         analyzer._load_custom_allowlist()
 
-        assert "my-custom-tool" in analyzer.profile.custom_commands
-        assert "another-command" in analyzer.profile.custom_commands
+        assert "uv" in analyzer.profile.custom_commands
+        assert "pytest" in analyzer.profile.custom_commands
+        # #1944: names outside the grantable set are dropped (file is agent-writable)
+        assert "my-custom-tool" not in analyzer.profile.custom_commands
 
 
 class TestSecurityProfileGeneration:

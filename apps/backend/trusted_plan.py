@@ -822,7 +822,6 @@ def ingest_trusted_plan(
     plan: dict,
     *,
     keyring: dict[str, str] | None = None,
-    project_dir: Path | None = None,
 ) -> TrustedPlanVerification:
     """Verify a handed-off plan and, if trusted-complete, install it for build.
 
@@ -831,10 +830,8 @@ def ingest_trusted_plan(
     approval on the spec's provenance — letting the executor go straight to the
     wave dispatch and bypass the spec pipeline. On failure nothing is written.
 
-    When ``project_dir`` is given, the plan's declared verification commands are
-    also granted into that project's security allowlist — a signature-verified
-    plan is the strongest trust context for seeding (mirrors the build-start
-    seeding done by the executor).
+    Allowlist seeding is not done here: the hook's profile lives in the build
+    process, and the coder loop seeds it before every session (#1944).
     """
     result = verify_trusted_plan(plan, keyring=keyring)
     if not result.ok:
@@ -875,16 +872,6 @@ def ingest_trusted_plan(
     # Apply the v2 execution profile (model/parallel/workers/complexity/skills)
     # so the executor honors it and skips planning. No-op for v1 plans.
     apply_execution_profile(spec_dir, plan)
-
-    if project_dir is not None:
-        try:
-            from project.analyzer import seed_profile_with_plan_commands
-
-            seed_profile_with_plan_commands(
-                Path(project_dir), spec_dir / "implementation_plan.json"
-            )
-        except Exception:
-            pass  # seeding is best-effort; never fail a verified ingest on it
 
     return result
 
