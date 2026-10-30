@@ -43,7 +43,7 @@ from prompts import get_solo_prompt, is_first_run
 from providers.factory import get_provider
 from recovery import RecoveryManager
 from review.state import requires_review_before_coding
-from run_gates import RunGates, _approved_plan_snapshot  # noqa: F401 - re-export
+from run_gates import RunGates
 from task_logger import (
     LogPhase,
     get_task_logger,

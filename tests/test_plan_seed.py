@@ -17,7 +17,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps" / "backend"))
 
-from agents.coder import _approved_plan_snapshot  # noqa: E402
+from run_gates import _approved_plan_snapshot  # noqa: E402
 from project.analyzer import seed_profile_with_plan_commands  # noqa: E402
 from security.hooks import validate_command  # noqa: E402
 
