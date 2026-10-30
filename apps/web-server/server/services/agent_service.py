@@ -1290,6 +1290,7 @@ class AgentService(
         env.update(await project_settings_store.mcp_spawn_env(project_path))
         # #1929: after make_subprocess_env(), which denies this name.
         env.update(self._marker_nonce_env(task_id))
+        env["AIFACTORY_TASK_ID"] = task_id  # #1972: not a secret
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,

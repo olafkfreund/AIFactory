@@ -929,6 +929,7 @@ async def handoff_to_tfactory(
         spec_dir,
         spec_id,
         contract=handoff_contract(spec_dir, await lookup(spec_dir)),
+        task_id=f"{project_id}:{spec_id}",
     )
     result = await send_handoff(payload)
     try:
