@@ -1,5 +1,5 @@
 ---
-status: approved
+status: draft
 issue: 1948
 author: olafkfreund
 ---
@@ -44,8 +44,10 @@ guarantee. No reviewer has to rediscover this class from a script runner.
 
 - AIFactory backend: `security/hooks.py`, `project/structure_analyzer.py`,
   `project/analyzer.py` (re-detection), `core/client.py` (bwrap sandbox flag).
-- Deployed factories: `AIFACTORY_BASH_SANDBOX=false` in the AIFactory,
-  PFactory and TFactory manifests (k3d cannot host bwrap, #363).
+- Deployed factories: `AIFACTORY_BASH_SANDBOX=false` (the SDK bash sandbox) in
+  the AIFactory, PFactory and TFactory manifests (k3d cannot host it, #363).
+  The agent OS sandbox (`AIFACTORY_AGENT_SANDBOX`, `server/services/sandbox.py`)
+  can run in-pod but is not set in factory-gitops, so it is off.
 - #1932 (in-pod isolation from the control plane), #1944 and #1940 (profile and
   plan grants, closed).
 
