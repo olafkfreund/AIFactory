@@ -192,3 +192,26 @@ def git_metadata_write_refusal(path: str, cwd: str | None) -> str | None:
     if ".git" in {c.casefold() for f in forms for c in f.parts}:
         return refusal
     return None
+
+
+# Same name as ProjectAnalyzer.PROFILE_FILENAME (not imported: avoids an import cycle).
+_PROFILE_FILENAMES = (".aifactory-security.json", ".aifactory-allowlist")
+
+
+def protected_write_refusal(path: str, cwd: str | None) -> str | None:
+    """Refuse writes to git metadata (#1719) and to the security profile file (#1944)."""
+    if refusal := git_metadata_write_refusal(path, cwd):
+        return refusal
+    refusal = (
+        "Refused: the security profile is managed by AIFactory and cannot be written."
+    )
+    try:
+        p = Path(path).expanduser()
+        if not p.is_absolute():
+            p = Path(cwd or Path.cwd()) / p
+        forms = [Path(os.path.normpath(p)), p.resolve()]
+    except (OSError, RuntimeError, ValueError):
+        return refusal
+    if any(f.name.casefold() in _PROFILE_FILENAMES for f in forms):
+        return refusal
+    return None

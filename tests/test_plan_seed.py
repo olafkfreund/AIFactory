@@ -74,7 +74,6 @@ def test_seeded_commands_pass_real_enforcement(tmp_path):
     )
 
     seed_profile_with_plan_commands(project_dir, plan_path)
-    reset_profile_cache()  # force reload from the freshly-written file
 
     # `uv run` targets are checked too (#1812), so pytest must be granted.
     ok_uv, _ = validate_command("uv run pytest", project_dir)
@@ -106,7 +105,6 @@ def test_non_python_toolchain_granted_without_floor_fix(tmp_path):
     plan_path = _write_plan(project_dir / "spec", ["cargo"])
 
     seed_profile_with_plan_commands(project_dir, plan_path)
-    reset_profile_cache()
     ok, _ = validate_command("cargo test", project_dir)
     assert ok is True
 

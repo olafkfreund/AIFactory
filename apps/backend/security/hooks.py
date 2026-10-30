@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 from .ast_parser import UnparseableCommand, extract_command_segments_ast, is_available
 from .egress import check_egress
 from .exec_context import reset_worktree_root, set_worktree_root
-from .filesystem_validators import git_metadata_write_refusal  # noqa: E402
+from .filesystem_validators import protected_write_refusal  # noqa: E402
 from .profile import get_security_profile
 from .url_guard import assert_url_not_ssrf
 from .validator import VALIDATORS
@@ -169,6 +169,17 @@ async def bash_security_hook(
     if not command:
         return {}
 
+    # shortcut: text match only, an obfuscated path gets past it; enforcement no longer
+    # reads the file (#1944), so this is defence in depth.
+    if any(
+        n in command.casefold()
+        for n in (".aifactory-security.json", ".aifactory-allowlist")
+    ):
+        return {
+            "decision": "block",
+            "reason": "Refused: the security profile is managed by AIFactory.",
+        }
+
     # Get the working directory from input_data (SDK passes it there, not in context)
     cwd = input_data.get("cwd") or os.getcwd()
 
@@ -263,7 +274,7 @@ async def git_dir_write_hook(
     _tool_use_id: str | None = None,
     _context: Any | None = None,
 ) -> dict[str, Any]:
-    """Refuse file-tool writes into any ``.git`` path (#1719)."""
+    """Refuse file-tool writes into any ``.git`` path (#1719) or the profile file (#1944)."""
     if input_data.get("tool_name") not in _GIT_DIR_WRITE_TOOLS:
         return {}
     tool_input = input_data.get("tool_input")
@@ -275,8 +286,8 @@ async def git_dir_write_hook(
     if not paths or not all(isinstance(p, str) and p for p in paths):
         return {"decision": "block", "reason": "Missing or invalid file path."}
     for path in paths:
-        refusal = git_metadata_write_refusal(path, input_data.get("cwd"))
+        refusal = protected_write_refusal(path, input_data.get("cwd"))
         if refusal:
-            logger.warning("Blocked agent write into git metadata")
+            logger.warning("Blocked agent write into protected path")
             return {"decision": "block", "reason": refusal}
     return {}

@@ -378,8 +378,8 @@ async def run_autonomous_agent(
         # and misses tooling the scaffold adds later, so without this a
         # from-scratch build is blocked running its own checks. Idempotent and
         # cheap; only grants sanitised, grant-listed command names. project_dir
-        # here is the task worktree root == the agent's cwd == the file the Bash
-        # hook reads (mtime-invalidated, so it applies immediately). When review
+        # here is the task worktree root == the agent's cwd; grants go into the
+        # in-memory profile the Bash hook uses, so they apply immediately. When review
         # is required, grants come from the run-start snapshot (#1940).
         plan_file = spec_dir / "implementation_plan.json"
         if plan_file.exists():
