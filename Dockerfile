@@ -237,6 +237,10 @@ RUN want="$(tr -dc '0-9.' < /tmp/.nvmrc | cut -d. -f1)" \
 #                        20260909-r3.
 #   libbrotlicommon1 / libbrotlidec1 / libbrotlienc1 1.2.0-r5 — CVE-2026-111497
 #                        (HIGH), fixed in 1.2.0-r7. Named together: same origin.
+#   py3-pip-wheel 26.2.2-r0 — CVE-2026-114613 (HIGH), msgpack map-deserialization
+#                        leak in pip's vendored msgpack 1.2.1; fixed in 26.2.2-r1
+#                        (vendors 1.2.3). python-3.15 depends on it, so it cannot
+#                        be apk-deleted with the other pip packages below.
 # Floors rather than == pins, so the build stays green as Wolfi revs further
 # (1.38.0-r1 and later already exist); drop each once the base digest ships it.
 # Verified present in the Wolfi x86_64 APKINDEX, then confirmed against the
@@ -254,6 +258,7 @@ RUN apk add --no-cache \
         "libbrotlicommon1>=1.2.0-r7" \
         "libbrotlidec1>=1.2.0-r7" \
         "libbrotlienc1>=1.2.0-r7" \
+        "py3-pip-wheel>=26.2.2-r1" \
         "curl>=8.23.0-r0" \
         "libcurl-openssl4>=8.23.0-r0" \
         git \
@@ -496,7 +501,7 @@ COPY --from=py-build --chown=nonroot:nonroot \
 
 # Remove the base image's pip too (same findings, second copy).
 # py3-pip-wheel ships deliberately: python-3.15 depends on it, so apk refuses to
-# drop it (warns, exits 0). Its CVEs ride base-digest bumps. The apk info
+# drop it (warns, exits 0). Its CVEs are cleared by its floor above. The apk info
 # checks fail the build if the removal ever silently no-ops.
 USER root
 RUN apk del --no-cache py3.15-pip py3.15-pip-base \
