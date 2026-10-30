@@ -2,7 +2,7 @@
 
 ### Security
 
-- **joserfc 1.7.7.** `requirements.lock` moves joserfc 1.7.4 -> 1.7.7
+- **joserfc 1.7.5.** `requirements.lock` moves joserfc 1.7.4 -> 1.7.5
   (CVE-2026-119283 HIGH, GHSA-jpxq-7h8p-2q76), and
   `apps/web-server/requirements.txt` gains a `joserfc>=1.7.5` floor next to
   Authlib, clearing the Trivy P0 gate. Not reachable in this code: the flaw is
