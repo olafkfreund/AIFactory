@@ -573,6 +573,12 @@ ARG SECURITY_REFRESH=0
 RUN echo "security refresh: ${SECURITY_REFRESH}" \
     && apk upgrade --no-cache
 
+# CVE-2026-114613 (pip's vendored msgpack 1.2.1): gateway.py is stdlib-only, so
+# pip goes as in the runtime stage; py3-pip-wheel (python dep) takes the floor.
+RUN apk add --no-cache "py3-pip-wheel>=26.2.2-r1" \
+ && apk del --no-cache py3.15-pip py3.15-pip-base \
+ && ! apk info -e py3.15-pip && ! apk info -e py3.15-pip-base
+
 # COPY creates /app without the execute bit here, so the nonroot user cannot
 # traverse it; create it explicitly.
 RUN mkdir -m 0755 /app
