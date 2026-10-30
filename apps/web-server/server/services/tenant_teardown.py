@@ -55,7 +55,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from ..db_pool import pool_kwargs
+from server.db_pool import pool_kwargs
 
 logger = logging.getLogger(__name__)
 

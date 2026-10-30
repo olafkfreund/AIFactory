@@ -19,7 +19,8 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from ..db_pool import pool_kwargs
+from server.db_pool import pool_kwargs
+
 from ..paths import get_data_dir
 
 logger = logging.getLogger(__name__)
