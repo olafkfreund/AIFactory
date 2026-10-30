@@ -8,7 +8,7 @@ Conforms to the Factory correlation-key RFC (olafkfreund/Factory#4 / RFC-0001):
 ``{correlation_key, service, task_id, status, phase, updated_at}`` + an optional
 ``correlation`` chain block. The shared key is ``<repo>#<issue number>`` when the
 task knows its repo (RFC-0001 §2, #1775), the bare issue number otherwise, with a
-synthetic ``af-<spec_id>`` fallback so it is never null.
+synthetic ``af-<task_id>`` fallback so it is never null.
 
 Additive envelope upgrade (#466) — every field below rides *alongside* the
 existing ones; nothing is removed, so existing consumers (CFactory) keep working
@@ -228,14 +228,15 @@ def read_issue_repo(spec_dir: Path) -> str | None:
 
 
 def correlation_key(
-    spec_id: str, issue_number: int | None, repo: str | None = None
+    task_id: str, issue_number: int | None, repo: str | None = None
 ) -> str:
     """RFC-0001 §2: ``<repo>#<n>`` when the repo is known, else the synthetic
-    ``af-<spec_id>`` (never a bare number, #1960)."""
+    ``af-<project_id>:<spec_id>`` (never a bare number, #1960; project-scoped
+    because spec ids repeat across projects, #1972)."""
     return (
         f"{repo}#{issue_number}"
         if issue_number is not None and repo
-        else f"af-{spec_id}"
+        else f"af-{task_id}"
     )
 
 
@@ -586,10 +587,10 @@ def build_completion_event(
             "synthetic key %s (no cross-service join)",
             sanitize_log(spec_id),
             "number" if issue_number is None else "repo",
-            sanitize_log(correlation_key(spec_id, None)),
+            sanitize_log(correlation_key(task_id, None)),
         )
     event = {
-        "correlation_key": correlation_key(spec_id, issue_number, repo),
+        "correlation_key": correlation_key(task_id, issue_number, repo),
         "service": SERVICE_NAME,
         "task_id": task_id,
         "status": status,
@@ -687,7 +688,7 @@ def build_worker_event(
         "duration_ms": int(rec.get("duration_ms", 0) or 0),
     }
     event = {
-        "correlation_key": correlation_key(spec_id, issue_number, repo),
+        "correlation_key": correlation_key(task_id, issue_number, repo),
         "service": SERVICE_NAME,
         "task_id": task_id,
         "status": _WORKER_STATUS,
@@ -759,7 +760,7 @@ def build_worker_progress_event(
         "elapsed_ms": int(rec.get("elapsed_ms", 0) or 0),
     }
     event = {
-        "correlation_key": correlation_key(spec_id, issue_number, repo),
+        "correlation_key": correlation_key(task_id, issue_number, repo),
         "service": SERVICE_NAME,
         "task_id": task_id,
         "status": _WORKER_PROGRESS_STATUS,
