@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1946
 spec: spec/2026-10-30-1946-resume-approval.md
 coders: [agy]
