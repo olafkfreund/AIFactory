@@ -146,7 +146,7 @@ def test_task_rows_declare_the_correlation_key(tmp_path, monkeypatch):
         return task_service.task_to_dict(task)
 
     assert row("001-a")["correlationKey"] == "owner/repo#7"
-    assert row("002-b")["correlationKey"] == "af-002-b"
+    assert row("002-b")["correlationKey"] == "af-p:002-b"
 
 
 def test_task_rows_surface_contract_hold_from_plan(tmp_path, monkeypatch):
