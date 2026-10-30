@@ -1,3 +1,52 @@
+## 3.10.15 - 2026-10-30
+
+Postgres pools are capped so the factory fleet fits the shared database,
+the solo flag and the QA plan grants read their gate from the source spec
+dir, and a task with an issue but no known repo gets a synthetic
+correlation key. Two behaviour changes; new optional env vars
+`DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_TIMEOUT`,
+`TEARDOWN_DB_POOL_SIZE`, `TEARDOWN_DB_MAX_OVERFLOW`. No migrations.
+
+### Security
+
+- **A resumed run reads solo mode from the source spec dir (#1967,
+  closes #1958).** `solo` and `require_review` both come from the source
+  spec dir, so a `soloMode` flag written into the worktree
+  `task_metadata.json` no longer switches a resumed run to the solo flow.
+- **QA plan-command seeding reads the approval gate from the source spec
+  dir (#1970, closes #1955).** A forged worktree `review_state.json` or a
+  flipped `requireReviewBeforeCoding` no longer grants a widened plan's
+  `required_commands`. A `--project-dir` at a task worktree root maps to
+  its source project; any other path under `.aifactory/worktrees`, or a
+  spec with no source dir, grants nothing (QA still runs).
+
+### Changed
+
+- **Postgres pools are capped (#1971, closes #1963).** The main web
+  engine uses 2 + 2 connections per pod (was 5 + 10), tunable with
+  `DB_POOL_SIZE` / `DB_MAX_OVERFLOW`; the tenant-teardown CronJob engine
+  uses 1 + 0 (`TEARDOWN_DB_POOL_SIZE` / `TEARDOWN_DB_MAX_OVERFLOW`).
+  `pool_timeout` drops to 10 s (`DB_POOL_TIMEOUT`), so a saturated pool
+  fails fast with `QueuePool limit ... reached`. Authz and merger
+  handlers release their request session earlier. SQLite is unchanged.
+- **Repo-scoped correlation key (#1966, closes #1960).** A task with an
+  issue but no known repo now uses the synthetic `af-<spec_id>` key, in
+  completion events, task rows, the from-issue response and the TFactory
+  handoff, instead of a bare issue number. **Behaviour change:** a
+  repo-less task already in flight under a bare number continues on a new
+  CFactory card.
+
+### Fixed
+
+- **A `None` anchor key version no longer raises in logging (#1965,
+  closes #1961).** Two log calls in `per_tenant_anchor_key.py` format the
+  version with `%s` instead of `%d`.
+
+### Docs
+
+- Intent and spec for containing indirect execution via agent-written
+  scripts (#1968, refs #1948). No code.
+
 ## 3.10.14 - 2026-10-30
 
 OIDC ID-token hardening now actually applies, with one operator-facing
