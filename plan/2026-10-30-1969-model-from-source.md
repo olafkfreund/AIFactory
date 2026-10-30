@@ -62,6 +62,10 @@ All paths below are relative to the repo root. Python:
      `source_spec_dir=gate_dir or Path(os.devnull)` to
      `run_qa_validation_loop` with a one-line comment (no source: no metadata,
      defaults). Add `import os` if missing.
+     Deviation: instead of hoisting, `gate_dir: Path | None = None` is set
+     before the seed `try` and the import stays inside it (hoisting tripped the
+     strict-ruff PLC0415 ratchet); a seed exception leaves `gate_dir` None, so
+     QA falls back to `os.devnull` (fail closed).
    - New `tests/test_qa_model_from_source.py`: worktree spec dir with
      `QA_FIX_REQUEST.md` and metadata `{"phaseModels": {"qa": "haiku",
      "qa_fixer": "haiku"}, "phaseThinking": {"qa": "none", "qa_fixer": "none"}}`;
