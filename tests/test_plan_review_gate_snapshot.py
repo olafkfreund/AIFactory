@@ -63,6 +63,7 @@ async def _drive(
     planner: Callable[[Path], None],
     next_subtask: dict | None = None,
     source_spec_dir: Path | None = None,
+    extra: dict | None = None,
 ) -> AsyncMock:
     """Run run_autonomous_agent; ``planner`` acts as the first agent session."""
     import agents.coder as coder
@@ -108,14 +109,14 @@ async def _drive(
         "get_commit_count": MagicMock(return_value=0),
         "infer_provider_from_model": MagicMock(return_value="claude"),
         "AUTO_CONTINUE_DELAY_SECONDS": 0,
+        **(extra or {}),
     }
+    # Model/thinking resolve through the run-start snapshot (#1983).
+    model = patchers.pop("get_phase_model", MagicMock(return_value="claude-sonnet-4-5"))
+    budget = patchers.pop("get_phase_thinking_budget", MagicMock(return_value=None))
     with contextlib.ExitStack() as stack:
-        stack.enter_context(
-            patch("run_gates.get_phase_model", return_value="claude-sonnet-4-5")
-        )
-        stack.enter_context(
-            patch("run_gates.get_phase_thinking_budget", return_value=None)
-        )
+        stack.enter_context(patch("run_gates.get_phase_model", model))
+        stack.enter_context(patch("run_gates.get_phase_thinking_budget", budget))
         for name, repl in patchers.items():
             stack.enter_context(patch.object(coder, name, repl))
         await coder.run_autonomous_agent(
@@ -402,3 +403,56 @@ async def test_resume_gate_comes_from_source_not_worktree_metadata(tmp_path):
     granted = _profile_commands(tmp_path)
     assert "uv" in granted
     assert "npx" not in granted
+
+
+@pytest.mark.asyncio
+async def test_coder_model_comes_from_source_not_worktree_metadata(
+    tmp_path, monkeypatch
+):
+    """#1969: coder model and thinking come from source_spec_dir, not worktree."""
+    import shutil
+
+    import phase_config
+
+    monkeypatch.delenv("AIFACTORY_FALLBACK_MODEL", raising=False)
+    monkeypatch.delenv("AIFACTORY_ROUTING_POLICY", raising=False)
+
+    source = _make_spec(tmp_path, {"requireReviewBeforeCoding": False})
+    worktree = shutil.copytree(source, tmp_path / "worktree")
+    _write_meta(
+        worktree,
+        {
+            "requireReviewBeforeCoding": False,
+            "pinnedModel": "haiku",
+            "thinkingLevel": "low",
+        },
+    )
+
+    models: list[str] = []
+    budgets: list[int | None] = []
+
+    def rec_model(*a, **kw):
+        res = phase_config.get_phase_model(*a, **kw)
+        models.append(res)
+        return res
+
+    def rec_budget(*a, **kw):
+        res = phase_config.get_phase_thinking_budget(*a, **kw)
+        budgets.append(res)
+        return res
+
+    m = await _drive(
+        worktree,
+        tmp_path,
+        _planner(PLAN_A),
+        next_subtask={"id": "1", "description": "d"},
+        source_spec_dir=source,
+        extra={
+            "get_phase_model": MagicMock(side_effect=rec_model),
+            "get_phase_thinking_budget": MagicMock(side_effect=rec_budget),
+        },
+    )
+
+    assert m.await_count == 2
+    assert phase_config.resolve_model_id("haiku") not in models
+    assert phase_config.get_thinking_budget("low") not in budgets

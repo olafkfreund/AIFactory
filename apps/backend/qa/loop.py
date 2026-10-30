@@ -148,11 +148,12 @@ def _create_qa_reviewer_provider(
 # =============================================================================
 
 
-async def run_qa_validation_loop(
+async def run_qa_validation_loop(  # noqa: PLR0913 - #1969 source dir + #1983 gates
     project_dir: Path,
     spec_dir: Path,
     model: str,
     verbose: bool = False,
+    source_spec_dir: Path | None = None,
     gates: RunGates | None = None,
 ) -> bool:
     """
@@ -174,13 +175,15 @@ async def run_qa_validation_loop(
         spec_dir: Spec directory
         model: Claude model to use
         verbose: Whether to show detailed output
+        source_spec_dir: Canonical spec dir when spec_dir is a worktree copy;
+            model/thinking come from it (#1969)
         gates: run-start gate snapshot (#1983); captured at loop start when
             None, which is the `--qa` process
 
     Returns:
         True if QA approved, False otherwise
     """
-    gates = gates or RunGates.capture(spec_dir, None, model)
+    gates = gates or RunGates.capture(spec_dir, source_spec_dir, model)
     debug_section("qa_loop", "QA Validation Loop")
     debug(
         "qa_loop",

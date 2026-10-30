@@ -453,7 +453,8 @@ async def run_autonomous_agent(
         commit_before = get_latest_commit(project_dir)
         commit_count_before = get_commit_count(project_dir)
 
-        # Get the phase-specific model and thinking level (respects task_metadata.json configuration)
+        # Get the phase-specific model and thinking level (respects task_metadata.json
+        # configuration from the source copy, which the agent cannot edit, #1969)
         # first_run means we're in planning phase, otherwise coding phase
         current_phase = "planning" if first_run else "coding"
         phase_model = gates.model(current_phase)
