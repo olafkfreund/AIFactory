@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1969
 spec: spec/2026-10-30-1969-model-from-source.md
 coders:
