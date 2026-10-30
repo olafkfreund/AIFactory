@@ -1170,6 +1170,43 @@ async def recover_task(
     }
 
 
+def _create_and_run_metadata(
+    request: CreateAndRunRequest, title: str, description: str
+) -> dict:
+    """Build create-and-run's task_metadata.json (#392, #394); keeps the route under PLR0915."""
+    task_metadata: dict = {}
+    if request.parallel is not None:
+        task_metadata["parallel"] = request.parallel
+    if request.workers is not None:
+        task_metadata["workers"] = request.workers
+    # Opt-in: auto-handover the finished build to TFactory for testing (#496).
+    if getattr(request, "auto_handover_tfactory", False):
+        task_metadata["auto_handover_tfactory"] = True
+    if request.mode and request.mode != "full":  # "full" is the default — don't persist
+        task_metadata["mode"] = request.mode
+    if request.model:
+        task_metadata["model"] = request.model
+    if request.complexity:
+        task_metadata["complexity"] = request.complexity
+
+    # Hybrid skill auto-selection (#394) — propose step. With no manual skills,
+    # rank relevant skills from the task description and persist them as
+    # suggestedSkills; the build uses them when no selectedSkills are set (see
+    # AgentService._write_skill_context). No LLM cost — deterministic matcher.
+    if not task_metadata.get("selectedSkills"):
+        try:
+            from server.services.skills_service import get_skills_service
+
+            suggested = get_skills_service().suggest_selected_skills(
+                f"{title}\n{description}", max_results=5
+            )
+            if suggested:
+                task_metadata["suggestedSkills"] = suggested
+        except Exception:  # noqa: BLE001 - skill proposal is best-effort
+            pass
+    return task_metadata
+
+
 @router.post("/create-and-run")
 async def create_and_run_task(
     project_id: str,
@@ -1228,37 +1265,7 @@ async def create_and_run_task(
     # via AgentService._read_parallel_opts; without this, create-and-run builds
     # run serial (workers.max=1) even when parallel:true/workers:N was requested,
     # making the #376 wave executor unreachable from the primary web flow.
-    task_metadata: dict = {}
-    if request.parallel is not None:
-        task_metadata["parallel"] = request.parallel
-    if request.workers is not None:
-        task_metadata["workers"] = request.workers
-    # Opt-in: auto-handover the finished build to TFactory for testing (#496).
-    if getattr(request, "auto_handover_tfactory", False):
-        task_metadata["auto_handover_tfactory"] = True
-    if request.mode and request.mode != "full":  # "full" is the default — don't persist
-        task_metadata["mode"] = request.mode
-    if request.model:
-        task_metadata["model"] = request.model
-    if request.complexity:
-        task_metadata["complexity"] = request.complexity
-
-    # Hybrid skill auto-selection (#394) — propose step. With no manual skills,
-    # rank relevant skills from the task description and persist them as
-    # suggestedSkills; the build uses them when no selectedSkills are set (see
-    # AgentService._write_skill_context). No LLM cost — deterministic matcher.
-    if not task_metadata.get("selectedSkills"):
-        try:
-            from server.services.skills_service import get_skills_service
-
-            suggested = get_skills_service().suggest_selected_skills(
-                f"{title}\n{description}", max_results=5
-            )
-            if suggested:
-                task_metadata["suggestedSkills"] = suggested
-        except Exception:  # noqa: BLE001 - skill proposal is best-effort
-            pass
-
+    task_metadata = _create_and_run_metadata(request, title, description)
     if task_metadata:
         (spec_dir / "task_metadata.json").write_text(
             json.dumps(task_metadata, indent=2)
