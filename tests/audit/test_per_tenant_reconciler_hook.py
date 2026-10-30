@@ -151,3 +151,32 @@ class TestPerTenantEnabledFlag:
     def test_case_insensitive(self) -> None:
         with patch.dict("os.environ", {"AUDIT_ANCHOR_PER_TENANT": "TRUE"}):
             assert per_tenant_enabled() is True
+
+
+@pytest.mark.asyncio
+async def test_none_version_is_logged_not_raised(caplog) -> None:
+    """#1961: a key row without a version must log, not hit a %d TypeError."""
+    import logging
+
+    from server.database.models import AuditSigningKey
+
+    caplog.set_level(logging.DEBUG, logger="server.services.per_tenant_anchor_key")
+    with (
+        patch("server.services.per_tenant_anchor_key.get_backend") as mock_kms,
+        patch(
+            "server.services.per_tenant_anchor_key.generate_new_key",
+            return_value=b"\x55" * 32,
+        ),
+    ):
+        mock_kms.return_value.encrypt.return_value = b"\xaa" * 64
+        assert await issue_tenant_anchor_key(_make_db(), None, ORG_ID) is True
+
+    existing = MagicMock(spec=AuditSigningKey)
+    existing.version = None
+    db = AsyncMock()
+    db.execute.return_value = MagicMock()
+    db.execute.return_value.scalar_one_or_none.return_value = existing
+    assert await issue_tenant_anchor_key(db, None, ORG_ID) is False
+
+    assert "version=None" in caplog.text
+    assert "(vNone)" in caplog.text
