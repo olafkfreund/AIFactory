@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1958
 spec: spec/2026-10-30-1958-solo-from-source.md
 coders:
