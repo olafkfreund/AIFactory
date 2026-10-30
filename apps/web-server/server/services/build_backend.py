@@ -406,7 +406,7 @@ def backend_config_error(store_enabled: bool) -> str | None:
         return None
     if raw != BACKEND_KUBEJOB:
         return (
-            f"unknown {_ENV_BACKEND}={raw!r}; valid values are "
+            f"unknown {_ENV_BACKEND} value; valid values are "
             f"{BACKEND_SUBPROCESS!r} and {BACKEND_KUBEJOB!r}"
         )
     if not store_enabled:

@@ -537,7 +537,7 @@ def test_backend_unknown_falls_back_to_subprocess(
         ("subprocess", False, None),
         ("kubejob", True, None),
         ("kubejob", False, "DATABASE_URL"),
-        ("lambda", True, "'lambda'"),
+        ("lambda", True, "unknown AIFACTORY_BUILD_BACKEND value"),
     ],
 )
 def test_backend_config_error(
@@ -556,6 +556,7 @@ def test_backend_config_error(
     else:
         assert msg is not None
         assert expected in msg
+        assert "lambda" not in msg  # never echo the raw value (#1943)
 
 
 def test_log_backend_config(

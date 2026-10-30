@@ -30,6 +30,8 @@ from pydantic import BaseModel, Field, SecretStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from server.oidc import authorize_access_token
+
 from ..config import get_settings
 from ..database import User
 from ..database.engine import get_db
@@ -189,7 +191,7 @@ async def oidc_callback(request: Request, db: AsyncSession = Depends(get_db)):
 
     oauth = get_oauth_client()
     try:
-        token = await oauth.oidc.authorize_access_token(request)
+        token = await authorize_access_token(oauth.oidc, request)
     except Exception as exc:  # authlib's specific exceptions vary by version
         logger.warning(
             "OIDC callback rejected: %s: %s",

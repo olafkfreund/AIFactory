@@ -31,6 +31,7 @@ from .config import (
 )
 from .crypto.kms import enforce_kms_safety
 from .database.engine import init_db
+from .error_ref import build_backend_unavailable
 from .logging_config import setup_logging
 from .routes import (
     api_keys,
@@ -75,6 +76,7 @@ from .routes import (
     settings as settings_routes,
 )
 from .services import github_app, project_settings_store
+from .services.build_backend import BuildBackendUnavailableError
 from .services.skills_service import init_skills_service
 from .websockets import (
     events as events_ws,
@@ -454,6 +456,7 @@ def create_app() -> FastAPI:
         docs_url="/docs" if settings.DEBUG else None,
         redoc_url="/redoc" if settings.DEBUG else None,
     )
+    app.add_exception_handler(BuildBackendUnavailableError, build_backend_unavailable)
 
     # OTel FastAPI instrumentation (Epic #35 #42 PR-1). Installs at
     # the ASGI layer so the request span is opened BEFORE any user
