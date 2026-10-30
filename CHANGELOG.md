@@ -7,7 +7,8 @@ launches are refused when the build backend cannot run. When review is
 required, plan-command grants come only from the run-start plan. The Bash
 hook no longer trusts the agent-writable security profile or
 `.aifactory-allowlist`. Authz denials and rmux console attach/detach audit
-rows are now committed on Postgres. No new operator env vars, no
+rows are now committed on Postgres. Trivy P0 CVEs are cleared in Authlib,
+dnspython and the images' py3-pip-wheel. No new operator env vars, no
 migrations.
 
 ### Security
@@ -18,6 +19,10 @@ migrations.
   Authlib floor in `apps/web-server/requirements.txt` rises to `>=1.9.1`,
   clearing the Trivy P0 gate. Not reachable in this code: the OIDC client
   verifies ID tokens with joserfc, and nothing calls `authlib.jose`.
+- **py3-pip-wheel 26.2.2-r1 floor (#1951).** CVE-2026-114613 (HIGH,
+  pip's vendored msgpack) in the pinned Chainguard base; floored in the
+  runtime and gateway images. The gateway image also drops `py3.15-pip` and
+  `py3.15-pip-base`, as runtime already did.
 - **Build stdout control markers are authenticated (#1938, closes #1929).**
   The control plane accepts `__EXEC_PHASE__`, `__USAGE__` and the new
   `__RATE_LIMIT__` markers only with the build's per-task nonce
