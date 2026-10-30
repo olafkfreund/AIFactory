@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import importlib
 import json
 import os
 import sys
@@ -240,3 +241,183 @@ def test_approval_still_valid_refuses_forged_review_state(tmp_path: Path) -> Non
     (spec / "implementation_plan.json").write_text(json.dumps({**PLAN, "x": 1}))
     ReviewState().approve(spec)  # forged against the changed plan
     assert _approval_still_valid(spec, None, gates) is False
+
+
+_FORGED = {
+    "pinnedModel": "haiku",
+    "thinkingLevel": "none",
+    "phaseThinking": {"coding": "none"},
+}
+_CODING_META = {
+    "phaseModels": {"coding": "sonnet"},
+    "phaseThinking": {"coding": "high"},
+}
+
+
+def _client_args(create_client) -> list[tuple[str, int | None]]:
+    return [
+        (c.args[2], c.kwargs["max_thinking_tokens"])
+        for c in create_client.call_args_list
+    ]
+
+
+@pytest.mark.asyncio
+async def test_serial_coder_second_session_ignores_metadata_forged_by_the_first(
+    tmp_path: Path,
+) -> None:
+    from unittest.mock import AsyncMock, MagicMock, patch  # noqa: PLC0415
+
+    from agents import coder  # noqa: PLC0415
+
+    source = _spec(tmp_path, "source", **_CODING_META)
+    worktree = _spec(tmp_path, "worktree", **_CODING_META)
+    client = MagicMock(
+        __aenter__=AsyncMock(return_value=None), __aexit__=AsyncMock(return_value=False)
+    )
+    client.__aenter__.return_value = client
+    create_client = MagicMock(return_value=client)
+
+    async def session(*_a: object, **_k: object) -> tuple[str, str, dict[str, object]]:
+        (source / "task_metadata.json").write_text(
+            json.dumps({**_CODING_META, **_FORGED})
+        )
+        return ("continue", "", {})
+
+    patchers = {
+        "create_client": create_client,
+        "run_session_guarded": session,
+        "check_git_metadata": MagicMock(),
+        "get_graphiti_context": AsyncMock(return_value=""),
+        "RecoveryManager": MagicMock(
+            return_value=MagicMock(get_attempt_count=MagicMock(return_value=0))
+        ),
+        "StatusManager": MagicMock(),
+        "get_task_logger": MagicMock(return_value=None),
+        "debug_memory_system_status": MagicMock(),
+        "record_turn": MagicMock(),
+        "CompactionDetector": MagicMock(),
+        "build_operational_context": MagicMock(return_value=""),
+        "drain_inbox": MagicMock(return_value=[]),
+        "is_build_complete": MagicMock(return_value=False),
+        "print_progress_summary": MagicMock(),
+        "print_session_header": MagicMock(),
+        "count_subtasks": MagicMock(return_value=(0, 1)),
+        "count_subtasks_detailed": MagicMock(
+            return_value={"completed": 0, "total": 1, "in_progress": 0}
+        ),
+        "get_current_phase": MagicMock(return_value=None),
+        "get_next_subtask": MagicMock(return_value={"id": "1", "status": "pending"}),
+        "get_latest_commit": MagicMock(return_value="abc"),
+        "get_commit_count": MagicMock(return_value=0),
+        "emit_phase": MagicMock(),
+        "AUTO_CONTINUE_DELAY_SECONDS": 0,
+    }
+    with contextlib.ExitStack() as stack:
+        for name, repl in patchers.items():
+            stack.enter_context(patch.object(coder, name, repl))
+        await coder.run_autonomous_agent(
+            project_dir=tmp_path,
+            spec_dir=worktree,
+            model="sonnet",
+            max_iterations=2,
+            source_spec_dir=source,
+        )
+
+    first, second = _client_args(create_client)
+    assert second == first
+    assert "haiku" not in second[0]
+    assert second[1] == get_thinking_budget("high")
+
+
+@pytest.mark.asyncio
+async def test_parallel_wave_ignores_metadata_forged_after_capture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unittest.mock import AsyncMock, MagicMock  # noqa: PLC0415
+
+    import agents.parallel_integration as wave  # noqa: PLC0415
+    from agents.parallel_runner import PhaseRunResult  # noqa: PLC0415
+    from implementation_plan.plan import ImplementationPlan  # noqa: PLC0415
+
+    importlib.import_module("core.worktree")
+    spec = _spec(tmp_path, **_CODING_META)
+    (spec / "implementation_plan.json").write_text(
+        json.dumps(
+            {
+                "feature": "f",
+                "phases": [
+                    {
+                        "phase": 1,
+                        "name": "P",
+                        "parallel_safe": True,
+                        "subtasks": [
+                            {"id": "A", "description": "a", "status": "pending"}
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    child = tmp_path / "child"
+    (child / ".aifactory" / "specs" / spec.name).mkdir(parents=True)
+    wt = MagicMock()
+    wt.create_worktree.return_value = MagicMock(path=child)
+    monkeypatch.setattr(
+        sys.modules["core.worktree"], "WorktreeManager", MagicMock(return_value=wt)
+    )
+    create_client = MagicMock()
+    for name, repl in {
+        "_task_branch": MagicMock(return_value="main"),
+        "create_client": create_client,
+        "generate_subtask_prompt": MagicMock(return_value="p"),
+        "load_subtask_context": MagicMock(return_value={}),
+        "get_graphiti_context": AsyncMock(return_value=""),
+        "_head_commit": MagicMock(return_value="abc"),
+        "run_session_guarded": AsyncMock(return_value=("complete", "", {})),
+        "check_git_metadata": MagicMock(),
+        "read_test_evidence": MagicMock(return_value={}),
+        "_capture_memory": AsyncMock(),
+        "record_subtask_started": MagicMock(),
+    }.items():
+        monkeypatch.setattr(wave, name, repl)
+
+    async def _phase(subtasks, *, run_subtask, **_kw):
+        await run_subtask(subtasks[0], index=0)
+        return PhaseRunResult(completed_ids=[], failed_ids=[])
+
+    monkeypatch.setattr(wave, "run_parallel_phase", _phase)
+    gates = RunGates.capture(spec, None, "sonnet")
+    expected = (gates.model("coding"), gates.thinking_budget("coding"))
+    (spec / "task_metadata.json").write_text(json.dumps({**_CODING_META, **_FORGED}))
+    plan = ImplementationPlan.load(spec / "implementation_plan.json")
+    await wave.run_parallel_coding_phase(
+        plan=plan,
+        phase=plan.phases[0],
+        project_dir=tmp_path,
+        spec_dir=spec,
+        model="sonnet",
+        workers=1,
+        gates=gates,
+    )
+
+    assert _client_args(create_client) == [expected]
+    assert expected[1] == get_thinking_budget("high")
+
+
+def test_injection_scan_ignores_approval_forged_after_capture(
+    tmp_path: Path,
+) -> None:
+    from unittest.mock import patch  # noqa: PLC0415
+
+    from agents.coder import _injection_scan_blocks  # noqa: PLC0415
+    from security.content_scan import ScanResult  # noqa: PLC0415
+
+    spec = _spec(tmp_path)
+    gates = RunGates.capture(spec, None, None)
+    ReviewState().approve(spec)  # forged after capture
+    flagged = ScanResult(verdict="flagged", mode="on", matched=[{"pattern": "p"}])
+    with (
+        patch("security.content_scan.run_scan_gate", return_value=flagged),
+        patch("agents.coder.emit_phase"),
+    ):
+        assert _injection_scan_blocks(spec, tmp_path, None, gates) is True

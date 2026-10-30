@@ -42,7 +42,7 @@ from prompt_generator import (
 from prompts import get_solo_prompt, is_first_run
 from providers.factory import get_provider
 from recovery import RecoveryManager
-from review.state import ReviewState, requires_review_before_coding
+from review.state import requires_review_before_coding
 from run_gates import RunGates, _approved_plan_snapshot  # noqa: F401 - re-export
 from task_logger import (
     LogPhase,
@@ -185,8 +185,10 @@ async def run_autonomous_agent(
     # and fail-closed: flagged spec/repo content routes the task to human_review
     # BEFORE any agent session sees it. Runs on every start, but an operator
     # approval (the existing plan-review flow) is the false-positive escape
-    # hatch and lets a flagged task proceed on resume.
-    if _injection_scan_blocks(spec_dir, project_dir, source_spec_dir):
+    # hatch and lets a flagged task proceed on resume. The approval comes from
+    # the run-start snapshot (#1983), so it is captured before the scan.
+    gates = gates or RunGates.capture(spec_dir, source_spec_dir, model)
+    if _injection_scan_blocks(spec_dir, project_dir, source_spec_dir, gates):
         status_manager.update(state=BuildState.PAUSED)
         return
 
@@ -212,7 +214,6 @@ async def run_autonomous_agent(
     # Both gates come from the run-start snapshot, read before any agent session
     # (#1922) from the source copy, which the agent in a worktree cannot edit
     # (#1946, #1958, #1983).
-    gates = gates or RunGates.capture(spec_dir, source_spec_dir, model)
     solo = gates.solo
     require_review = not solo and gates.requires_review
     # #1940: grants come only from the plan the start gate saw, not the live file.
@@ -1117,6 +1118,7 @@ def _injection_scan_blocks(
     spec_dir: Path,
     project_dir: Path,
     source_spec_dir: Path | None,
+    gates: RunGates,
 ) -> bool:
     """Run the pre-coder injection scan gate (#805). True = task blocked.
 
@@ -1157,7 +1159,9 @@ def _injection_scan_blocks(
         )
         return False
 
-    if ReviewState.load(spec_dir).is_approval_valid(spec_dir):
+    # gates.review, not gates.approval_valid: an approval is required here even
+    # when plan review is not (#1983).
+    if gates.review.is_approval_valid(spec_dir):
         print_status(
             "Injection scan flagged, but a human approved this task - continuing",
             "warning",
