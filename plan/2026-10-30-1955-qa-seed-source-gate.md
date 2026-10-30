@@ -1,9 +1,10 @@
 ---
-status: approved
+status: draft
 issue: 1955
 spec: spec/2026-10-30-1955-qa-seed-source-gate.md
 coders:
   1: codex  # the lead's brief names Codex for this lane
+  2: codex  # same
 ---
 
 # Plan: QA plan-command seeding reads the approval gate from the source spec dir
@@ -40,6 +41,22 @@ spec_dir.name`; seed `plan=None` only if `gate_dir.is_dir()` and
    Traps: other tests swap the `review` package, so patch module objects via
    `importlib.import_module`, never dotted strings; `get_specs_dir` appends to
    `.gitignore` on first use (harmless in tmp_path).
+
+2. (Revision after the lead's review.) `apps/backend/cli/qa_commands.py`: add
+   a module-level helper `_source_project_dir(project_dir: Path) -> Path | None`
+   that finds `(".aifactory", "worktrees")` in `project_dir.resolve().parts`;
+   if absent, returns `project_dir`; if present and the path is exactly
+   `.aifactory/worktrees/tasks/<name>`, returns the root above `.aifactory`;
+   otherwise `None`. In `handle_qa_command`, `gate_dir` is
+   `get_specs_dir(root) / spec_dir.name` when the root is not `None`, and the
+   seed is `None` only when `gate_dir` exists and passes the step 1 check;
+   else `{}`. Keep the helper out of `handle_qa_command`'s branch count
+   (strict-ruff ratchet PLR0912).
+   Tests in `tests/test_profile_untrusted.py`: the reviewer's probe
+   (`project_dir` = worktree root, worktree metadata flipped and plan widened
+   → `[{}]`); a worktree-root `project_dir` with an approved, unchanged source
+   → `[None]`; a `project_dir` deeper under `.aifactory/worktrees/` → `[{}]`.
+   → verify: as step 1.
 
 ## Tests
 

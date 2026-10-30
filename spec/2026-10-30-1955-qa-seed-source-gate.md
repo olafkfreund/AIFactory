@@ -1,5 +1,5 @@
 ---
-status: approved
+status: draft
 issue: 1955
 intent: intent/2026-10-30-1955-qa-seed-source-gate.md
 ---
@@ -28,8 +28,11 @@ and either `not requires_review_before_coding(gate_dir)` or
 
 A spec that exists only in a worktree and needs plan commands for QA no
 longer gets them; QA still runs and reports the denied command.
-`--project-dir` pointed at the worktree itself makes `gate_dir == spec_dir`;
-that is the operator's explicit choice and out of scope.
+Revised after the lead's review: `--project-dir` pointed at the worktree
+root (`<root>/.aifactory/worktrees/tasks/<name>`) made `gate_dir == spec_dir`
+and failed open. `project_dir` inside `.aifactory/worktrees/` now resolves to
+the source project root when the path is exactly that layout; any other path
+under `.aifactory/worktrees/` fails closed (`plan={}`).
 
 ## Verification
 
