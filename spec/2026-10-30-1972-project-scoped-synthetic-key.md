@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1972
 intent: intent/2026-10-30-1972-project-scoped-synthetic-key.md
 ---
