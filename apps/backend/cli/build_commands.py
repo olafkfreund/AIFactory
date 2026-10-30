@@ -758,6 +758,7 @@ def handle_build_command(
             model=model,
             max_iterations=max_iterations,
             verbose=verbose,
+            source_spec_dir=source_spec_dir,
         )
     except Exception as e:
         print(f"\nFatal error: {e}")
@@ -776,6 +777,7 @@ def _handle_build_interrupt(
     model: str,
     max_iterations: int | None,
     verbose: bool,
+    source_spec_dir: Path | None = None,
 ) -> None:
     """
     Handle keyboard interrupt during build.
@@ -788,6 +790,7 @@ def _handle_build_interrupt(
         model: Model being used
         max_iterations: Maximum iterations
         verbose: Verbose mode flag
+        source_spec_dir: Canonical spec dir when spec_dir is a worktree copy
     """
     from agent import run_autonomous_agent
 
@@ -883,7 +886,7 @@ def _handle_build_interrupt(
             print_status("No instructions provided.", "info")
 
         # If 'skip' was selected, actually resume the build
-        if choice == "skip":
+        if choice == "skip" and _approval_still_valid(spec_dir, source_spec_dir):
             print()
             print_status("Resuming build...", "info")
             status_manager.update(state=BuildState.RUNNING)
@@ -894,6 +897,7 @@ def _handle_build_interrupt(
                     model=model,
                     max_iterations=max_iterations,
                     verbose=verbose,
+                    source_spec_dir=source_spec_dir,
                 )
             )
             # Build completed or was interrupted again - exit
@@ -922,3 +926,19 @@ def _handle_build_interrupt(
         content.append(muted("Your build is in a separate workspace and is safe."))
     print(box(content, width=70, style="light"))
     print()
+
+
+def _approval_still_valid(spec_dir: Path, source_spec_dir: Path | None) -> bool:
+    """Whether a Ctrl+C resume may start the agent again (#1946).
+
+    The resumed agent snapshots the plan again (#1940), so it needs the run.py
+    pre-flight's approval check; when refused, the caller shows TO RESUME.
+    The gate files come from the source dir: the worktree copy is agent-writable.
+    """
+    gate_dir = source_spec_dir or spec_dir
+    if not requires_review_before_coding(gate_dir) or ReviewState.load(
+        gate_dir
+    ).is_approval_valid(spec_dir):
+        return True
+    print_status("Plan changed since approval; re-approve, then resume.", "warning")
+    return False

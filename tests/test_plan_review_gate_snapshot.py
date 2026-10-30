@@ -62,6 +62,7 @@ async def _drive(
     tmp_path: Path,
     planner: Callable[[Path], None],
     next_subtask: dict | None = None,
+    source_spec_dir: Path | None = None,
 ) -> AsyncMock:
     """Run run_autonomous_agent; ``planner`` acts as the first agent session."""
     import agents.coder as coder
@@ -118,6 +119,7 @@ async def _drive(
             spec_dir=spec_dir,
             model="claude-sonnet-4-5",
             max_iterations=2,
+            source_spec_dir=source_spec_dir,
         )
     return session_mock
 
@@ -348,3 +350,37 @@ async def test_mid_run_plan_edit_grants_only_when_review_not_required(
     granted = _profile_commands(tmp_path)
     assert "uv" in granted
     assert ("npx" in granted) is not require_review
+
+
+@pytest.mark.asyncio
+async def test_resume_gate_comes_from_source_not_worktree_metadata(tmp_path):
+    """#1946: flipped worktree metadata must not drop the snapshot on a resume."""
+    import shutil
+
+    from security.main import reset_profile_cache
+
+    reset_profile_cache()
+    source = _make_spec(tmp_path)
+    _write_plan(source, {**PLAN_A, "required_commands": ["uv"]})
+    ReviewState().approve(source)
+    worktree = tmp_path / "worktree"
+    shutil.copytree(source, worktree)
+    _write_meta(worktree, {"requireReviewBeforeCoding": False})
+
+    def coder_session(d: Path) -> None:
+        plan = json.loads((d / "implementation_plan.json").read_text())
+        plan["required_commands"] = ["uv", "npx"]
+        _write_plan(d, plan)
+
+    m = await _drive(
+        worktree,
+        tmp_path,
+        coder_session,
+        next_subtask={"id": "1", "description": "d"},
+        source_spec_dir=source,
+    )
+
+    assert m.await_count == 2
+    granted = _profile_commands(tmp_path)
+    assert "uv" in granted
+    assert "npx" not in granted
