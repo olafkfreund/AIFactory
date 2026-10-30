@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1974
 spec: spec/2026-10-30-1974-mcp-remote-post-context.md
 coders:
