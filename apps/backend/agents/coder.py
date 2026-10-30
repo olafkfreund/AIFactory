@@ -209,13 +209,11 @@ async def run_autonomous_agent(
     # the solo prompt (and coder tools, which include update_subtask_status)
     # instead of a dedicated planner session, and the plan-review gate is
     # skipped. Default OFF — the full pipeline is unchanged when disabled.
-    solo = is_solo_mode_enabled_for_spec(spec_dir)
-    # Read before any agent session so the planner cannot change the gate (#1922),
-    # from the source copy, which the agent in a worktree cannot edit (#1946).
+    # Both gates are read before any agent session (#1922), from the source
+    # copy, which the agent in a worktree cannot edit (#1946, #1958).
     gate_dir = source_spec_dir or spec_dir
-    require_review = not is_solo_mode_enabled_for_spec(
-        gate_dir
-    ) and _should_require_human_review(gate_dir)
+    solo = is_solo_mode_enabled_for_spec(gate_dir)
+    require_review = not solo and _should_require_human_review(gate_dir)
     # #1940: grants come only from the plan the start gate saw, not the live file.
     approved_plan = _approved_plan_snapshot(spec_dir, require_review)
 
