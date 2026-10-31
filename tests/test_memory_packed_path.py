@@ -155,6 +155,42 @@ def test_a_crafted_archive_cannot_escape_the_spec_dir(tmp_path, monkeypatch):
     assert not (tmp_path / "project" / "escaped.txt").exists()
 
 
+def test_forged_archive_only_extracts_memory_files_and_dirs(tmp_path):
+    """#1984: a Job can push arbitrary entries in memory.tar.gz; only regular
+    files and directories under memory/ may land in the spec dir."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for name, body in (
+            ("task_control.json", b'{"status":"done"}'),
+            ("review_state.json", b'{"approved":true}'),
+            ("context/task_contract.json", b'{"contract_version":"2.0"}'),
+            ("memory/../task_metadata.json", b'{"reviewTier":"auto"}'),
+            ("memory/session_insights/a.json", b'{"ok":true}'),
+        ):
+            info = tarfile.TarInfo(name)
+            info.size = len(body)
+            tar.addfile(info, io.BytesIO(body))
+        sym = tarfile.TarInfo("memory/x")
+        sym.type = tarfile.SYMTYPE
+        sym.linkname = "../task_control.json"
+        tar.addfile(sym)
+    _Store.blobs[wf._memory_key("088")] = buf.getvalue()
+
+    spec = tmp_path / "project" / "specs" / "088"
+    spec.mkdir(parents=True)
+    assert wf.maybe_fetch_memory(spec, "088")
+
+    assert (
+        spec / "memory" / "session_insights" / "a.json"
+    ).read_bytes() == b'{"ok":true}'
+    assert not (spec / "task_control.json").exists()
+    assert not (spec / "review_state.json").exists()
+    assert not (spec / "task_metadata.json").exists()
+    assert not (spec / "context" / "task_contract.json").exists()
+    assert not (spec / "memory" / "x").exists()
+    assert not (spec / "memory" / "x").is_symlink()
+
+
 # ── both ends are wired ──────────────────────────────────────────────────────
 
 

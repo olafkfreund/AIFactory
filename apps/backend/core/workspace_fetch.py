@@ -705,9 +705,17 @@ def maybe_fetch_memory(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
         dest = Path(spec_dir)
         dest.mkdir(parents=True, exist_ok=True)
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
+            # #1984: the Job can push any archive; only memory/ may land.
+            members = [
+                m
+                for m in tar.getmembers()
+                # normpath: "memory/../task_control.json" must not pass the prefix.
+                if Path(os.path.normpath(m.name)).parts[:1] == (_MEMORY_DIR,)
+                and (m.isfile() or m.isdir())
+            ]
             # filter="data" refuses absolute paths and ".." members, so a crafted
             # archive cannot write outside the spec dir.
-            tar.extractall(path=str(dest), filter="data")
+            tar.extractall(path=str(dest), members=members, filter="data")
         _log.info(
             "[workspace_fetch] fetched %s from object store (packed path)", _MEMORY_DIR
         )
