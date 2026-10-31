@@ -157,6 +157,13 @@ are `SECURITY.md`.
 - Step 1: `create_worktree` passes `record_base_sha` a `run=` that goes through
   `self._run_git(..., cwd=worktree_path)`, like `record_baseline` above it, so
   an ambient `GIT_DIR` is stripped (`test_create_worktree_ignores_ambient_git_dir`).
+- Step 2: `ConfigParser` exposes the git helper as `git_output` (public, so
+  `_base_ref` reuses it instead of a second subprocess call). `read_json` now
+  goes through `read_text` in both modes. Both changes came from the ruff and
+  mypy ratchets.
+- Step 3 (Claude, after review): the npm location options are refused only
+  when a script would run, so `npm install -w pkg` keeps working. Their
+  values are consumed, so `npm -w pkg test` is still seen as `test`.
 
 ## Tests
 
