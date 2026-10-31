@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1998
 intent: intent/2026-10-31-1998-migration-advisory-lock.md
 ---
