@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1981
 spec: spec/2026-10-31-1981-mcp-remote-call-authz.md
 coders:
