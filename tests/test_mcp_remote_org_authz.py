@@ -72,7 +72,11 @@ async def call(tmp_path, monkeypatch):
     monkeypatch.setattr(tools, "get_db", fake_db)
     monkeypatch.setattr(project_authz, "_auth_disabled", lambda: False)
     monkeypatch.setattr(project_authz, "_audit_authz_denial", no_audit)
-    projects = {"pa": {"org_id": "org-a"}, "pb": {"org_id": "org-b"}}
+    projects = {
+        "pa": {"org_id": "org-a"},
+        "pb": {"org_id": "org-b"},
+        "pa:x": {"org_id": "org-b"},
+    }
     monkeypatch.setattr("server.project_registry.load_projects", lambda: projects)
     monkeypatch.setattr(tools, "load_projects", lambda: projects)
     proxied = AsyncMock(return_value=[{"id": "pa"}, {"id": "pb"}])
@@ -142,3 +146,17 @@ async def test_viewer_cannot_write_even_with_write_scope(call):
     assert proxied.await_count == 0
     result, _ = await call("aifactory.get_task", {"task_id": "pa:001"}, viewer_key)
     assert not result.get("isError"), result
+
+
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [
+        ("aifactory.stop_task", {}),
+        ("aifactory.list_tasks", {}),
+        ("aifactory.list_tasks", {"project_id": "pa:x"}),
+    ],
+)
+async def test_missing_or_colon_project_id_refused(call, tool, args):
+    result, proxied = await call(tool, args)
+    assert result.get("isError") is True
+    assert proxied.await_count == 0
