@@ -174,13 +174,19 @@ async def messages_endpoint(request: Request):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=client_error(logger, "messages endpoint failed", exc),
         ) from exc
-    # Tools run as the key captured at SSE connect, so only that key may post.
+    # Only the key that opened the SSE session may post to it.
     session_id = request.query_params.get("session_id", "")
     if _session_keys.get(session_id) != key.key_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This MCP session belongs to another API key",
         )
-    return await _sse_transport.handle_post_message(
-        request.scope, request.receive, request._send
-    )
+    # mcp 2.x gives each message the POSTer's contextvars, so tools read the
+    # session owner's key from here.
+    token = _current_key.set(key)
+    try:
+        return await _sse_transport.handle_post_message(
+            request.scope, request.receive, request._send
+        )
+    finally:
+        _current_key.reset(token)

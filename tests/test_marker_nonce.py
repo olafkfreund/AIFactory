@@ -225,6 +225,7 @@ async def test_kubejob_dispatch_puts_the_nonce_in_the_job_env(tmp_path, monkeypa
     )
     env = fake.created[0][1]["spec"]["template"]["spec"]["containers"][0]["env"]
     assert {"name": "AIFACTORY_MARKER_NONCE", "value": NONCE} in env
+    assert {"name": "AIFACTORY_TASK_ID", "value": "p:s1"} in env  # #1972
 
 
 async def test_nonce_never_reaches_a_log_sink(tmp_path):
@@ -279,6 +280,32 @@ async def test_spec_creation_spawns_with_a_nonce(tmp_path, monkeypatch):
     proc = await svc.start_spec_creation("p:s1", tmp_path, "t", "d")
     assert proc.pid == 1
     assert seen["env"]["AIFACTORY_MARKER_NONCE"] == svc._task_marker_nonces["p:s1"]
+
+
+async def test_build_spawn_env_carries_the_task_id(tmp_path, monkeypatch):
+    """#1972: the build subprocess learns the project-scoped task id from env."""
+    from server.services import agent_service as agent_mod  # noqa: PLC0415
+
+    seen: dict = {}
+
+    async def fake_exec(*_cmd, env, **_kw):  # noqa: ANN002, ANN003
+        seen["env"] = env
+        raise RuntimeError("stop after spawn")
+
+    monkeypatch.setattr(agent_mod.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(
+        agent_mod.project_settings_store,
+        "mcp_spawn_env",
+        AsyncMock(return_value={}),
+    )
+    # The settings store reads the DB; the P1 suite runs against Postgres.
+    monkeypatch.setattr(
+        agent_mod.project_settings_store, "load_project_env", AsyncMock()
+    )
+    svc = AgentService()
+    with pytest.raises(RuntimeError, match="stop after spawn"):
+        await svc._spawn_task_execution("p:001-x", tmp_path / "proj", "001-x")
+    assert seen["env"]["AIFACTORY_TASK_ID"] == "p:001-x"
 
 
 @pytest.mark.parametrize(

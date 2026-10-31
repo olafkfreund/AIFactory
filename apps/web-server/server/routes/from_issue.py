@@ -103,7 +103,7 @@ def _normalize_issue(payload: dict | None, issue_number: int | None = None) -> d
     ``issue_number`` is the request's own field, used only when the payload
     carries no number of its own. A caller that sends BOTH a pre-fetched payload
     and the number it fetched it by used to lose the number here, and a spec
-    written without one correlates on the synthetic ``af-<spec_id>`` key that
+    written without one correlates on the synthetic ``af-<task_id>`` key that
     nothing else joins on — which is how a build's whole token spend landed on
     an orphan work item and the cockpit reported $0.00 (#1418).
     """
@@ -489,7 +489,7 @@ async def create_from_issue(
                 "issue_number": issue_number,
                 # The stored spec's repo is the truth for a dedup (#1775).
                 "correlation_key": correlation_key(
-                    existing_spec_id,
+                    f"{request.project_id}:{existing_spec_id}",
                     issue_number,
                     read_issue_repo(
                         projects_path / ".aifactory" / "specs" / existing_spec_id
@@ -566,7 +566,7 @@ async def create_from_issue(
         "execution": execution,
         "issue_number": issue.get("number"),
         "correlation_key": correlation_key(
-            spec_id, issue.get("number"), repo_ref or None
+            task_id, issue.get("number"), repo_ref or None
         ),
         "message": f"Ingested issue as {tier.value}-tier build ({execution['model']}).",
     }
