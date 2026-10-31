@@ -100,6 +100,10 @@ only in Jobs):
      `test_merger.py` asserts the label.
    → verify: `apps/backend/.venv/bin/python -m pytest apps/backend/pfactory apps/web-server/tests/test_merger.py apps/web-server/tests/test_trusted_contract_merge.py -q`
    Traps: `test_trusted_contract_merge.py` legacy tests must still pass.
+   Deviation: three tests in `apps/web-server/tests/test_pr_endgame_merge_gate.py`
+   and `tests/test_tfactory_auto_handoff.py` put the legacy contract in
+   `implementation_plan.json`; they now put it in `context/task_contract.json`
+   (the plan-sourced case of the read-error test is dropped).
 
 ## Tests
 
