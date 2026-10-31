@@ -212,7 +212,9 @@ def test_execution_profile_carries_pinned_model() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def _record_one_turn(spec: Path) -> dict[str, Any]:
+def _record_one_turn(
+    spec: Path, routing_metadata: dict[str, Any] | None = None
+) -> dict[str, Any]:
     record_turn(
         spec,
         PromptSegments(user_prompt="do the thing"),
@@ -220,6 +222,7 @@ def _record_one_turn(spec: Path) -> dict[str, Any]:
         model="claude-sonnet-5",
         provider="claude",
         duration_ms=900,
+        routing_metadata=routing_metadata,
     )
     data: dict[str, Any] = json.loads((spec / "token_usage.json").read_text())
     return data["workers"]["main"]
@@ -237,6 +240,17 @@ def test_worker_record_stamps_routing_tier_with_policy(
 def test_worker_record_has_no_tier_without_policy(tmp_path: Path) -> None:
     rec = _record_one_turn(_spec_dir(tmp_path))
     assert "routing_tier" not in rec
+
+
+def test_worker_record_uses_caller_routing_metadata_not_spec_file(
+    tmp_path: Path,
+) -> None:
+    metadata = {"routingRequested": {"coding": "mid"}}
+    spec = _spec_dir(tmp_path, metadata)
+
+    assert tier_for_model("claude-sonnet-5", metadata) == "mid"
+    assert "routing_tier" not in _record_one_turn(spec)
+    assert _record_one_turn(spec, routing_metadata=metadata)["routing_tier"] == "mid"
 
 
 def test_tier_for_model_matches_shorthand_and_full_id(
