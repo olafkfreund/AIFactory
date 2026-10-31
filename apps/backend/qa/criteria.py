@@ -50,8 +50,11 @@ def get_qa_signoff_status(spec_dir: Path) -> dict | None:
     return plan.get("qa_signoff")
 
 
-def is_qa_approved(spec_dir: Path) -> bool:
-    """Check if QA has approved the build."""
+def is_qa_approved(spec_dir: Path, *, requires_review: bool = False) -> bool:
+    """Check if QA approval counts for this build's review requirement."""
+    # #1987: a coder-written pre-approval does not count when review is required.
+    if requires_review:
+        return False
     status = get_qa_signoff_status(spec_dir)
     if not status:
         return False
@@ -89,9 +92,9 @@ def get_qa_iteration_count(spec_dir: Path) -> int:
 # =============================================================================
 
 
-def should_run_qa(spec_dir: Path) -> bool:
+def should_run_qa(spec_dir: Path, *, requires_review: bool = False) -> bool:
     """
-    Determine if QA validation should run.
+    Determine if QA validation should run for this build's review requirement.
 
     QA should run when:
     - All subtasks are completed
@@ -100,7 +103,7 @@ def should_run_qa(spec_dir: Path) -> bool:
     if not is_build_complete(spec_dir):
         return False
 
-    if is_qa_approved(spec_dir):
+    if is_qa_approved(spec_dir, requires_review=requires_review):
         return False
 
     return True
