@@ -834,6 +834,7 @@ async def run_autonomous_agent(
                     provider=_sub_provider,
                     phase=_agent_phase,
                     duration_ms=_turn_duration_ms,
+                    routing_metadata=gates.metadata,
                 )
                 # Live per-worker PROGRESS heartbeat (#45 Tier 2): this worker is
                 # STILL RUNNING and just persisted another turn's spend — emit a

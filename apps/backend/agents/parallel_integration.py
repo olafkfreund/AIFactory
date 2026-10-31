@@ -660,6 +660,7 @@ async def run_parallel_coding_phase(
                         provider=_sub_provider,
                         phase=LogPhase.CODING.value,
                         duration_ms=_duration_ms,
+                        routing_metadata=gates.metadata,
                     )
                     # Live per-worker sub-event (#45 P1): this worker has just
                     # finished its wave session and its record is persisted —
