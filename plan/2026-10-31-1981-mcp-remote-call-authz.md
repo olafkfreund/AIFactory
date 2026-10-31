@@ -63,3 +63,10 @@ migration, trailing `return Response()`.
 ## Rollback
 
 Revert the PR commit(s); no data or config changes.
+
+## Deviations
+
+- Step 3: the two missing-argument cases pass on origin/dev too. Dev already
+  refuses them (the tool's `KeyError` fires before any proxy call, with the
+  same message), so they guard the new authz path rather than reproduce a bug.
+  The `pa:x` case and both session-binding cases fail on dev as planned.
