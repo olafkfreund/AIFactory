@@ -1,6 +1,7 @@
 """An SSE session only accepts messages from the key that opened it (#1910)."""
 
 import json
+import re
 from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock
@@ -148,7 +149,7 @@ async def test_tool_call_over_the_real_transport_runs_as_the_session_key(monkeyp
     async def send_sse(message):
         if message["type"] == "http.response.body":
             stream.extend(message.get("body", b""))
-            if srv._SESSION_ID.search(stream):
+            if re.search(rb"session_id=([0-9a-f]{32})", stream):
                 endpoint_ready.set()
             if b'"id":2' in stream:
                 result_ready.set()
@@ -168,7 +169,9 @@ async def test_tool_call_over_the_real_transport_runs_as_the_session_key(monkeyp
         try:
             with anyio.fail_after(5):
                 await endpoint_ready.wait()
-            session_id = srv._SESSION_ID.search(stream).group(1).decode()
+            session_id = (
+                re.search(rb"session_id=([0-9a-f]{32})", stream).group(1).decode()
+            )
 
             assert (
                 await _post(
