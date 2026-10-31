@@ -288,8 +288,9 @@ def honest_pr_title_and_body(
         "not require QA approval to open it -- review the code as you would "
         "any other PR.\n\n"
         "**Verification status:**\n"
-        f"- Gate evidence: {gate_line}\n"
-        f"- QA sign-off: {qa_status}"
+        "- Gate evidence (reported by the build, not verified by the control "
+        f"plane): {gate_line}\n"
+        f"- QA sign-off (reported by the build): {qa_status}"
         f"{tier_line}"
         f"{fixes_line}"
     )
