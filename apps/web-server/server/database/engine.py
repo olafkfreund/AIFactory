@@ -14,6 +14,7 @@ from collections.abc import AsyncGenerator
 from pathlib import Path
 
 from sqlalchemy import event, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -159,7 +160,7 @@ async def _upgrade_head_with_pg_lock() -> None:
                         text("SELECT pg_advisory_unlock(:k)"),
                         {"k": _MIGRATION_LOCK_KEY},
                     )
-                except Exception:
+                except (SQLAlchemyError, OSError):
                     # Never mask the upgrade's error; closing the session frees the lock.
                     logger.warning(
                         "Failed to release migration advisory lock", exc_info=True

@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.pool import NullPool
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -68,7 +69,7 @@ def _fake_lock_engine(calls: list[str], fail_unlock: bool = False):
             sql = str(statement)
             calls.append(sql)
             if fail_unlock and "pg_advisory_unlock" in sql:
-                raise RuntimeError("unlock failed")
+                raise SQLAlchemyError("unlock failed")
 
     class Engine:
         def __init__(self):
