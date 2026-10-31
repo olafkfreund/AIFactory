@@ -235,6 +235,8 @@ RUN want="$(tr -dc '0-9.' < /tmp/.nvmrc | cut -d. -f1)" \
 #                        8.23.0-r0. Named together: same origin.
 #   ca-certificates-bundle 20260909-r2 — CVE-2026-111943 (HIGH), fixed in
 #                        20260909-r3.
+#   uv 0.13.5-r1 — CVE-2026-111943 (HIGH, same Go x509 denylist), fixed in
+#                        0.13.6-r1. Agents launch MCP servers with uvx.
 #   libbrotlicommon1 / libbrotlidec1 / libbrotlienc1 1.2.0-r5 — CVE-2026-111497
 #                        (HIGH), fixed in 1.2.0-r7. Named together: same origin.
 #   py3-pip-wheel 26.2.2-r0 — CVE-2026-114613 (HIGH), msgpack map-deserialization
@@ -255,6 +257,7 @@ RUN apk add --no-cache \
         bubblewrap \
         ca-certificates \
         "ca-certificates-bundle>=20260909-r3" \
+        "uv>=0.13.6-r1" \
         "libbrotlicommon1>=1.2.0-r7" \
         "libbrotlidec1>=1.2.0-r7" \
         "libbrotlienc1>=1.2.0-r7" \
@@ -575,7 +578,7 @@ RUN echo "security refresh: ${SECURITY_REFRESH}" \
 
 # CVE-2026-114613 (pip's vendored msgpack 1.2.1): gateway.py is stdlib-only, so
 # pip goes as in the runtime stage; py3-pip-wheel (python dep) takes the floor.
-RUN apk add --no-cache "py3-pip-wheel>=26.2.2-r1" \
+RUN apk add --no-cache "py3-pip-wheel>=26.2.2-r1" "uv>=0.13.6-r1" \
  && apk del --no-cache py3.15-pip py3.15-pip-base \
  && ! apk info -e py3.15-pip && ! apk info -e py3.15-pip-base
 
