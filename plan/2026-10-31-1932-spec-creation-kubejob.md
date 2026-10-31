@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1932
 spec: spec/2026-10-31-1932-spec-creation-kubejob.md
 coders:
