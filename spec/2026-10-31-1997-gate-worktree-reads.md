@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1997
 intent: intent/2026-10-31-1997-gate-worktree-reads.md
 ---
