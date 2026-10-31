@@ -152,6 +152,12 @@ are `SECURITY.md`.
 
    → verify by `ruff check` and `ruff format --check` on the touched files.
 
+## Deviations
+
+- Step 1: `create_worktree` passes `record_base_sha` a `run=` that goes through
+  `self._run_git(..., cwd=worktree_path)`, like `record_baseline` above it, so
+  an ambient `GIT_DIR` is stripped (`test_create_worktree_ignores_ambient_git_dir`).
+
 ## Tests
 
 From `apps/backend`:

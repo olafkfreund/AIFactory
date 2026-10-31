@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import subprocess
 import tempfile
 from collections.abc import Callable
@@ -221,6 +222,48 @@ def record_worktree_baseline(
 ) -> None:
     """Record only the worktree-scoped config baseline for ``cwd``."""
     _write_worktree_baseline(snapshot(cwd, run=run))
+
+
+_HEX_SHA_RE = re.compile(r"^[0-9a-f]{40,64}$")
+
+
+def _base_sha_path(gitdir: str) -> Path:
+    return _baseline_path(gitdir + "\0base")
+
+
+def record_base_sha(
+    cwd: str | os.PathLike[str],
+    run: Callable[[list[str]], tuple[int, str]] | None = None,
+) -> None:
+    """Record the base commit SHA for ``cwd``."""
+    dirs = _run_git(cwd, list(_REV_PARSE_DIRS), run).splitlines()
+    raw_common = dirs[0] if dirs else ""
+    raw_gitdir = dirs[1] if len(dirs) > 1 else raw_common
+    gitdir = str((Path(cwd) / raw_gitdir).resolve())
+    sha = _run_git(cwd, ["git", "rev-parse", "HEAD"], run).strip()
+    _write_snapshot(_base_sha_path(gitdir), {"base": sha})
+
+
+def read_base_sha(cwd: str | os.PathLike[str]) -> str | None:
+    """Read the recorded base commit SHA for ``cwd``, or return None."""
+    try:
+        dirs = _run_git(cwd, list(_REV_PARSE_DIRS), None).splitlines()
+    except RuntimeError:
+        return None
+    raw_common = dirs[0] if dirs else ""
+    raw_gitdir = dirs[1] if len(dirs) > 1 else raw_common
+    gitdir = str((Path(cwd) / raw_gitdir).resolve())
+    path = _base_sha_path(gitdir)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    val = data.get("base")
+    if not isinstance(val, str) or not _HEX_SHA_RE.match(val):
+        return None
+    return val
 
 
 def _load_baseline(
