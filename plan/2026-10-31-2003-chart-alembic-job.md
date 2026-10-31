@@ -54,6 +54,15 @@ Approved decisions (from the spec):
    → verify by `.venv/bin/python -m pytest tests/helm/test_migrations_job.py -q`
    Traps: the test must fail on origin/dev (no Job).
 
+## Deviations
+
+- Added `--set migrations.autoApply=true` to the `helm install` in
+  `.github/workflows/gvisor-smoke.yml`. That smoke installs with
+  `postgres.bundled=true` and a busybox image, so the new pre-install hook
+  Job (no python, Secret created later by the release) would fail the
+  install. Bundled/POC mode is exactly where the values comment says to use
+  autoApply=true; `tests/helm/test_p4_helm.py` kind install already does.
+
 ## Tests
 
 - `helm lint charts/aifactory` passes.
