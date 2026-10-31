@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1981
 intent: intent/2026-10-31-1981-mcp-remote-call-authz.md
 ---
