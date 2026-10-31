@@ -86,3 +86,21 @@ class RunGates:
             Path(os.devnull), phase, metadata=self.metadata
         )
         return budget
+
+    def subtask_model(self, subtask_id: object, live_model: object) -> str | None:
+        if self.approved_plan is None:
+            return live_model if isinstance(live_model, str) and live_model else None
+
+        phases = self.approved_plan.get("phases")
+        if isinstance(phases, list):
+            for phase in phases:
+                if not isinstance(phase, dict):
+                    continue
+                subtasks = phase.get("subtasks")
+                if not isinstance(subtasks, list):
+                    continue
+                for subtask in subtasks:
+                    if isinstance(subtask, dict) and subtask.get("id") == subtask_id:
+                        model = subtask.get("model")
+                        return model if isinstance(model, str) and model else None
+        return None
