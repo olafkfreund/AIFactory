@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1988
 spec: spec/2026-10-31-1988-qa-test-module-eviction.md
 coders:
