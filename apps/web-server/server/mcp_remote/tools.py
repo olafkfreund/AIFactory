@@ -102,7 +102,7 @@ async def _authorize_call(
         return
     arg = "project_id" if tool_name == "aifactory.list_tasks" else "task_id"
     if arg not in arguments:
-        return  # the tool's KeyError reports the missing argument
+        raise MCPAuthError(f"missing required argument: {arg}")
     value = arguments[arg]
     if (
         not isinstance(value, str)
@@ -113,7 +113,10 @@ async def _authorize_call(
     async for db in get_db():
         try:
             await authorize_project_for_user(
-                acw_principal(key), value.partition(":")[0], db, minimum_role
+                acw_principal(key),
+                value.partition(":")[0] if arg == "task_id" else value,
+                db,
+                minimum_role,
             )
         except HTTPException as exc:
             raise MCPAuthError(f"{tool_name} denied: {exc.detail}") from exc
