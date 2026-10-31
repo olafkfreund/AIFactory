@@ -75,13 +75,43 @@ def _report_orphaned_worktrees(job_id: str) -> list[str]:
 _REVIEW_PAUSE_REASONS = ("plan_review", "injection_scan")
 
 
+def _pause_confirmed(
+    spec_dir: Path, project_path: Path, spec_id: str, reason: str
+) -> bool:
+    """Recompute pause eligibility from control-plane state: the Job's claim is necessary, never sufficient (#1984)."""
+    try:
+        from review.state import (  # noqa: PLC0415
+            ReviewState,
+            requires_review_before_coding,
+        )
+        from security.content_scan import run_scan_gate  # noqa: PLC0415
+        from solo_mode import is_solo_mode_enabled_for_spec  # noqa: PLC0415
+
+        approved = ReviewState.load(spec_dir).is_approval_valid(spec_dir)
+        if reason == "plan_review":
+            return (
+                requires_review_before_coding(spec_dir)
+                and not is_solo_mode_enabled_for_spec(spec_dir)
+                and not approved
+            )
+        if reason == "injection_scan":
+            wt = project_path / ".aifactory" / "worktrees" / "builds" / spec_id
+            tree = wt if wt.is_dir() else project_path
+            return run_scan_gate(spec_dir, tree).blocks and not approved
+    except Exception:  # noqa: BLE001
+        return False
+    return False
+
+
 async def _kubejob_review_reason(job_id: str) -> tuple[Path, str] | None:
-    """``(spec_dir, reason)`` when the Job's pushed plan is a review PAUSE, else None (#1633).
+    """``(spec_dir, reason)`` when the Job's pushed plan is a review PAUSE, else None (#1633, #1984).
 
     A Job that stops for human review (pre-flight approval, injection scan) exits
     0 like a finished build, but nothing was built. Only an allowlisted
-    ``reviewReason`` counts: QA's ``human_review/completed`` and ``qa_issues`` are
-    real completions and keep the handoff. Blocking I/O runs in a thread. Never raises.
+    ``reviewReason`` counts, and the Job's claim is necessary, never sufficient
+    (#1984): the control plane recomputes whether the pause is required.
+    QA's ``human_review/completed`` and ``qa_issues`` are real completions and
+    keep the handoff. Blocking I/O runs in a thread. Never raises.
     """
     try:
         from core import workspace_fetch  # noqa: PLC0415
@@ -89,7 +119,8 @@ async def _kubejob_review_reason(job_id: str) -> tuple[Path, str] | None:
         project_id, _, spec_id = job_id.partition(":")
         if not spec_id:
             return None
-        spec_dir = spec_dir_for(resolve_project_path(project_id), spec_id)
+        project_path = resolve_project_path(project_id)
+        spec_dir = spec_dir_for(project_path, spec_id)
         await asyncio.to_thread(workspace_fetch.maybe_fetch_plan, spec_dir, spec_id)
         raw = await asyncio.to_thread(
             (spec_dir / "implementation_plan.json").read_text, "utf-8"
@@ -100,7 +131,18 @@ async def _kubejob_review_reason(job_id: str) -> tuple[Path, str] | None:
             and plan.get("status") == "human_review"
             and plan.get("reviewReason") in _REVIEW_PAUSE_REASONS
         ):
-            return spec_dir, plan["reviewReason"]
+            reason: str = plan["reviewReason"]
+            if await asyncio.to_thread(
+                _pause_confirmed, spec_dir, project_path, spec_id, reason
+            ):
+                return spec_dir, reason
+            _log.warning(
+                "[AgentService] ignoring kubejob review-pause claim (%s) for %s: "
+                "control-plane state does not require it (#1984)",
+                sanitize_log(reason),
+                sanitize_log(job_id),
+            )
+            return None
     except Exception:  # noqa: BLE001 - unreadable plan: take today's path
         _log.debug(
             "[AgentService] review-pause check failed for %s",
