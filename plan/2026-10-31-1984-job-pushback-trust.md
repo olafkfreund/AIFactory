@@ -75,8 +75,10 @@ only in Jobs):
    state helpers live on the backend path.
 
 3. Row 2, memory. `apps/backend/core/workspace_fetch.py` `maybe_fetch_memory`
-   (~703-712): pass `members=` only those with `name == "memory"` or
-   `name.startswith("memory/")` and `isfile() or isdir()`; keep
+   (~703-712): pass `members=` only those whose normalised name's first part
+   is `memory` (deviation: `os.path.normpath` first, so
+   `memory/../task_metadata.json` does not pass the prefix check) and
+   `isfile() or isdir()`; keep
    `filter="data"` on the same `tar.extractall(` line (pinned by
    `test_the_extraction_filter_is_pinned_explicitly`).
    Test in `tests/test_memory_packed_path.py`: a forged archive with
