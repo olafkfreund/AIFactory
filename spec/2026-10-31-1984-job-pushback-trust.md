@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1984
 intent: intent/2026-10-31-1984-job-pushback-trust.md
 ---
