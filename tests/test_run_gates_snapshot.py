@@ -89,6 +89,35 @@ def test_frozen(tmp_path: Path) -> None:
         gates.solo = True  # type: ignore[misc]
 
 
+def test_subtask_model_without_snapshot_uses_live_model(tmp_path: Path) -> None:
+    gates = dataclasses.replace(
+        RunGates.capture(_spec(tmp_path), None, None), approved_plan=None
+    )
+    assert gates.subtask_model("1", "haiku") == "haiku"
+    assert gates.subtask_model("1", "") is None
+    assert gates.subtask_model("1", 42) is None
+
+
+def test_subtask_model_uses_snapshot_model(tmp_path: Path) -> None:
+    gates = dataclasses.replace(
+        RunGates.capture(_spec(tmp_path), None, None),
+        approved_plan={"phases": [{"subtasks": [{"id": "1", "model": "sonnet"}]}]},
+    )
+    assert gates.subtask_model("1", "haiku") == "sonnet"
+
+
+def test_subtask_model_missing_or_unset_in_snapshot(tmp_path: Path) -> None:
+    gates = dataclasses.replace(
+        RunGates.capture(_spec(tmp_path), None, None),
+        approved_plan={"phases": [{"subtasks": [{"id": "1"}]}]},
+    )
+    assert gates.subtask_model("1", "haiku") is None
+    assert gates.subtask_model("2", "haiku") is None
+    assert (
+        dataclasses.replace(gates, approved_plan={}).subtask_model("1", "haiku") is None
+    )
+
+
 def test_explicit_metadata_wins_over_the_file(tmp_path: Path) -> None:
     spec = _spec(tmp_path, pinnedModel="haiku", thinkingLevel="none")
     assert get_phase_model(spec, "qa", metadata={}) != get_phase_model(spec, "qa")
