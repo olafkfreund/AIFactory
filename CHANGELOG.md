@@ -1,13 +1,53 @@
-## [Unreleased]
+## 3.10.16 - 2026-10-30
+
+Every run gate (solo, require-review, plan approval, model and thinking)
+is read once at run start, coder and QA model selection comes from the
+source spec dir, the synthetic correlation key is project-scoped, remote
+MCP tool calls work on mcp 2.x, and joserfc moves to 1.7.5. One
+behaviour change (the `af-` key); the build env gains the internal
+`AIFACTORY_TASK_ID`, set by the web server. No new operator env vars. No
+migrations.
 
 ### Security
 
+- **Every run gate is snapshotted once, before the first agent session
+  (#1986, closes #1983).** `run.py` captures solo, require-review, the
+  review state and approved plan, and the task metadata used for
+  model/thinking into a frozen `RunGates` snapshot, and reads only that
+  afterwards. A gate file forged by an agent mid-run (in-process, including
+  kubejob builds) is never consulted. Cross-run persistence is not closed
+  (follow-ups #1985, #1987).
+- **Coder, parallel-runner and QA model/thinking come from the source spec
+  dir (#1980, closes #1969).** An agent editing its worktree
+  `task_metadata.json` can no longer pick its own model or thinking budget,
+  or downgrade its QA reviewer.
 - **joserfc 1.7.5.** `requirements.lock` moves joserfc 1.7.4 -> 1.7.5
   (CVE-2026-119283 HIGH, GHSA-jpxq-7h8p-2q76), and
   `apps/web-server/requirements.txt` gains a `joserfc>=1.7.5` floor next to
-  Authlib, clearing the Trivy P0 gate. Not reachable in this code: the flaw is
-  in `joserfc.jwe.decrypt_json` (JWE General JSON), and the OIDC client only
-  verifies compact JWS ID tokens through `joserfc.jwt.decode`.
+  Authlib, clearing the Trivy P0 gate (#1982). Not reachable in this code:
+  the flaw is in `joserfc.jwe.decrypt_json` (JWE General JSON), and the
+  OIDC client only verifies compact JWS ID tokens through
+  `joserfc.jwt.decode`.
+
+### Changed
+
+- **Project-scoped synthetic correlation key (#1978, closes #1972).** The
+  synthetic key is now `af-<project_id>:<spec_id>` (was `af-<spec_id>`,
+  which collided across projects) on every emitter; `<repo>#<n>` keys are
+  unchanged. A synthetic key over 128 characters logs a warning and is
+  dropped (never truncated); an event with no key is skipped with a
+  warning. The web server sets `AIFACTORY_TASK_ID` in the build env
+  (local spawn and kubejob) so worker events carry the right task id.
+  **Behaviour change:** a build started before this deploy has no
+  `AIFACTORY_TASK_ID`, so its worker events land on a separate CFactory
+  card.
+
+### Fixed
+
+- **Remote MCP tool calls work on mcp 2.x (#1977, closes #1974).**
+  `messages_endpoint` sets the posting key on the message POST, after the
+  existing session-owner check, so `tools/call` no longer fails with
+  `missing auth context`. Remote MCP stays off in prod.
 
 ## 3.10.15 - 2026-10-30
 
