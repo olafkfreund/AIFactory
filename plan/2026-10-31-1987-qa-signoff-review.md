@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1987
 spec: spec/2026-10-31-1987-qa-signoff-review.md
 coders:
