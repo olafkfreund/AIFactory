@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 import anyio
 import pytest
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import Response
 from httpx import ASGITransport, AsyncClient
 from mcp.types import LATEST_PROTOCOL_VERSION
 from server.mcp_remote import server as srv
@@ -64,7 +65,8 @@ async def test_post_from_another_key_is_refused(monkeypatch):
         "headers": [(b"authorization", b"Bearer acw_a")],
         "query_string": b"",
     }
-    await srv.sse_endpoint(Request(scope, AsyncMock(), raw_send))
+    response = await srv.sse_endpoint(Request(scope, AsyncMock(), raw_send))
+    assert isinstance(response, Response)  # FastAPI must not send a second (null) body
     assert seen["bound"] == "key-a"
     assert len(sent) == 2  # the wrapper still forwards every message
     assert SID not in srv._session_keys  # dropped when the stream closes
