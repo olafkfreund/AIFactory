@@ -106,7 +106,9 @@ _sse_transport = SseServerTransport("/api/mcp-remote/messages/")
 # from the same key the session dispatches as (#1910). The transport generates
 # the id internally; we read it from the ``endpoint`` event it sends.
 _session_keys: dict[str, str] = {}
-_SESSION_ID = re.compile(rb"session_id=([0-9a-f]{32})")
+_ENDPOINT_EVENT = re.compile(
+    rb"event: endpoint\r?\ndata: [^\r\n]*[?&]session_id=([0-9a-f]{32})\r?\n"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -134,10 +136,12 @@ async def sse_endpoint(request: Request):
         )
 
     session_ids: list[str] = []
+    first_body = [True]
 
     async def send(message: Any) -> None:
-        if not session_ids and message.get("type") == "http.response.body":
-            match = _SESSION_ID.search(message.get("body", b""))
+        if first_body[0] and message.get("type") == "http.response.body":
+            first_body[0] = False
+            match = _ENDPOINT_EVENT.match(message.get("body", b""))
             if match:
                 session_ids.append(match.group(1).decode())
                 _session_keys[session_ids[0]] = key.key_id
@@ -174,13 +178,19 @@ async def messages_endpoint(request: Request):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=client_error(logger, "messages endpoint failed", exc),
         ) from exc
-    # Tools run as the key captured at SSE connect, so only that key may post.
+    # Only the key that opened the SSE session may post to it.
     session_id = request.query_params.get("session_id", "")
     if _session_keys.get(session_id) != key.key_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This MCP session belongs to another API key",
         )
-    return await _sse_transport.handle_post_message(
-        request.scope, request.receive, request._send
-    )
+    # mcp 2.x gives each message the POSTer's contextvars, so tools read the
+    # session owner's key from here.
+    token = _current_key.set(key)
+    try:
+        return await _sse_transport.handle_post_message(
+            request.scope, request.receive, request._send
+        )
+    finally:
+        _current_key.reset(token)

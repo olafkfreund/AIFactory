@@ -19,8 +19,6 @@ from core.error_utils import (
 )
 from core.git_metadata import GitMetadataChangedError, check_git_metadata
 from phase_config import (
-    get_phase_model,
-    get_phase_thinking_budget,
     get_provider_extra_kwargs,
     infer_provider_from_model,
 )
@@ -44,8 +42,8 @@ from prompt_generator import (
 from prompts import get_solo_prompt, is_first_run
 from providers.factory import get_provider
 from recovery import RecoveryManager
-from review.state import ReviewState, requires_review_before_coding
-from solo_mode import is_solo_mode_enabled_for_spec
+from review.state import requires_review_before_coding
+from run_gates import RunGates
 from task_logger import (
     LogPhase,
     get_task_logger,
@@ -129,6 +127,7 @@ async def run_autonomous_agent(
     remote_control_session: str | None = None,
     parallel: bool = False,
     workers: int | None = None,
+    gates: RunGates | None = None,
 ) -> None:
     """
     Run the autonomous agent loop with automatic memory management.
@@ -143,6 +142,7 @@ async def run_autonomous_agent(
         max_iterations: Maximum number of iterations (None for unlimited)
         verbose: Whether to show detailed output
         source_spec_dir: Original spec directory in main project (for syncing from worktree)
+        gates: run-start gate snapshot (#1983); captured here when None
         stop_after_planning: Return as soon as the planner phase finishes
             writing implementation_plan.json. Used by the Copilot delegation
             flow — AIFactory enriches the plan locally then hands the issue
@@ -185,8 +185,10 @@ async def run_autonomous_agent(
     # and fail-closed: flagged spec/repo content routes the task to human_review
     # BEFORE any agent session sees it. Runs on every start, but an operator
     # approval (the existing plan-review flow) is the false-positive escape
-    # hatch and lets a flagged task proceed on resume.
-    if _injection_scan_blocks(spec_dir, project_dir, source_spec_dir):
+    # hatch and lets a flagged task proceed on resume. The approval comes from
+    # the run-start snapshot (#1983), so it is captured before the scan.
+    gates = gates or RunGates.capture(spec_dir, source_spec_dir, model)
+    if _injection_scan_blocks(spec_dir, project_dir, source_spec_dir, gates):
         status_manager.update(state=BuildState.PAUSED)
         return
 
@@ -209,11 +211,13 @@ async def run_autonomous_agent(
     # the solo prompt (and coder tools, which include update_subtask_status)
     # instead of a dedicated planner session, and the plan-review gate is
     # skipped. Default OFF — the full pipeline is unchanged when disabled.
-    solo = is_solo_mode_enabled_for_spec(spec_dir)
-    # Read before any agent session so the planner cannot change the gate (#1922).
-    require_review = not solo and _should_require_human_review(spec_dir)
+    # Both gates come from the run-start snapshot, read before any agent session
+    # (#1922) from the source copy, which the agent in a worktree cannot edit
+    # (#1946, #1958, #1983).
+    solo = gates.solo
+    require_review = not solo and gates.requires_review
     # #1940: grants come only from the plan the start gate saw, not the live file.
-    approved_plan = _approved_plan_snapshot(spec_dir, require_review)
+    approved_plan = gates.approved_plan
 
     # #389: solo collapses plan+implement into one session, which bypasses the
     # wave dispatch. Under --parallel, author the plan first (planner session)
@@ -449,17 +453,21 @@ async def run_autonomous_agent(
         commit_before = get_latest_commit(project_dir)
         commit_count_before = get_commit_count(project_dir)
 
-        # Get the phase-specific model and thinking level (respects task_metadata.json configuration)
+        # Get the phase-specific model and thinking level (respects task_metadata.json
+        # configuration from the source copy, which the agent cannot edit, #1969)
         # first_run means we're in planning phase, otherwise coding phase
         current_phase = "planning" if first_run else "coding"
-        phase_model = get_phase_model(spec_dir, current_phase, model)
-        phase_thinking_budget = get_phase_thinking_budget(spec_dir, current_phase)
+        phase_model = gates.model(current_phase)
+        phase_thinking_budget = gates.thinking_budget(current_phase)
 
-        # Per-subtask model override (#376 right-sizing): a coding subtask may
-        # declare its own model (e.g. "haiku" for mechanical scaffolding) to run
-        # cheaper/faster than the phase default. Planning is never overridden.
-        if not first_run and next_subtask and next_subtask.get("model"):
-            phase_model = next_subtask["model"]
+        # Per-subtask model override comes from the approved-plan snapshot
+        # (#1979), not the live plan. Planning is never overridden.
+        if not first_run and next_subtask:
+            override = gates.subtask_model(
+                next_subtask.get("id"), next_subtask.get("model")
+            )
+            if override:
+                phase_model = override
 
         # Create client (fresh context) with phase-specific model and thinking
         # Route through provider factory for non-Claude models
@@ -658,7 +666,7 @@ async def run_autonomous_agent(
                         status_manager=status_manager,
                         disabled_phases=parallel_disabled_phases,
                         recovery_manager=recovery_manager,
-                        approved_plan=approved_plan,
+                        gates=gates,
                     )
                 except GitMetadataChangedError as exc:
                     _fail_on_git_metadata(exc, status_manager)
@@ -829,6 +837,7 @@ async def run_autonomous_agent(
                     provider=_sub_provider,
                     phase=_agent_phase,
                     duration_ms=_turn_duration_ms,
+                    routing_metadata=gates.metadata,
                 )
                 # Live per-worker PROGRESS heartbeat (#45 Tier 2): this worker is
                 # STILL RUNNING and just persisted another turn's spend — emit a
@@ -1114,6 +1123,7 @@ def _injection_scan_blocks(
     spec_dir: Path,
     project_dir: Path,
     source_spec_dir: Path | None,
+    gates: RunGates,
 ) -> bool:
     """Run the pre-coder injection scan gate (#805). True = task blocked.
 
@@ -1154,7 +1164,9 @@ def _injection_scan_blocks(
         )
         return False
 
-    if ReviewState.load(spec_dir).is_approval_valid(spec_dir):
+    # gates.review, not gates.approval_valid: an approval is required here even
+    # when plan review is not (#1983).
+    if gates.review.is_approval_valid(spec_dir):
         print_status(
             "Injection scan flagged, but a human approved this task - continuing",
             "warning",
@@ -1209,23 +1221,6 @@ def _injection_scan_blocks(
     )
     print()  # noqa: T201 - console UX, same as the plan-review gate
     return True
-
-
-def _approved_plan_snapshot(
-    spec_dir: Path, require_review: bool
-) -> dict[str, object] | None:
-    """Parse the plan once at run start when review gates coding (#1940).
-
-    None when review is not required (callers seed from the live plan); ``{}``
-    when the plan is missing/unreadable, which grants nothing.
-    """
-    if not require_review:
-        return None
-    try:
-        plan = json.loads((spec_dir / "implementation_plan.json").read_text())
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return plan if isinstance(plan, dict) else {}
 
 
 def _should_require_human_review(spec_dir: Path) -> bool:
@@ -1469,7 +1464,7 @@ async def _maybe_run_parallel_phase(
     status_manager: StatusManager,
     disabled_phases: set[int],
     recovery_manager: RecoveryManager | None = None,
-    approved_plan: dict[str, object] | None = None,
+    gates: RunGates | None = None,
 ) -> bool:
     """Run the subtask's phase as parallel waves if it is eligible (#376).
 
@@ -1517,7 +1512,7 @@ async def _maybe_run_parallel_phase(
             source_spec_dir=source_spec_dir,
             remote_control_session=remote_control_session,
             recovery_manager=recovery_manager,
-            approved_plan=approved_plan,
+            gates=gates,
         )
 
         # A stalled phase (cycle / unresolved deps / merge failures) drops to the

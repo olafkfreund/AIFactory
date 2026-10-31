@@ -1,13 +1,230 @@
-## [Unreleased]
+## 3.10.16 - 2026-10-30
+
+Every run gate (solo, require-review, plan approval, model and thinking)
+is read once at run start, coder and QA model selection comes from the
+source spec dir, the synthetic correlation key is project-scoped, remote
+MCP tool calls work on mcp 2.x, and joserfc moves to 1.7.5. One
+behaviour change (the `af-` key); the build env gains the internal
+`AIFACTORY_TASK_ID`, set by the web server. No new operator env vars. No
+migrations.
 
 ### Security
 
-- **Authlib 1.9.1 and dnspython 2.9.0.** `requirements.lock` moves Authlib
-  1.7.2 -> 1.9.1 (CVE-2026-96760 CRITICAL, CVE-2026-114615, CVE-2026-114616)
-  and dnspython 2.8.0 -> 2.9.0 (CVE-2026-114605), and the Authlib floor in
-  `apps/web-server/requirements.txt` rises to `>=1.9.1`, clearing the Trivy P0
-  gate. Not reachable in this code: the OIDC client verifies ID tokens with
-  joserfc, and nothing calls `authlib.jose`.
+- **Every run gate is snapshotted once, before the first agent session
+  (#1986, closes #1983).** `run.py` captures solo, require-review, the
+  review state and approved plan, and the task metadata used for
+  model/thinking into a frozen `RunGates` snapshot, and reads only that
+  afterwards. A gate file forged by an agent mid-run (in-process, including
+  kubejob builds) is never consulted. Cross-run persistence is not closed
+  (follow-ups #1985, #1987).
+- **Coder, parallel-runner and QA model/thinking come from the source spec
+  dir (#1980, closes #1969).** An agent editing its worktree
+  `task_metadata.json` can no longer pick its own model or thinking budget,
+  or downgrade its QA reviewer.
+- **joserfc 1.7.5.** `requirements.lock` moves joserfc 1.7.4 -> 1.7.5
+  (CVE-2026-119283 HIGH, GHSA-jpxq-7h8p-2q76), and
+  `apps/web-server/requirements.txt` gains a `joserfc>=1.7.5` floor next to
+  Authlib, clearing the Trivy P0 gate (#1982). Not reachable in this code:
+  the flaw is in `joserfc.jwe.decrypt_json` (JWE General JSON), and the
+  OIDC client only verifies compact JWS ID tokens through
+  `joserfc.jwt.decode`.
+
+### Changed
+
+- **Project-scoped synthetic correlation key (#1978, closes #1972).** The
+  synthetic key is now `af-<project_id>:<spec_id>` (was `af-<spec_id>`,
+  which collided across projects) on every emitter; `<repo>#<n>` keys are
+  unchanged. A synthetic key over 128 characters logs a warning and is
+  dropped (never truncated); an event with no key is skipped with a
+  warning. The web server sets `AIFACTORY_TASK_ID` in the build env
+  (local spawn and kubejob) so worker events carry the right task id.
+  **Behaviour change:** a build started before this deploy has no
+  `AIFACTORY_TASK_ID`, so its worker events land on a separate CFactory
+  card.
+
+### Fixed
+
+- **Remote MCP tool calls work on mcp 2.x (#1977, closes #1974).**
+  `messages_endpoint` sets the posting key on the message POST, after the
+  existing session-owner check, so `tools/call` no longer fails with
+  `missing auth context`. Remote MCP stays off in prod.
+
+## 3.10.15 - 2026-10-30
+
+Postgres pools are capped so the factory fleet fits the shared database,
+the solo flag and the QA plan grants read their gate from the source spec
+dir, and a task with an issue but no known repo gets a synthetic
+correlation key. Two behaviour changes; new optional env vars
+`DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_TIMEOUT`,
+`TEARDOWN_DB_POOL_SIZE`, `TEARDOWN_DB_MAX_OVERFLOW`. No migrations.
+
+### Security
+
+- **A resumed run reads solo mode from the source spec dir (#1967,
+  closes #1958).** `solo` and `require_review` both come from the source
+  spec dir, so a `soloMode` flag written into the worktree
+  `task_metadata.json` no longer switches a resumed run to the solo flow.
+- **QA plan-command seeding reads the approval gate from the source spec
+  dir (#1970, closes #1955).** A forged worktree `review_state.json` or a
+  flipped `requireReviewBeforeCoding` no longer grants a widened plan's
+  `required_commands`. A `--project-dir` at a task worktree root maps to
+  its source project; any other path under `.aifactory/worktrees`, or a
+  spec with no source dir, grants nothing (QA still runs).
+
+### Changed
+
+- **Postgres pools are capped (#1971, closes #1963).** The main web
+  engine uses 2 + 2 connections per pod (was 5 + 10), tunable with
+  `DB_POOL_SIZE` / `DB_MAX_OVERFLOW`; the tenant-teardown CronJob engine
+  uses 1 + 0 (`TEARDOWN_DB_POOL_SIZE` / `TEARDOWN_DB_MAX_OVERFLOW`).
+  `pool_timeout` drops to 10 s (`DB_POOL_TIMEOUT`), so a saturated pool
+  fails fast with `QueuePool limit ... reached`. Authz and merger
+  handlers release their request session earlier. SQLite is unchanged.
+- **Repo-scoped correlation key (#1966, closes #1960).** A task with an
+  issue but no known repo now uses the synthetic `af-<spec_id>` key, in
+  completion events, task rows, the from-issue response and the TFactory
+  handoff, instead of a bare issue number. **Behaviour change:** a
+  repo-less task already in flight under a bare number continues on a new
+  CFactory card.
+
+### Fixed
+
+- **A `None` anchor key version no longer raises in logging (#1965,
+  closes #1961).** Two log calls in `per_tenant_anchor_key.py` format the
+  version with `%s` instead of `%d`.
+
+### Docs
+
+- Intent and spec for containing indirect execution via agent-written
+  scripts (#1968, refs #1948). No code.
+
+## 3.10.14 - 2026-10-30
+
+OIDC ID-token hardening now actually applies, with one operator-facing
+behaviour change: the ID token's `iss` must match `APP_OIDC_ISSUER_URL`.
+The Ctrl+C resume re-checks plan approval, and a refused build-backend
+launch returns 503 instead of 500. No new env vars, no migrations.
+
+### Security
+
+- **OIDC ID-token claims are enforced (#1957, closes #1954).** The #324
+  `claims_options` and asymmetric-only alg list were passed to
+  `oauth.register()`, where Authlib never reads them. The callback now
+  pins `id_token_signing_alg_values_supported` to RS/ES/PS 256-512 and
+  validates `iss` (essential, `APP_OIDC_ISSUER_URL` with or without a
+  trailing slash), `aud` (essential, the client id) and `exp`. HS256 and
+  `alg=none` are refused even when discovery advertises them.
+  **Behaviour change:** `iss` must match the configured issuer, not just
+  the discovery document. Azure AD v1 setups using
+  `login.microsoftonline.com/<tid>` must switch `APP_OIDC_ISSUER_URL` to
+  the v2.0 issuer.
+- **The Ctrl+C resume re-checks plan approval (#1952, closes #1946).**
+  "Continue without instructions" re-runs the approval check before
+  restarting the agent, reading `review_state.json` and
+  `task_metadata.json` from the source spec dir rather than the
+  agent-writable worktree copy. When the approval no longer matches, it
+  warns and shows the TO RESUME box instead of resuming. The coder's solo
+  and review-required gate also reads the source spec dir.
+
+### Fixed
+
+- **A refused build-backend launch returns 503 (#1953, closes #1943).**
+  `BuildBackendUnavailableError` (#1942) was swallowed into an opaque 500.
+  `/start`, `/create-and-run`, `/from-plan` and `/from-issue` now return
+  503 with the fixed reason `BUILD_BACKEND_UNAVAILABLE`; neither the
+  exception text nor the raw env value reaches the caller.
+
+## 3.10.13 - 2026-10-30
+
+Security hardening of the build path, with seven behaviour changes. Plan
+approvals stored before this release read as stale once and may need
+re-approval. Build stdout control markers need a per-task nonce. Agent
+launches are refused when the build backend cannot run. When review is
+required, plan-command grants come only from the run-start plan. The Bash
+hook no longer trusts the agent-writable security profile or
+`.aifactory-allowlist`. Authz denials and rmux console attach/detach audit
+rows are now committed on Postgres. Trivy P0 CVEs are cleared in Authlib,
+dnspython and the images' py3-pip-wheel. No new operator env vars, no
+migrations.
+
+### Security
+
+- **Authlib 1.9.1 and dnspython 2.9.0 (#1949).** `requirements.lock` moves
+  Authlib 1.7.2 -> 1.9.1 (CVE-2026-96760 CRITICAL, CVE-2026-114615,
+  CVE-2026-114616) and dnspython 2.8.0 -> 2.9.0 (CVE-2026-114605), and the
+  Authlib floor in `apps/web-server/requirements.txt` rises to `>=1.9.1`,
+  clearing the Trivy P0 gate. Not reachable in this code: the OIDC client
+  verifies ID tokens with joserfc, and nothing calls `authlib.jose`.
+- **py3-pip-wheel 26.2.2-r1 floor (#1951).** CVE-2026-114613 (HIGH,
+  pip's vendored msgpack) in the pinned Chainguard base; floored in the
+  runtime and gateway images. The gateway image also drops `py3.15-pip` and
+  `py3.15-pip-base`, as runtime already did.
+- **Build stdout control markers are authenticated (#1938, closes #1929).**
+  The control plane accepts `__EXEC_PHASE__`, `__USAGE__` and the new
+  `__RATE_LIMIT__` markers only with the build's per-task nonce
+  (`<marker>:<nonce>:{json}`), passed to the build as
+  `AIFACTORY_MARKER_NONCE` and stripped from every agent child env. A line
+  with a missing or wrong nonce is plain log text. The `[PHASE_EVENT] k=v`
+  and bare `{"phase"|"status"}` JSON parsers are removed, and so is the
+  free-text rate-limit match: failover now triggers only on the SDK's
+  `error == "rate_limit"`. Builds in flight during the rollout lose live
+  phase and cost updates until they finish; completion is unaffected.
+- **Agent launches fail closed when the build backend cannot run (#1942,
+  refs #1932).** An unknown `AIFACTORY_BUILD_BACKEND`, or `kubejob` without
+  `DATABASE_URL`, makes start, both drains and spec creation raise
+  `BuildBackendUnavailableError` instead of running agents in the
+  web-server pod. At startup such a config logs an ERROR and the server
+  keeps serving the UI; in-cluster `subprocess` logs a WARNING. Unset is
+  still `subprocess` for local dev. Prod (`kubejob` with `DATABASE_URL`)
+  is unchanged.
+- **Plan-command grants come from the run-start plan when review is
+  required (#1945, closes #1940).** The coder loop and parallel wave
+  children no longer re-read the live, agent-writable
+  `implementation_plan.json` before each session. Runs that do not require
+  review behave as before.
+- **The Bash hook no longer trusts the agent-writable profile (#1947,
+  closes #1944).** The command allowlist is built in memory from fresh
+  detection once per process and worktree, plus in-process plan grants;
+  `.aifactory/.aifactory-security.json` is now output only. Write/Edit and
+  Bash commands that name the profile are refused. `.aifactory-allowlist`
+  is limited to `(BASE_COMMANDS | PLAN_GRANTABLE_COMMANDS) - DENY_COMMANDS`
+  and is write-protected; other names need the env-only
+  `AIFACTORY_EXTRA_ALLOWED_COMMANDS`. Grants that `trusted_plan.py` writes
+  to the file at ingest are no longer read (the coder loop re-seeds them
+  in-process).
+
+### Changed
+
+- **Plan approval binds plan content, not raw bytes (#1934, closes #1924).**
+  The approval hash ignores progress keys (status, notes, timestamps, QA
+  fields, `chunks` beside `subtasks`) and also accepts the plan model's
+  saved form, so progress writes and wave-engine saves no longer make an
+  approval stale. Any content edit still invalidates it. The plan-command
+  allowlist reads the same content, so commands placed only in progress
+  keys are no longer granted. **After deploy:** approvals stored before
+  this release read as stale once (fail closed). Tasks with
+  `task_control.planApproved` still resume via start; others need
+  re-approval.
+
+### Fixed
+
+- **Authz denials are committed (#1936, closes #1919).** `authz.denied` and
+  `gate.rejected` rows were rolled back with the request session on
+  Postgres; they are now written on their own session. The audit chain
+  head is read under `pg_advisory_xact_lock`, with
+  `created_at = clock_timestamp()` on Postgres, so concurrent writers keep
+  one linear chain. The 403 is unchanged.
+- **rmux console attach/detach audit rows are committed (#1941, closes
+  #1939).** Same fix as #1936.
+- **Planner prompt no longer asks for `selectedSkills` (#1937, closes
+  #1927).** The step never affected its own build. No runtime change.
+
+### Dependencies
+
+- GitHub Actions group (#1877): setup-python 7.1.0, setup-uv 10.3.2,
+  docker/login-action 4.7.0, codeql-action 4.39.1.
+- Docs site (#1865, #1866, #1867, #1868): dompurify 3.4.17, fast-uri
+  3.1.9, launch-editor 2.14.2, body-parser 1.20.9.
 
 ## 3.10.12 - 2026-10-27
 

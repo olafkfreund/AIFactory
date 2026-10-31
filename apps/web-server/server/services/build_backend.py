@@ -406,7 +406,7 @@ def backend_config_error(store_enabled: bool) -> str | None:
         return None
     if raw != BACKEND_KUBEJOB:
         return (
-            f"unknown {_ENV_BACKEND}={raw!r}; valid values are "
+            f"unknown {_ENV_BACKEND} value; valid values are "
             f"{BACKEND_SUBPROCESS!r} and {BACKEND_KUBEJOB!r}"
         )
     if not store_enabled:
@@ -1301,6 +1301,7 @@ class KubeJobBuildBackend:
         extra_env.update(await project_settings_store.mcp_spawn_env(project_path))
         if marker_nonce:
             extra_env["AIFACTORY_MARKER_NONCE"] = marker_nonce  # #1929
+        extra_env["AIFACTORY_TASK_ID"] = task_id  # #1972: not a secret
 
         manifest = build_run_py_job_manifest(
             task_id=task_id,

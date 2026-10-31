@@ -3,6 +3,7 @@
 import asyncio
 import importlib
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -167,5 +168,136 @@ def test_qa_entry_seeds_plan_by_review_state(
         return True
 
     monkeypatch.setattr(qc, "run_qa_validation_loop", _qa)
-    qc.handle_qa_command(proj, proj / "spec", "m")
+    spec_dir = proj / ".aifactory" / "specs" / "spec"
+    spec_dir.mkdir(parents=True)
+    qc.handle_qa_command(proj, spec_dir, "m")
     assert seen == [expected]
+
+
+def _source_and_worktree(proj):
+    source = proj / ".aifactory" / "specs" / "001-x"
+    source.mkdir(parents=True)
+    (source / "spec.md").write_text("# Spec\n")
+    (source / "task_metadata.json").write_text(
+        json.dumps({"requireReviewBeforeCoding": True})
+    )
+    (source / "implementation_plan.json").write_text(
+        json.dumps({"required_commands": ["uv"]})
+    )
+    review_state = importlib.import_module("review.state")
+    review_state.ReviewState().approve(source)
+    worktree = (
+        proj
+        / ".aifactory"
+        / "worktrees"
+        / "tasks"
+        / "001-x"
+        / ".aifactory"
+        / "specs"
+        / "001-x"
+    )
+    shutil.copytree(source, worktree)
+    return source, worktree
+
+
+def _qa_seed_seen(proj, spec_dir, monkeypatch, loop_kwargs=None):
+    qc = importlib.import_module("cli.qa_commands")
+    seen = []
+    monkeypatch.setattr(qc, "print_banner", lambda: None)
+    monkeypatch.setattr(qc, "validate_environment", lambda _s: True)
+    monkeypatch.setattr(qc, "should_run_qa", lambda _s: True)
+    monkeypatch.setattr(
+        importlib.import_module("project.analyzer"),
+        "seed_profile_with_plan_commands",
+        lambda _p, _f, plan: seen.append(plan),
+    )
+
+    async def _qa(**kw):
+        if loop_kwargs is not None:
+            loop_kwargs.append(kw)
+        return True
+
+    monkeypatch.setattr(qc, "run_qa_validation_loop", _qa)
+    qc.handle_qa_command(proj, spec_dir, "m")
+    return seen
+
+
+@pytest.mark.parametrize("tamper", ["forge_review", "flip_metadata"])
+def test_qa_entry_reads_gate_from_source_not_worktree(proj, monkeypatch, tamper):
+    source, worktree = _source_and_worktree(proj)
+    (worktree / "implementation_plan.json").write_text(
+        json.dumps({"required_commands": ["uv", "npx"]})
+    )
+    if tamper == "forge_review":
+        importlib.import_module("review.state").ReviewState().approve(worktree)
+    else:
+        (worktree / "task_metadata.json").write_text(
+            json.dumps({"requireReviewBeforeCoding": False})
+        )
+
+    assert source.is_dir()
+    assert _qa_seed_seen(proj, worktree, monkeypatch) == [{}]
+
+
+def test_qa_entry_worktree_without_source_seeds_nothing(proj, monkeypatch):
+    source, worktree = _source_and_worktree(proj)
+    shutil.rmtree(source)
+    assert _qa_seed_seen(proj, worktree, monkeypatch) == [{}]
+
+
+def test_qa_entry_approved_source_seeds_live_plan(proj, monkeypatch):
+    source, _ = _source_and_worktree(proj)
+    assert _qa_seed_seen(proj, source, monkeypatch) == [None]
+
+
+def test_qa_entry_worktree_root_rejects_flipped_review(proj, monkeypatch):
+    _, worktree = _source_and_worktree(proj)
+    (worktree / "task_metadata.json").write_text(
+        json.dumps({"requireReviewBeforeCoding": False})
+    )
+    (worktree / "implementation_plan.json").write_text(
+        json.dumps({"required_commands": ["uv", "npx"]})
+    )
+    assert _qa_seed_seen(worktree.parents[2], worktree, monkeypatch) == [{}]
+
+
+def test_qa_entry_worktree_root_accepts_approved_source(proj, monkeypatch):
+    _, worktree = _source_and_worktree(proj)
+    assert _qa_seed_seen(worktree.parents[2], worktree, monkeypatch) == [None]
+
+
+def test_qa_entry_rejects_deeper_worktree_project_dir(proj, monkeypatch):
+    _, worktree = _source_and_worktree(proj)
+    nested = worktree.parents[2] / "sub"
+    nested.mkdir()
+    assert _qa_seed_seen(nested, worktree, monkeypatch) == [{}]
+
+
+@pytest.mark.parametrize("from_root", [False, True])
+def test_qa_entry_passes_source_spec_dir_to_loop(proj, monkeypatch, from_root):
+    """#1969: QA model/thinking come from the source spec dir, not the worktree."""
+    source, worktree = _source_and_worktree(proj)
+    kwargs = []
+    project_dir = worktree.parents[2] if from_root else proj
+    _qa_seed_seen(project_dir, worktree, monkeypatch, kwargs)
+    assert kwargs[0]["source_spec_dir"] == source
+
+
+def test_qa_entry_deeper_worktree_reads_no_metadata(proj, monkeypatch):
+    import os
+
+    _, worktree = _source_and_worktree(proj)
+    nested = worktree.parents[2] / "sub"
+    nested.mkdir()
+    kwargs = []
+    _qa_seed_seen(nested, worktree, monkeypatch, kwargs)
+    assert kwargs[0]["source_spec_dir"] == Path(os.devnull)
+
+
+def test_qa_entry_keeps_source_when_seed_import_fails(proj, monkeypatch):
+    """A failed seed import must not drop the source dir in direct mode (#1969)."""
+    source, _ = _source_and_worktree(proj)
+    monkeypatch.setitem(sys.modules, "review.state", None)
+    kwargs = []
+    _qa_seed_seen(proj, source, monkeypatch, kwargs)
+    assert kwargs[0]["source_spec_dir"] == source

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -38,8 +39,6 @@ from core.client import create_client
 from core.git_metadata import GitMetadataChangedError, check_git_metadata
 from implementation_plan.plan import ImplementationPlan
 from phase_config import (
-    get_phase_model,
-    get_phase_thinking_budget,
     get_provider_extra_kwargs,
     infer_provider_from_model,
 )
@@ -49,6 +48,7 @@ from prompt_generator import (
     load_subtask_context,
 )
 from providers.factory import get_provider
+from run_gates import RunGates
 from task_logger import LogPhase, TaskLogger
 
 from .completion_gate import completion_refusal
@@ -189,15 +189,17 @@ def emit_worker_live_event(
 
     ``spec_id`` / ``task_id`` / ``project_id`` are reconstructed the same way the
     web-server's terminal emit derives them (``spec_id = spec_dir.name``,
-    ``project_id = project_dir.name``, ``task_id = project_id:spec_id``) so the
-    live sub-event shares the terminal event's correlation key.
+    ``task_id`` from env ``AIFACTORY_TASK_ID``, falling back to
+    ``<project_dir.name>:<spec_id>``) so the live sub-event shares the terminal
+    event's correlation key (#1972).
     """
     try:
         mod = _load_completion_emitter()
         if mod is None:
             return
         spec_id = spec_dir.name
-        project_id = project_dir.name
+        task_id = os.environ.get("AIFACTORY_TASK_ID") or f"{project_dir.name}:{spec_id}"
+        project_id = task_id.split(":", 1)[0]
         worker_rec = {
             "worker_id": worker_id,
             "subtask_id": subtask_id,
@@ -212,7 +214,7 @@ def emit_worker_live_event(
         }
         mod.emit_worker_completion(
             spec_dir=spec_dir,
-            task_id=f"{project_id}:{spec_id}",
+            task_id=task_id,
             spec_id=spec_id,
             project_id=project_id,
             worker=worker_rec,
@@ -254,7 +256,8 @@ def emit_worker_progress_heartbeat(
         if mod is None or not hasattr(mod, "emit_worker_progress"):
             return
         spec_id = spec_dir.name
-        project_id = project_dir.name
+        task_id = os.environ.get("AIFACTORY_TASK_ID") or f"{project_dir.name}:{spec_id}"
+        project_id = task_id.split(":", 1)[0]
         worker_rec = {
             "worker_id": worker_id,
             "subtask_id": subtask_id,
@@ -267,7 +270,7 @@ def emit_worker_progress_heartbeat(
         }
         mod.emit_worker_progress(
             spec_dir=spec_dir,
-            task_id=f"{project_id}:{spec_id}",
+            task_id=task_id,
             spec_id=spec_id,
             project_id=project_id,
             worker=worker_rec,
@@ -437,7 +440,7 @@ async def run_parallel_coding_phase(
     source_spec_dir: Path | None = None,
     remote_control_session: str | None = None,
     recovery_manager: Any = None,
-    approved_plan: dict[str, object] | None = None,
+    gates: RunGates | None = None,
 ) -> PhaseRunResult:
     """Run one ``parallel_safe`` phase's subtasks concurrently in waves.
 
@@ -455,8 +458,9 @@ async def run_parallel_coding_phase(
 
     plan_path = spec_dir / "implementation_plan.json"
     base_branch = _task_branch(project_dir)
-    phase_model = get_phase_model(spec_dir, "coding", model)
-    thinking_budget = get_phase_thinking_budget(spec_dir, "coding")
+    gates = gates or RunGates.capture(spec_dir, source_spec_dir, model)
+    phase_model = gates.model("coding")
+    thinking_budget = gates.thinking_budget("coding")
 
     # One manager for the phase; `git worktree add` is serialized via this lock
     # so concurrent subtasks don't race the repo during the (fast) setup step.
@@ -529,7 +533,7 @@ async def run_parallel_coding_phase(
                         seed_profile_with_plan_commands,
                         child_path,
                         _child_plan,
-                        plan=approved_plan,
+                        plan=gates.approved_plan,
                     )
             except Exception:
                 pass  # never let allowlist seeding break a parallel subtask
@@ -591,7 +595,10 @@ async def run_parallel_coding_phase(
             commit_before = await asyncio.to_thread(_head_commit, child_path)
 
             # --- agent session (the genuinely concurrent, awaited part) ---
-            sub_model = getattr(subtask, "model", None) or phase_model
+            sub_model = (
+                gates.subtask_model(subtask.id, getattr(subtask, "model", None))
+                or phase_model
+            )
             client = _make_client(child_path, child_spec_dir, sub_model)
             _t_start = time.monotonic()
             # Watchdog on the client enter (#816): a stalled MCP connect becomes a
@@ -656,6 +663,7 @@ async def run_parallel_coding_phase(
                         provider=_sub_provider,
                         phase=LogPhase.CODING.value,
                         duration_ms=_duration_ms,
+                        routing_metadata=gates.metadata,
                     )
                     # Live per-worker sub-event (#45 P1): this worker has just
                     # finished its wave session and its record is persisted —

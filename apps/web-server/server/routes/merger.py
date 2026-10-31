@@ -42,6 +42,7 @@ stall every other request and WebSocket for the scan's whole duration.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from typing import Any
 
@@ -96,6 +97,9 @@ async def report_merger(
     loop, so a stale value here is how a dead one shows (Factory#2586).
     """
     project_ids = await _visible_project_ids(request, db)
+    # Release the request's connection before the merger sweep (#1963).
+    with contextlib.suppress(Exception):
+        await db.rollback()
     try:
         await project_settings_store.refresh_all()
     except Exception:  # noqa: BLE001 - never block merger report on settings refresh
@@ -122,6 +126,9 @@ async def run_merger(
     # opens nothing, so it stays at the report's "any membership" level.
     minimum_role = "viewer" if dry_run else "member"
     project_ids = await _visible_project_ids(request, db, minimum_role=minimum_role)
+    # Release the request's connection before the merger sweep (#1963).
+    with contextlib.suppress(Exception):
+        await db.rollback()
     try:
         await project_settings_store.refresh_all()
     except Exception:  # noqa: BLE001 - never block merger run on settings refresh

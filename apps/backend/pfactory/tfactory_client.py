@@ -35,6 +35,7 @@ from urllib.parse import quote, urlparse
 from core import auth_preflight
 from core.child_env import child_env, lfs_upload
 from core.git_credentials import authed_push_url
+from factory_common.logsafe import sanitize_log
 
 _log = logging.getLogger(__name__)
 
@@ -581,15 +582,17 @@ def _issue_from_requirements(req: dict[str, Any]) -> int | None:
 
 
 _ISSUE_URL_PATH = re.compile(r"^/([^/]+/[^/]+)/issues/\d+$")
+_MAX_KEY_LEN = 128  # CFactory correlation_key column width (#1972)
 
 
-def _event_correlation_key(req: dict[str, Any]) -> str | None:
+def _event_correlation_key(req: dict[str, Any], task_id: str | None) -> str | None:
     """The key AIFactory's own completion events carry for this spec (#1775).
 
     Mirrors ``server/services/completion.py`` ``read_issue_number`` +
     ``read_issue_repo`` + ``correlation_key`` (that module is stdlib-only and
     lives in the web server); a web-server test pins the two together. None
-    when the spec has no issue: the synthetic key stays service-local.
+    when the spec has no issue; ``af-<task_id>`` when the issue's repo is unknown
+    (#1960), and None there too when ``task_id`` is unknown (#1972).
     """
     raw = None
     if isinstance(req.get("metadata"), dict):
@@ -610,11 +613,18 @@ def _event_correlation_key(req: dict[str, Any]) -> str | None:
     url = gh.get("url") if isinstance(gh, dict) else None
     if isinstance(url, str) and (m := _ISSUE_URL_PATH.match(urlparse(url).path)):
         return f"{m.group(1)}#{number}"
-    return str(number)
+    key = f"af-{task_id}" if task_id else None
+    if key and len(key) > _MAX_KEY_LEN:  # never truncate (#1972)
+        _log.warning(
+            "synthetic correlation key for %s exceeds 128 chars; sending none",
+            sanitize_log(task_id),
+        )
+        key = None
+    return key
 
 
 def _thread_issue(
-    contract: dict[str, Any] | None, req: dict[str, Any]
+    contract: dict[str, Any] | None, req: dict[str, Any], task_id: str | None
 ) -> dict[str, Any] | None:
     """Thread the origin issue onto the contract TFactory receives.
 
@@ -622,8 +632,8 @@ def _thread_issue(
     build + plan; the label-driven fast path carries no PFactory plan, so it is
     backfilled from requirements.json (#964). ``correlation_key`` is the key
     AIFactory's own events carry: AIFactory sends TFactory no issue repo, so
-    without it TFactory falls back to a bare issue number and its work item
-    splits from the build's (#1775). A PFactory contract's own key wins.
+    without it TFactory's work item splits from the build's (#1775); the key is
+    never a bare number (#1960). A PFactory contract's own key wins.
     """
     issue_no = _issue_from_requirements(req)
     if issue_no is not None:
@@ -633,7 +643,7 @@ def _thread_issue(
         contract["provenance"] = prov
     # Not gated on issue_no: the event readers also accept metadata.githubIssueNumber
     # and string numbers, and the key must follow the events, not the #964 block.
-    key = _event_correlation_key(req)
+    key = _event_correlation_key(req, task_id)
     if key:
         contract = dict(contract or {})
         contract.setdefault("correlation_key", key)
@@ -658,7 +668,11 @@ def _signed_snapshot(
 
 
 def build_ingest_payload(
-    spec_dir: Path, spec_id: str, *, contract: dict[str, Any] | None
+    spec_dir: Path,
+    spec_id: str,
+    *,
+    contract: dict[str, Any] | None,
+    task_id: str | None = None,
 ) -> dict:
     """Build the payload for TFactory's self-contained spec intake
     (``POST /api/specs/ingest``): ``{project_id, spec_id, spec_text}``.
@@ -673,6 +687,10 @@ def build_ingest_payload(
     the correlation key. When the contract carries ``approval``, the pre-overlay
     copy is also sent as ``signed_contract`` so TFactory can verify the PFactory
     signature, which the overlays would otherwise break (#1432).
+
+    ``task_id`` is ``<project_id>:<spec_id>``, the AIFactory event task id. It
+    scopes the synthetic ``af-`` key (spec ids repeat across projects, #1972);
+    when None no synthetic key is set, since ``af-<spec_id>`` would collide.
     """
     spec_dir = Path(spec_dir)
     project_id = os.environ.get("TFACTORY_PROJECT_ID") or _aifactory_project_name(
@@ -731,7 +749,7 @@ def build_ingest_payload(
         execution["phase_models"] = merged
         contract["execution"] = execution
     if not held:
-        contract = _thread_issue(contract, req)
+        contract = _thread_issue(contract, req, task_id)
     if contract:
         payload["contract"] = contract
     if signed:
@@ -1007,7 +1025,11 @@ def wants_auto_handoff(spec_dir: Path) -> bool:
 
 
 async def maybe_auto_handoff_tfactory(
-    spec_dir: Path, spec_id: str, *, contract: dict[str, Any] | None
+    spec_dir: Path,
+    spec_id: str,
+    *,
+    contract: dict[str, Any] | None,
+    task_id: str | None = None,
 ) -> dict:
     """On a task's terminal SUCCESS, hand the finished build to TFactory for
     testing — but only when the task opted in (``auto_handover_tfactory`` in
@@ -1033,7 +1055,11 @@ async def maybe_auto_handoff_tfactory(
     try:
         # Off the event loop: it pushes the build branch (LFS upload up to 600 s).
         payload = await asyncio.to_thread(
-            build_ingest_payload, spec_dir, spec_id, contract=contract
+            build_ingest_payload,
+            spec_dir,
+            spec_id,
+            contract=contract,
+            task_id=task_id,
         )
         result = await send_handoff(payload)
     except Exception as exc:  # noqa: BLE001 — must never break task completion

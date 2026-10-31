@@ -249,7 +249,10 @@ async def run_terminal_completion(
                 from pfactory.tfactory_client import maybe_auto_handoff_tfactory
 
                 handoff = await maybe_auto_handoff_tfactory(
-                    spec_dir, spec_id, contract=handoff_contract(spec_dir, trusted)
+                    spec_dir,
+                    spec_id,
+                    contract=handoff_contract(spec_dir, trusted),
+                    task_id=task_id,
                 )
                 if handoff.get("sent"):
                     logger.info(
@@ -302,6 +305,7 @@ async def run_terminal_completion(
                                 spec_dir,
                                 spec_id,
                                 contract=handoff_contract(spec_dir, trusted),
+                                task_id=task_id,
                             )
 
                         def _re_test_sync() -> None:

@@ -1285,7 +1285,9 @@ def task_to_dict(task: Task) -> dict:
                 specs_path = str(spec_dir)  # Store path for frontend Files tab
                 # Declared key (#1775): CFactory uses it as given.
                 corr_key = correlation_key(
-                    task.spec_id, read_issue_number(spec_dir), read_issue_repo(spec_dir)
+                    f"{task.project_id}:{task.spec_id}",
+                    read_issue_number(spec_dir),
+                    read_issue_repo(spec_dir),
                 )
                 execution_progress = get_execution_progress(spec_dir, task.subtasks)
                 # Load archive metadata from plan file
