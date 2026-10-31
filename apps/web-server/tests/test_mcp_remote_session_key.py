@@ -1,6 +1,7 @@
 """An SSE session only accepts messages from the key that opened it (#1910)."""
 
 import json
+import re
 from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock
@@ -148,7 +149,7 @@ async def test_tool_call_over_the_real_transport_runs_as_the_session_key(monkeyp
     async def send_sse(message):
         if message["type"] == "http.response.body":
             stream.extend(message.get("body", b""))
-            if srv._SESSION_ID.search(stream):
+            if re.search(rb"session_id=([0-9a-f]{32})", stream):
                 endpoint_ready.set()
             if b'"id":2' in stream:
                 result_ready.set()
@@ -168,7 +169,9 @@ async def test_tool_call_over_the_real_transport_runs_as_the_session_key(monkeyp
         try:
             with anyio.fail_after(5):
                 await endpoint_ready.wait()
-            session_id = srv._SESSION_ID.search(stream).group(1).decode()
+            match = re.search(rb"session_id=([0-9a-f]{32})", stream)
+            assert match is not None
+            session_id = match.group(1).decode()
 
             assert (
                 await _post(
@@ -227,3 +230,42 @@ async def test_tool_call_over_the_real_transport_runs_as_the_session_key(monkeyp
 
     assert dispatched == [(tool_name, "key-a")]
     assert b"missing auth context" not in stream
+
+
+@pytest.mark.parametrize(
+    "bodies",
+    [
+        [
+            b"data: hello\r\n\r\n",
+            f"event: endpoint\r\ndata: /m/?session_id={SID}\r\n\r\n".encode(),
+        ],
+        [f"junk\r\nevent: endpoint\r\ndata: /m/?session_id={SID}\r\n\r\n".encode()],
+    ],
+)
+async def test_session_id_only_bound_from_first_body_start(monkeypatch, bodies):
+    seen = []
+
+    @asynccontextmanager
+    async def connect_sse(_scope, _receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        for body in bodies:
+            await send({"type": "http.response.body", "body": body})
+            seen.append(dict(srv._session_keys))
+        yield None, None
+
+    async def authenticate(_header):
+        return _key("key-a")
+
+    monkeypatch.setattr(srv, "authenticate", authenticate)
+    monkeypatch.setattr(srv._sse_transport, "connect_sse", connect_sse)
+    monkeypatch.setattr(srv._mcp_server, "run", AsyncMock())
+
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/api/mcp-remote/sse",
+        "headers": [(b"authorization", b"Bearer acw_a")],
+        "query_string": b"",
+    }
+    await srv.sse_endpoint(Request(scope, AsyncMock(), AsyncMock()))
+    assert all(SID not in s for s in seen)

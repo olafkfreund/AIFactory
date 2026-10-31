@@ -595,7 +595,10 @@ async def run_parallel_coding_phase(
             commit_before = await asyncio.to_thread(_head_commit, child_path)
 
             # --- agent session (the genuinely concurrent, awaited part) ---
-            sub_model = getattr(subtask, "model", None) or phase_model
+            sub_model = (
+                gates.subtask_model(subtask.id, getattr(subtask, "model", None))
+                or phase_model
+            )
             client = _make_client(child_path, child_spec_dir, sub_model)
             _t_start = time.monotonic()
             # Watchdog on the client enter (#816): a stalled MCP connect becomes a
@@ -660,6 +663,7 @@ async def run_parallel_coding_phase(
                         provider=_sub_provider,
                         phase=LogPhase.CODING.value,
                         duration_ms=_duration_ms,
+                        routing_metadata=gates.metadata,
                     )
                     # Live per-worker sub-event (#45 P1): this worker has just
                     # finished its wave session and its record is persisted —

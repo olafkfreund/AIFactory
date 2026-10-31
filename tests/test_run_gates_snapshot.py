@@ -89,6 +89,35 @@ def test_frozen(tmp_path: Path) -> None:
         gates.solo = True  # type: ignore[misc]
 
 
+def test_subtask_model_without_snapshot_uses_live_model(tmp_path: Path) -> None:
+    gates = dataclasses.replace(
+        RunGates.capture(_spec(tmp_path), None, None), approved_plan=None
+    )
+    assert gates.subtask_model("1", "haiku") == "haiku"
+    assert gates.subtask_model("1", "") is None
+    assert gates.subtask_model("1", 42) is None
+
+
+def test_subtask_model_uses_snapshot_model(tmp_path: Path) -> None:
+    gates = dataclasses.replace(
+        RunGates.capture(_spec(tmp_path), None, None),
+        approved_plan={"phases": [{"subtasks": [{"id": "1", "model": "sonnet"}]}]},
+    )
+    assert gates.subtask_model("1", "haiku") == "sonnet"
+
+
+def test_subtask_model_missing_or_unset_in_snapshot(tmp_path: Path) -> None:
+    gates = dataclasses.replace(
+        RunGates.capture(_spec(tmp_path), None, None),
+        approved_plan={"phases": [{"subtasks": [{"id": "1"}]}]},
+    )
+    assert gates.subtask_model("1", "haiku") is None
+    assert gates.subtask_model("2", "haiku") is None
+    assert (
+        dataclasses.replace(gates, approved_plan={}).subtask_model("1", "haiku") is None
+    )
+
+
 def test_explicit_metadata_wins_over_the_file(tmp_path: Path) -> None:
     spec = _spec(tmp_path, pinnedModel="haiku", thinkingLevel="none")
     assert get_phase_model(spec, "qa", metadata={}) != get_phase_model(spec, "qa")
@@ -261,9 +290,15 @@ def _client_args(create_client) -> list[tuple[str, int | None]]:
     ]
 
 
+async def _inline_to_thread(func, /, *args, **kwargs):
+    return func(*args, **kwargs)
+
+
+@pytest.mark.parametrize("snapshot_model", [None, "haiku"])
 @pytest.mark.asyncio
 async def test_serial_coder_second_session_ignores_metadata_forged_by_the_first(
     tmp_path: Path,
+    snapshot_model: str | None,
 ) -> None:
     from unittest.mock import AsyncMock, MagicMock, patch  # noqa: PLC0415
 
@@ -271,21 +306,37 @@ async def test_serial_coder_second_session_ignores_metadata_forged_by_the_first(
 
     source = _spec(tmp_path, "source", **_CODING_META)
     worktree = _spec(tmp_path, "worktree", **_CODING_META)
+    snapshot_subtask = {"id": "1"}
+    if snapshot_model:
+        snapshot_subtask["model"] = snapshot_model
+    gates = dataclasses.replace(
+        RunGates.capture(worktree, source, "sonnet"),
+        approved_plan={"phases": [{"subtasks": [snapshot_subtask]}]},
+    )
     client = MagicMock(
         __aenter__=AsyncMock(return_value=None), __aexit__=AsyncMock(return_value=False)
     )
     client.__aenter__.return_value = client
-    create_client = MagicMock(return_value=client)
+
+    class SecondClientReached(Exception):
+        pass
+
+    create_client = MagicMock(side_effect=[client, SecondClientReached])
+    record_turn = MagicMock()
 
     async def session(*_a: object, **_k: object) -> tuple[str, str, dict[str, object]]:
         (source / "task_metadata.json").write_text(
             json.dumps({**_CODING_META, **_FORGED})
         )
-        return ("continue", "", {})
+        (worktree / "task_metadata.json").write_text(
+            json.dumps({**_CODING_META, **_FORGED})
+        )
+        return ("continue", "", {"usage": {"input_tokens": 1}})
 
     patchers = {
         "create_client": create_client,
         "run_session_guarded": session,
+        "post_session_processing": AsyncMock(return_value=True),
         "check_git_metadata": MagicMock(),
         "get_graphiti_context": AsyncMock(return_value=""),
         "RecoveryManager": MagicMock(
@@ -294,7 +345,7 @@ async def test_serial_coder_second_session_ignores_metadata_forged_by_the_first(
         "StatusManager": MagicMock(),
         "get_task_logger": MagicMock(return_value=None),
         "debug_memory_system_status": MagicMock(),
-        "record_turn": MagicMock(),
+        "record_turn": record_turn,
         "CompactionDetector": MagicMock(),
         "build_operational_context": MagicMock(return_value=""),
         "drain_inbox": MagicMock(return_value=[]),
@@ -306,32 +357,46 @@ async def test_serial_coder_second_session_ignores_metadata_forged_by_the_first(
             return_value={"completed": 0, "total": 1, "in_progress": 0}
         ),
         "get_current_phase": MagicMock(return_value=None),
-        "get_next_subtask": MagicMock(return_value={"id": "1", "status": "pending"}),
+        "get_next_subtask": MagicMock(
+            return_value={"id": "1", "status": "pending", "model": "haiku"}
+        ),
         "get_latest_commit": MagicMock(return_value="abc"),
         "get_commit_count": MagicMock(return_value=0),
         "emit_phase": MagicMock(),
         "AUTO_CONTINUE_DELAY_SECONDS": 0,
     }
-    with contextlib.ExitStack() as stack:
+    with contextlib.ExitStack() as stack, pytest.raises(SecondClientReached):
         for name, repl in patchers.items():
             stack.enter_context(patch.object(coder, name, repl))
+        stack.enter_context(patch("agents.utils.publish_plan", MagicMock()))
+        stack.enter_context(patch("asyncio.to_thread", new=_inline_to_thread))
+        stack.enter_context(
+            patch("agents.parallel_integration.emit_worker_progress_heartbeat")
+        )
         await coder.run_autonomous_agent(
             project_dir=tmp_path,
             spec_dir=worktree,
             model="sonnet",
             max_iterations=2,
             source_spec_dir=source,
+            gates=gates,
         )
 
     first, second = _client_args(create_client)
     assert second == first
-    assert "haiku" not in second[0]
+    assert second[0] == (snapshot_model or gates.model("coding"))
     assert second[1] == get_thinking_budget("high")
+    assert record_turn.called
+    assert all(
+        call.kwargs["routing_metadata"] == gates.metadata
+        for call in record_turn.call_args_list
+    )
 
 
+@pytest.mark.parametrize("snapshot_model", [None, "haiku"])
 @pytest.mark.asyncio
 async def test_parallel_wave_ignores_metadata_forged_after_capture(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, snapshot_model: str | None
 ) -> None:
     from unittest.mock import AsyncMock, MagicMock  # noqa: PLC0415
 
@@ -351,7 +416,12 @@ async def test_parallel_wave_ignores_metadata_forged_after_capture(
                         "name": "P",
                         "parallel_safe": True,
                         "subtasks": [
-                            {"id": "A", "description": "a", "status": "pending"}
+                            {
+                                "id": "A",
+                                "description": "a",
+                                "status": "pending",
+                                "model": "haiku",
+                            }
                         ],
                     }
                 ],
@@ -366,6 +436,7 @@ async def test_parallel_wave_ignores_metadata_forged_after_capture(
         sys.modules["core.worktree"], "WorktreeManager", MagicMock(return_value=wt)
     )
     create_client = MagicMock()
+    record_turn = MagicMock()
     for name, repl in {
         "_task_branch": MagicMock(return_value="main"),
         "create_client": create_client,
@@ -373,11 +444,15 @@ async def test_parallel_wave_ignores_metadata_forged_after_capture(
         "load_subtask_context": MagicMock(return_value={}),
         "get_graphiti_context": AsyncMock(return_value=""),
         "_head_commit": MagicMock(return_value="abc"),
-        "run_session_guarded": AsyncMock(return_value=("complete", "", {})),
+        "run_session_guarded": AsyncMock(
+            return_value=("complete", "", {"usage": {"input_tokens": 1}})
+        ),
         "check_git_metadata": MagicMock(),
         "read_test_evidence": MagicMock(return_value={}),
         "_capture_memory": AsyncMock(),
         "record_subtask_started": MagicMock(),
+        "record_turn": record_turn,
+        "emit_worker_live_event": MagicMock(),
     }.items():
         monkeypatch.setattr(wave, name, repl)
 
@@ -386,8 +461,18 @@ async def test_parallel_wave_ignores_metadata_forged_after_capture(
         return PhaseRunResult(completed_ids=[], failed_ids=[])
 
     monkeypatch.setattr(wave, "run_parallel_phase", _phase)
-    gates = RunGates.capture(spec, None, "sonnet")
-    expected = (gates.model("coding"), gates.thinking_budget("coding"))
+    monkeypatch.setattr(wave.asyncio, "to_thread", _inline_to_thread)
+    snapshot_subtask = {"id": "A"}
+    if snapshot_model:
+        snapshot_subtask["model"] = snapshot_model
+    gates = dataclasses.replace(
+        RunGates.capture(spec, None, "sonnet"),
+        approved_plan={"phases": [{"subtasks": [snapshot_subtask]}]},
+    )
+    expected = (
+        snapshot_model or gates.model("coding"),
+        gates.thinking_budget("coding"),
+    )
     (spec / "task_metadata.json").write_text(json.dumps({**_CODING_META, **_FORGED}))
     plan = ImplementationPlan.load(spec / "implementation_plan.json")
     await wave.run_parallel_coding_phase(
@@ -402,6 +487,8 @@ async def test_parallel_wave_ignores_metadata_forged_after_capture(
 
     assert _client_args(create_client) == [expected]
     assert expected[1] == get_thinking_budget("high")
+    record_turn.assert_called_once()
+    assert record_turn.call_args.kwargs["routing_metadata"] == gates.metadata
 
 
 def test_injection_scan_ignores_approval_forged_after_capture(
