@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +22,8 @@ from phase_config import (
 )
 from review.state import ReviewState, requires_review_before_coding
 from solo_mode import is_solo_mode_enabled_for_spec
+
+logger = logging.getLogger(__name__)
 
 
 def _approved_plan_snapshot(
@@ -53,9 +56,25 @@ class RunGates:
     def capture(
         cls, spec_dir: Path, source_spec_dir: Path | None, cli_model: str | None
     ) -> RunGates:
+        # #1997: no source dir on a server run means only agent-writable files; fail closed.
         gate_dir = source_spec_dir or spec_dir
-        solo = is_solo_mode_enabled_for_spec(gate_dir)
-        requires_review = bool(requires_review_before_coding(gate_dir))
+        fail_closed = source_spec_dir is None and bool(
+            os.environ.get("AIFACTORY_TASK_ID")
+        )
+        if fail_closed:
+            logger.warning(
+                "Review required because server-driven run has no source spec dir: %s",
+                spec_dir,
+            )
+            solo, requires_review = False, True
+        else:
+            if source_spec_dir is None:  # CLI --direct: no isolation by design
+                logger.warning(
+                    "Gates read from the run's own spec dir (no source_spec_dir): %s",
+                    spec_dir,
+                )
+            solo = is_solo_mode_enabled_for_spec(gate_dir)
+            requires_review = bool(requires_review_before_coding(gate_dir))
         metadata: TaskMetadataConfig = copy.deepcopy(
             load_task_metadata(gate_dir) or TaskMetadataConfig()
         )
@@ -64,7 +83,7 @@ class RunGates:
             requires_review=requires_review,
             review=ReviewState.load(gate_dir),
             approved_plan=_approved_plan_snapshot(
-                spec_dir, not solo and requires_review
+                gate_dir, not solo and requires_review
             ),
             metadata=metadata,
             cli_model=cli_model,
