@@ -7,12 +7,29 @@ Makefile targets, Poetry scripts, shell scripts) and custom
 command allowlists.
 """
 
+import logging
 import re
 from pathlib import Path
 
 from .command_registry import BASE_COMMANDS
 from .config_parser import ConfigParser
 from .models import CustomScripts
+
+logger = logging.getLogger(__name__)
+
+
+def _base_ref(project_dir: Path) -> str | None:
+    """Resolve the git ref to read script configuration from."""
+    from core.git_metadata import read_base_sha  # noqa: PLC0415
+
+    sha: str | None = read_base_sha(project_dir)
+    if sha:
+        return sha
+    if ConfigParser(project_dir).git_output("rev-parse", "--is-inside-work-tree"):
+        logger.info("No base sha recorded for %s; falling back to HEAD", project_dir)
+        return "HEAD"
+    # shortcut: non-git dirs are dev and tests only; read working tree.
+    return None
 
 
 class StructureAnalyzer:
@@ -28,10 +45,10 @@ class StructureAnalyzer:
             project_dir: Root directory of the project
         """
         self.project_dir = Path(project_dir).resolve()
-        self.parser = ConfigParser(project_dir)
+        self.parser = ConfigParser(project_dir, ref=_base_ref(self.project_dir))
         self.custom_scripts = CustomScripts()
-        self.custom_commands = set()
-        self.script_commands = set()
+        self.custom_commands: set[str] = set()
+        self.script_commands: set[str] = set()
 
     def analyze(self) -> tuple[CustomScripts, set[str], set[str]]:
         """
