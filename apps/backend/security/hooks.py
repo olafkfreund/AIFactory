@@ -273,10 +273,13 @@ async def git_dir_write_hook(
     input_data: dict[str, Any],
     _tool_use_id: str | None = None,
     _context: Any | None = None,
+    *,
+    project_dir: str | None = None,
 ) -> dict[str, Any]:
     """Refuse file-tool writes to protected paths.
 
     Covers .git (#1719), the profile file (#1944) and the source .aifactory (#1985).
+    ``project_dir`` is bound by create_client; the input's cwd moves with ``cd``.
     """
     if input_data.get("tool_name") not in _GIT_DIR_WRITE_TOOLS:
         return {}
@@ -289,7 +292,7 @@ async def git_dir_write_hook(
     if not paths or not all(isinstance(p, str) and p for p in paths):
         return {"decision": "block", "reason": "Missing or invalid file path."}
     for path in paths:
-        refusal = protected_write_refusal(path, input_data.get("cwd"))
+        refusal = protected_write_refusal(path, input_data.get("cwd"), project_dir)
         if refusal:
             logger.warning("Blocked agent write into protected path")
             return {"decision": "block", "reason": refusal}

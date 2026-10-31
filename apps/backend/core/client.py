@@ -20,6 +20,7 @@ import re
 import threading
 import time
 import weakref
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -1097,7 +1098,7 @@ def create_client(
                 # #1719: refuse agent writes into git metadata
                 HookMatcher(
                     matcher="Write|Edit|MultiEdit|NotebookEdit",
-                    hooks=[git_dir_write_hook],
+                    hooks=[partial(git_dir_write_hook, project_dir=str(project_dir))],
                 ),
                 # #474 anti-loop guardrail + #476 pre-mutation checkpoint — run on
                 # every tool (matcher=None); each no-ops unless its flag is on.

@@ -1087,7 +1087,8 @@ class TestGitDirWriteGuard:
             Path(__file__).resolve().parents[1] / "apps/backend/core/client.py"
         ).read_text()
         m = re.search(
-            r'HookMatcher\(\s*matcher="([^"]+)",\s*hooks=\[git_dir_write_hook\]', src
+            r'HookMatcher\(\s*matcher="([^"]+)",\s*hooks=\[(?:partial\()?git_dir_write_hook\b',
+            src,
         )
         assert m
         for t in ("Write", "Edit", "MultiEdit", "NotebookEdit"):

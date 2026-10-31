@@ -56,6 +56,27 @@ Approved decisions (from the spec):
 `apps/backend/.venv/bin/pytest tests/test_source_aifactory_readonly.py tests/test_profile_untrusted.py tests/test_command_sandbox.py tests/test_remote_control_wiring.py -q`
 all pass; `python scripts/ratchet_lint.py` if present passes.
 
+## Deviation (review round 2)
+
+The plan took the hook's `cwd` as the worktree root. In the Claude SDK the
+hook `cwd` is the session's current directory and moves with `cd`, so a
+subdirectory cwd refused writes to the rest of the worktree (including the
+localized plan/progress files) and a cwd outside the worktree disabled the
+guard. Changes:
+
+- `source_aifactory_write_refusal` / `protected_write_refusal` take an
+  optional `root`. The worktree root comes from the marker
+  (`<prefix><marker><first component>`) applied to `root`, falling back to
+  `cwd`; `cwd` stays the base for relative paths.
+- `git_dir_write_hook` takes keyword `project_dir`; `create_client` registers
+  `partial(git_dir_write_hook, project_dir=str(project_dir))`, so neither
+  direction depends on the mutable cwd. `tests/test_command_sandbox.py`
+  matcher regex accepts the `partial(` form.
+- Tests added: cwd in a worktree subdirectory (bound and unbound) keeps the
+  worktree and its `.aifactory/specs/` writable and the source refused; cwd at
+  the source project with a bound worktree project_dir still refuses;
+  `create_client` binds `project_dir` on the registered hook.
+
 ## Rollback
 
 Revert the PR commit. No data or config migration.
