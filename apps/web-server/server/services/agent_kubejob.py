@@ -78,7 +78,10 @@ _REVIEW_PAUSE_REASONS = ("plan_review", "injection_scan")
 def _pause_confirmed(
     spec_dir: Path, project_path: Path, spec_id: str, reason: str
 ) -> bool:
-    """Recompute pause eligibility from control-plane state: the Job's claim is necessary, never sufficient (#1984)."""
+    """Whether control-plane state requires this pause (#1984).
+
+    The Job's claim is necessary, never sufficient.
+    """
     try:
         from review.state import (  # noqa: PLC0415
             ReviewState,
@@ -104,7 +107,9 @@ def _pause_confirmed(
 
 
 async def _kubejob_review_reason(job_id: str) -> tuple[Path, str] | None:
-    """``(spec_dir, reason)`` when the Job's pushed plan is a review PAUSE, else None (#1633, #1984).
+    """``(spec_dir, reason)`` when the Job's pushed plan is a confirmed review PAUSE.
+
+    Else None (#1633, #1984).
 
     A Job that stops for human review (pre-flight approval, injection scan) exits
     0 like a finished build, but nothing was built. Only an allowlisted

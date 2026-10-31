@@ -401,26 +401,21 @@ def subprocess_gate_refusal(
     """Refusal sentence when a gated task is run on subprocess, else None (#1932)."""
     if _raw_backend() != BACKEND_SUBPROCESS:
         return None
-    if mode == "quick":
-        return _GATED_SUBPROCESS_REFUSAL
-    if spec_dir is None:
-        return None
-    meta_file = spec_dir / "task_metadata.json"
-    if not meta_file.exists():
-        return None
-    try:
-        meta = json.loads(meta_file.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return _GATED_SUBPROCESS_REFUSAL
-    if not isinstance(meta, dict):
-        return _GATED_SUBPROCESS_REFUSAL
-    if (
-        bool(meta.get("requireReviewBeforeCoding", False))
+    meta: Any = {}
+    meta_file = spec_dir / "task_metadata.json" if spec_dir is not None else None
+    if meta_file is not None and meta_file.exists():
+        try:
+            meta = json.loads(meta_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            meta = None  # unreadable metadata fails closed
+    gated = (
+        mode == "quick"
+        or not isinstance(meta, dict)
+        or bool(meta.get("requireReviewBeforeCoding", False))
         or meta.get("mode") == "quick"
         or meta.get("reviewTier") == "blocking"
-    ):
-        return _GATED_SUBPROCESS_REFUSAL
-    return None
+    )
+    return _GATED_SUBPROCESS_REFUSAL if gated else None
 
 
 def selected_backend() -> str:
