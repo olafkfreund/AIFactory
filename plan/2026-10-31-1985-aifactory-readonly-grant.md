@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1985
 spec: spec/2026-10-31-1985-aifactory-readonly-grant.md
 coders:
