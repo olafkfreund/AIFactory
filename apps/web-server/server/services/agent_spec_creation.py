@@ -25,7 +25,12 @@ from server.specpath import spec_dir_for
 from ..utils.subprocess_env import make_subprocess_env
 from . import project_settings_store
 from .agent_task_models import TaskProgress
-from .build_backend import BuildBackendUnavailableError, backend_config_error
+from .build_backend import (
+    BuildBackendUnavailableError,
+    GatedTaskRefusedError,
+    backend_config_error,
+    subprocess_gate_refusal,
+)
 from .task_phase import TaskPhase
 
 if TYPE_CHECKING:
@@ -95,6 +100,8 @@ class SpecCreationMixin:
             # Fallback: no project ID prefix (shouldn't happen in web mode)
             spec_dir = None
             spec_id = None
+        if problem := subprocess_gate_refusal(spec_dir):
+            raise GatedTaskRefusedError(problem)
 
         # Fix 5: Check if task requires manual review before coding
         # If requireReviewBeforeCoding is true, DON'T auto-approve (let user review the plan)
