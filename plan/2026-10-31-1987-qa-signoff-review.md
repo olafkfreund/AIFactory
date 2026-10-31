@@ -28,10 +28,12 @@ review is unchanged. `cli/qa_commands.py` (`--qa`) is not changed.
    `RunGates.capture` again. Existing tests patch these with MagicMock, so a new kwarg is safe.
 2. `apps/backend/qa/loop.py` ~222: keep the early `return True` only when
    `not gates.requires_review`. When review is required and the plan carries an
-   approved `qa_signoff` (and there is no human feedback), remove `qa_signoff` from
+   approved `qa_signoff`, remove `qa_signoff` from
    the plan with `load_implementation_plan` / `save_implementation_plan` (both
    already in `qa/criteria.py` / `agents.utils`) before the first reviewer session,
    so `qa/reviewer.py` ~322 reads the reviewer's own verdict.
+   Deviation (implementation): the clear also runs when `QA_FIX_REQUEST.md` exists, since
+   the reviewer runs after the fixer and would otherwise read the stale approval.
    → verify by `.venv/bin/pytest tests/test_run_gates_snapshot.py tests/test_qa_loop*.py -q`
    Traps: `gates` is already resolved at the top of the function; the loop's
    later status reads must stay as they are.
