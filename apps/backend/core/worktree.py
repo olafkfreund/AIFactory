@@ -31,7 +31,11 @@ from typing import Literal
 from core.child_env import child_env, merge_driver_pins
 from core.commit_trailers import commit_message_args, trailer_block
 from core.git_credentials import github_env
-from core.git_metadata import record_baseline, record_worktree_baseline
+from core.git_metadata import (
+    record_base_sha,
+    record_baseline,
+    record_worktree_baseline,
+)
 
 fcntl: ModuleType | None
 try:  # pragma: no cover - platform dependent
@@ -873,6 +877,13 @@ class WorktreeManager:
                 run=lambda a: ((r := self._run_git(a[1:])).returncode, r.stdout),
             )
             record_worktree_baseline(worktree_path)
+            record_base_sha(
+                worktree_path,
+                run=lambda a: (
+                    (r := self._run_git(a[1:], cwd=worktree_path)).returncode,
+                    r.stdout,
+                ),
+            )
         except RuntimeError as exc:
             raise WorktreeError(
                 f"could not record the git metadata baseline: {exc}"

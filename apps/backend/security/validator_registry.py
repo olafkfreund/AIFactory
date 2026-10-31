@@ -25,6 +25,10 @@ from .process_validators import (
     validate_killall_command,
     validate_pkill_command,
 )
+from .script_validators import (
+    validate_make_command,
+    validate_package_script_command,
+)
 from .validation_models import ValidatorFunction
 
 # Map command names to their validation functions
@@ -39,6 +43,11 @@ VALIDATORS: dict[str, ValidatorFunction] = {
     "init.sh": validate_init_script,
     # Git — option hardening (config injection / exec hijack) + commit scan
     "git": validate_git,
+    # Script runners (#1948)
+    "make": validate_make_command,
+    "npm": validate_package_script_command,
+    "yarn": validate_package_script_command,
+    "pnpm": validate_package_script_command,
     # Database - PostgreSQL
     "dropdb": validate_dropdb_command,
     "dropuser": validate_dropuser_command,
