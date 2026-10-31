@@ -274,7 +274,10 @@ async def git_dir_write_hook(
     _tool_use_id: str | None = None,
     _context: Any | None = None,
 ) -> dict[str, Any]:
-    """Refuse file-tool writes into any ``.git`` path (#1719) or the profile file (#1944)."""
+    """Refuse file-tool writes to protected paths.
+
+    Covers .git (#1719), the profile file (#1944) and the source .aifactory (#1985).
+    """
     if input_data.get("tool_name") not in _GIT_DIR_WRITE_TOOLS:
         return {}
     tool_input = input_data.get("tool_input")

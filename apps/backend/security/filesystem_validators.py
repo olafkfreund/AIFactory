@@ -194,13 +194,48 @@ def git_metadata_write_refusal(path: str, cwd: str | None) -> str | None:
     return None
 
 
+_WORKTREE_MARKERS = ("/.aifactory/worktrees/tasks/", "/.aifactory/github/pr/worktrees/")
+
+
+def source_aifactory_write_refusal(path: str, cwd: str | None) -> str | None:
+    """Refuse writes from a worktree session into the source project's .aifactory/ (#1985).
+
+    The worktree itself lives under that tree and stays writable. Checks the
+    lexical and the symlink-resolved form; fails closed if resolution errors.
+    """
+    if not cwd:
+        return None
+    refusal = "Refused: the source project's .aifactory/ is read-only for agents."
+    try:
+        wt = Path(cwd).expanduser().absolute()
+        p = Path(path).expanduser()
+        if not p.is_absolute():
+            p = wt / p
+        pairs = [
+            (Path(os.path.normpath(wt)), Path(os.path.normpath(p))),
+            (wt.resolve(), p.resolve()),
+        ]
+    except (OSError, RuntimeError, ValueError):
+        return refusal
+    for root, target in pairs:
+        marker = next((m for m in _WORKTREE_MARKERS if m in str(root)), None)
+        if marker is None:
+            continue
+        source = Path(str(root).rsplit(marker, 1)[0]) / ".aifactory"
+        if target.is_relative_to(source) and not target.is_relative_to(root):
+            return refusal
+    return None
+
+
 # Same name as ProjectAnalyzer.PROFILE_FILENAME (not imported: avoids an import cycle).
 _PROFILE_FILENAMES = (".aifactory-security.json", ".aifactory-allowlist")
 
 
 def protected_write_refusal(path: str, cwd: str | None) -> str | None:
-    """Refuse writes to git metadata (#1719) and to the security profile file (#1944)."""
+    """Refuse writes to git metadata, source .aifactory, and the security profile."""
     if refusal := git_metadata_write_refusal(path, cwd):
+        return refusal
+    if refusal := source_aifactory_write_refusal(path, cwd):
         return refusal
     refusal = (
         "Refused: the security profile is managed by AIFactory and cannot be written."

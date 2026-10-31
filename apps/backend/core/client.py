@@ -768,7 +768,8 @@ def create_client(
             original_project_str = project_path_posix.rsplit(marker, 1)[0]
             original_project_dir = Path(original_project_str)
 
-            permission_ops = ["Read", "Write", "Edit", "Glob", "Grep"]
+            # Original project directories are read-only in worktree sessions (#1985).
+            permission_ops = ["Read", "Glob", "Grep"]
             dirs_to_permit = [
                 original_project_dir / ".aifactory",
                 original_project_dir / ".worktrees",  # Legacy support
