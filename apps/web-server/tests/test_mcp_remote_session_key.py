@@ -169,9 +169,9 @@ async def test_tool_call_over_the_real_transport_runs_as_the_session_key(monkeyp
         try:
             with anyio.fail_after(5):
                 await endpoint_ready.wait()
-            session_id = (
-                re.search(rb"session_id=([0-9a-f]{32})", stream).group(1).decode()
-            )
+            match = re.search(rb"session_id=([0-9a-f]{32})", stream)
+            assert match is not None
+            session_id = match.group(1).decode()
 
             assert (
                 await _post(
