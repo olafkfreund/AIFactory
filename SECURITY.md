@@ -54,6 +54,22 @@ Out of scope:
   with `permission_mode="bypassPermissions"` outside the documented use
 - Issues in user-supplied custom skills, MCP servers, or hooks
 
+## Agent command allowlist
+
+The Bash allowlist, the per-command validators and `AIFACTORY_EGRESS_POLICY`
+are guardrails against accidental and reflexive misuse. They are not
+containment. The containing boundary is the Kubernetes Job pod each agent
+session runs in (#1932). Make targets and npm/yarn/pnpm scripts are allowed
+only when they are present at the commit the build started from (#1948).
+These still run, and the allowlist cannot see inside them:
+
+- a changed recipe or script body;
+- npm `pre`/`post` and install lifecycle scripts;
+- `bash x.sh`, interpreters and test runners.
+
+A report that only shows one of these, inside the Job pod, is expected
+behaviour.
+
 ## Safe-harbor
 
 Good-faith research conducted under this policy will not be subject to
