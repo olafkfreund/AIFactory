@@ -65,3 +65,11 @@ Approved decisions (from the spec; a port of PFactory PR #982 plus its review):
 ## Rollback
 
 Revert the PR; boot migrations go back to unlocked. No schema or data change.
+
+## Deviations
+
+- Step 1: added PFactory's docstring and the one-line why comments on
+  `lock_timeout` and the unlock `except` after Codex's edit. No behaviour change.
+- Step 2a: verified locally against Postgres 16: the concurrency test fails
+  5/5 with dev's `engine.py` (`UniqueViolationError` on `pg_type_typname_nsp_index`)
+  and passes 3/3 with the fix; the whole `test_p1_alembic.py -m postgres` file passes.
