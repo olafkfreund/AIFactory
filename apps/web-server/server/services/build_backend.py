@@ -1681,6 +1681,9 @@ class KubeJobBuildBackend:
         owned = {
             row["job_name"] or _reconstructed_ref(row["job_id"])[0] for row in rows
         }
+        from .spec_job_backend import live_spec_job_names  # noqa: PLC0415
+
+        owned |= live_spec_job_names()
         namespace = _dispatch_namespace()
         owns_client = batch is None
         if owns_client:
