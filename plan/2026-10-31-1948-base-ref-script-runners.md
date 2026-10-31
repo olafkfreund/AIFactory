@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1948
 spec: spec/2026-10-31-1948-base-ref-script-runners.md
 coders:
