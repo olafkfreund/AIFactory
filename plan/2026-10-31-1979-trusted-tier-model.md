@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1979
 spec: spec/2026-10-31-1979-trusted-tier-model.md
 coders:
