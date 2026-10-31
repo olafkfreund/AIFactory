@@ -43,7 +43,8 @@ class ConfigParser:
                 cwd=self.project_dir,
                 capture_output=True,
                 text=True,
-                env=child_env(),
+                # The agent can write refs/replace/*; never let it swap the base.
+                env={**child_env(), "GIT_NO_REPLACE_OBJECTS": "1"},
                 timeout=30,
                 check=False,
             )

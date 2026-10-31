@@ -164,6 +164,11 @@ are `SECURITY.md`.
 - Step 3 (Claude, after review): the npm location options are refused only
   when a script would run, so `npm install -w pkg` keeps working. Their
   values are consumed, so `npm -w pkg test` is still seen as `test`.
+- Step 2 (Claude, after review round 2): `git_output` runs git with
+  `GIT_NO_REPLACE_OBJECTS=1`. The allowlist lets the agent run `git replace`
+  or `git update-ref refs/replace/<base>`, which otherwise makes
+  `git show <base>:./Makefile` return the agent's file. Pinned by
+  `test_replace_refs_cannot_swap_base` (both forms).
 
 ## Tests
 

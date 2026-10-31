@@ -64,6 +64,20 @@ def test_scripts_pinned_to_base_sha(repo: Path) -> None:
     assert get_security_profile(repo).custom_scripts.shell_scripts == ["build.sh"]
 
 
+@pytest.mark.parametrize(
+    "swap", [["replace", "{base}", "HEAD"], ["update-ref", "refs/replace/{base}", "HEAD"]]
+)
+def test_replace_refs_cannot_swap_base(repo: Path, swap: list[str]) -> None:
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD~1"], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    _git(repo, *(a.format(base=base) for a in swap))
+    reset_profile_cache()
+    assert validate_command("make test", repo)[0]
+    assert not validate_command("make evil", repo)[0]
+    assert not validate_command("npm run evil", repo)[0]
+
+
 def test_no_makefile_at_base_disables_make(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
