@@ -77,7 +77,7 @@ FROM docker.io/node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b26014
 # py-build: compiles the Python venv (#1842). Compilers and -dev headers stay
 # here; only the finished venv is copied into `runtime`.
 # ---------------------------------------------------------------------------
-FROM cgr.dev/chainguard/python:latest-dev@sha256:dde1a2549dd62864f0263dae8e877680837b4e738a7ecc85c671c55c069848ac AS py-build
+FROM cgr.dev/chainguard/python:latest-dev@sha256:64f414bffa25ca9ff518f35975ad153a921b2e4850c4a84c31a96885fdb86a02 AS py-build
 
 USER root
 
@@ -137,7 +137,7 @@ RUN set -e; pip=/home/projects/MagesticAI/.venv/bin/pip; cd /tmp; \
     grep -vxFf run.names build.names | xargs -r $pip uninstall -y; \
     $pip uninstall -y pip
 
-FROM cgr.dev/chainguard/python:latest-dev@sha256:dde1a2549dd62864f0263dae8e877680837b4e738a7ecc85c671c55c069848ac AS runtime
+FROM cgr.dev/chainguard/python:latest-dev@sha256:64f414bffa25ca9ff518f35975ad153a921b2e4850c4a84c31a96885fdb86a02 AS runtime
 
 USER root
 
@@ -568,7 +568,7 @@ CMD ["/home/projects/MagesticAI/.venv/bin/python", "-m", "server.main"]
 # ---------------------------------------------------------------------------
 # Stdlib-only model gateway: one file, no venv, no app code. Built with
 # ``--target gateway``; same pinned base and security refresh as ``runtime``.
-FROM cgr.dev/chainguard/python:latest-dev@sha256:dde1a2549dd62864f0263dae8e877680837b4e738a7ecc85c671c55c069848ac AS gateway
+FROM cgr.dev/chainguard/python:latest-dev@sha256:64f414bffa25ca9ff518f35975ad153a921b2e4850c4a84c31a96885fdb86a02 AS gateway
 
 USER root
 
