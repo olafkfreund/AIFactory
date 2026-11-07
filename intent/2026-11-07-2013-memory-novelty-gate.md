@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2013
 author: olafkfreund
 ---
@@ -69,4 +69,4 @@ has its own entity dedup; gating it waits until it is enabled.
 
 ## Open questions
 
-None. Pre-approved unseen by the user for this bulk run (2026-11-07).
+None. Approved unseen by user 2026-11-07, bulk run.
