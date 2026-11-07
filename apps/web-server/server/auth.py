@@ -216,6 +216,24 @@ def _acw_principal(key, *, scoped_service_tokens_enabled: bool) -> dict:
     return principal
 
 
+async def _ws_acw_principal(token: str) -> dict | None:
+    try:
+        from .mcp_remote.auth import authenticate_rest
+
+        key = await authenticate_rest(f"Bearer {token}")
+        # shortcut: ownerless keys rejected on WS; revisit with Phase 4 scope enforcement
+        if key.user_id is None:
+            return None
+        return _acw_principal(
+            key,
+            scoped_service_tokens_enabled=getattr(
+                get_settings(), "SCOPED_SERVICE_TOKENS_ENABLED", False
+            ),
+        )
+    except Exception:
+        return None
+
+
 class TokenAuthMiddleware(BaseHTTPMiddleware):
     """Middleware to validate bearer token on API routes.
 
@@ -459,6 +477,11 @@ async def authenticate_websocket(websocket: WebSocket) -> dict | None:
     if _is_legacy_api_token(token):
         _warn_legacy_api_token_once()
         return None
+
+    if token.startswith("acw_"):
+        principal = await _ws_acw_principal(token)
+        if principal is not None:
+            return principal
 
     await websocket.close(code=4001, reason="Unauthorized")
     raise WebSocketAuthError("Invalid token")
