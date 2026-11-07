@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2013
 spec: spec/2026-11-07-2013-memory-novelty-gate.md
 coders:
