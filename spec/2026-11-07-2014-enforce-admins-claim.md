@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2014
 intent: intent/2026-11-07-2014-enforce-admins-claim.md
 ---
