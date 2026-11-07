@@ -48,8 +48,10 @@ pins the text were all rejected.
      claim.
 
    → Verify: `grep -c "while enforce_admins is false" docs/compliance/control-objectives.toml`
-   prints `0`, and `grep -c "re-read 2026-11-07, Factory#943), so there" docs/compliance/control-objectives.toml`
-   prints `6`.
+   prints `0` (and exits 1, which is grep's status for no match),
+   `grep -c "re-read 2026-11-07, Factory#943), so there" docs/compliance/control-objectives.toml`
+   prints `6`, and `grep -c "AIFactory#2014" docs/compliance/control-objectives.toml`
+   prints `1` (the comment).
    Traps: the value must stay on one line with no `|` (the generator puts it in
    a markdown table cell without escaping, `scripts/gen_autonomy_matrix.py:104`).
    The apostrophe in "fleet's" needs no escaping inside a TOML double-quoted
@@ -57,24 +59,36 @@ pins the text were all rejected.
 
 2. Regenerate `docs/docs/compliance/autonomy-matrix.md` and
    `docs/static/compliance/autonomy-matrix.json`. Never hand-edit them. From
-   the worktree root, run
-   `/mnt/code/Source-home/GitHub/AIFactory/apps/backend/.venv/bin/python scripts/gen_autonomy_matrix.py`,
-   then `... scripts/gen_autonomy_matrix.py --check`. The worktree has no venv
+   the worktree root, set
+   `PY=/mnt/code/Source-home/GitHub/AIFactory/apps/backend/.venv/bin/python`
+   and run `$PY scripts/gen_autonomy_matrix.py`, then
+   `$PY scripts/gen_autonomy_matrix.py --check`. Use `$PY` for every run below. The worktree has no venv
    of its own, so this uses the main checkout's venv. The script resolves paths
    from its own location, so it reads the worktree's files.
    → Verify: `--check` exits 0. `git diff --stat` lists only the TOML and the
    two outputs. In the JSON, only the six `claim` values and the six matching
    `rows` cells change.
    Traps: if the shared venv lacks a dependency, create a throwaway venv the
-   way CI does (`.github/workflows/autonomy-matrix.yml`: backend and web-server
-   requirements). Do not commit a venv.
+   way CI does (`.github/workflows/autonomy-matrix.yml`: Python 3.12, backend
+   and web-server requirements) in the scratchpad, and point `$PY` at it. Do not
+   commit a venv.
 
 ## Tests
 
-- `python scripts/gen_autonomy_matrix.py --check` → exit 0.
+- `$PY scripts/gen_autonomy_matrix.py --check` → exit 0.
 - `git grep -n "while enforce_admins is false" -- ':!intent' ':!spec' ':!plan'`
-  → no output.
+  → no output (grep exits 1 for no match).
 - On the PR: `autonomy matrix matches the policy (--check, blocking)` is green.
+
+## Known risks (from the spec, accepted)
+
+- The dated claim goes stale again if `enforce_admins` changes, for example
+  through the break-glass in Factory `docs/compliance/branch-protection.md`.
+  The dates make that visible. Keeping it current is out of scope.
+- The matching hub row, `Factory/docs/compliance/control-matrix.md:53`, is
+  fixed in a separate one-line Factory PR that links this one. If Factory#324's
+  open branch edits the same line, whichever merges second gets a merge
+  conflict there.
 
 ## Rollback
 
