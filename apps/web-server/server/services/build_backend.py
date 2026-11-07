@@ -295,6 +295,8 @@ _PASSTHROUGH_BUILD_ENV: tuple[str, ...] = (
     "AIFACTORY_SANDBOX_NETWORK",
     # #1742: opt-in repo lint gates run in this Job's trailing gate.
     "AIFACTORY_REPO_LINT_GATE",
+    # Factory#1960: the safety-net and wave commits run in this Job (commit_trailers.py).
+    "AIFACTORY_AGENT_COMMIT_TRAILERS",
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_MODEL",
