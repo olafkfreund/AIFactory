@@ -116,7 +116,7 @@ AIFactory; the PFactory and TFactory PRs carry copies and link here.
    or the repo's existing async test style for the handler.
 
 5. **PFactory and TFactory** (worktrees `PFactory-2013`, `TFactory-2013`, branch
-   `feat/2013-memory-novelty-gate` from `origin/main`): copy `novelty.py` and
+   `feat/2013-memory-novelty-gate` from `origin/dev`, the integration branch all three repos merge features into; deviation: the draft said `origin/main`): copy `novelty.py` and
    `tests/test_memory_novelty.py` verbatim from AIFactory; replay steps 1-3 at
    PFactory `sessions.py:25-76`, `memory.py:110-128,188`, `memory_manager.py:288`
    and TFactory `sessions.py:25-80`, `memory.py:114-132,197`,
