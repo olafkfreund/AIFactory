@@ -20,17 +20,24 @@ AIFactory, PFactory, TFactory, CFactory and Factory. It is still off on every
 `dev` branch and on factory-gitops `main`, where the CD bot pushes. A read-only
 `gh api …/protection/enforce_admins` check on 2026-11-07 shows the same.
 
-So the page understates the control on `main`, the branch that reaches the
-cluster, and does not say that the bypass is still open on `dev`. Factory#1958
+So the page understates the control on `main` in those five repos, and does
+not say that the bypass is still open on `dev` and on factory-gitops `main`. Factory#1958
 needs the evidence trail to say what actually holds.
 
 ## Proposed outcome
 
-The six controls carry a claim that says, with the date and the issue:
-- on `main`, branch protection binds admins too, so a red required check blocks
-  every merge;
-- on `dev`, it binds non-admin merges only. The fleet's merge paths do not use
-  admin bypass, but GitHub does not prevent it there.
+The six controls carry a claim that states the measured setting and its
+scope, with the dates (applied 2026-10-22, re-read 2026-11-07) and Factory#943:
+- `enforce_admins` is on for `main` in AIFactory, PFactory, TFactory, CFactory
+  and Factory, so there the required checks bind admins too;
+- it is off on every `dev` branch and on factory-gitops `main`. There the
+  checks bind non-admin merges only: the fleet's merge paths do not use admin
+  bypass (the code paths listed in Factory#943's 2026-10-07 comment), but
+  GitHub does not prevent it.
+
+The claim states the setting, not a stronger guarantee than it gives. The
+TOML comment that calls the claim "verbatim from the step 0 measurement" is
+updated to name the new source too.
 
 The generated markdown page and JSON are regenerated from that, and
 `autonomy matrix matches the policy` stays green.
