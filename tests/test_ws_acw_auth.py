@@ -14,7 +14,6 @@ sys.path.insert(0, str(_ROOT / "apps" / "web-server"))
 sys.path.insert(0, str(_ROOT / "apps" / "backend"))
 
 from server import auth as auth_mod  # noqa: E402
-from server.database import engine  # noqa: E402
 from server.mcp_remote import auth as mcp_auth  # noqa: E402
 from server.websockets import event_bus, events  # noqa: E402
 from server.websockets.event_bus import OrgScope  # noqa: E402
@@ -142,7 +141,10 @@ async def test_event_endpoint_narrows_key_to_its_org(
             return SimpleNamespace(all=lambda: [("A",), ("B",)])
 
     monkeypatch.setattr(mcp_auth, "_lookup_by_digest", lookup)
-    monkeypatch.setattr(engine, "async_session_factory", Session)
+    # Resolved at run time: other tests swap server.database.engine in sys.modules.
+    import server.database.engine as engine_mod  # noqa: PLC0415
+
+    monkeypatch.setattr(engine_mod, "async_session_factory", Session)
     event_bus._clients.clear()
     event_bus.active_connections.clear()
 
