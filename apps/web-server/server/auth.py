@@ -216,9 +216,10 @@ def _acw_principal(key, *, scoped_service_tokens_enabled: bool) -> dict:
     return principal
 
 
-async def _ws_acw_principal(token: str) -> dict | None:
+async def _ws_acw_principal(token: str) -> dict[str, object] | None:
     try:
-        from .mcp_remote.auth import authenticate_rest
+        # Lazy, as on the REST path: the DB-backed module would form an import cycle.
+        from .mcp_remote.auth import authenticate_rest  # noqa: PLC0415
 
         key = await authenticate_rest(f"Bearer {token}")
         # shortcut: ownerless keys rejected on WS; revisit with Phase 4 scope enforcement
@@ -230,7 +231,7 @@ async def _ws_acw_principal(token: str) -> dict | None:
                 get_settings(), "SCOPED_SERVICE_TOKENS_ENABLED", False
             ),
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 — any validator failure denies WS auth (4001)
         return None
 
 
