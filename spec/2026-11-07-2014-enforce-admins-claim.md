@@ -66,5 +66,6 @@ The generator, its `--check`, and the workflow stay as they are.
   intent/spec/plan, returns nothing.
 - `python scripts/gen_autonomy_matrix.py --check` exits 0.
 - The diff touches only the TOML and the two generated outputs, apart from the
-  artifacts. The JSON diff changes only `claim` strings.
+  artifacts. In the JSON, only the six `claim` values and the six matching
+  rendered table cells (`rows`) change.
 - CI's `autonomy matrix matches the policy` is green on the PR.
