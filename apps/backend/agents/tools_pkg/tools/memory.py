@@ -141,7 +141,9 @@ def create_memory_tools(
                 tail = gotchas_file.read_text()[-GOTCHA_CONTEXT_CHARS:]
                 seen = {
                     segment.strip()
-                    for segment in re.split(r"(?m)^## \[[^\]\n]+\]\r?\n", tail)[1:]
+                    for segment in re.split(
+                        r"(?m)^## \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\r?\n", tail
+                    )[1:]
                 }
             if not drop_repeats([body], seen, "gotchas.md"):
                 return {

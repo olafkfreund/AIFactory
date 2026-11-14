@@ -97,7 +97,9 @@ def save_session_insights(
     )
     if isinstance(discoveries, dict):
         discoveries = {
-            k: drop_repeats(v, seen[k], f"discoveries.{k}") if k in seen else v
+            k: drop_repeats(v, seen[k], f"discoveries.{k}")
+            if k in discovery_fields
+            else v
             for k, v in discoveries.items()
         }
 
