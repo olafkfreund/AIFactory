@@ -81,27 +81,24 @@ def test_runner_failure_is_warning_not_exception(error, caplog):
 
 
 @pytest.mark.parametrize(
-    ("result", "error", "reason", "owner", "detail"),
+    ("outcome", "reason", "owner", "detail"),
     [
-        (pe.CmdResult(1, "SENTINEL", "a\nb"), None, "gh failed", "owner", "a\\nb"),
+        (pe.CmdResult(1, "SENTINEL", "a\nb"), "gh failed", "owner", "a\\nb"),
         (
             pe.CmdResult(0, '{"requested_reviewers": [], "x": "SENTINEL"}', ""),
-            None,
             "Copilot was not listed",
             "owner\nforged",
             "",
         ),
-        (pe.CmdResult(0, "SENTINEL", ""), None, "Copilot was not listed", "owner", ""),
-        (None, OSError("SENTINEL"), "gh could not be run", "owner", "OSError"),
+        (pe.CmdResult(0, "SENTINEL", ""), "Copilot was not listed", "owner", ""),
+        (OSError("SENTINEL"), "gh could not be run", "owner", "OSError"),
     ],
 )
-def test_warning_has_remedy_and_safe_details(
-    result, error, reason, owner, detail, caplog
-):
+def test_warning_has_remedy_and_safe_details(outcome, reason, owner, detail, caplog):
     def runner(_argv, _cwd):
-        if error:
-            raise error
-        return result
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
 
     with caplog.at_level(logging.INFO, logger=pe.logger.name):
         assert pe.request_copilot_review(owner, "repo", 42, runner=runner) is False
