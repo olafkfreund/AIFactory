@@ -163,6 +163,11 @@ Each was confirmed against the code and fixed in the same commit as this note.
 - `_inject_seed_creds` takes the credential file list. The spec Job gets the
   Copilot login only when its model is a `copilot:` model.
 - A fetch that brings back no `spec.md` invalidates any earlier approval.
+- From the final review: the clone check also covers
+  `.aifactory/specs/<spec_id>` and `.aifactory/spec_task.md`; a stop ends the
+  log stream at once instead of after the 30 s drain; a dispatch that raises
+  releases the pooled credential; the packed workspace key carries the same
+  per-dispatch suffix as the Job id.
 - Not fixed here, tracked: bucket-wide `S3_*` in Jobs (#2023), the marker
   nonce in the Job env (#2024), unused CLI logins in build Jobs (#2025).
 

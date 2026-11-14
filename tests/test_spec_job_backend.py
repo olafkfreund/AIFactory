@@ -452,3 +452,136 @@ def test_partial_fetch_without_spec_md_drops_earlier_approval(
     ] = b'{"swapped": true}'
     assert sj._finish_spec_fetch(spec_dir, "fetch", True) == 1
     assert json.loads((spec_dir / "review_state.json").read_text())["approved"] is False
+
+
+@pytest.mark.parametrize("rel", [".aifactory/spec_task.md", ".aifactory/specs/s1"])
+def test_tracked_symlink_in_clone_cannot_redirect_writes_outside_it(
+    monkeypatch: pytest.MonkeyPatch,
+    project: tuple[Path, Path],
+    tmp_path: Path,
+    rel: str,
+) -> None:
+    root, spec_dir = project
+    (spec_dir / "requirements.json").write_text("{}")
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    target = victim / "review_state.json" if rel.endswith(".md") else victim
+    if rel.endswith(".md"):
+        target.write_text("control")
+    # Commit the link at the path the clone will have, without touching the
+    # live spec dir (which the control plane owns and git ignores here).
+    git = ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t"]
+    blob = (
+        subprocess.run(
+            [*git, "hash-object", "-w", "--stdin"],
+            input=str(target).encode(),
+            capture_output=True,
+            check=True,
+        )
+        .stdout.decode()
+        .strip()
+    )
+    subprocess.run(
+        [*git, "update-index", "--add", "--cacheinfo", f"120000,{blob},{rel}"],
+        check=True,
+    )
+    subprocess.run([*git, "commit", "-q", "-m", "link"], check=True)
+    pack = AsyncMock(side_effect=AssertionError("packed"))
+    monkeypatch.setattr(artifact_store, "pack_workspace", pack)
+    monkeypatch.setattr(artifact_store, "ArtifactStore", lambda: None)
+    with pytest.raises(BuildBackendUnavailableError):
+        sj._prepare_spec_workspace(root, "s1", spec_dir, "ATTACKER TEXT", "p-s1-spec")
+    pack.assert_not_called()
+    assert sorted(p.name for p in victim.iterdir()) == (
+        ["review_state.json"] if rel.endswith(".md") else []
+    )
+    if rel.endswith(".md"):
+        assert target.read_text() == "control"
+    assert not (root / ".aifactory/worktrees/specs/s1").exists()
+
+
+@pytest.mark.parametrize(("status", "code"), [("succeeded", 0), ("failed", 1)])
+async def test_job_outcome_sets_returncode_and_closes_stdout(
+    monkeypatch: pytest.MonkeyPatch, status: str, code: int
+) -> None:
+    class DoneBatch(FakeBatch):
+        async def read_namespaced_job(self, name: str, namespace: str):
+            return SimpleNamespace(
+                status=SimpleNamespace(
+                    succeeded=1 if status == "succeeded" else None,
+                    failed=1 if status == "failed" else None,
+                )
+            )
+
+    batch = DoneBatch()
+
+    async def batch_factory():
+        return batch
+
+    async def no_logs(self, **_kwargs):
+        return None
+
+    monkeypatch.setattr(sj.KubeJobLogStreamer, "stream", no_logs)
+    finish = AsyncMock(return_value=0)
+    proc = sj.SpecJobProcess(
+        "ns", "spec-job", batch_factory=batch_factory, finish=finish
+    )
+    assert await proc.wait() == code
+    assert finish.await_count == (1 if status == "succeeded" else 0)
+    assert await proc.stdout.read() == b""
+    assert batch.deleted == []
+
+
+async def test_stop_ends_log_stream_without_waiting_for_drain_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    batch = FakeBatch()
+
+    async def batch_factory():
+        return batch
+
+    async def until_inactive(self, *, job_active, **_kwargs):
+        while await job_active():
+            await asyncio.sleep(0.01)
+
+    monkeypatch.setattr(sj.KubeJobLogStreamer, "stream", until_inactive)
+    proc = sj.SpecJobProcess(
+        "ns", "spec-job", batch_factory=batch_factory, finish=AsyncMock()
+    )
+    proc.terminate()
+    assert await asyncio.wait_for(proc.wait(), timeout=5) == -15
+
+
+def test_push_uploads_only_allowlisted_regular_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    puts: list[str] = []
+
+    class Store:
+        def put_bytes(self, key: str, *_args, **_kwargs) -> None:
+            puts.append(key)
+
+    monkeypatch.setattr(artifact_store, "ArtifactStore", Store)
+    (tmp_path / "spec.md").write_text("# spec")
+    (tmp_path / "review_state.json").write_text('{"approved": true}')
+    (tmp_path / "task_control.json").write_text("{}")
+    (tmp_path / "context.json").symlink_to(tmp_path / "task_control.json")
+    monkeypatch.delenv(workspace_fetch.SPEC_FETCH_ID_ENV, raising=False)
+    assert workspace_fetch.maybe_push_spec_files(tmp_path) == 0
+    monkeypatch.setenv(workspace_fetch.SPEC_FETCH_ID_ENV, "fetch")
+    assert workspace_fetch.maybe_push_spec_files(tmp_path) == 1
+    assert puts == [workspace_fetch._spec_file_key("fetch", "spec.md")]
+
+
+async def test_refused_dispatch_releases_pooled_credential(
+    monkeypatch: pytest.MonkeyPatch, project: tuple[Path, Path], service: AgentService
+) -> None:
+    monkeypatch.setenv("AIFACTORY_SPEC_BACKEND", "kubejob")
+    monkeypatch.setattr(
+        sc.KubeJobSpecBackend, "dispatch", AsyncMock(side_effect=RuntimeError("no s3"))
+    )
+    released: list[str] = []
+    service._release_task_credential = released.append
+    with pytest.raises(RuntimeError):
+        await service.start_spec_creation("p:s1", project[0], "title", "body")
+    assert released == ["p:s1"]

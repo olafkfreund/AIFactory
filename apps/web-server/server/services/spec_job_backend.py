@@ -106,7 +106,7 @@ def build_spec_job_manifest(  # noqa: PLR0913 - manifest coordinates
 
 
 def _prepare_spec_workspace(
-    project_path: Path, spec_id: str, spec_dir: Path, task_text: str, task_id: str
+    project_path: Path, spec_id: str, spec_dir: Path, task_text: str, job_id: str
 ) -> str:
     from core.artifact_store import (  # noqa: PLC0415 - avoid boto3 at import time
         ArtifactRef,
@@ -129,9 +129,17 @@ def _prepare_spec_workspace(
             raise build_backend.BuildBackendUnavailableError(
                 "Spec directory contains a symlink"
             )
-        if (clone / ".aifactory").is_symlink() or (
-            clone / ".aifactory/specs"
-        ).is_symlink():
+        # A tracked symlink here would send the copy or the task text outside
+        # the clone, onto control-plane files.
+        if any(
+            (clone / rel).is_symlink()
+            for rel in (
+                ".aifactory",
+                ".aifactory/specs",
+                f".aifactory/specs/{spec_id}",
+                ".aifactory/spec_task.md",
+            )
+        ):
             raise build_backend.BuildBackendUnavailableError(
                 "Cloned spec path is a symlink"
             )
@@ -141,9 +149,7 @@ def _prepare_spec_workspace(
             str,
             pack_workspace(
                 ArtifactStore(),
-                ArtifactRef(
-                    service="aifactory", job_id=f"{task_id}-spec", role="workspace"
-                ),
+                ArtifactRef(service="aifactory", job_id=job_id, role="workspace"),
                 clone,
             ),
         )
@@ -209,7 +215,7 @@ class SpecJobProcess:
             self.stdout.feed_data((line + "\n").encode())
 
         async def active() -> bool:
-            return outcome is None
+            return outcome is None and not self._stop.is_set()
 
         stream = asyncio.create_task(
             KubeJobLogStreamer(log_sink=feed, line_source=line_source).stream(
@@ -318,7 +324,12 @@ class KubeJobSpecBackend:
 
         fetch_id = uuid4().hex
         uri = await asyncio.to_thread(
-            _prepare_spec_workspace, project_path, spec_id, spec_dir, task_text, task_id
+            _prepare_spec_workspace,
+            project_path,
+            spec_id,
+            spec_dir,
+            task_text,
+            f"{task_id}-spec-{fetch_id[:8]}",
         )
         env = build_backend.build_job_env(oauth_token)
         env.pop("GITHUB_TOKEN", None)

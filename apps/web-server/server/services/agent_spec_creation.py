@@ -105,7 +105,9 @@ class SpecCreationMixin:
             raise GatedTaskRefusedError(problem)
         use_job = spec_kubejob_enabled()
         if use_job and spec_dir is None:
-            raise BuildBackendUnavailableError("Spec creation refused: task has no spec directory")
+            raise BuildBackendUnavailableError(
+                "Spec creation refused: task has no spec directory"
+            )
 
         # Fix 5: Check if task requires manual review before coding
         # If requireReviewBeforeCoding is true, DON'T auto-approve (let user review the plan)
@@ -288,19 +290,26 @@ class SpecCreationMixin:
         env.update(self._marker_nonce_env(task_id))
 
         if use_job:
-            proc = await KubeJobSpecBackend().dispatch(
-                task_id=task_id,
-                project_path=project_path,
-                spec_id=spec_id,
-                spec_dir=spec_dir,
-                task_text=f"{title}\n\n{description}",
-                model=spec_phase_model,
-                complexity=complexity,
-                auto_approve=should_auto_approve,
-                oauth_token=token,
-                mcp_env=await project_settings_store.mcp_spawn_env(project_path),
-                marker_nonce=self._marker_nonce_env(task_id)["AIFACTORY_MARKER_NONCE"],
-            )
+            try:
+                proc = await KubeJobSpecBackend().dispatch(
+                    task_id=task_id,
+                    project_path=project_path,
+                    spec_id=spec_id,
+                    spec_dir=spec_dir,
+                    task_text=f"{title}\n\n{description}",
+                    model=spec_phase_model,
+                    complexity=complexity,
+                    auto_approve=should_auto_approve,
+                    oauth_token=token,
+                    mcp_env=await project_settings_store.mcp_spawn_env(project_path),
+                    marker_nonce=self._marker_nonce_env(task_id)[
+                        "AIFACTORY_MARKER_NONCE"
+                    ],
+                )
+            except BaseException:
+                # A refused dispatch must hand the pooled credential back.
+                self._release_task_credential(task_id)
+                raise
         else:
             # Start subprocess with a pseudo-TTY to prevent "Stream closed" errors
             # Claude Code CLI expects a TTY for permission handling
