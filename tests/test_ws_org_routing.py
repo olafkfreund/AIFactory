@@ -298,3 +298,28 @@ def test_org_less_login_events_follow_the_starting_principal(sockets, event):
         assert len(sent["legacy"]) == 2
         assert len(sent["jwt-owner"]) == 1
         assert sent.get("jwt-other", []) == sent.get("acw_key", []) == []
+
+
+def _no_database():
+    raise RuntimeError("membership lookup unavailable")
+
+
+def _wait_for_no_orgs(client, socket):
+    for _ in range(200):
+        if not socket.org_ids:
+            return
+        client.portal.call(asyncio.sleep, 0.01)
+    raise AssertionError("memberships were not reloaded")
+
+
+def test_key_socket_follows_membership_on_recheck(sockets, monkeypatch):
+    client, _memberships, sent = sockets
+    monkeypatch.setattr(events, "_KEY_RECHECK_SECONDS", 0)
+    with connect(client, "acw_key") as ws:
+        emit(client, events.broadcast_event, "event", {"projectId": "p-a"})
+        assert len(sent["acw_key"]) == 1
+        monkeypatch.setattr(engine, "async_session_factory", _no_database)
+        ws.send_text("wake the receive loop")
+        _wait_for_no_orgs(client, next(iter(event_bus._clients.values())))
+        emit(client, events.broadcast_event, "event", {"projectId": "p-a"})
+        assert len(sent["acw_key"]) == 1

@@ -140,8 +140,31 @@ async def send_to_org(org_id: str, event_type: str, payload: dict):
 # ---------------------------------------------------------------------------
 
 
+async def _load_org_ids(client: ConnectedClient, user_info: dict | None) -> None:
+    """Load the user's org memberships for routing; a failed lookup leaves none."""
+    if not (user_info and user_info.get("id")):
+        return
+    try:
+        from sqlalchemy import select
+
+        from ..database import OrgMember
+        from ..database.engine import async_session_factory
+
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(OrgMember.org_id).where(OrgMember.user_id == user_info["id"])
+            )
+            org_ids = {row[0] for row in result.all()}
+            if user_info.get("org_id"):
+                org_ids &= {user_info["org_id"]}
+            client.org_ids = org_ids
+    except Exception:
+        client.org_ids = set()
+        logger.debug("Could not load org memberships for WS client", exc_info=True)
+
+
 @router.websocket("/ws/events")
-async def events_websocket(websocket: WebSocket):  # noqa: PLR0912 - socket lifecycle
+async def events_websocket(websocket: WebSocket):
     """WebSocket endpoint for global events."""
     await websocket.accept()
 
@@ -156,23 +179,7 @@ async def events_websocket(websocket: WebSocket):  # noqa: PLR0912 - socket life
     key_token = key_token if key_token and key_token.startswith("acw_") else None
     last_key_check = time.monotonic()
 
-    # If authenticated user, load their org memberships for routing
-    if user_info and user_info.get("id"):
-        try:
-            from sqlalchemy import select
-
-            from ..database import OrgMember
-            from ..database.engine import async_session_factory
-
-            async with async_session_factory() as session:
-                result = await session.execute(
-                    select(OrgMember.org_id).where(OrgMember.user_id == user_info["id"])
-                )
-                client.org_ids = {row[0] for row in result.all()}
-                if user_info.get("org_id"):
-                    client.org_ids &= {user_info["org_id"]}
-        except Exception:
-            logger.debug("Could not load org memberships for WS client", exc_info=True)
+    await _load_org_ids(client, user_info)
 
     try:
         # Keep connection alive and listen for pings
@@ -182,6 +189,8 @@ async def events_websocket(websocket: WebSocket):  # noqa: PLR0912 - socket life
                     await websocket.close(code=4001)
                     break
                 last_key_check = time.monotonic()
+                # A key socket also follows its owner's current membership.
+                await _load_org_ids(client, user_info)
             try:
                 data = await asyncio.wait_for(websocket.receive_text(), timeout=30)
 
