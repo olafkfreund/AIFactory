@@ -106,8 +106,10 @@ def test_no_makefile_at_base_disables_make(
 
 
 def _agent_adds_colliding_names(repo: Path) -> None:
-    """A target and a script whose names pass the other checks (digits, `echo`)."""
-    (repo / "Makefile").write_text("test:\n\techo ok\n123:\n\techo pwn\n")
+    """Targets and a script whose names pass the other checks (digits, `echo`)."""
+    (repo / "Makefile").write_text(
+        "test:\n\techo ok\n123 2.5 \u00b2:\n\techo pwn\n", encoding="utf-8"
+    )
     (repo / "package.json").write_text(
         json.dumps({"scripts": {"test": "echo ok", "echo": "echo pwn"}})
     )
@@ -139,6 +141,12 @@ def _agent_adds_colliding_names(repo: Path) -> None:
         "make 'SHELL := ./evil.sh' test",
         "make 'SHELL =./evil.sh' test",
         "make .DEFAULT_GOAL=123",
+        "make -j 2.5",
+        "make -j \u00b2",
+        "make 'X!=./evil.sh' test",
+        "make 'X != ./evil.sh' test",
+        "make 'X:=$(shell ./evil.sh)' test",
+        "npm ur echo",
         # npm runs unambiguous command prefixes.
         "npm run-s echo",
         "npm resta",
@@ -165,6 +173,8 @@ def test_review_bypasses_refused(repo: Path, cmd: str) -> None:
         "make -kj 4 test",
         "make --jobs 4 test",
         "make -l 2.5 test",
+        "make -Onone test",
+        "npm ts",
         "make -- test",
         "npm install",
         "npm ins",
@@ -184,7 +194,16 @@ def test_review_fixes_keep_normal_use(repo: Path, cmd: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "cmd", ["npm it", "npm install-test", "pnpm it", "npm tes", "npm install-t"]
+    "cmd",
+    [
+        "npm it",
+        "npm install-test",
+        "pnpm it",
+        "npm tes",
+        "npm install-t",
+        "npm ts",
+        "npm clean-install-t",
+    ],
 )
 def test_install_test_aliases_need_base_test_script(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cmd: str

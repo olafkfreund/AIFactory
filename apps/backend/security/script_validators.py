@@ -9,6 +9,7 @@ script names against the security profile's base-commit script lists (#1948).
 from __future__ import annotations
 
 import json
+import re
 import shlex
 from itertools import pairwise
 from pathlib import Path
@@ -31,7 +32,7 @@ _REFUSED_MAKE_VARS = frozenset(
     {"SHELL", ".SHELLFLAGS", "MAKEFILES", "MAKEFLAGS", "GNUMAKEFLAGS"}
     | {".DEFAULT_GOAL"}
 )
-_MAKE_NUMBER_OPTS = frozenset({"--jobs", "--load-average", "--max-load"})
+_MAKE_LOAD_OPTS = frozenset({"--load-average", "--max-load"})
 
 _REFUSED_PKG_OPTS = frozenset(
     {
@@ -78,6 +79,8 @@ def _load_custom_scripts() -> CustomScripts | None:
 
 
 def _is_refused_make_option(tok: str) -> bool:
+    if tok.startswith("-O"):  # -O[type]: the rest is its value, not options
+        return False
     if tok.startswith("--"):
         # GNU make accepts any unambiguous abbreviation (`--fil=x.mk`).
         name = tok.split("=", 1)[0]
@@ -85,11 +88,16 @@ def _is_refused_make_option(tok: str) -> bool:
     return bool(_REFUSED_MAKE_SHORT & set(tok[1:]))
 
 
-def _takes_number(prev: str) -> bool:
-    """True when ``prev`` is ``-j``/``-l`` (or a cluster ending in one) or its long form."""
+def _is_count(prev: str, tok: str) -> bool:
+    """True when ``tok`` is the number ``prev`` takes: ``-j 4`` or ``-l 2.5``."""
     if prev.startswith("--"):
-        return prev in _MAKE_NUMBER_OPTS
-    return prev.startswith("-") and prev[-1] in "jl"
+        jobs, load = prev == "--jobs", prev in _MAKE_LOAD_OPTS
+    else:
+        jobs = prev.startswith("-") and prev.endswith("j")
+        load = prev.startswith("-") and prev.endswith("l")
+    # ASCII only: make reads `²` or, after -j, `2.5` as a target.
+    pattern = r"[0-9]+" if jobs else r"[0-9]+(\.[0-9]+)?" if load else None
+    return bool(pattern and re.fullmatch(pattern, tok))
 
 
 def _make_token_refusal(prev: str | None, tok: str, allowed: set[str]) -> str:
@@ -101,11 +109,12 @@ def _make_token_refusal(prev: str | None, tok: str, allowed: set[str]) -> str:
         refused = _is_refused_make_option(tok)
         return f"make option '{tok}' is not allowed" if refused else ""
     if "=" in tok:
-        var = tok.split("=", 1)[0].strip().rstrip(":+?!").strip()
-        refused = var in _REFUSED_MAKE_VARS
+        head, value = tok.split("=", 1)
+        var = head.strip().rstrip(":+?!").strip()
+        # `X!=cmd` and `X=$(shell cmd)` run a command while make parses.
+        refused = var in _REFUSED_MAKE_VARS or "!" in head or "$" in value
         return f"make variable '{var}' is not allowed" if refused else ""
-    number = tok.replace(".", "", 1).isdigit()  # `-l 2.5`
-    if (number and prev is not None and _takes_number(prev)) or tok in allowed:
+    if (prev is not None and _is_count(prev, tok)) or tok in allowed:
         return ""
     return f"make target '{tok}' is not in the base commit's Makefile"
 
@@ -168,23 +177,21 @@ def _is_worktree_script(name: str) -> bool:
         return True
 
 
-# npm runs any unambiguous prefix of a command name (`npm run-s x`, `npm tes`).
-_NPM_SCRIPT_COMMANDS = (
-    "run-script",
-    "test",
-    "start",
-    "stop",
-    "restart",
-    "install-test",
-    "install-ci-test",
-)
+# npm runs any unambiguous prefix of a command name or alias (`npm run-s x`,
+# `npm ur x`, `npm ts`). These other npm commands are prefixes of ours.
+_NPM_SCRIPT_COMMANDS = _RUN_SUBCOMMANDS | _TEST_SUBCOMMANDS | _LIFECYCLE_SUBCOMMANDS
+_NPM_OTHER_COMMANDS = ("install", "ci", "clean-install", "star", "stars")
 
 
 def _expand_npm_abbrev(sub: str) -> str:
     # One-letter names are npm's own aliases (`r` is uninstall).
-    if len(sub) <= 1 or "install".startswith(sub):
+    if (
+        len(sub) <= 1
+        or sub in _NPM_SCRIPT_COMMANDS
+        or any(c.startswith(sub) for c in _NPM_OTHER_COMMANDS)
+    ):
         return sub
-    return next((c for c in _NPM_SCRIPT_COMMANDS if c.startswith(sub)), sub)
+    return next((c for c in sorted(_NPM_SCRIPT_COMMANDS) if c.startswith(sub)), sub)
 
 
 def _target_script(tool: str, positionals: list[str]) -> str | None:

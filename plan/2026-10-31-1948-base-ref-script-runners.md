@@ -205,6 +205,13 @@ are `SECURITY.md`.
   - yarn/pnpm/bun shorthand: a working-tree `package.json` that Python cannot
     parse strictly (BOM, trailing comma) counts as defining the name, and
     every duplicate `scripts` object is read. The runners parse more loosely.
+- Step 3 (Claude, 2026-11-14, Fable review round 2; each has a test):
+  - make: a count is ASCII digits after `-j`, or a decimal after `-l`
+    (`make -j 2.5` and `make -j ²` ran targets). A variable with the `!=`
+    operator or `$` in its value is refused (`X!=cmd`, `X=$(shell cmd)`).
+    `-O<type>` is no longer read as an option cluster.
+  - npm: the prefix match covers every alias (`npm ur x`, `npm ts`), and
+    leaves `install`, `ci`, `clean-install` and `star` alone.
 - The autonomy matrix (`docs/docs/compliance/autonomy-matrix.md`,
   `docs/static/compliance/autonomy-matrix.json`) was regenerated because CI
   checks it against the validator registry. No step named it.

@@ -70,7 +70,9 @@ These still run, and the allowlist cannot see inside them:
 - runner config files in the worktree (`.npmrc` `script-shell`, `.yarnrc`,
   `bunfig.toml`);
 - a bare `make` after the Makefile is reordered;
-- `bash x.sh`, interpreters and test runners.
+- `bash x.sh`, interpreters and test runners;
+- a forged object in the worktree's git directory standing in for the base
+  commit (the agent can write there).
 
 A report that only shows one of these, inside the Job pod, is expected
 behaviour.
