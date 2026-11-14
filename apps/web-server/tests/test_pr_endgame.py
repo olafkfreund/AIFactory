@@ -534,7 +534,9 @@ def test_run_pr_endgame_full_chain():
         {
             "git push": CmdResult(0, "", ""),
             "pr create": CmdResult(0, "https://github.com/o/r/pull/11", ""),
-            "requested_reviewers": CmdResult(0, "", ""),
+            "requested_reviewers": CmdResult(
+                0, '{"requested_reviewers": [{"login": "Copilot"}]}', ""
+            ),
             "reviews": _reviews(
                 ("APPROVED", COPILOT)
             ),  # Copilot approved → gate satisfied

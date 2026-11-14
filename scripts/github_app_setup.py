@@ -171,8 +171,8 @@ def probe_copilot(
     if listed:
         return 0
     _say(
-        "the App token cannot request Copilot; configure a ruleset that requests "
-        "Copilot review (docs/docs/concepts/github-app.md)"
+        "Copilot review was not confirmed; a repository ruleset can request it "
+        "instead (reviewer value copilot-ruleset, docs/docs/concepts/github-app.md)"
     )
     message = body.get("message", "") if isinstance(body, dict) else ""
     _say(str(message)[:_MAX_MESSAGE])

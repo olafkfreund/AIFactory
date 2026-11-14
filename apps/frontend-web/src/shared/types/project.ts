@@ -66,9 +66,11 @@ export interface ProjectSettings {
   autoMerge?: boolean;
   /**
    * Which reviewer gates the auto-merge: "aifactory" (its own Claude/Ollama
-   * review engine — no Copilot credits), "copilot", or "any". Default aifactory.
+   * review engine — no Copilot credits), "copilot", "copilot-ruleset"
+   * (Copilot gates the merge but a repository ruleset requests the review), or
+   * "any". Default aifactory.
    */
-  prReviewer?: 'aifactory' | 'copilot' | 'any';
+  prReviewer?: 'aifactory' | 'copilot' | 'copilot-ruleset' | 'any';
 }
 
 export interface NotificationSettings {
