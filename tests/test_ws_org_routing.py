@@ -1,6 +1,7 @@
 """Organization boundaries on the global event WebSocket."""
 
 import asyncio
+import importlib
 import json
 import sys
 from pathlib import Path
@@ -16,13 +17,18 @@ sys.path.insert(0, str(_ROOT / "apps" / "web-server"))
 sys.path.insert(0, str(_ROOT / "apps" / "backend"))
 
 from server import auth  # noqa: E402
-from server.database import engine  # noqa: E402
 from server.mcp_remote import auth as mcp_auth  # noqa: E402
 from server.services import notification_service  # noqa: E402
 from server.websockets import event_bus, events  # noqa: E402
 from server.websockets.event_bus import BroadcastScope, OrgScope  # noqa: E402
 
 _real_ws_acw_principal = auth._ws_acw_principal
+
+
+def _engine():
+    # Resolved at run time: other tests swap server.database.engine in sys.modules,
+    # so an import-time handle goes stale (as in tests/test_ws_acw_auth.py).
+    return importlib.import_module("server.database.engine")
 
 
 @pytest.fixture
@@ -43,7 +49,7 @@ def sockets(monkeypatch):
         async def execute(self, _statement):
             return SimpleNamespace(all=lambda: memberships["rows"])
 
-    monkeypatch.setattr(engine, "async_session_factory", Session)
+    monkeypatch.setattr(_engine(), "async_session_factory", Session)
     monkeypatch.setattr(
         auth,
         "get_settings",
@@ -318,7 +324,7 @@ def test_key_socket_follows_membership_on_recheck(sockets, monkeypatch):
     with connect(client, "acw_key") as ws:
         emit(client, events.broadcast_event, "event", {"projectId": "p-a"})
         assert len(sent["acw_key"]) == 1
-        monkeypatch.setattr(engine, "async_session_factory", _no_database)
+        monkeypatch.setattr(_engine(), "async_session_factory", _no_database)
         ws.send_text("wake the receive loop")
         _wait_for_no_orgs(client, next(iter(event_bus._clients.values())))
         emit(client, events.broadcast_event, "event", {"projectId": "p-a"})
