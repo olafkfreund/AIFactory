@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import subprocess
 import tempfile
 from collections.abc import Callable
@@ -221,6 +222,62 @@ def record_worktree_baseline(
 ) -> None:
     """Record only the worktree-scoped config baseline for ``cwd``."""
     _write_worktree_baseline(snapshot(cwd, run=run))
+
+
+_HEX_SHA_RE = re.compile(r"^[0-9a-f]{40,64}$")
+
+
+def _base_sha_path(gitdir: str) -> Path:
+    return _baseline_path(gitdir + "\0base")
+
+
+def record_base_sha(
+    cwd: str | os.PathLike[str],
+    run: Callable[[list[str]], tuple[int, str]] | None = None,
+) -> None:
+    """Record the base commit SHA for ``cwd``."""
+    dirs = _run_git(cwd, list(_REV_PARSE_DIRS), run).splitlines()
+    raw_common = dirs[0] if dirs else ""
+    raw_gitdir = dirs[1] if len(dirs) > 1 else raw_common
+    gitdir = str((Path(cwd) / raw_gitdir).resolve())
+    sha = _run_git(cwd, ["git", "rev-parse", "HEAD"], run).strip()
+    _write_snapshot(_base_sha_path(gitdir), {"base": sha})
+    # Also keyed by the worktree path: the agent can change the gitdir
+    # (`git init --separate-git-dir`) or nest a repo (`git init sub`), not this.
+    _write_snapshot(_base_sha_path(str(Path(cwd).resolve())), {"base": sha})
+
+
+def _read_base_file(path: Path) -> str | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    val = data.get("base") if isinstance(data, dict) else None
+    if not isinstance(val, str) or not _HEX_SHA_RE.match(val):
+        return None
+    return val
+
+
+def read_base_sha(cwd: str | os.PathLike[str]) -> str | None:
+    """Read the recorded base commit SHA for ``cwd``, or return None.
+
+    Looks up the gitdir record, then the record of ``cwd`` or the nearest
+    parent directory that is a recorded worktree.
+    """
+    try:
+        dirs = _run_git(cwd, list(_REV_PARSE_DIRS), None).splitlines()
+    except RuntimeError:
+        dirs = []
+    if dirs:
+        raw_gitdir = dirs[1] if len(dirs) > 1 else dirs[0]
+        gitdir = str((Path(cwd) / raw_gitdir).resolve())
+        if sha := _read_base_file(_base_sha_path(gitdir)):
+            return sha
+    here = Path(cwd).resolve()
+    for d in (here, *here.parents):
+        if sha := _read_base_file(_base_sha_path(str(d))):
+            return sha
+    return None
 
 
 def _load_baseline(
