@@ -133,6 +133,8 @@ def _agent_adds_colliding_names(repo: Path) -> None:
         "MAKEFILES=evil.mk make test",
         "env MAKEFLAGS=-fevil.mk make test",
         "export MAKEFLAGS=-fevil.mk",
+        "env '.SHELLFLAGS=-c ./evil.sh;' make test",
+        "env .EXTRA_PREREQS=123 make test",
         # A numeric token is a target unless it follows -j/-l.
         "make 123",
         "make -k 123",

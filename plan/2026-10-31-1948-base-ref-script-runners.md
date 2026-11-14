@@ -228,6 +228,10 @@ are `SECURITY.md`.
   (`make -lj 123`, `make '$(shell x)V=1'`, `make $A=x`, `make -$A`,
   `make {SHELL,V}=x`, `make SHEL?=x`). Cost: `make V=$(git rev-parse HEAD)`
   and abbreviated long options are refused.
+- `security/ast_parser.py` (Claude, 2026-11-14, Fable review round 4, with
+  tests): an environment name that is not a plain identifier is refused, so
+  `env .SHELLFLAGS=… make test` and `env .EXTRA_PREREQS=evil make test` no
+  longer reach make. No reviewer re-checked this last change.
 - The autonomy matrix (`docs/docs/compliance/autonomy-matrix.md`,
   `docs/static/compliance/autonomy-matrix.json`) was regenerated because CI
   checks it against the validator registry. No step named it.

@@ -170,6 +170,9 @@ def _env_key_refusal(assignment: str) -> None:
     if "[" in name:
         # Bash evaluates a subscript as arithmetic, which runs any ``$(…)``.
         raise UnparseableCommand(f"array subscript in {name} is not permitted")
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+        # `env .SHELLFLAGS=… make` sets a make special variable the shell cannot.
+        raise UnparseableCommand(f"environment name {name!r} is not an identifier")
     # npm_config_* is every npm/pnpm option as env, e.g. the refused --workspace.
     if name.startswith("LD_") or name.lower().startswith("npm_config_"):
         allowed = False
