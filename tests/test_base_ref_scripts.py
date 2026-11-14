@@ -134,6 +134,14 @@ def _agent_adds_colliding_names(repo: Path) -> None:
         # A numeric token is a target unless it follows -j/-l.
         "make 123",
         "make -k 123",
+        "make -o -j 123",
+        "make -- -evil",
+        "make 'SHELL := ./evil.sh' test",
+        "make 'SHELL =./evil.sh' test",
+        "make .DEFAULT_GOAL=123",
+        # npm runs unambiguous command prefixes.
+        "npm run-s echo",
+        "npm resta",
         # npm options as environment, and the script shell.
         "npm_config_workspace=sub npm run test",
         "NPM_CONFIG_PREFIX=sub npm run test",
@@ -156,6 +164,12 @@ def test_review_bypasses_refused(repo: Path, cmd: str) -> None:
         "make -j 4 test",
         "make -kj 4 test",
         "make --jobs 4 test",
+        "make -l 2.5 test",
+        "make -- test",
+        "npm install",
+        "npm ins",
+        "npm ci",
+        "npm tes",
         "make V=1 test",
         "yarn install",
         "pnpm install",
@@ -169,7 +183,9 @@ def test_review_fixes_keep_normal_use(repo: Path, cmd: str) -> None:
     assert validate_command(cmd, repo)[0], cmd
 
 
-@pytest.mark.parametrize("cmd", ["npm it", "npm install-test", "pnpm it"])
+@pytest.mark.parametrize(
+    "cmd", ["npm it", "npm install-test", "pnpm it", "npm tes", "npm install-t"]
+)
 def test_install_test_aliases_need_base_test_script(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cmd: str
 ) -> None:
@@ -209,3 +225,19 @@ def test_moved_gitdir_keeps_base(repo: Path) -> None:
     assert validate_command("make test", repo)[0]
     assert not validate_command("make evil", repo)[0]
     assert not validate_command("npm run evil", repo)[0]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "\ufeff" + json.dumps({"scripts": {"echo": "echo pwn"}}),
+        '{"scripts": {"echo": "echo pwn",}}',
+        '{"scripts": {"echo": "echo pwn"}, "scripts": {}}',
+    ],
+    ids=["bom", "trailing-comma", "duplicate-key"],
+)
+def test_loosely_parsed_package_json_fails_closed(repo: Path, text: str) -> None:
+    (repo / "package.json").write_text(text, encoding="utf-8")
+    reset_profile_cache()
+    for cmd in ("yarn echo hi", "bun echo hi", "bun run echo hi"):
+        assert not validate_command(cmd, repo)[0], cmd

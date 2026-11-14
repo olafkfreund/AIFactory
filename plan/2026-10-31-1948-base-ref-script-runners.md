@@ -194,6 +194,23 @@ are `SECURITY.md`.
   - Not fixed, added to the residuals in `SECURITY.md`: an agent-written
     `GNUmakefile`/`makefile`, and `cd sub && make test`. The target name is
     still one from the base commit, so both equal an edited recipe body.
+- Step 3 (Claude, 2026-11-14, after the Fable review; each has a test):
+  - make: after `--` every word is a target (`make -- -evil`). `-o`/`-W` and
+    their long forms are refused, since they take a file and hid the next
+    word (`make -o -j 123`). Variable names are stripped of spaces
+    (`'SHELL := x'`), and `.DEFAULT_GOAL` is refused. `-l 2.5` is a number.
+  - npm: an unambiguous prefix of `run-script`, `test`, `start`, `stop`,
+    `restart`, `install-test` or `install-ci-test` counts as that command
+    (`npm run-s evil`). Prefixes of `install` stay `install`.
+  - yarn/pnpm/bun shorthand: a working-tree `package.json` that Python cannot
+    parse strictly (BOM, trailing comma) counts as defining the name, and
+    every duplicate `scripts` object is read. The runners parse more loosely.
+- The autonomy matrix (`docs/docs/compliance/autonomy-matrix.md`,
+  `docs/static/compliance/autonomy-matrix.json`) was regenerated because CI
+  checks it against the validator registry. No step named it.
+- Known and not fixed here, filed as follow-ups: a forged loose object in a
+  gitdir the agent controls can stand in for the base commit; detection sees
+  only the first target on a Makefile rule line and no `include`.
 
 ## Tests
 
