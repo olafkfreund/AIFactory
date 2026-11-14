@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1700
 spec: spec/2026-11-14-1700-github-app-installation-credential.md
 coders:
