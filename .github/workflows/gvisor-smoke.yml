@@ -313,6 +313,7 @@ jobs:
             --create-namespace \
             --set sandbox.gvisor.enabled=true \
             --set postgres.bundled=true \
+            --set migrations.autoApply=true \
             --set postgres.externalSecretName=aifactory-db \
             --set externalSecrets.enabled=false \
             --set oidc.enabled=false \
