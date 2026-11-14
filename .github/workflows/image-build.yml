@@ -64,7 +64,7 @@ jobs:
   build:
     name: Build root Dockerfile
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45  # cold cache: build ~29m + mode=max cache export; a cancel never saves the cache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

@@ -7,17 +7,20 @@ the driver from the URL scheme, and the SQLite-specific WAL pragma
 listener is only registered when the SQLite dialect is in use.
 """
 
+import asyncio
 import logging
 import os
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
 from sqlalchemy import event, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.pool import NullPool
 
 from server.db_pool import pool_kwargs
 
@@ -103,6 +106,8 @@ if engine.dialect.name == "sqlite":
 
 
 _ALEMBIC_INI_PATH = Path(__file__).resolve().parents[2] / "alembic.ini"
+# Serialize boot migrations across AIFactory instances sharing a Postgres database.
+_MIGRATION_LOCK_KEY = 0x4149464143545259
 
 
 def _alembic_config():
@@ -130,6 +135,38 @@ def _alembic_upgrade_head_sync() -> None:
     from alembic import command
 
     command.upgrade(_alembic_config(), "head")
+
+
+async def _upgrade_head_with_pg_lock() -> None:
+    """Run the upgrade while holding a Postgres session advisory lock (#1998).
+
+    The lock lives on its own NullPool engine so its connection is never
+    handed back to the app pool, which may be used from another event loop.
+    """
+    lock_engine = create_async_engine(DATABASE_URL, poolclass=NullPool)
+    try:
+        async with lock_engine.connect() as conn:
+            await conn.execution_options(isolation_level="AUTOCOMMIT")
+            # A pod that can't get the lock in 5 min fails boot loudly and restarts.
+            await conn.execute(text("SET lock_timeout = '300s'"))
+            await conn.execute(
+                text("SELECT pg_advisory_lock(:k)"), {"k": _MIGRATION_LOCK_KEY}
+            )
+            try:
+                await asyncio.to_thread(_alembic_upgrade_head_sync)
+            finally:
+                try:
+                    await conn.execute(
+                        text("SELECT pg_advisory_unlock(:k)"),
+                        {"k": _MIGRATION_LOCK_KEY},
+                    )
+                except (SQLAlchemyError, OSError):
+                    # Never mask the upgrade's error; closing the session frees the lock.
+                    logger.warning(
+                        "Failed to release migration advisory lock", exc_info=True
+                    )
+    finally:
+        await lock_engine.dispose()
 
 
 def _verify_schema_at_head_sync(sync_conn) -> None:
@@ -188,9 +225,10 @@ async def init_db() -> None:
         logger.info("MIGRATIONS_AUTO_APPLY=true — running `alembic upgrade head`")
         # Alembic uses a sync engine internally; run via to_thread so we
         # don't block the asyncio loop on the DDL transactions.
-        import asyncio
-
-        await asyncio.to_thread(_alembic_upgrade_head_sync)
+        if engine.dialect.name == "postgresql":
+            await _upgrade_head_with_pg_lock()
+        else:
+            await asyncio.to_thread(_alembic_upgrade_head_sync)
     else:
         logger.info(
             "MIGRATIONS_AUTO_APPLY=false — verifying schema is at head "

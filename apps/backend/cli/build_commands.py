@@ -612,7 +612,9 @@ def handle_build_command(
         # Run QA validation BEFORE finalization (while worktree still exists)
         # QA must sign off before the build is considered complete
         qa_approved = True  # Default to approved if QA is skipped
-        if not skip_qa and should_run_qa(spec_dir):
+        if not skip_qa and should_run_qa(
+            spec_dir, requires_review=gates.requires_review
+        ):
             print("\n" + "=" * 70)
             print("  SUBTASKS COMPLETE - STARTING QA VALIDATION")
             print("=" * 70)
@@ -660,7 +662,9 @@ def handle_build_command(
                 print(f"Resume: python aifactory/run.py --spec {spec_dir.name} --qa")
                 qa_approved = False
 
-        elif not skip_qa and is_qa_approved(spec_dir):
+        elif not skip_qa and is_qa_approved(
+            spec_dir, requires_review=gates.requires_review
+        ):
             # A pre-approval is the coder's own reading of its own work. That is
             # worth something, but it is not evidence, and it must not be able
             # to report the same "passed" as an executed gate suite.

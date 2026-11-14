@@ -217,8 +217,11 @@ def test_honest_body_states_no_gate_evidence_and_qa_not_run(tmp_path):
     title, body = mg.honest_pr_title_and_body(spec_dir, "001-x", tmp_path, None)
     assert title == "Task 001-x"
     assert "review surface, not a certificate" in body
-    assert "no verification gates recorded" in body
-    assert "QA sign-off: not run" in body
+    assert (
+        "Gate evidence (reported by the build, not verified by the control plane): "
+        "no verification gates recorded" in body
+    )
+    assert "QA sign-off (reported by the build): not run" in body
     assert "Review tier: none (decided as low) (not checked" in body
 
 
@@ -248,7 +251,10 @@ def test_honest_body_reports_gate_evidence_without_a_worktree(tmp_path, monkeypa
     (spec_dir / "requirements.json").write_text(json.dumps({"title": "Task 005-x"}))
     (spec_dir / ".trailing_gates_done").write_text(f"{task_sha}\npytest: passed\n")
     _title, body = mg.honest_pr_title_and_body(spec_dir, "005-x", tmp_path, None)
-    assert "Gate evidence: pytest: passed" in body
+    assert (
+        "Gate evidence (reported by the build, not verified by the control plane): "
+        "pytest: passed" in body
+    )
 
 
 def test_copied_home_marker_for_another_commit_is_no_evidence(tmp_path, monkeypatch):
@@ -273,7 +279,10 @@ def test_copied_home_marker_for_another_commit_is_no_evidence(tmp_path, monkeypa
     (spec_dir / "requirements.json").write_text(json.dumps({"title": "Task 005-x"}))
     (spec_dir / ".trailing_gates_done").write_text(f"{'0' * 40}\npytest: passed\n")
     _title, body = mg.honest_pr_title_and_body(spec_dir, "005-x", tmp_path, None)
-    assert "Gate evidence: pytest: passed" not in body
+    assert (
+        "Gate evidence (reported by the build, not verified by the control plane): "
+        "pytest: passed" not in body
+    )
     assert "no verification gates recorded" in body
 
 
@@ -283,7 +292,7 @@ def test_honest_body_reports_qa_signoff_status(tmp_path):
         json.dumps({"qa_signoff": {"status": "rejected"}})
     )
     _title, body = mg.honest_pr_title_and_body(spec_dir, "002-x", tmp_path, "medium")
-    assert "QA sign-off: rejected" in body
+    assert "QA sign-off (reported by the build): rejected" in body
     assert "Review tier: medium (not checked against a signed contract)" in body
 
 

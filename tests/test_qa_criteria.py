@@ -25,20 +25,8 @@ import pytest
 # MOCK SETUP - Must happen before ANY imports from aifactory
 # =============================================================================
 
-# Store original modules for cleanup
-_original_modules = {}
-_mocked_module_names = [
-    "claude_agent_sdk",
-    "ui",
-    "progress",
-    "task_logger",
-    "linear_updater",
-    "client",
-]
-
-for name in _mocked_module_names:
-    if name in sys.modules:
-        _original_modules[name] = sys.modules[name]
+# Restore collection-time imports so mocked modules do not leak into other files (#1988).
+_modules_before = dict(sys.modules)
 
 # Mock claude_agent_sdk FIRST (before any other imports)
 mock_sdk = MagicMock()
@@ -126,6 +114,17 @@ from qa.criteria import (
     should_run_qa,
 )
 
+_module_changes = {
+    name: sys.modules.get(name)
+    for name in set(_modules_before) | set(sys.modules)
+    if sys.modules.get(name) is not _modules_before.get(name)
+}
+for _name in _module_changes:
+    if _name in _modules_before:
+        sys.modules[_name] = _modules_before[_name]
+    else:
+        del sys.modules[_name]
+
 # Mock the qa.report import inside print_qa_status
 mock_report = MagicMock()
 mock_report.get_iteration_history = MagicMock(return_value=[])
@@ -137,17 +136,16 @@ mock_report.get_recurring_issue_summary = MagicMock(return_value={})
 # =============================================================================
 
 
-# Cleanup fixture to restore original modules after all tests in this module
 @pytest.fixture(scope="module", autouse=True)
-def cleanup_mocked_modules():
-    """Restore original modules after all tests in this module complete."""
-    yield  # Run all tests first
-    # Cleanup: restore original modules or remove mocks
-    for name in _mocked_module_names:
-        if name in _original_modules:
-            sys.modules[name] = _original_modules[name]
-        elif name in sys.modules:
-            del sys.modules[name]
+def mocked_modules():
+    """Install this file's sys.modules state for its own tests only."""
+    with pytest.MonkeyPatch.context() as mp:
+        for name, module in _module_changes.items():
+            if module is None:
+                mp.delitem(sys.modules, name, raising=False)
+            else:
+                mp.setitem(sys.modules, name, module)
+        yield
 
 
 @pytest.fixture

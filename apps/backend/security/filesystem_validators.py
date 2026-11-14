@@ -194,13 +194,66 @@ def git_metadata_write_refusal(path: str, cwd: str | None) -> str | None:
     return None
 
 
+_WORKTREE_MARKERS = ("/.aifactory/worktrees/tasks/", "/.aifactory/github/pr/worktrees/")
+
+
+def _worktree_source(p: Path) -> tuple[Path, Path] | None:
+    """Return (source .aifactory, worktree root) for a path inside a worktree."""
+    s = f"{p}/"
+    marker = next((m for m in _WORKTREE_MARKERS if m in s), None)
+    if marker is None:
+        return None
+    prefix, rest = s.rsplit(marker, 1)
+    name = rest.split("/", 1)[0]
+    return Path(prefix) / ".aifactory", Path(prefix + marker + name)
+
+
+def source_aifactory_write_refusal(
+    path: str, cwd: str | None, root: str | None = None
+) -> str | None:
+    """Refuse writes from a worktree session into the source project's .aifactory/ (#1985).
+
+    ``root`` is the session's project dir, bound when the hook is registered;
+    ``cwd`` moves with ``cd`` and is only the fallback and the base for relative
+    paths. The worktree itself stays writable. Checks the lexical and the
+    symlink-resolved form; fails closed if resolution errors.
+    """
+    base = root or cwd
+    if not base:
+        return None
+    refusal = "Refused: the source project's .aifactory/ is read-only for agents."
+    try:
+        start = Path(base).expanduser().absolute()
+        p = Path(path).expanduser()
+        if not p.is_absolute():
+            p = Path(cwd or base).expanduser().absolute() / p
+        pairs = [
+            (Path(os.path.normpath(start)), Path(os.path.normpath(p))),
+            (start.resolve(), p.resolve()),
+        ]
+    except (OSError, RuntimeError, ValueError):
+        return refusal
+    for start_form, target in pairs:
+        found = _worktree_source(start_form)
+        if found is None:
+            continue
+        source, worktree = found
+        if target.is_relative_to(source) and not target.is_relative_to(worktree):
+            return refusal
+    return None
+
+
 # Same name as ProjectAnalyzer.PROFILE_FILENAME (not imported: avoids an import cycle).
 _PROFILE_FILENAMES = (".aifactory-security.json", ".aifactory-allowlist")
 
 
-def protected_write_refusal(path: str, cwd: str | None) -> str | None:
-    """Refuse writes to git metadata (#1719) and to the security profile file (#1944)."""
+def protected_write_refusal(
+    path: str, cwd: str | None, root: str | None = None
+) -> str | None:
+    """Refuse writes to git metadata, source .aifactory, and the security profile."""
     if refusal := git_metadata_write_refusal(path, cwd):
+        return refusal
+    if refusal := source_aifactory_write_refusal(path, cwd, root):
         return refusal
     refusal = (
         "Refused: the security profile is managed by AIFactory and cannot be written."

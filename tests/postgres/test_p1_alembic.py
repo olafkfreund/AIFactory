@@ -1,10 +1,17 @@
 """P1.3 / P1.4 — Alembic baseline migration + idempotent upgrade + autoApply modes."""
 
+import asyncio
 import os
 import subprocess
+import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from tests.postgres.helpers import (
     WEB_SERVER_ROOT,
@@ -59,22 +66,35 @@ def test_alembic_upgrade_idempotent(test_postgres_url: str) -> None:
 
 
 def _init_db_subprocess(
-    test_postgres_url: str, auto_apply: bool
+    test_postgres_url: str, auto_apply: bool, barrier_dir: Path | None = None
 ) -> subprocess.CompletedProcess:
     """Invoke server.database.engine.init_db() in a fresh subprocess.
 
     Subprocess isolation keeps each test's module state clean (DATABASE_URL
     is read at module import time inside engine.py).
     """
-    import sys
+    code = """
+import asyncio
+import os
+import sys
+import time
+from pathlib import Path
 
-    code = (
-        "import asyncio, sys, os; "
-        "sys.path.insert(0, 'apps/web-server'); "
-        "from server.database.engine import init_db; "
-        "asyncio.run(init_db()); "
-        "print('init_db OK')"
-    )
+sys.path.insert(0, 'apps/web-server')
+from server.database.engine import init_db
+
+if barrier := os.environ.get('INIT_DB_BARRIER'):
+    barrier_dir = Path(barrier)
+    (barrier_dir / str(os.getpid())).touch()
+    deadline = time.monotonic() + 30
+    while len(list(barrier_dir.iterdir())) < 2:
+        if time.monotonic() >= deadline:
+            raise TimeoutError('Timed out waiting for concurrent init_db')
+        time.sleep(0.01)
+
+asyncio.run(init_db())
+print('init_db OK')
+"""
     env = os.environ.copy()
     env.update(
         {
@@ -86,6 +106,8 @@ def _init_db_subprocess(
             "GRAPHITI_ENABLED": "false",
         }
     )
+    if barrier_dir is not None:
+        env["INIT_DB_BARRIER"] = str(barrier_dir)
     repo_root = Path(__file__).resolve().parents[2]
     return subprocess.run(
         [sys.executable, "-c", code],
@@ -95,6 +117,47 @@ def _init_db_subprocess(
         text=True,
         timeout=60,
     )
+
+
+@pytest.mark.postgres
+@pytest.mark.slow
+def test_concurrent_init_db_applies_migrations_once(
+    test_postgres_url: str, tmp_path: Path
+) -> None:
+    _drop_schema(test_postgres_url)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(_init_db_subprocess, test_postgres_url, True, tmp_path)
+            for _ in range(2)
+        ]
+        results = [future.result() for future in futures]
+    for result in results:
+        assert result.returncode == 0, (
+            f"init_db exit {result.returncode}\n"
+            f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
+        )
+
+    config = Config(str(WEB_SERVER_ROOT / "alembic.ini"))
+    config.set_main_option(
+        "script_location", str(WEB_SERVER_ROOT / "server" / "database" / "alembic")
+    )
+    head = ScriptDirectory.from_config(config).get_current_head()
+
+    async def _versions() -> list[str]:
+        engine = create_async_engine(test_postgres_url)
+        try:
+            async with engine.connect() as conn:
+                return list(
+                    (
+                        await conn.execute(
+                            text("SELECT version_num FROM alembic_version")
+                        )
+                    ).scalars()
+                )
+        finally:
+            await engine.dispose()
+
+    assert asyncio.run(_versions()) == [head]
 
 
 def _drop_schema(test_postgres_url: str) -> None:

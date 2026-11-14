@@ -23,7 +23,7 @@ import re
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from mcp.server.lowlevel import Server
 from mcp.server.sse import SseServerTransport
 from mcp.types import (
@@ -160,6 +160,8 @@ async def sse_endpoint(request: Request):
         _current_key.reset(token)
         for session_id in session_ids:
             _session_keys.pop(session_id, None)
+    # The transport already sent the whole SSE response.
+    return Response()
 
 
 @router.post("/messages/")

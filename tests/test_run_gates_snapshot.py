@@ -29,7 +29,11 @@ PLAN = {"feature": "a", "phases": [{"phase": 1, "subtasks": [{"id": "1"}]}]}
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in ("AIFACTORY_FALLBACK_MODEL", "AIFACTORY_SOLO_MODE"):
+    for name in (
+        "AIFACTORY_FALLBACK_MODEL",
+        "AIFACTORY_SOLO_MODE",
+        "AIFACTORY_TASK_ID",
+    ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("AIFACTORY_MODEL_REGISTRY_ENFORCE", "off")
 
@@ -49,6 +53,54 @@ def test_capture_reads_source_dir_not_worktree_copy(tmp_path: Path) -> None:
     gates = RunGates.capture(worktree, source, None)
     assert gates.solo is True
     assert gates.requires_review is False
+
+
+def test_server_run_without_source_dir_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AIFACTORY_TASK_ID", "t")
+    spec = _spec(tmp_path, "pre", requireReviewBeforeCoding=False, soloMode=True)
+    gates = RunGates.capture(spec, None, None)
+    assert gates.requires_review is True
+    assert gates.solo is False
+
+    late = _spec(tmp_path, "post")
+    late_gates = RunGates.capture(late, None, None)
+    (late / "task_metadata.json").write_text(
+        json.dumps({"requireReviewBeforeCoding": False, "soloMode": True})
+    )
+    assert late_gates.requires_review is True
+    assert late_gates.solo is False
+
+
+def test_cli_direct_without_source_dir_reads_spec_and_warns(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    spec = _spec(tmp_path, requireReviewBeforeCoding=False, soloMode=True)
+    with caplog.at_level("WARNING", logger="run_gates"):
+        gates = RunGates.capture(spec, None, None)
+    assert gates.solo is True
+    assert any(
+        r.name == "run_gates" and r.levelname == "WARNING" for r in caplog.records
+    )
+
+
+def test_approved_plan_reads_source_dir_not_worktree_copy(tmp_path: Path) -> None:
+    source = _spec(tmp_path, "source", requireReviewBeforeCoding=True)
+    worktree = _spec(tmp_path, "worktree")
+    (worktree / "implementation_plan.json").write_text(
+        json.dumps({**PLAN, "feature": "worktree"})
+    )
+    gates = RunGates.capture(worktree, source, None)
+    assert gates.approved_plan == PLAN
+
+    (source / "implementation_plan.json").write_text(
+        json.dumps({**PLAN, "feature": "rewritten-source"})
+    )
+    (worktree / "implementation_plan.json").write_text(
+        json.dumps({**PLAN, "feature": "rewritten-worktree"})
+    )
+    assert gates.approved_plan == PLAN
 
 
 def test_metadata_empty_when_absent_and_frozen_after_capture(tmp_path: Path) -> None:

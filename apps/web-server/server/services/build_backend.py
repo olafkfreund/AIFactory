@@ -99,6 +99,7 @@ copies. The Job now gets them from its image. See ``_inject_build_path``.
 from __future__ import annotations
 
 import importlib
+import json
 import logging
 import os
 import shutil
@@ -108,6 +109,7 @@ from typing import Any
 
 from factory_common.logsafe import sanitize_log
 
+from server.error_ref import InputRejectedError
 from server.services.task_branch import record_branch
 from server.specpath import safe_spec_component, spec_dir_for
 from server.utils.subprocess_env import child_env, github_env
@@ -378,8 +380,42 @@ class BuildBackendUnavailableError(RuntimeError):
     """Agent launches are refused: the build backend config can't run (#1932)."""
 
 
+class GatedTaskRefusedError(InputRejectedError):
+    """Review- or tier-gated task refused on the subprocess backend (#1932)."""
+
+
+_GATED_SUBPROCESS_REFUSAL = (
+    "This task is review- or tier-gated, so this task needs the kubejob "
+    "backend: in-pod agents can rewrite its gate state (#1932). Set "
+    "AIFACTORY_BUILD_BACKEND=kubejob, or clear the gate for local dev."
+)
+
+
 def _raw_backend() -> str:
     return (os.environ.get(_ENV_BACKEND) or "").strip().lower() or _DEFAULT_BACKEND
+
+
+def subprocess_gate_refusal(
+    spec_dir: Path | None, mode: str | None = None
+) -> str | None:
+    """Refusal sentence when a gated task is run on subprocess, else None (#1932)."""
+    if _raw_backend() != BACKEND_SUBPROCESS:
+        return None
+    meta: Any = {}
+    meta_file = spec_dir / "task_metadata.json" if spec_dir is not None else None
+    if meta_file is not None and meta_file.exists():
+        try:
+            meta = json.loads(meta_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            meta = None  # unreadable metadata fails closed
+    gated = (
+        mode == "quick"
+        or not isinstance(meta, dict)
+        or bool(meta.get("requireReviewBeforeCoding", False))
+        or meta.get("mode") == "quick"
+        or meta.get("reviewTier") == "blocking"
+    )
+    return _GATED_SUBPROCESS_REFUSAL if gated else None
 
 
 def selected_backend() -> str:

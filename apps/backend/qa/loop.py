@@ -10,6 +10,7 @@ import time as time_module
 from pathlib import Path
 
 from agents.coder import _fail_on_git_metadata
+from agents.utils import load_implementation_plan
 from core.client import create_client
 from core.git_metadata import check_git_metadata
 from core.provider_failover import DeadlineBudget, next_provider, should_failover
@@ -33,6 +34,7 @@ from .criteria import (
     get_qa_iteration_count,
     get_qa_signoff_status,
     is_qa_approved,
+    save_implementation_plan,
 )
 from .fixer import run_qa_fixer_session
 from .providers import get_qa_llm_provider
@@ -219,10 +221,19 @@ async def run_qa_validation_loop(  # noqa: PLR0913 - #1969 source dir + #1983 ga
     has_human_feedback = fix_request_file.exists()
 
     # Check if already approved - but if there's human feedback, we need to process it first
-    if is_qa_approved(spec_dir) and not has_human_feedback:
-        debug_success("qa_loop", "Build already approved by QA")
-        print("\n✅ Build already approved by QA.")
-        return True
+    if is_qa_approved(spec_dir):
+        if not gates.requires_review:
+            if not has_human_feedback:
+                debug_success("qa_loop", "Build already approved by QA")
+                print("\n✅ Build already approved by QA.")
+                return True
+        else:
+            # #1987: the reviewer's verdict is read from this field, so a
+            # coder-written approval must not survive into it.
+            plan = load_implementation_plan(spec_dir) or {}
+            plan.pop("qa_signoff", None)
+            if not save_implementation_plan(spec_dir, plan):
+                return False
 
     # If there's human feedback, we need to run the fixer first before re-validating
     if has_human_feedback:
