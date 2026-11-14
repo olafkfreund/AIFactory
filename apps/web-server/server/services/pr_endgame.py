@@ -882,7 +882,7 @@ def _warn_copilot_unconfirmed(
         sanitize_log(f"{owner}/{repo}"),
         pr,
         reason,
-        f" ({detail})" if detail else "",
+        f" ({sanitize_log(detail)})" if detail else "",
     )
 
 
@@ -909,9 +909,7 @@ def request_copilot_review(
         )
         return False
     if not res.ok:
-        _warn_copilot_unconfirmed(
-            owner, repo, pr, "gh failed", sanitize_log(res.err[:200])
-        )
+        _warn_copilot_unconfirmed(owner, repo, pr, "gh failed", res.err[:200])
         return False
     try:
         answer = json.loads(res.out)

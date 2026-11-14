@@ -81,19 +81,23 @@ def test_runner_failure_is_warning_not_exception(error, caplog):
 
 
 @pytest.mark.parametrize(
-    ("result", "error", "reason", "owner"),
+    ("result", "error", "reason", "owner", "detail"),
     [
-        (pe.CmdResult(1, "SENTINEL", "a\nb"), None, "gh failed", "owner"),
+        (pe.CmdResult(1, "SENTINEL", "a\nb"), None, "gh failed", "owner", "a\\nb"),
         (
-            pe.CmdResult(0, '{"requested_reviewers": []}', ""),
+            pe.CmdResult(0, '{"requested_reviewers": [], "x": "SENTINEL"}', ""),
             None,
             "Copilot was not listed",
             "owner\nforged",
+            "",
         ),
-        (None, OSError("SENTINEL"), "gh could not be run", "owner"),
+        (pe.CmdResult(0, "SENTINEL", ""), None, "Copilot was not listed", "owner", ""),
+        (None, OSError("SENTINEL"), "gh could not be run", "owner", "OSError"),
     ],
 )
-def test_warning_has_remedy_and_safe_details(result, error, reason, owner, caplog):
+def test_warning_has_remedy_and_safe_details(
+    result, error, reason, owner, detail, caplog
+):
     def runner(_argv, _cwd):
         if error:
             raise error
@@ -122,6 +126,7 @@ def test_warning_has_remedy_and_safe_details(result, error, reason, owner, caplo
             "docs/docs/concepts/github-app.md",
         )
     )
+    assert detail in warning
     assert "App token" not in warning
     assert "SENTINEL" not in warning
     assert "\n" not in warning
