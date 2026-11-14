@@ -1,5 +1,6 @@
 """Organization boundaries on the global event WebSocket."""
 
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -248,3 +249,49 @@ def test_notify_org_overrides_data_org(sockets, monkeypatch):
             )
             assert sent["acw_key"][-1]["payload"]["data"]["org_id"] == "A"
             assert sent["jwt-owner"][-1]["payload"]["data"]["org_id"] == "A"
+
+
+def test_task_log_writer_stream_carries_project_id(sockets, tmp_path):
+    from server.services.task_log_writer import TaskLogWriter
+    from server.services.task_phase import TaskPhase
+
+    client, memberships, sent = sockets
+    writer = TaskLogWriter(tmp_path, project_id="p-a")
+
+    async def add_and_flush():
+        writer.add_entry("001-x", TaskPhase.CODING, "text", "hi")
+        await asyncio.sleep(0.2)
+
+    with connect(client, "jwt-a"):
+        memberships["rows"] = [("B",)]
+        with connect(client, "jwt-b"):
+            client.portal.call(add_and_flush)
+            assert sent["jwt-a"][-1]["type"] == "task-logs:stream"
+            assert sent["jwt-a"][-1]["payload"]["projectId"] == "p-a"
+            assert sent.get("jwt-b", []) == []
+
+
+@pytest.mark.parametrize("event", ["cli-account-auth", "github:auth-complete"])
+def test_org_less_login_events_follow_the_starting_principal(sockets, event):
+    client, _memberships, sent = sockets
+    with (
+        connect(client, "jwt-owner"),
+        connect(client, "jwt-other"),
+        connect(client, "acw_key"),
+        connect(client, "legacy"),
+    ):
+        emit(client, events.emit_org_less, {"id": "owner"}, event, {"ok": True})
+        assert [m["type"] for m in sent["jwt-owner"]] == [event]
+        assert sent.get("jwt-other", []) == sent.get("acw_key", []) == []
+        assert sent.get("legacy", []) == []
+        emit(
+            client,
+            events.emit_org_less,
+            {"id": "default", "is_service": True},
+            event,
+            {},
+        )
+        emit(client, events.emit_org_less, None, event, {})
+        assert len(sent["legacy"]) == 2
+        assert len(sent["jwt-owner"]) == 1
+        assert sent.get("jwt-other", []) == sent.get("acw_key", []) == []
