@@ -28,9 +28,11 @@ Built on the #1973 branch (merged into this branch): `runner_github_env`,
   token only when it names a bound org; an unbound org, an unknown project
   path or an unwired code path gets no token.
 - Without the map, everything behaves exactly as today.
-- `start()` raises, before any HTTP call, when: the map is set without the
-  App; an entry has an empty or duplicate org id or an installation id that
-  is not all ASCII digits; the map is set together with
+- `start()` raises, before any HTTP call, when: the map variable is
+  non-blank without the App; the variable is non-blank but yields no entry
+  (for example `,`), so a typo can never fall back to the process-wide
+  token; an entry has an empty or duplicate org id or an installation id
+  that is not all ASCII digits; the map is set together with
   `AIFACTORY_AGENT_GITHUB_TOKEN`; or (with or without the map)
   `AIFACTORY_GITHUB_APP_INSTALLATION_ID` is not all ASCII digits.
 - `installation_token(installation_id, *, min_ttl=900)`: cache per
@@ -78,11 +80,12 @@ Paths below are under `apps/web-server/server/` unless they start with
         tuple[str, float]]`, `_tokens_lock = threading.Lock()`;
       - `_valid_installation_id(s) -> bool`: `s.isascii() and
         s.isdecimal()`;
-      - `_parse_org_map(raw) -> dict[str, str]`: split on `,`, skip empty
-        items, each item `org=id` with both sides stripped; raise
-        `RuntimeError` naming the org id on an empty org, a duplicate org,
-        or an invalid id (for an item without `=` name the item position,
-        not its text);
+      - `_parse_org_map(raw) -> dict[str, str]`: a blank `raw` gives `{}`.
+        Otherwise split on `,`, skip empty items, each item `org=id` with
+        both sides stripped; raise `RuntimeError` naming the org id on an
+        empty org, a duplicate org, or an invalid id (for an item without
+        `=` name the item position, not its text); raise as well when a
+        non-blank `raw` yields no entry;
       - `_mint(installation_id) -> tuple[str, float]` (`:81-97`): the id is
         an argument; return the token and the expiry as epoch seconds
         (`datetime.fromisoformat` on `expires_at` with a trailing `Z`
@@ -111,12 +114,20 @@ Paths below are under `apps/web-server/server/` unless they start with
         unchanged apart from `_mint`'s new signature.
 
    c. `project_registry.py`: `org_id_for_path(project_path: str | Path |
-      None) -> str | None` after `load_projects` (`:47-53`): resolve the
-      argument; for each entry resolve `entry["path"]`; a match is equality
-      or the entry path being a parent (`Path.is_relative_to`); prefer the
-      longest matching entry path; return its `org_id` (a missing `org_id`
-      counts as `DEFAULT_ORG_ID`, as `save_projects` stamps it); None when
-      nothing matches, the argument is None, or the file cannot be read.
+      None) -> str | None` after `load_projects` (`:47-53`). Fail closed:
+      - return None for `None`, an empty string, or a path that is not
+        absolute; same for a registry entry whose `path` is empty or not
+        absolute (skip it);
+      - normalise both sides with `os.path.normpath` only. Do **not** call
+        `Path.resolve()` or `realpath`: a symlink inside one tenant's
+        worktree must not lead into another tenant's project;
+      - a match is equality or the entry path being a parent
+        (`PurePath.is_relative_to`);
+      - collect the `org_id` of every matching entry. If the matches name
+        more than one org, or a matching entry has no `org_id`, return
+        None (an ambiguous or unowned path gets no token). Otherwise
+        return the one org id;
+      - None when nothing matches or the file cannot be read.
 
    d. Tests (see Tests): extend `apps/web-server/tests/test_github_app.py`
       (its autouse `_isolate` fixture at `:61` patches `httpx.post`; also
@@ -126,10 +137,11 @@ Paths below are under `apps/web-server/server/` unless they start with
 
    → verify by
    `apps/backend/.venv/bin/pytest apps/web-server/tests/test_github_app.py apps/web-server/tests/test_project_registry_org.py -q -o asyncio_mode=auto`
-   and `apps/backend/.venv/bin/pytest tests/test_github_env.py -q` (two
-   tests there call the real `gh` and fail on this host on untouched code:
-   `test_helper_reset_keeps_store_from_saving_token` and
-   `test_real_gh_reads_token_without_rewriting_hosts`; ignore those two).
+   and `apps/backend/.venv/bin/pytest tests/test_github_env.py -q $GH_DESELECT`,
+   where `GH_DESELECT` is
+   `--deselect tests/test_github_env.py::test_helper_reset_keeps_store_from_saving_token --deselect tests/test_github_env.py::test_real_gh_reads_token_without_rewriting_hosts`
+   (those two call the real `gh` and fail on this host on untouched code;
+   CI runs them).
    Traps: `github_app.py` already imports `child_env, github_token` from
    `server.utils.subprocess_env`; import `AGENT_GITHUB_TOKEN_VAR` from the
    same module. `apps/backend` must not import from `apps/web-server`.
@@ -187,7 +199,7 @@ Paths below are under `apps/web-server/server/` unless they start with
    f. Tests (see Tests).
 
    → verify by
-   `apps/backend/.venv/bin/pytest tests/test_child_process_env.py tests/test_github_env.py tests/test_build_backend_kubejob.py tests/test_env_passthrough_credentials.py -q`
+   `apps/backend/.venv/bin/pytest tests/test_child_process_env.py tests/test_github_env.py tests/test_build_backend_kubejob.py tests/test_env_passthrough_credentials.py -q $GH_DESELECT`
    and
    `apps/backend/.venv/bin/pytest apps/web-server/tests/test_github_app.py apps/web-server/tests/test_pr_endgame.py apps/web-server/tests/test_org_installation_wiring.py -q -o asyncio_mode=auto`
    Traps: `tests/test_github_env.py::test_web_server_has_no_env_token_path`
@@ -211,19 +223,27 @@ Paths below are under `apps/web-server/server/` unless they start with
      the map is non-empty, render env
      `AIFACTORY_GITHUB_APP_ORG_INSTALLATIONS` as `org=id` pairs joined by
      commas, in sorted key order (`range $org, $id := ...` iterates sorted).
-     Each id goes through `toString`; `fail` when it does not match
-     `^[0-9]+$` (`regexMatch`); also `fail` when
+     Each id must be a YAML **string** of digits: `fail` unless
+     `kindIs "string" $id` and `regexMatch "^[0-9]+$" $id`. Numbers are
+     rejected on purpose: Helm parses them as float64, which prints large
+     ids in scientific notation and would round or truncate others. The
+     failure message says to quote the id or use `--set-string`. Also
+     `fail` when
      `agentGithubToken.secretName` is set together with a non-empty map.
    - `tests/helm/test_github_app_toggle.py`: absent when the map is empty;
-     rendered as `acme=9002,default=9001` for two entries; a value given
-     with `--set-string` as `12345678` renders as digits; `--set
-     githubApp.orgInstallations.acme=1e7`-style and `abc` values fail the
-     render; the map with `agentGithubToken.secretName` fails the render.
+     rendered as `acme=9002,default=9001` for two entries given with
+     `--set-string`; `--set-string ...acme=12345678` renders `12345678`; an
+     unquoted number (`--set ...acme=12345678`, and a values file with
+     `acme: 9002.5`), `--set-string ...acme=abc` and `--set-string
+     ...acme=1e7` each fail the render; the map with
+     `agentGithubToken.secretName` fails the render.
    - `docs/docs/concepts/github-app.md`: new section "Several
      installations" before "Limits": what the map is and that only the
      operator sets it (an installation id is not a secret, so tenants must
      not be able to choose one); that every org, `default` included, must
      be bound, because an unbound org gets no GitHub token in this mode;
+     that ids are written as quoted strings; that a project path registered
+     under two orgs (one inside the other) gets no token;
      what is wired (project clone, build/spec/PR-review runners, build
      Jobs, the PR endgame) and that the interactive GitHub routes and the
      services listed in the decisions have no token in this mode yet
@@ -232,10 +252,9 @@ Paths below are under `apps/web-server/server/` unless they start with
      at least 55 minutes; how to roll back (empty the map). Add a Limits
      bullet pointing to the section.
    → verify by `apps/backend/.venv/bin/pytest tests/helm/test_github_app_toggle.py tests/helm/test_agent_github_token.py -q`
-   Traps: `--set` turns `12345678` into a number; the template must still
-   render it as digits (`toString` of a float64 prints `1.2345678e+07`:
-   use `int64` first when the value is not a string, and test it). Do not
-   stage or commit.
+   Traps: `--set` turns `12345678` into a number, which this template
+   rejects by design; the tests and the docs use `--set-string` or quoted
+   YAML. Do not stage or commit.
 
 ## Tests
 
@@ -259,9 +278,17 @@ All with `httpx.post` patched; no App needed.
   a failed bound mint at start raises and leaves `configured()` false;
 - mode off: `start()` and `refresh_loop` behave as the existing tests
   assert (they keep passing unchanged except for `_mint`'s signature);
-- `org_github_token`: mode off → `github_token()` is the ambient token
-  inside the block; mode on, bound org → that org's token and the ambient
-  env token is ignored; mode on, unbound org and `None` → `""`.
+- a map variable of `,` or `" , "` raises before any HTTP call and nothing
+  is published;
+- `org_github_token`, with two bound orgs `acme` and `globex` on different
+  installations with different tokens, and an ambient `GITHUB_TOKEN` set in
+  the env to prove it is ignored: mode off → `github_token()` is the
+  ambient token inside the block; mode on → `acme` gives acme's token,
+  `globex` gives globex's; an unbound org and `None` give `""`; nested
+  `acme` → unbound gives `""` inside and acme's token again after; nested
+  `acme` → `globex` gives globex's inside and acme's after; two interleaved
+  asyncio tasks for `acme` and `globex` each read their own token every
+  time.
 
 `tests/test_github_env.py` (step 1):
 - `use_github_token`: `github_env` writes the provider's token to
@@ -278,8 +305,14 @@ All with `httpx.post` patched; no App needed.
   has exited; a task created before the block does not.
 
 `apps/web-server/tests/test_project_registry_org.py` (step 1): exact path;
-a worktree path under a project; nested projects pick the longest match; no
-match; `None`; an entry without `org_id` → `DEFAULT_ORG_ID`.
+a worktree path under a project; two entries of the same org, one inside
+the other → that org; two entries of different orgs, one inside the other
+→ None for a path under both; no match; `None`, `""` and a relative path →
+None (with the process cwd inside a registered project, to prove cwd is
+not used); a registry entry with an empty path is skipped; a path that
+reaches another org's project only through a symlink (create one under
+`tmp_path`) → the org of the path as written, not the symlink target; a
+matching entry without `org_id` → None.
 
 `tests/test_child_process_env.py` and `tests/test_build_backend_kubejob.py`
 (step 2), with `github_app.multi_installation` and `token_for_org`
@@ -303,10 +336,21 @@ monkeypatched and a registry file under `tmp_path`:
   the existing project-route tests do; if `add_project` cannot be called
   without a large fixture, test a small helper extracted for the clone
   call instead and say so in the handback.)
-- endgame: with the mode on, `run_pr_endgame` invoked inside
-  `org_github_token("acme")` with `create_pr` and `watch_and_finish`
-  stubbed to record `github_token()`: both record acme's token, and a
-  background task created inside records it after the block exits.
+- endgame, through the real wiring: drive the function in
+  `services/completion_orchestration.py` that contains the PR endgame block
+  for a project of `acme` (registry file under `tmp_path`), with
+  `is_auto_pr_enabled` true and `gather_pr_context`, `run_pr_endgame`
+  replaced by stubs that record `core.git_credentials.github_token()`:
+  both record acme's token; for a project of an unbound org both record
+  `""`. If that function cannot be driven without a large fixture, move
+  the endgame block into a small module-level coroutine, call it from the
+  old place, test that, and say so in the handback. Plus: `run_pr_endgame`
+  inside `org_github_token("acme")` with `watch_and_finish` stubbed: a
+  background task created inside the block still reads acme's token after
+  the block exits.
+- Job dispatch: a source test that the one call of `build_job_env` in
+  `services/build_backend.py` passes `project_path` as its second
+  argument and runs through `asyncio.to_thread`.
 
 `tests/helm/test_github_app_toggle.py` (step 3) as listed in step 3.
 
