@@ -8,8 +8,7 @@ clients connected to any other replica.
 
 When ``settings.REDIS_URL`` is empty the bus is a thin in-process
 shim: ``publish_event`` directly calls ``deliver_local``. This is the
-laptop / dev / single-replica default and preserves v1.0 behavior
-exactly.
+laptop / dev / single-replica default.
 
 When ``settings.REDIS_URL`` is set, ``publish_event`` ALSO publishes a
 JSON envelope to ``settings.REDIS_CHANNEL``. A background subscriber
@@ -76,6 +75,7 @@ class ConnectedClient:
     websocket: WebSocket
     user_id: str | None = None
     org_ids: set[str] = field(default_factory=set)
+    key_org_id: str | None = None
 
 
 _clients: dict[WebSocket, ConnectedClient] = {}
@@ -95,6 +95,7 @@ def register_client(ws: WebSocket, user_info: dict | None) -> ConnectedClient:
     client = ConnectedClient(
         websocket=ws,
         user_id=user_info["id"] if user_info else None,
+        key_org_id=(user_info or {}).get("org_id"),
     )
     _clients[ws] = client
     active_connections.add(ws)
@@ -125,7 +126,7 @@ def update_client_orgs(user_id: str, org_ids: set[str]) -> None:
 
 @dataclass(frozen=True)
 class BroadcastScope:
-    """Send to every connected client. Mirrors ``broadcast_event``."""
+    """Legacy envelope scope, delivered only to service clients."""
 
 
 @dataclass(frozen=True)
@@ -138,13 +139,29 @@ class UserScope:
 
 @dataclass(frozen=True)
 class OrgScope:
-    """Send to clients whose ``org_ids`` includes ``org_id`` OR to
-    legacy (no-user_id) clients. Mirrors ``send_to_org`` exactly."""
+    """Send to org members, org-bound keys, and service clients."""
 
     org_id: str
 
 
 Scope = BroadcastScope | UserScope | OrgScope
+
+
+def _payload_org(payload: dict) -> str | None:
+    org = payload.get("org_id")
+    if org is not None:
+        return org
+    data = payload.get("data")
+    return data.get("org_id") if isinstance(data, dict) else None
+
+
+def _may_receive(client: ConnectedClient, org: str | None) -> bool:
+    if client.user_id is None:
+        return True
+    if client.key_org_id is not None:
+        # Also needs live membership: a failed lookup or a removed owner gets nothing.
+        return org is not None and org == client.key_org_id and org in client.org_ids
+    return org is not None and org in client.org_ids
 
 
 # ---------------------------------------------------------------------------
@@ -259,38 +276,40 @@ def _parse_envelope(raw: bytes | str) -> tuple[str, Scope, str, dict] | None:
 async def deliver_local(scope: Scope, event_type: str, payload: dict) -> None:
     """Deliver an event to local clients matching ``scope``.
 
-    Mirrors the v1.0 routing rules exactly:
-    - ``BroadcastScope``: every connected client
-    - ``UserScope``: clients with matching ``user_id``
-    - ``OrgScope``: clients whose ``org_ids`` includes the org OR
-      legacy clients without a ``user_id`` (back-compat)
+    Every delivery path enforces the socket's org boundary.
     """
     message = json.dumps({"type": event_type, "payload": payload})
     disconnected: list[WebSocket] = []
 
     if isinstance(scope, BroadcastScope):
-        targets = list(active_connections)
-        for ws in targets:
-            try:
-                await ws.send_text(message)
-            except Exception:
-                disconnected.append(ws)
+        targets = [
+            (ws, client)
+            for ws, client in list(_clients.items())
+            if _may_receive(client, None)
+        ]
     elif isinstance(scope, UserScope):
-        for ws, client in list(_clients.items()):
-            if client.user_id == scope.user_id:
-                try:
-                    await ws.send_text(message)
-                except Exception:
-                    disconnected.append(ws)
+        targets = [
+            (ws, client)
+            for ws, client in list(_clients.items())
+            if client.user_id == scope.user_id
+            and (
+                client.key_org_id is None or _payload_org(payload) == client.key_org_id
+            )
+        ]
     elif isinstance(scope, OrgScope):
-        for ws, client in list(_clients.items()):
-            # Match v1.0: send to org members OR legacy (no user_id)
-            # clients so bearer-token connections still receive events.
-            if client.user_id is None or scope.org_id in client.org_ids:
-                try:
-                    await ws.send_text(message)
-                except Exception:
-                    disconnected.append(ws)
+        targets = [
+            (ws, client)
+            for ws, client in list(_clients.items())
+            if _may_receive(client, scope.org_id or None)
+        ]
+    else:
+        targets = []
+
+    for ws, _client in targets:
+        try:
+            await ws.send_text(message)
+        except Exception:
+            disconnected.append(ws)
 
     for ws in disconnected:
         unregister_client(ws)

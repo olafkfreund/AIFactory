@@ -1,31 +1,34 @@
 """
 Global Events WebSocket with per-client routing.
 
-Supports both broadcast (legacy) and targeted delivery based on
-user identity. When a JWT-authenticated user connects, events
-can be routed only to members of the relevant organization.
+Supports project-org and user-targeted delivery. When a JWT-authenticated
+user connects, project events reach only members of the relevant organization.
 Legacy (bearer-token) connections receive all events (backward
 compatible).
 
 Epic #35 #40 PR-1: the three public functions (``broadcast_event``,
 ``send_to_user``, ``send_to_org``) are now thin shims over
-``event_bus.publish_event``. Their signatures, behavior, and the
-client registry semantics are unchanged. Setting ``REDIS_URL``
-enables cross-replica delivery; leaving it unset preserves v1.0
-in-process-only behavior.
+``event_bus.publish_event``. Setting ``REDIS_URL`` enables cross-replica
+delivery; leaving it unset keeps delivery in-process.
 """
 
 import asyncio
 import json
 import logging
+import time
 
 from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from ..auth import WebSocketAuthError, authenticate_websocket
+from ..auth import (
+    WebSocketAuthError,
+    _ws_acw_principal,
+    _ws_extract_token,
+    authenticate_websocket,
+)
+from ..project_registry import load_projects
 from . import event_bus
 from .event_bus import (
-    BroadcastScope,
     ConnectedClient,
     OrgScope,
     UserScope,
@@ -36,6 +39,10 @@ from .event_bus import (
 )
 
 logger = logging.getLogger(__name__)
+SERVICE_ONLY_ORG = ""
+_ORG_CACHE_SECONDS = 30.0
+_KEY_RECHECK_SECONDS = 300
+_org_cache: dict[str, tuple[float, str | None]] = {}
 
 router = APIRouter()
 
@@ -74,8 +81,31 @@ __all__ = [
 
 
 async def broadcast_event(event_type: str, payload: dict):
-    """Broadcast an event to all connected clients (legacy behavior)."""
-    await event_bus.publish_event(BroadcastScope(), event_type, payload)
+    """Route an event by its project organization."""
+    await send_to_org(_event_org(payload) or SERVICE_ONLY_ORG, event_type, payload)
+
+
+def _event_org(payload: dict) -> str | None:
+    try:
+        pid = payload.get("projectId")
+        if not pid:
+            task_id = payload.get("taskId")
+            pid = (
+                task_id.split(":", 1)[0]
+                if isinstance(task_id, str) and ":" in task_id
+                else None
+            )
+        if not isinstance(pid, str):
+            return None
+        now = time.monotonic()
+        cached = _org_cache.get(pid)
+        if cached and now - cached[0] < _ORG_CACHE_SECONDS:
+            return cached[1]
+        org = load_projects().get(pid, {}).get("org_id") or None
+        _org_cache[pid] = (now, org)
+        return org
+    except Exception:
+        return None
 
 
 async def send_to_user(user_id: str, event_type: str, payload: dict):
@@ -109,6 +139,9 @@ async def events_websocket(websocket: WebSocket):
         return
 
     client = register_client(websocket, user_info)
+    key_token = _ws_extract_token(websocket)
+    key_token = key_token if key_token and key_token.startswith("acw_") else None
+    last_key_check = time.monotonic()
 
     # If authenticated user, load their org memberships for routing
     if user_info and user_info.get("id"):
@@ -131,6 +164,11 @@ async def events_websocket(websocket: WebSocket):
     try:
         # Keep connection alive and listen for pings
         while True:
+            if key_token and time.monotonic() - last_key_check >= _KEY_RECHECK_SECONDS:
+                if await _ws_acw_principal(key_token) is None:
+                    await websocket.close(code=4001)
+                    break
+                last_key_check = time.monotonic()
             try:
                 data = await asyncio.wait_for(websocket.receive_text(), timeout=30)
 
