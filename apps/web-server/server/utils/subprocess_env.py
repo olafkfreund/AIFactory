@@ -73,9 +73,8 @@ _log = logging.getLogger(__name__)
 
 
 def github_names() -> tuple[str, ...]:
-    from core.mcp_credentials import _load_operator_config  # noqa: PLC0415
-
     from core.auth import is_denied_env_key  # noqa: PLC0415
+    from core.mcp_credentials import _load_operator_config  # noqa: PLC0415
 
     names = (*GITHUB_KEEP, "GITHUB_PERSONAL_ACCESS_TOKEN")
     github = _load_operator_config().get("github")
