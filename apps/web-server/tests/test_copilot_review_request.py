@@ -139,7 +139,7 @@ async def test_endgame_waits_for_copilot_even_if_request_unconfirmed(
     reviewer, tmp_path, monkeypatch
 ):
     requested = []
-    opened = []
+    opened: list[int] = []
     watched = []
 
     def request(owner, repo, pr, *, runner):
