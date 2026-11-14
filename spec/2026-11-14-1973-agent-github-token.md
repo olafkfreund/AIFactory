@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1973
 intent: intent/2026-11-14-1973-agent-github-token.md
 ---
