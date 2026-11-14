@@ -76,7 +76,6 @@ mocks, because the App has not been created yet (owner comment on #1973,
 None. The issue stays open and deferred after this lands; the owner closes
 it when a real second installation has been exercised.
 
-Known limit, not solved here: an org with no binding keeps using the default
-installation, as every org does today. In a deployment with several tenants
-the operator must bind every tenant, or the default installation's repos are
-reachable by the unbound ones.
+Note added with the spec (2026-11-14): the spec is stricter than the limit
+first written here. Once any binding exists, an org without one gets no
+GitHub token instead of the default installation's.
