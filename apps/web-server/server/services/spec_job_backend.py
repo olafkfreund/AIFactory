@@ -275,7 +275,10 @@ class SpecJobProcess:
         finally:
             _LIVE_SPEC_JOBS.discard(self.job_name)
             with contextlib.suppress(Exception):
-                await asyncio.wait_for(stream, timeout=30)
+                # A stopped Job's logs are not drained: stop_task awaits this.
+                await asyncio.wait_for(
+                    stream, timeout=0.1 if self._stop.is_set() else 30
+                )
             if not stream.done():
                 stream.cancel()
                 with contextlib.suppress(asyncio.CancelledError):

@@ -540,9 +540,8 @@ async def test_stop_ends_log_stream_without_waiting_for_drain_timeout(
     async def batch_factory():
         return batch
 
-    async def until_inactive(self, *, job_active, **_kwargs):
-        while await job_active():
-            await asyncio.sleep(0.01)
+    async def until_inactive(self, **_kwargs):
+        await asyncio.Event().wait()  # a log follow that never ends
 
     monkeypatch.setattr(sj.KubeJobLogStreamer, "stream", until_inactive)
     proc = sj.SpecJobProcess(
@@ -585,3 +584,13 @@ async def test_refused_dispatch_releases_pooled_credential(
     with pytest.raises(RuntimeError):
         await service.start_spec_creation("p:s1", project[0], "title", "body")
     assert released == ["p:s1"]
+
+
+def test_fresh_task_without_auto_approve_gets_unapproved_review_state(
+    fake_store: type[FakeArtifactStore], tmp_path: Path
+) -> None:
+    spec_dir = tmp_path / "spec"
+    spec_dir.mkdir()
+    fake_store.objects[workspace_fetch._spec_file_key("fetch", "spec.md")] = b"# spec"
+    assert sj._finish_spec_fetch(spec_dir, "fetch", False) == 0
+    assert json.loads((spec_dir / "review_state.json").read_text())["approved"] is False
