@@ -8,20 +8,28 @@ intent: intent/2026-11-14-1973-agent-github-token.md
 
 ## Design
 
-Two changes, both in how the web server builds a child's env. "GitHub names"
-below means `GITHUB_TOKEN`, `GH_TOKEN` and `GITHUB_PERSONAL_ACCESS_TOKEN`.
+Two changes, both in how the web server builds a child's env.
+
+"GitHub names" below means `GITHUB_TOKEN`, `GH_TOKEN`,
+`GITHUB_PERSONAL_ACCESS_TOKEN`, and the operator's MCP alias when one is
+configured: the env name in `github.tokenEnv` of
+`~/.aifactory/mcp-credentials.json`, which the GitHub MCP probe reads before
+any other name (`apps/backend/core/mcp_credentials.py:188-190`). A helper
+`github_names()` in `apps/web-server/server/utils/subprocess_env.py` returns
+them (the same lookup as `services/github_app.py:152-154`).
 
 ### 1. Children that do no GitHub work get no GitHub names
 
-`make_subprocess_env` (`apps/web-server/server/utils/subprocess_env.py:78`)
-gains a keyword `github: bool = False`.
+`make_subprocess_env` (`subprocess_env.py:78`) gains a keyword
+`github: bool = False`.
 
 - `RUNNER_KEEP` no longer contains `GITHUB_KEEP`.
-- With `github=False` the result has none of the GitHub names.
-  `GITHUB_PERSONAL_ACCESS_TOKEN` needs an explicit drop: the runner scrub
-  (`child_env(runner=True)`) does not apply the `*_TOKEN` rule and the name
-  is not on the deny list.
-- With `github=True` the GitHub names are filled as in section 2.
+- After the scrub, every GitHub name is removed from the result, in both
+  modes. The explicit removal is needed because the runner scrub
+  (`child_env(runner=True)`) does not apply the `*_TOKEN` rule, and
+  `GITHUB_PERSONAL_ACCESS_TOKEN` and an alias are not on the deny list.
+- With `github=True` the result of `runner_github_env()` (section 2) is then
+  applied.
 
 Callers:
 
@@ -36,50 +44,66 @@ Callers:
 
 The three `github=False` callers add nothing to the env afterwards that could
 bring a GitHub name back (checked: they set `PYTHON*`, the OAuth token and
-the data class only).
+the data class only; none loads a `.env` file or project settings).
 
 ### 2. An optional token for the children: `AIFACTORY_AGENT_GITHUB_TOKEN`
 
-New helper in `subprocess_env.py`:
+New in `subprocess_env.py`:
 
 ```python
 AGENT_GITHUB_TOKEN_VAR = "AIFACTORY_AGENT_GITHUB_TOKEN"
+
+def agent_github_token() -> str:
+    """The operator's token for runner children, stripped; "" when unset."""
 
 def runner_github_env() -> dict[str, str]:
     """GitHub token vars for a runner child or build Job (#1973)."""
 ```
 
-- If `AIFACTORY_AGENT_GITHUB_TOKEN` is set (non-blank): return
-  `{"GITHUB_TOKEN": t, "GH_TOKEN": t}`. Nothing from the control plane's own
-  GitHub names is returned, so the child cannot see the control plane's
-  token under any of the three names. The GitHub MCP probe in the child then
-  resolves the agent token through `GITHUB_TOKEN`
-  (`apps/backend/core/mcp_credentials.py:187`).
-- Otherwise: return the GitHub names that are set in `os.environ`, unchanged.
-  This is today's behaviour (plus `GITHUB_PERSONAL_ACCESS_TOKEN`, which
-  passes through today as well).
+`runner_github_env()`:
+
+- If the agent token is set: return it under `GITHUB_TOKEN`, `GH_TOKEN` and
+  `GITHUB_PERSONAL_ACCESS_TOKEN`. No alias is returned. Since section 1
+  removed every GitHub name first, the child cannot see the control plane's
+  token under any of them. In the child, the MCP probe finds no alias value
+  and falls through to the names above. Setting all three also means the
+  add-if-absent loaders below cannot bring in another value for them.
+- Otherwise: return every GitHub name that has a non-empty value in
+  `os.environ`, unchanged. This is today's behaviour.
+- If the variable is present but blank (for example a Secret key with no
+  value), log one WARNING that the children fall back to the control plane's
+  token, then behave as unset.
 
 Used in two places:
 
-- `make_subprocess_env(github=True)` applies it on top of the scrubbed env.
+- `make_subprocess_env(github=True)`.
 - `build_job_env` (`services/build_backend.py:350`): `GITHUB_TOKEN` and
-  `GH_TOKEN` leave `_PASSTHROUGH_BUILD_ENV`; the function merges
-  `runner_github_env()` instead (dropping `GITHUB_PERSONAL_ACCESS_TOKEN`,
-  which the Job never received). The stale comments at `build_backend.py:234`
-  and `:267` ("for run.py's PR endgame") are corrected: the Job uses the
-  token for the base fetch, the packed-workspace branch push and the GitHub
-  MCP server; the PR endgame runs in the web server.
+  `GH_TOKEN` leave `_PASSTHROUGH_BUILD_ENV`; the function merges only those
+  two names from `runner_github_env()`, so the Job receives exactly the
+  names it receives today. The stale comments at `build_backend.py:234` and
+  `:267` ("for run.py's PR endgame") are corrected: the Job uses the token
+  for the base fetch, the packed-workspace branch push and the GitHub MCP
+  server; the PR endgame runs in the web server.
 
 The variable itself must never reach a child: add
 `AIFACTORY_AGENT_GITHUB_TOKEN` to `_AGENT_ENV_DENY_EXACT`
 (`apps/backend/core/auth.py:118`). `child_env` drops denied names for every
-caller, and `_load_backend_env` skips them.
+caller.
 
-Loaders that run after the scrub in the `github=True` callers
-(`_load_backend_env`, the `.env` loops in `agent_spec_creation.py:240` and
-`pr_review_service.py:274`, `load_project_env`) only add keys that are
-absent. When the agent token is set, `GITHUB_TOKEN` and `GH_TOKEN` are
-present, so none of them can replace it.
+Loaders that run after the scrub in the `github=True` callers copy keys from
+`apps/backend/.env` when they are absent: `_load_backend_env`
+(`agent_service.py:144`, already skips denied names), the inline loop in
+`agent_spec_creation.py:240-250` and `_load_env_file`
+(`pr_review_service.py:76`), neither of which checks anything. A new helper
+`dotenv_key_blocked(key) -> bool` in `subprocess_env.py` is true for the
+agent variable always, and for any GitHub name while the agent token is
+set; the three loaders skip such keys. So a `.env` file can neither hand
+the agent variable to a child nor add an alias next to the agent token.
+`load_project_env` adds only allowlisted project keys that are absent, and
+`mcp_spawn_env` returns one fixed key with the project's MCP toggles
+(`project_settings_store.py:442-448`); neither can replace the token.
+
+Without the agent token the loaders behave as today.
 
 ### 3. What does not change
 
@@ -91,7 +115,9 @@ present, so none of them can replace it.
 - With the GitHub App configured, the ambient token is the installation
   token. `github_app.start()` does not refuse an agent token: it is not one
   of the names the web server or `gh` read. If both are set, children use
-  the agent token and the web server acts as the App.
+  the agent token and the web server acts as the App. The operator must not
+  point `github.tokenEnv` at the agent variable: `start()` treats that alias
+  as a PAT and refuses to boot (`github_app.py:152-158`); the docs say so.
 - `_externalize_secret_env` and the agent env allowlist: untouched (#1931).
   The agent can still read the token its MCP server gets; after this change
   that is the narrow token when the operator sets one.
@@ -100,7 +126,9 @@ present, so none of them can replace it.
 
 - `charts/aifactory/values.yaml`: `agentGithubToken: {secretName: "",
   secretKey: token}`. `templates/deployment.yaml`: when `secretName` is set,
-  add env `AIFACTORY_AGENT_GITHUB_TOKEN` from that Secret key. Off by
+  add env `AIFACTORY_AGENT_GITHUB_TOKEN` from that Secret key. The block
+  goes after the `githubApp` block (`:683`), outside the
+  `mcpCredentials.enabled` condition, so it works with either. Off by
   default.
 - `docs/docs/concepts/github-app.md`: new section "Token for agent
   children": what the children use GitHub for, the fine-grained PAT
@@ -146,23 +174,44 @@ present, so none of them can replace it.
 
 ## Verification
 
-- `tests/test_child_process_env.py`: `make_subprocess_env()` has no GitHub
-  name; `make_subprocess_env(github=True)` keeps the ambient token when no
-  agent token is set; with `AIFACTORY_AGENT_GITHUB_TOKEN` set, `GITHUB_TOKEN`
-  and `GH_TOKEN` equal it, the control plane's value appears in no env
-  value, and neither `GITHUB_PERSONAL_ACCESS_TOKEN` nor the variable itself
-  is present.
-- `build_job_env`: same three cases (`tests/test_build_backend_kubejob.py`).
+- `tests/test_child_process_env.py`, with three distinct control-plane
+  values in `GITHUB_TOKEN`, `GH_TOKEN` and `GITHUB_PERSONAL_ACCESS_TOKEN`
+  and a fourth under an operator alias:
+  - `make_subprocess_env()` has none of the four names;
+  - `make_subprocess_env(github=True)` without an agent token keeps all
+    four values;
+  - with `AIFACTORY_AGENT_GITHUB_TOKEN` set, the three fixed names equal it,
+    the alias is absent, no control-plane value appears in any env value,
+    and the variable itself is absent;
+  - a blank agent variable logs the warning and behaves as unset.
+- The MCP probe on the child env: `_probe_github()` run under
+  `make_subprocess_env(github=True)` with the agent token and an alias set
+  returns the agent token; under `make_subprocess_env()` it reports no
+  credential (`tests/test_mcp_credentials.py`).
+- Final spawn env: for the spec-creation and PR-review loaders, a backend
+  `.env` that defines `GITHUB_TOKEN`, `GITHUB_PERSONAL_ACCESS_TOKEN`, the
+  alias and `AIFACTORY_AGENT_GITHUB_TOKEN` leaves the env unchanged for
+  those keys when the agent token is set; `dotenv_key_blocked` unit test.
+- `build_job_env`: no token, ambient token, agent token; never an empty
+  placeholder; never `GITHUB_PERSONAL_ACCESS_TOKEN`
+  (`tests/test_build_backend_kubejob.py`).
 - PR creation unaffected: with both tokens set, `github_env(child_env())`
-  writes the control plane's token to `hosts.yml`, not the agent token
-  (`tests/test_github_env.py`), and `apps/web-server/tests/test_pr_endgame.py`
-  still passes.
-- A source test that each `make_subprocess_env(` call site passes the
-  `github` value in the table above.
-- `tests/test_env_passthrough_credentials.py` exemption sets updated.
-- Helm: `tests/helm/` renders the env only when `secretName` is set.
+  writes the control plane's token to `hosts.yml`, not the agent token, and
+  the agent variable is not in that env (`tests/test_github_env.py`);
+  `apps/web-server/tests/test_pr_endgame.py` still passes.
+- `github_app.start()` succeeds with the agent variable set next to the App
+  variables (`apps/web-server/tests/test_github_app.py`).
+- Source tests: each `make_subprocess_env(` call site passes the `github`
+  value in the table; `runner_github_env` is referenced only in
+  `subprocess_env.py` and `build_backend.py`; the `*GITHUB_KEEP,` pin in
+  `tests/test_github_env.py:273` is replaced by the new allowed lines.
+- `tests/test_env_passthrough_credentials.py` exemption sets updated;
+  `is_denied_env_key("AIFACTORY_AGENT_GITHUB_TOKEN")` is true.
+- Helm: `tests/helm/` renders the env only when `secretName` is set, with
+  and without `githubApp.enabled`.
 - `pytest tests/test_child_process_env.py tests/test_github_env.py
   tests/test_env_passthrough_credentials.py tests/test_build_backend_kubejob.py
-  tests/test_agent_env_scrub.py tests/helm apps/web-server/tests/test_pr_endgame.py`
+  tests/test_agent_env_scrub.py tests/test_mcp_credentials.py tests/helm
+  apps/web-server/tests/test_pr_endgame.py apps/web-server/tests/test_github_app.py`
   and `scripts/cq_ratchet.py` on the touched files.
 - Not verified: a live build with a real fine-grained PAT (owner action).
