@@ -212,6 +212,22 @@ are `SECURITY.md`.
     `-O<type>` is no longer read as an option cluster.
   - npm: the prefix match covers every alias (`npm ur x`, `npm ts`), and
     leaves `install`, `ci`, `clean-install` and `star` alone.
+- Step 3 (Claude, 2026-11-14, Fable review round 3; each has a test). This
+  replaces the plan's make rules "other long options skip", "other short
+  options skip" and "tokens with `=` skip": make arguments are now accepted
+  by shape instead of refused by name. A word must be one of:
+  - a target in the base list;
+  - a short cluster of no-value letters, optionally ending in `-j[N]` or
+    `-l[N]`, or `-O[type]`;
+  - a long option from a fixed list that reads no file, spelled in full;
+  - a count after a bare `-j`/`-l` or its long form;
+  - `NAME=value` (`=`, `:=`, `::=`, `+=`) with a literal value and a name
+    other than `SHELL`, `MAKEFILES`, `MAKEFLAGS`, `GNUMAKEFLAGS`.
+
+  The refuse-lists kept losing to rewriting by make or the shell
+  (`make -lj 123`, `make '$(shell x)V=1'`, `make $A=x`, `make -$A`,
+  `make {SHELL,V}=x`, `make SHEL?=x`). Cost: `make V=$(git rev-parse HEAD)`
+  and abbreviated long options are refused.
 - The autonomy matrix (`docs/docs/compliance/autonomy-matrix.md`,
   `docs/static/compliance/autonomy-matrix.json`) was regenerated because CI
   checks it against the validator registry. No step named it.

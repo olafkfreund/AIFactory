@@ -21,17 +21,32 @@ from .validation_models import ValidationResult
 if TYPE_CHECKING:
     from project.models import CustomScripts
 
-# -o/-W take a file, so they would also hide the next word from the target check.
-_REFUSED_MAKE_LONG = frozenset(
-    {"--file", "--makefile", "--directory", "--eval", "--include-dir"}
-    | {"--old-file", "--assume-old", "--what-if", "--new-file", "--assume-new"}
+# make arguments are accepted by shape, not refused by name: the shell and
+# make both rewrite words (`-$A`, `--fil=x.mk`, `-lj 123`, `$(shell x)V=1`).
+# Options that take no value, then at most one of -j[N] / -l[N].
+_MAKE_SHORT_RE = re.compile(
+    r"-[bBdehikLmnpqrRsStvw]*(?:j[0-9]*|l(?:[0-9]+(?:\.[0-9]+)?)?)?"
 )
-_REFUSED_MAKE_SHORT = frozenset("fCEIoW")
-# Command-line variables that change what make reads or runs, whatever the recipe.
-_REFUSED_MAKE_VARS = frozenset(
-    {"SHELL", ".SHELLFLAGS", "MAKEFILES", "MAKEFLAGS", "GNUMAKEFLAGS"}
-    | {".DEFAULT_GOAL"}
+_MAKE_OUTPUT_RE = re.compile(r"-O(?:none|line|target|recurse)?")
+# Long options that read no file and change no directory, spelled in full.
+_MAKE_LONG = frozenset(
+    {"--always-make", "--debug", "--dry-run", "--just-print", "--recon"}
+    | {"--ignore-errors", "--keep-going", "--no-keep-going", "--stop", "--silent"}
+    | {"--quiet", "--no-silent", "--print-directory", "--no-print-directory"}
+    | {"--question", "--touch", "--trace", "--warn-undefined-variables"}
+    | {"--no-builtin-rules", "--no-builtin-variables", "--print-data-base"}
+    | {"--environment-overrides", "--check-symlink-times", "--shuffle"}
+    | {"--output-sync", "--jobs", "--load-average", "--max-load"}
+    | {"--version", "--help"}
 )
+_MAKE_LONG_VALUE_RE = re.compile(r"[A-Za-z0-9.,]*")
+# NAME=value with a literal value: no `$`, glob, brace or `!=` for the shell
+# or make to expand.
+_MAKE_VAR_RE = re.compile(
+    r"([A-Za-z_][A-Za-z0-9_]*)(?:::?|\+)?=[A-Za-z0-9_./:@%+,= -]*"
+)
+# Variables that change what make reads or runs, whatever the recipe.
+_REFUSED_MAKE_VARS = frozenset({"SHELL", "MAKEFILES", "MAKEFLAGS", "GNUMAKEFLAGS"})
 _MAKE_LOAD_OPTS = frozenset({"--load-average", "--max-load"})
 
 _REFUSED_PKG_OPTS = frozenset(
@@ -78,14 +93,13 @@ def _load_custom_scripts() -> CustomScripts | None:
     return security.profile.get_security_profile(Path(root)).custom_scripts
 
 
-def _is_refused_make_option(tok: str) -> bool:
-    if tok.startswith("-O"):  # -O[type]: the rest is its value, not options
-        return False
+def _is_make_option(tok: str) -> bool:
     if tok.startswith("--"):
-        # GNU make accepts any unambiguous abbreviation (`--fil=x.mk`).
-        name = tok.split("=", 1)[0]
-        return any(full.startswith(name) for full in _REFUSED_MAKE_LONG)
-    return bool(_REFUSED_MAKE_SHORT & set(tok[1:]))
+        name, _, value = tok.partition("=")
+        return name in _MAKE_LONG and bool(_MAKE_LONG_VALUE_RE.fullmatch(value))
+    return tok != "-" and bool(
+        _MAKE_SHORT_RE.fullmatch(tok) or _MAKE_OUTPUT_RE.fullmatch(tok)
+    )
 
 
 def _is_count(prev: str, tok: str) -> bool:
@@ -93,8 +107,8 @@ def _is_count(prev: str, tok: str) -> bool:
     if prev.startswith("--"):
         jobs, load = prev == "--jobs", prev in _MAKE_LOAD_OPTS
     else:
-        jobs = prev.startswith("-") and prev.endswith("j")
-        load = prev.startswith("-") and prev.endswith("l")
+        short = bool(_MAKE_SHORT_RE.fullmatch(prev))
+        jobs, load = short and prev.endswith("j"), short and prev.endswith("l")
     # ASCII only: make reads `²` or, after -j, `2.5` as a target.
     pattern = r"[0-9]+" if jobs else r"[0-9]+(\.[0-9]+)?" if load else None
     return bool(pattern and re.fullmatch(pattern, tok))
@@ -105,17 +119,17 @@ def _make_token_refusal(prev: str | None, tok: str, allowed: set[str]) -> str:
 
     ``prev`` is None after ``--``, where make reads no more options.
     """
-    if prev is not None and tok.startswith("-") and tok != "-":
-        refused = _is_refused_make_option(tok)
-        return f"make option '{tok}' is not allowed" if refused else ""
-    if "=" in tok:
-        head, value = tok.split("=", 1)
-        var = head.strip().rstrip(":+?!").strip()
-        # `X!=cmd` and `X=$(shell cmd)` run a command while make parses.
-        refused = var in _REFUSED_MAKE_VARS or "!" in head or "$" in value
-        return f"make variable '{var}' is not allowed" if refused else ""
-    if (prev is not None and _is_count(prev, tok)) or tok in allowed:
+    if tok in allowed:
         return ""
+    if m := _MAKE_VAR_RE.fullmatch(tok):
+        refused = m[1] in _REFUSED_MAKE_VARS
+        return f"make variable '{m[1]}' is not allowed" if refused else ""
+    if prev is not None and (_is_count(prev, tok) or _is_make_option(tok)):
+        return ""
+    if "=" in tok:
+        return f"make variable '{tok}' must be NAME=value with a literal value"
+    if prev is not None and tok.startswith("-"):
+        return f"make option '{tok}' is not allowed"
     return f"make target '{tok}' is not in the base commit's Makefile"
 
 
