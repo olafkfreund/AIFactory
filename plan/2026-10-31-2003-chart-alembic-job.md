@@ -62,6 +62,10 @@ Approved decisions (from the spec):
   Job (no python, Secret created later by the release) would fail the
   install. Bundled/POC mode is exactly where the values comment says to use
   autoApply=true; `tests/helm/test_p4_helm.py` kind install already does.
+- Step 3 test asserts three more things than the step lists (final review,
+  2026-11-14): `before-hook-creation` in the delete policy, the pod label
+  `name: aifactory-migrations` (not the Service selector), and no
+  `serviceAccountName`. These are the step 1 traps; the test did not guard them.
 
 ## Tests
 

@@ -36,7 +36,17 @@ class TestMigrationsJob:
         assert (
             job["metadata"]["annotations"]["helm.sh/hook"] == "pre-install,pre-upgrade"
         )
+        # Without before-hook-creation the second upgrade fails: Job already exists.
+        assert (
+            "before-hook-creation"
+            in (job["metadata"]["annotations"]["helm.sh/hook-delete-policy"])
+        )
+        # Job pods must not carry the Service selector labels (AIFactory#1107).
+        pod_labels = job["spec"]["template"]["metadata"]["labels"]
+        assert pod_labels["app.kubernetes.io/name"] == "aifactory-migrations"
         pod = job["spec"]["template"]["spec"]
+        # The chart ServiceAccount does not exist at pre-install.
+        assert "serviceAccountName" not in pod
         assert pod["automountServiceAccountToken"] is False
         container = pod["containers"][0]
         assert container["command"][-2:] == ["upgrade", "head"]
