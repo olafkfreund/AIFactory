@@ -112,7 +112,13 @@ from factory_common.logsafe import sanitize_log
 from server.error_ref import InputRejectedError
 from server.services.task_branch import record_branch
 from server.specpath import safe_spec_component, spec_dir_for
-from server.utils.subprocess_env import child_env, github_env
+from server.utils.subprocess_env import (
+    GITHUB_KEEP,
+    agent_github_token,
+    child_env,
+    github_env,
+    runner_github_env,
+)
 
 from .task_phase import (
     _append_parallel_flags,
@@ -231,9 +237,9 @@ _BUILD_CLONE_TEMPLATE = ".aifactory/worktrees/builds/{spec_id}"
 #     ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN / model overrides / SDK behaviour)
 #     — but ONLY when present in the control-plane env (a fresh Job shouldn't get
 #     empty placeholders).
-#   * GITHUB_TOKEN / GH_TOKEN when present — run.py uses these for the PR endgame,
-#     exactly as the in-pod build does. (run.py re-applies core/auth.py's agent
-#     scrubbing to its OWN agent sub-subprocess, so this mirrors in-pod scope.)
+#   * GITHUB_TOKEN / GH_TOKEN when present — run.py uses these for the base-branch
+#     fetch, packed-workspace branch push and GitHub MCP server. The PR endgame
+#     runs in the web server.
 #   * The fixed non-interactive build env the in-pod path sets verbatim
 #     (CLAUDE_CODE_ENTRYPOINT/CI/PYTHONUNBUFFERED/PYTHONIOENCODING).
 #
@@ -264,7 +270,7 @@ _FIXED_BUILD_ENV: dict[str, str] = {
 
 # Provider/runtime env to propagate WHEN PRESENT in the control-plane env. Mirrors
 # core/auth.py::_AGENT_ENV_KEEP (the SDK passthrough the agent legitimately needs)
-# plus GITHUB_TOKEN/GH_TOKEN for run.py's PR endgame. ANTHROPIC_API_KEY is NOT
+# plus GitHub env from runner_github_env below. ANTHROPIC_API_KEY is NOT
 # here — OAuth-only policy (core.child_env._STRIP_VARS).
 _PASSTHROUGH_BUILD_ENV: tuple[str, ...] = (
     # The build Job runs the trailing gates itself, and
@@ -305,8 +311,6 @@ _PASSTHROUGH_BUILD_ENV: tuple[str, ...] = (
     "DISABLE_TELEMETRY",
     "DISABLE_COST_WARNINGS",
     "API_TIMEOUT_MS",
-    "GITHUB_TOKEN",
-    "GH_TOKEN",
     # Non-Claude provider credentials + config a non-Claude-routed build resolves
     # from env (byo_llm.py / phase routing). Mirrors TFactory #480's verify-Job
     # provider set; forwarded ONLY when present (the loop below skips empties), in
@@ -366,6 +370,14 @@ def build_job_env(oauth_token: str | None) -> dict[str, str]:
         val = os.environ.get(name)
         if val:  # only propagate real values; never empty placeholders
             env[name] = val
+    github = runner_github_env()
+    # With the narrow token every GitHub name is set, so a .env in the Job
+    # cannot add another value; without it the Job gets the two names it always got.
+    env.update(
+        github
+        if agent_github_token()
+        else {name: val for name, val in github.items() if name in GITHUB_KEEP}
+    )
     if oauth_token:
         env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
     return env

@@ -149,6 +149,8 @@ _AGENT_ENV_DENY_EXACT: set[str] = {
     # Integrations.
     "LINEAR_API_KEY",
     "GITHUB_TOKEN",
+    # #1973: read by the web server only; children get it as GITHUB_TOKEN.
+    "AIFACTORY_AGENT_GITHUB_TOKEN",
     "GH_TOKEN",
     # Host keys that matched neither list (#1674). Their readers keep them: web
     # server (own env), runner via RUNNER_KEEP, kubejob run.py via Job spec.

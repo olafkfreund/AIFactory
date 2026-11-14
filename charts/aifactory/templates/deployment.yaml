@@ -681,6 +681,14 @@ spec:
                   name: {{ required "githubApp.enabled requires githubApp.secretName" .Values.githubApp.secretName }}
                   key: {{ .Values.githubApp.privateKeyKey }}
             {{- end }}
+            {{- if .Values.agentGithubToken.secretName }}
+            # Narrow GitHub token for runner children and build Jobs (#1973).
+            - name: AIFACTORY_AGENT_GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.agentGithubToken.secretName | quote }}
+                  key: {{ .Values.agentGithubToken.secretKey }}
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /api/health

@@ -26,6 +26,7 @@ from pathlib import Path
 from factory_common.logsafe import sanitize_log
 
 from server.background import spawn
+from server.utils.subprocess_env import dotenv_key_blocked
 
 from ..config import get_settings
 from ..websockets.events import broadcast_event
@@ -85,7 +86,7 @@ def _load_env_file(env_file: Path, env: dict) -> None:
                     k, v = line.split("=", 1)
                     k = k.strip()
                     v = v.strip().strip('"').strip("'")
-                    if k not in env:
+                    if k not in env and not dotenv_key_blocked(k):
                         env[k] = v
     except Exception as e:
         logger.warning(f"Failed to load env file {env_file}: {e}")
@@ -255,7 +256,7 @@ class PRReviewService:
         # Set up environment — scrub ANTHROPIC_API_KEY (OAuth-only policy).
         from ..utils.subprocess_env import make_subprocess_env
 
-        env = make_subprocess_env()
+        env = make_subprocess_env(github=True)
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
 
