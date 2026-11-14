@@ -7,6 +7,11 @@ Pre-tool-use hooks that validate agent tool calls:
 - ``web_fetch_security_hook``: SSRF guard on WebFetch URLs (#370).
 
 Main enforcement point for the security system.
+
+These checks are guardrails, not containment: a script, recipe, interpreter
+or test runner the allowlist permits can run anything inside it. The Job pod
+is the boundary (#1932). Make targets and package scripts are pinned to the
+build's base commit (#1948, ``security/script_validators.py``).
 """
 
 import logging
