@@ -75,32 +75,26 @@ def load_task_contract(spec_dir: Path) -> dict:
     """Return the full signed Task Contract when it carries RFC-0002 markers,
     else ``{}``.
 
-    Reads ``context/task_contract.json`` FIRST: the trusted-plan ingest stashes
-    the signed contract there (a build-safe location), because the executor
-    rewrites ``implementation_plan.json`` into AIFactory's runtime format during
-    the build — dropping the contract's ``tfactory`` block (lanes / frameworks /
-    ``ac_to_code_map``) plus ``contract_version``/``approval``. Falls back to
-    ``implementation_plan.json`` for plans installed before this stash existed.
-    Sending the WHOLE contract on the handoff lets TFactory persist it to its own
-    ``context/task_contract.json`` and test the DECLARED acceptance criteria
-    instead of inferring (#71 Phase 3). For AIFactory's own (create-and-run)
-    plans — no contract markers anywhere — this returns ``{}`` so TFactory infers.
+    Reads ONLY ``context/task_contract.json``: the trusted-plan ingest stashes
+    the signed contract there, while ``implementation_plan.json`` is
+    agent-written and pushed back by build Jobs so it is never a contract
+    source (#1984). Sending the WHOLE contract on the handoff lets TFactory
+    persist it to its own ``context/task_contract.json`` and test the DECLARED
+    acceptance criteria instead of inferring (#71 Phase 3). For AIFactory's own
+    (create-and-run) plans — no contract file — this returns ``{}`` so TFactory
+    infers.
     """
-    spec_dir = Path(spec_dir)
-    for candidate in (
-        spec_dir / "context" / "task_contract.json",
-        spec_dir / "implementation_plan.json",
+    candidate = Path(spec_dir) / "context" / "task_contract.json"
+    if not candidate.exists():
+        return {}
+    try:
+        plan = json.loads(candidate.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if isinstance(plan, dict) and (
+        "tfactory" in plan or "contract_version" in plan or "approval" in plan
     ):
-        if not candidate.exists():
-            continue
-        try:
-            plan = json.loads(candidate.read_text())
-        except (OSError, json.JSONDecodeError):
-            continue
-        if isinstance(plan, dict) and (
-            "tfactory" in plan or "contract_version" in plan or "approval" in plan
-        ):
-            return plan
+        return plan
     return {}
 
 

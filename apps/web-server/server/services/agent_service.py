@@ -38,6 +38,7 @@ from .agent_queue import QueueMixin
 from .agent_skill_context import SkillContextMixin
 from .agent_spec_creation import SpecCreationMixin
 from .agent_worktree_sync import WorktreeSyncMixin
+from .build_backend import GatedTaskRefusedError, subprocess_gate_refusal
 
 # subprocess_env adds apps/backend to sys.path before this import.
 # isort: split
@@ -841,6 +842,10 @@ class AgentService(
             raise ValueError(f"Task {task_id} is already running")
         if any(q.task_id == task_id for q in self._task_queue):
             raise ValueError(f"Task {task_id} is already queued")
+        if problem := subprocess_gate_refusal(
+            spec_dir_for(project_path, spec_id), mode
+        ):
+            raise GatedTaskRefusedError(problem)
 
         # #376 shipped the parallel harness but left it dark for every caller
         # except the auto-continue monitor, which read task_metadata itself.
