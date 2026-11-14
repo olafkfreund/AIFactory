@@ -1,7 +1,7 @@
 {
   "controls": {
     "gate.merge.merge_policy": {
-      "claim": "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943).",
+      "claim": "Enforced by branch protection. enforce_admins is on for main in AIFactory, PFactory, TFactory, CFactory and Factory (applied 2026-10-22, re-read 2026-11-07, Factory#943), so there the required checks bind admins too. It is off on every dev branch and on factory-gitops main, where the checks bind non-admin merges only: the fleet's merge paths do not use admin bypass, but GitHub does not prevent it.",
       "evidence": "apps/backend/merge/merge_policy.py",
       "frameworks": [
         "ISO 27001:2022 A.8.32",
@@ -11,7 +11,7 @@
       "objective": "The merge decision itself is deterministic: its own import closure reaches no model client."
     },
     "gate.server.services.pr_endgame": {
-      "claim": "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943).",
+      "claim": "Enforced by branch protection. enforce_admins is on for main in AIFactory, PFactory, TFactory, CFactory and Factory (applied 2026-10-22, re-read 2026-11-07, Factory#943), so there the required checks bind admins too. It is off on every dev branch and on factory-gitops main, where the checks bind non-admin merges only: the fleet's merge paths do not use admin bypass, but GitHub does not prevent it.",
       "evidence": "apps/web-server/server/services/pr_endgame.py",
       "frameworks": [
         "ISO 27001:2022 A.8.32",
@@ -22,7 +22,7 @@
       "objective": "The endgame that applies the merge decision imports model clients; the review verdict it consumes is injected, not computed there."
     },
     "gate.server.services.pr_review_service": {
-      "claim": "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943).",
+      "claim": "Enforced by branch protection. enforce_admins is on for main in AIFactory, PFactory, TFactory, CFactory and Factory (applied 2026-10-22, re-read 2026-11-07, Factory#943), so there the required checks bind admins too. It is off on every dev branch and on factory-gitops main, where the checks bind non-admin merges only: the fleet's merge paths do not use admin bypass, but GitHub does not prevent it.",
       "evidence": "apps/web-server/server/services/pr_review_service.py",
       "frameworks": [
         "ISO 27001:2022 A.8.32",
@@ -54,7 +54,7 @@
       "objective": "A change touching auth, secrets, migrations, infrastructure or CI paths is floored at blocking review, so a change cannot declare itself routine."
     },
     "policy.tier.hard": {
-      "claim": "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943).",
+      "claim": "Enforced by branch protection. enforce_admins is on for main in AIFactory, PFactory, TFactory, CFactory and Factory (applied 2026-10-22, re-read 2026-11-07, Factory#943), so there the required checks bind admins too. It is off on every dev branch and on factory-gitops main, where the checks bind non-admin merges only: the fleet's merge paths do not use admin bypass, but GitHub does not prevent it.",
       "evidence": "apps/backend/merge/merge_policy.py",
       "frameworks": [
         "ISO 27001:2022 A.8.32",
@@ -67,7 +67,7 @@
       "objective": "A hard-tier change is never auto-merged; it is held for blocking human approval, which separates the author from the approver."
     },
     "policy.tier.low": {
-      "claim": "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943).",
+      "claim": "Enforced by branch protection. enforce_admins is on for main in AIFactory, PFactory, TFactory, CFactory and Factory (applied 2026-10-22, re-read 2026-11-07, Factory#943), so there the required checks bind admins too. It is off on every dev branch and on factory-gitops main, where the checks bind non-admin merges only: the fleet's merge paths do not use admin bypass, but GitHub does not prevent it.",
       "evidence": "apps/backend/merge/merge_policy.py",
       "frameworks": [
         "ISO 27001:2022 A.8.32",
@@ -78,7 +78,7 @@
       "objective": "A low-tier change auto-merges only when host CI is green, TFactory passed, the achieved VAL meets the floor and CI parity holds; otherwise it is held for async review."
     },
     "policy.tier.medium": {
-      "claim": "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943).",
+      "claim": "Enforced by branch protection. enforce_admins is on for main in AIFactory, PFactory, TFactory, CFactory and Factory (applied 2026-10-22, re-read 2026-11-07, Factory#943), so there the required checks bind admins too. It is off on every dev branch and on factory-gitops main, where the checks bind non-admin merges only: the fleet's merge paths do not use admin bypass, but GitHub does not prevent it.",
       "evidence": "apps/backend/merge/merge_policy.py",
       "frameworks": [
         "ISO 27001:2022 A.8.32",
@@ -813,21 +813,21 @@
               "The merge decision itself is deterministic: its own import closure reaches no model client.",
               "ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 CM",
               "`apps/backend/merge/merge_policy.py`",
-              "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943)."
+              "Enforced by branch protection. enforce_admins is on for main in AIFactory, PFactory, TFactory, CFactory and Factory (applied 2026-10-22, re-read 2026-11-07, Factory#943), so there the required checks bind admins too. It is off on every dev branch and on factory-gitops main, where the checks bind non-admin merges only: the fleet's merge paths do not use admin bypass, but GitHub does not prevent it."
             ],
             [
               "`gate.server.services.pr_endgame`",
               "The endgame that applies the merge decision imports model clients; the review verdict it consumes is injected, not computed there.",
               "ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 SA; NIST 800-53 RA",
               "`apps/web-server/server/services/pr_endgame.py`",
-              "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943)."
+              "Enforced by branch protection. enforce_admins is on for main in AIFactory, PFactory, TFactory, CFactory and Factory (applied 2026-10-22, re-read 2026-11-07, Factory#943), so there the required checks bind admins too. It is off on every dev branch and on factory-gitops main, where the checks bind non-admin merges only: the fleet's merge paths do not use admin bypass, but GitHub does not prevent it."
             ],
             [
               "`gate.server.services.pr_review_service`",
               "The review that feeds the merge verdict is model-assisted, and the page says so; it runs as a spawned runner whose model clients are found by following the declared spawn edge.",
               "ISO 27001:2022 A.8.32; SOC 2 CC8.1; NIST 800-53 SA; NIST 800-53 RA",
               "`apps/web-server/server/services/pr_review_service.py`",
-              "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943)."
+              "Enforced by branch protection. enforce_admins is on for main in AIFactory, PFactory, TFactory, CFactory and Factory (applied 2026-10-22, re-read 2026-11-07, Factory#943), so there the required checks bind admins too. It is off on every dev branch and on factory-gitops main, where the checks bind non-admin merges only: the fleet's merge paths do not use admin bypass, but GitHub does not prevent it."
             ],
             [
               "`policy.overlay`",
@@ -848,21 +848,21 @@
               "A hard-tier change is never auto-merged; it is held for blocking human approval, which separates the author from the approver.",
               "ISO 27001:2022 A.8.32; SOC 2 CC8.1; SOX ITGC change management; SOX ITGC segregation of duties; NYDFS 500.3; NIST 800-53 CM",
               "`apps/backend/merge/merge_policy.py`",
-              "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943)."
+              "Enforced by branch protection. enforce_admins is on for main in AIFactory, PFactory, TFactory, CFactory and Factory (applied 2026-10-22, re-read 2026-11-07, Factory#943), so there the required checks bind admins too. It is off on every dev branch and on factory-gitops main, where the checks bind non-admin merges only: the fleet's merge paths do not use admin bypass, but GitHub does not prevent it."
             ],
             [
               "`policy.tier.low`",
               "A low-tier change auto-merges only when host CI is green, TFactory passed, the achieved VAL meets the floor and CI parity holds; otherwise it is held for async review.",
               "ISO 27001:2022 A.8.32; SOC 2 CC8.1; SOX ITGC change management; NIST 800-53 CM",
               "`apps/backend/merge/merge_policy.py`",
-              "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943)."
+              "Enforced by branch protection. enforce_admins is on for main in AIFactory, PFactory, TFactory, CFactory and Factory (applied 2026-10-22, re-read 2026-11-07, Factory#943), so there the required checks bind admins too. It is off on every dev branch and on factory-gitops main, where the checks bind non-admin merges only: the fleet's merge paths do not use admin bypass, but GitHub does not prevent it."
             ],
             [
               "`policy.tier.medium`",
               "A medium-tier change is never auto-merged; it is always held for asynchronous human review.",
               "ISO 27001:2022 A.8.32; SOC 2 CC8.1; SOX ITGC change management; NIST 800-53 CM",
               "`apps/backend/merge/merge_policy.py`",
-              "Enforced by branch protection for non-admin merges; the fleet's merge paths do not use admin bypass, but GitHub does not prevent it while enforce_admins is false (measured 2026-10-07, Factory#943)."
+              "Enforced by branch protection. enforce_admins is on for main in AIFactory, PFactory, TFactory, CFactory and Factory (applied 2026-10-22, re-read 2026-11-07, Factory#943), so there the required checks bind admins too. It is off on every dev branch and on factory-gitops main, where the checks bind non-admin merges only: the fleet's merge paths do not use admin bypass, but GitHub does not prevent it."
             ],
             [
               "`policy.val_floor`",
