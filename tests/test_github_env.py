@@ -33,6 +33,8 @@ _SERVER = _ROOT / "apps" / "web-server" / "server"
 def _env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
     monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_PERSONAL_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("AIFACTORY_AGENT_GITHUB_TOKEN", raising=False)
     for k in ("GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"):
         monkeypatch.delenv(k, raising=False)
     # Without this the sweep tests delete a running dev server's real dirs.
@@ -64,6 +66,16 @@ def test_token_rides_in_owner_only_hosts_file() -> None:
         assert all(TOKEN not in v for v in env.values())
         for k in ("GITHUB_TOKEN", "GH_TOKEN", "GIT_PASS"):
             assert k not in env
+
+
+def test_control_plane_keeps_own_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GITHUB_TOKEN", "cp-a")
+    monkeypatch.setenv("AIFACTORY_AGENT_GITHUB_TOKEN", "agent-x")
+    with gc.github_env(ce.child_env()) as env:
+        entry = json.loads((Path(env["GH_CONFIG_DIR"]) / "hosts.yml").read_text())
+        assert entry["github.com"]["oauth_token"] == "cp-a"  # noqa: S105
+        assert "AIFACTORY_AGENT_GITHUB_TOKEN" not in env
+        assert "agent-x" not in env.values()
 
 
 def test_inherited_github_credentials_are_stripped() -> None:
@@ -273,7 +285,7 @@ def _non_test_sources() -> Iterator[Path]:
 def test_web_server_has_no_env_token_path() -> None:
     needles = (
         "keep=GITHUB_KEEP",
-        "*GITHUB_KEEP",
+        "runner_github_env(",
         '"setup-git"',
         'GIT_PASS"',
         '"GIT_PASS":',
@@ -284,9 +296,19 @@ def test_web_server_has_no_env_token_path() -> None:
         for line in p.read_text().splitlines()
         if any(s in line for s in needles)
     }
-    # RUNNER_KEEP keeps the token in the runner process by approver decision (#1723 D1).
     allowed = {
-        ("apps/web-server/server/utils/subprocess_env.py", "*GITHUB_KEEP,"),
+        (
+            "apps/web-server/server/utils/subprocess_env.py",
+            "def runner_github_env() -> dict[str, str]:",
+        ),
+        (
+            "apps/web-server/server/utils/subprocess_env.py",
+            "env.update(runner_github_env())",
+        ),
+        (
+            "apps/web-server/server/services/build_backend.py",
+            "{name: val for name, val in runner_github_env().items() if name in GITHUB_KEEP}",
+        ),
         (
             "apps/backend/core/git_credentials.py",
             '_STRIPPED = ("GITHUB_TOKEN", "GH_TOKEN", "GIT_PASS")',

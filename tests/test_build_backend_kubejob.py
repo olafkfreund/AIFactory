@@ -31,6 +31,7 @@ for _p in (_REPO / "apps" / "web-server", _REPO / "apps" / "backend"):
     if str(_p) not in sys.path:
         sys.path.append(str(_p))
 
+from core import mcp_credentials  # noqa: E402
 from core.job_dispatch import DEFAULT_NIX_IMAGE  # noqa: E402
 from server.database.models import Base  # noqa: E402
 from server.services import build_backend as bb  # noqa: E402
@@ -308,6 +309,18 @@ def test_manifest_outside_data_root_has_no_worktree_mount(
 # --------------------------------------------------------------------------- #
 
 
+@pytest.fixture(autouse=True)
+def _isolate_build_github_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mcp_credentials, "_load_operator_config", lambda: {})
+    for name in (
+        "GITHUB_TOKEN",
+        "GH_TOKEN",
+        "GITHUB_PERSONAL_ACCESS_TOKEN",
+        "AIFACTORY_AGENT_GITHUB_TOKEN",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
 def test_build_job_env_injects_oauth_token_and_fixed_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -322,6 +335,20 @@ def test_build_job_env_injects_oauth_token_and_fixed_env(
     assert env["CI"] == "true"
     assert env["PYTHONUNBUFFERED"] == "1"
     assert env["PYTHONIOENCODING"] == "utf-8"
+    assert "GITHUB_TOKEN" not in env
+    assert "GH_TOKEN" not in env
+
+
+def test_build_job_env_uses_narrow_agent_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GITHUB_TOKEN", "cp-a")
+    monkeypatch.setenv("GH_TOKEN", "cp-b")
+    monkeypatch.setenv("GITHUB_PERSONAL_ACCESS_TOKEN", "cp-c")
+    monkeypatch.setenv("AIFACTORY_AGENT_GITHUB_TOKEN", "agent-x")
+    env = bb.build_job_env(None)
+    assert env["GITHUB_TOKEN"] == env["GH_TOKEN"] == "agent-x"  # noqa: S105
+    assert "GITHUB_PERSONAL_ACCESS_TOKEN" not in env
+    assert "AIFACTORY_AGENT_GITHUB_TOKEN" not in env
+    assert not any(value in env.values() for value in ("cp-a", "cp-b", "cp-c"))
 
 
 def test_build_job_env_propagates_present_provider_env(
@@ -329,7 +356,7 @@ def test_build_job_env_propagates_present_provider_env(
 ) -> None:
     # Provider/runtime SDK env mirrors core/auth.py's agent-keep allowlist, but
     # ONLY when present on the control plane (no empty placeholders), plus
-    # GITHUB_TOKEN for run.py's PR endgame.
+    # GITHUB_TOKEN for run.py's base fetch and branch push.
     for var in bb._PASSTHROUGH_BUILD_ENV:
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://gw.example/v1")

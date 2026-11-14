@@ -116,14 +116,57 @@ with no stored credential. Then delete the stored PAT through the UI or
 `DELETE /api/git-credentials/{id}`, and revoke it on GitHub. Keep a PAT only
 where the App cannot be installed.
 
+## Token for agent children
+
+Runner children and build Jobs use GitHub for the base-branch fetch, the
+packed-workspace branch push, PR review reads and the GitHub MCP tools. The PR
+create, review request and merge calls run in the web server and keep its own
+token.
+
+Without a dedicated token, the children that need GitHub share the control
+plane's token. To give them a narrower one, create a fine-grained PAT and put
+it in a Secret:
+
+- Repositories: only the ones AIFactory builds.
+- Permissions: Contents read and write, Pull requests read, Issues read,
+  Metadata read.
+
+```bash
+kubectl create secret generic agent-github-token --from-literal=token=<PAT>
+```
+
+```yaml
+agentGithubToken:
+  secretName: agent-github-token
+  secretKey: token
+```
+
+The chart sets `AIFACTORY_AGENT_GITHUB_TOKEN` from this Secret. The web server
+passes it to the children as `GITHUB_TOKEN`, `GH_TOKEN` and
+`GITHUB_PERSONAL_ACCESS_TOKEN`. They never see the control plane's GitHub
+token, and never see the variable itself.
+
+Notes:
+
+- An empty Secret value counts as "not set". The server logs a warning and
+  the children fall back to the control plane's token.
+- The agent can read the children's token whenever the GitHub MCP server is
+  on. Keep the PAT narrow.
+- Do not point `github.tokenEnv` at this variable. The App start refuses it
+  as a PAT.
+- Do not put GitHub tokens in `apps/backend/.env`. While this token is set,
+  the loaders skip them.
+
 ## Limits
 
 - GitHub Models is not supported with the App.
 - The token is process-wide with a 1 hour lifetime, refreshed every 30
   minutes. A build or Job gets at least 30 minutes at spawn, so a long packed
   build can fail its final push. Per-call tokens (#1688) remove this.
-- Claude agents never see the token. Non-Claude runners and the GitHub MCP
-  server do.
+- An agent can read the GitHub token of its runner whenever the GitHub MCP
+  server is enabled (it is passed to the agent CLI as
+  `GITHUB_PERSONAL_ACCESS_TOKEN`). Set a token for agent children to keep that
+  narrow.
 - Stored per-project clone PATs are an accepted risk; see Clone credentials.
 
 ## Rollback
