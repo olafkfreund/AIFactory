@@ -114,6 +114,7 @@ from server.services.task_branch import record_branch
 from server.specpath import safe_spec_component, spec_dir_for
 from server.utils.subprocess_env import (
     GITHUB_KEEP,
+    agent_github_token,
     child_env,
     github_env,
     runner_github_env,
@@ -369,8 +370,13 @@ def build_job_env(oauth_token: str | None) -> dict[str, str]:
         val = os.environ.get(name)
         if val:  # only propagate real values; never empty placeholders
             env[name] = val
+    github = runner_github_env()
+    # With the narrow token every GitHub name is set, so a .env in the Job
+    # cannot add another value; without it the Job gets the two names it always got.
     env.update(
-        {name: val for name, val in runner_github_env().items() if name in GITHUB_KEEP}
+        github
+        if agent_github_token()
+        else {name: val for name, val in github.items() if name in GITHUB_KEEP}
     )
     if oauth_token:
         env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token

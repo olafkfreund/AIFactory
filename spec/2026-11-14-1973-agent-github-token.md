@@ -62,12 +62,15 @@ def runner_github_env() -> dict[str, str]:
 
 `runner_github_env()`:
 
-- If the agent token is set: return it under `GITHUB_TOKEN`, `GH_TOKEN` and
-  `GITHUB_PERSONAL_ACCESS_TOKEN`. No alias is returned. Since section 1
-  removed every GitHub name first, the child cannot see the control plane's
-  token under any of them. In the child, the MCP probe finds no alias value
-  and falls through to the names above. Setting all three also means the
-  add-if-absent loaders below cannot bring in another value for them.
+- If the agent token is set: return it under every GitHub name, the alias
+  included. Since section 1 removed every GitHub name first, the child
+  cannot see the control plane's token under any of them. Setting them all
+  also means nothing that only adds absent keys can bring in another value:
+  the loaders below, and the runners' own `load_dotenv` calls
+  (`apps/backend/cli/utils.py:48`, `runners/spec_runner.py:91`,
+  `runners/github/runner.py:64`), which do not override. (Changed after the
+  diff review, 2026-11-14: the first version left the alias absent, and a
+  value for it in `apps/backend/.env` came back inside the child.)
 - Otherwise: return every GitHub name that has a non-empty value in
   `os.environ`, unchanged. This is today's behaviour.
 - If the variable is present but blank (for example a Secret key with no
@@ -78,9 +81,11 @@ Used in two places:
 
 - `make_subprocess_env(github=True)`.
 - `build_job_env` (`services/build_backend.py:350`): `GITHUB_TOKEN` and
-  `GH_TOKEN` leave `_PASSTHROUGH_BUILD_ENV`; the function merges only those
-  two names from `runner_github_env()`, so the Job receives exactly the
-  names it receives today. The stale comments at `build_backend.py:234` and
+  `GH_TOKEN` leave `_PASSTHROUGH_BUILD_ENV`; without the agent token the
+  function merges only those two names from `runner_github_env()`, so the
+  Job receives exactly the names it receives today. With the agent token it
+  merges every name (changed after the diff review, 2026-11-14: `run.py` in
+  the Job calls `load_dotenv` as well). The stale comments at `build_backend.py:234` and
   `:267` ("for run.py's PR endgame") are corrected: the Job uses the token
   for the base fetch, the packed-workspace branch push and the GitHub MCP
   server; the PR endgame runs in the web server.

@@ -346,7 +346,7 @@ def test_build_job_env_uses_narrow_agent_token(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("AIFACTORY_AGENT_GITHUB_TOKEN", "agent-x")
     env = bb.build_job_env(None)
     assert env["GITHUB_TOKEN"] == env["GH_TOKEN"] == "agent-x"  # noqa: S105
-    assert "GITHUB_PERSONAL_ACCESS_TOKEN" not in env
+    assert env["GITHUB_PERSONAL_ACCESS_TOKEN"] == "agent-x"  # noqa: S105
     assert "AIFACTORY_AGENT_GITHUB_TOKEN" not in env
     assert not any(value in env.values() for value in ("cp-a", "cp-b", "cp-c"))
 

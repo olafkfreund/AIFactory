@@ -73,11 +73,18 @@ _log = logging.getLogger(__name__)
 
 
 def github_names() -> tuple[str, ...]:
+    from core.auth import is_denied_env_key  # noqa: PLC0415
     from core.mcp_credentials import _load_operator_config  # noqa: PLC0415
 
     names = (*GITHUB_KEEP, "GITHUB_PERSONAL_ACCESS_TOKEN")
-    alias = (_load_operator_config().get("github") or {}).get("tokenEnv")
-    return (*names, alias) if alias and alias not in names else names
+    github = _load_operator_config().get("github")
+    alias = github.get("tokenEnv") if isinstance(github, dict) else None
+    alias = alias.strip() if isinstance(alias, str) else ""
+    # A denied name (another secret, or the agent variable) is never an alias:
+    # it must not ride into a child through this list.
+    if not alias or alias in names or is_denied_env_key(alias):
+        return names
+    return (*names, alias)
 
 
 def agent_github_token() -> str:
@@ -100,7 +107,9 @@ def agent_github_token() -> str:
 def runner_github_env() -> dict[str, str]:
     token = agent_github_token()
     if token:
-        return dict.fromkeys((*GITHUB_KEEP, "GITHUB_PERSONAL_ACCESS_TOKEN"), token)
+        # The alias too: the runners load_dotenv() themselves, and a value
+        # there for an absent alias would win in the MCP probe.
+        return dict.fromkeys(github_names(), token)
     return {name: os.environ[name] for name in github_names() if os.environ.get(name)}
 
 
