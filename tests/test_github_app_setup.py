@@ -81,3 +81,45 @@ def test_invalid_conversion_code_does_not_call_network(
     output = tmp_path / "secret.yaml"
     assert setup.main(["convert", "bad code!", "--out", str(output)]) != 0
     assert not output.exists()
+
+
+def test_probe_copilot_negative_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    key = tmp_path / "key.pem"
+    key.write_text("pem")
+
+    class _Resp:
+        def __init__(self, status: int, body: dict[str, object]) -> None:
+            self.status_code = status
+            self._body = body
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return self._body
+
+    answers = iter(
+        [
+            _Resp(201, {"token": "t"}),
+            _Resp(201, {"requested_reviewers": [], "message": "nope"}),
+        ]
+    )
+    fake_httpx = type(
+        "httpx",
+        (),
+        {"post": staticmethod(lambda *a, **k: next(answers)), "HTTPError": Exception},
+    )
+    monkeypatch.setitem(sys.modules, "httpx", fake_httpx)
+    fake_jwt = type("jwt", (), {"encode": staticmethod(lambda *a, **k: "jwt")})
+    monkeypatch.setattr(setup.importlib, "import_module", lambda name: fake_jwt)
+
+    code = setup.probe_copilot("o/r", "1", "2", "3", str(key))
+
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "HTTP 201; copilot_listed: False" in out
+    assert "copilot-ruleset" in out
+    assert "nope" in out
+    assert "cannot request" not in out

@@ -90,11 +90,27 @@ render with the MCP GitHub PAT:
 ## Copilot review
 
 AIFactory's engine reviews PRs by default. Copilot gates a PR only when
-`AIFACTORY_PR_REVIEWER=copilot`. A missing Copilot review times out to a human
-stop.
+`AIFACTORY_PR_REVIEWER` is `copilot` or `copilot-ruleset`. A missing Copilot
+review times out after 20 minutes and stops for a human.
+
+With `copilot`, the server asks GitHub to add Copilot as a reviewer and checks
+that the answer lists Copilot. If the request fails or Copilot is not listed,
+the server logs one warning and keeps waiting. The warning does not mean the
+App token is at fault. A PAT deployment, a repository without Copilot and a PR
+that Copilot already reviewed give the same answer.
+
+With `copilot-ruleset`, Copilot's review gates the merge as before, but the
+server sends no request. A repository ruleset must request it: in the
+repository settings, add a branch ruleset with "Automatically request Copilot
+code review". The ruleset must exist on every repository that uses this value.
+Without it no review arrives, and the PR stops for a human after 20 minutes.
+To have fix cycles reviewed again, enable the ruleset option for new pushes.
+This is a GitHub option and was not tested here.
 
 To check whether the App can request Copilot review, run this probe on a test
-PR opened by the App. Use the App's PEM private key file. The probe needs
+PR opened by the App. Run it before the ruleset is enabled on that repository.
+With the ruleset on, Copilot is already listed and the probe passes for the
+wrong reason. Use the App's PEM private key file. The probe needs
 `python-jose` and `httpx` (the backend virtualenv has both) and never prints
 the token or key; it exits 0 only when GitHub lists Copilot as a reviewer:
 
@@ -102,8 +118,10 @@ the token or key; it exits 0 only when GitHub lists Copilot as a reviewer:
 python scripts/github_app_setup.py probe-copilot --repo OWNER/NAME --pr N --app-id ID --installation-id ID --key-file private-key.pem
 ```
 
-Record the result on #1701. If the request is refused, add a branch ruleset
-with "Automatically request Copilot code review".
+Record the result on #1701. A negative result does not by itself prove that
+installation tokens are unsupported. A repository without Copilot or an
+already-reviewed PR give the same answer. Read the printed status and message.
+If the request is not confirmed, use `copilot-ruleset`.
 
 ## Clone credentials
 
