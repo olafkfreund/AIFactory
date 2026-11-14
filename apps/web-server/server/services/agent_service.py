@@ -24,9 +24,9 @@ from factory_common.logsafe import sanitize_log
 
 from server.background import spawn
 from server.specpath import spec_dir_for
+from server.utils.subprocess_env import dotenv_key_blocked, make_subprocess_env
 
 from ..config import get_settings
-from ..utils.subprocess_env import make_subprocess_env
 from . import job_state_store, project_settings_store, task_control
 from .agent_credential import CredentialMixin
 from .agent_emit import (
@@ -148,7 +148,11 @@ def _load_backend_env(path: Path, env: dict[str, str]) -> None:
             if line and not line.startswith("#") and "=" in line:
                 key, value = line.split("=", 1)
                 key = key.strip()
-                if key not in env and not is_denied_env_key(key):
+                if (
+                    key not in env
+                    and not is_denied_env_key(key)
+                    and not dotenv_key_blocked(key)
+                ):
                     env[key] = value.strip()
 
 
@@ -1107,7 +1111,7 @@ class AgentService(
         # Set environment — scrub ANTHROPIC_API_KEY so spawned subprocesses
         # can never silently bill the direct-API account (OAuth-only policy;
         # see apps/backend/core/auth.py).
-        env = make_subprocess_env()
+        env = make_subprocess_env(github=True)
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
         # Run Claude in non-interactive mode - bypass permission prompts

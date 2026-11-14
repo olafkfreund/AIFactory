@@ -262,6 +262,16 @@ def test_start_mints_and_moves_the_key(
     assert "ghs_1" not in caplog.text
 
 
+def test_start_allows_agent_token(
+    rsa_pem: tuple[str, str], monkeypatch: pytest.MonkeyPatch, _isolate: _Post
+) -> None:
+    _app_env(monkeypatch, rsa_pem[0])
+    monkeypatch.setenv("AIFACTORY_AGENT_GITHUB_TOKEN", "agent-x")
+    _isolate.queue.append(_resp("ghs_1"))
+    github_app.start()
+    assert github_app.configured()
+
+
 @pytest.mark.parametrize(
     "outcome",
     [

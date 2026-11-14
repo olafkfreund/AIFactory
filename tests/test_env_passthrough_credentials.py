@@ -34,11 +34,9 @@ EXEMPT: dict[str, frozenset[str]] = {
             "GH_TOKEN",
         }
     ),
-    # Backend runner subprocesses: GitHub and provider keys (#1680, OLLAMA #1713).
+    # Backend runner subprocesses: provider keys (#1680, OLLAMA #1713).
     "RUNNER_KEEP": frozenset(
         {
-            "GITHUB_TOKEN",
-            "GH_TOKEN",
             "OPENAI_API_KEY",
             "OPENAI_COMPATIBLE_API_KEY",
             "GEMINI_API_KEY",
@@ -48,13 +46,11 @@ EXEMPT: dict[str, frozenset[str]] = {
             "OLLAMA_API_KEY",
         }
     ),
-    # Build Job pods: Claude auth, GitHub, non-Claude provider keys for
+    # Build Job pods: Claude auth, non-Claude provider keys for
     # byo_llm / phase routing (#689), S3 artifact store.
     "_PASSTHROUGH_BUILD_ENV": frozenset(
         {
             "ANTHROPIC_AUTH_TOKEN",
-            "GITHUB_TOKEN",
-            "GH_TOKEN",
             "OPENAI_API_KEY",
             "OPENAI_COMPATIBLE_API_KEY",
             "GEMINI_API_KEY",

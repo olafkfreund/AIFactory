@@ -21,8 +21,8 @@ from factory_common.logsafe import sanitize_log
 
 from server.background import spawn
 from server.specpath import spec_dir_for
+from server.utils.subprocess_env import dotenv_key_blocked, make_subprocess_env
 
-from ..utils.subprocess_env import make_subprocess_env
 from . import project_settings_store
 from .agent_task_models import TaskProgress
 from .build_backend import (
@@ -35,6 +35,18 @@ from .task_phase import TaskPhase
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+
+def _load_spec_env(path: Path, env: dict[str, str]) -> None:
+    with path.open() as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+                if key not in env and not dotenv_key_blocked(key):
+                    env[key] = value
 
 
 def build_chain_args(kubejob_enabled: bool) -> list[str]:
@@ -220,7 +232,7 @@ class SpecCreationMixin:
         # Set environment — scrub ANTHROPIC_API_KEY so spawned subprocesses
         # can never silently bill the direct-API account (OAuth-only policy;
         # see apps/backend/core/auth.py).
-        env = make_subprocess_env()
+        env = make_subprocess_env(github=True)
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
         # Run Claude in non-interactive mode - bypass permission prompts
@@ -238,16 +250,7 @@ class SpecCreationMixin:
         backend_env_file = self.backend_path / ".env"
         if backend_env_file.exists():
             try:
-                with open(backend_env_file) as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith("#") and "=" in line:
-                            key, value = line.split("=", 1)
-                            key = key.strip()
-                            value = value.strip()
-                            # Don't override existing env vars
-                            if key not in env:
-                                env[key] = value
+                _load_spec_env(backend_env_file, env)
                 logger.info("[AgentService] Loaded backend .env for spec creation")
             except Exception as e:
                 logger.warning(f"[AgentService] Failed to load backend .env: {e}")
