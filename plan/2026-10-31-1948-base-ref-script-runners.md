@@ -169,6 +169,31 @@ are `SECURITY.md`.
   or `git update-ref refs/replace/<base>`, which otherwise makes
   `git show <base>:./Makefile` return the agent's file. Pinned by
   `test_replace_refs_cannot_swap_base` (both forms).
+- Steps 1-4 (Claude, 2026-11-14, after the codex bypass review; every item
+  has a case in `tests/test_base_ref_scripts.py` that fails without it):
+  - Step 1: the base sha is also recorded under the worktree path, and
+    `read_base_sha` falls back to the record of the directory or its nearest
+    recorded parent. A nested `git init sub` or
+    `git init --separate-git-dir` gave a gitdir with no record, so detection
+    fell back to the agent's HEAD.
+  - Step 3, make: a long option is refused when it is a prefix of a refused
+    name (GNU make accepts `--fil=x.mk`). The variables `SHELL`,
+    `.SHELLFLAGS`, `MAKEFILES`, `MAKEFLAGS` and `GNUMAKEFLAGS` are refused on
+    the command line. An all-digit token is skipped only after `-j`/`-l` or
+    their long forms; otherwise it is a target (`make 123`).
+  - Step 3, packages: `it`, `install-test`, `cit`, `install-ci-test`,
+    `clean-install-test` and `sit` count as running `test`. `--script-shell`
+    is a refused option. `yarn <name>` and `pnpm <name>` are checked when
+    `<name>` is a script in the working tree's `package.json`. `bun` is
+    registered: `bun run <name>` and `bun <name>` are checked the same way
+    (`bun test` is bun's own runner and is not).
+  - `security/ast_parser.py` (not in the plan's file list): the env-key
+    refusal now covers `MAKEFLAGS`, `MAKEFILES`, `GNUMAKEFLAGS` and any
+    `npm_config_*` name, in any case. The validators never see env prefixes,
+    `env VAR=…` or `export`, so this is the one place that does.
+  - Not fixed, added to the residuals in `SECURITY.md`: an agent-written
+    `GNUmakefile`/`makefile`, and `cd sub && make test`. The target name is
+    still one from the base commit, so both equal an edited recipe body.
 
 ## Tests
 

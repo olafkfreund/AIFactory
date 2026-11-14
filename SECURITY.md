@@ -64,6 +64,8 @@ only when they are present at the commit the build started from (#1948).
 These still run, and the allowlist cannot see inside them:
 
 - a changed recipe or script body;
+- a base target or script name run from another file or directory
+  (`GNUmakefile`, `cd sub && make test`);
 - npm `pre`/`post` and install lifecycle scripts;
 - `bash x.sh`, interpreters and test runners.
 

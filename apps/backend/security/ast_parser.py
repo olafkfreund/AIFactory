@@ -91,7 +91,8 @@ _PROGRAM_KEYS = frozenset(
     {"GIT_PAGER", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "PAGER", "EDITOR", "VISUAL"}
 )
 _NOOP_PROGRAMS = frozenset({"", "cat", "true", ":"})
-_REFUSED_KEYS = frozenset({"SSH_ASKPASS"})
+# MAKEFLAGS/MAKEFILES carry `-f other.mk` past the make validator (#1948).
+_REFUSED_KEYS = frozenset({"SSH_ASKPASS", "MAKEFLAGS", "MAKEFILES", "GNUMAKEFLAGS"})
 _VAR_SETTERS = frozenset(
     {
         "export",
@@ -169,7 +170,8 @@ def _env_key_refusal(assignment: str) -> None:
     if "[" in name:
         # Bash evaluates a subscript as arithmetic, which runs any ``$(…)``.
         raise UnparseableCommand(f"array subscript in {name} is not permitted")
-    if name.startswith("LD_"):
+    # npm_config_* is every npm/pnpm option as env, e.g. the refused --workspace.
+    if name.startswith("LD_") or name.lower().startswith("npm_config_"):
         allowed = False
     elif name in _PROGRAM_KEYS:
         allowed = not eq or value in _NOOP_PROGRAMS
@@ -179,7 +181,7 @@ def _env_key_refusal(assignment: str) -> None:
         )
     if not allowed:
         raise UnparseableCommand(
-            f"setting {name} can change git config or what git runs; not permitted"
+            f"setting {name} can change git config or what a command runs; not permitted"
         )
 
 

@@ -242,28 +242,42 @@ def record_base_sha(
     gitdir = str((Path(cwd) / raw_gitdir).resolve())
     sha = _run_git(cwd, ["git", "rev-parse", "HEAD"], run).strip()
     _write_snapshot(_base_sha_path(gitdir), {"base": sha})
+    # Also keyed by the worktree path: the agent can change the gitdir
+    # (`git init --separate-git-dir`) or nest a repo (`git init sub`), not this.
+    _write_snapshot(_base_sha_path(str(Path(cwd).resolve())), {"base": sha})
 
 
-def read_base_sha(cwd: str | os.PathLike[str]) -> str | None:
-    """Read the recorded base commit SHA for ``cwd``, or return None."""
-    try:
-        dirs = _run_git(cwd, list(_REV_PARSE_DIRS), None).splitlines()
-    except RuntimeError:
-        return None
-    raw_common = dirs[0] if dirs else ""
-    raw_gitdir = dirs[1] if len(dirs) > 1 else raw_common
-    gitdir = str((Path(cwd) / raw_gitdir).resolve())
-    path = _base_sha_path(gitdir)
+def _read_base_file(path: Path) -> str | None:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    if not isinstance(data, dict):
-        return None
-    val = data.get("base")
+    val = data.get("base") if isinstance(data, dict) else None
     if not isinstance(val, str) or not _HEX_SHA_RE.match(val):
         return None
     return val
+
+
+def read_base_sha(cwd: str | os.PathLike[str]) -> str | None:
+    """Read the recorded base commit SHA for ``cwd``, or return None.
+
+    Looks up the gitdir record, then the record of ``cwd`` or the nearest
+    parent directory that is a recorded worktree.
+    """
+    try:
+        dirs = _run_git(cwd, list(_REV_PARSE_DIRS), None).splitlines()
+    except RuntimeError:
+        dirs = []
+    if dirs:
+        raw_gitdir = dirs[1] if len(dirs) > 1 else dirs[0]
+        gitdir = str((Path(cwd) / raw_gitdir).resolve())
+        if sha := _read_base_file(_base_sha_path(gitdir)):
+            return sha
+    here = Path(cwd).resolve()
+    for d in (here, *here.parents):
+        if sha := _read_base_file(_base_sha_path(str(d))):
+            return sha
+    return None
 
 
 def _load_baseline(

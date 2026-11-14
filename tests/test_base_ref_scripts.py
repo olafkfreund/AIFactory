@@ -103,3 +103,109 @@ def test_no_makefile_at_base_disables_make(
     profile = get_security_profile(repo_dir)
     assert "make" not in profile.script_commands
     assert not validate_command("make evil", repo_dir)[0]
+
+
+def _agent_adds_colliding_names(repo: Path) -> None:
+    """A target and a script whose names pass the other checks (digits, `echo`)."""
+    (repo / "Makefile").write_text("test:\n\techo ok\n123:\n\techo pwn\n")
+    (repo / "package.json").write_text(
+        json.dumps({"scripts": {"test": "echo ok", "echo": "echo pwn"}})
+    )
+    (repo / "evil.mk").write_text("test:\n\techo pwn\n")
+    reset_profile_cache()
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        # GNU make accepts abbreviated long options.
+        "make --fil=evil.mk test",
+        "make --mak=evil.mk test",
+        "make --dir=sub test",
+        "make '--ev=$(shell ./evil.sh)' test",
+        "make --include-d=sub test",
+        # Variables and environment that change what make reads or runs.
+        "make SHELL=./evil.sh test",
+        "make MAKEFILES=evil.mk test",
+        "MAKEFLAGS=-fevil.mk make test",
+        "MAKEFILES=evil.mk make test",
+        "env MAKEFLAGS=-fevil.mk make test",
+        "export MAKEFLAGS=-fevil.mk",
+        # A numeric token is a target unless it follows -j/-l.
+        "make 123",
+        "make -k 123",
+        # npm options as environment, and the script shell.
+        "npm_config_workspace=sub npm run test",
+        "NPM_CONFIG_PREFIX=sub npm run test",
+        "npm run test --script-shell=./evil.sh",
+        # Shorthand without `run`, with a script named like an allowed command.
+        "yarn echo",
+        "pnpm echo",
+        "bun echo",
+        "bun run echo",
+    ],
+)
+def test_review_bypasses_refused(repo: Path, cmd: str) -> None:
+    _agent_adds_colliding_names(repo)
+    assert not validate_command(cmd, repo)[0], cmd
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "make -j 4 test",
+        "make -kj 4 test",
+        "make --jobs 4 test",
+        "make V=1 test",
+        "yarn install",
+        "pnpm install",
+        "yarn test",
+        "bun test",
+        "bun install",
+    ],
+)
+def test_review_fixes_keep_normal_use(repo: Path, cmd: str) -> None:
+    _agent_adds_colliding_names(repo)
+    assert validate_command(cmd, repo)[0], cmd
+
+
+@pytest.mark.parametrize("cmd", ["npm it", "npm install-test", "pnpm it"])
+def test_install_test_aliases_need_base_test_script(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cmd: str
+) -> None:
+    monkeypatch.setenv("AIFACTORY_GIT_BASELINE_DIR", str(tmp_path / "bl"))
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    _git(repo_dir, "init")
+    (repo_dir / "package.json").write_text(json.dumps({"scripts": {"lint": "true"}}))
+    _git(repo_dir, "add", "package.json")
+    _git(repo_dir, "commit", "-m", "base")
+    record_base_sha(repo_dir)
+    (repo_dir / "package.json").write_text(
+        json.dumps({"scripts": {"lint": "true", "test": "echo pwn"}})
+    )
+    reset_profile_cache()
+    assert not validate_command(cmd, repo_dir)[0], cmd
+
+
+def test_nested_repo_in_recorded_worktree_grants_nothing(repo: Path) -> None:
+    sub = repo / "sub"
+    sub.mkdir()
+    _git(sub, "init")
+    (sub / "Makefile").write_text("evil:\n\techo pwn\n")
+    (sub / "evil.sh").write_text("#!/bin/sh\necho pwn\n")
+    _git(sub, "add", "Makefile", "evil.sh")
+    _git(sub, "commit", "-m", "nested")
+    reset_profile_cache()
+    profile = get_security_profile(sub)
+    assert "make" not in profile.script_commands
+    assert profile.custom_scripts.shell_scripts == []
+    assert not validate_command("make evil", sub)[0]
+
+
+def test_moved_gitdir_keeps_base(repo: Path) -> None:
+    _git(repo, "init", "--separate-git-dir=" + str(repo / "newgit"))
+    reset_profile_cache()
+    assert validate_command("make test", repo)[0]
+    assert not validate_command("make evil", repo)[0]
+    assert not validate_command("npm run evil", repo)[0]

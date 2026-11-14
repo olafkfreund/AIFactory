@@ -48,6 +48,7 @@ VALIDATORS: dict[str, ValidatorFunction] = {
     "npm": validate_package_script_command,
     "yarn": validate_package_script_command,
     "pnpm": validate_package_script_command,
+    "bun": validate_package_script_command,
     # Database - PostgreSQL
     "dropdb": validate_dropdb_command,
     "dropuser": validate_dropuser_command,
