@@ -155,7 +155,12 @@ Notes:
 - Do not point `github.tokenEnv` at this variable. The App start refuses it
   as a PAT.
 - Do not put GitHub tokens in `apps/backend/.env`. While this token is set,
-  the loaders skip them.
+  the web server skips them when it builds a child's env, and it sets every
+  GitHub name the children read (including a `github.tokenEnv` alias) to the
+  narrow token, so a value in that file cannot replace it.
+- The `github-models` provider reads its key from `GITHUB_TOKEN`. With a
+  narrow token it needs the Models permission on that PAT, or another
+  provider.
 
 ## Limits
 

@@ -24,8 +24,10 @@ reviewers:
   from the result in both modes; with `github=True` the result of
   `runner_github_env()` is then applied. `RUNNER_KEEP` loses `GITHUB_KEEP`.
 - `AIFACTORY_AGENT_GITHUB_TOKEN` (optional, read by the web server only):
-  when set, `runner_github_env()` returns it under the three fixed names and
-  nothing else; when unset it returns every GitHub name that has a
+  when set, `runner_github_env()` returns it under every GitHub name, the
+  alias included (deviation recorded 2026-11-14 after the diff review: the
+  runners call `load_dotenv` themselves, so an absent alias could be
+  restored from `apps/backend/.env` and win in the MCP probe); when unset it returns every GitHub name that has a
   non-empty value in `os.environ` (today's behaviour); when present but
   blank (`""`, as an empty Secret key gives, or whitespace) it logs one
   WARNING, which says that runner children fall back to the control plane's
@@ -201,8 +203,8 @@ All written in step 1 unless marked. Fixture for the env cases:
   `AIFACTORY_AGENT_GITHUB_TOKEN=agent-x` set, and then `agent-x` appears in
   no env value either.
 - `make_subprocess_env(github=True)`, no agent token: all four values kept.
-- with `AIFACTORY_AGENT_GITHUB_TOKEN=agent-x`: the three fixed names equal
-  `agent-x`; the alias and `AIFACTORY_AGENT_GITHUB_TOKEN` are absent; none
+- with `AIFACTORY_AGENT_GITHUB_TOKEN=agent-x`: the three fixed names and
+  the alias equal `agent-x`; `AIFACTORY_AGENT_GITHUB_TOKEN` is absent; none
   of `cp-a..cp-d` appears in any env value.
 - agent variable `""` and `"  "` (two tests, flag reset): exactly one
   WARNING whose text mentions the control plane's token; the result equals

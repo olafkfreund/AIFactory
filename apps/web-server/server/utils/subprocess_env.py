@@ -100,7 +100,9 @@ def agent_github_token() -> str:
 def runner_github_env() -> dict[str, str]:
     token = agent_github_token()
     if token:
-        return dict.fromkeys((*GITHUB_KEEP, "GITHUB_PERSONAL_ACCESS_TOKEN"), token)
+        # The alias too: the runners load_dotenv() themselves, and a value
+        # there for an absent alias would win in the MCP probe.
+        return dict.fromkeys(github_names(), token)
     return {name: os.environ[name] for name in github_names() if os.environ.get(name)}
 
 

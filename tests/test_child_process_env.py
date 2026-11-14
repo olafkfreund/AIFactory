@@ -621,8 +621,7 @@ def test_github_env_is_scoped_to_selected_runner(
     assert all(name not in plain for name in (*names, AGENT_GITHUB_TOKEN_VAR))
     assert "agent-x" not in plain.values()
     env = make_subprocess_env(github=True)
-    assert all(env[name] == "agent-x" for name in names[:3])
-    assert "GITHUB_MCP_TOKEN" not in env
+    assert all(env[name] == "agent-x" for name in names)
     assert AGENT_GITHUB_TOKEN_VAR not in env
     assert not any(value in env.values() for value in ("cp-a", "cp-b", "cp-c", "cp-d"))
     assert AGENT_GITHUB_TOKEN_VAR not in child_env()
@@ -688,7 +687,14 @@ def test_dotenv_guard_and_loaders(
             value in env.values() for value in ("env-1", "env-2", "env-3", "env-4")
         )
         monkeypatch.delenv(AGENT_GITHUB_TOKEN_VAR)
-        assert not dotenv_key_blocked("GITHUB_MCP_TOKEN")
+        assert not any(
+            dotenv_key_blocked(name)
+            for name in (
+                "GITHUB_TOKEN",
+                "GITHUB_PERSONAL_ACCESS_TOKEN",
+                "GITHUB_MCP_TOKEN",
+            )
+        )
         env = make_subprocess_env(github=True)
         env.pop("GITHUB_MCP_TOKEN")
         load(file, env)
