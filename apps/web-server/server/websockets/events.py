@@ -20,13 +20,14 @@ import time
 from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from ..auth import (
+from server.auth import (
     WebSocketAuthError,
     _ws_acw_principal,
     _ws_extract_token,
     authenticate_websocket,
 )
-from ..project_registry import load_projects
+from server.project_registry import load_projects
+
 from . import event_bus
 from .event_bus import (
     ConnectedClient,
@@ -104,7 +105,7 @@ def _event_org(payload: dict) -> str | None:
         org = load_projects().get(pid, {}).get("org_id") or None
         _org_cache[pid] = (now, org)
         return org
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable registry must fail closed
         return None
 
 
@@ -140,7 +141,7 @@ async def send_to_org(org_id: str, event_type: str, payload: dict):
 
 
 @router.websocket("/ws/events")
-async def events_websocket(websocket: WebSocket):
+async def events_websocket(websocket: WebSocket):  # noqa: PLR0912 - socket lifecycle
     """WebSocket endpoint for global events."""
     await websocket.accept()
 
