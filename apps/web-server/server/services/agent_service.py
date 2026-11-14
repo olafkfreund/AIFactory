@@ -1331,12 +1331,13 @@ class AgentService(
             spec_id,
         )
         worktree_spec_dir.mkdir(parents=True, exist_ok=True)
-        log_writer = TaskLogWriter(worktree_spec_dir)
+        _log_pid = task_id.split(":", 1)[0] if ":" in task_id else None
+        log_writer = TaskLogWriter(worktree_spec_dir, _log_pid)
 
         # Also write to main spec dir for immediate visibility
         main_spec_dir = spec_dir_for(project_path, spec_id)
         main_spec_dir.mkdir(parents=True, exist_ok=True)
-        main_log_writer = TaskLogWriter(main_spec_dir)
+        main_log_writer = TaskLogWriter(main_spec_dir, _log_pid)
 
         # Store log writers for cleanup
         self._task_log_writers[task_id] = (log_writer, main_log_writer)

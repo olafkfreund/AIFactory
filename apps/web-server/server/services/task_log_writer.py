@@ -58,8 +58,9 @@ class TaskLogWriter:
         TaskPhase.QA_FIXING: "validation",
     }
 
-    def __init__(self, spec_dir: Path):
+    def __init__(self, spec_dir: Path, project_id: str | None = None):
         self.spec_dir = spec_dir
+        self.project_id = project_id
         self.log_file = spec_dir / "task_logs.json"
         self._current_tool: str | None = None
         self._tool_start_time: str | None = None
@@ -218,7 +219,7 @@ class TaskLogWriter:
                 # durable log file is written separately, and anchoring per line would
                 # grow the set without bound on a hot path.
                 asyncio.create_task(  # noqa: RUF006
-                    emit_task_logs_stream(spec_id, stream_chunk)
+                    emit_task_logs_stream(spec_id, stream_chunk, self.project_id)
                 )
         except RuntimeError:
             # No event loop running, skip WebSocket emit
