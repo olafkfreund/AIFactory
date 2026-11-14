@@ -651,9 +651,52 @@ def test_blank_agent_token_warns_once_and_falls_back(
     assert len(caplog.records) == 1
     assert "control plane's GitHub token" in caplog.text
     monkeypatch.delenv(AGENT_GITHUB_TOKEN_VAR)
+    monkeypatch.setattr(subprocess_env, "_blank_agent_token_warned", False)
     caplog.clear()
-    assert make_subprocess_env(github=True) == expected
+    with caplog.at_level("WARNING"):
+        assert make_subprocess_env(github=True) == expected
     assert not caplog.records
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"github": {"tokenEnv": AGENT_GITHUB_TOKEN_VAR}},
+        {"github": {"tokenEnv": "DATABASE_URL"}},
+        {"github": {"tokenEnv": "   "}},
+        {"github": {"tokenEnv": ["x"]}},
+        {"github": "nope"},
+    ],
+)
+def test_bad_token_alias_is_ignored(
+    github_tokens: None, monkeypatch: pytest.MonkeyPatch, config: dict[str, object]
+) -> None:
+    from core import mcp_credentials  # noqa: PLC0415
+    from server.utils.subprocess_env import github_names  # noqa: PLC0415
+
+    monkeypatch.setattr(mcp_credentials, "_load_operator_config", lambda: config)
+    monkeypatch.setenv("DATABASE_URL", "db-secret")
+    assert github_names() == (*GITHUB_KEEP, "GITHUB_PERSONAL_ACCESS_TOKEN")
+    assert "db-secret" not in make_subprocess_env(github=True).values()
+    monkeypatch.setenv(AGENT_GITHUB_TOKEN_VAR, "agent-x")
+    env = make_subprocess_env(github=True)
+    assert AGENT_GITHUB_TOKEN_VAR not in env
+    assert "DATABASE_URL" not in env
+
+
+def test_token_alias_is_stripped(
+    github_tokens: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from core import mcp_credentials  # noqa: PLC0415
+    from server.utils.subprocess_env import github_names  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        mcp_credentials,
+        "_load_operator_config",
+        lambda: {"github": {"tokenEnv": " GITHUB_MCP_TOKEN "}},
+    )
+    assert github_names()[-1] == "GITHUB_MCP_TOKEN"
+    assert "GITHUB_MCP_TOKEN" not in make_subprocess_env()
 
 
 def test_dotenv_guard_and_loaders(

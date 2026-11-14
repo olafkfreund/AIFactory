@@ -307,7 +307,7 @@ def test_web_server_has_no_env_token_path() -> None:
         ),
         (
             "apps/web-server/server/services/build_backend.py",
-            "{name: val for name, val in runner_github_env().items() if name in GITHUB_KEEP}",
+            "github = runner_github_env()",
         ),
         (
             "apps/backend/core/git_credentials.py",

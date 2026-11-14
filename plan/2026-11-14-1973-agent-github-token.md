@@ -37,8 +37,14 @@ reviewers:
 - `.env` loaders that run after the scrub skip the agent variable always,
   and every GitHub name while the agent token is set
   (`dotenv_key_blocked`).
-- Build Job env: gets only `GITHUB_TOKEN` and `GH_TOKEN` from
-  `runner_github_env()`.
+- Build Job env: without the agent token it gets only `GITHUB_TOKEN` and
+  `GH_TOKEN` from `runner_github_env()`, as before. With the agent token it
+  gets every GitHub name set to it (deviation recorded 2026-11-14 after the
+  diff review: `run.py` in the Job calls `load_dotenv` too).
+- An alias is used only when it is a non-blank string that is not on the
+  env deny list (so `github.tokenEnv` can never pull the agent variable or
+  another denied secret into a child); otherwise it is ignored (same
+  review).
 - The web server's own GitHub calls (`github_env(child_env())`: PR create,
   review request, merge, clone) keep the control plane's token. Untouched.
 - Callers: `github=True` for `agent_service` (run.py), `agent_spec_creation`
