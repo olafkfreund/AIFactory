@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1701
 spec: spec/2026-11-14-1701-copilot-review-app-token.md
 coders:
