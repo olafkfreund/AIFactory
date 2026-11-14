@@ -253,7 +253,7 @@ class ArtifactStore:
         )
         return f"s3://{self.config.bucket}/{key}"
 
-    def get_bytes(self, key: str) -> bytes:
+    def get_bytes(self, key: str, max_bytes: int | None = None) -> bytes:
         """Fetch one object's bytes by explicit key. The complement to
         ``put_bytes`` for the workspace unpacker (which may key off a URI env var,
         not a reconstructed ``ArtifactRef``)."""
@@ -261,7 +261,10 @@ class ArtifactStore:
             Bucket=self.config.bucket, Key=key
         )
         # boto3's client is untyped, so .read() is Any; coerce to satisfy strict.
-        return cast(bytes, obj["Body"].read())
+        return cast(
+            bytes,
+            obj["Body"].read() if max_bytes is None else obj["Body"].read(max_bytes),
+        )
 
 
 def parse_uri(uri: str) -> tuple[str, str]:

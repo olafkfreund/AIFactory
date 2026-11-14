@@ -31,6 +31,7 @@ from .build_backend import (
     backend_config_error,
     subprocess_gate_refusal,
 )
+from .spec_job_backend import KubeJobSpecBackend, spec_kubejob_enabled
 from .task_phase import TaskPhase
 
 if TYPE_CHECKING:
@@ -102,6 +103,11 @@ class SpecCreationMixin:
             spec_id = None
         if problem := subprocess_gate_refusal(spec_dir):
             raise GatedTaskRefusedError(problem)
+        use_job = spec_kubejob_enabled()
+        if use_job and spec_dir is None:
+            raise BuildBackendUnavailableError(
+                "Spec creation refused: task has no spec directory"
+            )
 
         # Fix 5: Check if task requires manual review before coding
         # If requireReviewBeforeCoding is true, DON'T auto-approve (let user review the plan)
@@ -283,34 +289,56 @@ class SpecCreationMixin:
         # #1929: after make_subprocess_env(), which denies this name.
         env.update(self._marker_nonce_env(task_id))
 
-        # Start subprocess with a pseudo-TTY to prevent "Stream closed" errors
-        # Claude Code CLI expects a TTY for permission handling
-        import pty
+        if use_job:
+            try:
+                proc = await KubeJobSpecBackend().dispatch(
+                    task_id=task_id,
+                    project_path=project_path,
+                    spec_id=spec_id,
+                    spec_dir=spec_dir,
+                    task_text=f"{title}\n\n{description}",
+                    model=spec_phase_model,
+                    complexity=complexity,
+                    auto_approve=should_auto_approve,
+                    oauth_token=token,
+                    mcp_env=await project_settings_store.mcp_spawn_env(project_path),
+                    marker_nonce=self._marker_nonce_env(task_id)[
+                        "AIFACTORY_MARKER_NONCE"
+                    ],
+                )
+            except BaseException:
+                # A refused dispatch must hand the pooled credential back.
+                self._release_task_credential(task_id)
+                raise
+        else:
+            # Start subprocess with a pseudo-TTY to prevent "Stream closed" errors
+            # Claude Code CLI expects a TTY for permission handling
+            import pty
 
-        master_fd, slave_fd = pty.openpty()
+            master_fd, slave_fd = pty.openpty()
 
-        # #363: optional OS sandbox — passthrough unless AIFACTORY_AGENT_SANDBOX
-        # is set and bwrap is installed (zero behaviour change by default).
-        from .sandbox import build_sandboxed_command
+            # #363: optional OS sandbox — passthrough unless AIFACTORY_AGENT_SANDBOX
+            # is set and bwrap is installed (zero behaviour change by default).
+            from .sandbox import build_sandboxed_command
 
-        cmd = build_sandboxed_command(cmd, project_path)
+            cmd = build_sandboxed_command(cmd, project_path)
 
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=slave_fd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(project_path),
-            env=env,
-            # Own session/process group so stop_task can kill the WHOLE tree —
-            # run.py spawns coder subprocesses (Claude SDK, git); without this,
-            # proc.terminate() only signals run.py and the children orphan and
-            # keep running (the stop-resistance bug).
-            start_new_session=True,
-        )
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=slave_fd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(project_path),
+                env=env,
+                # Own session/process group so stop_task can kill the WHOLE tree —
+                # run.py spawns coder subprocesses (Claude SDK, git); without this,
+                # proc.terminate() only signals run.py and the children orphan and
+                # keep running (the stop-resistance bug).
+                start_new_session=True,
+            )
 
-        # Close slave fd in parent process
-        os.close(slave_fd)
+            # Close slave fd in parent process
+            os.close(slave_fd)
 
         self.running_tasks[task_id] = proc
         self._spec_creation_procs[task_id] = proc
@@ -342,7 +370,11 @@ class SpecCreationMixin:
         # Pass cmd and env so model fallback can retry with a different model on failure
         spawn(
             self._monitor_process(
-                task_id, proc, project_path=project_path, cmd=cmd, env=env
+                task_id,
+                proc,
+                project_path=project_path,
+                cmd=None if use_job else cmd,
+                env=None if use_job else env,
             )
         )
 

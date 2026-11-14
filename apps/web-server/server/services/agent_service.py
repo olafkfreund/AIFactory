@@ -1403,6 +1403,9 @@ class AgentService(
         """
         pid = getattr(proc, "pid", None)
         if pid is None:
+            # A spec Job has no pid (#1932).
+            with contextlib.suppress(ProcessLookupError, OSError):
+                proc.send_signal(sig)
             return
         with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
             os.killpg(os.getpgid(pid), sig)
