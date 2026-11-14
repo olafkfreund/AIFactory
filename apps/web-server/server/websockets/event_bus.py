@@ -293,7 +293,7 @@ async def deliver_local(scope: Scope, event_type: str, payload: dict) -> None:
             for ws, client in list(_clients.items())
             if client.user_id == scope.user_id
             and (
-                client.key_org_id is None or _payload_org(payload) == client.key_org_id
+                client.key_org_id is None or _may_receive(client, _payload_org(payload))
             )
         ]
     elif isinstance(scope, OrgScope):

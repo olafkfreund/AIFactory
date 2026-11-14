@@ -163,8 +163,11 @@ def test_user_event_requires_matching_org_for_key(sockets):
             {"data": {"org_id": "B"}},
         )
         emit(client, events.send_to_user, "owner", "notification", {"org_id": "A"})
+        # Membership gone (failed lookup or removal): the key socket gets nothing.
+        event_bus.update_client_orgs("owner", set())
+        emit(client, events.send_to_user, "owner", "notification", {"org_id": "A"})
         assert [m["type"] for m in sent["acw_key"]] == ["notification"]
-        assert len(sent["jwt-owner"]) == 3
+        assert len(sent["jwt-owner"]) == 4
 
 
 def test_legacy_envelopes_and_empty_org_round_trip(sockets):
