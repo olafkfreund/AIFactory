@@ -41,6 +41,7 @@ def live_spec_job_names() -> set[str]:
 def build_spec_job_manifest(  # noqa: PLR0913 - manifest coordinates
     *,
     task_id: str,
+    fetch_id: str,
     spec_id: str,
     workspace_uri: str,
     extra_env: dict[str, str],
@@ -79,7 +80,7 @@ def build_spec_job_manifest(  # noqa: PLR0913 - manifest coordinates
     )
     spec = JobSpec(
         service="aifactory",
-        job_id=f"{task_id}-spec",
+        job_id=f"{task_id}-spec-{fetch_id[:8]}",
         commands=[shlex.join(argv)],
         image=build_backend._resolve_build_image(DEFAULT_NIX_IMAGE),
         service_account=service_account,
@@ -92,8 +93,15 @@ def build_spec_job_manifest(  # noqa: PLR0913 - manifest coordinates
         workspace_uri=workspace_uri,
         automount_service_account_token=False,
     )
+    # #1932: this agent reads untrusted issue text, so it gets the Copilot
+    # (GitHub) login only when the spec model actually runs on Copilot.
+    cred_files = tuple(
+        (key, rel)
+        for key, rel in build_backend._CLI_CRED_FILES
+        if "copilot" not in key or (model or "").lower().startswith("copilot:")
+    )
     return build_backend._inject_build_path(
-        build_backend._inject_seed_creds(build_job_manifest(spec))
+        build_backend._inject_seed_creds(build_job_manifest(spec), cred_files)
     )
 
 
@@ -115,6 +123,18 @@ def _prepare_spec_workspace(
         build_backend._git(
             ["clone", "--local", "--no-hardlinks", str(project_path), str(clone)]
         )
+        if spec_dir.is_symlink() or any(
+            path.is_symlink() for path in spec_dir.rglob("*")
+        ):
+            raise build_backend.BuildBackendUnavailableError(
+                "Spec directory contains a symlink"
+            )
+        if (clone / ".aifactory").is_symlink() or (
+            clone / ".aifactory/specs"
+        ).is_symlink():
+            raise build_backend.BuildBackendUnavailableError(
+                "Cloned spec path is a symlink"
+            )
         copy_spec_to_worktree(spec_dir, clone, spec_id)
         (clone / ".aifactory/spec_task.md").write_text(task_text)
         return cast(
@@ -136,9 +156,11 @@ def _finish_spec_fetch(spec_dir: Path, fetch_id: str, auto_approve: bool) -> int
     from core.workspace_fetch import fetch_spec_files  # noqa: PLC0415
     from review.state import ReviewState  # noqa: PLC0415
 
-    if "spec.md" not in fetch_spec_files(spec_dir, fetch_id):
-        return 1
     state = ReviewState.load(spec_dir)
+    if "spec.md" not in fetch_spec_files(spec_dir, fetch_id):
+        # A partial fetch may have replaced the plan: drop any earlier approval.
+        state.invalidate(spec_dir)
+        return 1
     if auto_approve:
         state.approve(spec_dir, approved_by="auto")
     elif not state.is_approval_valid(spec_dir):
@@ -313,6 +335,7 @@ class KubeJobSpecBackend:
             env["QUICK_MODE"] = "true"
         manifest = build_spec_job_manifest(
             task_id=task_id,
+            fetch_id=fetch_id,
             spec_id=spec_id,
             workspace_uri=uri,
             extra_env=env,

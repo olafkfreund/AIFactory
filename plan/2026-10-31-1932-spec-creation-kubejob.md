@@ -147,6 +147,25 @@ These are carried over from the spec. Each one is binding.
    one-line doc edit.
    → verify by reading the rendered row.
 
+## Deviations (from the codex and agy security reviews of the diff)
+
+Each was confirmed against the code and fixed in the same commit as this note.
+
+- A failed, vanished or stopped spec Job (`proc.pid is None`, non-zero return
+  code) skips the monitor's spec-completion branch, so it cannot auto-start a
+  build from stale spec files (`process_monitor.py`). In-pod runs are unchanged.
+- `ArtifactStore.get_bytes` takes `max_bytes`; `fetch_spec_files` reads at most
+  8 MiB + 1, so an oversize object is skipped without being loaded.
+- `_prepare_spec_workspace` refuses a spec dir that is or contains a symlink,
+  and a clone whose `.aifactory` or `.aifactory/specs` is a symlink.
+- The Job id is `f"{task_id}-spec-{fetch_id[:8]}"`, not `f"{task_id}-spec"`:
+  the 20-character short name collided on re-runs and across projects.
+- `_inject_seed_creds` takes the credential file list. The spec Job gets the
+  Copilot login only when its model is a `copilot:` model.
+- A fetch that brings back no `spec.md` invalidates any earlier approval.
+- Not fixed here, tracked: bucket-wide `S3_*` in Jobs (#2023), the marker
+  nonce in the Job env (#2024), unused CLI logins in build Jobs (#2025).
+
 ## Tests
 
 - `apps/backend/.venv/bin/python -m pytest tests/test_spec_job_backend.py tests/test_agent_spec_creation_mixin.py tests/test_build_backend_kubejob.py -q`: all pass.

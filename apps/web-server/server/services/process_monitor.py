@@ -303,7 +303,8 @@ async def monitor_process(
 
         # Special case: Spec creation (project_path provided, spec_id is None)
         # Need to detect the created spec_id and check if it requires review
-        if project_path and not spec_id:
+        # #1932: a failed spec Job must not launch a build from stale spec files.
+        if project_path and not spec_id and (proc.pid is not None or return_code == 0):
             logger.info(
                 "[AgentService] Spec creation completed, detecting created spec..."
             )

@@ -803,7 +803,9 @@ def fetch_spec_files(spec_dir: str | os.PathLike[str], fetch_id: str) -> list[st
         tmp = ""
         try:
             try:
-                data = store.get_bytes(_spec_file_key(fetch_id, name))
+                data = store.get_bytes(
+                    _spec_file_key(fetch_id, name), max_bytes=_SPEC_FILE_MAX_BYTES + 1
+                )
             except Exception as exc:  # noqa: BLE001 - not pushed: optional file
                 _log.debug("[workspace_fetch] no spec file %s: %s", name, exc)
                 continue

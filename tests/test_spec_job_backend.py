@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import signal
 import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -26,6 +27,7 @@ from server.services.build_backend import (  # noqa: E402
     BuildBackendUnavailableError,
     KubeJobBuildBackend,
 )
+from server.services.process_monitor import monitor_process  # noqa: E402
 
 
 class FakeBatch:
@@ -48,11 +50,22 @@ class FakeBatch:
 
 class FakeArtifactStore:
     objects: dict[str, bytes] = {}
-    reads: list[str] = []
+    reads: list[tuple[str, int | None]] = []
 
-    def get_bytes(self, key: str) -> bytes:
-        self.reads.append(key)
-        return self.objects[key]
+    def get_bytes(self, key: str, max_bytes: int | None = None) -> bytes:
+        self.reads.append((key, max_bytes))
+        return self.objects[key][:max_bytes]
+
+
+def test_artifact_store_reads_only_requested_bytes() -> None:
+    body = SimpleNamespace(read=Mock(side_effect=lambda limit=None: b"abcdef"[:limit]))
+    store = artifact_store.ArtifactStore()
+    store._s3 = SimpleNamespace(get_object=lambda **_kwargs: {"Body": body})
+    assert store.get_bytes("key", max_bytes=3) == b"abc"
+    body.read.assert_called_once_with(3)
+    body.read.reset_mock()
+    assert store.get_bytes("key") == b"abcdef"
+    body.read.assert_called_once_with()
 
 
 @pytest.fixture
@@ -195,6 +208,7 @@ def test_fetch_back_writes_only_allowlisted_files_and_preserves_control_files(
     assert {name: (spec_dir / name).read_bytes() for name in expected} == expected
     assert {name: (spec_dir / name).read_bytes() for name in protected} == before
     assert len(fake_store.reads) == len(expected)
+    assert all(limit == (8 << 20) + 1 for _, limit in fake_store.reads)
 
 
 def test_fetch_back_skips_oversize_and_invalid_json_without_clobbering(
@@ -216,6 +230,91 @@ def test_fetch_back_skips_oversize_and_invalid_json_without_clobbering(
     assert (spec_dir / "context.json").read_bytes() == b'{"old": true}'
     assert not (spec_dir / "spec.md").exists()
     assert not (spec_dir / "research.json").exists()
+    assert all(limit == (8 << 20) + 1 for _, limit in fake_store.reads)
+
+
+@pytest.mark.parametrize("return_code", [1, -15])
+@pytest.mark.parametrize("approved", [None, True])
+async def test_failed_spec_job_never_starts_build(
+    project: tuple[Path, Path],
+    service: AgentService,
+    return_code: int,
+    approved: bool | None,
+) -> None:
+    root, spec_dir = project
+    if approved is not None:
+        (spec_dir / "review_state.json").write_text('{"approved": true}')
+    service._spec_dirs["p:s1"] = spec_dir
+    service.start_task_execution = AsyncMock()
+    proc = SimpleNamespace(pid=None, wait=AsyncMock(return_value=return_code))
+    await monitor_process(service, "p:s1", proc, root)
+    service.start_task_execution.assert_not_called()
+    assert service._emit_progress.await_args.args[0].phase.value == "failed"
+
+
+async def test_spec_workspace_rejects_external_symlink_before_pack(
+    monkeypatch: pytest.MonkeyPatch,
+    project: tuple[Path, Path],
+) -> None:
+    root, spec_dir = project
+    secret = root.parent / "secret"
+    secret.write_text("secret")
+    (spec_dir / "outside").symlink_to(secret)
+    pack = AsyncMock(side_effect=AssertionError("pack called"))
+    monkeypatch.setattr(artifact_store, "pack_workspace", pack)
+    with pytest.raises(BuildBackendUnavailableError, match="symlink"):
+        await sj.KubeJobSpecBackend().dispatch(
+            task_id="p:s1",
+            project_path=root,
+            spec_id="s1",
+            spec_dir=spec_dir,
+            task_text="title",
+            model=None,
+            complexity=None,
+            auto_approve=False,
+            oauth_token=None,
+            mcp_env={},
+            marker_nonce="nonce",
+        )
+    pack.assert_not_called()
+    assert not (root / ".aifactory/worktrees/specs/s1").exists()
+
+
+async def test_repeat_dispatch_uses_distinct_kubernetes_names(
+    monkeypatch: pytest.MonkeyPatch, project: tuple[Path, Path]
+) -> None:
+    root, spec_dir = project
+    batch = FakeBatch()
+    monkeypatch.setattr(
+        artifact_store, "pack_workspace", lambda *_: "s3://bucket/workspace"
+    )
+    monkeypatch.setattr(sj.KubeJobLogStreamer, "stream", AsyncMock())
+    task_id = "project:" + "long-spec-id-" * 3
+    processes = []
+    for _ in range(2):
+        processes.append(
+            await sj.KubeJobSpecBackend().dispatch(
+                task_id=task_id,
+                project_path=root,
+                spec_id="s1",
+                spec_dir=spec_dir,
+                task_text="title",
+                model=None,
+                complexity=None,
+                auto_approve=False,
+                oauth_token=None,
+                mcp_env={},
+                marker_nonce="nonce",
+                batch=batch,
+            )
+        )
+    names = [manifest["metadata"]["name"] for _, manifest in batch.created]
+    assert len(set(names)) == 2
+    assert all(re.fullmatch(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?", name) for name in names)
+    assert all(re.search(r"-spec-[0-9a-f]{8}$", name) for name in names)
+    for proc in processes:
+        proc.terminate()
+        assert await proc.wait() == -15
 
 
 @pytest.mark.parametrize("auto_approve", [True, False])
@@ -318,3 +417,38 @@ async def test_sweep_treats_live_spec_job_as_owned(
     assert batch.deleted == []
     sj._LIVE_SPEC_JOBS.clear()
     assert await backend.sweep_orphan_jobs(now=10_000, batch=batch) == ["live-spec"]
+
+
+@pytest.mark.parametrize(
+    ("model", "seeded"), [("sonnet", False), ("copilot:gpt-5", True)]
+)
+def test_spec_job_gets_copilot_login_only_for_copilot_model(
+    monkeypatch: pytest.MonkeyPatch, model: str, seeded: bool
+) -> None:
+    monkeypatch.setenv("AIFACTORY_CLI_CREDS_SECRET", "cli-creds")
+    manifest = sj.build_spec_job_manifest(
+        task_id="p:s1",
+        fetch_id="a" * 32,
+        spec_id="s1",
+        workspace_uri="s3://bucket/w.tar.gz",
+        extra_env={},
+        model=model,
+    )
+    seed = manifest["spec"]["template"]["spec"]["initContainers"][-1]
+    assert seed["name"] == "seed-creds"
+    script = seed["args"][0]
+    assert ("copilot-apps.json" in script) is seeded
+    assert "claude-credentials.json" in script
+
+
+def test_partial_fetch_without_spec_md_drops_earlier_approval(
+    fake_store: type[FakeArtifactStore], tmp_path: Path
+) -> None:
+    spec_dir = tmp_path / "spec"
+    spec_dir.mkdir()
+    (spec_dir / "review_state.json").write_text('{"approved": true}')
+    fake_store.objects[
+        workspace_fetch._spec_file_key("fetch", "implementation_plan.json")
+    ] = b'{"swapped": true}'
+    assert sj._finish_spec_fetch(spec_dir, "fetch", True) == 1
+    assert json.loads((spec_dir / "review_state.json").read_text())["approved"] is False
