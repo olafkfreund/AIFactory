@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1701
 intent: intent/2026-11-14-1701-copilot-review-app-token.md
 ---
