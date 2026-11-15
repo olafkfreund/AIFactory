@@ -4,11 +4,11 @@ title: Claude Enforcement Wrapper
 sidebar_label: Claude Enforcement
 ---
 
-# Claude Enforcement Wrapper (v1.2 / #207)
+# Claude Enforcement Wrapper (#207)
 
 ## Why this exists
 
-In v1.1 (#38), AIFactory ships LiteLLM as the gateway for OpenAI-compatible
+AIFactory ships LiteLLM (#38) as the gateway for OpenAI-compatible
 providers (OpenAI, Codex, Gemini, Ollama, Bedrock, Vertex). Every call through
 that path gets:
 
@@ -17,10 +17,10 @@ that path gets:
 - Per-call PII-redacted audit row (`llm.call` / `.abandoned` / `.failed`).
 - Prometheus per-tenant cost metrics.
 
-**Claude calls bypassed all of that.** The Claude Agent SDK spawns the `claude`
+**Claude calls bypass all of that through the gateway.** The Claude Agent SDK spawns the `claude`
 CLI subprocess, which speaks the Anthropic-format `POST /v1/messages` endpoint —
 wire-incompatible with LiteLLM's OpenAI-format `POST /v1/chat/completions`
-endpoint. v1.2 closes this gap with an in-process wrapper that mirrors LiteLLM's
+endpoint. An in-process wrapper closes this gap that mirrors LiteLLM's
 enforcement plane without requiring a network hop.
 
 The wrapper is described in full in
@@ -76,7 +76,7 @@ The wrapper produces **one audit row per `create_client()` invocation**. A
 50-turn agentic session (Claude calling tools 50 times) produces one audit row
 that records the assembled final token count + cost for the whole session.
 Per-turn tool-use audit (one row per `tool_use` / `tool_result` pair) is
-parking-lot for v1.3.
+not implemented.
 
 This matches the non-Claude path: `OpenAICompatibleProvider` also produces one
 row per API call, not per streaming chunk.
@@ -96,7 +96,7 @@ The Claude path produces **byte-identical audit rows** to the non-Claude path:
 | `details_json.output_tokens` | from SDK `result.usage` |
 | `details_json.cost_usd` | estimated from `_CLAUDE_PRICING` dict |
 | `details_json.cost_source` | `"litellm_estimate"` (approximate) |
-| `details_json.provider` | `"claude_sdk"` (new in v1.2 — backward-compat) |
+| `details_json.provider` | `"claude_sdk"` (backward-compatible) |
 | `details_json.latency_ms` | wall-clock from `__aenter__` to `__aexit__` |
 | `details_json.litellm_request_id` | `null` (no LiteLLM on this path) |
 | `details_json.truncated` | `true` for abandoned streams |
@@ -173,11 +173,11 @@ Two replicas can each read "$3 remaining" and both proceed. The over-spend cap
 is one call per replica per budget window (cents to single-digit dollars —
 never the multi-hundred-dollar runaway the wrapper is here to prevent). The
 next call after the window refills correctly sees $0. This is a known,
-documented limitation; an `INCRBY`-reservation approach is parking-lot v1.3.
+documented limitation; an `INCRBY`-reservation approach is not implemented.
 
 ### Per-tenant Anthropic billing
 
-v1.2 uses ONE deployment-wide Anthropic API key. The wrapper enables
+The wrapper uses ONE deployment-wide Anthropic API key. The wrapper enables
 **per-tenant chargeback** via audit rows — operators run billing queries against
 `audit_logs WHERE action='llm.call' AND details_json->>'provider'='claude_sdk'`.
 Anthropic still issues one invoice for the whole deployment.
@@ -214,11 +214,11 @@ Call sites that pass **no `org_id`** to `create_client()` receive the bare
 
 These are "trusted operator-local invocations" — the same pattern as
 `OpenAICompatibleProvider(allowed_models=None)` for trusted test contexts.
-A v1.3 milestone may add an `--org-id` flag to the CLI runners.
+An `--org-id` flag on the CLI runners is not implemented.
 
 ## When to revisit Option B (LiteLLM Anthropic passthrough)
 
-Option B was evaluated and rejected in v1.2 due to four open upstream bugs:
+Option B was evaluated and rejected due to four open upstream bugs:
 
 - **BerriAI/litellm #28562** — passthrough `request_id` mismatch breaks audit row cross-reference.
 - **BerriAI/litellm #28228** — cost tracking ignores router pricing on passthrough.
@@ -226,13 +226,13 @@ Option B was evaluated and rejected in v1.2 due to four open upstream bugs:
 - **BerriAI/litellm #27512** — passthrough retry drops `thinking` content for Opus 4.7.
 
 Monitor these issues on the BerriAI/litellm tracker. When all four are closed,
-v1.3 can evaluate unifying the enforcement plane into LiteLLM (removing the
+it can be re-evaluated to unify the enforcement plane into LiteLLM (removing the
 Claude-specific wrapper). The wrapper's public interface is intentionally narrow
 so the swap remains a single-file change.
 
 ## Cross-references
 
-- [LiteLLM Gateway concept](litellm-gateway.md) — the v1.1 enforcement plane that Claude was not part of.
+- [LiteLLM Gateway concept](litellm-gateway.md) — the enforcement plane that Claude calls through the gateway are not part of.
 - [Audit Anchor concept](audit-anchor.md) — the hash-chain that wraps every audit row (applies to Claude rows too).
 - `apps/backend/core/enforcement.py` — wrapper implementation.
 - `docs/plans/2026-05-29-claude-litellm-wrapper-design.md` — locked design with full decision audit trail.

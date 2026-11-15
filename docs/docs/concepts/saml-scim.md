@@ -23,7 +23,7 @@ You **don't** need it for:
 
 ## What's in scope (and what's not)
 
-| Aspect | v1.1 status |
+| Aspect | Status |
 |--------|-------------|
 | SAML 2.0 Web SSO (SP-init + IdP-init) | Supported |
 | `python3-saml` (OneLogin) wrapper with hard-coded XSW / strict defences | Supported |
@@ -36,10 +36,10 @@ You **don't** need it for:
 | HMAC-signed RelayState (SP-init CSRF defence) | Supported |
 | Cross-IdP collision guard (OIDC ↔ SAML auto-link rejection) | Supported |
 | Login-page IdP discovery dropdown | Supported |
-| SAML Single Logout (SLO) | Supported, opt-in (`saml.slo.enabled=true`, v1.2 #209) |
-| Per-tenant SAML IdP routing | Not yet (v1.2, ships with #36 tenant isolation) |
+| SAML Single Logout (SLO) | Supported, opt-in (`saml.slo.enabled=true`, #209) |
+| Per-tenant SAML IdP routing | Not yet (ships with #36 tenant isolation) |
 | Just-in-time provisioning via SAML alone (no SCIM) | No (decision #4 — SCIM provisions first) |
-| OAuth client-credentials grant for SCIM | No (decision #3 — static Bearer in v1.1) |
+| OAuth client-credentials grant for SCIM | No (decision #3 — static Bearer) |
 | FedRAMP / FIPS-mode crypto enforcement | No (operator picks PEM; we don't enforce FIPS) |
 
 ## How it fits together
@@ -127,7 +127,7 @@ scim:
   tokenSecretName: "aifactory-scim"
 ```
 
-Vendor docs: [Okta SAML setup](https://developer.okta.com/docs/concepts/saml/) · [Okta SCIM provisioning](https://developer.okta.com/docs/guides/scim-with-okta-integration-network/).
+Vendor docs: [Okta SAML setup](https://developer.okta.com/docs/concepts/saml/) · [Okta SCIM provisioning](https://developer.okta.com/docs/guides/scim-provisioning-integration-overview/main/).
 
 ### Azure AD (Microsoft Entra ID)
 
@@ -232,15 +232,15 @@ The token is read once at startup; the constant-time compare protects against a 
 
 ### Logout
 
-> **v1.2 update:** SAML Single Logout (SLO) is now supported and opt-in via `saml.slo.enabled=true`. The default behaviour (local logout only) is unchanged for backward compatibility. See below for both modes.
+> **Update:** SAML Single Logout (SLO) is now supported and opt-in via `saml.slo.enabled=true`. The default behaviour (local logout only) is unchanged for backward compatibility. See below for both modes.
 
 #### Default behaviour — local logout (backward compatible)
 
-When `saml.slo.enabled: false` (the default), "Sign out" clears the AIFactory session cookie and redirects to the login page. No SAML `LogoutRequest` is issued to the IdP. This is the same behaviour as v1.1.
+When `saml.slo.enabled: false` (the default), "Sign out" clears the AIFactory session cookie and redirects to the login page. No SAML `LogoutRequest` is issued to the IdP. This is the behaviour from before SLO existed.
 
 For contexts where SLO is not required, configure short access-token TTLs (default 15 min) and rely on the IdP's session-kill admin console for force-logout scenarios.
 
-#### SLO — SAML Single Logout (v1.2, opt-in)
+#### SLO — SAML Single Logout (opt-in)
 
 When `saml.slo.enabled: true`, AIFactory supports full SAML 2.0 SLO:
 
@@ -317,13 +317,13 @@ This covers 100% of what Okta + Azure AD send during user-sync. Other IdPs that 
 
 `op: add` on a multi-valued attribute (e.g. Group `members`) **appends** to the existing array. Implementing it as replace is the most common SCIM bug; Azure AD relies on the append semantics for Group member sync. The PATCH applier in `apps/web-server/server/scim/filters.py` has dedicated array handling.
 
-### Identity-key constraint (v1.1)
+### Identity-key constraint
 
 ```
 scim.userName == saml.NameID == users.email
 ```
 
-SCIM's `userName` and SAML's `NameID` **must** both be the user's email. The provisioning layer enforces this on `POST /scim/v2/Users`: if `userName != emails[0].value`, the response is `400 {scimType: "invalidValue"}`. Operators who need decoupled `userName` (e.g. `alice.smith` for `userName`, `alice@corp.com` for `email`) wait for v1.2.
+SCIM's `userName` and SAML's `NameID` **must** both be the user's email. The provisioning layer enforces this on `POST /scim/v2/Users`: if `userName != emails[0].value`, the response is `400 {scimType: "invalidValue"}`. Decoupled `userName` (e.g. `alice.smith` for `userName`, `alice@corp.com` for `email`) is not supported yet.
 
 ### Cross-IdP collision guard
 
@@ -331,7 +331,7 @@ If a User row already has an OIDC identity (`external_identities.kind = 'oidc:gi
 
 > Cross-IdP linkage requires admin confirmation. Contact your AIFactory administrator to link this identity.
 
-This closes the hijack-via-unverified-email attack: an attacker who controls a GitHub account that doesn't verify corporate email could otherwise link via OIDC, then have a corp SAML IdP silently re-bind the same User row. v1.1 lands the safe-default block; v1.2 adds the admin UI for the legitimate link-multiple-IdPs case (today the admin runbook is to verify the human identity and update `external_identities` in the DB).
+This closes the hijack-via-unverified-email attack: an attacker who controls a GitHub account that doesn't verify corporate email could otherwise link via OIDC, then have a corp SAML IdP silently re-bind the same User row. The safe-default block is in place; there is no admin UI yet for the legitimate link-multiple-IdPs case (the admin runbook is to verify the human identity and update `external_identities` in the DB).
 
 ## Trust scope (what this defends + what it doesn't)
 
@@ -349,7 +349,7 @@ This closes the hijack-via-unverified-email attack: an attacker who controls a G
 
 ## See also
 
-- [OIDC SSO](https://github.com/olafkfreund/AIFactory/blob/dev/guides/auth/oidc.md) — primary SSO for Okta / Auth0 / Google / GitHub (Epic #35 P3).
+- [OIDC SSO](https://github.com/olafkfreund/AIFactory/blob/main/docs-archive/2026-05-26/guides/operations/oidc-setup.md) — primary SSO for Okta / Auth0 / Google / GitHub (Epic #35 P3).
 - [Signed audit-chain anchor](./audit-anchor.md) — daily HMAC-signed audit log integrity (Epic #35 #43).
 - [Distributed tracing](./observability-tracing.md) — OpenTelemetry (Epic #35 #42).
 - [Multi-replica deployment](./multi-replica.md) — Redis fan-out (Epic #35 #40).

@@ -5,7 +5,7 @@ sidebar_position: 12
 
 # Signed audit-chain anchor (Epic #35 #43)
 
-> *Daily HMAC-signed snapshot of the audit chain head. Closes the v1.0 limitation where a DB admin could silently rewrite the audit log.*
+> *Daily HMAC-signed snapshot of the audit chain head. Closes the limitation where a DB admin could silently rewrite the audit log.*
 
 ## When you need this
 
@@ -19,11 +19,11 @@ You **don't** need it for:
 
 - Laptop installs / dev sessions.
 - Single-developer pilots where the same human controls the DB and the audit narrative.
-- Sub-100-row-per-day audit volumes (the v1.0 chain already detects post-hoc edits if you keep a copy of `prev_hash` off-system).
+- Sub-100-row-per-day audit volumes (the base chain already detects post-hoc edits if you keep a copy of `prev_hash` off-system).
 
 ## What's in scope (and what's not)
 
-| Aspect | v1.1 status |
+| Aspect | Status |
 |--------|-------------|
 | HMAC-SHA256 daily anchor signed with KMS-wrapped key | Yes |
 | Versioned signing keys (KMS rotation doesn't invalidate prior anchors) | Yes |
@@ -34,8 +34,8 @@ You **don't** need it for:
 | Access-review export (`/api/admin/access-review`) | Yes |
 | `users.last_login_at` updated on every successful login | Yes |
 | Kubernetes CronJob OR in-process asyncio scheduler | Yes |
-| External anchor publication (S3 WORM / RFC 3161 TSA / Sigstore) | No (v1.2) |
-| Asymmetric signatures for public verification | No (v1.2) |
+| External anchor publication (S3 WORM / RFC 3161 TSA / Sigstore) | No |
+| Asymmetric signatures for public verification | No |
 | Per-event signing | No (intentional — daily granularity matches retention) |
 
 ## How it works
@@ -147,7 +147,7 @@ A clean verification proves: every row's `prev_hash` correctly chains to the pre
 | Mutation of row content | Defended — chain break detected |
 | Flipping a `confidential` row to `public` to leak past export filter | Defended — classifications hash mismatch |
 | DB admin re-signing entire chain (no HMAC key access) | Defended — anchor mismatch |
-| DB admin who ALSO has the unwrapped HMAC key | Out of scope. v1.2 external pub (S3 WORM / RFC 3161 TSA / Sigstore) closes this by writing anchors to a target the admin can't rewrite. |
+| DB admin who ALSO has the unwrapped HMAC key | Out of scope. External publication (S3 WORM / RFC 3161 TSA / Sigstore) would close this by writing anchors to a target the admin can't rewrite; it is not implemented. |
 
 Operationally: keep the KMS-wrapped key Secret separate from DB admin access. If the same human has both, the anchor is policy evidence, not cryptographic proof.
 
@@ -167,7 +167,7 @@ curl -H "Cookie: access_token=<admin-token>" \
 
 Returns one NDJSON line per current `OrgMember` with email, role, active, `joined_at`, `last_login_at`. Audit log queries on `org.member.add/remove` events provide the membership-change history.
 
-## Per-tenant chains (v1.2 #208)
+## Per-tenant chains (#208)
 
 Available when `audit.anchor.enabled=true` **and** `audit.anchor.perTenant=true` **and** `tenant.isolationEnabled=true`.
 
@@ -189,7 +189,7 @@ Organization B (isolation_mode='isolated')
        └── verifiable independently with org B's key only
 
 Non-isolated orgs / pre-cutover rows
-  audit_logs: shared chain (GENESIS sentinel, unchanged from v1.1)
+  audit_logs: shared chain (GENESIS sentinel, unchanged)
   audit_anchors: org_id=NULL (shared deployment anchor)
 ```
 
@@ -197,8 +197,8 @@ Non-isolated orgs / pre-cutover rows
 
 | Org status | Chain mode | Anchor |
 |---|---|---|
-| Pre-v1.2 (no `tenant_states` row OR `isolation_mode='shared'`) | Shared | Shared deployment anchor (v1.1 unchanged) |
-| Post-v1.2, `isolation_mode='isolated'`, cutover at time T | Pre-T rows: shared; post-T rows: per-tenant | Pre-T: shared anchor; post-T: per-tenant anchor |
+| Before per-tenant chains (no `tenant_states` row OR `isolation_mode='shared'`) | Shared | Shared deployment anchor (unchanged) |
+| With per-tenant chains, `isolation_mode='isolated'`, cutover at time T | Pre-T rows: shared; post-T rows: per-tenant | Pre-T: shared anchor; post-T: per-tenant anchor |
 | `isolation_mode='deleted'` (org soft-deleted) | Per-tenant chain sealed; no new rows | Per-tenant anchor stops at seal time |
 
 ### Operator opt-in
@@ -234,7 +234,7 @@ The KMS unwrap step is the only one requiring operator credentials. Each unwrap 
 
 ### ISO 27001 controls enabled by per-tenant chains
 
-- **A.12.4.2** — Tenant-level log integrity protection (v1.1 covered deployment-level only).
+- **A.12.4.2** — Tenant-level log integrity protection (the deployment-level anchor alone does not cover it).
 - **A.12.4.3** — Operator privilege scope is separated from tenant verification scope.
 - **A.18.1.3** — Each tenant holds their own evidence for their ISMS audit.
 - **A.18.2.2** — Tenant's auditor can independently attest compliance without seeing other tenants' data.
@@ -245,17 +245,17 @@ When an org is soft-deleted (`Organization.deleted_at` set), the audit chain row
 
 ## What's not yet supported
 
-- **External anchor publication.** v1.2 stores anchors in the same Postgres as the audit log. A DB admin with the tenant's HMAC key can rewrite that tenant's chain. v1.3 will publish per-tenant anchors to S3 Object Lock / RFC 3161 TSA / Sigstore for genuine third-party untamperedness.
-- **Asymmetric signatures.** v1.2's HMAC means the verifier needs the secret. v1.3 with public verification needs RSA/ECDSA signatures via cloud KMS Sign APIs.
-- **Per-event signing.** Daily is sufficient for the v1.2 threat model and operator habits. Per-event signing adds per-write overhead with no operational benefit at our scale.
-- **Migration of pre-v1.2 rows to per-tenant chains.** Pre-v1.2 rows participate in the shared chain. Rewriting them into per-tenant chains requires recomputing every `prev_hash` — a destructive one-time operation. Operators wanting a clean per-tenant chain from row 1 must provision a fresh deployment.
+- **External anchor publication.** Anchors are stored in the same Postgres as the audit log. A DB admin with the tenant's HMAC key can rewrite that tenant's chain. Publishing per-tenant anchors to S3 Object Lock / RFC 3161 TSA / Sigstore for third-party untamperedness is not implemented.
+- **Asymmetric signatures.** HMAC means the verifier needs the secret. Public verification would need RSA/ECDSA signatures via cloud KMS Sign APIs.
+- **Per-event signing.** Daily is sufficient for the threat model and operator habits. Per-event signing adds per-write overhead with no operational benefit at our scale.
+- **Migration of earlier rows to per-tenant chains.** Rows written before per-tenant chains participate in the shared chain. Rewriting them into per-tenant chains requires recomputing every `prev_hash` — a destructive one-time operation. Operators wanting a clean per-tenant chain from row 1 must provision a fresh deployment.
 
 ## See also
 
 - [Tenant isolation](./tenant-isolation.md) — per-tenant K8s namespaces + Vault paths. Per-tenant audit chains integrate here.
 - [Multi-replica deployment](./multi-replica.md) — Redis fan-out (Epic #35 #40).
 - [Distributed tracing](./observability-tracing.md) — OpenTelemetry (Epic #35 #42).
-- [ISO 27001 evidence](https://github.com/olafkfreund/AIFactory/blob/dev/guides/compliance/iso27001-evidence.md) — Annex A control mapping (lives outside the Docusaurus tree).
-- [GitHub issue #43](https://github.com/olafkfreund/AIFactory/issues/43) — v1.1 design.
-- [GitHub issue #208](https://github.com/olafkfreund/AIFactory/issues/208) — v1.2 per-tenant design.
-- Design docs: `docs/plans/2026-05-28-audit-anchor-design.md` (v1.1), `docs/plans/2026-05-29-per-tenant-audit-anchor-design.md` (v1.2).
+- [ISO 27001 evidence](https://github.com/olafkfreund/AIFactory/blob/main/guides/compliance/iso27001-evidence.md) — Annex A control mapping (lives outside the Docusaurus tree).
+- [GitHub issue #43](https://github.com/olafkfreund/AIFactory/issues/43) — design.
+- [GitHub issue #208](https://github.com/olafkfreund/AIFactory/issues/208) — per-tenant design.
+- Design docs: `docs/plans/2026-05-28-audit-anchor-design.md`, `docs/plans/2026-05-29-per-tenant-audit-anchor-design.md`.

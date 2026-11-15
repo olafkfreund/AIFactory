@@ -74,4 +74,4 @@ rmux v0.3.x requires a writable runtime directory and pins replicas to 1. Bank-p
 
 ## Status
 
-Shipping incrementally in PRs #67–#71 (Epic #44). Currently in dev branch. The portal hides the Live Console tab automatically when the feature is off (`APP_RMUX_ENABLED` / `AIFACTORY_RMUX_ENABLED` unset), probing `GET /api/capabilities` on load.
+Shipped in PRs #67–#71 (Epic #44). The portal hides the Live Console tab automatically when the feature is off (`APP_RMUX_ENABLED` / `AIFACTORY_RMUX_ENABLED` unset), probing `GET /api/capabilities` on load.

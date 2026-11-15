@@ -95,6 +95,6 @@ and tear it down at the end:
 
 ## See also
 
-- [Testing authenticated web apps](https://github.com/olafkfreund/AIFactory/blob/dev/guides/testing-authenticated-web-apps.md)
+- [Testing authenticated web apps](https://github.com/olafkfreund/Factory/blob/main/techdocs/testing-authenticated-web-apps.md)
 - [Task Contract](../task-contract) — how the deployed URL travels to verification
 - [Configuration Reference](../configuration-reference)

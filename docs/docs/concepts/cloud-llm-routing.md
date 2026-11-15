@@ -66,9 +66,9 @@ The Claude Agent SDK has its own direct cloud path controlled by env vars:
 
 When these flags are set in the agent process environment, the Claude Agent SDK's built-in cloud integration takes over and AIFactory's LiteLLM enforcement (budget, audit, allowlist) does **not** apply to those Claude calls.
 
-**v1.1 keeps this path.** If you want LiteLLM enforcement to cover Claude-on-Bedrock or Claude-on-Vertex, set those models with the `bedrock/` or `vertex_ai/` prefix in AIFactory's model config (not via the SDK env vars). The LiteLLM gateway then mediates those calls.
+**This path stays.** If you want LiteLLM enforcement to cover Claude-on-Bedrock or Claude-on-Vertex, set those models with the `bedrock/` or `vertex_ai/` prefix in AIFactory's model config (not via the SDK env vars). The LiteLLM gateway then mediates those calls.
 
-A future release (v1.2) will close this gap via an in-process Claude wrapper that routes all Claude traffic through LiteLLM regardless of SDK flags.
+Claude calls made through the Claude Agent SDK are covered by the in-process wrapper described in [Claude Enforcement](./claude-enforcement.md), not by LiteLLM.
 
 ## Operator recipes
 
@@ -162,11 +162,11 @@ See the tenant-isolation concept doc for details on the reconciler and its confi
 
 ## Per-tenant accounting
 
-In v1.1, cost attribution happens at the **LiteLLM accounting level**: LiteLLM records spend per `team_id` (one per AIFactory organisation) against the deployment's cloud account. This means:
+Cost attribution happens at the **LiteLLM accounting level**: LiteLLM records spend per `team_id` (one per AIFactory organisation) against the deployment's cloud account. This means:
 
 - A single AWS or GCP bill covers all tenants' Bedrock/Vertex usage.
 - Per-tenant cost is visible in LiteLLM's usage dashboard, not in AWS Cost Explorer or GCP Billing per-account.
-- Cross-tenant cost isolation at the AWS/GCP-bill level (separate AWS accounts per tenant) is a v1.2 concern — it requires per-tenant AssumeRole chaining which is out of scope for #36's initial reconciler.
+- Cross-tenant cost isolation at the AWS/GCP-bill level (separate AWS accounts per tenant) is not supported: it would require per-tenant AssumeRole chaining, which is out of scope for the reconciler.
 
 Operators should communicate this trade-off to tenants who have contractual per-AWS-account cost reporting requirements.
 
