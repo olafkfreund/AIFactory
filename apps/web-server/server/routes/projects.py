@@ -876,7 +876,8 @@ class ProjectSettingsUpdate(BaseModel):
     autoPr: bool | None = Field(default=None, alias="auto_pr")
     autoMerge: bool | None = Field(default=None, alias="auto_merge")
     # Which reviewer gates the auto-merge: "aifactory" (its own Claude/Ollama
-    # review engine — no Copilot credits), "copilot", or "any". Default aifactory.
+    # review engine — no Copilot credits), "copilot", "copilot-ruleset" (Copilot
+    # gates the merge, a repo ruleset requests the review), or "any". Default aifactory.
     prReviewer: str | None = Field(default=None, alias="pr_reviewer")
     # #320: data classification; treated as "internal" when unset. A bad value is a 422.
     dataClassification: DataClassification | None = Field(  # noqa: N815
