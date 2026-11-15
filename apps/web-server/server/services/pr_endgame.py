@@ -778,8 +778,9 @@ def merge_disposition(  # noqa: PLR0913 - floor is the legacy path floor (#1697)
 # Which reviewer gates the merge. "aifactory" = AIFactory's own review engine
 # (Claude/Ollama — no Copilot credits, gated on the engine's verdict since GitHub
 # forbids self-approving the PR we opened). "copilot" = GitHub Copilot's review.
+# "copilot-ruleset" = Copilot review requested by a repository ruleset.
 # "any" = any APPROVED GitHub review. Default "aifactory".
-_VALID_REVIEWERS = {"aifactory", "copilot", "any"}
+_VALID_REVIEWERS = {"aifactory", "copilot", "copilot-ruleset", "any"}
 
 
 def resolve_pr_reviewer(project_path: Path | None = None) -> str:
@@ -870,27 +871,60 @@ def _parse_pr_number(text: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
+def _warn_copilot_unconfirmed(
+    owner: str, repo: str, pr: int, reason: str, detail: str = ""
+) -> None:
+    logger.warning(
+        "[pr-endgame] Copilot review request for %s PR #%s unconfirmed: %s%s. "
+        "The review may not arrive; the endgame will wait and then stop for a human. "
+        'Set the repository ruleset "Automatically request Copilot code review" '
+        "and reviewer value copilot-ruleset; see docs/docs/concepts/github-app.md",
+        sanitize_log(f"{owner}/{repo}"),
+        pr,
+        reason,
+        f" ({sanitize_log(detail)})" if detail else "",
+    )
+
+
 def request_copilot_review(
     owner: str, repo: str, pr: int, *, runner: Runner = _default_runner
 ) -> bool:
     """Ask GitHub Copilot to review the PR. Best-effort (never fatal)."""
-    res = runner(
-        [
-            "gh",
-            "api",
-            "--method",
-            "POST",
-            f"/repos/{owner}/{repo}/pulls/{pr}/requested_reviewers",
-            "-f",
-            f"reviewers[]={COPILOT_REVIEWER}",
-        ],
-        None,
-    )
-    if not res.ok:
-        logger.info(
-            "[pr-endgame] copilot review request not accepted: %s", res.err[:200]
+    try:
+        res = runner(
+            [
+                "gh",
+                "api",
+                "--method",
+                "POST",
+                f"/repos/{owner}/{repo}/pulls/{pr}/requested_reviewers",
+                "-f",
+                f"reviewers[]={COPILOT_REVIEWER}",
+            ],
+            None,
         )
-    return res.ok
+    except (subprocess.SubprocessError, OSError) as exc:
+        _warn_copilot_unconfirmed(
+            owner, repo, pr, "gh could not be run", type(exc).__name__
+        )
+        return False
+    if not res.ok:
+        _warn_copilot_unconfirmed(owner, repo, pr, "gh failed", res.err[:200])
+        return False
+    try:
+        answer = json.loads(res.out)
+    except ValueError:
+        answer = None
+    reviewers = answer.get("requested_reviewers") if isinstance(answer, dict) else None
+    if isinstance(reviewers, list) and any(
+        isinstance(reviewer, dict)
+        and isinstance(reviewer.get("login"), str)
+        and "copilot" in reviewer["login"].lower()
+        for reviewer in reviewers
+    ):
+        return True
+    _warn_copilot_unconfirmed(owner, repo, pr, "Copilot was not listed in the answer")
+    return False
 
 
 @dataclass
@@ -2205,7 +2239,7 @@ async def run_pr_endgame(
     # on_pr_opened (it has the review engine + project id).
     if reviewer == "copilot":
         await asyncio.to_thread(request_copilot_review, owner, name, pr, runner=runner)
-    elif on_pr_opened is not None:
+    elif reviewer != "copilot-ruleset" and on_pr_opened is not None:
         try:
             on_pr_opened(pr)
         except Exception as exc:  # noqa: BLE001
@@ -2225,7 +2259,7 @@ async def run_pr_endgame(
         repo=name,
         pr=pr,
         auto_merge=auto_merge,
-        require_copilot=(reviewer == "copilot"),
+        require_copilot=(reviewer in ("copilot", "copilot-ruleset")),
         review_fn=review_fn,
         fix_fn=fix_fn,
         conflict_fixer=conflict_fixer,
