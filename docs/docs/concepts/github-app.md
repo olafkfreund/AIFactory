@@ -208,9 +208,12 @@ A non-empty map turns on multi-installation mode, which fails closed:
 - It cannot be combined with the token for agent children
   (`agentGithubToken`); the chart and the boot check refuse both.
 - Wired: project clone, build, spec and PR-review runners, build Jobs and the
-  PR endgame. The interactive GitHub routes and the services that call
-  `gh` or git on their own have no token in this mode yet (#1700 stays open for
-  them).
+  PR endgame. No token in this mode yet (#1700 stays open for them): the
+  interactive GitHub, PR and git routes, Kubernetes spec Jobs, the PR data
+  service, Copilot dispatch, task-branch push, the merger, the shared `gh`
+  helper, and the control plane's worktree fetch for build Jobs.
+- If GitHub refuses to mint a token, the call runs without one and fails with
+  an authentication error; the server log has the cause.
 - A runner's token is fixed at spawn and lasts at least 55 minutes.
 
 Rollback: empty the map (`githubApp.orgInstallations: {}`) and restart.

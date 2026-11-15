@@ -624,3 +624,29 @@ def test_org_token_interleaved_tasks() -> None:
         await asyncio.gather(read("acme", "a"), read("globex", "b"))
 
     asyncio.run(run())
+
+
+def test_provider_mint_error_gives_no_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GITHUB_TOKEN", "ambient-1700")
+    monkeypatch.setattr(github_app, "_org_installations", {"acme": "12"})
+    monkeypatch.setattr(github_app, "_tokens", {})
+
+    def fail(_installation: str) -> tuple[str, float]:
+        raise httpx.ConnectError("down")
+
+    monkeypatch.setattr(github_app, "_mint", fail)
+    with github_app.org_github_token("acme"):
+        assert github_token() == ""
+
+
+def test_fresh_token_is_read_while_another_org_mints(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        github_app, "_tokens", {"12": ("ghs_acme_1700", time.time() + 3600)}
+    )
+    assert github_app._tokens_lock.acquire(timeout=1)  # another org is minting
+    try:
+        assert github_app.installation_token("12") == "ghs_acme_1700"
+    finally:
+        github_app._tokens_lock.release()

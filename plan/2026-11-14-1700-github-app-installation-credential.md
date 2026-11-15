@@ -139,7 +139,7 @@ Paths below are under `apps/web-server/server/` unless they start with
    `apps/backend/.venv/bin/pytest apps/web-server/tests/test_github_app.py apps/web-server/tests/test_project_registry_org.py -q -o asyncio_mode=auto`
    and `apps/backend/.venv/bin/pytest tests/test_github_env.py -q $GH_DESELECT`,
    where `GH_DESELECT` is
-   `--deselect tests/test_github_env.py::test_helper_reset_keeps_store_from_saving_token --deselect tests/test_github_env.py::test_real_gh_reads_token_without_rewriting_hosts`
+   `--deselect test_github_env.py::test_helper_reset_keeps_store_from_saving_token --deselect test_github_env.py::test_real_gh_reads_token_without_rewriting_hosts`
    (those two call the real `gh` and fail on this host on untouched code;
    CI runs them).
    Traps: `github_app.py` already imports `child_env, github_token` from
@@ -364,6 +364,30 @@ no regression.
 
 Not tested: a real second installation (needs the owner's App and a second
 account).
+
+## Deviations
+
+Recorded after the final review (Fable, Codex):
+
+- `GH_DESELECT` uses node ids relative to pytest's rootdir (`tests/`); the
+  ids first written here deselected nothing.
+- `installation_token` reads a fresh cached token without the lock, and the
+  `org_github_token` provider asks for `min_ttl=60`, not 900: a token read on
+  the event loop must not wait behind another org's mint. A block that
+  outlives its warmed token still mints inline once.
+- The provider logs a mint error and returns no token instead of raising
+  (`installation_token` itself still propagates): `github_token()` never
+  raised before, and the background PR watcher has no handler for it. The
+  endgame warm-up logs a mint error at warning level and carries on.
+- `org_id_for_path` skips registry entries that are not objects with a
+  string path.
+- The chart fails the render when `orgInstallations` is set without
+  `githubApp.enabled`.
+- `build_job_env` has a second caller, `services/spec_job_backend.py`, which
+  passes no path: Kubernetes spec Jobs get no GitHub token in the mode. The
+  docs list it with the unwired services.
+- The merge of `dev` duplicated the `agentGithubToken` block in the chart's
+  values and deployment template; the copies were removed.
 
 ## Rollback
 

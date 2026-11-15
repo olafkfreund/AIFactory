@@ -23,7 +23,7 @@ from pathlib import Path
 import httpx
 import yaml
 from core.git_credentials import use_github_token
-from jose import jwt
+from jose import JOSEError, jwt
 
 from server.utils.subprocess_env import AGENT_GITHUB_TOKEN_VAR, child_env, github_token
 
@@ -46,6 +46,8 @@ _key: str | None = None
 _org_installations: dict[str, str] = {}
 _tokens: dict[str, tuple[str, float]] = {}
 _tokens_lock = threading.Lock()
+#: What a mint can raise: HTTP, a bad id or empty reply, bad JSON, JWT signing.
+MINT_ERRORS = (httpx.HTTPError, RuntimeError, ValueError, JOSEError)
 
 
 def _valid_installation_id(value: str) -> bool:
@@ -93,9 +95,23 @@ def org_github_token(org_id: str | None) -> Iterator[None]:
         yield
         return
     installation = installation_for_org(org_id)
-    with use_github_token(
-        (lambda: installation_token(installation)) if installation else (lambda: "")
-    ):
+
+    def provider() -> str:
+        if not installation:
+            return ""
+        # Callers warm the cache in a thread first, so this is a cache read on
+        # the event loop. shortcut: a block that outlives the warmed token
+        # (>14 min) mints inline once, up to the 30 s timeout; move the reads
+        # to a thread if that shows up.
+        try:
+            return installation_token(installation, min_ttl=60)
+        except MINT_ERRORS:  # fail closed: no token, gh/git report the auth error
+            logger.warning(
+                "GitHub App token mint failed for org %s", org_id, exc_info=True
+            )
+            return ""
+
+    with use_github_token(provider):
         yield
 
 
@@ -168,6 +184,11 @@ def _mint(installation_id: str) -> tuple[str, float]:
 def installation_token(installation_id: str, *, min_ttl: int = 900) -> str:
     if not _valid_installation_id(installation_id):
         raise RuntimeError("Invalid GitHub App installation id")
+    # Fresh tokens are read without the lock, so one org's mint (HTTP under
+    # the lock) never stalls another org's read.
+    cached = _tokens.get(installation_id)
+    if cached and cached[1] - time.time() >= min_ttl:
+        return cached[0]
     with _tokens_lock:
         cached = _tokens.get(installation_id)
         if cached and cached[1] - time.time() >= min_ttl:

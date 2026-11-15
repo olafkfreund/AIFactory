@@ -146,7 +146,9 @@ def test_org_map_keeps_large_id(helm_available, chart_dir) -> None:
 
 
 @pytest.mark.helm
-@pytest.mark.parametrize("bad", [f"{_MAP}acme=12345678", f"string:{_MAP}acme=abc", f"string:{_MAP}acme=1e7"])
+@pytest.mark.parametrize(
+    "bad", [f"{_MAP}acme=12345678", f"string:{_MAP}acme=abc", f"string:{_MAP}acme=1e7"]
+)
 def test_org_map_bad_id_fails(helm_available, chart_dir, bad: str) -> None:
     assert "githubApp.orgInstallations.acme" in _render_expect_error(
         chart_dir, [_PG, *_ON, bad]
@@ -169,3 +171,9 @@ def test_org_map_float_in_values_file_fails(
 def test_org_map_with_agent_token_fails(helm_available, chart_dir) -> None:
     sets = [_PG, *_ON, f"string:{_MAP}acme=9002", "agentGithubToken.secretName=tok"]
     assert "agentGithubToken" in _render_expect_error(chart_dir, sets)
+
+
+@pytest.mark.helm
+def test_org_map_without_app_fails(helm_available, chart_dir) -> None:
+    sets = [_PG, f"string:{_MAP}acme=9002"]
+    assert "requires githubApp.enabled" in _render_expect_error(chart_dir, sets)

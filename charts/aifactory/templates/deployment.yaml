@@ -694,6 +694,8 @@ spec:
             - name: AIFACTORY_GITHUB_APP_ORG_INSTALLATIONS
               value: {{ join "," $pairs | quote }}
             {{- end }}
+            {{- else if .Values.githubApp.orgInstallations }}
+            {{- fail "githubApp.orgInstallations requires githubApp.enabled (#1700)" }}
             {{- end }}
             {{- if .Values.agentGithubToken.secretName }}
             # Narrow GitHub token for runner children and build Jobs (#1973).

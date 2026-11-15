@@ -55,3 +55,21 @@ def test_org_id_for_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
 
     registry.unlink()
     assert lookup(acme) is None
+
+
+def test_malformed_registry_entries_are_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry = tmp_path / "projects.json"
+    monkeypatch.setattr(project_registry, "get_projects_file", lambda: registry)
+    acme = tmp_path / "acme"
+    registry.write_text(
+        json.dumps(
+            {
+                "x": "not-an-object",
+                "y": {"path": 7},
+                "a": {"path": str(acme), "org_id": "acme"},
+            }
+        )
+    )
+    assert project_registry.org_id_for_path(acme) == "acme"

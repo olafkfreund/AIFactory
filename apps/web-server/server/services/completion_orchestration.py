@@ -295,7 +295,14 @@ async def run_terminal_completion(
                 )
 
                 _org = org_id_for_path(project_path)
-                await asyncio.to_thread(github_app.token_for_org, _org)
+                try:
+                    await asyncio.to_thread(github_app.token_for_org, _org)
+                except github_app.MINT_ERRORS:  # endgame runs with no token
+                    logger.warning(
+                        "GitHub App token mint failed for %s; PR endgame has no token",
+                        sanitize_log(spec_id),
+                        exc_info=True,
+                    )
 
                 with github_app.org_github_token(_org):
                     if is_auto_pr_enabled(project_path):

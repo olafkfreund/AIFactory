@@ -62,11 +62,14 @@ def org_id_for_path(project_path: str | Path | None) -> str | None:
         projects = load_projects()
     except (OSError, ValueError):
         return None
+    if not isinstance(projects, dict):
+        return None
     orgs: set[str | None] = set()
     for project in projects.values():
-        entry = project.get("path")
+        entry = project.get("path") if isinstance(project, dict) else None
         if (
-            entry
+            isinstance(entry, str)
+            and entry
             and PurePath(entry).is_absolute()
             and path.is_relative_to(PurePath(os.path.normpath(entry)))
         ):
