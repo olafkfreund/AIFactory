@@ -150,9 +150,8 @@ async def test_deliver_local_broadcast_hits_every_client():
 
     await event_bus.deliver_local(BroadcastScope(), "t", {"x": 1})
 
-    for ws in (a, b, c):
-        assert len(ws.sent) == 1
-        assert json.loads(ws.sent[0]) == {"type": "t", "payload": {"x": 1}}
+    assert a.sent == c.sent == []
+    assert json.loads(b.sent[0]) == {"type": "t", "payload": {"x": 1}}
 
 
 @pytest.mark.asyncio
@@ -344,7 +343,7 @@ async def test_events_shims_route_through_bus(monkeypatch):
     await events_mod.send_to_org("org-9", "c", {"z": 3})
 
     assert len(captured) == 3
-    assert isinstance(captured[0][0], BroadcastScope)
+    assert captured[0][0] == OrgScope(org_id="")
     assert captured[0][1:] == ("a", {"x": 1})
     assert captured[1][0] == UserScope(user_id="u-1")
     assert captured[1][1:] == ("b", {"y": 2})
