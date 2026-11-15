@@ -36,7 +36,7 @@ migration job mode, customCABundle for TLS-intercepting proxies.
 | `service` / `ingress` | Network exposure. |
 | `serviceAccount` / `rbac` | Pod identity, and the namespace-scoped Role the RFC-0016 build lane needs (`rbac.jobSandbox.enabled`, on by default — see below). |
 | `networkPolicy` | Default-deny + 443 egress allowlist. |
-| `migrations` | With `autoApply=false`, a pre-install/pre-upgrade hook Job runs `alembic upgrade head` before pods roll (no init container). The database Secret must exist before the first install: ExternalSecret- and bundled-managed Secrets are unavailable at pre-install, so pre-create it or install once with `autoApply=true`. |
+| `migrations` | With `autoApply=false`, a pre-install/pre-upgrade hook Job runs `alembic upgrade head` before pods roll (no init container). `jobActiveDeadlineSeconds` bounds the Job; `jobResources` overrides the web resources. The database Secret, custom CA Secret (`global.customCABundle.secretName`) and image pull Secrets must exist before the first install: chart-managed Secrets are unavailable at pre-install, so pre-create them or install once with `autoApply=true`. |
 | `postgres` | External (default) or bundled CNPG sub-chart. |
 | `externalSecrets` | One of: vault / aws-sm / azure-kv / gcp-sm. |
 | `oidc` | OIDC SSO settings (Epic #26 P3). |

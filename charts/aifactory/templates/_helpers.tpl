@@ -99,3 +99,14 @@ to the chart's appVersion when tag is empty.
 {{- $tag := .Values.image.tag | default .Chart.AppVersion }}
 {{- printf "%s:%s" .Values.image.repository $tag }}
 {{- end }}
+
+{{/*
+One imagePullSecrets key from both lists. Two separate `with` blocks emit
+the key twice when both are set (AIFactory#2021).
+*/}}
+{{- define "aifactory.imagePullSecrets" -}}
+{{- with concat ((.Values.global).imagePullSecrets | default list) (.Values.image.pullSecrets | default list) | uniq }}
+imagePullSecrets:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}

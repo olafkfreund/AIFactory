@@ -51,7 +51,7 @@ Pull the GitHub release page for the target version. Look for:
 - A "BREAKING" section (rare; AIFactory aims for zero between minor versions).
 - Newly-required Helm values (rare; defaults are designed to avoid this).
 - Newly-deprecated Helm values (call out the deprecation warning; you have one minor release to migrate).
-- Schema-impact notes (every release advertises whether a migration runs at startup).
+- Schema-impact notes (every release advertises whether a migration runs).
 
 ### 2. Back up Postgres
 
@@ -88,21 +88,36 @@ helm upgrade aifactory ./charts/aifactory -n aifactory \
 
 The `--wait` flag holds Helm until all Deployments reach `Available` — useful for catching crash-on-startup early.
 
-### Database migrations auto-apply at startup
+### Database migrations run in a hook Job
 
-Web pods run `alembic upgrade head` on startup before binding the HTTP server. This means:
+With the chart default (`migrations.autoApply=false`), a pre-install/pre-upgrade Job runs `alembic upgrade head` before any pod rolls. This means:
 
-- The first new pod to start carries the migration cost — typically < 10 s for typical schema changes.
-- Subsequent pods see the schema already at head and start immediately.
-- If the migration fails, the pod CrashLoopBackOff with the alembic error in `kubectl logs`, and the old pod keeps serving until the issue is resolved.
+- If the migration fails, `helm upgrade` fails and the old pods keep serving.
+- With `autoApply=true` (POC), the web pod migrates at startup as before.
+- A successful Job is deleted. A Job that failed its retries keeps its pods and logs. A Job that hit its deadline keeps only its events: Kubernetes deletes the pods.
 
-For deployments with very large `audit_logs` tables, monitor the migration time:
+Follow the migration while it runs, or read the error after a failed run:
 
 ```bash
-kubectl -n aifactory logs -f deploy/aifactory-web | grep -i alembic
+kubectl -n aifactory logs -f job/aifactory-migrations
 ```
 
-If a migration takes longer than 60 s, the next-iteration migration may be designed to run lazily (mark `op.add_column(..., server_default=...)` so the column is added instantly + populated in a separate background job). Release notes call this out per release.
+`aifactory-migrations` is the name for the release `aifactory`. Other release names and name overrides give a different name; find the Job with:
+
+```bash
+kubectl -n aifactory get jobs -l app.kubernetes.io/component=migrations
+```
+
+The Job is bounded by `migrations.jobActiveDeadlineSeconds` (300 s from Job start). The deadline covers scheduling, image pull, retries and the migration itself. For long migrations or slow image pulls, raise it together with `--timeout`; Helm's default `--timeout` is 5 minutes, so Helm may give up first. A run killed at the deadline normally rolls back (the revisions run in one transaction), so raise the value and re-run. A Job can still fail after its transaction committed, so check `alembic current` before assuming the schema is unchanged.
+
+A typical schema change takes under 10 s. If a migration takes longer than 60 s, the next-iteration migration may be designed to run lazily (mark `op.add_column(..., server_default=...)` so the column is added instantly + populated in a separate background job). Release notes call this out per release.
+
+The Job requests the web `resources` unless `migrations.jobResources` is set. A pod `Pending` for lack of capacity therefore also ends at the deadline.
+
+Notes:
+
+- An upgrade with `--reuse-values` from a chart older than this change gets no deadline until you set the value.
+- Postgres TLS with a private CA needs `sslrootcert=/etc/ssl/custom-ca/<key>` in `DATABASE_URL`.
 
 ### 5. Verify the upgrade
 
@@ -159,7 +174,7 @@ helm upgrade aifactory ./charts/aifactory -n aifactory \
 | What changed                                    | Why                                                                                     | Migration                                                                                                   |
 | ----------------------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | Local password login removed.                    | OIDC-only simplifies CC6.1 evidence; password storage is the IdP's responsibility.       | All users must log in via OIDC. The v1.0 schema removes `users.password_hash`; v0.x dumps fail to restore.   |
-| `audit_logs` gains `prev_hash` + `classification`. | Tamper-evident chain.                                                                  | Auto-applied at startup; chain "starts" at migration time for pre-existing rows.                            |
+| `audit_logs` gains `prev_hash` + `classification`. | Tamper-evident chain.                                                                  | Auto-applied by the migration hook Job (or at startup with `autoApply=true`); chain "starts" at migration time for pre-existing rows. |
 | Helm value `database.url` → `db.url`.            | Naming consistency.                                                                    | Migration script in release notes; old key warns for one release.                                            |
 
 ---
@@ -246,7 +261,9 @@ kubectl -n aifactory get pods -w
 
 Find the previous revision number with `helm history aifactory -n aifactory`.
 
-This works cleanly when the new pods never made it past the alembic startup step — the schema is unchanged, and the previous image still matches the schema.
+This works cleanly when the migration hook Job failed before committing: the schema is unchanged, and the previous image still matches the schema. A failed Job is not proof of that, so confirm the revision with `alembic current` from a debug pod first.
+
+If the hook succeeded and the new pods then failed to start, the schema is already at the new head. Use "Rollback after schema change applied" below instead.
 
 ### Rollback after schema change applied
 
@@ -282,6 +299,7 @@ This loses any audit rows + state changes that happened between the backup and t
 
 | Symptom                                                                                  | Likely cause                                                | Fix                                                                                                                  |
 | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `helm upgrade` fails on the pre-upgrade hook (`DeadlineExceeded`).                         | Watch the Job pod before the deadline (it is deleted afterwards; `kubectl describe job` and `kubectl get events` remain): missing DB Secret → `CreateContainerConfigError`; missing CA Secret → `ContainerCreating` with a `FailedMount` event; missing or wrong pull Secret → `ImagePullBackOff`; no node capacity → `Pending`; quota exceeded → no pod, `FailedCreate` event on the Job; otherwise a migration longer than the deadline. | Create the Secret, set `migrations.jobResources`, or raise `migrations.jobActiveDeadlineSeconds`.                  |
 | Alembic migration fails with "duplicate column".                                         | Previous upgrade left the column in place; alembic state out of sync. | `alembic stamp head` from a debug pod, then redo the upgrade. Investigate why alembic state drifted.                |
 | Web pod starts but `/api/health` returns 503.                                            | Some downstream (KMS, OIDC, Postgres) failed health probe.   | `kubectl logs` to see which probe failed; verify connectivity.                                                       |
 | New pod runs alongside old pod for > 10 min.                                             | `--wait` timeout reached; new pod CrashLoopBackOff.          | `kubectl describe pod` on the new pod; check probes + secrets bound.                                                 |
