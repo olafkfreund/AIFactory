@@ -19,6 +19,7 @@ tests/test_terminal_completion_characterization.py.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from datetime import UTC, datetime
@@ -281,6 +282,9 @@ async def run_terminal_completion(
             # fallback. Both default OFF; human-stop on changes-requested,
             # no-Copilot-review, or timeout.
             try:
+                from server.project_registry import org_id_for_path
+
+                from . import github_app
                 from .pr_endgame import (
                     gather_pr_context,
                     is_auto_merge_enabled,
@@ -290,269 +294,288 @@ async def run_terminal_completion(
                     verdict_from_review_result,
                 )
 
-                if is_auto_pr_enabled(project_path):
-                    ctx = gather_pr_context(
-                        project_path, spec_dir, spec_id, trusted=trusted
-                    )
-                    if ctx:
+                _org = org_id_for_path(project_path)
+                await asyncio.to_thread(github_app.token_for_org, _org)
 
-                        async def _re_test() -> None:
-                            from pfactory.tfactory_client import (
-                                maybe_auto_handoff_tfactory,
-                            )
+                with github_app.org_github_token(_org):
+                    if is_auto_pr_enabled(project_path):
+                        ctx = gather_pr_context(
+                            project_path, spec_dir, spec_id, trusted=trusted
+                        )
+                        if ctx:
 
-                            await maybe_auto_handoff_tfactory(
-                                spec_dir,
-                                spec_id,
-                                contract=handoff_contract(spec_dir, trusted),
-                                task_id=task_id,
-                            )
-
-                        def _re_test_sync() -> None:
-                            spawn(_re_test())
-
-                        # Reviewer gating (#71 Phase A). "aifactory" uses
-                        # AIFactory's own review engine (Claude/Ollama, no
-                        # Copilot credits): on PR-open, trigger the engine
-                        # and gate the merge on its stored verdict (GitHub
-                        # forbids self-approving the PR we opened).
-                        _reviewer = resolve_pr_reviewer(project_path)
-                        _proj_id = task_id.split(":", 1)[0] if ":" in task_id else ""
-                        _review_fn = None
-                        _on_pr_opened = None
-                        _fix_fn = None
-                        _conflict_fixer = None
-                        if _reviewer == "aifactory":
-                            from . import pr_endgame  # noqa: PLC0415
-                            from .pr_data_service import get_pr_data_service
-                            from .pr_endgame import ReviewState
-                            from .pr_review_service import get_pr_review_service
-
-                            _pr_box: dict = {}
-                            _wt = ctx["worktree"]
-
-                            def _on_pr_opened(prn: int) -> None:
-                                _pr_box["pr"] = prn
-                                spawn(
-                                    get_pr_review_service().start_review(
-                                        _proj_id, prn, project_path
-                                    )
+                            async def _re_test() -> None:
+                                from pfactory.tfactory_client import (
+                                    maybe_auto_handoff_tfactory,
                                 )
-                                # Back-fill the PR onto the TFactory verify task so
-                                # its triager posts the verdict to this PR — the
-                                # handoff was sent before the PR existed (#964).
-                                try:
-                                    from pfactory.tfactory_client import send_pr_attach
 
+                                await maybe_auto_handoff_tfactory(
+                                    spec_dir,
+                                    spec_id,
+                                    contract=handoff_contract(spec_dir, trusted),
+                                    task_id=task_id,
+                                )
+
+                            def _re_test_sync() -> None:
+                                spawn(_re_test())
+
+                            # Reviewer gating (#71 Phase A). "aifactory" uses
+                            # AIFactory's own review engine (Claude/Ollama, no
+                            # Copilot credits): on PR-open, trigger the engine
+                            # and gate the merge on its stored verdict (GitHub
+                            # forbids self-approving the PR we opened).
+                            _reviewer = resolve_pr_reviewer(project_path)
+                            _proj_id = (
+                                task_id.split(":", 1)[0] if ":" in task_id else ""
+                            )
+                            _review_fn = None
+                            _on_pr_opened = None
+                            _fix_fn = None
+                            _conflict_fixer = None
+                            if _reviewer == "aifactory":
+                                from . import pr_endgame  # noqa: PLC0415
+                                from .pr_data_service import get_pr_data_service
+                                from .pr_endgame import ReviewState
+                                from .pr_review_service import get_pr_review_service
+
+                                _pr_box: dict = {}
+                                _wt = ctx["worktree"]
+
+                                def _on_pr_opened(prn: int) -> None:
+                                    _pr_box["pr"] = prn
                                     spawn(
-                                        send_pr_attach(
-                                            spec_dir, spec_id, prn, ctx.get("repo")
+                                        get_pr_review_service().start_review(
+                                            _proj_id, prn, project_path
                                         )
                                     )
-                                except Exception:  # noqa: BLE001 — best-effort
-                                    logger.debug(
-                                        "tfactory PR-attach failed (best-effort)",
-                                        exc_info=True,
-                                    )
-
-                            def _review_fn() -> ReviewState:
-                                prn = _pr_box.get("pr")
-                                if not prn:
-                                    return ReviewState("pending")
-                                res = get_pr_data_service().get_review(
-                                    project_path, prn
-                                )
-                                return verdict_from_review_result(res)
-
-                            def _fix_fn(findings) -> bool:
-                                # Phase B: route review findings to the QA-fixer,
-                                # push the fix to the PR branch, then re-review.
-                                # Runs in a worker thread (no running loop), so
-                                # asyncio.run is safe. Best-effort.
-                                prn = _pr_box.get("pr")
-                                try:
-                                    import asyncio as _aio
-
-                                    from qa.correction import (
-                                        _run_fixer_bg,
-                                        apply_correction,
-                                    )
-
-                                    md = (
-                                        "## Pre-merge review findings (auto-fix)\n\n"
-                                        + "\n".join(
-                                            f"- [{(f or {}).get('severity', 'note')}] "
-                                            f"{(f or {}).get('title') or (f or {}).get('message') or f}"
-                                            for f in (findings or [])
+                                    # Back-fill the PR onto the TFactory verify task so
+                                    # its triager posts the verdict to this PR — the
+                                    # handoff was sent before the PR existed (#964).
+                                    try:
+                                        from pfactory.tfactory_client import (
+                                            send_pr_attach,
                                         )
-                                    )
 
-                                    # Run the QA-fixer TO COMPLETION (not the
-                                    # default fire-and-forget background task) so
-                                    # the fix actually lands BEFORE we push +
-                                    # re-review — otherwise we'd re-review the
-                                    # un-fixed code and waste the cycle budget.
-                                    async def _fixer_to_completion(_spec):
-                                        await _run_fixer_bg(_spec)
-                                        return {"status": "qa_fixed", "completed": True}
-
-                                    _aio.run(
-                                        apply_correction(
-                                            spec_dir,
-                                            md,
-                                            confirm=True,
-                                            fixer_fn=_fixer_to_completion,
-                                            correlation_key=f"pr-{prn}",
-                                        )
-                                    )
-                                    push = pr_endgame.push_with_lfs(
-                                        ["git", "push", "origin", "HEAD"],
-                                        "HEAD",
-                                        str(_wt),
-                                    )
-                                    if not push.ok:
-                                        logger.warning(
-                                            "[pr-endgame] fix push failed: %s",
-                                            push.err[:200],
-                                        )
-                                        return False
-                                    # Re-review the FIXED code and wait for the
-                                    # fresh result before returning, so the loop
-                                    # doesn't re-read the stale (pre-fix) verdict
-                                    # and burn a cycle. Bounded; best-effort.
-                                    if prn:
-                                        import time as _t
-
-                                        _ds = get_pr_data_service()
-                                        _before = (
-                                            (
-                                                _ds.get_review(project_path, prn) or {}
-                                            ).get("data", {})
-                                            or {}
-                                        ).get("reviewedAt")
-                                        _aio.run(
-                                            get_pr_review_service().start_review(
-                                                _proj_id, prn, project_path
+                                        spawn(
+                                            send_pr_attach(
+                                                spec_dir, spec_id, prn, ctx.get("repo")
                                             )
                                         )
-                                        for _ in range(40):  # ~6 min cap
-                                            _t.sleep(9)
-                                            _now = (
+                                    except Exception:  # noqa: BLE001 — best-effort
+                                        logger.debug(
+                                            "tfactory PR-attach failed (best-effort)",
+                                            exc_info=True,
+                                        )
+
+                                def _review_fn() -> ReviewState:
+                                    prn = _pr_box.get("pr")
+                                    if not prn:
+                                        return ReviewState("pending")
+                                    res = get_pr_data_service().get_review(
+                                        project_path, prn
+                                    )
+                                    return verdict_from_review_result(res)
+
+                                def _fix_fn(findings) -> bool:
+                                    # Phase B: route review findings to the QA-fixer,
+                                    # push the fix to the PR branch, then re-review.
+                                    # Runs in a worker thread (no running loop), so
+                                    # asyncio.run is safe. Best-effort.
+                                    prn = _pr_box.get("pr")
+                                    try:
+                                        import asyncio as _aio
+
+                                        from qa.correction import (
+                                            _run_fixer_bg,
+                                            apply_correction,
+                                        )
+
+                                        md = (
+                                            "## Pre-merge review findings (auto-fix)\n\n"
+                                            + "\n".join(
+                                                f"- [{(f or {}).get('severity', 'note')}] "
+                                                f"{(f or {}).get('title') or (f or {}).get('message') or f}"
+                                                for f in (findings or [])
+                                            )
+                                        )
+
+                                        # Run the QA-fixer TO COMPLETION (not the
+                                        # default fire-and-forget background task) so
+                                        # the fix actually lands BEFORE we push +
+                                        # re-review — otherwise we'd re-review the
+                                        # un-fixed code and waste the cycle budget.
+                                        async def _fixer_to_completion(_spec):
+                                            await _run_fixer_bg(_spec)
+                                            return {
+                                                "status": "qa_fixed",
+                                                "completed": True,
+                                            }
+
+                                        _aio.run(
+                                            apply_correction(
+                                                spec_dir,
+                                                md,
+                                                confirm=True,
+                                                fixer_fn=_fixer_to_completion,
+                                                correlation_key=f"pr-{prn}",
+                                            )
+                                        )
+                                        push = pr_endgame.push_with_lfs(
+                                            ["git", "push", "origin", "HEAD"],
+                                            "HEAD",
+                                            str(_wt),
+                                        )
+                                        if not push.ok:
+                                            logger.warning(
+                                                "[pr-endgame] fix push failed: %s",
+                                                push.err[:200],
+                                            )
+                                            return False
+                                        # Re-review the FIXED code and wait for the
+                                        # fresh result before returning, so the loop
+                                        # doesn't re-read the stale (pre-fix) verdict
+                                        # and burn a cycle. Bounded; best-effort.
+                                        if prn:
+                                            import time as _t
+
+                                            _ds = get_pr_data_service()
+                                            _before = (
                                                 (
                                                     _ds.get_review(project_path, prn)
                                                     or {}
                                                 ).get("data", {})
                                                 or {}
                                             ).get("reviewedAt")
-                                            if _now and _now != _before:
-                                                break
-                                    return True
-                                except Exception:  # noqa: BLE001
-                                    logger.debug(
-                                        "PR endgame fix_fn failed", exc_info=True
-                                    )
-                                    return False
-
-                            def _conflict_fixer(conflicted_files, wt) -> bool:
-                                # #543: resolve git conflict markers in-place via
-                                # the QA-fixer. resolve_pr_conflicts owns the
-                                # rebase/add/continue + the orchestrator owns the
-                                # push + re-review, so this only needs to make the
-                                # markers disappear. Verify none remain before
-                                # returning True (the fixer is general-purpose, so
-                                # never blindly trust it resolved them). Runs in a
-                                # worker thread (no loop), so asyncio.run is safe.
-                                from pathlib import Path as _P
-
-                                try:
-                                    import asyncio as _aio
-
-                                    from qa.correction import (
-                                        _run_fixer_bg,
-                                        apply_correction,
-                                    )
-
-                                    md = (
-                                        "## Auto-resolve merge conflicts\n\n"
-                                        "Resolve the git conflict markers "
-                                        "(<<<<<<<, =======, >>>>>>>) in these "
-                                        "files, keeping BOTH sides' intent where "
-                                        "possible. The result must contain NO "
-                                        "conflict markers:\n"
-                                        + "\n".join(f"- {f}" for f in conflicted_files)
-                                    )
-
-                                    async def _fixer_to_completion(_spec):
-                                        await _run_fixer_bg(_spec)
-                                        return {"status": "qa_fixed", "completed": True}
-
-                                    _aio.run(
-                                        apply_correction(
-                                            spec_dir,
-                                            md,
-                                            confirm=True,
-                                            fixer_fn=_fixer_to_completion,
-                                            correlation_key=f"pr-conflict-{spec_id}",
+                                            _aio.run(
+                                                get_pr_review_service().start_review(
+                                                    _proj_id, prn, project_path
+                                                )
+                                            )
+                                            for _ in range(40):  # ~6 min cap
+                                                _t.sleep(9)
+                                                _now = (
+                                                    (
+                                                        _ds.get_review(
+                                                            project_path, prn
+                                                        )
+                                                        or {}
+                                                    ).get("data", {})
+                                                    or {}
+                                                ).get("reviewedAt")
+                                                if _now and _now != _before:
+                                                    break
+                                        return True
+                                    except Exception:  # noqa: BLE001
+                                        logger.debug(
+                                            "PR endgame fix_fn failed", exc_info=True
                                         )
-                                    )
-                                except Exception:  # noqa: BLE001
-                                    logger.debug(
-                                        "PR endgame conflict_fixer failed",
-                                        exc_info=True,
-                                    )
-                                    return False
-                                # Only report resolved if NO markers remain.
-                                for rel in conflicted_files:
-                                    try:
-                                        txt = (_P(wt) / rel).read_text()
-                                    except OSError:
                                         return False
-                                    if (
-                                        "<<<<<<<" in txt
-                                        or ">>>>>>>" in txt
-                                        or "\n=======\n" in txt
-                                    ):
-                                        return False
-                                return True
 
-                        endgame = await run_pr_endgame(
-                            spec_dir=spec_dir,
-                            spec_id=spec_id,
-                            trusted=trusted,
-                            worktree=ctx["worktree"],
-                            branch=ctx["branch"],
-                            base=ctx["base"],
-                            repo=ctx["repo"],
-                            # RFC-0020 3.5: the tenant's declared host. The
-                            # endgame refuses off GitHub rather than running
-                            # `gh` against a repo that is not there.
-                            provider=ctx.get("provider", "github"),
-                            auto_merge=is_auto_merge_enabled(project_path),
-                            # RFC-0011 tier (#1158) — read by
-                            # gather_pr_context from the same
-                            # task_metadata.json it reads the base from.
-                            review_tier=ctx.get("review_tier"),
-                            # #1456 advisory rollout: what the CHANGED PATHS
-                            # say the tier should be, noted on the PR for the
-                            # human even while it may not withhold the merge.
-                            review_tier_floor=ctx.get("review_tier_floor"),
-                            reviewer=_reviewer,
-                            review_fn=_review_fn,
-                            fix_fn=_fix_fn,
-                            conflict_fixer=_conflict_fixer,
-                            on_pr_opened=_on_pr_opened,
-                            re_test=_re_test_sync,
-                        )
-                        logger.info(
-                            f"[AgentService] PR endgame for {sanitize_log(spec_id)} "
-                            f"(reviewer={sanitize_log(_reviewer)}): {sanitize_log(endgame)}"
-                        )
-                    else:
-                        logger.info(
-                            "[AgentService] PR endgame skipped for %s "
-                            "(no worktree branch / repo)",
-                            sanitize_log(spec_id),
-                        )
+                                def _conflict_fixer(conflicted_files, wt) -> bool:
+                                    # #543: resolve git conflict markers in-place via
+                                    # the QA-fixer. resolve_pr_conflicts owns the
+                                    # rebase/add/continue + the orchestrator owns the
+                                    # push + re-review, so this only needs to make the
+                                    # markers disappear. Verify none remain before
+                                    # returning True (the fixer is general-purpose, so
+                                    # never blindly trust it resolved them). Runs in a
+                                    # worker thread (no loop), so asyncio.run is safe.
+                                    from pathlib import Path as _P
+
+                                    try:
+                                        import asyncio as _aio
+
+                                        from qa.correction import (
+                                            _run_fixer_bg,
+                                            apply_correction,
+                                        )
+
+                                        md = (
+                                            "## Auto-resolve merge conflicts\n\n"
+                                            "Resolve the git conflict markers "
+                                            "(<<<<<<<, =======, >>>>>>>) in these "
+                                            "files, keeping BOTH sides' intent where "
+                                            "possible. The result must contain NO "
+                                            "conflict markers:\n"
+                                            + "\n".join(
+                                                f"- {f}" for f in conflicted_files
+                                            )
+                                        )
+
+                                        async def _fixer_to_completion(_spec):
+                                            await _run_fixer_bg(_spec)
+                                            return {
+                                                "status": "qa_fixed",
+                                                "completed": True,
+                                            }
+
+                                        _aio.run(
+                                            apply_correction(
+                                                spec_dir,
+                                                md,
+                                                confirm=True,
+                                                fixer_fn=_fixer_to_completion,
+                                                correlation_key=f"pr-conflict-{spec_id}",
+                                            )
+                                        )
+                                    except Exception:  # noqa: BLE001
+                                        logger.debug(
+                                            "PR endgame conflict_fixer failed",
+                                            exc_info=True,
+                                        )
+                                        return False
+                                    # Only report resolved if NO markers remain.
+                                    for rel in conflicted_files:
+                                        try:
+                                            txt = (_P(wt) / rel).read_text()
+                                        except OSError:
+                                            return False
+                                        if (
+                                            "<<<<<<<" in txt
+                                            or ">>>>>>>" in txt
+                                            or "\n=======\n" in txt
+                                        ):
+                                            return False
+                                    return True
+
+                            endgame = await run_pr_endgame(
+                                spec_dir=spec_dir,
+                                spec_id=spec_id,
+                                trusted=trusted,
+                                worktree=ctx["worktree"],
+                                branch=ctx["branch"],
+                                base=ctx["base"],
+                                repo=ctx["repo"],
+                                # RFC-0020 3.5: the tenant's declared host. The
+                                # endgame refuses off GitHub rather than running
+                                # `gh` against a repo that is not there.
+                                provider=ctx.get("provider", "github"),
+                                auto_merge=is_auto_merge_enabled(project_path),
+                                # RFC-0011 tier (#1158) — read by
+                                # gather_pr_context from the same
+                                # task_metadata.json it reads the base from.
+                                review_tier=ctx.get("review_tier"),
+                                # #1456 advisory rollout: what the CHANGED PATHS
+                                # say the tier should be, noted on the PR for the
+                                # human even while it may not withhold the merge.
+                                review_tier_floor=ctx.get("review_tier_floor"),
+                                reviewer=_reviewer,
+                                review_fn=_review_fn,
+                                fix_fn=_fix_fn,
+                                conflict_fixer=_conflict_fixer,
+                                on_pr_opened=_on_pr_opened,
+                                re_test=_re_test_sync,
+                            )
+                            logger.info(
+                                f"[AgentService] PR endgame for {sanitize_log(spec_id)} "
+                                f"(reviewer={sanitize_log(_reviewer)}): {sanitize_log(endgame)}"
+                            )
+                        else:
+                            logger.info(
+                                "[AgentService] PR endgame skipped for %s "
+                                "(no worktree branch / repo)",
+                                sanitize_log(spec_id),
+                            )
             except Exception:
                 logger.debug("PR endgame failed (best-effort)", exc_info=True)
 
@@ -562,8 +585,6 @@ async def run_terminal_completion(
             # `awaiting_merge`; otherwise it pushes the branch and opens the
             # PR. Runs after the endgame on purpose, never instead of it.
             try:
-                import asyncio  # noqa: PLC0415
-
                 from .merger import process_one  # noqa: PLC0415
 
                 landed = await asyncio.to_thread(

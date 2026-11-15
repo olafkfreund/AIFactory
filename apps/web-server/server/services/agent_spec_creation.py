@@ -232,7 +232,9 @@ class SpecCreationMixin:
         # Set environment — scrub ANTHROPIC_API_KEY so spawned subprocesses
         # can never silently bill the direct-API account (OAuth-only policy;
         # see apps/backend/core/auth.py).
-        env = make_subprocess_env(github=True)
+        env = await asyncio.to_thread(
+            make_subprocess_env, github=True, project_path=project_path
+        )
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
         # Run Claude in non-interactive mode - bypass permission prompts

@@ -98,6 +98,7 @@ copies. The Job now gets them from its image. See ``_inject_build_path``.
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
 import logging
@@ -351,7 +352,9 @@ _PASSTHROUGH_BUILD_ENV: tuple[str, ...] = (
 )
 
 
-def build_job_env(oauth_token: str | None) -> dict[str, str]:
+def build_job_env(
+    oauth_token: str | None, project_path: str | Path | None = None
+) -> dict[str, str]:
     """Resolve the env the build Job container needs (#671 OAuth-env defect).
 
     Mirrors the in-pod env construction so the Job behaves like the in-pod build:
@@ -370,12 +373,14 @@ def build_job_env(oauth_token: str | None) -> dict[str, str]:
         val = os.environ.get(name)
         if val:  # only propagate real values; never empty placeholders
             env[name] = val
-    github = runner_github_env()
+    from . import github_app  # noqa: PLC0415
+
+    github = runner_github_env(project_path)
     # With the narrow token every GitHub name is set, so a .env in the Job
     # cannot add another value; without it the Job gets the two names it always got.
     env.update(
         github
-        if agent_github_token()
+        if not github_app.multi_installation() and agent_github_token()
         else {name: val for name, val in github.items() if name in GITHUB_KEEP}
     )
     if oauth_token:
@@ -1341,7 +1346,7 @@ class KubeJobBuildBackend:
 
         await stamp_spawn(spec_dir_for(project_path, spec_id), "kubejob")
 
-        extra_env = build_job_env(oauth_token)
+        extra_env = await asyncio.to_thread(build_job_env, oauth_token, project_path)
         from . import project_settings_store  # noqa: PLC0415
         from .trusted_contract import spawn_env  # noqa: PLC0415
 

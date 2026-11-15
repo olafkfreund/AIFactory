@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import os
 import subprocess
 import sys
@@ -753,8 +754,15 @@ def test_subprocess_env_callers_are_explicit() -> None:
             node
             for node in ast.walk(ast.parse(path.read_text()))
             if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "make_subprocess_env"
+            and (
+                isinstance(node.func, ast.Name)
+                and node.func.id == "make_subprocess_env"
+                or isinstance(node.func, ast.Attribute)
+                and node.func.attr == "to_thread"
+                and node.args
+                and isinstance(node.args[0], ast.Name)
+                and node.args[0].id == "make_subprocess_env"
+            )
         ]
         if found:
             calls[path.name] = [
@@ -765,6 +773,17 @@ def test_subprocess_env_callers_are_explicit() -> None:
                 ]
                 for node in found
             ]
+            if path.name in {
+                "agent_service.py",
+                "agent_spec_creation.py",
+                "pr_review_service.py",
+            }:
+                assert all(
+                    isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "to_thread"
+                    and any(kw.arg == "project_path" for kw in node.keywords)
+                    for node in found
+                )
     assert calls == {
         "agent_service.py": [[("github", True)]],
         "agent_spec_creation.py": [[("github", True)]],
@@ -773,3 +792,46 @@ def test_subprocess_env_callers_are_explicit() -> None:
         "clarification_service.py": [[]],
         "insights_service.py": [[]],
     }
+
+
+def test_runner_github_env_uses_bound_org_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server import project_registry
+    from server.services import github_app
+
+    registry = tmp_path / "projects.json"
+    project = tmp_path / "acme"
+    unbound = tmp_path / "other"
+    registry.write_text(
+        json.dumps(
+            {
+                "a": {"path": str(project), "org_id": "acme"},
+                "b": {"path": str(unbound), "org_id": "other"},
+            }
+        )
+    )
+    monkeypatch.setattr(project_registry, "get_projects_file", lambda: registry)
+    monkeypatch.setattr(github_app, "multi_installation", lambda: True)
+    calls: list[tuple[str | None, int]] = []
+
+    def token_for_org(org: str | None, *, min_ttl: int = 900) -> str | None:
+        calls.append((org, min_ttl))
+        return "ghs_acme_1700" if org == "acme" else None
+
+    monkeypatch.setattr(github_app, "token_for_org", token_for_org)
+    for name in (*GITHUB_KEEP, "GITHUB_PERSONAL_ACCESS_TOKEN"):
+        monkeypatch.setenv(name, f"ambient-{name}")
+    monkeypatch.setenv(AGENT_GITHUB_TOKEN_VAR, "agent-secret-1700")
+    names = (*GITHUB_KEEP, "GITHUB_PERSONAL_ACCESS_TOKEN")
+    bound = make_subprocess_env(github=True, project_path=project)
+    assert {name: bound[name] for name in names} == dict.fromkeys(
+        names, "ghs_acme_1700"
+    )
+    assert not any(
+        "ambient-" in value or "agent-secret-1700" in value for value in bound.values()
+    )
+    for path in (unbound, tmp_path / "missing", None):
+        env = make_subprocess_env(github=True, project_path=path)
+        assert all(name not in env for name in names)
+    assert calls == [("acme", 3300), ("other", 3300), (None, 3300), (None, 3300)]

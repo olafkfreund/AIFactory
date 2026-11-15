@@ -256,7 +256,9 @@ class PRReviewService:
         # Set up environment — scrub ANTHROPIC_API_KEY (OAuth-only policy).
         from ..utils.subprocess_env import make_subprocess_env
 
-        env = make_subprocess_env(github=True)
+        env = await asyncio.to_thread(
+            make_subprocess_env, github=True, project_path=project_path
+        )
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
 

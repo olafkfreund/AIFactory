@@ -350,15 +350,15 @@ def test_web_server_has_no_env_token_path() -> None:
     allowed = {
         (
             "apps/web-server/server/utils/subprocess_env.py",
-            "def runner_github_env() -> dict[str, str]:",
+            "def runner_github_env(project_path: str | Path | None = None) -> dict[str, str]:",
         ),
         (
             "apps/web-server/server/utils/subprocess_env.py",
-            "env.update(runner_github_env())",
+            "env.update(runner_github_env(project_path))",
         ),
         (
             "apps/web-server/server/services/build_backend.py",
-            "github = runner_github_env()",
+            "github = runner_github_env(project_path)",
         ),
         (
             "apps/backend/core/git_credentials.py",
