@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2021
 intent: intent/2026-11-15-2021-harden-alembic-hook-job.md
 ---
