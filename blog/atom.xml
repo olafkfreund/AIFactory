@@ -2,12 +2,152 @@
 <feed xmlns="http://www.w3.org/2005/Atom">
     <id>https://aifactory.freundcloud.com/blog</id>
     <title>AIFactory Blog</title>
-    <updated>2026-08-10T00:00:00.000Z</updated>
+    <updated>2026-11-15T00:00:00.000Z</updated>
     <generator>https://github.com/jpmonette/feed</generator>
     <link rel="alternate" href="https://aifactory.freundcloud.com/blog"/>
     <subtitle>Governed, auditable, self-hostable autonomous coding.</subtitle>
     <icon>https://aifactory.freundcloud.com/img/favicon.ico</icon>
     <rights>Copyright © 2026 AIFactory contributors.</rights>
+    <entry>
+        <title type="html"><![CDATA[What shipped in AIFactory, August to November 2026]]></title>
+        <id>https://aifactory.freundcloud.com/blog/what-shipped-august-to-november</id>
+        <link href="https://aifactory.freundcloud.com/blog/what-shipped-august-to-november"/>
+        <updated>2026-11-15T00:00:00.000Z</updated>
+        <summary type="html"><![CDATA[Auto-merge gated on evidence, and the coding agent treated as untrusted. Releases v3.6.74 to v3.10.16, with the opt-in flags and behaviour changes stated.]]></summary>
+        <content type="html"><![CDATA[<p>AIFactory has shipped releases from
+<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.6.74" target="_blank" rel="noopener noreferrer" class="">v3.6.74</a> (2026-08-18) to <a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.16" target="_blank" rel="noopener noreferrer" class="">v3.10.16</a> (2026-10-31); the
+<a href="https://github.com/olafkfreund/AIFactory/releases" target="_blank" rel="noopener noreferrer" class="">release list</a> has the notes.
+Nothing has been tagged since. Several 3.10.x releases are marked as behaviour
+changes for operators, and this post says so where it matters. Work that is
+only on <code>dev</code> is at the end, under "In progress".</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="auto-merge-gated-on-evidence">Auto-merge gated on evidence<a href="https://aifactory.freundcloud.com/blog/what-shipped-august-to-november#auto-merge-gated-on-evidence" class="hash-link" aria-label="Direct link to Auto-merge gated on evidence" title="Direct link to Auto-merge gated on evidence" translate="no">​</a></h2>
+<ul>
+<li class="">A verified task auto-merges only on a TFactory verdict plus green host CI
+that AIFactory fetches itself for the exact head commit. A host without
+<code>TFACTORY_BASE_URL</code>, or a repo without CI, never auto-merges a verified task
+and times out to a human after 20 minutes
+(<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.0" target="_blank" rel="noopener noreferrer" class="">v3.10.0</a>, <a href="https://github.com/olafkfreund/AIFactory/issues/1695" target="_blank" rel="noopener noreferrer" class="">#1695</a>).</li>
+<li class="">Tasks with no signed contract go through the same gate. This is breaking for
+projects without TFactory or without CI, whose tasks no longer auto-merge
+(<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.3" target="_blank" rel="noopener noreferrer" class="">v3.10.3</a>, <a href="https://github.com/olafkfreund/AIFactory/issues/1697" target="_blank" rel="noopener noreferrer" class="">#1697</a>).</li>
+<li class="">The merge gate acts only on the contract PFactory signed, stored server-side.
+A trusted task auto-merges only if it was built as a Job (<code>kubejob</code>, with
+<code>DATABASE_URL</code>), and the server-side <code>trusted_contracts</code> table needs an Alembic
+migration. The notes say auto-merge is held for all other hosts
+(<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.9.0" target="_blank" rel="noopener noreferrer" class="">v3.9.0</a>, <a href="https://github.com/olafkfreund/AIFactory/issues/1667" target="_blank" rel="noopener noreferrer" class="">#1667</a>).</li>
+<li class="">A task whose contract declares a production target or high risk class is held
+for a human, and so is a task with an unreadable contract
+(<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.8.1" target="_blank" rel="noopener noreferrer" class="">v3.8.1</a>, <a href="https://github.com/olafkfreund/AIFactory/issues/1658" target="_blank" rel="noopener noreferrer" class="">#1658</a>).</li>
+<li class="">A <code>human-approval</code> gate clears only on a GitHub review that approves the head
+commit, from someone other than the PR author and not a bot. Until AIFactory
+has its own bot identity, such tasks merge by hand
+(<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.9.0" target="_blank" rel="noopener noreferrer" class="">v3.9.0</a>, <a href="https://github.com/olafkfreund/AIFactory/issues/1663" target="_blank" rel="noopener noreferrer" class="">#1663</a>). The optional GitHub App identity
+(<code>AIFACTORY_GITHUB_APP_*</code>) is off unless configured
+(<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.0" target="_blank" rel="noopener noreferrer" class="">v3.10.0</a>, <a href="https://github.com/olafkfreund/AIFactory/issues/1671" target="_blank" rel="noopener noreferrer" class="">#1671</a>).</li>
+</ul>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="the-coding-agent-is-treated-as-untrusted">The coding agent is treated as untrusted<a href="https://aifactory.freundcloud.com/blog/what-shipped-august-to-november#the-coding-agent-is-treated-as-untrusted" class="hash-link" aria-label="Direct link to The coding agent is treated as untrusted" title="Direct link to The coding agent is treated as untrusted" translate="no">​</a></h2>
+<ul>
+<li class="">The web server sets itself non-dumpable so in-pod agents cannot read
+<code>/proc/1/environ</code>
+(<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.8.3" target="_blank" rel="noopener noreferrer" class="">v3.8.3</a>, <a href="https://github.com/olafkfreund/AIFactory/issues/1679" target="_blank" rel="noopener noreferrer" class="">#1679</a>).</li>
+<li class="">Non-Claude agent CLIs (Codex, Gemini/Antigravity, Copilot, OpenCode) and the
+Ollama/OpenAI-compatible tool loops start with scrubbed environments plus only
+their own key
+(<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.0" target="_blank" rel="noopener noreferrer" class="">v3.10.0</a>, <a href="https://github.com/olafkfreund/AIFactory/issues/1692" target="_blank" rel="noopener noreferrer" class="">#1692</a>). Each spawn gets a private 0700
+HOME and an allowlist, which is a behaviour change: operators add names
+through <code>AIFACTORY_AGENT_ENV_EXTRA</code> (<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.3" target="_blank" rel="noopener noreferrer" class="">v3.10.3</a>, <a href="https://github.com/olafkfreund/AIFactory/issues/1762" target="_blank" rel="noopener noreferrer" class="">#1762</a>).
+The notes list an open gap: on local runners the same-uid <code>/proc</code> window stays
+open (<a href="https://github.com/olafkfreund/AIFactory/issues/1724" target="_blank" rel="noopener noreferrer" class="">#1724</a>).</li>
+<li class="">Server-side git is pinned against agent-written config (hooks, fsmonitor,
+credential helper, filters) (<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.0" target="_blank" rel="noopener noreferrer" class="">v3.10.0</a>, <a href="https://github.com/olafkfreund/AIFactory/issues/1689" target="_blank" rel="noopener noreferrer" class="">#1689</a>).</li>
+<li class="">The Bash allowlist parser checks commands hidden in wrappers, redirects,
+heredocs and runner prefixes, and fails closed on non-literal command words
+(<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.0" target="_blank" rel="noopener noreferrer" class="">v3.10.0</a>, <a href="https://github.com/olafkfreund/AIFactory/issues/1720" target="_blank" rel="noopener noreferrer" class="">#1720</a>).</li>
+<li class="">Each run gate is read once into a frozen snapshot before the first agent
+session. The notes say cross-run persistence is not closed
+(<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.16" target="_blank" rel="noopener noreferrer" class="">v3.10.16</a>, <a href="https://github.com/olafkfreund/AIFactory/issues/1986" target="_blank" rel="noopener noreferrer" class="">#1986</a>).</li>
+</ul>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="identity-access-control-and-audit">Identity, access control and audit<a href="https://aifactory.freundcloud.com/blog/what-shipped-august-to-november#identity-access-control-and-audit" class="hash-link" aria-label="Direct link to Identity, access control and audit" title="Direct link to Identity, access control and audit" translate="no">​</a></h2>
+<ul>
+<li class=""><code>acw_</code> API keys authenticate for the first time (before, every real key
+failed), with checks for expiry, owner status, role cap and org binding
+(<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.12" target="_blank" rel="noopener noreferrer" class="">v3.10.12</a>, <a href="https://github.com/olafkfreund/AIFactory/issues/1914" target="_blank" rel="noopener noreferrer" class="">#1914</a>).</li>
+<li class="">Remote MCP authorizes each tool call as the calling key, and stays off by
+default (<code>AIFACTORY_MCP_REMOTE_ENABLED</code>)
+(<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.12" target="_blank" rel="noopener noreferrer" class="">v3.10.12</a>, <a href="https://github.com/olafkfreund/AIFactory/issues/1917" target="_blank" rel="noopener noreferrer" class="">#1917</a>).</li>
+<li class="">OIDC ID-token <code>iss</code>, <code>aud</code> and <code>exp</code> are enforced and HS256 and <code>alg=none</code> are
+refused. The ID token <code>iss</code> must match <code>APP_OIDC_ISSUER_URL</code>, which the notes
+call an operator-facing change
+(<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.14" target="_blank" rel="noopener noreferrer" class="">v3.10.14</a>, <a href="https://github.com/olafkfreund/AIFactory/issues/1957" target="_blank" rel="noopener noreferrer" class="">#1957</a>).</li>
+<li class="">Authorization denials and gate rejections are committed to the audit chain
+instead of being rolled back with the request
+(<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.13" target="_blank" rel="noopener noreferrer" class="">v3.10.13</a>, <a href="https://github.com/olafkfreund/AIFactory/issues/1936" target="_blank" rel="noopener noreferrer" class="">#1936</a>).</li>
+</ul>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="data-protection">Data protection<a href="https://aifactory.freundcloud.com/blog/what-shipped-august-to-november#data-protection" class="hash-link" aria-label="Direct link to Data protection" title="Direct link to Data protection" translate="no">​</a></h2>
+<ul>
+<li class="">Outbound PII scrubbing is on by default and fails closed. Only the built-in
+high-precision set (hyphenated SSN, email, US phone, Luhn-valid cards) is
+scrubbed outbound (<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.6.75" target="_blank" rel="noopener noreferrer" class="">v3.6.75</a>, <a href="https://github.com/olafkfreund/AIFactory/issues/320" target="_blank" rel="noopener noreferrer" class="">#320</a>).</li>
+<li class="">A project <code>dataClassification</code> of <code>regulated</code> always scrubs outbound, and the
+kill-switch is ignored (<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.8" target="_blank" rel="noopener noreferrer" class="">v3.10.8</a>, <a href="https://github.com/olafkfreund/AIFactory/issues/1862" target="_blank" rel="noopener noreferrer" class="">#1862</a>).
+Direct <code>claude --print</code> spawns were covered in the next release
+(<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.9" target="_blank" rel="noopener noreferrer" class="">v3.10.9</a>, <a href="https://github.com/olafkfreund/AIFactory/issues/1870" target="_blank" rel="noopener noreferrer" class="">#1870</a>).</li>
+</ul>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="build-quality-qa-gates-and-evidence">Build quality: QA, gates and evidence<a href="https://aifactory.freundcloud.com/blog/what-shipped-august-to-november#build-quality-qa-gates-and-evidence" class="hash-link" aria-label="Direct link to Build quality: QA, gates and evidence" title="Direct link to Build quality: QA, gates and evidence" translate="no">​</a></h2>
+<ul>
+<li class="">QA no longer signs off a build that produced nothing: approval needs a commit
+not yet on origin or an uncommitted change
+(<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.6.75" target="_blank" rel="noopener noreferrer" class="">v3.6.75</a>, <a href="https://github.com/olafkfreund/AIFactory/issues/1396" target="_blank" rel="noopener noreferrer" class="">#1396</a>).</li>
+<li class="">QA refuses sign-off when the spec enumerates an API the build did not export,
+and the enumerated API reaches the coder as a hard requirement
+(<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.6.79" target="_blank" rel="noopener noreferrer" class="">v3.6.79</a>, <a href="https://github.com/olafkfreund/AIFactory/issues/1429" target="_blank" rel="noopener noreferrer" class="">#1429</a>).</li>
+<li class="">Test evidence is scoped per subtask and must touch the deliverable
+(<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.6.75" target="_blank" rel="noopener noreferrer" class="">v3.6.75</a>, <a href="https://github.com/olafkfreund/AIFactory/issues/1187" target="_blank" rel="noopener noreferrer" class="">#1187</a>).</li>
+<li class="">An opt-in repo lint gate (<code>AIFACTORY_REPO_LINT_GATE=1</code>) runs the repo's CI
+linters that have a curated command. It is off by default because it can fail
+builds that pass today (<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.3" target="_blank" rel="noopener noreferrer" class="">v3.10.3</a>, <a href="https://github.com/olafkfreund/AIFactory/issues/1742" target="_blank" rel="noopener noreferrer" class="">#1742</a>).</li>
+<li class="">Apply-correction requires a <code>triage</code> block by default
+(<code>APP_REQUIRE_CORRECTION_TRIAGE</code>)
+(<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.9" target="_blank" rel="noopener noreferrer" class="">v3.10.9</a>, <a href="https://github.com/olafkfreund/AIFactory/issues/1872" target="_blank" rel="noopener noreferrer" class="">#1872</a>).</li>
+</ul>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="models-and-operations">Models and operations<a href="https://aifactory.freundcloud.com/blog/what-shipped-august-to-november#models-and-operations" class="hash-link" aria-label="Direct link to Models and operations" title="Direct link to Models and operations" translate="no">​</a></h2>
+<ul>
+<li class="">Opus 5.5 is the flagship for spec, planning and QA, and Sonnet 5 codes. The
+notes say the Opus 5.5 pricing is provisional
+(<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.8.0" target="_blank" rel="noopener noreferrer" class="">v3.8.0</a>).</li>
+<li class="">Build Jobs declare an ephemeral-storage limit, and a crashed dispatch no
+longer leaks a concurrency slot
+(<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.7.0" target="_blank" rel="noopener noreferrer" class="">v3.7.0</a>, <a href="https://github.com/olafkfreund/AIFactory/issues/1606" target="_blank" rel="noopener noreferrer" class="">#1606</a>). Postgres pools are capped at 2+2
+connections per pod (<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.15" target="_blank" rel="noopener noreferrer" class="">v3.10.15</a>, <a href="https://github.com/olafkfreund/AIFactory/issues/1971" target="_blank" rel="noopener noreferrer" class="">#1971</a>).</li>
+<li class="">The model gateway image is published, but the notes state nothing deploys it
+(<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.12" target="_blank" rel="noopener noreferrer" class="">v3.10.12</a>, <a href="https://github.com/olafkfreund/AIFactory/issues/1912" target="_blank" rel="noopener noreferrer" class="">#1912</a>).</li>
+<li class="">Completion events use the correlation key <code>&lt;repo&gt;#&lt;n&gt;</code>, and
+<code>af-&lt;project_id&gt;:&lt;spec_id&gt;</code> where no repo is known. This changed twice, and
+the notes list behaviour changes for tasks in flight
+(<a href="https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.15" target="_blank" rel="noopener noreferrer" class="">v3.10.15</a>, <a href="https://github.com/olafkfreund/AIFactory/issues/1966" target="_blank" rel="noopener noreferrer" class="">#1966</a>).</li>
+</ul>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="in-progress">In progress<a href="https://aifactory.freundcloud.com/blog/what-shipped-august-to-november#in-progress" class="hash-link" aria-label="Direct link to In progress" title="Direct link to In progress" translate="no">​</a></h2>
+<p>Merged to <code>dev</code> and in no release; 33 commits ahead of <code>main</code> at the time of
+writing:</p>
+<ul>
+<li class="">Spec creation as a Kubernetes Job, behind <code>AIFACTORY_SPEC_BACKEND</code>
+(<a href="https://github.com/olafkfreund/AIFactory/issues/2026" target="_blank" rel="noopener noreferrer" class="">#2026</a>).</li>
+<li class="">Per-org GitHub App installation tokens (<a href="https://github.com/olafkfreund/AIFactory/issues/2039" target="_blank" rel="noopener noreferrer" class="">#2039</a>).</li>
+<li class=""><code>/ws/events</code> confined to the caller's orgs, and scoped <code>acw_</code> keys on
+WebSocket (<a href="https://github.com/olafkfreund/AIFactory/issues/2027" target="_blank" rel="noopener noreferrer" class="">#2027</a>, <a href="https://github.com/olafkfreund/AIFactory/issues/2017" target="_blank" rel="noopener noreferrer" class="">#2017</a>).</li>
+<li class="">Keeping the control plane's GitHub token out of agent children
+(<a href="https://github.com/olafkfreund/AIFactory/issues/2030" target="_blank" rel="noopener noreferrer" class="">#2030</a>).</li>
+</ul>]]></content>
+        <author>
+            <name>Olaf Krasicki-Freund</name>
+            <uri>https://github.com/olafkfreund</uri>
+        </author>
+        <category label="ai-coding" term="ai-coding"/>
+        <category label="security" term="security"/>
+        <category label="compliance" term="compliance"/>
+        <category label="kubernetes" term="kubernetes"/>
+        <category label="autonomous" term="autonomous"/>
+    </entry>
     <entry>
         <title type="html"><![CDATA[The builder stopped reporting work it had not done]]></title>
         <id>https://aifactory.freundcloud.com/blog/the-builder-stopped-reporting-work-it-had-not-done</id>
