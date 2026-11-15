@@ -39,6 +39,7 @@ from .agent_skill_context import SkillContextMixin
 from .agent_spec_creation import SpecCreationMixin
 from .agent_worktree_sync import WorktreeSyncMixin
 from .build_backend import GatedTaskRefusedError, subprocess_gate_refusal
+from .spec_job_backend import SpecJobProcess
 
 # subprocess_env adds apps/backend to sys.path before this import.
 # isort: split
@@ -1337,12 +1338,13 @@ class AgentService(
             spec_id,
         )
         worktree_spec_dir.mkdir(parents=True, exist_ok=True)
-        log_writer = TaskLogWriter(worktree_spec_dir)
+        _log_pid = task_id.split(":", 1)[0] if ":" in task_id else None
+        log_writer = TaskLogWriter(worktree_spec_dir, _log_pid)
 
         # Also write to main spec dir for immediate visibility
         main_spec_dir = spec_dir_for(project_path, spec_id)
         main_spec_dir.mkdir(parents=True, exist_ok=True)
-        main_log_writer = TaskLogWriter(main_spec_dir)
+        main_log_writer = TaskLogWriter(main_spec_dir, _log_pid)
 
         # Store log writers for cleanup
         self._task_log_writers[task_id] = (log_writer, main_log_writer)
@@ -1399,7 +1401,9 @@ class AgentService(
         return proc
 
     @staticmethod
-    def _signal_process_tree(proc: "asyncio.subprocess.Process", sig: int) -> None:
+    def _signal_process_tree(
+        proc: "asyncio.subprocess.Process | SpecJobProcess", sig: int
+    ) -> None:
         """Send ``sig`` to the whole process group, falling back to the proc.
 
         Builds are spawned with start_new_session=True, so the run.py pid leads a
@@ -1407,6 +1411,10 @@ class AgentService(
         Signalling the group terminates the entire tree; without this the children
         orphan and the build keeps running after a stop (the stop-resistance bug).
         """
+        if isinstance(proc, SpecJobProcess):
+            # A spec Job has no pid or process group; this deletes the Job (#1932).
+            proc.send_signal(sig)
+            return
         pid = getattr(proc, "pid", None)
         if pid is None:
             return

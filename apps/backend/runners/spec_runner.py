@@ -240,6 +240,10 @@ Examples:
 
     args = parser.parse_args()
 
+    from core.workspace_fetch import maybe_unpack_workspace  # noqa: PLC0415
+
+    maybe_unpack_workspace(args.project_dir)
+
     # Handle task from file if provided
     task_description = args.task
     if args.task_file:
@@ -333,6 +337,10 @@ Examples:
             "Spec creation succeeded",
             spec_dir=str(orchestrator.spec_dir),
         )
+
+        from core.workspace_fetch import maybe_push_spec_files  # noqa: PLC0415
+
+        maybe_push_spec_files(orchestrator.spec_dir)
 
         # Auto-start build unless --no-build is specified
         if not args.no_build:

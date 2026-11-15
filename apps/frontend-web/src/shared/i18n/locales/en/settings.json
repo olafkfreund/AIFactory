@@ -297,6 +297,8 @@
   "projectSections": {
     "general": {
       "title": "General",
+      "prReviewerCopilotRuleset": "GitHub Copilot (requested by ruleset)",
+      "prReviewerCopilotRulesetHelp": "Copilot (ruleset) also waits for Copilot's review but sends no request: the repository needs a ruleset that requests Copilot review.",
       "description": "Auto-Build and agent config",
       "useClaudeMd": "Use CLAUDE.md",
       "useClaudeMdDescription": "Include CLAUDE.md instructions in agent context"

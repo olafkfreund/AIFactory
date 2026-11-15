@@ -716,7 +716,8 @@ class KubejobMixin:
         try:
             spec_dir = spec_dir_for(project_path, spec_id)
             spec_dir.mkdir(parents=True, exist_ok=True)
-            writer = TaskLogWriter(spec_dir)
+            project_id = task_id.split(":", 1)[0] if ":" in task_id else None
+            writer = TaskLogWriter(spec_dir, project_id)
             writer.set_phase_status(spec_id, TaskPhase.PLANNING, "active")
         except Exception:  # noqa: BLE001 - reporting must not break the build
             _log.warning(

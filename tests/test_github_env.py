@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+_REQ = type("Req", (), {"state": type("State", (), {"user": None})()})()
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "apps" / "backend"))
 sys.path.insert(0, str(_ROOT / "apps" / "web-server"))
@@ -395,7 +396,7 @@ async def test_login_route_spawns_nothing_when_token_set() -> None:
         patch("server.routes.github.shutil.which", return_value="/usr/bin/gh"),
         patch("server.routes.github.asyncio.create_subprocess_exec", spawn),
     ):
-        r = await github_routes.start_github_auth()  # type: ignore[no-untyped-call]
+        r = await github_routes.start_github_auth(_REQ)  # type: ignore[no-untyped-call]
     assert r["data"]["success"] is True
     assert "GITHUB_TOKEN" in r["data"]["message"]
     spawn.assert_not_awaited()
@@ -422,7 +423,7 @@ async def test_login_route_uses_managed_gh_config_dir(
         patch("server.routes.github.shutil.which", return_value="/usr/bin/gh"),
         patch("server.routes.github.asyncio.create_subprocess_exec", spawn),
     ):
-        await github_routes.start_github_auth()  # type: ignore[no-untyped-call]
+        await github_routes.start_github_auth(_REQ)  # type: ignore[no-untyped-call]
     assert seen[0]["GH_CONFIG_DIR"] == str(tmp_path / "aif-gh")
     assert "--insecure-storage" in argvs[0]  # token lands in the managed hosts.yml
 
@@ -487,7 +488,7 @@ async def test_already_authenticated_exit_publishes_before_success(
         patch("server.routes.github.shutil.which", return_value="/usr/bin/gh"),
         patch("server.routes.github.asyncio.create_subprocess_exec", spawn),
     ):
-        r = await github_routes.start_github_auth()  # type: ignore[no-untyped-call]
+        r = await github_routes.start_github_auth(_REQ)  # type: ignore[no-untyped-call]
     assert r["data"]["message"] == "Already authenticated with GitHub."
     assert seen == [None], "load_web_login must run before success is set"
     assert github_routes._gh_auth_status == {"complete": True, "success": True}

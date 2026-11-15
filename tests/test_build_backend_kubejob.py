@@ -467,6 +467,17 @@ def test_build_job_env_forwards_gate_env(monkeypatch: pytest.MonkeyPatch) -> Non
     assert "AIFACTORY_DATA_ROOT" not in env
 
 
+def test_build_job_env_forwards_commit_trailers_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Factory#1960: the safety-net and wave commits run in the Job and read the flag."""
+    for var in bb._PASSTHROUGH_BUILD_ENV:
+        monkeypatch.delenv(var, raising=False)
+    assert "AIFACTORY_AGENT_COMMIT_TRAILERS" not in bb.build_job_env("t")
+    monkeypatch.setenv("AIFACTORY_AGENT_COMMIT_TRAILERS", "1")
+    assert bb.build_job_env("t")["AIFACTORY_AGENT_COMMIT_TRAILERS"] == "1"
+
+
 def test_build_job_env_propagates_non_claude_provider_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

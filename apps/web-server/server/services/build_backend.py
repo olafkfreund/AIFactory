@@ -302,6 +302,8 @@ _PASSTHROUGH_BUILD_ENV: tuple[str, ...] = (
     "AIFACTORY_SANDBOX_NETWORK",
     # #1742: opt-in repo lint gates run in this Job's trailing gate.
     "AIFACTORY_REPO_LINT_GATE",
+    # Factory#1960: the safety-net and wave commits run in this Job (commit_trailers.py).
+    "AIFACTORY_AGENT_COMMIT_TRAILERS",
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_MODEL",
@@ -635,7 +637,10 @@ def _init_container_security_context(run_as_user: int) -> dict[str, Any]:
     }
 
 
-def _inject_seed_creds(manifest: dict[str, Any]) -> dict[str, Any]:
+def _inject_seed_creds(
+    manifest: dict[str, Any],
+    cred_files: tuple[tuple[str, str], ...] = _CLI_CRED_FILES,
+) -> dict[str, Any]:
     """Add a ``seed-creds`` initContainer that materializes the file-auth CLI
     credentials into the build Job pod (#690). No-op unless a secret name is
     configured. Mutates + returns the manifest. Pure (env-only) → unit-testable.
@@ -660,7 +665,7 @@ def _inject_seed_creds(manifest: dict[str, Any]) -> dict[str, Any]:
     lines = [f"mkdir -p {mkdirs}"]
     lines += [
         f"[ -f /seed/{key} ] && cp /seed/{key} {_BUILD_HOME}/{rel} || true"
-        for key, rel in _CLI_CRED_FILES
+        for key, rel in cred_files
     ]
     lines.append(
         f"chmod -R g+rwX {_BUILD_HOME}/.claude {_BUILD_HOME}/.codex "
@@ -1698,6 +1703,9 @@ class KubeJobBuildBackend:
         owned = {
             row["job_name"] or _reconstructed_ref(row["job_id"])[0] for row in rows
         }
+        from .spec_job_backend import live_spec_job_names  # noqa: PLC0415
+
+        owned |= live_spec_job_names()
         namespace = _dispatch_namespace()
         owns_client = batch is None
         if owns_client:
