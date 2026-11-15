@@ -24,7 +24,7 @@ import time
 from pathlib import Path
 
 from factory_common.logsafe import sanitize_log
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, SecretStr
 
 from server.error_ref import client_error
@@ -465,7 +465,9 @@ def _save_credentials(cli: str, data: dict) -> None:
     atomic_write_secret_json(CLI_CONFIG[cli]["stored_credentials"], data)
 
 
-def _poll_codex_token(mtime_before: float, loop: asyncio.AbstractEventLoop) -> None:
+def _poll_codex_token(
+    mtime_before: float, loop: asyncio.AbstractEventLoop, principal: object = None
+) -> None:
     """Poll ~/.codex/auth.json for new credentials after user runs `codex login`.
 
     ``loop`` is the ASGI server's running loop, captured by the caller; this
@@ -495,16 +497,18 @@ def _poll_codex_token(mtime_before: float, loop: asyncio.AbstractEventLoop) -> N
                                 },
                             )
                             logger.info("[Codex] Credentials detected and saved")
-                            _broadcast_cli_auth_event("codex", True, loop)
+                            _broadcast_cli_auth_event("codex", True, loop, principal)
                             return
         except Exception as e:
             logger.warning(f"[Codex] Polling error: {e}")
         time.sleep(2)
     logger.warning("[Codex] Credentials not detected within timeout")
-    _broadcast_cli_auth_event("codex", False, loop)
+    _broadcast_cli_auth_event("codex", False, loop, principal)
 
 
-def _poll_gemini_token(mtime_before: float, loop: asyncio.AbstractEventLoop) -> None:
+def _poll_gemini_token(
+    mtime_before: float, loop: asyncio.AbstractEventLoop, principal: object = None
+) -> None:
     """Poll ~/.gemini/settings.json and oauth_creds.json for new credentials.
 
     ``loop`` is the ASGI server's running loop, captured by the caller; this
@@ -558,7 +562,7 @@ def _poll_gemini_token(mtime_before: float, loop: asyncio.AbstractEventLoop) -> 
                         },
                     )
                     logger.info("[Gemini] Credentials detected and saved")
-                    _broadcast_cli_auth_event("antigravity", True, loop)
+                    _broadcast_cli_auth_event("antigravity", True, loop, principal)
                     return
                 elif selected_type == "API_KEY" or (
                     settings and settings.get("apiKey")
@@ -575,17 +579,20 @@ def _poll_gemini_token(mtime_before: float, loop: asyncio.AbstractEventLoop) -> 
                         },
                     )
                     logger.info("[Gemini] API key credentials detected and saved")
-                    _broadcast_cli_auth_event("antigravity", True, loop)
+                    _broadcast_cli_auth_event("antigravity", True, loop, principal)
                     return
         except Exception as e:
             logger.warning(f"[Gemini] Polling error: {e}")
         time.sleep(2)
     logger.warning("[Gemini] Credentials not detected within timeout")
-    _broadcast_cli_auth_event("antigravity", False, loop)
+    _broadcast_cli_auth_event("antigravity", False, loop, principal)
 
 
 def _broadcast_cli_auth_event(
-    cli: str, success: bool, loop: asyncio.AbstractEventLoop
+    cli: str,
+    success: bool,
+    loop: asyncio.AbstractEventLoop,
+    principal: object = None,
 ) -> None:
     """Broadcast a cli-account-auth event on the ASGI server's event loop.
 
@@ -604,10 +611,12 @@ def _broadcast_cli_auth_event(
     instead, which is the only loop allowed to write to those sockets.
     """
     try:
-        from ..websockets.events import broadcast_event
+        from ..websockets.events import emit_org_less
 
         future = asyncio.run_coroutine_threadsafe(
-            broadcast_event("cli-account-auth", {"cli": cli, "success": success}),
+            emit_org_less(
+                principal, "cli-account-auth", {"cli": cli, "success": success}
+            ),
             loop,
         )
         future.result(timeout=_BROADCAST_TIMEOUT_SECONDS)
@@ -744,7 +753,7 @@ async def set_cli_api_key(cli: str, body: APIKeyRequest):
 
 
 @router.post("/cli-accounts/{cli}/start-login")
-async def start_cli_login(cli: str):
+async def start_cli_login(cli: str, request: Request):
     """Start terminal-based login polling.
 
     Records the credential file mtime, then starts a background thread
@@ -764,7 +773,9 @@ async def start_cli_login(cli: str):
 
     if cli == "codex":
         threading.Thread(
-            target=_poll_codex_token, args=(mtime_before, loop), daemon=True
+            target=_poll_codex_token,
+            args=(mtime_before, loop, getattr(request.state, "user", None)),
+            daemon=True,
         ).start()
         return {
             "success": True,
@@ -775,7 +786,9 @@ async def start_cli_login(cli: str):
         }
     else:  # antigravity
         threading.Thread(
-            target=_poll_gemini_token, args=(mtime_before, loop), daemon=True
+            target=_poll_gemini_token,
+            args=(mtime_before, loop, getattr(request.state, "user", None)),
+            daemon=True,
         ).start()
         binary = get_antigravity_binary()
         return {
@@ -788,7 +801,7 @@ async def start_cli_login(cli: str):
 
 
 @router.post("/cli-accounts/{cli}/start-login-terminal")
-async def start_cli_login_terminal(cli: str):
+async def start_cli_login_terminal(cli: str, request: Request):
     """Start an interactive terminal session that runs the CLI login command.
 
     Creates a PTY session, sends the auth command, and starts credential
@@ -840,11 +853,15 @@ async def start_cli_login_terminal(cli: str):
 
     if cli == "codex":
         threading.Thread(
-            target=_poll_codex_token, args=(mtime_before, loop), daemon=True
+            target=_poll_codex_token,
+            args=(mtime_before, loop, getattr(request.state, "user", None)),
+            daemon=True,
         ).start()
     else:
         threading.Thread(
-            target=_poll_gemini_token, args=(mtime_before, loop), daemon=True
+            target=_poll_gemini_token,
+            args=(mtime_before, loop, getattr(request.state, "user", None)),
+            daemon=True,
         ).start()
 
     return {
