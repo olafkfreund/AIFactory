@@ -29,7 +29,8 @@ to a route module. Only the registry itself moved.
 from __future__ import annotations
 
 import json
-from pathlib import Path
+import os
+from pathlib import Path, PurePath
 from typing import Any
 
 from fastapi import HTTPException
@@ -51,6 +52,30 @@ def load_projects() -> dict[str, dict[str, Any]]:
         loaded: dict[str, dict[str, Any]] = json.loads(projects_file.read_text())
         return loaded
     return {}
+
+
+def org_id_for_path(project_path: str | Path | None) -> str | None:
+    if not project_path or not PurePath(project_path).is_absolute():
+        return None
+    path = PurePath(os.path.normpath(project_path))
+    try:
+        projects = load_projects()
+    except (OSError, ValueError):
+        return None
+    if not isinstance(projects, dict):
+        return None
+    orgs: set[str | None] = set()
+    for project in projects.values():
+        entry = project.get("path") if isinstance(project, dict) else None
+        if (
+            isinstance(entry, str)
+            and entry
+            and PurePath(entry).is_absolute()
+            and path.is_relative_to(PurePath(os.path.normpath(entry)))
+        ):
+            org = project.get("org_id")
+            orgs.add(org if isinstance(org, str) else None)
+    return next(iter(orgs)) if len(orgs) == 1 and None not in orgs else None
 
 
 def resolve_project_path(project_id: str) -> Path:

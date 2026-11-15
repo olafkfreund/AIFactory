@@ -605,13 +605,18 @@ async def start_github_auth(request: Request):
             "data": {"success": False, "message": "GitHub CLI (gh) is not installed."},
         }
 
-    if github_token():
-        # A server token already authenticates gh; a web login would store a second one.
+    multi = github_app.multi_installation()
+    if multi or github_token():
+        # A server token already authenticates gh; a web login would store a
+        # second one. With org installations no process token exists, and a
+        # stored web login would make the next start() refuse to boot (#1700).
         return {
             "success": True,
             "data": {
-                "success": True,
-                "message": "already authenticated via GITHUB_TOKEN",
+                "success": not multi,
+                "message": "Web login is disabled: GitHub App installations are configured."
+                if multi
+                else "already authenticated via GITHUB_TOKEN",
             },
         }
 

@@ -23,7 +23,11 @@ _KEY = "AIFACTORY_GITHUB_APP_PRIVATE_KEY"
 def _cmd(chart_dir, set_values: list[str] | None) -> list[str]:
     cmd = ["helm", "template", "test-release", str(chart_dir)]
     for kv in set_values or []:
-        cmd.extend(["--set", kv])
+        # "string:" marks a value for --set-string (digits stay a string)
+        if kv.startswith("string:"):
+            cmd.extend(["--set-string", kv[len("string:") :]])
+        else:
+            cmd.extend(["--set", kv])
     return cmd
 
 
@@ -118,3 +122,58 @@ def test_enabled_with_mcp_on_but_github_off_renders(helm_available, chart_dir) -
 def test_enabled_requires_field(helm_available, chart_dir, field: str) -> None:
     sets = [s for s in _ON if not s.startswith(f"githubApp.{field}=")]
     assert field in _render_expect_error(chart_dir, [_PG, *sets])
+
+
+_MAP = "githubApp.orgInstallations."
+_MAP_ENV = _PREFIX + "ORG_INSTALLATIONS"
+
+
+@pytest.mark.helm
+def test_org_map_absent_when_empty(helm_available, chart_dir) -> None:
+    assert _MAP_ENV not in _raw(chart_dir, [_PG, *_ON])
+
+
+@pytest.mark.helm
+def test_org_map_renders_sorted_pairs(helm_available, chart_dir) -> None:
+    sets = [_PG, *_ON, f"string:{_MAP}default=9001", f"string:{_MAP}acme=9002"]
+    assert _env(_render(chart_dir, sets), _MAP_ENV)["value"] == "acme=9002,default=9001"
+
+
+@pytest.mark.helm
+def test_org_map_keeps_large_id(helm_available, chart_dir) -> None:
+    sets = [_PG, *_ON, f"string:{_MAP}acme=12345678"]
+    assert _env(_render(chart_dir, sets), _MAP_ENV)["value"] == "acme=12345678"
+
+
+@pytest.mark.helm
+@pytest.mark.parametrize(
+    "bad", [f"{_MAP}acme=12345678", f"string:{_MAP}acme=abc", f"string:{_MAP}acme=1e7"]
+)
+def test_org_map_bad_id_fails(helm_available, chart_dir, bad: str) -> None:
+    assert "githubApp.orgInstallations.acme" in _render_expect_error(
+        chart_dir, [_PG, *_ON, bad]
+    )
+
+
+@pytest.mark.helm
+def test_org_map_float_in_values_file_fails(
+    helm_available, chart_dir, tmp_path
+) -> None:
+    vf = tmp_path / "v.yaml"
+    vf.write_text("githubApp:\n  orgInstallations:\n    acme: 9002.5\n")
+    cmd = [*_cmd(chart_dir, [_PG, *_ON]), "-f", str(vf)]
+    out = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    assert out.returncode != 0
+    assert "githubApp.orgInstallations.acme" in out.stderr
+
+
+@pytest.mark.helm
+def test_org_map_with_agent_token_fails(helm_available, chart_dir) -> None:
+    sets = [_PG, *_ON, f"string:{_MAP}acme=9002", "agentGithubToken.secretName=tok"]
+    assert "agentGithubToken" in _render_expect_error(chart_dir, sets)
+
+
+@pytest.mark.helm
+def test_org_map_without_app_fails(helm_available, chart_dir) -> None:
+    sets = [_PG, f"string:{_MAP}acme=9002"]
+    assert "requires githubApp.enabled" in _render_expect_error(chart_dir, sets)

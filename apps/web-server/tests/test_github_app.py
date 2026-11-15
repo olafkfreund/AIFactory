@@ -29,6 +29,7 @@ for _root in (WEB_SERVER, BACKEND):
         sys.path.insert(0, str(_root))
 
 from core import mcp_credentials as mc  # noqa: E402
+from core.git_credentials import github_token  # noqa: E402
 from server.services import github_app  # noqa: E402
 
 _APP_VARS = (
@@ -60,7 +61,12 @@ class _Post:
 
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[_Post]:
-    for name in (*_APP_VARS, *_PAT_VARS):
+    for name in (
+        *_APP_VARS,
+        *_PAT_VARS,
+        github_app._ORG_MAP_VAR,
+        "AIFACTORY_AGENT_GITHUB_TOKEN",
+    ):
         # setenv first so monkeypatch records the original and undoes what
         # start() later writes straight into os.environ.
         monkeypatch.setenv(name, "x")
@@ -74,6 +80,8 @@ def _isolate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[_Post]
     mc.reset_cache()
     for attr in ("_key", "_app_id", "_installation_id"):
         monkeypatch.setattr(github_app, attr, None)
+    monkeypatch.setattr(github_app, "_org_installations", {})
+    monkeypatch.setattr(github_app, "_tokens", {})
     post = _Post()
     monkeypatch.setattr(github_app.httpx, "post", post)
     yield post
@@ -420,3 +428,225 @@ def test_warn_legacy_web_login_never_raises_on_an_unreadable_file(
     with caplog.at_level(logging.WARNING):
         github_app.warn_legacy_web_login()
     assert "could not be checked" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("raw", "needle"),
+    [
+        ("acme=1,acme=2", "acme"),
+        ("=1", "''"),
+        ("acme=12a", "acme"),
+        ("acme=../x", "acme"),
+        ("acme", "entry 1"),
+        (",", "no entries"),
+        (" , ", "no entries"),
+    ],
+)
+def test_invalid_org_map_fails_before_http(
+    raw: str,
+    needle: str,
+    rsa_pem: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    _isolate: _Post,
+) -> None:
+    _app_env(monkeypatch, rsa_pem[0])
+    monkeypatch.setenv(github_app._ORG_MAP_VAR, raw)
+    with pytest.raises(RuntimeError, match=needle) as exc:
+        github_app.start()
+    assert rsa_pem[0] not in str(exc.value)
+    assert not _isolate.calls
+    assert not github_app.configured()
+
+
+def test_valid_org_map() -> None:
+    assert github_app._parse_org_map(" acme = 12 , globex=34 ") == {
+        "acme": "12",
+        "globex": "34",
+    }
+
+
+@pytest.mark.parametrize("with_app", [False, True])
+def test_map_requires_app_and_rejects_agent_token(
+    with_app: bool,
+    rsa_pem: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    _isolate: _Post,
+) -> None:
+    monkeypatch.setenv(github_app._ORG_MAP_VAR, "acme=12")
+    if with_app:
+        _app_env(monkeypatch, rsa_pem[0])
+        monkeypatch.setenv("AIFACTORY_AGENT_GITHUB_TOKEN", "agent-secret")
+    with pytest.raises(RuntimeError) as exc:
+        github_app.start()
+    assert "agent-secret" not in str(exc.value)
+    assert not _isolate.calls
+
+
+@pytest.mark.parametrize("mapped", [False, True])
+def test_invalid_default_installation_fails_before_http(
+    mapped: bool,
+    rsa_pem: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    _isolate: _Post,
+) -> None:
+    _app_env(monkeypatch, rsa_pem[0])
+    monkeypatch.setenv("AIFACTORY_GITHUB_APP_INSTALLATION_ID", "12a")
+    if mapped:
+        monkeypatch.setenv(github_app._ORG_MAP_VAR, "acme=12")
+    with pytest.raises(RuntimeError, match="AIFACTORY_GITHUB_APP_INSTALLATION_ID"):
+        github_app.start()
+    assert not _isolate.calls
+
+
+def test_installation_cache_expiry_and_independence(
+    rsa_pem: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    _isolate: _Post,
+) -> None:
+    _app_env(monkeypatch, rsa_pem[0])
+    github_app._app_id, github_app._key = "123", rsa_pem[0]
+    _isolate.queue.extend(
+        [_resp("first"), _resp("second"), _resp("third"), _resp("other")]
+    )
+    assert github_app.installation_token("12") == "first"
+    assert github_app.installation_token("12") == "first"
+    github_app._tokens["12"] = ("first", time.time() + 800)
+    assert github_app.installation_token("12") == "second"
+    github_app._tokens["12"] = ("second", time.time() + 3000)
+    assert github_app.installation_token("12", min_ttl=3300) == "third"
+    assert github_app.installation_token("34") == "other"
+    assert len(_isolate.calls) == 4
+    assert all(k not in os.environ for k in ("GITHUB_TOKEN", "GH_TOKEN"))
+
+
+@pytest.mark.parametrize("expiry", [None, "not-a-date"])
+def test_missing_or_bad_expiry_defaults_to_hour(
+    expiry: str | None,
+    rsa_pem: tuple[str, str],
+    _isolate: _Post,
+) -> None:
+    github_app._app_id, github_app._key = "123", rsa_pem[0]
+    data = {"token": "fresh"}
+    if expiry is not None:
+        data["expires_at"] = expiry
+    _isolate.queue.append(
+        httpx.Response(
+            201, json=data, request=httpx.Request("POST", "https://api.github.com/x")
+        )
+    )
+    before = time.time()
+    assert github_app.installation_token("12") == "fresh"
+    assert before + 3599 <= github_app._tokens["12"][1] <= time.time() + 3601
+
+
+def test_mint_failure_is_not_cached_and_bad_id_never_posts(
+    rsa_pem: tuple[str, str],
+    _isolate: _Post,
+) -> None:
+    github_app._app_id, github_app._key = "123", rsa_pem[0]
+    with pytest.raises(RuntimeError):
+        github_app.installation_token("../12")
+    assert not _isolate.calls
+    _isolate.queue.append(httpx.ConnectError("boom"))
+    with pytest.raises(httpx.ConnectError):
+        github_app.installation_token("12")
+    assert "12" not in github_app._tokens
+
+
+def test_multi_mode_mints_distinct_ids_without_publishing(
+    rsa_pem: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    _isolate: _Post,
+) -> None:
+    _app_env(monkeypatch, rsa_pem[0])
+    monkeypatch.setenv(github_app._ORG_MAP_VAR, "acme=12,globex=34,other=12")
+    _isolate.queue.extend([_resp("one"), _resp("two")])
+    github_app.start()
+    assert github_app.multi_installation()
+    assert github_app.installation_for_org("other") == "12"
+    assert len(_isolate.calls) == 2
+    assert all(k not in os.environ for k in ("GITHUB_TOKEN", "GH_TOKEN"))
+    asyncio.run(github_app.refresh_loop(asyncio.Event()))
+    assert len(_isolate.calls) == 2
+
+
+def test_multi_mode_failed_mint_clears_state(
+    rsa_pem: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    _isolate: _Post,
+) -> None:
+    _app_env(monkeypatch, rsa_pem[0])
+    monkeypatch.setenv(github_app._ORG_MAP_VAR, "acme=12")
+    _isolate.queue.append(httpx.ConnectError("boom"))
+    with pytest.raises(httpx.ConnectError):
+        github_app.start()
+    assert not github_app.configured()
+    assert not github_app.multi_installation()
+    assert not github_app._tokens
+
+
+def test_org_token_context_isolated_and_nested(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GITHUB_TOKEN", "ambient")
+    with github_app.org_github_token("acme"):
+        assert github_token() == "ambient"
+    github_app._org_installations = {"acme": "12", "globex": "34"}
+    github_app._tokens.update(
+        {
+            "12": ("acme-token", time.time() + 3600),
+            "34": ("globex-token", time.time() + 3600),
+        }
+    )
+    with github_app.org_github_token("acme"):
+        assert github_token() == "acme-token"
+        with github_app.org_github_token("missing"):
+            assert github_token() == ""
+        with github_app.org_github_token("globex"):
+            assert github_token() == "globex-token"
+        with github_app.org_github_token(None):
+            assert github_token() == ""
+        assert github_token() == "acme-token"
+    assert github_token() == "ambient"
+
+
+def test_org_token_interleaved_tasks() -> None:
+    github_app._org_installations = {"acme": "12", "globex": "34"}
+    github_app._tokens.update(
+        {"12": ("a", time.time() + 3600), "34": ("b", time.time() + 3600)}
+    )
+
+    async def read(org: str, expected: str) -> None:
+        with github_app.org_github_token(org):
+            for _ in range(3):
+                assert github_token() == expected
+                await asyncio.sleep(0)
+
+    async def run() -> None:
+        await asyncio.gather(read("acme", "a"), read("globex", "b"))
+
+    asyncio.run(run())
+
+
+def test_provider_mint_error_gives_no_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GITHUB_TOKEN", "ambient-1700")
+    monkeypatch.setattr(github_app, "_org_installations", {"acme": "12"})
+    monkeypatch.setattr(github_app, "_tokens", {})
+
+    def fail(_installation: str) -> tuple[str, float]:
+        raise httpx.ConnectError("down")
+
+    monkeypatch.setattr(github_app, "_mint", fail)
+    with github_app.org_github_token("acme"):
+        assert github_token() == ""
+
+
+def test_fresh_token_is_read_while_another_org_mints(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        github_app, "_tokens", {"12": ("ghs_acme_1700", time.time() + 3600)}
+    )
+    assert github_app._tokens_lock.acquire(timeout=1)  # another org is minting
+    try:
+        assert github_app.installation_token("12") == "ghs_acme_1700"
+    finally:
+        github_app._tokens_lock.release()

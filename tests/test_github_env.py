@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import json
 import os
 import shutil
@@ -77,6 +78,56 @@ def test_control_plane_keeps_own_token(monkeypatch: pytest.MonkeyPatch) -> None:
         assert entry["github.com"]["oauth_token"] == "cp-a"  # noqa: S105
         assert "AIFACTORY_AGENT_GITHUB_TOKEN" not in env
         assert "agent-x" not in env.values()
+
+
+def _file_token() -> str:
+    with gc.github_env(ce.child_env()) as env:
+        if "GH_CONFIG_DIR" not in env:
+            return ""
+        return json.loads((Path(env["GH_CONFIG_DIR"]) / "hosts.yml").read_text())[
+            "github.com"
+        ]["oauth_token"]
+
+
+def test_provider_overrides_ambient_and_resets() -> None:
+    provided = "ghs_provider_unique_1700"
+    with gc.use_github_token(lambda: f" {provided} "):
+        assert _file_token() == provided
+        with gc.use_github_token(lambda: ""):
+            assert _file_token() == ""
+        assert _file_token() == provided
+    assert _file_token() == TOKEN
+    with (
+        pytest.raises(RuntimeError),
+        gc.use_github_token(lambda: "ghs_other_unique_1700"),
+    ):
+        raise RuntimeError("stop")
+    assert _file_token() == TOKEN
+
+
+def test_provider_context_across_tasks_and_thread() -> None:
+    async def read(value: str) -> None:
+        with gc.use_github_token(lambda: value):
+            for _ in range(3):
+                assert _file_token() == value
+                await asyncio.sleep(0)
+            assert await asyncio.to_thread(_file_token) == value
+
+    async def run() -> None:
+        async def delayed_read() -> str:
+            await asyncio.sleep(0)
+            return _file_token()
+
+        before = asyncio.create_task(delayed_read())
+        with gc.use_github_token(lambda: "later"):
+            after = asyncio.create_task(delayed_read())
+        assert await before == TOKEN
+        assert await after == "later"
+        await asyncio.gather(
+            read("ghs_acme_unique_1700"), read("ghs_globex_unique_1700")
+        )
+
+    asyncio.run(run())
 
 
 def test_inherited_github_credentials_are_stripped() -> None:
@@ -300,15 +351,15 @@ def test_web_server_has_no_env_token_path() -> None:
     allowed = {
         (
             "apps/web-server/server/utils/subprocess_env.py",
-            "def runner_github_env() -> dict[str, str]:",
+            "def runner_github_env(project_path: str | Path | None = None) -> dict[str, str]:",
         ),
         (
             "apps/web-server/server/utils/subprocess_env.py",
-            "env.update(runner_github_env())",
+            "env.update(runner_github_env(project_path))",
         ),
         (
             "apps/web-server/server/services/build_backend.py",
-            "github = runner_github_env()",
+            "github = runner_github_env(project_path)",
         ),
         (
             "apps/backend/core/git_credentials.py",

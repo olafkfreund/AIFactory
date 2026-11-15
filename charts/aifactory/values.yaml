@@ -771,6 +771,9 @@ githubApp:
   installationId: ""
   secretName: ""
   privateKeyKey: private-key
+  # Org id -> installation id, both strings (quote the id). A non-empty map
+  # turns on multi-installation mode; see docs/docs/concepts/github-app.md.
+  orgInstallations: {}
 
 # Narrow GitHub token for runner children and build Jobs (#1973). When
 # set, the control plane's own GitHub token never enters them.

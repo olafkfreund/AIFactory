@@ -4,6 +4,7 @@ Project management routes.
 Handles CRUD operations for projects (git repositories that Magestic AI manages).
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -23,7 +24,7 @@ from server.error_ref import InputRejectedError, client_error
 # call sites unchanged -- and so `patch("server.routes.projects.load_projects")`
 # still works for tests that drive THIS module's handlers.
 from server.project_registry import load_projects, save_projects
-from server.services import project_settings_store
+from server.services import github_app, project_settings_store
 from server.services.audit_service import ACTION_TASK_CREATE, audit_task_action
 from server.services.http_verdict import honest_status
 from server.services.originator import principal_attribution
@@ -559,6 +560,12 @@ async def add_project(
     the frontend api-client.ts adds the {success, data} wrapper automatically.
     """
     created_directory = False
+    # Resolve the owner before cloning so its installation supplies git auth.
+    org_id = DEFAULT_ORG_ID
+    if request is not None and isinstance(db, AsyncSession):
+        from .project_authz import resolve_owner_org_id
+
+        org_id = await resolve_owner_org_id(request, db)
 
     if project.gitUrl:
         # Clone mode — defer to project_workspace_service.
@@ -576,11 +583,19 @@ async def add_project(
         if project.gitCredentialId:
             credential = await _resolve_git_credential(project.gitCredentialId)
         try:
-            cloned_path = await clone_or_update(
-                git_url=project.gitUrl,
-                branch=project.branch,
-                credential=credential,
-            )
+            await asyncio.to_thread(github_app.token_for_org, org_id)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=client_error(logger, "Clone failed", e),
+            ) from e
+        try:
+            with github_app.org_github_token(org_id):
+                cloned_path = await clone_or_update(
+                    git_url=project.gitUrl,
+                    branch=project.branch,
+                    credential=credential,
+                )
         except (GitOperationError, InputRejectedError) as e:
             # InputRejectedError: the gitUrl's path is not a usable workspace
             # directory name (#1313). Its message is developer-written, so
@@ -642,15 +657,6 @@ async def add_project(
     # Create project entry
     project_id = str(uuid4())
     now = datetime.now(UTC).isoformat()
-    # Stamp the owning org (#319). Service/M2M creators → default org; human
-    # creators → their own org. Defensive: direct callers (MCP stdio proxy,
-    # tests) pass no Request / real session → fall back to the default org
-    # rather than break. Lazy import avoids a project_authz↔projects cycle.
-    org_id = DEFAULT_ORG_ID
-    if request is not None and isinstance(db, AsyncSession):
-        from .project_authz import resolve_owner_org_id
-
-        org_id = await resolve_owner_org_id(request, db)
     project_data = {
         "path": str(project_path.resolve()),
         "name": project.name or project_path.name,

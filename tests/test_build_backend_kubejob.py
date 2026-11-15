@@ -14,6 +14,7 @@ properties the RFC calls out:
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 import logging
@@ -349,6 +350,71 @@ def test_build_job_env_uses_narrow_agent_token(monkeypatch: pytest.MonkeyPatch) 
     assert env["GITHUB_PERSONAL_ACCESS_TOKEN"] == "agent-x"  # noqa: S105
     assert "AIFACTORY_AGENT_GITHUB_TOKEN" not in env
     assert not any(value in env.values() for value in ("cp-a", "cp-b", "cp-c"))
+
+
+def test_build_job_env_uses_only_bound_org(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server import project_registry
+    from server.services import github_app
+
+    registry = tmp_path / "projects.json"
+    project = tmp_path / "acme"
+    other = tmp_path / "other"
+    registry.write_text(
+        json.dumps(
+            {
+                "a": {"path": str(project), "org_id": "acme"},
+                "b": {"path": str(other), "org_id": "other"},
+            }
+        )
+    )
+    monkeypatch.setattr(project_registry, "get_projects_file", lambda: registry)
+    monkeypatch.setattr(github_app, "multi_installation", lambda: True)
+    seen: list[tuple[str | None, int]] = []
+
+    def token_for_org(org: str | None, *, min_ttl: int = 900) -> str | None:
+        seen.append((org, min_ttl))
+        return "ghs_acme_1700" if org == "acme" else None
+
+    monkeypatch.setattr(github_app, "token_for_org", token_for_org)
+    for name in ("GITHUB_TOKEN", "GH_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN"):
+        monkeypatch.setenv(name, f"ambient-{name}")
+    monkeypatch.setenv("AIFACTORY_AGENT_GITHUB_TOKEN", "agent-secret-1700")
+    bound = bb.build_job_env("oauth", project)
+    assert bound["GITHUB_TOKEN"] == bound["GH_TOKEN"] == "ghs_acme_1700"
+    assert "GITHUB_PERSONAL_ACCESS_TOKEN" not in bound
+    assert not any(
+        "ambient-" in value or "agent-secret-1700" in value for value in bound.values()
+    )
+    for path in (other, tmp_path / "unknown", None):
+        env = bb.build_job_env("oauth", path)
+        assert all(
+            name not in env
+            for name in ("GITHUB_TOKEN", "GH_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN")
+        )
+    assert seen == [("acme", 3300), ("other", 3300), (None, 3300), (None, 3300)]
+
+
+def test_job_dispatch_builds_env_in_thread_with_project_path() -> None:
+    source = Path(bb.__file__).read_text()
+    tree = ast.parse(source)
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "to_thread"
+        and node.args
+        and isinstance(node.args[0], ast.Name)
+        and node.args[0].id == "build_job_env"
+    ]
+    assert len(calls) == 1
+    assert [arg.id for arg in calls[0].args[1:]] == ["oauth_token", "project_path"]
+    assert any(
+        isinstance(node, ast.Await) and node.value is calls[0]
+        for node in ast.walk(tree)
+    )
 
 
 def test_build_job_env_propagates_present_provider_env(

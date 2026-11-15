@@ -680,6 +680,22 @@ spec:
                 secretKeyRef:
                   name: {{ required "githubApp.enabled requires githubApp.secretName" .Values.githubApp.secretName }}
                   key: {{ .Values.githubApp.privateKeyKey }}
+            {{- if .Values.githubApp.orgInstallations }}
+            {{- if .Values.agentGithubToken.secretName }}
+            {{- fail "githubApp.orgInstallations cannot be combined with agentGithubToken.secretName (#1700)" }}
+            {{- end }}
+            {{- $pairs := list }}
+            {{- range $org, $id := .Values.githubApp.orgInstallations }}
+            {{- if not (and (kindIs "string" $id) (regexMatch "^[0-9]+$" $id)) }}
+            {{- fail (printf "githubApp.orgInstallations.%s must be a string of digits; quote the id or use --set-string (#1700)" $org) }}
+            {{- end }}
+            {{- $pairs = append $pairs (printf "%s=%s" $org $id) }}
+            {{- end }}
+            - name: AIFACTORY_GITHUB_APP_ORG_INSTALLATIONS
+              value: {{ join "," $pairs | quote }}
+            {{- end }}
+            {{- else if .Values.githubApp.orgInstallations }}
+            {{- fail "githubApp.orgInstallations requires githubApp.enabled (#1700)" }}
             {{- end }}
             {{- if .Values.agentGithubToken.secretName }}
             # Narrow GitHub token for runner children and build Jobs (#1973).

@@ -104,7 +104,19 @@ def agent_github_token() -> str:
     return token
 
 
-def runner_github_env() -> dict[str, str]:
+def runner_github_env(project_path: str | Path | None = None) -> dict[str, str]:
+    from server import project_registry  # noqa: PLC0415 - avoid github_app import cycle
+    from server.services import github_app  # noqa: PLC0415
+
+    if github_app.multi_installation():
+        token = github_app.token_for_org(
+            project_registry.org_id_for_path(project_path), min_ttl=3300
+        )
+        return (
+            dict.fromkeys((*GITHUB_KEEP, "GITHUB_PERSONAL_ACCESS_TOKEN"), token)
+            if token
+            else {}
+        )
     token = agent_github_token()
     if token:
         # The alias too: the runners load_dotenv() themselves, and a value
@@ -137,6 +149,7 @@ def make_subprocess_env(
     *,
     strip_anthropic_api_key: bool = True,
     github: bool = False,
+    project_path: str | Path | None = None,
 ) -> dict[str, str]:
     """Return a scrubbed env for LLM runner subprocesses.
 
@@ -154,7 +167,7 @@ def make_subprocess_env(
     for name in github_names():
         env.pop(name, None)
     if github:
-        env.update(runner_github_env())
+        env.update(runner_github_env(project_path))
     return env
 
 
