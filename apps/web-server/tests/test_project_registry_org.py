@@ -73,3 +73,5 @@ def test_malformed_registry_entries_are_skipped(
         )
     )
     assert project_registry.org_id_for_path(acme) == "acme"
+    registry.write_text(json.dumps({"a": {"path": str(acme), "org_id": ["acme"]}}))
+    assert project_registry.org_id_for_path(acme) is None

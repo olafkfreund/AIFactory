@@ -73,7 +73,8 @@ def org_id_for_path(project_path: str | Path | None) -> str | None:
             and PurePath(entry).is_absolute()
             and path.is_relative_to(PurePath(os.path.normpath(entry)))
         ):
-            orgs.add(project.get("org_id"))
+            org = project.get("org_id")
+            orgs.add(org if isinstance(org, str) else None)
     return next(iter(orgs)) if len(orgs) == 1 and None not in orgs else None
 
 

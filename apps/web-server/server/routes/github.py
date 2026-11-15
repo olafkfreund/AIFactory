@@ -605,6 +605,16 @@ async def start_github_auth(request: Request):
             "data": {"success": False, "message": "GitHub CLI (gh) is not installed."},
         }
 
+    if github_app.multi_installation():
+        # No process token blocks the login in this mode, and a stored web
+        # login would make the next start() refuse to boot (#1700).
+        return {
+            "success": True,
+            "data": {
+                "success": False,
+                "message": "Web login is disabled: GitHub App installations are configured.",
+            },
+        }
     if github_token():
         # A server token already authenticates gh; a web login would store a second one.
         return {

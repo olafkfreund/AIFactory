@@ -46,8 +46,15 @@ _key: str | None = None
 _org_installations: dict[str, str] = {}
 _tokens: dict[str, tuple[str, float]] = {}
 _tokens_lock = threading.Lock()
-#: What a mint can raise: HTTP, a bad id or empty reply, bad JSON, JWT signing.
-MINT_ERRORS = (httpx.HTTPError, RuntimeError, ValueError, JOSEError)
+#: What a mint can raise: HTTP, a bad id or empty reply, bad or odd JSON, JWT signing.
+MINT_ERRORS = (
+    httpx.HTTPError,
+    RuntimeError,
+    ValueError,
+    AttributeError,
+    TypeError,
+    JOSEError,
+)
 
 
 def _valid_installation_id(value: str) -> bool:

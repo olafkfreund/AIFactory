@@ -367,7 +367,7 @@ account).
 
 ## Deviations
 
-Recorded after the final review (Fable, Codex):
+Recorded after the final review (Fable, Codex, agy; two rounds):
 
 - `GH_DESELECT` uses node ids relative to pytest's rootdir (`tests/`); the
   ids first written here deselected nothing.
@@ -386,6 +386,10 @@ Recorded after the final review (Fable, Codex):
 - `build_job_env` has a second caller, `services/spec_job_backend.py`, which
   passes no path: Kubernetes spec Jobs get no GitHub token in the mode. The
   docs list it with the unwired services.
+- `routes/github.py` stays unwired, but its `POST /auth/start` now refuses a
+  web login in the mode: nothing blocked it there, and the stored login
+  made the next `start()` refuse to boot.
+- A registry entry whose `org_id` is not a string counts as having none.
 - The merge of `dev` duplicated the `agentGithubToken` block in the chart's
   values and deployment template; the copies were removed.
 

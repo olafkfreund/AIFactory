@@ -22,6 +22,7 @@ for root in (WEB_SERVER, BACKEND):
 
 from core.git_credentials import github_token  # noqa: E402
 from server import project_registry  # noqa: E402
+from server.routes import github as github_routes  # noqa: E402
 from server.routes import project_authz, projects  # noqa: E402
 from server.services import (  # noqa: E402  # noqa: E402
     completion_orchestration as completion,
@@ -235,3 +236,18 @@ def test_background_pr_watcher_keeps_org_provider(
 
     asyncio.run(run())
     assert observed == ["ghs_acme_1700"]
+
+
+def test_web_login_is_refused_in_multi_installation_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(github_app, "_org_installations", {"acme": "12"})
+    monkeypatch.setattr(github_routes.shutil, "which", lambda _name: "/usr/bin/gh")
+
+    def no_spawn(*_args: Any, **_kw: Any) -> None:
+        raise AssertionError("gh must not be started")
+
+    monkeypatch.setattr(github_routes.subprocess, "Popen", no_spawn)
+    monkeypatch.setattr(github_routes.asyncio, "create_subprocess_exec", no_spawn)
+    result = asyncio.run(github_routes.start_github_auth(object()))
+    assert result["data"]["success"] is False
