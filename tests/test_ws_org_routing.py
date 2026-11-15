@@ -65,7 +65,7 @@ def sockets(monkeypatch):
     monkeypatch.setattr(
         auth,
         "_ws_acw_principal",
-        AsyncMock(return_value={"id": "owner", "org_id": "A"}),
+        AsyncMock(return_value={"id": "owner", "org_id": "A", "api_key_id": "key"}),
     )
     monkeypatch.setattr(events, "_ws_acw_principal", auth._ws_acw_principal)
     monkeypatch.setattr(event_bus, "_get_redis_publisher", lambda: None)
@@ -243,6 +243,8 @@ def test_key_revocation_closes_socket(sockets, monkeypatch, validator):
 def test_notify_org_overrides_data_org(sockets, monkeypatch):
     client, memberships, sent = sockets
     memberships["rows"] = [("A",)]
+    # The service's import-time engine handle goes stale the same way _engine() avoids.
+    monkeypatch.setattr(notification_service, "engine", _engine())
     service = notification_service.NotificationService()
     with connect(client, "acw_key"):
         with connect(client, "jwt-owner"):
@@ -329,3 +331,71 @@ def test_key_socket_follows_membership_on_recheck(sockets, monkeypatch):
         _wait_for_no_orgs(client, next(iter(event_bus._clients.values())))
         emit(client, events.broadcast_event, "event", {"projectId": "p-a"})
         assert len(sent["acw_key"]) == 1
+
+
+def test_login_emitters_route_by_starting_principal(sockets, monkeypatch):
+    from server.routes import cli_accounts, github
+
+    client, _memberships, sent = sockets
+    monkeypatch.setattr(github, "_gh_auth_status", {})
+    monkeypatch.setattr(github, "_gh_auth_proc", None)
+
+    async def run_cli(principal):
+        await asyncio.to_thread(
+            cli_accounts._broadcast_cli_auth_event,
+            "codex",
+            True,
+            asyncio.get_running_loop(),
+            principal,
+        )
+
+    class FailedProc:
+        returncode = 1
+
+        async def wait(self):
+            return 1
+
+    service = {"id": "default", "is_service": True}
+    with (
+        connect(client, "jwt-owner"),
+        connect(client, "jwt-other"),
+        connect(client, "acw_key"),
+        connect(client, "legacy"),
+    ):
+        emit(client, run_cli, {"id": "owner"})
+        emit(client, github._monitor_gh_auth, FailedProc(), {"id": "owner"})
+        assert [m["type"] for m in sent["jwt-owner"]] == [
+            "cli-account-auth",
+            "github:auth-complete",
+        ]
+        assert sent.get("legacy", []) == []
+        emit(client, run_cli, service)
+        emit(client, github._monitor_gh_auth, FailedProc(), service)
+        assert [m["type"] for m in sent["legacy"]] == [
+            "cli-account-auth",
+            "github:auth-complete",
+        ]
+        assert len(sent["jwt-owner"]) == 2
+        assert sent.get("jwt-other", []) == sent.get("acw_key", []) == []
+
+
+def test_legacy_socket_with_key_like_token_is_not_rechecked(sockets, monkeypatch):
+    client, _memberships, _sent = sockets
+    monkeypatch.setattr(
+        auth,
+        "get_settings",
+        lambda: SimpleNamespace(DISABLE_AUTH=False, API_TOKEN="acw_legacy"),
+    )
+    monkeypatch.setattr(events, "_ws_acw_principal", AsyncMock(return_value=None))
+    monkeypatch.setattr(events, "_KEY_RECHECK_SECONDS", 0)
+    with connect(client, "acw_legacy") as ws:
+        ws.send_text("wake the receive loop")
+        emit(client, events.broadcast_event, "event", {"projectId": "p-a"})
+        assert ws.receive_json()["type"] == "event"
+    events._ws_acw_principal.assert_not_awaited()
+
+
+def test_org_bound_key_without_owner_is_not_a_service_client():
+    client = event_bus.ConnectedClient(websocket=None, user_id=None, key_org_id="A")
+    assert not event_bus._may_receive(client, "B")
+    assert not event_bus._may_receive(client, None)

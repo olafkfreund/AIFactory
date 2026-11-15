@@ -175,8 +175,13 @@ async def events_websocket(websocket: WebSocket):
         return
 
     client = register_client(websocket, user_info)
-    key_token = _ws_extract_token(websocket)
-    key_token = key_token if key_token and key_token.startswith("acw_") else None
+    # Only a key principal carries api_key_id; a legacy or DISABLE_AUTH socket
+    # whose token merely starts with acw_ is not re-checked.
+    key_token = (
+        _ws_extract_token(websocket) if (user_info or {}).get("api_key_id") else None
+    )
+    if not key_token or not key_token.startswith("acw_"):
+        key_token = None
     last_key_check = time.monotonic()
 
     await _load_org_ids(client, user_info)
