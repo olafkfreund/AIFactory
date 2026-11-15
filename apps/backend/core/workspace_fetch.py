@@ -740,6 +740,27 @@ SPEC_FETCH_FILES = (
     "architecture.md",
 )
 _SPEC_FILE_MAX_BYTES = 8 << 20
+# QA and contract verdicts the build's gates read from the plan. A spec session
+# has no business writing them, and the approval hash does not cover them.
+_PLAN_VERDICT_KEYS = frozenset(
+    {"qa_signoff", "qa_iteration_history", "qa_stats", "contractHold"}
+)
+
+
+def _checked_spec_json(name: str, data: bytes) -> bytes:
+    """Validate a fetched JSON file; a plan comes back without verdict keys."""
+    doc = json.loads(data)
+    if not isinstance(doc, dict | list):
+        raise ValueError("not a JSON object or array")
+    if (
+        name == "implementation_plan.json"
+        and isinstance(doc, dict)
+        and doc.keys() & _PLAN_VERDICT_KEYS
+    ):
+        for key in _PLAN_VERDICT_KEYS:
+            doc.pop(key, None)
+        return json.dumps(doc, indent=2).encode()
+    return data
 
 
 def _read_capped(store: Any, key: str, limit: int) -> bytes:
@@ -749,7 +770,12 @@ def _read_capped(store: Any, key: str, limit: int) -> bytes:
     # byte-exact hub copy with no size cap; switch to get_bytes(max_bytes=)
     # once the hub canonical has one.
     obj = store._client().get_object(Bucket=store.config.bucket, Key=key)
-    return bytes(obj["Body"].read(limit))
+    data = bytes(obj["Body"].read(limit))
+    size = obj.get("ContentLength")
+    # A capped read skips botocore's own length check.
+    if size is not None and len(data) != min(size, limit):
+        raise OSError(f"short read of {key}")
+    return data
 
 
 def _spec_file_key(fetch_id: str, name: str) -> str:
@@ -824,9 +850,7 @@ def fetch_spec_files(spec_dir: str | os.PathLike[str], fetch_id: str) -> list[st
                 _log.warning("[workspace_fetch] fetched spec file too large: %s", name)
                 continue
             if name.endswith(".json"):
-                if not isinstance(json.loads(data), dict | list):
-                    _log.warning("[workspace_fetch] spec file is not JSON: %s", name)
-                    continue
+                data = _checked_spec_json(name, data)
             else:
                 data.decode("utf-8")
             dest_dir.mkdir(parents=True, exist_ok=True)

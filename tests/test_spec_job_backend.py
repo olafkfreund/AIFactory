@@ -72,6 +72,11 @@ def test_capped_read_asks_s3_for_only_the_limit() -> None:
     store._s3 = SimpleNamespace(get_object=lambda **_kwargs: {"Body": body})
     assert workspace_fetch._read_capped(store, "key", 3) == b"abc"
     body.read.assert_called_once_with(3)
+    store._s3 = SimpleNamespace(
+        get_object=lambda **_kwargs: {"Body": body, "ContentLength": 9}
+    )
+    with pytest.raises(OSError, match="short read"):
+        workspace_fetch._read_capped(store, "key", 100)
 
 
 @pytest.fixture
@@ -455,8 +460,11 @@ def test_partial_fetch_without_spec_md_drops_earlier_approval(
     (spec_dir / "review_state.json").write_text('{"approved": true}')
     fake_store.objects[
         workspace_fetch._spec_file_key("fetch", "implementation_plan.json")
-    ] = b'{"swapped": true}'
+    ] = b'\xef\xbb\xbf{"swapped": true, "qa_signoff": {"status": "approved"}}'
     assert sj._finish_spec_fetch(spec_dir, "fetch", True) == 1
+    # The plan that a failed fetch leaves behind carries no QA verdict either.
+    plan = json.loads((spec_dir / "implementation_plan.json").read_text())
+    assert plan == {"swapped": True}
     assert json.loads((spec_dir / "review_state.json").read_text())["approved"] is False
 
 
@@ -488,7 +496,7 @@ def test_job_cannot_pre_approve_qa_through_the_plan(
     assert plan == {"phases": []}
 
 
-async def test_stop_during_fetch_back_does_not_report_success(
+async def test_stop_after_fetch_back_does_not_report_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     batch = FakeBatch()
@@ -499,14 +507,17 @@ async def test_stop_during_fetch_back_does_not_report_success(
     async def succeeded(*_args):
         return "succeeded"
 
-    async def no_logs(self, **_kwargs):
-        return None
+    fetched = asyncio.Event()
 
     async def finish() -> int:
-        proc.terminate()
+        fetched.set()
         return 0
 
-    monkeypatch.setattr(sj.KubeJobLogStreamer, "stream", no_logs)
+    async def stop_while_draining(self, **_kwargs):
+        await fetched.wait()
+        proc.terminate()
+
+    monkeypatch.setattr(sj.KubeJobLogStreamer, "stream", stop_while_draining)
     monkeypatch.setattr(KubeJobBuildBackend, "_job_outcome", staticmethod(succeeded))
     proc = sj.SpecJobProcess(
         "ns", "spec-job", batch_factory=batch_factory, finish=finish
