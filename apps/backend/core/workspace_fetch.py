@@ -14,12 +14,14 @@ no-op and today's behaviour is unchanged.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from core import process_hardening
 from core.child_env import child_env, lfs_upload
@@ -723,3 +725,144 @@ def maybe_fetch_memory(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
     except Exception as exc:  # noqa: BLE001 - best-effort
         _log.warning("[workspace_fetch] could not write fetched memory: %s", exc)
         return False
+
+
+SPEC_FETCH_ID_ENV = "AIFACTORY_SPEC_FETCH_ID"
+SPEC_FETCH_FILES = (
+    "spec.md",
+    "implementation_plan.json",
+    "context.json",
+    "project_index.json",
+    "research.json",
+    "complexity_assessment.json",
+    "critique_report.json",
+    "graph_hints.json",
+    "architecture.md",
+)
+_SPEC_FILE_MAX_BYTES = 8 << 20
+# QA and contract verdicts the build's gates read from the plan. A spec session
+# has no business writing them, and the approval hash does not cover them.
+_PLAN_VERDICT_KEYS = frozenset(
+    {"qa_signoff", "qa_iteration_history", "qa_stats", "contractHold"}
+)
+
+
+def _checked_spec_json(name: str, data: bytes) -> bytes:
+    """Validate a fetched JSON file; a plan comes back without verdict keys."""
+    doc = json.loads(data)
+    if not isinstance(doc, dict | list):
+        raise ValueError("not a JSON object or array")
+    if name != "implementation_plan.json":
+        return data
+    if not isinstance(doc, dict):
+        raise ValueError("plan is not a JSON object")
+    if doc.keys() & _PLAN_VERDICT_KEYS:
+        for key in _PLAN_VERDICT_KEYS:
+            doc.pop(key, None)
+        return json.dumps(doc, indent=2).encode()
+    return data
+
+
+def _read_capped(store: Any, key: str, limit: int) -> bytes:
+    """Read at most ``limit`` bytes of one object, so an oversize object is
+    never loaded whole."""
+    # shortcut: uses ArtifactStore._client() because artifact_store.py is a
+    # byte-exact hub copy with no size cap; switch to get_bytes(max_bytes=)
+    # once the hub canonical has one.
+    obj = store._client().get_object(Bucket=store.config.bucket, Key=key)
+    data = bytes(obj["Body"].read(limit))
+    size = obj.get("ContentLength")
+    # A capped read skips botocore's own length check.
+    if size is not None and len(data) != min(size, limit):
+        raise OSError(f"short read of {key}")
+    return data
+
+
+def _spec_file_key(fetch_id: str, name: str) -> str:
+    from core.artifact_store import ArtifactRef  # noqa: PLC0415
+
+    return str(
+        ArtifactRef(
+            service="aifactory", job_id=fetch_id, role="doc", path=f"spec/{name}"
+        ).key()
+    )
+
+
+def maybe_push_spec_files(spec_dir: str | os.PathLike[str]) -> int:
+    """Best-effort upload of allowlisted spec files from a spec creation Job."""
+    fetch_id = os.environ.get(SPEC_FETCH_ID_ENV, "").strip()
+    if not fetch_id:
+        return 0
+    count = 0
+    try:
+        from core.artifact_store import ArtifactStore  # noqa: PLC0415
+
+        store = ArtifactStore()
+    except Exception as exc:  # noqa: BLE001 - never fail spec creation
+        _log.warning("[workspace_fetch] spec file store unavailable: %s", exc)
+        return 0
+    for name in SPEC_FETCH_FILES:
+        try:
+            src = Path(spec_dir) / name
+            if src.is_symlink() or not src.is_file():
+                continue
+            if src.stat().st_size > _SPEC_FILE_MAX_BYTES:
+                _log.warning("[workspace_fetch] spec file too large: %s", name)
+                continue
+            data = src.read_bytes()
+            if len(data) > _SPEC_FILE_MAX_BYTES:
+                _log.warning("[workspace_fetch] spec file too large: %s", name)
+                continue
+            store.put_bytes(
+                _spec_file_key(fetch_id, name),
+                data,
+                "application/json" if name.endswith(".json") else "text/markdown",
+                role="doc",
+            )
+            count += 1
+        except Exception as exc:  # noqa: BLE001 - continue with remaining files
+            _log.warning("[workspace_fetch] could not push spec file %s: %s", name, exc)
+    return count
+
+
+def fetch_spec_files(spec_dir: str | os.PathLike[str], fetch_id: str) -> list[str]:
+    """Restore validated spec documents without replacing local files on failure."""
+    written: list[str] = []
+    try:
+        from core.artifact_store import ArtifactStore  # noqa: PLC0415
+
+        store = ArtifactStore()
+    except Exception as exc:  # noqa: BLE001 - store may be unavailable
+        _log.warning("[workspace_fetch] spec file store unavailable: %s", exc)
+        return written
+    dest_dir = Path(spec_dir)
+    for name in SPEC_FETCH_FILES:
+        tmp = ""
+        try:
+            try:
+                data = _read_capped(
+                    store, _spec_file_key(fetch_id, name), _SPEC_FILE_MAX_BYTES + 1
+                )
+            except Exception as exc:  # noqa: BLE001 - not pushed: optional file
+                _log.debug("[workspace_fetch] no spec file %s: %s", name, exc)
+                continue
+            if len(data) > _SPEC_FILE_MAX_BYTES:
+                _log.warning("[workspace_fetch] fetched spec file too large: %s", name)
+                continue
+            if name.endswith(".json"):
+                data = _checked_spec_json(name, data)
+            else:
+                data.decode("utf-8")
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(dir=dest_dir)
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+            Path(tmp).replace(dest_dir / name)
+            written.append(name)
+        except Exception as exc:  # noqa: BLE001 - missing, invalid, or unwritable
+            _log.warning("[workspace_fetch] rejected spec file %s: %s", name, exc)
+        finally:
+            if tmp:
+                with contextlib.suppress(OSError):
+                    Path(tmp).unlink(missing_ok=True)
+    return written
