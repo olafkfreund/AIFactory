@@ -164,6 +164,14 @@ Approved decisions (from the spec):
    `helm template aifactory charts/aifactory -s templates/job-migrations.yaml`.
    Traps: keep the table's column alignment (markdownlint in pre-commit).
 
+## Deviations
+
+- Step 4: the guide keeps the old section's advice on migrations longer than
+  60 s (lazy backfill, called out in release notes). The step's rewrite list
+  did not name it, and it is still true with the hook Job.
+- Step 2: the `jobResources` values comment also says a non-empty value
+  replaces `resources` whole (no merge).
+
 ## Tests
 
 - `helm dep update charts/aifactory/` then `helm lint charts/aifactory`.
