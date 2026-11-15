@@ -171,6 +171,20 @@ Approved decisions (from the spec):
   did not name it, and it is still true with the hook Job.
 - Step 2: the `jobResources` values comment also says a non-empty value
   replaces `resources` whole (no merge).
+- Final review, round 1 (2026-11-15):
+  - Step 2: the deadline renders through `int64`. A values-file number is a
+    float64, so `{{ . }}` printed `1e+06` for 1000000, which the API rejects.
+  - Step 4: a Job that hits its deadline has its pods deleted, so the guide
+    says to watch the pod before the deadline and to use `describe job` and
+    events afterwards, not "check the Job pod". It also names the quota case
+    (`FailedCreate`, no pod).
+  - Step 4: a failed Job does not prove nothing was committed; the guide says
+    to confirm with `alembic current` before the unchanged-schema rollback.
+  - Step 4: the `<release>-aifactory-migrations` formula is dropped: a
+    release name containing `aifactory` or a name override gives another
+    name. The label-selector command stays.
+  - Step 3: three more assertions: the Job follows a customised top-level
+    `resources`, no CA mount by default, and the large-deadline render.
 
 ## Tests
 

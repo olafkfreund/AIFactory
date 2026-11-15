@@ -17,7 +17,7 @@ metadata:
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
   {{- with .Values.migrations.jobActiveDeadlineSeconds }}
-  activeDeadlineSeconds: {{ . }}
+  activeDeadlineSeconds: {{ . | int64 }}
   {{- end }}
   backoffLimit: {{ .Values.migrations.jobBackoffLimit }}
   template:

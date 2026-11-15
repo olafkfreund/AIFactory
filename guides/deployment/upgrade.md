@@ -94,21 +94,21 @@ With the chart default (`migrations.autoApply=false`), a pre-install/pre-upgrade
 
 - If the migration fails, `helm upgrade` fails and the old pods keep serving.
 - With `autoApply=true` (POC), the web pod migrates at startup as before.
-- A failed or running Job is visible; a successful Job is deleted.
+- A successful Job is deleted. A Job that failed its retries keeps its pods and logs. A Job that hit its deadline keeps only its events: Kubernetes deletes the pods.
 
-Follow the migration while it runs, or read the error after a failure:
+Follow the migration while it runs, or read the error after a failed run:
 
 ```bash
 kubectl -n aifactory logs -f job/aifactory-migrations
 ```
 
-`aifactory-migrations` is the name for the release `aifactory`. Other release names give `<release>-aifactory-migrations`; find the Job with:
+`aifactory-migrations` is the name for the release `aifactory`. Other release names and name overrides give a different name; find the Job with:
 
 ```bash
 kubectl -n aifactory get jobs -l app.kubernetes.io/component=migrations
 ```
 
-The Job is bounded by `migrations.jobActiveDeadlineSeconds` (300 s from Job start). The deadline covers scheduling, image pull, retries and the migration itself. For long migrations or slow image pulls, raise it together with `--timeout`; Helm's default `--timeout` is 5 minutes, so Helm may give up first. A run killed at the deadline rolls back (one transaction), so raise the value and re-run.
+The Job is bounded by `migrations.jobActiveDeadlineSeconds` (300 s from Job start). The deadline covers scheduling, image pull, retries and the migration itself. For long migrations or slow image pulls, raise it together with `--timeout`; Helm's default `--timeout` is 5 minutes, so Helm may give up first. A run killed at the deadline normally rolls back (the revisions run in one transaction), so raise the value and re-run. A Job can still fail after its transaction committed, so check `alembic current` before assuming the schema is unchanged.
 
 A typical schema change takes under 10 s. If a migration takes longer than 60 s, the next-iteration migration may be designed to run lazily (mark `op.add_column(..., server_default=...)` so the column is added instantly + populated in a separate background job). Release notes call this out per release.
 
@@ -261,7 +261,7 @@ kubectl -n aifactory get pods -w
 
 Find the previous revision number with `helm history aifactory -n aifactory`.
 
-This works cleanly when the migration hook Job failed: nothing was committed, the schema is unchanged, and the previous image still matches the schema.
+This works cleanly when the migration hook Job failed before committing: the schema is unchanged, and the previous image still matches the schema. A failed Job is not proof of that, so confirm the revision with `alembic current` from a debug pod first.
 
 If the hook succeeded and the new pods then failed to start, the schema is already at the new head. Use "Rollback after schema change applied" below instead.
 
@@ -299,7 +299,7 @@ This loses any audit rows + state changes that happened between the backup and t
 
 | Symptom                                                                                  | Likely cause                                                | Fix                                                                                                                  |
 | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `helm upgrade` fails on the pre-upgrade hook (`DeadlineExceeded`).                         | Check the Job pod: missing DB Secret → `CreateContainerConfigError`; missing CA Secret → `ContainerCreating` with a `FailedMount` event; missing or wrong pull Secret → `ImagePullBackOff`; no node capacity → `Pending`; otherwise a migration longer than the deadline. | Create the Secret, set `migrations.jobResources`, or raise `migrations.jobActiveDeadlineSeconds`.                  |
+| `helm upgrade` fails on the pre-upgrade hook (`DeadlineExceeded`).                         | Watch the Job pod before the deadline (it is deleted afterwards; `kubectl describe job` and `kubectl get events` remain): missing DB Secret → `CreateContainerConfigError`; missing CA Secret → `ContainerCreating` with a `FailedMount` event; missing or wrong pull Secret → `ImagePullBackOff`; no node capacity → `Pending`; quota exceeded → no pod, `FailedCreate` event on the Job; otherwise a migration longer than the deadline. | Create the Secret, set `migrations.jobResources`, or raise `migrations.jobActiveDeadlineSeconds`.                  |
 | Alembic migration fails with "duplicate column".                                         | Previous upgrade left the column in place; alembic state out of sync. | `alembic stamp head` from a debug pod, then redo the upgrade. Investigate why alembic state drifted.                |
 | Web pod starts but `/api/health` returns 503.                                            | Some downstream (KMS, OIDC, Postgres) failed health probe.   | `kubectl logs` to see which probe failed; verify connectivity.                                                       |
 | New pod runs alongside old pod for > 10 min.                                             | `--wait` timeout reached; new pod CrashLoopBackOff.          | `kubectl describe pod` on the new pod; check probes + secrets bound.                                                 |

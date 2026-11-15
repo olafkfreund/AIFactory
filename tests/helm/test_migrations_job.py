@@ -96,6 +96,15 @@ class TestMigrationsJobHardening:
         spec = _job_spec(chart_dir, sets)
         assert spec.get("activeDeadlineSeconds") == expected
 
+    def test_large_deadline_renders_as_integer(self, helm_available, chart_dir) -> None:
+        # Values-file numbers are float64 (--set-json reproduces that; --set
+        # does not): without int64 this renders 1e+06, which the API rejects.
+        cmd = ["helm", "template", "test-release", str(chart_dir)]
+        cmd += ["-s", "templates/job-migrations.yaml", "--set-json"]
+        cmd += ["migrations.jobActiveDeadlineSeconds=1000000"]
+        out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+        assert "activeDeadlineSeconds: 1000000\n" in out
+
     def test_negative_deadline_rejected(self, helm_available, chart_dir) -> None:
         with pytest.raises(subprocess.CalledProcessError):
             _render(chart_dir, ["migrations.jobActiveDeadlineSeconds=-1"])
@@ -104,6 +113,8 @@ class TestMigrationsJobHardening:
         pod = _job_spec(chart_dir)["template"]["spec"]
         names = {e["name"] for e in pod["containers"][0]["env"]}
         assert not names & {"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE"}
+        mounts = pod["containers"][0]["volumeMounts"]
+        assert "custom-ca" not in {m["name"] for m in mounts}
         assert "custom-ca" not in {v["name"] for v in pod["volumes"]}
 
     def test_custom_ca_on(self, helm_available, chart_dir) -> None:
@@ -131,6 +142,10 @@ class TestMigrationsJobHardening:
             "resources"
         ]
         assert job_res == web_res
+        # Follows a customised web value, not today's defaults.
+        spec = _job_spec(chart_dir, ["resources.limits.cpu=3"])
+        limits = spec["template"]["spec"]["containers"][0]["resources"]["limits"]
+        assert limits["cpu"] == 3
         spec = _job_spec(chart_dir, ["migrations.jobResources.limits.cpu=100m"])
         assert spec["template"]["spec"]["containers"][0]["resources"] == {
             "limits": {"cpu": "100m"}
