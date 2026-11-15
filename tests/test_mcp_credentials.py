@@ -13,10 +13,16 @@ with ``monkeypatch`` + ``tmp_path``. The frozen ``CredentialStatus`` and the
 from __future__ import annotations
 
 import json
+import os
+import sys
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
 from core import mcp_credentials as mc
+
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT / "apps" / "web-server"))
 
 
 @pytest.fixture(autouse=True)
@@ -43,6 +49,8 @@ def isolate_env(monkeypatch, tmp_path):
         "GITHUB_TOKEN",
         "GITHUB_PERSONAL_ACCESS_TOKEN",
         "GH_TOKEN",
+        "GITHUB_MCP_TOKEN",
+        "AIFACTORY_AGENT_GITHUB_TOKEN",
         "GITLAB_TOKEN",
         "GITLAB_API_TOKEN",
         "GITLAB_INSTANCE_URL",
@@ -125,6 +133,32 @@ def test_github_operator_config_indirects_to_named_env(tmp_path, monkeypatch):
     assert s.available
     assert s.source == "env:GH_ROBOT_TOKEN"
     assert s.env_vars["GITHUB_PERSONAL_ACCESS_TOKEN"] == "ghp_robot"
+
+
+def test_github_probe_sees_only_selected_runner_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.utils.subprocess_env import make_subprocess_env  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        mc,
+        "_load_operator_config",
+        lru_cache(lambda: {"github": {"tokenEnv": "GITHUB_MCP_TOKEN"}}),
+    )
+    for name, value in {
+        "GITHUB_TOKEN": "cp-a",
+        "GH_TOKEN": "cp-b",
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "cp-c",
+        "GITHUB_MCP_TOKEN": "cp-d",
+        "AIFACTORY_AGENT_GITHUB_TOKEN": "agent-x",
+    }.items():
+        monkeypatch.setenv(name, value)
+    runner = make_subprocess_env(github=True)
+    plain = make_subprocess_env()
+    monkeypatch.setattr(os, "environ", runner)
+    assert mc._probe_github().env_vars == {"GITHUB_PERSONAL_ACCESS_TOKEN": "agent-x"}
+    monkeypatch.setattr(os, "environ", plain)
+    assert not mc._probe_github().available
 
 
 def test_github_no_token_is_unavailable():
