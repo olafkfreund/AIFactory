@@ -477,8 +477,9 @@ def test_new_spec_beside_a_stale_plan_is_refused(
     fake_store.objects[workspace_fetch._spec_file_key("fetch", "spec.md")] = b"# new"
     fake_store.objects[
         workspace_fetch._spec_file_key("fetch", "implementation_plan.json")
-    ] = b"not json"
+    ] = b"[]"  # valid JSON, but a plan must be an object
     assert sj._finish_spec_fetch(spec_dir, "fetch", True) == 1
+    assert (spec_dir / "implementation_plan.json").read_text() == '{"old": true}'
     assert json.loads((spec_dir / "review_state.json").read_text())["approved"] is False
 
 

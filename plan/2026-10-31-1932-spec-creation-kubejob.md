@@ -183,7 +183,8 @@ Each was confirmed against the code and fixed in the same commit as this note.
   `fetch_spec_files` drops `qa_signoff`, `qa_iteration_history`, `qa_stats`
   and `contractHold` from the fetched plan before it is written, so a failed
   fetch cannot leave them on disk either; a capped read that comes back
-  shorter than the object's `ContentLength` is rejected; the docs row names
+  shorter than the object's `ContentLength` is rejected; a fetched plan that
+  is not a JSON object is rejected; the docs row names
   the model credentials the Job gets.
 - Not fixed here, tracked: bucket-wide `S3_*` in Jobs (#2023), the marker
   nonce in the Job env (#2024), unused CLI logins in build Jobs (#2025).

@@ -288,14 +288,14 @@ class SpecJobProcess:
                 stream.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await stream
-            # A stop during the fetch or the drain must not leave a 0: it
-            # would start a build.
-            self.returncode = -15 if self._stop.is_set() else self.returncode
             self.stdout.feed_eof()
             api = getattr(batch, "api_client", None)
             if api is not None:
                 with contextlib.suppress(Exception):
                     await api.close()
+            # Last step: a stop during the fetch, the drain or the close must
+            # not leave a 0, which would start a build.
+            self.returncode = -15 if self._stop.is_set() else self.returncode
 
     async def wait(self) -> int:
         await asyncio.shield(self._runner)

@@ -752,11 +752,11 @@ def _checked_spec_json(name: str, data: bytes) -> bytes:
     doc = json.loads(data)
     if not isinstance(doc, dict | list):
         raise ValueError("not a JSON object or array")
-    if (
-        name == "implementation_plan.json"
-        and isinstance(doc, dict)
-        and doc.keys() & _PLAN_VERDICT_KEYS
-    ):
+    if name != "implementation_plan.json":
+        return data
+    if not isinstance(doc, dict):
+        raise ValueError("plan is not a JSON object")
+    if doc.keys() & _PLAN_VERDICT_KEYS:
         for key in _PLAN_VERDICT_KEYS:
             doc.pop(key, None)
         return json.dumps(doc, indent=2).encode()
