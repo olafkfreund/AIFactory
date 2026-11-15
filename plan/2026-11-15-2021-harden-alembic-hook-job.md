@@ -43,7 +43,7 @@ Approved decisions (from the spec):
      the key twice when both are set (AIFactory#2021).
      */}}
      {{- define "aifactory.imagePullSecrets" -}}
-     {{- with concat (.Values.global.imagePullSecrets | default list) (.Values.image.pullSecrets | default list) | uniq }}
+     {{- with concat ((.Values.global).imagePullSecrets | default list) (.Values.image.pullSecrets | default list) | uniq }}
      imagePullSecrets:
        {{- toYaml . | nindent 2 }}
      {{- end }}
@@ -87,12 +87,14 @@ Approved decisions (from the spec):
      `jobActiveDeadlineSeconds: 300` and `jobResources: {}` with comments:
      the deadline covers scheduling, image pull, retries and the migration;
      raise it for long migrations; `0` disables; empty `jobResources` uses
-     `resources`; the CA and pull Secrets must exist before the first install.
+     `resources`; the DB, CA and pull Secrets must exist before the first
+     install.
    - `values.schema.json:120-127` (`migrations.properties`): add
      `jobActiveDeadlineSeconds` (`integer`, `minimum: 0`) and `jobResources`
      (`object`).
-   - `README.md:39` (`migrations` row): name both values and the Secret
-     precondition.
+   - `README.md:39` (`migrations` row): name both values, and extend the
+     existing DB-Secret precondition to the CA Secret
+     (`global.customCABundle.secretName`) and the pull Secrets.
 
    → verify: `helm lint charts/aifactory`; `helm template` with defaults shows
    `activeDeadlineSeconds: 300` and the web resources on the Job; with
@@ -108,7 +110,9 @@ Approved decisions (from the spec):
      `global.customCABundle.key` appears in both env values;
    - resources: default equals the Deployment container's; override wins;
    - pull secrets, for the Job and the Deployment: both lists → `[g, i]`; a
-     duplicate entry appears once; global only; image only; neither → no key.
+     duplicate entry appears once; global only; image only; neither → no key;
+     each list `=null` alone, and one `=null` beside a populated one, renders
+     without error.
      Count `imagePullSecrets:` in the raw output of
      `helm template -s templates/<file>` (0 or 1), because `yaml.safe_load`
      hides a duplicate key;
@@ -123,10 +127,20 @@ Approved decisions (from the spec):
      rewrite: with the chart default (`migrations.autoApply=false`) a
      pre-install/pre-upgrade Job runs `alembic upgrade head` before pods roll;
      a failure fails `helm upgrade` and the old pods keep serving; logs are
-     `kubectl -n aifactory logs -f job/<release>-aifactory-migrations` while it
-     runs or after a failure (a successful Job is deleted); the Job is bounded
-     by `migrations.jobActiveDeadlineSeconds` (300 s, raise it together with
-     `--timeout` for long migrations); with `autoApply=true` (POC) the web pod
+     `kubectl -n aifactory logs -f job/aifactory-migrations` while it runs or
+     after a failure (a successful Job is deleted). That is the name for the
+     guide's release `aifactory`: `aifactory.fullname` does not repeat the
+     chart name. Say that other release names give
+     `<release>-aifactory-migrations`, and give
+     `kubectl -n aifactory get jobs -l app.kubernetes.io/component=migrations`
+     to find it. The Job is bounded by
+     `migrations.jobActiveDeadlineSeconds` (300 s from Job start, covering
+     scheduling, image pull, retries and the migration): raise it together
+     with `--timeout` for long migrations or slow pulls; with Helm's default
+     5-minute `--timeout` Helm may give up first; a run killed at the deadline
+     rolls back (one transaction), so raise the value and re-run; the Job
+     requests the web `resources` unless `migrations.jobResources` is set, so
+     a pod `Pending` for lack of capacity also ends at the deadline; with `autoApply=true` (POC) the web pod
      migrates at startup as before; an upgrade with `--reuse-values` from a
      chart older than this change gets no deadline until the value is set;
      Postgres TLS with a private CA needs
@@ -134,16 +148,20 @@ Approved decisions (from the spec):
    - line 54: "whether a migration runs" (drop "at startup").
    - line 162: "Auto-applied by the migration hook Job (or at startup with
      `autoApply=true`)".
-   - lines 240-249: the clean-rollback case is "the migration hook Job failed
-     or the new pods never started", not "the alembic startup step".
+   - lines 240-249: the clean-rollback case is "the migration hook Job
+     failed", and only that: nothing was committed. If the hook succeeded and
+     the new pods then failed to start, the schema is already at the new
+     head; say so and point to "Rollback after schema change applied".
    - troubleshooting table: add a row for `helm upgrade` failing on the
-     pre-upgrade hook (`DeadlineExceeded`, or the pod in
-     `CreateContainerConfigError`): causes missing DB/CA/pull Secret or a
-     migration longer than the deadline; fix is to create the Secret or raise
-     the deadline.
+     pre-upgrade hook (`DeadlineExceeded`). Causes by pod state: missing DB
+     Secret → `CreateContainerConfigError`; missing CA Secret →
+     `ContainerCreating` with a `FailedMount` event; missing or wrong pull
+     Secret → `ImagePullBackOff`; no node capacity → `Pending`; otherwise a
+     migration longer than the deadline. Fix: create the Secret, set
+     `migrations.jobResources`, or raise the deadline.
 
    → verify: read the rendered diff; the Job name matches
-   `helm template test-release charts/aifactory -s templates/job-migrations.yaml`.
+   `helm template aifactory charts/aifactory -s templates/job-migrations.yaml`.
    Traps: keep the table's column alignment (markdownlint in pre-commit).
 
 ## Tests
