@@ -16,6 +16,7 @@ import asyncio
 import json
 import logging
 import time
+from typing import Any
 
 from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -86,7 +87,7 @@ async def broadcast_event(event_type: str, payload: dict):
     await send_to_org(_event_org(payload) or SERVICE_ONLY_ORG, event_type, payload)
 
 
-def _event_org(payload: dict) -> str | None:
+def _event_org(payload: dict[str, Any]) -> str | None:
     try:
         pid = payload.get("projectId")
         if not pid:
@@ -114,7 +115,9 @@ async def send_to_user(user_id: str, event_type: str, payload: dict):
     await event_bus.publish_event(UserScope(user_id=user_id), event_type, payload)
 
 
-async def emit_org_less(principal: object, event_type: str, payload: dict):
+async def emit_org_less(
+    principal: object, event_type: str, payload: dict[str, Any]
+) -> None:
     """Send an event that has no org to the human who started it, else to service clients."""
     if (
         isinstance(principal, dict)
@@ -140,7 +143,9 @@ async def send_to_org(org_id: str, event_type: str, payload: dict):
 # ---------------------------------------------------------------------------
 
 
-async def _load_org_ids(client: ConnectedClient, user_info: dict | None) -> None:
+async def _load_org_ids(
+    client: ConnectedClient, user_info: dict[str, Any] | None
+) -> None:
     """Load the user's org memberships for routing; a failed lookup leaves none."""
     if not (user_info and user_info.get("id")):
         return
@@ -303,8 +308,8 @@ async def emit_profile_switch(task_id: str, switch_data: dict):
 
 
 async def emit_task_logs_stream(
-    spec_id: str, chunk: dict, project_id: str | None = None
-):
+    spec_id: str, chunk: dict[str, Any], project_id: str | None = None
+) -> None:
     """Emit a task log chunk for real-time streaming to open task detail modals.
 
     This event streams individual log entries as they're added to task_logs.json,

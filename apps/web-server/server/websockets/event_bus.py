@@ -47,6 +47,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
+from typing import Any
 
 from fastapi import WebSocket
 
@@ -147,12 +148,13 @@ class OrgScope:
 Scope = BroadcastScope | UserScope | OrgScope
 
 
-def _payload_org(payload: dict) -> str | None:
-    org = payload.get("org_id")
+def _payload_org(payload: dict[str, Any]) -> str | None:
+    org: str | None = payload.get("org_id")
     if org is not None:
         return org
     data = payload.get("data")
-    return data.get("org_id") if isinstance(data, dict) else None
+    nested: str | None = data.get("org_id") if isinstance(data, dict) else None
+    return nested
 
 
 def _may_receive(client: ConnectedClient, org: str | None) -> bool:
