@@ -15,6 +15,9 @@ const sidebars: SidebarsConfig = {
     'getting-started',
     'configuration-reference',
     'environment-reference',
+    'task-lifecycle',
+    'task-contract',
+    'nix-reproducible-build',
     'demo',
     {
       type: 'category',
@@ -22,6 +25,7 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       items: [
         'concepts/spec-driven-development',
+        'concepts/pipeline-flow',
         'concepts/multi-provider',
         'concepts/deploy-then-verify',
         'concepts/api-key-auth',
@@ -37,6 +41,7 @@ const sidebars: SidebarsConfig = {
         'concepts/mcp-stdio-keys',
         'concepts/portal-clones',
         'concepts/gvisor-sandbox',
+        'concepts/gvisor-smoke-test-local',
         'concepts/multi-replica',
         'concepts/workspace-storage',
         'concepts/observability-panels',
@@ -47,7 +52,6 @@ const sidebars: SidebarsConfig = {
         'concepts/litellm-gateway',
         'concepts/claude-enforcement',
         'concepts/saml-scim',
-        'concepts/tenant-isolation',
       ],
     },
     {

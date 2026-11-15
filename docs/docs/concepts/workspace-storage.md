@@ -127,7 +127,7 @@ workspace_store.upload_project: snapshotted /var/lib/aifactory/workspaces/my-rep
 
 ## Azure Blob / GCS
 
-These backends work via fsspec's `adlfs` and `gcsfs` packages but aren't first-class in v1.1's chart. To use them:
+These backends work via fsspec's `adlfs` and `gcsfs` packages but aren't first-class in the chart. To use them:
 
 1. Install the extra dep in your image overlay: `pip install adlfs` or `pip install gcsfs`.
 2. Set `uriBase: "azure://container/aifactory"` or `uriBase: "gs://my-bucket/workspaces"`.
@@ -194,8 +194,8 @@ Where `lifecycle.json` has a rule like "delete objects under `workspaces/` older
 
 ## Related
 
-- Epic [#35](https://github.com/olafkfreund/AIFactory/issues/35) — Enterprise v1.1
+- Epic [#35](https://github.com/olafkfreund/AIFactory/issues/35) — Enterprise hardening
 - Issue [#40](https://github.com/olafkfreund/AIFactory/issues/40) — original two-half issue
-- [Multi-replica deployment](./multi-replica) — companion v1.1 spec (Redis pub/sub) you'll want alongside this
+- [Multi-replica deployment](./multi-replica) — companion spec (Redis pub/sub) you'll want alongside this
 - Design doc — `docs/plans/2026-05-28-s3-workspaces-design.md`
 - Cross-ref Epic [#36](https://github.com/olafkfreund/AIFactory/issues/36) — Tenant Isolation Mode (per-tenant `org_id` populates the storage prefix when it lands)

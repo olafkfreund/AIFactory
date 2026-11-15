@@ -50,12 +50,13 @@ const config: Config = {
   deploymentBranch: 'gh-pages',
   trailingSlash: false,
 
-  onBrokenLinks: 'warn',
+  onBrokenLinks: 'throw',
+  onBrokenAnchors: 'throw',
 
   markdown: {
     mermaid: true,
     hooks: {
-      onBrokenMarkdownLinks: 'warn',
+      onBrokenMarkdownLinks: 'throw',
     },
   },
   themes: ['@docusaurus/theme-mermaid'],
@@ -159,7 +160,6 @@ const config: Config = {
           title: 'Community',
           items: [
             {label: 'GitHub Issues', href: 'https://github.com/olafkfreund/AIFactory/issues'},
-            {label: 'Discussions', href: 'https://github.com/olafkfreund/AIFactory/discussions'},
             {label: 'Contributing', to: '/contributing'},
           ],
         },

@@ -7,9 +7,9 @@ sidebar_position: 10
 
 > *Scale AIFactory's web pod beyond one replica without losing real-time WebSocket events. Opt-in via Redis pub/sub.*
 
-Single-replica AIFactory is the default — laptop installs, dev environments, and small pilots run one pod and everything Just Works. When you need to scale (more concurrent users, more in-flight tasks, HA across nodes), the v1.0 chart had a hard `replicaCount: 1` pin: starting a second pod would make WebSocket events fire on one pod and disappear from the others.
+Single-replica AIFactory is the default — laptop installs, dev environments, and small pilots run one pod and everything Just Works. When you need to scale (more concurrent users, more in-flight tasks, HA across nodes), the chart originally had a hard `replicaCount: 1` pin: starting a second pod would make WebSocket events fire on one pod and disappear from the others.
 
-v1.1 closes that gap with an opt-in Redis pub/sub bridge that fan-outs events across all replicas. With Redis on, you can scale to `replicaCount: N` (or enable the HPA up to `maxReplicas: N`) and every replica's WebSocket clients receive every event — regardless of which replica fired it.
+An opt-in Redis pub/sub bridge that fan-outs events across all replicas. With Redis on, you can scale to `replicaCount: N` (or enable the HPA up to `maxReplicas: N`) and every replica's WebSocket clients receive every event — regardless of which replica fired it.
 
 ## Concurrency model (RFC-0016 / RFC-0017)
 
@@ -45,7 +45,7 @@ You **don't** need it for:
 
 ## What's in scope (and what's not)
 
-| Aspect | v1.1 status |
+| Aspect | Status |
 |---|---|
 | `broadcast_event`, `send_to_user`, `send_to_org` cross-replica | Works — fan-out via Redis |
 | Task progress / log / status events | Works — they use the functions above |
@@ -145,7 +145,7 @@ Terminal WebSocket streams (`/ws/terminal/{id}`) carry stateful rmux subprocesse
 
 The ingress sticky-cookie annotation in the example above is the recommended pattern: each browser session pins to one replica for the duration of its terminal interactions. The cookie path scoped to `/ws/terminal` means general-events WebSocket traffic on `/ws/events` is still free to land on any replica.
 
-If you need true cross-replica terminal routing (e.g. one user's terminal needs to survive a pod restart on a different replica), that's tracked as v1.2 work — not in scope for v1.1.
+If you need true cross-replica terminal routing (e.g. one user's terminal needs to survive a pod restart on a different replica), that's not supported today.
 
 ## Operator notes
 
@@ -156,7 +156,7 @@ If you need true cross-replica terminal routing (e.g. one user's terminal needs 
 
 ## Related
 
-- Epic [#35](https://github.com/olafkfreund/AIFactory/issues/35) — Enterprise v1.1
+- Epic [#35](https://github.com/olafkfreund/AIFactory/issues/35) — Enterprise hardening
 - Issue [#40](https://github.com/olafkfreund/AIFactory/issues/40) — original two-half issue (Redis + S3)
 - Design doc — `docs/plans/2026-05-28-redis-ws-fanout-design.md`
-- [gVisor sandboxing](./gvisor-sandbox) — companion v1.1 isolation feature
+- [gVisor sandboxing](./gvisor-sandbox) — companion isolation feature

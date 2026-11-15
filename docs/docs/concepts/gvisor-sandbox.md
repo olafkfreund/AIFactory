@@ -120,7 +120,7 @@ Pod startup dominates the overhead percentage but the absolute number is still s
 
 ## Related
 
-- Epic [#35](https://github.com/olafkfreund/AIFactory/issues/35) — Enterprise v1.1 hardening
+- Epic [#35](https://github.com/olafkfreund/AIFactory/issues/35) — Enterprise hardening
 - Issue [#37](https://github.com/olafkfreund/AIFactory/issues/37) — chart wiring (closed)
 - Issue [#170](https://github.com/olafkfreund/AIFactory/issues/170) — live-cluster CI smoke test (this doc)
 - Threat model doc pending [#160](https://github.com/olafkfreund/AIFactory/issues/160) backfill

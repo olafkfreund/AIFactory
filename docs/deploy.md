@@ -1,6 +1,6 @@
 # Deploying AIFactory to the k3d cluster (CD → ArgoCD)
 
-AIFactory runs on the p510 k3d cluster, managed by ArgoCD from
+AIFactory runs on the operator host k3d cluster, managed by ArgoCD from
 [`olafkfreund/factory-gitops`](https://github.com/olafkfreund/factory-gitops). The deploy loop is
 **build → push immutable image → bump the gitops tag → ArgoCD redeploys**.
 
@@ -33,16 +33,16 @@ scripts/deploy.sh            # build current checkout → push → bump → sync
 TAG=v3.5.0 scripts/deploy.sh # also push an explicit semver tag
 ```
 
-Needs: `docker login ghcr.io` (push), git access to `factory-gitops`, and optionally ssh to `p510`
+Needs: `docker login ghcr.io` (push), git access to `factory-gitops`, and optionally ssh to the operator host
 for an instant `argocd app sync` (otherwise auto-sync picks it up).
 
 ## Verify
 
 ```bash
-ssh p510 'KUBECONFIG=/etc/k3d/kubeconfig kubectl -n factory get pods -l app=aifactory'
-ssh p510 'KUBECONFIG=/etc/k3d/kubeconfig kubectl -n argocd get app aifactory'
+ssh <operator-host> 'KUBECONFIG=/etc/k3d/kubeconfig kubectl -n factory get pods -l app=aifactory'
+ssh <operator-host> 'KUBECONFIG=/etc/k3d/kubeconfig kubectl -n argocd get app aifactory'
 # rendered tag:
-ssh p510 'KUBECONFIG=/etc/k3d/kubeconfig kubectl -n factory get deploy aifactory -o jsonpath="{.spec.template.spec.containers[0].image}"'
+ssh <operator-host> 'KUBECONFIG=/etc/k3d/kubeconfig kubectl -n factory get deploy aifactory -o jsonpath="{.spec.template.spec.containers[0].image}"'
 ```
 
 ## Roll back

@@ -2,12 +2,12 @@
 
 When you use AIFactory through Claude Code, a small **stdio MCP server** runs
 on your laptop as a subprocess. It calls into the AIFactory web-server to
-list tasks, start runs, create PRs, and so on. Before v1.1 the stdio MCP
+list tasks, start runs, create PRs, and so on. Originally the stdio MCP
 used the **host-wide admin token** at `~/.aifactory/.token` — fine for a
 single user, dangerous on shared hosts because any process that could
 read that file got full admin power.
 
-This page covers the v1.1 model (Issue #154): each developer holds their
+This page covers the scoped-key model (Issue #154): each developer holds their
 own **scoped `acw_` key** for the stdio MCP, the legacy admin token
 keeps working as a fallback.
 

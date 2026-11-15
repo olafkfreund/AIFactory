@@ -36,7 +36,7 @@ flowchart LR
 
 The fully detailed version — with the self-heal loop, the QA-fixer loop, the
 pre-merge gate, and the handback path — lives in the docs:
-[Pipeline Flow](/docs/concepts/pipeline-flow). Here I want to explain *why* it's
+[Pipeline Flow](/concepts/pipeline-flow). Here I want to explain *why* it's
 shaped this way.
 
 ## 1. Assignment: trust, but verify the plan
@@ -127,5 +127,5 @@ thrashing. Security and destructive triggers escalate immediately.
 The pipeline is opinionated on purpose. The opinions are all the same one: a unit
 of work is finished when the system can *prove* it, not when a model *claims* it.
 
-*Full detail: [Pipeline Flow](/docs/concepts/pipeline-flow) ·
-[Task Lifecycle](/docs/task-lifecycle) · [Task Contract v2](/docs/task-contract).*
+*Full detail: [Pipeline Flow](/concepts/pipeline-flow) ·
+[Task Lifecycle](/task-lifecycle) · [Task Contract v2](/task-contract).*
