@@ -18,6 +18,7 @@ Approved decisions (from the spec):
 - Deviation after the lead's review: `agents/session.py` passes `source_spec_dir or spec_dir` to the safety net, so in worktree mode the trailers come from the canonical spec copy rather than the agent-writable worktree copy. The parallel path (`agents/parallel_integration.py`) passes `source_spec_dir or spec_dir` the same way. Regenerated `docs/docs/compliance/autonomy-matrix.md` and `docs/static/compliance/autonomy-matrix.json` (`scripts/gen_autonomy_matrix.py`): the new import bumps a reach count, which CI checks.
 - Not covered either: the `merge --no-ff` commit in `core/worktree.py` (`aifactory: Merge <branch>`), which carries no trailers.
 - Agent-session commits, squash-merge bodies, authorship and `merge_policy` mapping are out of scope.
+- Deviation (2026-11-15, AIFactory#2015): `AIFACTORY_AGENT_COMMIT_TRAILERS` is added to `_PASSTHROUGH_BUILD_ENV` in `apps/web-server/server/services/build_backend.py`. The plan missed that with the `kubejob` backend the safety-net and wave commits run in the build Job, which only receives the allowlisted env, so the flag never reached them. Test: `test_build_job_env_forwards_commit_trailers_flag` in `tests/test_build_backend_kubejob.py`. The variable is now documented in `docs/docs/environment-reference.md`. In the Job the trailers still come from `source_spec_dir`, outside the agent's worktree, as in subprocess mode (read from code, not run in a live Job).
 
 ## Steps
 
