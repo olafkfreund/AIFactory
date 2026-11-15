@@ -22,23 +22,18 @@ for root in (WEB_SERVER, BACKEND):
 
 from core.git_credentials import github_token  # noqa: E402
 from server import project_registry  # noqa: E402
-from server.routes import (  # noqa: E402
-    github as github_routes,
-)
-from server.routes import (
-    project_authz,
-    projects,
-)
+from server.routes import github, project_authz, projects  # noqa: E402
 from server.services import (  # noqa: E402
-    completion_orchestration as completion,
-)
-from server.services import (
+    completion_orchestration,
     github_app,
     merger,
     pr_endgame,
     project_settings_store,
     project_workspace_service,
 )
+
+github_routes = github
+completion = completion_orchestration
 
 
 @pytest.mark.parametrize(
