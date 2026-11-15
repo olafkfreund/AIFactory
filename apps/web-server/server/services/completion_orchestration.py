@@ -282,9 +282,9 @@ async def run_terminal_completion(
             # fallback. Both default OFF; human-stop on changes-requested,
             # no-Copilot-review, or timeout.
             try:
-                from server.project_registry import org_id_for_path
+                from server.project_registry import org_id_for_path  # noqa: PLC0415
 
-                from . import github_app
+                from . import github_app  # noqa: PLC0415
                 from .pr_endgame import (
                     gather_pr_context,
                     is_auto_merge_enabled,

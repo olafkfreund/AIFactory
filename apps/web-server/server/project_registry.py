@@ -55,7 +55,7 @@ def load_projects() -> dict[str, dict[str, Any]]:
 
 
 def org_id_for_path(project_path: str | Path | None) -> str | None:
-    if not project_path or not os.path.isabs(project_path):
+    if not project_path or not PurePath(project_path).is_absolute():
         return None
     path = PurePath(os.path.normpath(project_path))
     try:
@@ -67,7 +67,7 @@ def org_id_for_path(project_path: str | Path | None) -> str | None:
         entry = project.get("path")
         if (
             entry
-            and os.path.isabs(entry)
+            and PurePath(entry).is_absolute()
             and path.is_relative_to(PurePath(os.path.normpath(entry)))
         ):
             orgs.add(project.get("org_id"))

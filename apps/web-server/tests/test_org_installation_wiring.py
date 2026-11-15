@@ -23,10 +23,8 @@ for root in (WEB_SERVER, BACKEND):
 from core.git_credentials import github_token  # noqa: E402
 from server import project_registry  # noqa: E402
 from server.routes import project_authz, projects  # noqa: E402
-from server.services import (  # noqa: E402
+from server.services import (  # noqa: E402  # noqa: E402
     completion_orchestration as completion,
-)
-from server.services import (
     github_app,
     merger,
     pr_endgame,
@@ -75,7 +73,7 @@ def test_project_clone_uses_owner_org(
     seen: list[tuple[str, tuple[str, str] | None]] = []
 
     async def clone_or_update(
-        *, git_url: str, branch: str | None, credential: tuple[str, str] | None
+        *, credential: tuple[str, str] | None, **_kw: Any
     ) -> Path:
         seen.append((github_token(), credential))
         return path
@@ -97,7 +95,7 @@ def test_project_clone_uses_owner_org(
 
 
 def test_project_clone_mint_error_returns_400(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(github_app, "_org_installations", {"acme": "12"})
     monkeypatch.setattr(github_app, "_tokens", {})

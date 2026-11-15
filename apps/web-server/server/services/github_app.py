@@ -284,7 +284,7 @@ async def refresh_loop(stop: asyncio.Event) -> None:
         if stop.is_set():
             break
         try:
-            _publish((await asyncio.to_thread(_mint, _installation_id))[0])
+            _publish((await asyncio.to_thread(_mint, _installation_id or ""))[0])
             delay = _OK_DELAY
         except Exception:  # keep the current token, retry soon
             logger.exception("GitHub App token refresh failed; keeping current token")
