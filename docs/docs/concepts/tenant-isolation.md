@@ -5,7 +5,7 @@ sidebar_position: 13
 
 # Tenant Isolation Mode (Epic #35 #36)
 
-> *Opt-in per-deployment toggle that gives every Organization its own Kubernetes namespace, ServiceAccount, NetworkPolicy, S3 prefix + IAM role, and Vault path. Closes the v1.0 limitation where all organizations in a deployment trust each other implicitly. See [Epic #35 #36](https://github.com/olafkfreund/AIFactory/issues/36).*
+> *Opt-in per-deployment toggle that gives every Organization its own Kubernetes namespace, ServiceAccount, NetworkPolicy, S3 prefix + IAM role, and Vault path. Closes the limitation where all organizations in a deployment trust each other implicitly. See [Epic #35 #36](https://github.com/olafkfreund/AIFactory/issues/36).*
 
 ## When you need this
 
@@ -26,7 +26,7 @@ Pre-#36 deployments are byte-for-byte unchanged until the operator flips `tenant
 
 ## What's in scope (and what's not)
 
-| Aspect | v1.1 status |
+| Aspect | Status |
 |--------|-------------|
 | Per-tenant Kubernetes Namespace, ServiceAccount, NetworkPolicy | Yes |
 | Per-tenant S3 prefix + IAM role (AWS / IRSA) | Yes |
@@ -36,9 +36,9 @@ Pre-#36 deployments are byte-for-byte unchanged until the operator flips `tenant
 | Soft-delete + 30-day infra grace + immediate PII scrub | Yes |
 | OPA Gatekeeper sample policies (opt-in defence-in-depth) | Yes |
 | Stuck-terminating namespace detection + operator alerts | Yes |
-| Per-tenant audit-chain anchor | No (v1.2) |
+| Per-tenant audit-chain anchor | Optional (`audit.anchor.perTenant=true`) |
 | Per-tenant LLM provider routing | No (Epic #35 #38 LiteLLM gateway) |
-| Per-tenant Postgres database | No (v2.0 separate epic) |
+| Per-tenant Postgres database | No (separate epic) |
 | Cross-cluster isolation (one cluster per tenant) | No (use multiple Helm installs) |
 | OpenShift-specific SCCs | No (parking lot) |
 | Kata Containers / Firecracker | No (gVisor only — Epic #35 #37) |
@@ -144,7 +144,7 @@ Before flipping the toggle:
 
 Kubernetes RBAC does **NOT** support prefix-based namespace scoping at the RoleBinding level. A ClusterRole with `create namespaces` + `create rolebindings` (which the reconciler needs to provision tenant namespaces at run time) is **effectively cluster-admin**. A compromised web pod can create arbitrary namespaces + bindings, not just `aifactory-tenant-*` ones.
 
-This is a **known privilege concentration** in v1.1. We document it honestly rather than hide it.
+This is a **known privilege concentration**. We document it honestly rather than hide it.
 
 Production deployments **should** close the gap with both:
 
@@ -157,7 +157,7 @@ Production deployments **should** close the gap with both:
 
 The samples are inert templates by default (`gatekeeperEnabled: false`). When opted in, they instantiate against the operator's configured `namespacePrefix` + reconciler SA. Operators with their own Gatekeeper governance may need to merge the Rego with existing rules.
 
-**Roadmap (v2.x):** extract the reconciler into a separate Operator pod (Kopf-based controller watching `AIFactoryOrg` CRDs) with a tighter ServiceAccount that supports prefix matching at the API-server level. The in-app reconciler ships in v1.1 because it's under half the maintenance cost while the threat model accepts the privilege concentration.
+**Future work:** extract the reconciler into a separate Operator pod (Kopf-based controller watching `AIFactoryOrg` CRDs) with a tighter ServiceAccount that supports prefix matching at the API-server level. The reconciler runs in-app, and the threat model accepts the privilege concentration.
 
 ## Tear-down lifecycle
 
@@ -324,7 +324,7 @@ Alert when this returns >0 rows — the operator needs to intervene (typically a
 
 ## Compatibility with other Helm toggles
 
-- **`audit.anchor.enabled`** — independent. Per-tenant audit-chain anchor is a v1.2 work item; v1.1 has one chain across all tenants.
+- **`audit.anchor.enabled`** — independent. Per-tenant audit-chain anchor is a separate option (`audit.anchor.perTenant`); without it there is one chain across all tenants.
 - **`workspaces.storage.enabled`** — pairs naturally. Per-tenant IAM roles scope S3 access to the tenant's prefix.
 - **`redis.enabled`** — **required** for multi-replica safety (distributed mutex).
 - **`sandbox.gvisor.enabled`** — strongly recommended together (closes the web pod's privilege concentration).
@@ -336,4 +336,4 @@ Alert when this returns >0 rows — the operator needs to intervene (typically a
 - ISO 27001 evidence: see `guides/compliance/iso27001-evidence.md` A.13.1 (network segmentation), A.9.2 (privileged access), A.18.1 (legal compliance).
 - Companion concepts: [Audit anchor](./audit-anchor.md), [gVisor sandbox](./gvisor-sandbox.md), [Multi-replica deployments](./multi-replica.md).
 
-> **Per-tenant audit chain (v1.2 #208):** when `audit.anchor.perTenant=true` is set alongside `tenant.isolationEnabled=true`, each isolated tenant gets its own HMAC-SHA256 signing key and its own daily audit-chain anchor — verifiable independently without seeing other tenants' data. This is recommended but not required for isolated-mode tenants. See [Signed audit-chain anchor — Per-tenant chains](./audit-anchor.md).
+> **Per-tenant audit chain (#208):** when `audit.anchor.perTenant=true` is set alongside `tenant.isolationEnabled=true`, each isolated tenant gets its own HMAC-SHA256 signing key and its own daily audit-chain anchor — verifiable independently without seeing other tenants' data. This is recommended but not required for isolated-mode tenants. See [Signed audit-chain anchor — Per-tenant chains](./audit-anchor.md).
