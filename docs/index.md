@@ -130,7 +130,7 @@ The full documentation lives at **<https://aifactory.freundcloud.com/>**:
 - **[Wiki](https://aifactory.freundcloud.com/wiki/faq)** — FAQ, troubleshooting, glossary
 - **[Compliance](https://aifactory.freundcloud.com/compliance/soc2)** — SOC 2 evidence, GDPR, encryption-at-rest
 
-Legacy guides (pre-2026-05-26 rewrite) are archived under [`docs-archive/2026-05-26/`](docs-archive/2026-05-26/) and remain searchable in git history.
+Legacy guides (pre-2026-05-26 rewrite) are archived under `docs-archive/2026-05-26/` and remain searchable in git history.
 
 ## Stack
 

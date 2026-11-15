@@ -349,7 +349,7 @@ This closes the hijack-via-unverified-email attack: an attacker who controls a G
 
 ## See also
 
-- [OIDC SSO](https://github.com/olafkfreund/AIFactory/blob/dev/guides/auth/oidc.md) — primary SSO for Okta / Auth0 / Google / GitHub (Epic #35 P3).
+- [OIDC SSO](https://github.com/olafkfreund/AIFactory/blob/main/docs-archive/2026-05-26/guides/operations/oidc-setup.md) — primary SSO for Okta / Auth0 / Google / GitHub (Epic #35 P3).
 - [Signed audit-chain anchor](./audit-anchor.md) — daily HMAC-signed audit log integrity (Epic #35 #43).
 - [Distributed tracing](./observability-tracing.md) — OpenTelemetry (Epic #35 #42).
 - [Multi-replica deployment](./multi-replica.md) — Redis fan-out (Epic #35 #40).

@@ -16,8 +16,6 @@ The build wasn't wrong. It was *slow*. And the reason turned out to be embarrass
 the executor did everything one step at a time, even when the steps had nothing to do with each
 other.
 
-![The AIFactory board with the FastAPI gateway PARR demo completed](./board-parr-demo.png)
-
 {/* truncate */}
 
 ## The problem: correct, thorough, and serial
@@ -82,12 +80,8 @@ While we were in here, we moved the default Opus tier to **Claude Opus 4.8** acr
 coder, and QA roles, and fixed the model picker labels that still said 4.7. One shorthand,
 `opus`, now resolves to the current flagship everywhere.
 
-![Agent settings showing Claude Opus 4.8 across phase configuration](./agent-settings-opus-4-8.png)
-
 Memory is configurable in the same settings surface — the embedded knowledge graph, the MCP
-endpoint agents read and write through, and the embedding model for semantic search:
-
-![The Memory settings panel — Graphiti, MCP access, and embedding model](./memory-panel.png)
+endpoint agents read and write through, and the embedding model for semantic search.
 
 ## The part we won't hand-wave: humans, in their language
 
@@ -103,8 +97,6 @@ naturally wherever you are:
 
 There are no hardcoded strings in the UI — new text lands in every locale at once. Autonomy you
 can't read isn't autonomy you can govern.
-
-![The portal language picker — English, Français, Português (Brasil)](./language-i18n.png)
 
 ## What's still open
 
