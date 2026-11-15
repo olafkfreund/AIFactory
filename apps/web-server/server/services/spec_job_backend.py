@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import shlex
@@ -158,15 +159,34 @@ def _prepare_spec_workspace(
             shutil.rmtree(clone)
 
 
+# QA and contract verdicts the build's gates read from the plan. A spec session
+# has no business writing them, and the approval hash does not cover them.
+_PLAN_VERDICT_KEYS = ("qa_signoff", "qa_iteration_history", "qa_stats", "contractHold")
+
+
+def _drop_plan_verdicts(plan_file: Path) -> None:
+    plan = json.loads(plan_file.read_text())
+    if isinstance(plan, dict) and any(key in plan for key in _PLAN_VERDICT_KEYS):
+        for key in _PLAN_VERDICT_KEYS:
+            plan.pop(key, None)
+        plan_file.write_text(json.dumps(plan, indent=2))
+
+
 def _finish_spec_fetch(spec_dir: Path, fetch_id: str, auto_approve: bool) -> int:
     from core.workspace_fetch import fetch_spec_files  # noqa: PLC0415
     from review.state import ReviewState  # noqa: PLC0415
 
     state = ReviewState.load(spec_dir)
-    if "spec.md" not in fetch_spec_files(spec_dir, fetch_id):
-        # A partial fetch may have replaced the plan: drop any earlier approval.
+    fetched = fetch_spec_files(spec_dir, fetch_id)
+    plan_file = spec_dir / "implementation_plan.json"
+    plan_fetched = "implementation_plan.json" in fetched
+    # No spec.md, or a new spec.md beside a plan this Job did not return: a
+    # partial fetch must not pair fresh and stale files under one approval.
+    if "spec.md" not in fetched or (plan_file.exists() and not plan_fetched):
         state.invalidate(spec_dir)
         return 1
+    if plan_fetched:
+        _drop_plan_verdicts(plan_file)
     if auto_approve:
         state.approve(spec_dir, approved_by="auto")
     elif not state.is_approval_valid(spec_dir):
@@ -256,6 +276,9 @@ class SpecJobProcess:
                 if outcome == "succeeded":
                     try:
                         self.returncode = await finish()
+                        if self._stop.is_set():
+                            # Stopped while the fetch ran: 0 would start a build.
+                            self.returncode = -15
                     except Exception:  # noqa: BLE001 - failed fetch is failed Job
                         _log.exception(
                             "[spec_job_backend] fetch failed for Job %s/%s",

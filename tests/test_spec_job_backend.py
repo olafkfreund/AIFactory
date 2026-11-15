@@ -460,6 +460,60 @@ def test_partial_fetch_without_spec_md_drops_earlier_approval(
     assert json.loads((spec_dir / "review_state.json").read_text())["approved"] is False
 
 
+def test_new_spec_beside_a_stale_plan_is_refused(
+    fake_store: type[FakeArtifactStore], tmp_path: Path
+) -> None:
+    spec_dir = tmp_path / "spec"
+    spec_dir.mkdir()
+    (spec_dir / "implementation_plan.json").write_text('{"old": true}')
+    fake_store.objects[workspace_fetch._spec_file_key("fetch", "spec.md")] = b"# new"
+    fake_store.objects[
+        workspace_fetch._spec_file_key("fetch", "implementation_plan.json")
+    ] = b"not json"
+    assert sj._finish_spec_fetch(spec_dir, "fetch", True) == 1
+    assert json.loads((spec_dir / "review_state.json").read_text())["approved"] is False
+
+
+def test_job_cannot_pre_approve_qa_through_the_plan(
+    fake_store: type[FakeArtifactStore], tmp_path: Path
+) -> None:
+    spec_dir = tmp_path / "spec"
+    spec_dir.mkdir()
+    fake_store.objects[workspace_fetch._spec_file_key("fetch", "spec.md")] = b"# s"
+    fake_store.objects[
+        workspace_fetch._spec_file_key("fetch", "implementation_plan.json")
+    ] = b'{"phases": [], "qa_signoff": {"status": "approved"}, "contractHold": 0}'
+    assert sj._finish_spec_fetch(spec_dir, "fetch", True) == 0
+    plan = json.loads((spec_dir / "implementation_plan.json").read_text())
+    assert plan == {"phases": []}
+
+
+async def test_stop_during_fetch_back_does_not_report_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    batch = FakeBatch()
+
+    async def batch_factory():
+        return batch
+
+    async def succeeded(*_args):
+        return "succeeded"
+
+    async def no_logs(self, **_kwargs):
+        return None
+
+    async def finish() -> int:
+        proc.terminate()
+        return 0
+
+    monkeypatch.setattr(sj.KubeJobLogStreamer, "stream", no_logs)
+    monkeypatch.setattr(KubeJobBuildBackend, "_job_outcome", staticmethod(succeeded))
+    proc = sj.SpecJobProcess(
+        "ns", "spec-job", batch_factory=batch_factory, finish=finish
+    )
+    assert await proc.wait() == -15
+
+
 @pytest.mark.parametrize("rel", [".aifactory/spec_task.md", ".aifactory/specs/s1"])
 def test_tracked_symlink_in_clone_cannot_redirect_writes_outside_it(
     monkeypatch: pytest.MonkeyPatch,

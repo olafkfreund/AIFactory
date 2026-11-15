@@ -177,6 +177,11 @@ Each was confirmed against the code and fixed in the same commit as this note.
   `start_spec_creation` returns `Process | SpecJobProcess`. The gitleaks hit on
   step 4's code excerpt in this file is a false positive, listed by fingerprint
   in `.gitleaksignore`.
+- From the Fable review of 2026-11-15: a stop that lands while the fetch-back
+  runs returns -15, not 0, so it cannot start a build; a new `spec.md` beside
+  a local plan the Job did not return fails the fetch; the control plane
+  drops `qa_signoff`, `qa_iteration_history`, `qa_stats` and `contractHold`
+  from the fetched plan; the docs row names the model credentials the Job gets.
 - Not fixed here, tracked: bucket-wide `S3_*` in Jobs (#2023), the marker
   nonce in the Job env (#2024), unused CLI logins in build Jobs (#2025).
 
