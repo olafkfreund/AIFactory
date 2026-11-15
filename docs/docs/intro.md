@@ -29,9 +29,11 @@ You watch the whole thing happen live in the **Agent Console** — read-only by 
 - **Auditable by design.** Every action is journaled in a hash-chained audit log; every spec, plan, and QA report is on disk and in version control. SOC2 / ISO evidence in the enterprise build.
 - **No vendor lock-in.** Pick a model per phase — Claude, OpenAI, Gemini, Codex, or a local Ollama / OpenAI-compatible endpoint. You own your model bill.
 - **Isolated by default.** Each task runs in its own git worktree on its own branch. Nothing touches your working tree until you merge.
-- **MCP control plane.** 27 MCP tools across stdio + HTTP+SSE transports let any MCP-aware editor (Claude Code, Cursor, Continue.dev) inspect and direct AIFactory tasks, including autonomous hand-off via the `/handover` skill.
+- **MCP control plane.** MCP tools over stdio and HTTP+SSE let any MCP-aware editor (Claude Code, Cursor, Continue.dev) inspect and direct AIFactory tasks, including autonomous hand-off via the `/handover` skill.
 
-## Recently shipped (May–June 2026)
+## Recently shipped
+
+The latest summary is [What shipped, August to November](/blog/what-shipped-august-to-november). Earlier highlights:
 
 ### June 2026 — the PARR loop grew a real deploy-then-verify leg
 

@@ -24,12 +24,12 @@ You want the LiteLLM gateway when **any** of these apply:
 You **don't** need it for:
 
 - Laptop installs / single-developer pilots that hit the direct Anthropic API.
-- Deployments that use **only Claude** through the Claude Agent SDK — Claude bypasses the gateway in v1.1 (see scope table below).
+- Deployments that use **only Claude** through the Claude Agent SDK — Claude bypasses the gateway (see scope table below).
 - Single-tenant deployments where one budget covers everything and no per-org accounting is needed.
 
 ## Scope (what flows through, what does not)
 
-| Provider | v1.1 routing | LiteLLM enforcement (budget / rate-limit / allowlist) | Audit coverage |
+| Provider | Routing | LiteLLM enforcement (budget / rate-limit / allowlist) | Audit coverage |
 |----------|-------------|-------------------------------------------------------|----------------|
 | Claude (via Claude Agent SDK) | Direct | None | Existing chain audit (`claude.session.start` / `claude.session.end`) signed by the daily anchor (#43) |
 | OpenAI / OpenAI-compatible (LM Studio, vLLM, OpenRouter, Together, Groq, LocalAI) | Via gateway | Full | Full (per-call `llm.call` audit row) |
@@ -39,9 +39,9 @@ You **don't** need it for:
 | Bedrock | Via gateway | Full | Full (see [Cloud LLM routing](./cloud-llm-routing.md)) |
 | Vertex AI | Via gateway | Full | Full (see [Cloud LLM routing](./cloud-llm-routing.md)) |
 
-**The Claude exception.** The Claude Agent SDK spawns the `claude` CLI as a subprocess. That CLI speaks Anthropic-format `POST /v1/messages` which is wire-incompatible with LiteLLM's OpenAI-format `POST /v1/chat/completions`. Pointing `ANTHROPIC_BASE_URL` at the gateway produces a 4xx because the request shape does not match the endpoint. v1.1 leaves Claude calls direct; v1.2 closes the gap via either an in-process Claude-SDK enforcement wrapper in `core/client.py` or a LiteLLM Anthropic-format passthrough endpoint if upstream ships one.
+**The Claude exception.** The Claude Agent SDK spawns the `claude` CLI as a subprocess. That CLI speaks Anthropic-format `POST /v1/messages` which is wire-incompatible with LiteLLM's OpenAI-format `POST /v1/chat/completions`. Pointing `ANTHROPIC_BASE_URL` at the gateway produces a 4xx because the request shape does not match the endpoint. Claude calls therefore go direct. Closing the gap would need either an in-process Claude-SDK enforcement wrapper in `core/client.py` or a LiteLLM Anthropic-format passthrough endpoint; neither exists today.
 
-**Compliance implication for Claude calls in v1.1:** Claude calls keep their existing audit-chain coverage (the `claude.session.*` events signed by the daily anchor from #43) but they do NOT get per-tenant budget / rate-limit / allowlist enforcement. Document this explicitly to your compliance team before opting the gateway on; otherwise the residual "Org A's runaway Claude loop costs $10k overnight" risk reads as a regression rather than a known v1.1 limitation.
+**Compliance implication for Claude calls:** Claude calls keep their existing audit-chain coverage (the `claude.session.*` events signed by the daily anchor from #43) but they do NOT get per-tenant budget / rate-limit / allowlist enforcement. Document this explicitly to your compliance team before opting the gateway on; otherwise the residual "Org A's runaway Claude loop costs $10k overnight" risk reads as a regression rather than a known limitation.
 
 ## Architecture
 
@@ -60,7 +60,7 @@ flowchart LR
         ollama["Ollama"]
     end
 
-    direct[/"Claude calls — direct<br/>(SDK incompatible, v1.2)"/]
+    direct[/"Claude calls — direct<br/>(SDK incompatible)"/]
 
     aif -- "openai_compatible<br/>POST /v1/chat/completions<br/>+ virtual-key header" --> ll
     aif --> direct
@@ -167,20 +167,20 @@ kubectl create secret generic aifactory-litellm-master-key \
 4. Update `litellm.masterKeySecretName` in AIFactory's values + `helm upgrade` to roll the AIFactory pods on the new wrapping.
 5. Delete the old Secret after the rollout completes.
 
-Blast radius of a master-key leak: an attacker can rotate / delete / create LiteLLM virtual keys (full budget + allowlist control). They cannot read prompts / responses (LiteLLM does not store those by default in v1.1; `litellm.audit.fullTextCapture=true` writes encrypted full-text rows to AIFactory's own audit_logs, NOT to LiteLLM's Postgres).
+Blast radius of a master-key leak: an attacker can rotate / delete / create LiteLLM virtual keys (full budget + allowlist control). They cannot read prompts / responses (LiteLLM does not store those by default; `litellm.audit.fullTextCapture=true` writes encrypted full-text rows to AIFactory's own audit_logs, NOT to LiteLLM's Postgres).
 
 ## PII redaction
 
-AIFactory's audit hook redacts PII from prompt + response BEFORE writing the audit row. In v1.2 the same redactor can also run on the prompt BEFORE it's sent to the LLM (see [scrubBeforeSend mode](#scrubbeforesend-mode-v12) below). The built-in pattern set:
+AIFactory's audit hook redacts PII from prompt + response BEFORE writing the audit row. The same redactor also runs on the prompt BEFORE it's sent to the LLM (see [scrubBeforeSend mode](#scrubbeforesend-mode) below). The built-in pattern set:
 
 | Pattern | Replacement | Notes |
 |---------|-------------|-------|
 | US SSN hyphenated `XXX-XX-XXXX` | `[REDACTED_SSN]` | Bare 9-digit numbers excluded — too many false positives (zip + phone concatenations, code identifiers) |
 | Email `user@host.tld` | `[REDACTED_EMAIL]` | |
 | US phone `(XXX) XXX-XXXX` or `XXX-XXX-XXXX` | `[REDACTED_PHONE]` | Bare 10-digit numbers excluded for the same reason as SSN |
-| Credit card 13-19 digits, Luhn-validated (v1.2) | `[REDACTED_CC]` | Accepts hyphen / space / no-separator forms. A digit run that fails Luhn is left UNCHANGED — closes the v1.1 false-positive problem (IPv4 CIDRs, hashes, code identifiers). Luhn arithmetic runs LAST in the chain so cheap patterns short-circuit first |
+| Credit card 13-19 digits, Luhn-validated | `[REDACTED_CC]` | Accepts hyphen / space / no-separator forms. A digit run that fails Luhn is left UNCHANGED — avoids the false positives of an unvalidated digit-run pattern (IPv4 CIDRs, hashes, code identifiers). Luhn arithmetic runs LAST in the chain so cheap patterns short-circuit first |
 
-**Credit-card history (v1.1 → v1.2).** The v1.1 release dropped the CC built-in entirely: the naive `\b(?:\d[ -]*?){13,16}\b` matched any 13-16 digit numeric string (IPv4 CIDRs, code identifiers, hashes, etc.) and corrupted legitimate prompt content without Luhn validation. Operators with PCI data had to add their own Luhn-checked patterns via `litellm.audit.extraRedactionPatterns`. **v1.2 ships a Luhn-validated CC pattern as a built-in** — no extra-pattern configuration required for PCI tenants.
+**Credit-card pattern.** A naive `\b(?:\d[ -]*?){13,16}\b` matches any 13-16 digit numeric string (IPv4 CIDRs, code identifiers, hashes) and corrupts legitimate prompt content, so the built-in CC pattern is Luhn-validated and needs no extra-pattern configuration for PCI tenants.
 
 Operator additions still apply for non-built-in cases:
 
@@ -194,17 +194,13 @@ litellm:
 
 Patterns are Python `re` syntax. Compile failures log WARNING + skip the bad pattern (fail-safe; one bad regex does not disable all redaction).
 
-### scrubBeforeSend mode (v1.2)
+### scrubBeforeSend mode
 
-In v1.1, redaction applied to the audit row ONLY, NOT to what the LLM saw. A high-sensitivity tenant whose prompt contained PII still sent that PII to the LLM provider — intrinsic to LLM use. **v1.2 closes this gap for orgs that opt in** via `LITELLM_AUDIT_SCRUB_OUTBOUND=true` (deployment-wide) or `OpenAICompatibleProvider(scrub_outbound=True)` (per-instance):
+The same redactor can run on the prompt BEFORE the LLM API call, so PII never reaches the LLM provider. Outbound scrubbing is **on by default and fails closed**; `LITELLM_AUDIT_SCRUB_OUTBOUND` (deployment-wide) and `OpenAICompatibleProvider(scrub_outbound=...)` (per-instance) act as a kill-switch ([v3.6.75](https://github.com/olafkfreund/AIFactory/releases/tag/v3.6.75)). A project whose `dataClassification` is `regulated` always gets outbound scrubbing and the kill-switch is ignored ([v3.10.8](https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.8)). Only the built-in high-precision set (hyphenated SSN, email, US phone, Luhn-valid cards) is scrubbed outbound.
 
-- The same redactor (built-ins + operator extras + Luhn-CC) runs on the prompt BEFORE the LLM API call.
-- The audit row captures BOTH the raw prompt (for operator forensics — what did the user actually type) AND the new `prompt_outbound_scrubbed: true` flag (so operators can query "show me every call where PII was scrubbed before send": `details_json->>'prompt_outbound_scrubbed' = 'true'`).
-- Default remains `false` — backward-compatible with v1.1 callers; no opt-out needed for existing deployments.
+- The audit row captures BOTH the raw prompt (for operator forensics: what did the user actually type) AND the `prompt_outbound_scrubbed: true` flag (so operators can query "show me every call where PII was scrubbed before send": `details_json->>'prompt_outbound_scrubbed' = 'true'`).
 
-**Trade-off.** Heavy redaction can degrade prompt quality (the LLM loses context that may have mattered to the answer). A prompt like *"please summarise the customer call from alice@example.com about her invoice"* becomes *"please summarise the customer call from [REDACTED_EMAIL] about her invoice"* — the LLM still answers, but loses the (sometimes useful) identity signal. Compliance teams should sign off on the scope: enable scrubBeforeSend for tenants where LLM-vendor PII oblivion is mandatory; leave it off for low-sensitivity deployments where prompt fidelity matters more.
-
-**The v1.1 "LLM still sees plaintext" caveat is CLOSED for orgs that opt in to scrubBeforeSend.** The audit row's `prompt_outbound_scrubbed` flag is the auditor's proof.
+**Trade-off.** Heavy redaction can degrade prompt quality (the LLM loses context that may have mattered to the answer). A prompt like *"please summarise the customer call from alice@example.com about her invoice"* becomes *"please summarise the customer call from [REDACTED_EMAIL] about her invoice"*; the LLM still answers, but loses the (sometimes useful) identity signal. The audit row's `prompt_outbound_scrubbed` flag is the auditor's proof that scrubbing ran.
 
 ## Audit shape
 

@@ -21,7 +21,7 @@ flowchart LR
 ```
 
 - **Frontend** (`apps/frontend-web/`) — React 19 + Vite + xterm. Talks REST + WebSocket to the web-server.
-- **Web Server** (`apps/web-server/`) — FastAPI service. Handles auth, project/task CRUD, GitHub integration, audit logging. Spawns the agent runtime as a subprocess per task.
+- **Web Server** (`apps/web-server/`) — FastAPI service. Handles auth, project/task CRUD, GitHub integration, audit logging. Spawns the agent runtime as a subprocess per task, or, in production, runs each build as its own Kubernetes Job (Job-native execution).
 - **Agent Runtime** (`apps/backend/`) — The Python CLI (`run.py`, `spec_runner.py`) that drives the agent pipeline. Talks to LLM providers via the Claude Agent SDK or the provider abstraction.
 
 ## Where the code lives

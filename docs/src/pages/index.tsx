@@ -88,11 +88,25 @@ const FEATURES = [
       'Attach), with OpenTelemetry tracing across every boundary.',
   },
   {
+    title: 'Merge gated on evidence',
+    body:
+      'Auto-merge needs a signed contract, a TFactory verdict and green CI on the exact ' +
+      'head commit, fetched by AIFactory itself. Tasks with a production target or a high ' +
+      'risk class hold for a human. Projects without TFactory or CI no longer auto-merge.',
+  },
+  {
+    title: 'The coding agent is untrusted',
+    body:
+      'Agent environments are scrubbed of secrets, each spawn gets a private HOME and an ' +
+      'allowlist, server-side git is pinned against agent-written config, and run gates ' +
+      'are read once before the first agent session. Some gaps remain and are listed in the release notes.',
+  },
+  {
     title: 'MCP control plane',
     body:
-      '27 MCP tools across stdio + HTTP+SSE transports. Drive AIFactory from Claude Code, ' +
-      'Cursor, Continue.dev, or any MCP-aware client — and hand a task off to an autonomous ' +
-      'background run with the /handover skill.',
+      'Drive AIFactory from Claude Code, Cursor, Continue.dev, or any MCP-aware client over ' +
+      'stdio or HTTP+SSE, with scoped API keys, and hand a task off to an autonomous ' +
+      'background run with the /handover skill. Remote MCP is off by default.',
   },
 ];
 
@@ -125,51 +139,49 @@ function FeatureGrid() {
 
 const RECENT = [
   {
-    when: 'June 2026',
-    title: 'Factory-line integration + parallel build executor',
+    when: 'October 2026',
+    title: 'Merge gated on a TFactory verdict and green CI',
     body:
-      'AIFactory now builds from a signed Task Contract (the planned acceptance ' +
-      'criteria from PFactory) and hands the built branch + deployed URL to TFactory, ' +
-      'which verifies it with visible evidence. Independent subtasks build in parallel ' +
-      'with per-worker token, cost, and progress tracking.',
-    link: '/task-contract',
-    linkText: 'See the contract →',
+      'v3.10.0 auto-merges a verified task only on a TFactory verdict plus green host CI ' +
+      'for the exact head commit. Hosts without TFactory or CI hold for a human after 20 minutes.',
+    link: '/blog/what-shipped-august-to-november',
+    linkText: 'Read the summary →',
   },
   {
-    when: 'May 2026',
-    title: 'MCP Control-Plane Epic shipped',
+    when: 'October 2026',
+    title: 'Agent environments scrubbed',
     body:
-      '27 task-control tools across stdio + remote HTTP+SSE transports. Drive AIFactory ' +
-      'from Claude Code, Cursor, or any MCP-aware client.',
-    link: '/concepts/multi-provider',
-    linkText: 'Read the design →',
+      'Agent CLIs start with scrubbed environments, a private HOME and an allowlist; ' +
+      'operators add names through AIFACTORY_AGENT_ENV_EXTRA.',
+    link: '/blog/what-shipped-august-to-november',
+    linkText: 'Read the summary →',
   },
   {
-    when: 'May 2026',
-    title: '/handover skill — async hand-off from any chat',
+    when: 'October 2026',
+    title: 'Scoped API keys that work, and enforced OIDC claims',
     body:
-      'Type /handover in Claude Code. AIFactory summarises the conversation, creates ' +
-      'a spec, and runs the build while you do something else. Comes back as a draft PR.',
-    link: '/concepts/multi-provider',
-    linkText: 'See the workflow →',
+      'acw_ keys authenticate (before, every real key failed), remote MCP checks each tool ' +
+      'call and stays off by default, and OIDC issuer, audience and expiry are enforced.',
+    link: '/concepts/mcp-stdio-keys',
+    linkText: 'Scoped MCP keys →',
   },
   {
-    when: 'May 2026',
-    title: 'Default MCP servers — Kubernetes / AWS / Azure / GitHub',
+    when: 'August 2026',
+    title: 'Outbound PII scrubbing on by default',
     body:
-      'A catalog of well-maintained MCP servers auto-enables per project when infra ' +
-      'markers + credentials line up. Read-only by default. CVE-aware version pins.',
-    link: '/concepts/multi-provider',
-    linkText: 'Setup guide →',
+      'v3.6.75 scrubs outbound model calls by default and fails closed. Projects classed ' +
+      'regulated (v3.10.8) always scrub.',
+    link: '/concepts/litellm-gateway',
+    linkText: 'LiteLLM gateway →',
   },
   {
-    when: 'May 2026',
-    title: 'Remote Control — drive AIFactory tasks from your phone',
+    when: 'September 2026',
+    title: 'Safer Kubernetes build Jobs',
     body:
-      'Wires Claude Code\'s native --remote-control flag into the agent spawn. Open ' +
-      'claude.ai/code on any device and pick up where you left off.',
-    link: '/concepts/remote-control',
-    linkText: 'Operator guide →',
+      'v3.7.0 gives build Jobs an ephemeral-storage limit and stops a crashed dispatch ' +
+      'from leaking a concurrency slot. v3.10.15 caps Postgres pools at 2+2 per pod.',
+    link: '/blog/what-shipped-august-to-november',
+    linkText: 'Read the summary →',
   },
 ];
 
@@ -241,7 +253,7 @@ function FactoryFamily(): ReactNode {
           <Link href="https://pfactory.freundcloud.com/">PFactory</Link> plans ·{' '}
           <strong>AIFactory</strong> builds ·{' '}
           <Link href="https://tfactory.freundcloud.com/">TFactory</Link> verifies ·{' '}
-          <Link href="https://github.com/olafkfreund/CFactory">CFactory</Link>{' '}
+          <Link href="https://cfactory.freundcloud.com/">CFactory</Link>{' '}
           watches over all four.
         </p>
         <div className="hero-cta">
