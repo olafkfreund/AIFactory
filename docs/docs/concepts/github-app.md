@@ -162,8 +162,44 @@ Notes:
   narrow token it needs the Models permission on that PAT, or another
   provider.
 
+## Several installations
+
+By default one installation id serves every org. To give each org its own
+installation of the same App, the operator sets a map of org id to
+installation id:
+
+```yaml
+githubApp:
+  orgInstallations:
+    default: "9001"
+    acme: "9002"
+```
+
+The chart sets `AIFACTORY_GITHUB_APP_ORG_INSTALLATIONS=acme=9002,default=9001`.
+Write the ids as quoted strings; the chart rejects numbers (use `--set-string`
+on the command line). Only the operator sets the map. An installation id is
+not a secret, so tenants must not be able to choose one.
+
+A non-empty map turns on multi-installation mode, which fails closed:
+
+- No process-wide token is published. A call gets a GitHub token only when it
+  names a bound org. Bind every org, `default` included: an unbound org gets
+  no GitHub token.
+- A project path registered under two orgs (one inside the other) gets no
+  token.
+- It cannot be combined with the token for agent children
+  (`agentGithubToken`); the chart and the boot check refuse both.
+- Wired: project clone, build, spec and PR-review runners, build Jobs and the
+  PR endgame. The interactive GitHub routes and the services that call
+  `gh` or git on their own have no token in this mode yet (#1700 stays open for
+  them).
+- A runner's token is fixed at spawn and lasts at least 55 minutes.
+
+Rollback: empty the map (`githubApp.orgInstallations: {}`) and restart.
+
 ## Limits
 
+- Per-org installations: see Several installations.
 - GitHub Models is not supported with the App.
 - The token is process-wide with a 1 hour lifetime, refreshed every 30
   minutes. A build or Job gets at least 30 minutes at spawn, so a long packed
