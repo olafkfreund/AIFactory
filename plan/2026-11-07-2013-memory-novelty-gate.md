@@ -159,6 +159,10 @@ AIFactory; the PFactory and TFactory PRs carry copies and link here.
   overwritten `session_NNN.json` can remove the only stored copy of an item a
   later session dropped as a repeat; and the gate does not run when Graphiti
   is the primary store (`memory_manager.py` returns before the file save).
+- **Autonomy matrix regenerated, 2026-11-15.** The new `memory/novelty.py`
+  module raises two import-reach counts by one (280 to 281, 381 to 382), so
+  `scripts/gen_autonomy_matrix.py --check` failed in CI. The two generated
+  files under `docs/` were rewritten with the generator; no policy changed.
 
 ## Tests
 
