@@ -157,7 +157,7 @@ Production deployments **should** close the gap with both:
 
 The samples are inert templates by default (`gatekeeperEnabled: false`). When opted in, they instantiate against the operator's configured `namespacePrefix` + reconciler SA. Operators with their own Gatekeeper governance may need to merge the Rego with existing rules.
 
-**Future work:** extract the reconciler into a separate Operator pod (Kopf-based controller watching `AIFactoryOrg` CRDs) with a tighter ServiceAccount that supports prefix matching at the API-server level. The in-app reconciler ships in-app because it's under half the maintenance cost while the threat model accepts the privilege concentration.
+**Future work:** extract the reconciler into a separate Operator pod (Kopf-based controller watching `AIFactoryOrg` CRDs) with a tighter ServiceAccount that supports prefix matching at the API-server level. The reconciler runs in-app, and the threat model accepts the privilege concentration.
 
 ## Tear-down lifecycle
 

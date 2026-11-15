@@ -6,7 +6,7 @@ sidebar_position: 14
 # LiteLLM gateway (Epic #35 #38)
 
 :::warning Deprecated
-Deprecated by Factory#1959 in favour of the in-house model gateway (image `ghcr.io/olafkfreund/aifactory:*-gateway`). The LiteLLM sub-chart is still functional; removal is a later slice.
+The in-house model gateway image (`ghcr.io/olafkfreund/aifactory:*-gateway`) is published ([v3.10.12](https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.12), [#1912](https://github.com/olafkfreund/AIFactory/issues/1912)), but the release notes state nothing deploys it yet. The LiteLLM sub-chart is deprecated in its favour and is still functional; removal is a later slice.
 :::
 
 > *Centralised budget, rate-limit, model-allowlist, and audit enforcement for every non-Claude LLM call AIFactory makes. Optional Helm sub-chart that operators flip on with one boolean.*
@@ -39,7 +39,7 @@ You **don't** need it for:
 | Bedrock | Via gateway | Full | Full (see [Cloud LLM routing](./cloud-llm-routing.md)) |
 | Vertex AI | Via gateway | Full | Full (see [Cloud LLM routing](./cloud-llm-routing.md)) |
 
-**The Claude exception.** The Claude Agent SDK spawns the `claude` CLI as a subprocess. That CLI speaks Anthropic-format `POST /v1/messages` which is wire-incompatible with LiteLLM's OpenAI-format `POST /v1/chat/completions`. Pointing `ANTHROPIC_BASE_URL` at the gateway produces a 4xx because the request shape does not match the endpoint. Claude calls therefore go direct. Closing the gap would need either an in-process Claude-SDK enforcement wrapper in `core/client.py` or a LiteLLM Anthropic-format passthrough endpoint; neither exists today.
+**The Claude exception.** The Claude Agent SDK spawns the `claude` CLI as a subprocess. That CLI speaks Anthropic-format `POST /v1/messages` which is wire-incompatible with LiteLLM's OpenAI-format `POST /v1/chat/completions`. Pointing `ANTHROPIC_BASE_URL` at the gateway produces a 4xx because the request shape does not match the endpoint. Claude calls therefore go direct to Anthropic. Their allowlist, budget and audit enforcement comes from the in-process wrapper described in [Claude Enforcement](./claude-enforcement.md).
 
 **Compliance implication for Claude calls:** Claude calls keep their existing audit-chain coverage (the `claude.session.*` events signed by the daily anchor from #43) but they do NOT get per-tenant budget / rate-limit / allowlist enforcement. Document this explicitly to your compliance team before opting the gateway on; otherwise the residual "Org A's runaway Claude loop costs $10k overnight" risk reads as a regression rather than a known limitation.
 
@@ -196,7 +196,7 @@ Patterns are Python `re` syntax. Compile failures log WARNING + skip the bad pat
 
 ### scrubBeforeSend mode
 
-The same redactor can run on the prompt BEFORE the LLM API call, so PII never reaches the LLM provider. Outbound scrubbing is **on by default and fails closed**; `LITELLM_AUDIT_SCRUB_OUTBOUND` (deployment-wide) and `OpenAICompatibleProvider(scrub_outbound=...)` (per-instance) act as a kill-switch ([v3.6.75](https://github.com/olafkfreund/AIFactory/releases/tag/v3.6.75)). A project whose `dataClassification` is `regulated` always gets outbound scrubbing and the kill-switch is ignored ([v3.10.8](https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.8)). Only the built-in high-precision set (hyphenated SSN, email, US phone, Luhn-valid cards) is scrubbed outbound.
+The same redactor can run on the prompt BEFORE the LLM API call, so PII never reaches the LLM provider. Outbound scrubbing is **on by default and fails closed**; `LITELLM_AUDIT_SCRUB_OUTBOUND` (deployment-wide) and `OpenAICompatibleProvider(scrub_outbound=...)` (per-instance) act as a kill-switch ([v3.6.75](https://github.com/olafkfreund/AIFactory/releases/tag/v3.6.75)). A project whose `dataClassification` is `regulated` always gets outbound scrubbing and the kill-switch is ignored ([v3.10.8](https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.8), [#1862](https://github.com/olafkfreund/AIFactory/issues/1862)); direct `claude --print` spawns were covered in [v3.10.9](https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.9) ([#1870](https://github.com/olafkfreund/AIFactory/issues/1870)). Only the built-in high-precision set (hyphenated SSN, email, US phone, Luhn-valid cards) is scrubbed outbound.
 
 - The audit row captures BOTH the raw prompt (for operator forensics: what did the user actually type) AND the `prompt_outbound_scrubbed: true` flag (so operators can query "show me every call where PII was scrubbed before send": `details_json->>'prompt_outbound_scrubbed' = 'true'`).
 

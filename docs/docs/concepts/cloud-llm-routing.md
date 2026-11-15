@@ -68,7 +68,7 @@ When these flags are set in the agent process environment, the Claude Agent SDK'
 
 **This path stays.** If you want LiteLLM enforcement to cover Claude-on-Bedrock or Claude-on-Vertex, set those models with the `bedrock/` or `vertex_ai/` prefix in AIFactory's model config (not via the SDK env vars). The LiteLLM gateway then mediates those calls.
 
-Routing all Claude traffic through LiteLLM regardless of SDK flags would need an in-process Claude wrapper, which does not exist today.
+Claude calls made through the Claude Agent SDK are covered by the in-process wrapper described in [Claude Enforcement](./claude-enforcement.md), not by LiteLLM.
 
 ## Operator recipes
 

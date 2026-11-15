@@ -28,7 +28,7 @@ You **don't** need it for:
 
 ## What's in scope (and what's not)
 
-| Aspect | v1.1 status |
+| Aspect | Status |
 |--------|-------------|
 | HTTP request spans (FastAPI auto-instrumentation) | Supported |
 | DB call spans (SQLAlchemy + asyncpg) | Supported |
@@ -40,7 +40,7 @@ You **don't** need it for:
 | Per-worker OTel metrics (`gen_ai.*`, `worker.duration_ms`) from the web-server | Supported (#567) |
 | Sampling configuration (ParentBased + ratio) | Supported |
 | Trace-aware logs (request_id = trace_id when in span) | Supported |
-| Per-MCP-server spans inside the agent | Not yet (v1.2 — needs SDK changes) |
+| Per-MCP-server spans inside the agent | Not yet (needs SDK changes) |
 | Custom OTel processors (TailSampling, etc.) | Not yet (set via OTel SDK env vars) |
 
 ## How it works
@@ -167,7 +167,7 @@ event — see [Task observability panels](./observability-panels.md).
 
 - **Custom processors** (TailSamplingProcessor, attribute filters, etc.) — set via the OTel SDK's standard env vars (`OTEL_PROCESSOR_BSP_*`, `OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT`, etc.) which the Python SDK picks up automatically. AIFactory doesn't wrap these.
 - **Logs** signal — not yet emitted over OTLP; the structlog stack covers it (logs stay trace-aware via the shared trace ID). The **Metrics** signal now has a first set of OTel instruments (see below).
-- **Per-MCP-server spans inside the agent** — the agent inherits the parent trace context (so the trace ID is consistent), but the agent doesn't itself export spans for individual MCP calls in v1.1. The web-server's outbound `httpx` calls to MCP servers DO show up.
+- **Per-MCP-server spans inside the agent** — the agent inherits the parent trace context (so the trace ID is consistent), but the agent doesn't itself export spans for individual MCP calls. The web-server's outbound `httpx` calls to MCP servers DO show up.
 
 ## See also
 

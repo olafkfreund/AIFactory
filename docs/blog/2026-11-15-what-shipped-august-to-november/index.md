@@ -25,8 +25,9 @@ only on `dev` is at the end, under "In progress".
   projects without TFactory or without CI, whose tasks no longer auto-merge
   ([v3.10.3](https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.3), [#1697](https://github.com/olafkfreund/AIFactory/issues/1697)).
 - The merge gate acts only on the contract PFactory signed, stored server-side.
-  A trusted task auto-merges only if it was built as a Job, and the notes say
-  auto-merge is held for all other hosts
+  A trusted task auto-merges only if it was built as a Job (`kubejob`, with
+  `DATABASE_URL`), and the server-side `trusted_contracts` table needs an Alembic
+  migration. The notes say auto-merge is held for all other hosts
   ([v3.9.0](https://github.com/olafkfreund/AIFactory/releases/tag/v3.9.0), [#1667](https://github.com/olafkfreund/AIFactory/issues/1667)).
 - A task whose contract declares a production target or high risk class is held
   for a human, and so is a task with an unreadable contract
@@ -43,7 +44,9 @@ only on `dev` is at the end, under "In progress".
 - The web server sets itself non-dumpable so in-pod agents cannot read
   `/proc/1/environ`
   ([v3.8.3](https://github.com/olafkfreund/AIFactory/releases/tag/v3.8.3), [#1679](https://github.com/olafkfreund/AIFactory/issues/1679)).
-- Agent CLIs start with scrubbed environments plus only their own key
+- Non-Claude agent CLIs (Codex, Gemini/Antigravity, Copilot, OpenCode) and the
+  Ollama/OpenAI-compatible tool loops start with scrubbed environments plus only
+  their own key
   ([v3.10.0](https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.0), [#1692](https://github.com/olafkfreund/AIFactory/issues/1692)). Each spawn gets a private 0700
   HOME and an allowlist, which is a behaviour change: operators add names
   through `AIFACTORY_AGENT_ENV_EXTRA` ([v3.10.3](https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.3), [#1762](https://github.com/olafkfreund/AIFactory/issues/1762)).
@@ -81,6 +84,25 @@ only on `dev` is at the end, under "In progress".
   scrubbed outbound ([v3.6.75](https://github.com/olafkfreund/AIFactory/releases/tag/v3.6.75), [#320](https://github.com/olafkfreund/AIFactory/issues/320)).
 - A project `dataClassification` of `regulated` always scrubs outbound, and the
   kill-switch is ignored ([v3.10.8](https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.8), [#1862](https://github.com/olafkfreund/AIFactory/issues/1862)).
+  Direct `claude --print` spawns were covered in the next release
+  ([v3.10.9](https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.9), [#1870](https://github.com/olafkfreund/AIFactory/issues/1870)).
+
+## Build quality: QA, gates and evidence
+
+- QA no longer signs off a build that produced nothing: approval needs a commit
+  not yet on origin or an uncommitted change
+  ([v3.6.75](https://github.com/olafkfreund/AIFactory/releases/tag/v3.6.75), [#1396](https://github.com/olafkfreund/AIFactory/issues/1396)).
+- QA refuses sign-off when the spec enumerates an API the build did not export,
+  and the enumerated API reaches the coder as a hard requirement
+  ([v3.6.79](https://github.com/olafkfreund/AIFactory/releases/tag/v3.6.79), [#1429](https://github.com/olafkfreund/AIFactory/issues/1429)).
+- Test evidence is scoped per subtask and must touch the deliverable
+  ([v3.6.75](https://github.com/olafkfreund/AIFactory/releases/tag/v3.6.75), [#1187](https://github.com/olafkfreund/AIFactory/issues/1187)).
+- An opt-in repo lint gate (`AIFACTORY_REPO_LINT_GATE=1`) runs the repo's CI
+  linters that have a curated command. It is off by default because it can fail
+  builds that pass today ([v3.10.3](https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.3), [#1742](https://github.com/olafkfreund/AIFactory/issues/1742)).
+- Apply-correction requires a `triage` block by default
+  (`APP_REQUIRE_CORRECTION_TRIAGE`)
+  ([v3.10.9](https://github.com/olafkfreund/AIFactory/releases/tag/v3.10.9), [#1872](https://github.com/olafkfreund/AIFactory/issues/1872)).
 
 ## Models and operations
 

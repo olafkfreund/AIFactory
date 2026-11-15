@@ -13,7 +13,7 @@ AIFactory is an **open-source** project, dual-licensed **MIT OR GPL-3.0**. The s
 the self-hostable, review-gated, auditable core into the hands of the engineers who need it most:
 platform and security teams at organizations that can't send their code to a cloud agent. See
 [Why AIFactory](./why-aifactory) for the positioning, and the
-[GTM strategy memo](https://github.com/olafkfreund/AIFactory/blob/dev/docs/plans/2026-05-30-oss-gtm-strategy.md)
+[GTM strategy memo](https://github.com/olafkfreund/AIFactory/blob/main/docs/plans/2026-05-30-oss-gtm-strategy.md)
 for the full reasoning.
 
 What that means for the roadmap, concretely:
@@ -54,7 +54,7 @@ shipped feature (see [Live Console](./concepts/rmux-live-console)).
 ### Earlier: June 2026 — deploy-then-verify + the PR endgame
 
 - **Deploy-then-verify on real AWS** — after the build, ship the services to **AWS App Runner** with deterministic Terraform, verify the live HTTPS endpoint, run the acceptance tests against it, and tear down — cost-guarded with `factory-ephemeral` tags, opt-in via `AIFACTORY_AUTO_DEPLOY` (default off). Demo: `/run-aws-demo`. See [Deploy-then-verify](./concepts/deploy-then-verify).
-- **PR endgame closed** — auto-PR → review → merge → re-test, configurable per project (`AIFACTORY_AUTO_PR` / `AIFACTORY_AUTO_MERGE`), with a selectable reviewer (`AIFACTORY_PR_REVIEWER` = `aifactory` | `copilot` | `any`) and a bounded auto-feedback fix-and-re-review loop (≤2 cycles) on changes-requested. See [`guides/pr-endgame.md`](https://github.com/olafkfreund/AIFactory/blob/dev/guides/pr-endgame.md).
+- **PR endgame closed** — auto-PR → review → merge → re-test, configurable per project (`AIFACTORY_AUTO_PR` / `AIFACTORY_AUTO_MERGE`), with a selectable reviewer (`AIFACTORY_PR_REVIEWER` = `aifactory` | `copilot` | `any`) and a bounded auto-feedback fix-and-re-review loop (≤2 cycles) on changes-requested. See [`guides/pr-endgame.md`](https://github.com/olafkfreund/AIFactory/blob/main/guides/pr-endgame.md).
 - **Contract-carrying TFactory handoff** — a signed Task Contract v2 (RFC-0002) carries declared acceptance criteria, lanes, and endpoints through to TFactory, so it verifies the declared profile instead of inferring it. See [Task Contract](./task-contract).
 - **Opt-in direct-API-key auth** — `AIFACTORY_ALLOW_API_KEY=1` for operators billing via a direct key; OAuth-only and key-scrubbed by default. See [API-key auth](./concepts/api-key-auth).
 - **Test authenticated web apps** — deploy behind a login, browser-test logs in as a test user, records screenshots + findings as proof. See [`techdocs/testing-authenticated-web-apps.md`](https://github.com/olafkfreund/Factory/blob/main/techdocs/testing-authenticated-web-apps.md).
@@ -73,7 +73,7 @@ shipped feature (see [Live Console](./concepts/rmux-live-console)).
   - #42 OpenTelemetry distributed tracing
   - #43 Signed audit-chain anchor + ISO 27001 evidence map
   - #154 Scoped MCP API keys
-  See the [ISO 27001 evidence map](https://github.com/olafkfreund/AIFactory/blob/dev/guides/compliance/iso27001-evidence.md) + linked concept docs.
+  See the [ISO 27001 evidence map](https://github.com/olafkfreund/AIFactory/blob/main/guides/compliance/iso27001-evidence.md) + linked concept docs.
 
 - **Epic #92 — Delegation (Copilot + Duo)** — hand the coder phase off to GitHub Copilot or GitLab Duo Workflow while AIFactory keeps the planning + governance. See the [Delegation concept page](./concepts/delegation).
 - **Epic #82 — Portal-managed Git clones** — clone repos into the portal's workspace root (env-aware on laptop vs Helm PVC), with encrypted-at-rest stored credentials for private repos. See [Portal-managed clones](./concepts/portal-clones).

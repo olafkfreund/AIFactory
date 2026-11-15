@@ -151,8 +151,9 @@ const RECENT = [
     when: 'October 2026',
     title: 'Agent environments scrubbed',
     body:
-      'Agent CLIs start with scrubbed environments, a private HOME and an allowlist; ' +
-      'operators add names through AIFACTORY_AGENT_ENV_EXTRA.',
+      'Non-Claude agent CLIs (Codex, Gemini, Copilot, OpenCode) and the Ollama/OpenAI-compatible ' +
+      'loops start with scrubbed environments (v3.10.0). v3.10.3 adds a private HOME and an ' +
+      'allowlist; operators add names through AIFACTORY_AGENT_ENV_EXTRA.',
     link: '/blog/what-shipped-august-to-november',
     linkText: 'Read the summary →',
   },
@@ -170,9 +171,9 @@ const RECENT = [
     title: 'Outbound PII scrubbing on by default',
     body:
       'v3.6.75 scrubs outbound model calls by default and fails closed. Projects classed ' +
-      'regulated (v3.10.8) always scrub.',
+      'regulated (v3.10.8, with direct claude --print spawns in v3.10.9) always scrub.',
     link: '/concepts/litellm-gateway',
-    linkText: 'LiteLLM gateway →',
+    linkText: 'Gateway and scrubbing (LiteLLM sub-chart deprecated, still works) →',
   },
   {
     when: 'September 2026',
