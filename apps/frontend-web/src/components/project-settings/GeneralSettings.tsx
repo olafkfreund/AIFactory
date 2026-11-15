@@ -243,7 +243,8 @@ export function GeneralSettings({
                   its own code-review engine on the project's provider (Claude/Ollama —
                   no Copilot credits). <strong>Copilot</strong> uses GitHub Copilot's
                   review (requires Copilot code-review credits). <strong>Any</strong>{' '}
-                  accepts any approving GitHub review.
+                  accepts any approving GitHub review.{' '}
+                  {t('projectSections.general.prReviewerCopilotRulesetHelp')}
                 </p>
               </div>
               <select
@@ -253,12 +254,15 @@ export function GeneralSettings({
                 onChange={(e) =>
                   { setSettings({
                     ...settings,
-                    prReviewer: e.target.value as 'aifactory' | 'copilot' | 'any',
+                    prReviewer: e.target.value as 'aifactory' | 'copilot' | 'copilot-ruleset' | 'any',
                   }); }
                 }
               >
                 <option value="aifactory">AIFactory (Claude/Ollama)</option>
                 <option value="copilot">GitHub Copilot</option>
+                <option value="copilot-ruleset">
+                  {t('projectSections.general.prReviewerCopilotRuleset')}
+                </option>
                 <option value="any">Any approval</option>
               </select>
             </div>
