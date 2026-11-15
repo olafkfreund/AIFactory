@@ -24,11 +24,15 @@ from core.git_credentials import github_token  # noqa: E402
 from server import project_registry  # noqa: E402
 from server.routes import (  # noqa: E402
     github as github_routes,
+)
+from server.routes import (
     project_authz,
     projects,
 )
 from server.services import (  # noqa: E402
     completion_orchestration as completion,
+)
+from server.services import (
     github_app,
     merger,
     pr_endgame,
