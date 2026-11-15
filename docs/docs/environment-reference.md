@@ -257,6 +257,7 @@ How `run.py` executes and what lets a build schedule on any node. Read in
 | `AIFACTORY_NIX_STORE_PVC` | `""` | no | Warm Nix-store PVC that gate Jobs mount (seeded from the image). Forwarded into the build Job; the build Job itself never mounts it (#1736). |
 | `AIFACTORY_CLI_CREDS_SECRET` | `""` | no | K8s Secret name holding CLI credentials mounted into the build Job. |
 | `APP_BACKEND_PATH` | `/home/projects/MagesticAI/apps/backend` | no | Backend path inside the build Job. |
+| `AIFACTORY_AGENT_COMMIT_TRAILERS` | off | no | Add `Agent-Identity`, `Autonomy-Tier` and `Originator` git trailers to factory commits and squash-merge bodies, from the spec's `requirements.json` (Factory#1960). Forwarded into the build Job, where the safety-net and wave commits run. |
 
 ### Build-Job env allowlist (`_PASSTHROUGH_BUILD_ENV`)
 
@@ -278,7 +279,7 @@ Forwarded when present: `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`,
 `OPENAI_COMPATIBLE_BASE_URL`, `GEMINI_API_KEY`, `GEMINI_CLI_TRUST_WORKSPACE`,
 `GOOGLE_API_KEY`, `OLLAMA_API_KEY`, `OLLAMA_CLOUD_BASE_URL`, `S3_ENDPOINT`,
 `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_REGION`,
-`AIFACTORY_GRAPHIFY_ENABLED`.
+`AIFACTORY_GRAPHIFY_ENABLED`, `AIFACTORY_AGENT_COMMIT_TRAILERS`.
 
 The `S3_*` namespace is what the Job-side `core/artifact_store` reads to
 reconstitute a packed workspace (distinct from the chart's fsspec
