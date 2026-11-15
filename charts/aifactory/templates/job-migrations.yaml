@@ -16,6 +16,9 @@ metadata:
     "helm.sh/hook-weight": "-5"
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
+  {{- with .Values.migrations.jobActiveDeadlineSeconds }}
+  activeDeadlineSeconds: {{ . }}
+  {{- end }}
   backoffLimit: {{ .Values.migrations.jobBackoffLimit }}
   template:
     metadata:
@@ -23,13 +26,8 @@ spec:
         {{- include "aifactory.jobPodLabels" (dict "ctx" . "component" "migrations") | nindent 8 }}
     spec:
       automountServiceAccountToken: false
-      {{- with .Values.global.imagePullSecrets }}
-      imagePullSecrets:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.image.pullSecrets }}
-      imagePullSecrets:
-        {{- toYaml . | nindent 8 }}
+      {{- with include "aifactory.imagePullSecrets" . }}
+      {{- . | trim | nindent 6 }}
       {{- end }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
@@ -57,10 +55,28 @@ spec:
                   key: database-url
             - name: PYTHONDONTWRITEBYTECODE
               value: "1"
+            {{- if and .Values.global .Values.global.customCABundle.secretName }}
+            - name: SSL_CERT_FILE
+              value: /etc/ssl/custom-ca/{{ .Values.global.customCABundle.key }}
+            - name: REQUESTS_CA_BUNDLE
+              value: /etc/ssl/custom-ca/{{ .Values.global.customCABundle.key }}
+            {{- end }}
+          resources:
+            {{- toYaml (.Values.migrations.jobResources | default .Values.resources) | nindent 12 }}
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            {{- if and .Values.global .Values.global.customCABundle.secretName }}
+            - name: custom-ca
+              mountPath: /etc/ssl/custom-ca
+              readOnly: true
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
+        {{- if and .Values.global .Values.global.customCABundle.secretName }}
+        - name: custom-ca
+          secret:
+            secretName: {{ .Values.global.customCABundle.secretName }}
+        {{- end }}
 {{- end }}

@@ -122,6 +122,13 @@
       "properties": {
         "autoApply": {
           "type": "boolean"
+        },
+        "jobActiveDeadlineSeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "jobResources": {
+          "type": "object"
         }
       }
     },
