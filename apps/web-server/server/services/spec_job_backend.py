@@ -275,10 +275,9 @@ class SpecJobProcess:
             if self.returncode is None:
                 if outcome == "succeeded":
                     try:
-                        self.returncode = await finish()
-                        if self._stop.is_set():
-                            # Stopped while the fetch ran: 0 would start a build.
-                            self.returncode = -15
+                        code = await finish()
+                        # Stopped while the fetch ran: 0 would start a build.
+                        self.returncode = -15 if self._stop.is_set() else code
                     except Exception:  # noqa: BLE001 - failed fetch is failed Job
                         _log.exception(
                             "[spec_job_backend] fetch failed for Job %s/%s",
