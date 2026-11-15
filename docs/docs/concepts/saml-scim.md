@@ -127,7 +127,7 @@ scim:
   tokenSecretName: "aifactory-scim"
 ```
 
-Vendor docs: [Okta SAML setup](https://developer.okta.com/docs/concepts/saml/) · [Okta SCIM provisioning](https://developer.okta.com/docs/guides/scim-with-okta-integration-network/).
+Vendor docs: [Okta SAML setup](https://developer.okta.com/docs/concepts/saml/) · [Okta SCIM provisioning](https://developer.okta.com/docs/guides/scim-provisioning-integration-overview/main/).
 
 ### Azure AD (Microsoft Entra ID)
 

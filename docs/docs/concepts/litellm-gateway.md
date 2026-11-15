@@ -410,4 +410,4 @@ kubectl exec -n aifactory deploy/aifactory -- python -m server.jobs.tenant_recon
 - [Multi-replica deployment](./multi-replica.md) — Redis-backed cross-replica WebSocket fan-out (Epic #35 #40).
 - Design doc in-repo: `docs/plans/2026-05-28-litellm-gateway-design.md`.
 - [GitHub issue #38](https://github.com/olafkfreund/AIFactory/issues/38) — original design + audit.
-- Upstream [LiteLLM Helm chart](https://github.com/BerriAI/litellm/tree/main/deploy/charts/litellm-helm) — for pass-through values reference.
+- Upstream [LiteLLM Helm chart](https://docs.litellm.ai/docs/proxy/deploy) — for pass-through values reference.

@@ -160,7 +160,6 @@ const config: Config = {
           title: 'Community',
           items: [
             {label: 'GitHub Issues', href: 'https://github.com/olafkfreund/AIFactory/issues'},
-            {label: 'Discussions', href: 'https://github.com/olafkfreund/AIFactory/discussions'},
             {label: 'Contributing', to: '/contributing'},
           ],
         },
