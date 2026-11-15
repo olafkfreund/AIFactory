@@ -10,6 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -52,20 +53,25 @@ class FakeArtifactStore:
     objects: dict[str, bytes] = {}
     reads: list[tuple[str, int | None]] = []
 
-    def get_bytes(self, key: str, max_bytes: int | None = None) -> bytes:
-        self.reads.append((key, max_bytes))
-        return self.objects[key][:max_bytes]
+    config = SimpleNamespace(bucket="bucket")
+
+    def _client(self) -> FakeArtifactStore:
+        return self
+
+    def get_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:  # noqa: N803
+        def read(limit: int) -> bytes:
+            self.reads.append((Key, limit))
+            return self.objects[Key][:limit]
+
+        return {"Body": SimpleNamespace(read=read)}
 
 
-def test_artifact_store_reads_only_requested_bytes() -> None:
-    body = SimpleNamespace(read=Mock(side_effect=lambda limit=None: b"abcdef"[:limit]))
+def test_capped_read_asks_s3_for_only_the_limit() -> None:
+    body = SimpleNamespace(read=Mock(side_effect=lambda limit: b"abcdef"[:limit]))
     store = artifact_store.ArtifactStore()
     store._s3 = SimpleNamespace(get_object=lambda **_kwargs: {"Body": body})
-    assert store.get_bytes("key", max_bytes=3) == b"abc"
+    assert workspace_fetch._read_capped(store, "key", 3) == b"abc"
     body.read.assert_called_once_with(3)
-    body.read.reset_mock()
-    assert store.get_bytes("key") == b"abcdef"
-    body.read.assert_called_once_with()
 
 
 @pytest.fixture

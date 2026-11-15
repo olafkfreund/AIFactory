@@ -31,7 +31,11 @@ from .build_backend import (
     backend_config_error,
     subprocess_gate_refusal,
 )
-from .spec_job_backend import KubeJobSpecBackend, spec_kubejob_enabled
+from .spec_job_backend import (
+    KubeJobSpecBackend,
+    SpecJobProcess,
+    spec_kubejob_enabled,
+)
 from .task_phase import TaskPhase
 
 if TYPE_CHECKING:
@@ -73,6 +77,7 @@ class SpecCreationMixin:
         _marker_nonce_env: Callable[..., dict[str, str]]
         _resolve_claude_token_pooled: Callable[..., Any]
         _kubejob_backend_enabled: Callable[..., bool]
+        _release_task_credential: Callable[[str], None]
 
     async def start_spec_creation(
         self,
@@ -83,7 +88,7 @@ class SpecCreationMixin:
         complexity: str | None = None,
         auto_continue: bool = True,
         user_id: str = "",
-    ) -> asyncio.subprocess.Process:
+    ) -> asyncio.subprocess.Process | SpecJobProcess:
         """Start spec creation for a task."""
 
         logger = logging.getLogger(__name__)
@@ -289,8 +294,14 @@ class SpecCreationMixin:
         # #1929: after make_subprocess_env(), which denies this name.
         env.update(self._marker_nonce_env(task_id))
 
+        proc: asyncio.subprocess.Process | SpecJobProcess
         if use_job:
             try:
+                if spec_id is None or spec_dir is None:
+                    # Refused above already; this narrows the types for mypy.
+                    raise BuildBackendUnavailableError(
+                        "Spec creation refused: task has no spec directory"
+                    )
                 proc = await KubeJobSpecBackend().dispatch(
                     task_id=task_id,
                     project_path=project_path,

@@ -154,8 +154,11 @@ Each was confirmed against the code and fixed in the same commit as this note.
 - A failed, vanished or stopped spec Job (`proc.pid is None`, non-zero return
   code) skips the monitor's spec-completion branch, so it cannot auto-start a
   build from stale spec files (`process_monitor.py`). In-pod runs are unchanged.
-- `ArtifactStore.get_bytes` takes `max_bytes`; `fetch_spec_files` reads at most
-  8 MiB + 1, so an oversize object is skipped without being loaded.
+- `fetch_spec_files` reads at most 8 MiB + 1 per object through
+  `workspace_fetch._read_capped`, so an oversize object is skipped without
+  being loaded. `artifact_store.py` is not changed: it is a byte-exact copy of
+  the hub canonical (the drift gate has no allowed divergence), so the cap
+  uses the store's S3 client until the hub's `get_bytes` grows a `max_bytes`.
 - `_prepare_spec_workspace` refuses a spec dir that is or contains a symlink,
   and a clone whose `.aifactory` or `.aifactory/specs` is a symlink.
 - The Job id is `f"{task_id}-spec-{fetch_id[:8]}"`, not `f"{task_id}-spec"`:
@@ -168,6 +171,12 @@ Each was confirmed against the code and fixed in the same commit as this note.
   log stream at once instead of after the 30 s drain; a dispatch that raises
   releases the pooled credential; the packed workspace key carries the same
   per-dispatch suffix as the Job id.
+- From CI on the PR (2026-11-15): `_signal_process_tree` signals a spec Job by
+  type (`isinstance(proc, SpecJobProcess)`), and a pid-less process of any
+  other kind stays a no-op, as `test_stop_process_tree.py` requires.
+  `start_spec_creation` returns `Process | SpecJobProcess`. The gitleaks hit on
+  step 4's code excerpt in this file is a false positive, listed by fingerprint
+  in `.gitleaksignore`.
 - Not fixed here, tracked: bucket-wide `S3_*` in Jobs (#2023), the marker
   nonce in the Job env (#2024), unused CLI logins in build Jobs (#2025).
 
