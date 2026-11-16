@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -54,6 +55,10 @@ from server.routes.terminal import (  # noqa: E402
     CreateTerminalRequest,
     clear_terminal_sessions,
     create_terminal,
+)
+
+_SERVICE = SimpleNamespace(
+    state=SimpleNamespace(user={"id": "default", "is_service": True})
 )
 from server.routes.worktree_tools import resolve_launch_dir  # noqa: E402
 from server.specpath import browse_roots, registered_project_roots  # noqa: E402
@@ -408,7 +413,7 @@ async def test_git_status_outside_is_refused(registry, outside):
 async def test_terminal_cwd_outside_is_refused(registry, outside):
     """A free-form shell cwd is worth more than a file read."""
     with pytest.raises(HTTPException) as exc:
-        await create_terminal(CreateTerminalRequest(cwd=str(outside)))
+        await create_terminal(CreateTerminalRequest(cwd=str(outside)), _SERVICE)
 
     assert exc.value.status_code == 403
 
@@ -431,7 +436,7 @@ async def test_terminal_cwd_in_a_legacy_project_is_allowed_through_containment(
     )
 
     with pytest.raises(HTTPException) as exc:
-        await create_terminal(CreateTerminalRequest(cwd=str(registry.alpha)))
+        await create_terminal(CreateTerminalRequest(cwd=str(registry.alpha)), _SERVICE)
 
     assert exc.value.status_code == 503, "got past containment, failed at the PTY"
     assert spawned["cwd"] == str(registry.alpha.resolve())
@@ -455,7 +460,7 @@ async def test_clear_sessions_outside_a_registered_project_is_refused(
     (victim / "terminal_b.json").write_text("{}")
 
     with pytest.raises(HTTPException) as exc:
-        await clear_terminal_sessions(project=str(outside))
+        await clear_terminal_sessions(_SERVICE, project=str(outside))
 
     assert exc.value.status_code == 403
     assert (victim / "terminal_a.json").exists(), "a refused clear must delete nothing"
@@ -468,7 +473,7 @@ async def test_clear_sessions_inside_a_registered_project_still_works(registry):
     (sessions / "terminal_one.json").write_text("{}")
     (sessions / "terminal_two.json").write_text("{}")
 
-    res = await clear_terminal_sessions(project=str(registry.alpha))
+    res = await clear_terminal_sessions(_SERVICE, project=str(registry.alpha))
 
     assert res["data"]["cleared"] == 2
     assert not (sessions / "terminal_one.json").exists()

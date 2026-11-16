@@ -33,6 +33,7 @@ import inspect
 import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -320,7 +321,12 @@ async def test_terminal_remove_worktree_refusal_has_a_status() -> None:
     with service as cls:
         cls.return_value.remove_worktree.return_value = False
         result = await terminal.remove_terminal_worktree(
-            name="wt", project="/nonexistent/project", deleteBranch=False
+            name="wt",
+            http_request=SimpleNamespace(
+                state=SimpleNamespace(user={"id": "default", "is_service": True})
+            ),
+            project="/nonexistent/project",
+            deleteBranch=False,
         )
     status, payload = verdict(result)
     assert status == REFUSED_STATUS

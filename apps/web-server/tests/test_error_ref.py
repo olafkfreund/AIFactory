@@ -172,6 +172,11 @@ def test_a_real_route_response_body_leaks_nothing(
     app = FastAPI()
     app.include_router(terminal.router, prefix="/api/terminals")
 
+    @app.middleware("http")
+    async def _service_principal(request, call_next):
+        request.state.user = {"id": "default", "is_service": True}
+        return await call_next(request)
+
     with patch.object(terminal, "get_pty_manager", return_value=_FailingPtyManager()):
         response = TestClient(app, raise_server_exceptions=False).post(
             "/api/terminals", json={"cols": 80, "rows": 24, "cwd": str(tmp_path)}
