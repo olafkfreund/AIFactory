@@ -20,6 +20,8 @@ _PRIVATE_KEY = re.compile(
     r".*?-----END (?P=type)-----",
     re.DOTALL,
 )
+# #2054: Anthropic-style keys; the hub secrets table does not cover them yet.
+_ANTHROPIC_KEY = re.compile(r"sk-ant-[A-Za-z0-9_-]{10,}")
 _LOCK = threading.RLock()
 
 
@@ -32,6 +34,7 @@ class _State:
 def _clean(value: object, secrets: list[str]) -> object:
     if isinstance(value, str):
         value = _PRIVATE_KEY.sub("***REDACTED***", value)
+        value = _ANTHROPIC_KEY.sub("***REDACTED***", value)
         for secret in secrets:
             value = value.replace(secret, "***REDACTED***")
         return redact(value)
