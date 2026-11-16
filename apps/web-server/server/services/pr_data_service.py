@@ -20,7 +20,7 @@ from typing import Any
 from factory_common.logsafe import sanitize_log
 
 from server.error_ref import client_error
-from server.utils.subprocess_env import child_env, github_env
+from server.utils.subprocess_env import child_env, project_github_env
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ def _run_gh(args: list[str], cwd: str | None = None, timeout: int = 30) -> dict:
     import subprocess
 
     try:
-        with github_env(child_env()) as env:
+        with project_github_env(cwd, child_env()) as env:
             result = subprocess.run(
                 ["gh"] + args,
                 capture_output=True,

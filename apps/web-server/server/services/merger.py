@@ -42,6 +42,7 @@ import server.services.project_settings_store as pss
 from server.project_registry import load_projects, resolve_project_path
 from server.routes.task_service import get_spec_dirs
 from server.services import pr_endgame as pe
+from server.services.github_app import project_github_token
 from server.services.pr_endgame import Runner
 from server.services.task_control import read_control, write_control
 from server.tenancy import UNREADABLE_TENANT, spec_tenant
@@ -472,9 +473,10 @@ def process_one(
     The build-end entry point (#2586) -- the same decision the sweep makes,
     for a single spec, for real (never a dry run).
     """
-    result = _process_spec(
-        project_id, project_path, spec_dir, dry_run=False, runner=runner
-    )
+    with project_github_token(project_path):
+        result = _process_spec(
+            project_id, project_path, spec_dir, dry_run=False, runner=runner
+        )
     result["status_written"] = _sync_status(spec_dir, result)
     return result
 
@@ -554,13 +556,14 @@ def sweep(
             spec_dirs = kept
         for spec_dir in spec_dirs:
             try:
-                result = _process_spec(
-                    project_id,
-                    project_path,
-                    spec_dir,
-                    dry_run=dry_run,
-                    runner=runner,
-                )
+                with project_github_token(project_path):
+                    result = _process_spec(
+                        project_id,
+                        project_path,
+                        spec_dir,
+                        dry_run=dry_run,
+                        runner=runner,
+                    )
                 if not dry_run:
                     result["status_written"] = _sync_status(spec_dir, result)
                 results.append(result)

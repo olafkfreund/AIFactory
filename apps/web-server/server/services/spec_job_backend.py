@@ -399,6 +399,14 @@ class KubeJobSpecBackend:
         )
         if complexity == "simple":
             env["QUICK_MODE"] = "true"
+        # #2023: after every merge into env, so none can restore the bucket-wide key.
+        from .job_s3_scope import scope_job_s3  # noqa: PLC0415
+
+        await asyncio.to_thread(
+            scope_job_s3,
+            env,
+            [(None, f"{task_id}-spec-{fetch_id[:8]}"), (None, fetch_id)],
+        )
         manifest = build_spec_job_manifest(
             task_id=task_id,
             fetch_id=fetch_id,

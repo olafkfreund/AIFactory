@@ -17,12 +17,13 @@ import subprocess
 import threading
 import time
 from collections.abc import Iterator
+from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
 
 import httpx
 import yaml
-from core.git_credentials import use_github_token
+from core.git_credentials import has_github_token_provider, use_github_token
 from jose import JOSEError, jwt
 
 from server.utils.subprocess_env import AGENT_GITHUB_TOKEN_VAR, child_env, github_token
@@ -38,6 +39,7 @@ _APP_VARS = (
 )
 _PAT_VARS = ("GITHUB_TOKEN", "GH_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN")
 _OK_DELAY = 1800
+_READ_TTL = 60  # a token read must have at least this long to live
 _RETRY_DELAY = 60
 
 _app_id: str | None = None
@@ -46,6 +48,11 @@ _key: str | None = None
 _org_installations: dict[str, str] = {}
 _tokens: dict[str, tuple[str, float]] = {}
 _tokens_lock = threading.Lock()
+#: Set inside a request whose org the access check settled, as ``(org_id,)``.
+#: Path-based wiring may only keep it: a path of another org gets no token.
+_pinned: ContextVar[tuple[str | None] | None] = ContextVar(
+    "github_app_pinned", default=None
+)
 #: What a mint can raise: HTTP, a bad id or empty reply, bad or odd JSON, JWT signing.
 MINT_ERRORS = (
     httpx.HTTPError,
@@ -73,9 +80,13 @@ def _parse_org_map(raw: str) -> dict[str, str]:
                 f"{_ORG_MAP_VAR} entry {position} needs org=installation"
             )
         org, installation = (part.strip() for part in item.split("=", 1))
-        if not org or org in result or not _valid_installation_id(installation):
+        if not org or org in result:
             raise RuntimeError(
                 f"{_ORG_MAP_VAR} has invalid or duplicate org id {org!r}"
+            )
+        if not _valid_installation_id(installation):
+            raise RuntimeError(
+                f"{_ORG_MAP_VAR} has an invalid installation id for org {org!r}"
             )
         result[org] = installation
     if not result:
@@ -97,7 +108,7 @@ def token_for_org(org_id: str | None, *, min_ttl: int = 900) -> str | None:
 
 
 @contextlib.contextmanager
-def org_github_token(org_id: str | None) -> Iterator[None]:
+def org_github_token(org_id: str | None, *, pinned: bool = False) -> Iterator[None]:
     if not multi_installation():
         yield
         return
@@ -106,20 +117,63 @@ def org_github_token(org_id: str | None) -> Iterator[None]:
     def provider() -> str:
         if not installation:
             return ""
-        # Callers warm the cache in a thread first, so this is a cache read on
-        # the event loop. shortcut: a block that outlives the warmed token
-        # (>14 min) mints inline once, up to the 30 s timeout; move the reads
-        # to a thread if that shows up.
+        # Callers warm the cache in a thread first. On the event loop thread a
+        # cold cache means no token rather than a mint that blocks the loop for
+        # up to the 30 s timeout; a worker thread may mint.
+        cached = _tokens.get(installation)
+        if cached and cached[1] - time.time() >= _READ_TTL:
+            return cached[0]
         try:
-            return installation_token(installation, min_ttl=60)
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            return ""
+        try:
+            return installation_token(installation, min_ttl=_READ_TTL)
         except MINT_ERRORS:  # fail closed: no token, gh/git report the auth error
             logger.warning(
                 "GitHub App token mint failed for org %s", org_id, exc_info=True
             )
             return ""
 
-    with use_github_token(provider):
+    pin = _pinned.set((org_id,)) if pinned else None
+    try:
+        with use_github_token(provider):
+            yield
+    finally:
+        if pin is not None:
+            _pinned.reset(pin)
+
+
+@contextlib.contextmanager
+def project_github_token(path: str | Path | None) -> Iterator[None]:
+    """``org_github_token`` for the org that owns ``path``.
+
+    No path keeps an outer block's provider; a path with no owner never does.
+    A request's pinned org (see ``org_github_token``) is never replaced: a path
+    of another org, or of none, gets no token inside it.
+    """
+    if not multi_installation() or (not path and has_github_token_provider()):
         yield
+        return
+    from server.project_registry import org_id_for_path  # noqa: PLC0415 - cycle
+
+    org = org_id_for_path(path)
+    pinned = _pinned.get()
+    if pinned is not None and org == pinned[0]:
+        yield
+        return
+    with org_github_token(org if pinned is None else None, pinned=pinned is not None):
+        yield
+
+
+async def warm_org_token(org_id: str | None) -> None:
+    """Fill the token cache off the event loop; a mint error is logged, not raised."""
+    try:
+        await asyncio.to_thread(token_for_org, org_id)
+    except MINT_ERRORS:
+        logger.warning("GitHub App token mint failed for org %s", org_id, exc_info=True)
 
 
 def configured() -> bool:

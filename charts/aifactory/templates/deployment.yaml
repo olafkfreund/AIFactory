@@ -681,6 +681,9 @@ spec:
             {{- end }}
             {{- $pairs := list }}
             {{- range $org, $id := .Values.githubApp.orgInstallations }}
+            {{- if not (regexMatch "^[^,=[:space:]]+$" $org) }}
+            {{- fail (printf "githubApp.orgInstallations key %q must not be empty or contain ',', '=' or whitespace (#1700)" $org) }}
+            {{- end }}
             {{- if not (and (kindIs "string" $id) (regexMatch "^[0-9]+$" $id)) }}
             {{- fail (printf "githubApp.orgInstallations.%s must be a string of digits; quote the id or use --set-string (#1700)" $org) }}
             {{- end }}
