@@ -110,3 +110,9 @@ adds a best-effort marker write; no data migration.
 - The route returns 409 with the refusal reason; the intent's "a failing
   regression opens a revert PR" is delivered as the endpoint plus the merge
   record, the TFactory caller is in #2059.
+- Final Codex review (round 1) found four defects in step 1, all fixed in the
+  same commit as this note: reconcile lookup failure now refuses to create,
+  ambiguous sha prefixes are refused, the revert phrase must match a whole body
+  line, and record writes are atomic (`atomic_write_secret_json`). The viewer
+  denial is asserted via the route's `require_task_access("member")` dependency,
+  not an HTTP call.

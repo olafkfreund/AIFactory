@@ -31,14 +31,16 @@ CREATED = {
 
 
 class Runner:
-    def __init__(self, view=VIEW, listing=None):
-        self.view, self.listing, self.calls = view, listing or [], []
+    def __init__(self, view=VIEW, listing=()):
+        self.view, self.listing, self.calls = view, listing, []
 
     def __call__(self, argv, cwd=None):
         self.calls.append(argv)
         if argv[:3] == ["gh", "pr", "view"]:
             return CmdResult(0, json.dumps(self.view), "")
         if argv[:3] == ["gh", "pr", "list"]:
+            if self.listing is None:
+                return CmdResult(1, "", "boom")
             return CmdResult(0, json.dumps(self.listing), "")
         if argv[:3] == ["gh", "api", "graphql"]:
             return CmdResult(0, json.dumps(CREATED), "")
@@ -128,6 +130,46 @@ def test_earlier_revert_of_any_state_reconciled(state):
     r = Runner(listing=[{"url": f"u/{state}", "body": "Reverts o/r#7\n..."}])
     out = _open(r)
     assert out["url"] == f"u/{state}" and not r.creates()
+
+
+def test_failed_lookup_does_not_create():
+    _record()
+    r = Runner(listing=None)
+    assert _open(r)["reason"] == "reconcile_failed"
+    assert not r.creates()
+
+
+def test_similar_pr_number_is_not_a_match():
+    _record()
+    r = Runner(listing=[{"url": "u/70", "body": "Reverts o/r#70\n"}])
+    assert _open(r)["reason"] == "created"
+
+
+def test_ambiguous_prefix_refused():
+    _record()
+    other = "a" * 7 + "b" * 33
+    rp._record_path(other).write_text(
+        json.dumps({"project_id": "p1", "spec_id": "010-x", "merge_sha": other})
+    )
+    r = Runner()
+    assert _open(r, sha="a" * 7)["reason"] == "not_pipeline_merged"
+    assert not r.calls
+
+
+def test_url_persist_failure_keeps_the_record_and_retry_reconciles(monkeypatch):
+    _record()
+    real = rp.atomic_write_secret_json
+    monkeypatch.setattr(
+        rp,
+        "atomic_write_secret_json",
+        lambda *a: (_ for _ in ()).throw(OSError("full")),
+    )
+    r = Runner()
+    assert _open(r)["reason"] == "created"
+    monkeypatch.setattr(rp, "atomic_write_secret_json", real)
+    r.listing = [{"url": "u/9", "body": "Reverts o/r#7\nx"}]
+    assert _open(r) == {"ok": True, "reason": "exists", "url": "u/9"}
+    assert len(r.creates()) == 1
 
 
 def test_concurrent_calls_create_once():

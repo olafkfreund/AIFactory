@@ -16,6 +16,8 @@ from typing import Any
 
 from factory_common.logsafe import sanitize_log
 
+from server.paths import atomic_write_secret_json
+
 from .pr_endgame import Runner, _default_runner
 
 logger = logging.getLogger(__name__)
@@ -69,18 +71,17 @@ def record_pipeline_merge(  # noqa: PLR0913 - one record, all fields required
         sha = str((doc.get("mergeCommit") or {}).get("oid") or "")
         if not _SHA.fullmatch(sha):
             return False
-        _record_path(sha).write_text(
-            json.dumps(
-                {
-                    "project_id": project_id,
-                    "spec_id": spec_id,
-                    "owner": owner,
-                    "repo": repo,
-                    "pr": pr,
-                    "branch": branch,
-                    "merge_sha": sha,
-                }
-            )
+        atomic_write_secret_json(
+            _record_path(sha),
+            {
+                "project_id": project_id,
+                "spec_id": spec_id,
+                "owner": owner,
+                "repo": repo,
+                "pr": pr,
+                "branch": branch,
+                "merge_sha": sha,
+            },
         )
         return True
     except Exception as exc:  # noqa: BLE001 - must never skip the re-test
@@ -93,16 +94,18 @@ def _find_record(failing_sha: str) -> tuple[Path, dict[str, Any]] | None:
     sha = failing_sha.strip().lower()
     if not _SHA.fullmatch(sha):
         return None
-    for path in sorted(_record_path("x").parent.glob(f"{sha}*.json")):
-        try:
-            return path, json.loads(path.read_text())
-        except (OSError, ValueError):
-            return None
-    return None
+    matches = list(_record_path("x").parent.glob(f"{sha}*.json"))
+    if len(matches) != 1:  # none, or an ambiguous prefix
+        return None
+    try:
+        return matches[0], json.loads(matches[0].read_text())
+    except (OSError, ValueError):
+        return None
 
 
 def _existing_revert(owner: str, repo: str, pr: int, runner: Runner) -> str | None:
-    """A PR of any state whose body says it reverts ``pr``."""
+    """URL of a PR of any state that reverts ``pr``, ``""`` for none, ``None`` when
+    the lookup failed (the caller must then not create)."""
     phrase = f"Reverts {owner}/{repo}#{pr}"
     res = runner(
         [
@@ -118,10 +121,13 @@ def _existing_revert(owner: str, repo: str, pr: int, runner: Runner) -> str | No
         rows = json.loads(res.out)
     except ValueError:
         return None
-    for row in rows if isinstance(rows, list) else []:
-        if isinstance(row, dict) and phrase in str(row.get("body") or ""):
-            return str(row.get("url") or "") or None
-    return None
+    if not isinstance(rows, list):
+        return None
+    for row in rows:
+        lines = str((row or {}).get("body") or "").splitlines()
+        if isinstance(row, dict) and phrase in (ln.strip() for ln in lines):
+            return str(row.get("url") or "") or ""
+    return ""  # shortcut: first 100 search hits only; upgrade if a PR has more
 
 
 def open_revert_pr(  # noqa: PLR0913 - the caller names every input
@@ -153,8 +159,10 @@ def open_revert_pr(  # noqa: PLR0913 - the caller names every input
         ):
             return {"ok": False, "reason": "merge_not_confirmed"}
         url = _existing_revert(owner, repo, pr, runner)
-        reason = "exists"
         if url is None:
+            return {"ok": False, "reason": "reconcile_failed"}
+        reason = "exists"
+        if not url:
             uris = "\n".join(f"- `{u}`" for u in transcript_uris) or "- none recorded"
             body = (
                 f"Reverts {owner}/{repo}#{pr}\n\n"
@@ -183,7 +191,7 @@ def open_revert_pr(  # noqa: PLR0913 - the caller names every input
                 return {"ok": False, "reason": "revert_failed"}
         rec["revert_pr_url"] = url
         try:
-            path.write_text(json.dumps(rec))
+            atomic_write_secret_json(path, rec)
         except OSError:
             logger.warning("[revert-pr] could not store the revert URL")
         return {"ok": True, "reason": reason, "url": url}
