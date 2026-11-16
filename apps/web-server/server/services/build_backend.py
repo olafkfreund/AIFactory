@@ -617,7 +617,17 @@ def cred_files_for_models(
     share this rule), so an agent in the Job cannot read the ones it does not use."""
     from phase_config import infer_provider_from_model  # noqa: PLC0415
 
-    keys = {_PROVIDER_CRED_KEY.get(infer_provider_from_model(m)) for m in models if m}
+    providers = {infer_provider_from_model(m) for m in models if m}
+    # #2047: QA failover and subtask overrides can land on any operator-enabled
+    # provider in the chain, so seed those logins too (default allowlist = claude).
+    from core.provider_failover import enabled_failover_chain  # noqa: PLC0415
+
+    try:
+        for p in list(providers):
+            providers.update(enabled_failover_chain(p))
+    except ValueError:  # bad AIFACTORY_RUNTIMES: gating rejects it at provider build
+        pass
+    keys = {_PROVIDER_CRED_KEY.get(p) for p in providers}
     return tuple((k, rel) for k, rel in _CLI_CRED_FILES if k in keys)
 
 
