@@ -7128,7 +7128,7 @@ paths:
       tags:
       - Terminals
       summary: List Terminals
-      description: List all active terminal sessions.
+      description: List the caller's active terminal sessions.
       operationId: list_terminals_api_terminals_get
       responses:
         '200':
@@ -7198,7 +7198,7 @@ paths:
       tags:
       - Terminals
       summary: Get Sessions
-      description: Get terminal sessions for a project.
+      description: Get the caller's terminal sessions, for a project when given.
       operationId: get_sessions_api_terminals_sessions_get
       parameters:
       - name: project
