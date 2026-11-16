@@ -4758,7 +4758,10 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Post Merge Regression Api Tasks  Task Id  Post Merge Regression Post
         '422':
           description: Validation Error
           content:
