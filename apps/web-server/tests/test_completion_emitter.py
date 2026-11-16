@@ -1585,3 +1585,50 @@ def test_keyless_events_are_skipped_not_sent(
         )
     assert posts == []
     assert "no correlation key" in caplog.text
+
+
+# ── #2034 run transcript link ────────────────────────────────────────────────
+
+
+def _no_webhook(monkeypatch) -> None:
+    monkeypatch.delenv("AIFACTORY_COMPLETION_WEBHOOK", raising=False)
+    monkeypatch.delenv("AIFACTORY_COMPLETION_SENTINEL", raising=False)
+
+
+def _emit(spec: Path) -> dict:
+    return emit_terminal_completion(
+        spec, task_id="proj:s", project_id="proj", spec_id="s", status="done"
+    )
+
+
+def test_event_and_task_record_link_the_transcript(tmp_path, monkeypatch):
+    _no_webhook(monkeypatch)
+    uris = ["s3://b/a.jsonl", "s3://b/z.jsonl"]
+    monkeypatch.setattr("core.workspace_fetch.transcript_uris", lambda _s: uris)
+    spec = _spec_with_issue(tmp_path, 412)
+    ev = _emit(spec)
+    assert ev["transcript_uri"] == "s3://b/z.jsonl"
+    meta = json.loads((spec / "task_metadata.json").read_text())
+    assert meta["transcriptUris"] == uris
+
+
+def test_no_transcript_leaves_event_and_record_unchanged(tmp_path, monkeypatch):
+    _no_webhook(monkeypatch)
+    monkeypatch.setattr("core.workspace_fetch.transcript_uris", lambda _s: [])
+    spec = _spec_with_issue(tmp_path, 412)
+    tm = spec / "task_metadata.json"
+    before = tm.read_text() if tm.exists() else None
+    ev = _emit(spec)
+    assert "transcript_uri" not in ev
+    assert (tm.read_text() if tm.exists() else None) == before
+
+
+def test_metadata_write_failure_still_emits_the_uri(tmp_path, monkeypatch):
+    _no_webhook(monkeypatch)
+    monkeypatch.setattr(
+        "core.workspace_fetch.transcript_uris", lambda _s: ["s3://b/a.jsonl"]
+    )
+    spec = _spec_with_issue(tmp_path, 412)
+    (spec / "task_metadata.json").write_text("{not json")
+    ev = _emit(spec)
+    assert ev["transcript_uri"] == "s3://b/a.jsonl"
