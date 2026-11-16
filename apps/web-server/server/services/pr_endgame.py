@@ -2086,6 +2086,31 @@ def _build_merge_gate(  # noqa: PLR0913 - one-shot builder for run_pr_endgame
     return gate
 
 
+def _after_merge(  # noqa: PLR0913 - one call site, every field is the record
+    project_id: str | None,
+    spec_id: str,
+    owner: str,
+    repo: str,
+    pr: int,
+    branch: str,
+    re_test: Callable[[], None] | None,
+    runner: Runner,
+) -> None:
+    """#2054: remember the merge (server-side) for the revert path, then re-test.
+
+    Recording is best-effort and must never skip the re-test.
+    """
+    if project_id:
+        try:
+            from .revert_pr import record_pipeline_merge  # noqa: PLC0415
+
+            record_pipeline_merge(project_id, spec_id, owner, repo, pr, branch, runner)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[pr-endgame] merge record skipped: %s", exc)
+    if re_test is not None:
+        re_test()
+
+
 async def run_pr_endgame(
     *,
     spec_dir: Path,
@@ -2105,6 +2130,7 @@ async def run_pr_endgame(
     conflict_fixer: ConflictFixer | None = None,
     on_pr_opened: Callable[[int], None] | None = None,
     re_test: Callable[[], None] | None = None,
+    project_id: str | None = None,
     runner: Runner = _default_runner,
     background: bool = True,
 ) -> dict:
@@ -2277,7 +2303,9 @@ async def run_pr_endgame(
         conflict_fixer=conflict_fixer,
         worktree=str(worktree),
         base_branch=base,
-        on_approved_merged=re_test,
+        on_approved_merged=lambda: _after_merge(
+            project_id, spec_id, owner, name, pr, branch, re_test, runner
+        ),
         runner=runner,
         human_approval_required=human_approval_required,
         merge_gate=merge_gate,

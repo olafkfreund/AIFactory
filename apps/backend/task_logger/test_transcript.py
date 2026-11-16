@@ -104,3 +104,11 @@ def test_task_logger_methods_pair_batched_calls(tmp_path):
     ]
     assert len(ends[0]["payload"]) == 30000
     assert ends[1]["payload"] == ""
+
+
+def test_anthropic_style_key_is_redacted(tmp_path):
+    transcript.start(tmp_path)
+    transcript.record(
+        "tool_start", "Bash", {"cmd": "echo sk-ant-api03-AbC_dEf-123456789"}
+    )
+    assert "sk-ant-" not in transcript.written_files()[0].read_text()

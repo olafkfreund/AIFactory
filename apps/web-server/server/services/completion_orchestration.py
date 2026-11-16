@@ -569,6 +569,7 @@ async def run_terminal_completion(
                                 conflict_fixer=_conflict_fixer,
                                 on_pr_opened=_on_pr_opened,
                                 re_test=_re_test_sync,
+                                project_id=_proj_id or None,
                             )
                             logger.info(
                                 f"[AgentService] PR endgame for {sanitize_log(spec_id)} "
