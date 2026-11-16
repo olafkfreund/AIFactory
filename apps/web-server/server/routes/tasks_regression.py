@@ -24,7 +24,7 @@ from server.specpath import safe_spec_component
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-_URI = re.compile(r"s3://[A-Za-z0-9._\-/]{1,512}")
+_URI = re.compile(r"s3://[A-Za-z0-9._:\-/]{1,512}")
 
 
 class PostMergeRegression(BaseModel):
