@@ -17,6 +17,12 @@ from .models import CustomScripts
 
 logger = logging.getLogger(__name__)
 
+# `a b: deps` or `a::`, but not `A := x`, `A ::= x` or `A = x: y`.
+_MAKE_RULE = re.compile(r"^([^\s:=#][^:=#]*?)\s*::?(?![:=])")
+_MAKE_INCLUDE = re.compile(r"^-?(?:include|sinclude)\s+(.+)$")
+_MAKE_INCLUDE_DEPTH = 5
+_MAKE_NAME = re.compile(r"[A-Za-z0-9_.+/-]+")
+
 
 def _base_ref(project_dir: Path) -> str | None:
     """Resolve the git ref to read script configuration from."""
@@ -86,25 +92,37 @@ class StructureAnalyzer:
                 self.script_commands.update(("npm", "yarn", "pnpm", "bun"))
 
     def _detect_makefile_targets(self) -> None:
-        """Detect Makefile targets."""
+        """Detect Makefile targets, following plain `include`s (#2028)."""
         if not self.parser.file_exists("Makefile"):
             return
-
-        content = self.parser.read_text("Makefile")
-        if not content:
-            return
-
-        for line in content.splitlines():
-            # Match target definitions like "target:" or "target: deps"
-            match = re.match(r"^([a-zA-Z_][a-zA-Z0-9_-]*)\s*:", line)
-            if match:
-                target = match.group(1)
-                # Skip common internal targets
-                if not target.startswith("."):
-                    self.custom_scripts.make_targets.append(target)
-
+        seen: set[str] = set()
+        self._read_makefile("Makefile", seen, set(), 0)
+        self.custom_scripts.make_targets.extend(sorted(seen - {""}))
         if self.custom_scripts.make_targets:
             self.script_commands.add("make")
+
+    def _read_makefile(
+        self, name: str, targets: set[str], visited: set[str], depth: int
+    ) -> None:
+        visited.add(name)
+        content = self.parser.read_text(name)
+        if not content or depth > _MAKE_INCLUDE_DEPTH:
+            return
+        content = re.sub(r"\\\n[ \t]*", " ", content)
+        for line in content.splitlines():
+            if line.startswith("\t"):  # recipe
+                continue
+            code = line.split("#", 1)[0]
+            if m := _MAKE_INCLUDE.match(code):
+                for inc in m.group(1).split():
+                    # shortcut: only plain relative names; a `$(var)` or glob adds nothing.
+                    if inc not in visited and _MAKE_NAME.fullmatch(inc):
+                        self._read_makefile(inc, targets, visited, depth + 1)
+            elif m := _MAKE_RULE.match(code):
+                names = m.group(1).split()
+                # One odd word (`$(info x: y)`, `a\ b`, `%.o`) drops the line.
+                if all(_MAKE_NAME.fullmatch(n) for n in names):
+                    targets.update(n for n in names if not n.startswith("."))
 
     def _detect_poetry_scripts(self) -> None:
         """Detect Poetry scripts from pyproject.toml."""
