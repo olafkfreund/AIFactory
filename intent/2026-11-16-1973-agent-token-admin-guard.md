@@ -10,9 +10,9 @@ author: olafkfreund
 
 Checked against `origin/dev` on 2026-11-16:
 
-- **#1973 (admin-scoped token in agent children).** #2030 added `AIFACTORY_AGENT_GITHUB_TOKEN` and strips the control plane's token from non-runner children. But `runner_github_env()` (`server/utils/subprocess_env.py`) still falls back to the control plane's own token when that variable is unset, and the live Deployment does not set it. So runners, spec creation and build Jobs still receive the fleet PAT, which carries `admin` and `delete_repo`. Nothing checks what a token can do before it goes to a child.
-- **The App path exists but cannot be adopted.** `scripts/github-app-manifest.json` asks only for contents, pull requests and metadata. The owner's 2026-10-31 decision also wants Issues R/W and Checks R. The gitops aifactory Deployment has no App variables, so the owner has nothing to switch on.
-- **#1700 and #1701** are code-complete (per-org installation tokens: #2039, #2053; Copilot probe tooling shipped). What is left is owner-only: create the App, store the secret, run one probe with the key on a workstation, run a second-installation live test.
+- **#1973 (admin-scoped token in agent children).** #2030 added `AIFACTORY_AGENT_GITHUB_TOKEN` and strips the control plane's token from non-runner children. But `runner_github_env()` (`server/utils/subprocess_env.py`) still falls back to the control plane's own token when that variable is unset, and the live Deployment does not set it. So runner subprocesses, PR review and build Jobs still receive the fleet PAT (Kubernetes spec Jobs already drop it, `spec_job_backend.py:389-392`), which carries `admin` and `delete_repo`. Nothing checks what a token can do before it goes to a child.
+- **The App path exists but cannot be adopted.** `scripts/github-app-manifest.json` asks only for contents, pull requests and metadata. The owner's 2026-10-31 decision also wants Issues R/W and Checks R. The Helm chart already has default-off App wiring (`charts/aifactory/templates/deployment.yaml:663-705`), but the gitops aifactory Deployment, which is what runs, has no App variables, so the owner has nothing to switch on.
+- **#1700 and #1701** have their code merged per the issue threads (per-org installation tokens: #2039, #2053; Copilot probe tooling shipped); I do not re-verify them here beyond reading `github_app.py`. What is left is owner-only: create the App, store the secret, run one probe with the key on a workstation, run a second-installation live test.
 
 ## Proposed outcome
 
