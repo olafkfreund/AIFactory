@@ -15,6 +15,7 @@ from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .ast_parser import _RUNNER_BUILTINS, _RUNNER_SUBCOMMANDS
 from .exec_context import get_worktree_root
 from .validation_models import ValidationResult
 
@@ -221,10 +222,21 @@ def _target_script(tool: str, positionals: list[str]) -> str | None:
             return "test"
         if sub in _LIFECYCLE_SUBCOMMANDS:
             return sub
-    # yarn, pnpm and bun run `<tool> <script>` without `run`; `bun run x` runs
-    # a script if one exists, else a file or binary.
-    name = arg if tool == "bun" and sub == "run" and arg else sub
-    return name if tool != "npm" and _is_worktree_script(name) else None
+    # `bun run x` runs script `x` if there is one, else a file or binary: always a
+    # base-script check, even for `test` (#2028).
+    if tool == "bun" and sub == "run":
+        return arg
+    # yarn, pnpm and bun run `<tool> <script>` without `run`. A parent
+    # package.json may define it, so any name that is not a built-in is a script.
+    builtin = sub in _RUNNER_BUILTINS.get(tool, ()) or sub in _runner_subcommands(tool)
+    # The built-in table spans runner versions (`yarn constraints` is a script
+    # in yarn 1), so a built-in name the working tree defines is checked too.
+    skip = tool == "npm" or (builtin and not _is_worktree_script(sub))
+    return None if skip else sub
+
+
+def _runner_subcommands(tool: str) -> set[str]:
+    return {s[0] for s in _RUNNER_SUBCOMMANDS.get(tool, ())} | {"exec"}
 
 
 def validate_package_script_command(seg: str) -> ValidationResult:

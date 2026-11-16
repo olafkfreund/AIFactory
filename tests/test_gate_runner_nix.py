@@ -426,3 +426,21 @@ def test_co_mount_path_still_drops_the_warm_store(monkeypatch, tmp_path):
     gr._nix_kube_runner("gate-image")(["gradle", "test"], work)
 
     assert seen["nix_store_pvc"] is None, "co-mount path must not add a 2nd RWO PVC"
+
+
+def test_store_env_forwards_scoped_session_creds(monkeypatch):
+    """#2023: the nested gate Job's unpack needs the STS session, not S3_ACCESS_KEY."""
+    import agents.gate_runner as gr
+
+    for name in ("S3_ENDPOINT", "S3_ACCESS_KEY", "S3_SECRET_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("S3_ENDPOINT", "http://minio:9000")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "a")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "s")
+    monkeypatch.setenv("AWS_SESSION_TOKEN", "t")
+    assert gr._store_env() == {
+        "S3_ENDPOINT": "http://minio:9000",
+        "AWS_ACCESS_KEY_ID": "a",
+        "AWS_SECRET_ACCESS_KEY": "s",
+        "AWS_SESSION_TOKEN": "t",
+    }

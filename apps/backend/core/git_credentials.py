@@ -51,6 +51,10 @@ def github_token() -> str:
     return (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or "").strip()
 
 
+def has_github_token_provider() -> bool:
+    return _token_provider.get() is not None
+
+
 @contextlib.contextmanager
 def use_github_token(provider: Callable[[], str]) -> Iterator[None]:
     token = _token_provider.set(provider)

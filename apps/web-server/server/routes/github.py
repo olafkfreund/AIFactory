@@ -16,7 +16,7 @@ import sys
 from pathlib import Path as FilePath
 
 from factory_common.logsafe import sanitize_log
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -29,9 +29,12 @@ from server.services.http_verdict import honest_status
 from server.services.originator import issue_originator
 from server.utils.subprocess_env import child_env, github_token
 
+from .project_github import project_github_token
+
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+
+router = APIRouter(dependencies=[Depends(project_github_token)])
 
 
 # ============================================
@@ -107,6 +110,8 @@ async def _persist_cli_token_to_project(project_id: str) -> bool:
     """
     from server.project_registry import load_projects
 
+    if github_app.multi_installation():  # never store an installation token (#1700)
+        return False
     token_result = run_gh_command(["auth", "token"])
     if not token_result["success"] or not token_result["output"]:
         return False
@@ -888,7 +893,7 @@ async def add_git_remote(request: AddRemoteRequest):
 # These are mounted under /api/projects/{projectId}/github
 # ============================================
 
-project_router = APIRouter()
+project_router = APIRouter(dependencies=[Depends(project_github_token)])
 
 
 def _resolve_project_path(projectId: str) -> FilePath | None:

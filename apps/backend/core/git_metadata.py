@@ -235,7 +235,13 @@ def record_base_sha(
     cwd: str | os.PathLike[str],
     run: Callable[[list[str]], tuple[int, str]] | None = None,
 ) -> None:
-    """Record the base commit SHA for ``cwd``."""
+    """Record the base commit SHA for ``cwd``.
+
+    Recorded once, at worktree creation. It is not refreshed when upstream is
+    merged into a running task: nothing trusted names the new base (the agent's
+    own commits must never qualify), so targets added upstream stay refused
+    until the worktree is recreated (#2028, fails closed).
+    """
     dirs = _run_git(cwd, list(_REV_PARSE_DIRS), run).splitlines()
     raw_common = dirs[0] if dirs else ""
     raw_gitdir = dirs[1] if len(dirs) > 1 else raw_common
