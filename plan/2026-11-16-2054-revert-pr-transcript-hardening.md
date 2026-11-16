@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2054
 spec: spec/2026-11-16-2054-revert-pr-transcript-hardening.md
 # coders: none. The steps are small and share one design; the lead implements them
