@@ -6,6 +6,7 @@ import json
 import sys
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -1595,7 +1596,7 @@ def _no_webhook(monkeypatch) -> None:
     monkeypatch.delenv("AIFACTORY_COMPLETION_SENTINEL", raising=False)
 
 
-def _emit(spec: Path) -> dict:
+def _emit(spec: Path) -> Any:
     return emit_terminal_completion(
         spec, task_id="proj:s", project_id="proj", spec_id="s", status="done"
     )
