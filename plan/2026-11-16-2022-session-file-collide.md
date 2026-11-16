@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2022
 spec: spec/2026-11-16-2022-session-file-collide.md
 coders:
