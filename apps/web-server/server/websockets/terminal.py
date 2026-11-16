@@ -113,12 +113,16 @@ async def terminal_websocket(websocket: WebSocket, terminal_id: str):
         try:
             await websocket.send_text(data)
         except Exception:  # noqa: BLE001 - client may have disconnected; drop output
-            logger.debug("Failed to send PTY output to terminal WebSocket", exc_info=True)
+            logger.debug(
+                "Failed to send PTY output to terminal WebSocket", exc_info=True
+            )
 
     # Start reader task
     reader_task = asyncio.create_task(create_pty_reader(session, send_output))
     watch_task = (
-        asyncio.create_task(_watch(websocket, session, user, _ws_extract_token(websocket)))
+        asyncio.create_task(
+            _watch(websocket, session, user, _ws_extract_token(websocket))
+        )
         if user is not None
         else None
     )
@@ -183,7 +187,9 @@ async def terminal_websocket(websocket: WebSocket, terminal_id: str):
                 }
             )
         except Exception:  # noqa: BLE001 - client gone; can't deliver the error frame
-            logger.debug("Failed to send error frame to terminal WebSocket", exc_info=True)
+            logger.debug(
+                "Failed to send error frame to terminal WebSocket", exc_info=True
+            )
 
     finally:
         # Cancel reader task
@@ -215,4 +221,6 @@ async def terminal_websocket(websocket: WebSocket, terminal_id: str):
                     }
                 )
             except Exception:  # noqa: BLE001 - client gone; can't deliver the exit frame
-                logger.debug("Failed to send exit frame to terminal WebSocket", exc_info=True)
+                logger.debug(
+                    "Failed to send exit frame to terminal WebSocket", exc_info=True
+                )

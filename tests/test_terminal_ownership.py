@@ -57,7 +57,9 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(access.engine, "async_session_factory", Session)
     monkeypatch.setattr(access, "authorize_project_for_user", authorize)
 
-    monkeypatch.setattr(PTYManager, "_resolve_claude_token", lambda self: (None, None, None))
+    monkeypatch.setattr(
+        PTYManager, "_resolve_claude_token", lambda self: (None, None, None)
+    )
     monkeypatch.setattr(PTYSession, "start", lambda self: None)
     monkeypatch.setattr(PTYSession, "is_alive", lambda self: True)
     monkeypatch.setattr(PTYSession, "close", lambda self: None)
@@ -108,7 +110,9 @@ def test_owner_uses_own_terminal_and_the_other_user_gets_404(env):
     assert _as(env, "bob", "get", "/api/terminals/t1/alive").json()["data"] is False
     assert _as(env, "alice", "get", "/api/terminals/t1/alive").json()["data"] is True
     assert _as(env, "bob", "delete", "/api/terminals/t1").status_code == 404
-    assert _as(env, "bob", "post", "/api/terminals/t1/buffer", json={}).status_code == 404
+    assert (
+        _as(env, "bob", "post", "/api/terminals/t1/buffer", json={}).status_code == 404
+    )
 
     assert _as(env, "alice", "get", "/api/terminals").json()["count"] == 1
     assert _as(env, "bob", "get", "/api/terminals").json()["count"] == 0
@@ -122,7 +126,9 @@ def test_create_requires_an_authorized_project_that_contains_the_directory(env):
     assert _create(env, "alice", cwd=str(env.root / "b")).status_code == 403
     assert _create(env, "alice", projectId="b").status_code == 403
     # project A's id cannot authorize project B's directory
-    assert _create(env, "alice", projectId="a", cwd=str(env.root / "b")).status_code == 403
+    assert (
+        _create(env, "alice", projectId="a", cwd=str(env.root / "b")).status_code == 403
+    )
     # projectless (home directory) terminals stay service-only
     assert _create(env, "alice", cwd=str(env.root)).status_code == 403
     assert _create(env, "root", cwd=str(env.root / "a")).status_code == 403
@@ -178,20 +184,20 @@ def test_sessions_filter_by_project_path_and_id(env):
     path = str(env.root / "a")
     assert [
         s["id"]
-        for s in _as(env, "svc", "get", "/api/terminals/sessions", params={"project": path}).json()[
-            "data"
-        ]
+        for s in _as(
+            env, "svc", "get", "/api/terminals/sessions", params={"project": path}
+        ).json()["data"]
     ] == ["t1"]
     assert [
         s["id"]
-        for s in _as(env, "svc", "get", "/api/terminals/sessions", params={"project": "b"}).json()[
-            "data"
-        ]
+        for s in _as(
+            env, "svc", "get", "/api/terminals/sessions", params={"project": "b"}
+        ).json()["data"]
     ] == ["t2"]
     assert (
-        _as(env, "svc", "get", "/api/terminals/sessions", params={"project": "/nowhere"}).json()[
-            "data"
-        ]
+        _as(
+            env, "svc", "get", "/api/terminals/sessions", params={"project": "/nowhere"}
+        ).json()["data"]
         == []
     )
 
@@ -199,7 +205,11 @@ def test_sessions_filter_by_project_path_and_id(env):
 def test_buffer_lands_in_the_sessions_project(env):
     _create(env, "alice", id="t1", projectId="a")
     res = _as(
-        env, "alice", "post", "/api/terminals/t1/buffer", json={"buffer": "x", "projectId": "b"}
+        env,
+        "alice",
+        "post",
+        "/api/terminals/t1/buffer",
+        json={"buffer": "x", "projectId": "b"},
     )
     assert res.status_code == 200, res.text
     assert str(env.root / "a") in res.json()["sessionFile"]
@@ -207,14 +217,32 @@ def test_buffer_lands_in_the_sessions_project(env):
 
 def test_worktree_clear_and_cleanup_routes(env):
     for method, path, kw in [
-        ("get", "/api/terminals/worktrees", {"params": {"project": str(env.root / "b")}}),
-        ("delete", "/api/terminals/worktrees/x", {"params": {"project": str(env.root / "b")}}),
+        (
+            "get",
+            "/api/terminals/worktrees",
+            {"params": {"project": str(env.root / "b")}},
+        ),
+        (
+            "delete",
+            "/api/terminals/worktrees/x",
+            {"params": {"project": str(env.root / "b")}},
+        ),
         (
             "post",
             "/api/terminals/worktrees",
-            {"json": {"terminalId": "t", "name": "x", "projectPath": str(env.root / "b")}},
+            {
+                "json": {
+                    "terminalId": "t",
+                    "name": "x",
+                    "projectPath": str(env.root / "b"),
+                }
+            },
         ),
-        ("delete", "/api/terminals/sessions", {"params": {"project": str(env.root / "b")}}),
+        (
+            "delete",
+            "/api/terminals/sessions",
+            {"params": {"project": str(env.root / "b")}},
+        ),
         ("delete", "/api/terminals/sessions", {}),
         ("post", "/api/terminals/cleanup", {}),
     ]:
@@ -241,8 +269,12 @@ async def test_may_use_rule(env):
     assert not await access.may_use(None, session)
     assert not await access.may_use({"role": "admin"}, session)
     assert not await access.may_use(ADMIN_NOT_SERVICE, session)
-    assert not await access.may_use({"id": "alice", "api_key_id": "k", "org_id": "B"}, session)
-    assert await access.may_use({"id": "alice", "api_key_id": "k", "org_id": "A"}, session)
+    assert not await access.may_use(
+        {"id": "alice", "api_key_id": "k", "org_id": "B"}, session
+    )
+    assert await access.may_use(
+        {"id": "alice", "api_key_id": "k", "org_id": "A"}, session
+    )
     env.state["error"] = True
     assert not await access.may_use(ALICE, session)
     env.state["error"] = False
@@ -261,7 +293,9 @@ def sockets(env, monkeypatch):
         await asyncio.Event().wait()
 
     monkeypatch.setattr(terminal_ws, "authenticate_websocket", authenticate)
-    monkeypatch.setattr(terminal_ws, "_ws_extract_token", lambda _ws: principal["token"])
+    monkeypatch.setattr(
+        terminal_ws, "_ws_extract_token", lambda _ws: principal["token"]
+    )
     monkeypatch.setattr(terminal_ws, "create_pty_reader", pending)
     monkeypatch.setattr(terminal_ws, "_RECHECK_SECONDS", 0.05)
     env.manager.create_session(session_id="t1", owner_id="alice", project_id="a")

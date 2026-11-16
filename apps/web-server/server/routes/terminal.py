@@ -178,7 +178,9 @@ async def _owned(terminal_id: str, http_request: Request) -> PTYSession:
     """The session if the caller may use it; another user's reads as missing."""
     session = get_pty_manager().get_session(terminal_id)
     if session is None or not await may_use(_user(http_request), session):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Terminal not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Terminal not found"
+        )
     return session
 
 
@@ -393,12 +395,16 @@ async def clear_terminal_sessions(http_request: Request, project: str | None = N
                     projects_list = projects_data
 
                 for proj in projects_list:
-                    proj_path = Path(proj.get("path", "") if isinstance(proj, dict) else proj)
+                    proj_path = Path(
+                        proj.get("path", "") if isinstance(proj, dict) else proj
+                    )
                     sessions_dir = proj_path / ".aifactory" / "terminal-sessions"
                     if sessions_dir.exists():
                         dirs_to_clear.append(sessions_dir)
             except (json.JSONDecodeError, KeyError):
-                logger.warning("failed to parse projects data for session cleanup", exc_info=True)
+                logger.warning(
+                    "failed to parse projects data for session cleanup", exc_info=True
+                )
 
     # Clear session files from each directory
     for sessions_dir in dirs_to_clear:
@@ -409,9 +415,13 @@ async def clear_terminal_sessions(http_request: Request, project: str | None = N
                     session_file.unlink()
                     cleared_count += 1
                 except Exception as e:
-                    errors.append(client_error(logger, "Failed to remove a session file", e))
+                    errors.append(
+                        client_error(logger, "Failed to remove a session file", e)
+                    )
         except Exception as e:
-            errors.append(client_error(logger, "Failed to process a session directory", e))
+            errors.append(
+                client_error(logger, "Failed to process a session directory", e)
+            )
 
     result = {
         "success": True,
@@ -463,7 +473,9 @@ async def list_terminal_worktrees(http_request: Request, project: str = Query(..
 
 
 @router.post("/worktrees", response_model=TerminalWorktreeResult)
-async def create_terminal_worktree(request: CreateTerminalWorktreeRequest, http_request: Request):
+async def create_terminal_worktree(
+    request: CreateTerminalWorktreeRequest, http_request: Request
+):
     """Create a new terminal worktree.
 
     Args:
@@ -482,7 +494,9 @@ async def create_terminal_worktree(request: CreateTerminalWorktreeRequest, http_
             create_git_branch=request.createGitBranch,
             base_branch=request.baseBranch,
         )
-        return TerminalWorktreeResult(success=True, config=TerminalWorktreeConfig(**config))
+        return TerminalWorktreeResult(
+            success=True, config=TerminalWorktreeConfig(**config)
+        )
     except ValueError as e:
         # Validation errors (invalid name, already exists, etc.)
         return TerminalWorktreeResult(
@@ -491,7 +505,11 @@ async def create_terminal_worktree(request: CreateTerminalWorktreeRequest, http_
         )
     except subprocess.CalledProcessError as e:
         # Git command errors
-        error_msg = f"Git error: {e.stderr}" if e.stderr else client_error(logger, "Git error", e)
+        error_msg = (
+            f"Git error: {e.stderr}"
+            if e.stderr
+            else client_error(logger, "Git error", e)
+        )
         return TerminalWorktreeResult(success=False, error=error_msg)
     except Exception as e:
         return TerminalWorktreeResult(
@@ -529,7 +547,11 @@ async def remove_terminal_worktree(
             "error": client_error(logger, "remove terminal worktree failed", e),
         }
     except subprocess.CalledProcessError as e:
-        error_msg = f"Git error: {e.stderr}" if e.stderr else client_error(logger, "Git error", e)
+        error_msg = (
+            f"Git error: {e.stderr}"
+            if e.stderr
+            else client_error(logger, "Git error", e)
+        )
         return {"success": False, "error": error_msg}
     except Exception as e:
         return {
@@ -569,7 +591,9 @@ async def close_terminal(terminal_id: str, http_request: Request):
 
 
 @router.post("/{terminal_id}/resize")
-async def resize_terminal(terminal_id: str, request: ResizeTerminalRequest, http_request: Request):
+async def resize_terminal(
+    terminal_id: str, request: ResizeTerminalRequest, http_request: Request
+):
     """Resize a terminal.
 
     Note: This can also be done via WebSocket with a resize message.

@@ -142,7 +142,9 @@ class PTYManager:
         """Get a session by ID."""
         return self.sessions.get(session_id)
 
-    def close_session(self, session_id: str, expected: PTYSession | None = None) -> bool:
+    def close_session(
+        self, session_id: str, expected: PTYSession | None = None
+    ) -> bool:
         """Close and remove a session (only `expected`, when given)."""
         with self._lock:
             session = self.sessions.get(session_id)
