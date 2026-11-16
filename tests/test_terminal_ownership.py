@@ -361,7 +361,6 @@ async def test_projectless_session_belongs_to_its_owner(env):
 
 
 def test_cli_login_terminal_is_owned_and_runs_command(monkeypatch, tmp_path):
-    import asyncio
     from types import SimpleNamespace
 
     from server.routes import cli_accounts
