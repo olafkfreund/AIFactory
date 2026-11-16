@@ -1313,7 +1313,7 @@ def test_merge_is_recorded_for_revert_and_retest_still_runs(
             "pr merge": CmdResult(0, "merged", ""),
         }
     )
-    retested = {}
+    retested: dict[str, bool] = {}
     res = asyncio.run(
         pe.run_pr_endgame(
             spec_dir=tmp_path,

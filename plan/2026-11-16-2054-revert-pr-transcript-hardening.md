@@ -121,3 +121,4 @@ adds a best-effort marker write; no data migration.
   merge hook to `pr_endgame._after_merge` and the fallback recording to
   `reviewer._fallback_transcript`, and by using `Annotated` for the route's
   dependency.
+- Mypy-strict ratchet: annotated the new code and tests; openapi-optin.yaml gets the same 18-line schema block as CI's generator produces.

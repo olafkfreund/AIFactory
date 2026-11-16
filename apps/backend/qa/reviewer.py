@@ -11,6 +11,7 @@ Memory Integration:
 """
 
 from pathlib import Path
+from typing import Any
 
 # Memory integration for cross-session learning
 from agents.memory_manager import get_graphiti_context, save_session_memory
@@ -447,7 +448,7 @@ This is attempt {previous_error.get("consecutive_errors", 1) + 1}. If you fail t
 # =============================================================================
 
 
-def _fallback_transcript(task_logger, block_type: str, block) -> None:
+def _fallback_transcript(task_logger: Any, block_type: str, block: Any) -> None:
     """Record a fallback provider's tool call or result in the run transcript (#2054)."""
     if not task_logger:
         return
