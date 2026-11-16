@@ -194,12 +194,19 @@ async def events_websocket(websocket: WebSocket):
     try:
         # Keep connection alive and listen for pings
         while True:
-            if key_token and time.monotonic() - last_key_check >= _KEY_RECHECK_SECONDS:
-                if await _ws_acw_principal(key_token) is None:
-                    await websocket.close(code=4001)
-                    break
+            if (
+                client.user_id
+                and time.monotonic() - last_key_check >= _KEY_RECHECK_SECONDS
+            ):
+                if key_token:
+                    principal = await _ws_acw_principal(key_token)
+                    if principal is None:
+                        await websocket.close(code=4001)
+                        break
+                    user_info = principal
+                    client.key_org_id = principal.get("org_id")
+                    client.user_id = principal.get("id")
                 last_key_check = time.monotonic()
-                # A key socket also follows its owner's current membership.
                 await _load_org_ids(client, user_info)
             try:
                 data = await asyncio.wait_for(websocket.receive_text(), timeout=30)
