@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import sys
 from typing import ClassVar
 
 import core.workspace_fetch as wf
 import pytest
+import task_logger
 from task_logger import transcript
 
 
@@ -32,6 +34,9 @@ class _FakeStore:
 def _store(monkeypatch: pytest.MonkeyPatch) -> None:
     _FakeStore.blobs = {}
     monkeypatch.setattr("core.artifact_store.ArtifactStore", _FakeStore)
+    # Other test modules leave a MagicMock task_logger in sys.modules; the
+    # code under test imports it at call time, so pin the real one.
+    monkeypatch.setitem(sys.modules, "task_logger", task_logger)
     transcript.reset()
 
 
