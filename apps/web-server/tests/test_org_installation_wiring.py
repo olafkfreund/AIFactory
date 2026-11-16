@@ -408,6 +408,18 @@ def test_project_route_dependency_pins_the_authorised_org(
     app.include_router(router)
     client.post("/w", params={"projectId": "a"})
     assert roles == ["viewer", "member"]
+    # A body-only route names the project in the JSON body (#2053): authorised
+    # and bound like a path/query one; a denied or absent project never gets
+    # another org's token.
+    monkeypatch.setattr(project_authz, "require_project_access", lambda _r: Checker())
+    router.post("/b")(by_query)
+    app.include_router(router)
+    assert client.post("/b", json={"projectId": "a"}).json() == {
+        "token": "ghs_acme_1700"
+    }
+    assert client.post("/b", json={"projectId": "o"}).status_code == 403
+    assert client.post("/b", json={"projectPath": str(acme)}).json() == {"token": ""}
+    assert client.post("/b", content=b"not json").json() == {"token": ""}
     assert github_token() == "ambient-1700"  # provider reset after the requests
 
 

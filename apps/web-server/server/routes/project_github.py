@@ -16,9 +16,10 @@ async def project_github_token(request: Request) -> AsyncIterator[None]:
 
     The caller's `projectId` (path or query) selects the org only after the
     project access check, which refuses (403/404) like any project route. A
-    request without a project gets no token. An async generator on purpose:
-    the set and the reset must run in the handler's context. The org is
-    pinned: path-based wiring inside the handler cannot swap it.
+    body-only route reads `projectId` from the JSON body. A request without a
+    project gets no token (a body `projectPath` never picks an org). An async
+    generator on purpose: the set and the reset must run in the handler's
+    context. The org is pinned: path-based wiring inside the handler cannot swap it.
     """
     if not github_app.multi_installation():
         yield
@@ -28,6 +29,13 @@ async def project_github_token(request: Request) -> AsyncIterator[None]:
 
     org: object = None
     pid = request.path_params.get("projectId") or request.query_params.get("projectId")
+    if not pid and request.method not in ("GET", "HEAD", "OPTIONS"):
+        # Body-only routes (`/persist-token`) name the project in the JSON body (#2053).
+        # The body is cached on the request, so the handler still reads it.
+        with contextlib.suppress(ValueError, UnicodeDecodeError):
+            body = await request.json()
+            if isinstance(body, dict) and isinstance(body.get("projectId"), str):
+                pid = body["projectId"]
     if pid:
         async with contextlib.asynccontextmanager(get_db)() as db:
             # A write (merge, release, import) needs the member role.
