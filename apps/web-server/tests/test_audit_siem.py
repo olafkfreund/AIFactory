@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import logging
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -160,3 +161,59 @@ def test_schedule_disabled_with_loop(monkeypatch):
             audit_siem.schedule("auth.failure")
 
     asyncio.run(run())
+
+
+# --- wiring (#2079): which failures reach the SIEM, and what they carry ---------
+
+
+class _Conn:
+    client = SimpleNamespace(host="203.0.113.7")
+    url = SimpleNamespace(path="/api/x/alice@example.com")
+
+
+@pytest.fixture
+def sent(monkeypatch):
+    from server.services import audit_service
+
+    calls = []
+
+    async def _no_db(**_kw):
+        return None
+
+    monkeypatch.setattr(audit_service, "log_audit_event_bg", _no_db)
+    monkeypatch.setattr(audit_siem, "schedule", lambda a, **f: calls.append((a, f)))
+    return calls
+
+
+async def test_auth_failure_event_has_no_path_or_token(sent):
+    from server.auth import _audit_auth_failure
+
+    await _audit_auth_failure(_Conn(), reason="invalid_token")
+    assert sent == [
+        (
+            "auth.failure",
+            {"resource_type": "auth", "reason": "invalid_token", "ip": "203.0.113.7"},
+        )
+    ]
+
+
+async def test_failed_login_and_bad_refresh_emit(sent):
+    from fastapi import HTTPException
+    from server.routes import auth_routes
+
+    class _Db:
+        async def execute(self, *_a):
+            return SimpleNamespace(scalar_one_or_none=lambda: None)
+
+    login = auth_routes.LoginRequest(email="a@example.com", password="pw-123456789")
+    with pytest.raises(HTTPException) as e:
+        await auth_routes.login(login, _Conn(), _Db())
+    assert e.value.status_code == 401
+    refresh = auth_routes.RefreshRequest(refresh_token="not-a-jwt")
+    with pytest.raises(HTTPException):
+        await auth_routes.refresh(refresh, _Conn(), _Db())
+    assert [f["reason"] for _a, f in sent] == [
+        "bad_credentials",
+        "invalid_refresh_token",
+    ]
+    assert all("a@example.com" not in str(f) for _a, f in sent)

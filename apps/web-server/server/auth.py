@@ -156,12 +156,21 @@ async def _audit_auth_failure(request: Request, reason: str) -> None:
     here if that write volume ever bites.
     """
     try:
+        from .services import audit_siem
         from .services.audit_service import ACTION_AUTH_FAILURE, log_audit_event_bg
 
         await log_audit_event_bg(
             action=ACTION_AUTH_FAILURE,
             resource_type="auth",
             details={"reason": reason, "path": request.url.path},
+            ip=request.client.host if request.client else None,
+        )
+        # SIEM stream the security-alerts rule reads (#2079); off unless configured.
+        # No path: it can carry ids; it stays in the DB row above.
+        audit_siem.schedule(
+            ACTION_AUTH_FAILURE,
+            resource_type="auth",
+            reason=reason,
             ip=request.client.host if request.client else None,
         )
     except Exception:  # pragma: no cover - defensive; bg already swallows
@@ -436,6 +445,7 @@ async def verify_websocket_token(websocket: WebSocket) -> bool:
         _warn_legacy_api_token_once()
         return True
 
+    await _audit_auth_failure(websocket, reason="invalid_ws_token")
     await websocket.close(code=4001, reason="Unauthorized")
     return False
 
@@ -487,6 +497,7 @@ async def authenticate_websocket(websocket: WebSocket) -> dict | None:
         if principal is not None:
             return principal
 
+    await _audit_auth_failure(websocket, reason="invalid_ws_token")
     await websocket.close(code=4001, reason="Unauthorized")
     raise WebSocketAuthError("Invalid token")
 
