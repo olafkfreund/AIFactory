@@ -125,22 +125,33 @@ def _is_system_binary(word: str) -> bool:
 
 
 def _path_command_refusal(cmds: list[tuple[str, str, bool]]) -> str | None:
-    """Refuse a command word with a path unless it is an absolute system binary.
+    """Refuse a path word that could stand in for a vetted command.
 
     ``./echo`` is a file the agent wrote, yet the AST step reduces it to the
-    allowed name ``echo``. ``./build.sh`` tracked at base is refused too: a
-    `cd sub && ./build.sh` would run another file (`bash build.sh` is checked).
+    allowed name ``echo`` (#2028). That only matters when the basename is a
+    vetted base or validated command, or the path leaves the worktree or is
+    absolute outside the system dirs. A relative project path (``./gradlew``,
+    ``node_modules/.bin/x``, ``scripts/test.sh``) still needs its basename in
+    the allowlist, so it passes on to that check (#2055).
     """
     for _, seg, _ in cmds:
         try:
             word = shlex.split(seg)[0]
         except (ValueError, IndexError):
             word = "?/"  # cannot read the word: fail closed
-        if "/" in word and not _is_system_binary(word):
+        if "/" not in word or _is_system_binary(word):
+            continue
+        base = posixpath.basename(word)
+        if (
+            word.startswith("/")
+            or ".." in word.split("/")
+            or base in BASE_COMMANDS
+            or base in VALIDATORS
+        ):
             return (
-                f"Command '{word}' runs a file by path, which the agent may have "
-                "written. Use the bare command name, or `bash <script>` for a "
-                "script tracked in the repository."
+                f"Command '{word}' runs a file by path that could replace a "
+                "vetted command. Use the bare command name, or `bash <script>` "
+                "for a script tracked in the repository."
             )
     return None
 

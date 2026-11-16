@@ -29,7 +29,10 @@ async def may_use(user: dict[str, Any] | None, session: Any) -> bool:
         return True
     if not isinstance(user, dict) or not user.get("id"):
         return False
-    return user["id"] == session.owner_id and await project_ok(user, session.project_id)
+    if user["id"] != session.owner_id:
+        return False
+    # A project-less session (the CLI login shell in the home dir) is bound to its owner alone.
+    return session.project_id is None or await project_ok(user, session.project_id)
 
 
 def _roots(project: object) -> list[PurePath]:

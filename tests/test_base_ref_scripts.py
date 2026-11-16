@@ -328,7 +328,9 @@ def test_tag_named_like_base_sha_is_ignored(repo: Path) -> None:
         "/usr/bin/../../tmp/echo hi",
         "./build.sh",
         "./evil.sh",
-        ".venv/bin/python -V",
+        "scripts/../../tmp/echo hi",
+        "./rm -rf x",
+        "./git status",
     ],
 )
 def test_path_bearing_commands_refused(repo: Path, cmd: str) -> None:
@@ -339,6 +341,22 @@ def test_path_bearing_commands_refused(repo: Path, cmd: str) -> None:
 @pytest.mark.parametrize("cmd", ["echo hi", "/usr/bin/env true", "/bin/echo hi"])
 def test_bare_and_system_commands_still_allowed(repo: Path, cmd: str) -> None:
     assert validate_command(cmd, repo)[0], cmd
+
+
+@pytest.mark.parametrize(
+    "cmd", ["node_modules/.bin/node -v", "./node -v", ".venv/bin/node -v"]
+)
+def test_relative_project_paths_allowed_when_name_is_allowed(
+    repo: Path, cmd: str
+) -> None:
+    """A relative path to a non-vetted allowed name runs (#2055)."""
+    assert validate_command("node -v", repo)[0]
+    assert validate_command(cmd, repo)[0], cmd
+
+
+def test_relative_path_still_needs_an_allowed_name(repo: Path) -> None:
+    assert not validate_command("./gradlew build", repo)[0]
+    assert not validate_command("scripts/test.sh", repo)[0]
 
 
 def _repo_with_makefile(tmp_path: Path, monkeypatch, makefile: str, **files) -> Path:

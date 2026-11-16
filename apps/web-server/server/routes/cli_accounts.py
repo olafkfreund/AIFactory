@@ -829,17 +829,18 @@ async def start_cli_login_terminal(cli: str, request: Request):
     from ..pty.manager import get_pty_manager
 
     manager = get_pty_manager()
-    terminal_id = manager.create_session(
+    user = getattr(request.state, "user", None)
+    session = manager.create_session(
         cwd=str(Path.home()),
-        shell=None,
-        env=None,
+        owner_id=user.get("id") if isinstance(user, dict) else None,
     )
+    terminal_id = session.id
 
     # Send the auth command to the terminal after a brief delay
     # to let the shell initialize
     def _send_auth_command():
         time.sleep(0.5)
-        manager.write(terminal_id, auth_command + "\n")
+        session.write(auth_command + "\n")
 
     threading.Thread(target=_send_auth_command, daemon=True).start()
 
