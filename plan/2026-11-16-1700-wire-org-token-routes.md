@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1700
 spec: spec/2026-11-16-1700-wire-org-token-routes.md
 coders:
