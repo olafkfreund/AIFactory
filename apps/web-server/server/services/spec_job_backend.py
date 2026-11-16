@@ -8,6 +8,8 @@ import logging
 import os
 import shlex
 import shutil
+import threading
+import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, cast
@@ -21,6 +23,11 @@ from .build_log_stream import KubeJobLogStreamer, LineSource
 _log = logging.getLogger(__name__)
 _ENV_SPEC_BACKEND = "AIFACTORY_SPEC_BACKEND"
 _LIVE_SPEC_JOBS: set[str] = set()
+# The Job's activeDeadlineSeconds (7200) plus grace: past it, stop polling.
+_LOCAL_DEADLINE_SECONDS = 7500.0
+_API_CALL_TIMEOUT = 30.0
+_LOG_LINE_MAX = 16000  # chars: under the 64 KiB reader limit at 4 bytes each
+_LOG_BUFFER_MAX = 1 << 20
 
 
 def spec_kubejob_enabled() -> bool:
@@ -93,13 +100,9 @@ def build_spec_job_manifest(  # noqa: PLR0913 - manifest coordinates
         workspace_uri=workspace_uri,
         automount_service_account_token=False,
     )
-    # #1932: this agent reads untrusted issue text, so it gets the Copilot
-    # (GitHub) login only when the spec model actually runs on Copilot.
-    cred_files = tuple(
-        (key, rel)
-        for key, rel in build_backend._CLI_CRED_FILES
-        if "copilot" not in key or (model or "").lower().startswith("copilot:")
-    )
+    # #1932/#2025: only the spec model's login (shared rule), plus Claude: the
+    # spec pipeline always summarizes phases with sonnet (orchestrator.py).
+    cred_files = build_backend.cred_files_for_models([model, "sonnet"])
     return build_backend._inject_build_path(
         build_backend._inject_seed_creds(build_job_manifest(spec), cred_files)
     )
@@ -158,13 +161,23 @@ def _prepare_spec_workspace(
             shutil.rmtree(clone)
 
 
-def _finish_spec_fetch(spec_dir: Path, fetch_id: str, auto_approve: bool) -> int:
+def _finish_spec_fetch(
+    spec_dir: Path,
+    fetch_id: str,
+    auto_approve: bool,
+    cancel: threading.Event | None = None,
+) -> int:
     from core.workspace_fetch import fetch_spec_files  # noqa: PLC0415
     from review.state import ReviewState  # noqa: PLC0415
 
     state = ReviewState.load(spec_dir)
-    fetched = fetch_spec_files(spec_dir, fetch_id)
+    failed: list[str] = []
+    fetched = fetch_spec_files(spec_dir, fetch_id, failed, cancel)
     plan_file = spec_dir / "implementation_plan.json"
+    # A plan that exists but could not be read is not "no plan pushed".
+    if (cancel is not None and cancel.is_set()) or "implementation_plan.json" in failed:
+        state.invalidate(spec_dir)
+        return 1
     # No spec.md, or a new spec.md beside a plan this Job did not return: a
     # partial fetch must not pair fresh and stale files under one approval.
     if "spec.md" not in fetched or (
@@ -195,6 +208,8 @@ class SpecJobProcess:
         finish: Callable[[], Awaitable[int]],
         poll_interval: float = 10.0,
         line_source: LineSource | None = None,
+        cancel: threading.Event | None = None,
+        deadline: float = _LOCAL_DEADLINE_SECONDS,
     ) -> None:
         self.namespace = namespace
         self.job_name = job_name
@@ -203,9 +218,44 @@ class SpecJobProcess:
         self.stderr.feed_eof()
         self.returncode: int | None = None
         self._stop = asyncio.Event()
+        self._cancel = cancel or threading.Event()
+        self._deadline = deadline
         self._runner = asyncio.create_task(
             self._run(batch_factory, finish, poll_interval, line_source)
         )
+
+    async def _feed(self, line: str) -> None:
+        # shortcut: reads StreamReader._buffer; no public unread size. Drop
+        # lines while a consumer lags rather than grow without bound.
+        if len(self.stdout._buffer) > _LOG_BUFFER_MAX:  # type: ignore[attr-defined]
+            return
+        self.stdout.feed_data((line[:_LOG_LINE_MAX] + "\n").encode())
+
+    async def _delete_job(self, batch: Any) -> None:
+        try:
+            await asyncio.wait_for(
+                batch.delete_namespaced_job(
+                    self.job_name, self.namespace, propagation_policy="Background"
+                ),
+                timeout=_API_CALL_TIMEOUT,
+            )
+        except Exception:  # noqa: BLE001 - stop still completes
+            _log.exception(
+                "[spec_job_backend] could not delete Job %s/%s",
+                sanitize_log(self.namespace),
+                sanitize_log(self.job_name),
+            )
+
+    async def _poll_outcome(self, batch: Any) -> str:
+        try:
+            return await asyncio.wait_for(
+                build_backend.KubeJobBuildBackend._job_outcome(
+                    batch, self.namespace, self.job_name
+                ),
+                timeout=_API_CALL_TIMEOUT,
+            )
+        except TimeoutError:  # a stalled call must not skip the deadline
+            return "running"
 
     async def _run(
         self,
@@ -216,14 +266,11 @@ class SpecJobProcess:
     ) -> None:
         outcome: str | None = None
 
-        async def feed(line: str) -> None:
-            self.stdout.feed_data((line + "\n").encode())
-
         async def active() -> bool:
             return outcome is None and not self._stop.is_set()
 
         stream = asyncio.create_task(
-            KubeJobLogStreamer(log_sink=feed, line_source=line_source).stream(
+            KubeJobLogStreamer(log_sink=self._feed, line_source=line_source).stream(
                 namespace=self.namespace,
                 job_name=self.job_name,
                 spec_id=self.job_name,
@@ -231,27 +278,23 @@ class SpecJobProcess:
             )
         )
         batch: Any = None
+        expires = time.monotonic() + self._deadline
         try:
             batch = await batch_factory()
             while True:
-                if self._stop.is_set():
-                    try:
-                        await batch.delete_namespaced_job(
-                            self.job_name,
-                            self.namespace,
-                            propagation_policy="Background",
-                        )
-                    except Exception:  # noqa: BLE001 - stop still completes
-                        _log.exception(
-                            "[spec_job_backend] could not delete Job %s/%s",
-                            sanitize_log(self.namespace),
-                            sanitize_log(self.job_name),
-                        )
-                    self.returncode = -15
+                timed_out = time.monotonic() > expires
+                if timed_out:
+                    _log.error(
+                        "[spec_job_backend] Job %s/%s polling deadline passed",
+                        sanitize_log(self.namespace),
+                        sanitize_log(self.job_name),
+                    )
+                if self._stop.is_set() or timed_out:
+                    await self._delete_job(batch)
+                    self.returncode = 1 if timed_out else -15
+                    outcome = "failed"  # ends the log follow
                     break
-                outcome = await build_backend.KubeJobBuildBackend._job_outcome(
-                    batch, self.namespace, self.job_name
-                )
+                outcome = await self._poll_outcome(batch)
                 if outcome in {"succeeded", "failed", "gone"}:
                     break
                 outcome = None
@@ -306,12 +349,13 @@ class SpecJobProcess:
     def send_signal(self, sig: int) -> None:
         del sig
         self._stop.set()
+        self._cancel.set()
 
     def terminate(self) -> None:
-        self._stop.set()
+        self.send_signal(15)
 
     def kill(self) -> None:
-        self._stop.set()
+        self.send_signal(9)
 
 
 class KubeJobSpecBackend:
@@ -383,14 +427,20 @@ class KubeJobSpecBackend:
             sanitize_log(job_name),
         )
 
+        cancel = threading.Event()
+
         async def finish() -> int:
             return await asyncio.to_thread(
-                _finish_spec_fetch, spec_dir, fetch_id, auto_approve
+                _finish_spec_fetch, spec_dir, fetch_id, auto_approve, cancel
             )
 
         async def existing_batch() -> object:
             return batch
 
         return SpecJobProcess(
-            namespace, job_name, batch_factory=existing_batch, finish=finish
+            namespace,
+            job_name,
+            batch_factory=existing_batch,
+            finish=finish,
+            cancel=cancel,
         )
