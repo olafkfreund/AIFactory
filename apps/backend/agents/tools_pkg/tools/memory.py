@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from memory.novelty import drop_repeats
+from memory.retention import CAPS, confirm, gotchas_context, session_type
 
 try:
     from claude_agent_sdk import tool
@@ -114,6 +115,8 @@ def create_memory_tools(
     # -------------------------------------------------------------------------
     # Tool: record_gotcha
     # -------------------------------------------------------------------------
+    gotchas_written: dict[Path, int] = {}  # per spec: the server resolves it per call
+
     @tool(
         "record_gotcha",
         "Record a gotcha or pitfall to avoid. Use this when you encounter something that future sessions should know.",
@@ -151,10 +154,22 @@ def create_memory_tools(
                         r"(?m)^## \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\r?\n", tail
                     )[1:]
                 }
-            if not drop_repeats([body], seen, "gotchas.md"):
+            rejected: list[str] = []
+            if not drop_repeats([body], seen, "gotchas.md", rejected):
+                confirm(memory_dir, rejected)
                 return {
                     "content": [
                         {"type": "text", "text": f"Gotcha already recorded: {gotcha}"}
+                    ]
+                }
+
+            if gotchas_written.get(memory_dir, 0) >= CAPS[session_type()]:
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Gotcha cap reached; new gotcha not recorded.",
+                        }
                     ]
                 }
 
@@ -166,6 +181,9 @@ def create_memory_tools(
                         "# Gotchas & Pitfalls\n\nThings to watch out for in this codebase.\n"
                     )
                 f.write(entry)
+
+            gotchas_written[memory_dir] = gotchas_written.get(memory_dir, 0) + 1
+            confirm(memory_dir, [body.strip()])
 
             return {"content": [{"type": "text", "text": f"Recorded gotcha: {gotcha}"}]}
 
@@ -225,11 +243,8 @@ def create_memory_tools(
                 content = gotchas_file.read_text()
                 if content.strip():
                     result_parts.append("\n## Gotchas")
-                    # Take the gotchas window to avoid too much context
                     result_parts.append(
-                        content[-GOTCHA_CONTEXT_CHARS:]
-                        if len(content) > GOTCHA_CONTEXT_CHARS
-                        else content
+                        gotchas_context(memory_dir, content, GOTCHA_CONTEXT_CHARS)
                     )
             except OSError:
                 logger.warning(
