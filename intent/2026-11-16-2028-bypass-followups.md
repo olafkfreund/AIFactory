@@ -23,7 +23,7 @@ inside the Job pod boundary (#1932):
 4. Makefile detection sees only the first plain name per rule line and no
    `include`: `build.all lint: test`, `dist/app.js:` and `include common.mk`
    targets are refused. Fails closed, regression since #2010.
-5. `yarn <name>` / `bun <name>` are checked only if the cwd `package.json`
+5. `yarn|pnpm|bun <name>` (and `bun run <name>`) are checked only if the cwd `package.json`
    defines `<name>`; a parent `package.json` the runner walks up to is missed.
 6. The base sha is recorded only in `create_worktree`, so targets added upstream
    after a dev merge into a running task are refused.
@@ -50,4 +50,4 @@ command names (`python`, `git`). No live-cluster change.
 
 ## Open questions
 
-None; the design choices (item 3 allow, item 6 keep) are made in the spec.
+None. Reviews (codex, agy) raised: Makefile `:=` assignments must not read as targets, and `git ls-tree` and `git show` resolve against different directories when cwd is a subdirectory; both go into the spec.
