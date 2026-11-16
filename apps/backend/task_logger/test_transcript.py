@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from typing import Any
 
 import pytest
-from task_logger import transcript
+from task_logger import LogPhase, TaskLogger, transcript
 
 
 @pytest.fixture(autouse=True)
@@ -88,3 +88,19 @@ def test_unwritable_target_never_raises(tmp_path):
     transcript.tool_start("Read", {}, "id")
     transcript.tool_end("id", None, False)
     assert transcript.written_files() == []
+
+
+def test_task_logger_methods_pair_batched_calls(tmp_path):
+    transcript.start(tmp_path)
+    log = TaskLogger(tmp_path, emit_markers=False)
+    log.transcript_tool_start("Read", {"file_path": "/a" * 200}, "t1", LogPhase.CODING)
+    log.transcript_tool_start("Bash", {"command": "ls"}, "t2", LogPhase.CODING)
+    log.transcript_tool_end("t1", "x" * 30000, False, LogPhase.CODING)
+    log.transcript_tool_end("t2", None, True, LogPhase.CODING)
+    ends = [e for e in entries() if e["kind"] == "tool_end"]
+    assert [(e["tool"], e["success"]) for e in ends] == [
+        ("Read", True),
+        ("Bash", False),
+    ]
+    assert len(ends[0]["payload"]) == 30000
+    assert ends[1]["payload"] == ""

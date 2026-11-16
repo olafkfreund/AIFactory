@@ -239,6 +239,14 @@ This is attempt {previous_error.get("consecutive_errors", 1) + 1}. If you fail t
                             tool_input=tool_input_display,
                         )
 
+                        if task_logger:
+                            task_logger.transcript_tool_start(
+                                tool_name,
+                                {} if inp is None else inp,
+                                getattr(block, "id", None),
+                                LogPhase.VALIDATION,
+                            )
+
                         # Log tool start (handles printing)
                         if task_logger:
                             task_logger.tool_start(
@@ -265,6 +273,14 @@ This is attempt {previous_error.get("consecutive_errors", 1) + 1}. If you fail t
                     if block_type == "ToolResultBlock":
                         is_error = getattr(block, "is_error", False)
                         result_content = getattr(block, "content", "")
+
+                        if task_logger:
+                            task_logger.transcript_tool_end(
+                                getattr(block, "tool_use_id", None),
+                                result_content,
+                                is_error,
+                                LogPhase.VALIDATION,
+                            )
 
                         if is_error:
                             debug_error(
