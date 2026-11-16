@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2024
 spec: spec/2026-11-16-2024-marker-forgery.md
 coders:
