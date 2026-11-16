@@ -30,7 +30,11 @@ async def project_github_token(request: Request) -> AsyncIterator[None]:
     pid = request.path_params.get("projectId") or request.query_params.get("projectId")
     if pid:
         async with contextlib.asynccontextmanager(get_db)() as db:
-            await require_project_access("viewer")._authorize(pid, request, db)
+            # A write (merge, release, import) needs the member role.
+            role = (
+                "viewer" if request.method in ("GET", "HEAD", "OPTIONS") else "member"
+            )
+            await require_project_access(role)._authorize(pid, request, db)
         org = (load_projects().get(pid) or {}).get("org_id")
     org_id = org if isinstance(org, str) else None
     await github_app.warm_org_token(org_id)

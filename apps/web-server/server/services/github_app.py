@@ -47,9 +47,11 @@ _key: str | None = None
 _org_installations: dict[str, str] = {}
 _tokens: dict[str, tuple[str, float]] = {}
 _tokens_lock = threading.Lock()
-#: Set inside a request whose org the access check settled: path-based
-#: wiring must not replace it, and token reads never mint on the event loop.
-_pinned: ContextVar[bool] = ContextVar("github_app_pinned", default=False)
+#: Set inside a request whose org the access check settled, as ``(org_id,)``.
+#: Path-based wiring may only keep it: a path of another org gets no token.
+_pinned: ContextVar[tuple[str | None] | None] = ContextVar(
+    "github_app_pinned", default=None
+)
 #: What a mint can raise: HTTP, a bad id or empty reply, bad or odd JSON, JWT signing.
 MINT_ERRORS = (
     httpx.HTTPError,
@@ -114,13 +116,18 @@ def org_github_token(org_id: str | None, *, pinned: bool = False) -> Iterator[No
     def provider() -> str:
         if not installation:
             return ""
-        if pinned:  # a request: the dependency warmed the cache; never mint here
-            cached = _tokens.get(installation)
-            return cached[0] if cached and cached[1] - time.time() >= 60 else ""
-        # Callers warm the cache in a thread first, so this is a cache read on
-        # the event loop. shortcut: a block that outlives the warmed token
-        # (>14 min) mints inline once, up to the 30 s timeout; move the reads
-        # to a thread if that shows up.
+        # Callers warm the cache in a thread first. On the event loop thread a
+        # cold cache means no token rather than a mint that blocks the loop for
+        # up to the 30 s timeout; a worker thread may mint.
+        cached = _tokens.get(installation)
+        if cached and cached[1] - time.time() >= 60:
+            return cached[0]
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            return ""
         try:
             return installation_token(installation, min_ttl=60)
         except MINT_ERRORS:  # fail closed: no token, gh/git report the auth error
@@ -129,7 +136,7 @@ def org_github_token(org_id: str | None, *, pinned: bool = False) -> Iterator[No
             )
             return ""
 
-    pin = _pinned.set(True) if pinned else None
+    pin = _pinned.set((org_id,)) if pinned else None
     try:
         with use_github_token(provider):
             yield
@@ -143,18 +150,20 @@ def project_github_token(path: str | Path | None) -> Iterator[None]:
     """``org_github_token`` for the org that owns ``path``.
 
     No path keeps an outer block's provider; a path with no owner never does.
-    A request's pinned org (see ``org_github_token``) is never replaced.
+    A request's pinned org (see ``org_github_token``) is never replaced: a path
+    of another org, or of none, gets no token inside it.
     """
-    if (
-        not multi_installation()
-        or _pinned.get()
-        or (not path and has_github_token_provider())
-    ):
+    if not multi_installation() or (not path and has_github_token_provider()):
         yield
         return
     from server.project_registry import org_id_for_path  # noqa: PLC0415 - cycle
 
-    with org_github_token(org_id_for_path(path)):
+    org = org_id_for_path(path)
+    pinned = _pinned.get()
+    if pinned is not None and org == pinned[0]:
+        yield
+        return
+    with org_github_token(org if pinned is None else None, pinned=pinned is not None):
         yield
 
 

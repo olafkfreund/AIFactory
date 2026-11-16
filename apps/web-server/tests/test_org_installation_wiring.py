@@ -361,8 +361,12 @@ def test_project_route_dependency_pins_the_authorised_org(
     seen: list[str] = []
 
     def run(*_args: Any, env: dict[str, str], **_kw: Any) -> Any:
-        hosts = Path(env["GH_CONFIG_DIR"]) / "hosts.yml"
-        seen.append(json.loads(hosts.read_text())["github.com"]["oauth_token"])
+        hosts = (
+            Path(env["GH_CONFIG_DIR"]) / "hosts.yml" if "GH_CONFIG_DIR" in env else None
+        )
+        seen.append(
+            json.loads(hosts.read_text())["github.com"]["oauth_token"] if hosts else ""
+        )
         return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
     monkeypatch.setattr(gh.subprocess, "run", run)
@@ -372,8 +376,8 @@ def test_project_route_dependency_pins_the_authorised_org(
 
     @router.get("/p/{projectId}")
     async def by_path(projectId: str) -> dict[str, str]:  # noqa: N803
-        # Even a cwd of the other org's project cannot swap the pinned org.
-        gh.run_gh_command(["x"], cwd=str(other))
+        gh.run_gh_command(["x"], cwd=str(acme / "wt"))  # same org: kept
+        gh.run_gh_command(["x"], cwd=str(other))  # another org's path: no token
         return {"token": github_token()}
 
     @router.get("/q")
@@ -384,28 +388,49 @@ def test_project_route_dependency_pins_the_authorised_org(
     app.include_router(router)
     client = TestClient(app)
     assert client.get("/p/a").json() == {"token": "ghs_acme_1700"}
-    assert seen == ["ghs_acme_1700"]
+    assert seen == ["ghs_acme_1700", ""]
     assert client.get("/q", params={"projectId": "a"}).json() == {
         "token": "ghs_acme_1700"
     }
     assert client.get("/q").json() == {"token": ""}  # no project: no token
     assert client.get("/p/o").status_code == 403  # denied: handler never runs
-    assert seen == ["ghs_acme_1700"]
+    assert seen == ["ghs_acme_1700", ""]
+    # Writes need the member role: a viewer may read but not POST.
+    roles: list[str] = []
+    monkeypatch.setattr(
+        project_authz,
+        "require_project_access",
+        lambda role: roles.append(role) or Checker(),
+    )
+    client.get("/q", params={"projectId": "a"})
+    router.post("/w")(by_query)
+    app.include_router(router)
+    client.post("/w", params={"projectId": "a"})
+    assert roles == ["viewer", "member"]
     assert github_token() == "ambient-1700"  # provider reset after the requests
 
 
-def test_pinned_provider_never_mints(
+def test_event_loop_thread_never_mints(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _two_orgs(tmp_path, monkeypatch)
     monkeypatch.setattr(github_app, "_tokens", {})  # cold cache
+    minted: list[str] = []
 
-    def no_mint(*_args: Any, **_kw: Any) -> None:
-        raise AssertionError("must not mint on a request")
+    def mint(installation: str, **_kw: Any) -> str:
+        minted.append(installation)
+        return "ghs_minted"
 
-    monkeypatch.setattr(github_app, "installation_token", no_mint)
-    with github_app.org_github_token("acme", pinned=True):
-        assert github_token() == ""
+    monkeypatch.setattr(github_app, "installation_token", mint)
+
+    async def on_loop() -> str:
+        with github_app.org_github_token("acme"):
+            return github_token()
+
+    assert asyncio.run(on_loop()) == ""
+    assert minted == []
+    with github_app.org_github_token("acme"):  # a worker thread may mint
+        assert github_token() == "ghs_minted"
 
 
 def test_sweep_uses_each_projects_org(

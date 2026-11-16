@@ -213,8 +213,9 @@ A non-empty map turns on multi-installation mode, which fails closed:
   Copilot dispatch, task-branch git calls, the shared `gh` helper, the
   control plane's worktree fetch for build Jobs, and the project routes of
   the GitHub and git APIs (`/api/projects/{projectId}/github/...`, the PR and
-  git routes). The org comes from the project the call works on; a caller
-  who has no access to that project gets no token.
+  git routes). The org comes from the project the call works on. Those routes
+  refuse a caller who has no access to the project (403), and a handler cannot
+  switch to another org's token.
 - Still no token in this mode, by design: routes with no project (web login,
   `auth/status`, user, orgs, models), Kubernetes spec Jobs (they never carry
   a GitHub token), and a path no org owns. The server never stores an

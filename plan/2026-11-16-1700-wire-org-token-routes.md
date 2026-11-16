@@ -143,6 +143,13 @@ as the code:
   (`org_github_token(org, pinned=True)`): path-based wiring in the handler
   cannot swap a pinned org, and a pinned provider reads the cache only
   (never mints on the event loop; a failed warm-up means no token).
+- Round 2 (Codex) found: the dependency authorised at viewer for writes (now
+  `member` for non-GET); a pinned org kept a conflicting explicit path
+  (now a path of another org or of none gets no token inside a pinned
+  request); async handlers could mint inline (the provider now returns no
+  token instead of minting when it runs on the event-loop thread, so cold
+  reads fail closed and worker threads still mint; `routes/pr.py` warms the
+  cache first).
 - Tests added for the dependency through a real `gh` call, the pinned
   no-mint rule, a two-org merger sweep and Copilot dispatch.
 - Not covered: `/api/git` routes taking a raw `path` (local git only; no

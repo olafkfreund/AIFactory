@@ -30,7 +30,8 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from server.error_ref import client_error
-from server.project_registry import get_projects_file
+from server.project_registry import get_projects_file, org_id_for_path
+from server.services import github_app
 from server.services.approval import find_pr
 from server.services.audit_service import ACTION_TASK_CREATE_PR, audit_task_route
 from server.services.build_backend import task_repo_dir
@@ -158,6 +159,8 @@ async def create_pr_from_task(
     spec_dir = project_path / ".aifactory" / "specs" / spec_id
     if not spec_dir.exists():
         return {"success": False, "error": f"Task {task_id} not found"}
+    if github_app.multi_installation():  # fill the token cache off the loop (#1700)
+        await github_app.warm_org_token(org_id_for_path(project_path))
 
     # The repo to push from: the linked task worktree when the in-pod backend
     # built there, else the kubejob build clone (#1467 moved it to
