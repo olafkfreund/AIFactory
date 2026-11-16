@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2047
 spec: spec/2026-11-16-review-gap-fixes-aifactory.md
 reviewers:
