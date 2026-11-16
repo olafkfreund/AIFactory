@@ -349,3 +349,51 @@ def test_ws_revoked_key_closes_4001(sockets, monkeypatch, outcome):
         with pytest.raises(WebSocketDisconnect) as exc:
             ws.receive_json()
     assert exc.value.code == 4001
+
+
+@pytest.mark.asyncio
+async def test_projectless_session_belongs_to_its_owner(env):
+    session = PTYSession(owner_id="alice", project_id=None)
+    assert await access.may_use(ALICE, session)
+    assert not await access.may_use(BOB, session)
+    assert not await access.may_use(None, session)
+    assert await access.may_use(SERVICE, session)
+
+
+def test_cli_login_terminal_is_owned_and_runs_command(monkeypatch, tmp_path):
+    import asyncio
+    from types import SimpleNamespace
+
+    from server.routes import cli_accounts
+
+    seen = {}
+    written = []
+    session = SimpleNamespace(id="t1", write=written.append)
+
+    def create_session(**kw):
+        seen.update(kw)
+        return session
+
+    class Thread:
+        def __init__(self, *, target, args=(), daemon=False):
+            self.target = target
+
+        def start(self):
+            if self.target.__name__ == "_send_auth_command":
+                self.target()
+
+    monkeypatch.setattr(cli_accounts.time, "sleep", lambda _: None)
+    monkeypatch.setattr(cli_accounts.threading, "Thread", Thread)
+    monkeypatch.setitem(
+        cli_accounts.CLI_CONFIG["codex"], "credentials_file", tmp_path / "missing"
+    )
+    monkeypatch.setattr(cli_accounts, "_detect_cli_version", lambda _c: "1.0")
+    monkeypatch.setattr(
+        "server.pty.manager.get_pty_manager",
+        lambda: SimpleNamespace(create_session=create_session),
+    )
+    request = SimpleNamespace(state=SimpleNamespace(user={"id": "alice"}))
+    result = asyncio.run(cli_accounts.start_cli_login_terminal("codex", request))
+    assert seen["owner_id"] == "alice"
+    assert result["data"]["terminalId"] == "t1"
+    assert written == ["codex auth login\n"]

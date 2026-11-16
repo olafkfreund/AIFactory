@@ -479,7 +479,9 @@ def test_cli_start_routes_pass_principal(
     monkeypatch.setattr(
         pty_manager,
         "get_pty_manager",
-        lambda: SimpleNamespace(create_session=lambda **_: "terminal"),
+        lambda: SimpleNamespace(
+            create_session=lambda **_: SimpleNamespace(id="terminal", write=lambda _d: None)
+        ),
     )
     request = SimpleNamespace(state=SimpleNamespace(user=principal))
     route = (
