@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2067
 intent: intent/2026-11-16-review-fixes-aifactory.md
 ---
