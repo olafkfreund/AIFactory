@@ -1,3 +1,62 @@
+## 3.11.0 - 2026-11-16
+
+Everything merged to `dev` since 3.10.16. Security hardening across the
+WebSocket, terminal, sandbox, Kubernetes Job and script-runner surfaces,
+per-org GitHub App installation tokens, spec creation as a Kubernetes Job
+(behind `AIFACTORY_SPEC_BACKEND`), full per-run transcripts, memory
+write gating, an anti-loop guardrail and a build-Job model gateway route.
+
+### Security
+
+- Scope `/ws/events`, `/ws/logs`, `/ws/progress` and per-task sockets to the
+  caller's orgs; accept scoped `acw_` keys on WebSocket (#2027, #2061, #2050,
+  #2017).
+- Bind terminal PTY sessions to owner and project (#2067).
+- Keep the control plane's GitHub token out of agent children (#2030).
+- Run script runners only from files tracked at the base ref, and close the
+  #1948 review bypasses (#2010, #2055).
+- Scope each Kubernetes Job's S3 access to its task prefixes (#2052).
+- Seed only the CLI logins a Job's providers use; phase markers cannot set
+  terminal state (#2047, #2046).
+- Adopt the shared `agent_sandbox` package, re-vendor it, skip catalog MCP
+  servers the sandboxed agent cannot credential (#2057, #2068, #2058).
+- dnspython 2.9.2 (CVE-2026-128089); chainguard/python digest bump clears
+  libexpat1 CVEs (#2031, #2018).
+
+### New Features
+
+- Per-org GitHub App installation tokens, wired to the remaining paths
+  (#2039, #2053).
+- Spec creation as a Kubernetes Job, behind `AIFACTORY_SPEC_BACKEND` (#2026).
+- Store a full redacted per-run transcript and link it from the completion
+  event (#2056).
+- Agent identity and originator on completion events and the PR body (#2062).
+- Revert PR after a post-merge regression, with QA fallback capture (#2060).
+- Default-on anti-loop guardrail and per-run token ceiling (#2051).
+- Memory: exact-repeat write gate, per-session-type caps, `last_confirmed_at`
+  and demotion (RFC-0021, #2019, #2063, #2049).
+- Per-key expiry and rotation runbook for trusted-plan keys (#2069).
+- Route the build Job OpenAI-compatible plane through the model gateway via
+  `AIFACTORY_MODEL_GATEWAY_URL` (#2070).
+- Confirm the Copilot review request; add copilot-ruleset reviewer (#2029).
+
+### Improvements
+
+- Alembic hook Job for `migrations.autoApply=false`, hardened (#2004, #2040).
+- Forward `AIFACTORY_AGENT_COMMIT_TRAILERS` to build Jobs (#2015).
+- Bump baked agent-CLI pins: claude-code 2.1.319, gemini-cli 0.67.0,
+  codex 0.167.0 (#2011).
+- Settle spec-job review follow-ups before the kubejob flag (#2045).
+- Docs site refresh and compliance wording fixes (#2041, #2016); dependency
+  bumps (#2020, #2032, #1992).
+
+### Bug Fixes
+
+- Load the completion emitter as a package (#2065).
+- Isolate gh tests from the host login (#2044).
+
+---
+
 ## 3.10.16 - 2026-10-30
 
 Every run gate (solo, require-review, plan approval, model and thinking)
