@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1931
 spec: spec/2026-11-16-1931-env-only-secrets-transcript-key.md
 coders:
