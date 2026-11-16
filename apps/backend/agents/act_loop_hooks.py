@@ -3,7 +3,10 @@
 Wires three Hermes-inspired modules into the Claude Agent SDK's hook points
 (PreToolUse / PostToolUse / PreCompact). Each feature is **flag-gated and
 default-off**, so the agent launch path is byte-for-byte unchanged unless the
-operator opts in:
+operator opts in. The #474 guardrail is the exception: it is **on by default**
+since #2033 (``AIFACTORY_ACT_GUARDRAIL=off`` opts out), together with a per-run
+token ceiling (``AIFACTORY_RUN_TOKEN_CEILING``, 0 = off) that halts through the
+same ``guardrail_halt.json`` signal:
 
   - ``AIFACTORY_ACT_GUARDRAIL``     → #474 anti-loop guardrail (guardrails.py)
   - ``AIFACTORY_MUTATION_LEDGER``   → #476 checkpoint + mutation ledger (mutation_ledger.py)
@@ -44,12 +47,55 @@ _HALT_FILE = "guardrail_halt.json"
 
 
 def guardrail_enabled() -> bool:
-    return (os.environ.get("AIFACTORY_ACT_GUARDRAIL") or "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
+    """On unless explicitly switched off (#2033)."""
+    return (os.environ.get("AIFACTORY_ACT_GUARDRAIL") or "").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
     }
+
+
+DEFAULT_TOKEN_CEILING = 10_000_000
+_run_tokens: dict[str, int] = {}
+
+
+def token_ceiling() -> int:
+    """Per-run token ceiling (input + output + cache writes); 0 disables."""
+    raw = (os.environ.get("AIFACTORY_RUN_TOKEN_CEILING") or "").strip()
+    try:
+        return max(0, int(raw)) if raw else DEFAULT_TOKEN_CEILING
+    except ValueError:
+        return DEFAULT_TOKEN_CEILING
+
+
+def start_run(spec_dir: Path | str) -> None:
+    """Reset the token counter and any stale halt from a previous run."""
+    _run_tokens.pop(str(spec_dir), None)
+    try:
+        (Path(spec_dir) / _HALT_FILE).unlink(missing_ok=True)
+    except OSError:
+        logger.warning("failed to clear halt file", exc_info=True)
+
+
+def charge_tokens(spec_dir: Path | str, usage: dict[str, Any] | None) -> bool:
+    """Add one session's usage to the run total; on passing the ceiling write a
+    typed halt (read by the loops and the completion event). True if halted."""
+    ceiling = token_ceiling()
+    if not ceiling or not usage:
+        return False
+    key = str(spec_dir)
+    total = _run_tokens.get(key, 0) + sum(
+        int(usage.get(k) or 0)
+        for k in ("input_tokens", "output_tokens", "cache_creation_tokens")
+    )
+    _run_tokens[key] = total
+    if total <= ceiling:
+        return False
+    _write_halt(
+        Path(spec_dir), f"token_ceiling: run used {total} tokens, ceiling {ceiling}"
+    )
+    return True
 
 
 @dataclass
