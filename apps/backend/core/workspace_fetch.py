@@ -21,7 +21,6 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any
 
 from core import process_hardening
 from core.child_env import child_env, lfs_upload
@@ -763,21 +762,6 @@ def _checked_spec_json(name: str, data: bytes) -> bytes:
     return data
 
 
-def _read_capped(store: Any, key: str, limit: int) -> bytes:
-    """Read at most ``limit`` bytes of one object, so an oversize object is
-    never loaded whole."""
-    # shortcut: uses ArtifactStore._client() because artifact_store.py is a
-    # byte-exact hub copy with no size cap; switch to get_bytes(max_bytes=)
-    # once the hub canonical has one.
-    obj = store._client().get_object(Bucket=store.config.bucket, Key=key)
-    data = bytes(obj["Body"].read(limit))
-    size = obj.get("ContentLength")
-    # A capped read skips botocore's own length check.
-    if size is not None and len(data) != min(size, limit):
-        raise OSError(f"short read of {key}")
-    return data
-
-
 def _spec_file_key(fetch_id: str, name: str) -> str:
     from core.artifact_store import ArtifactRef  # noqa: PLC0415
 
@@ -840,14 +824,14 @@ def fetch_spec_files(spec_dir: str | os.PathLike[str], fetch_id: str) -> list[st
         tmp = ""
         try:
             try:
-                data = _read_capped(
-                    store, _spec_file_key(fetch_id, name), _SPEC_FILE_MAX_BYTES + 1
+                data = store.get_bytes(
+                    _spec_file_key(fetch_id, name), max_bytes=_SPEC_FILE_MAX_BYTES
                 )
+            except ValueError:
+                _log.warning("[workspace_fetch] fetched spec file too large: %s", name)
+                continue
             except Exception as exc:  # noqa: BLE001 - not pushed: optional file
                 _log.debug("[workspace_fetch] no spec file %s: %s", name, exc)
-                continue
-            if len(data) > _SPEC_FILE_MAX_BYTES:
-                _log.warning("[workspace_fetch] fetched spec file too large: %s", name)
                 continue
             if name.endswith(".json"):
                 data = _checked_spec_json(name, data)
