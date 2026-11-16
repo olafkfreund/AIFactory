@@ -1606,9 +1606,12 @@ def test_event_and_task_record_link_the_transcript(tmp_path, monkeypatch):
     _no_webhook(monkeypatch)
     uris = ["s3://b/a.jsonl", "s3://b/z.jsonl"]
     seen: list[str] = []
-    monkeypatch.setattr(
-        "core.workspace_fetch.transcript_uris", lambda k: seen.append(k) or uris
-    )
+
+    def _uris(key: str) -> list[str]:
+        seen.append(key)
+        return uris
+
+    monkeypatch.setattr("core.workspace_fetch.transcript_uris", _uris)
     spec = _spec_with_issue(tmp_path, 412)
     ev = _emit(spec)
     assert seen == ["proj:s"]  # project-qualified, not the bare spec id
