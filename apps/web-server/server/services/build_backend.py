@@ -105,6 +105,7 @@ import logging
 import os
 import shutil
 import subprocess
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -579,6 +580,37 @@ _CLI_CRED_FILES: tuple[tuple[str, str], ...] = (
     ("copilot-apps.json", ".config/github-copilot/apps.json"),
     ("gemini-oauth_creds.json", ".gemini/oauth_creds.json"),
 )
+# Which secret key each provider (phase_config.infer_provider_from_model) logs in
+# with. A provider not listed (ollama, openai-compatible, ...) needs no file.
+_PROVIDER_CRED_KEY = {
+    "claude": "claude-credentials.json",
+    "codex": "codex-auth.json",
+    "copilot": "copilot-apps.json",
+    "antigravity": "gemini-oauth_creds.json",
+}
+
+
+def cred_files_for_models(
+    models: Iterable[str | None],
+) -> tuple[tuple[str, str], ...]:
+    """#2025: only the logins the given phase models run on (build + spec Jobs
+    share this rule), so an agent in the Job cannot read the ones it does not use."""
+    from phase_config import infer_provider_from_model  # noqa: PLC0415
+
+    keys = {_PROVIDER_CRED_KEY.get(infer_provider_from_model(m)) for m in models if m}
+    return tuple((k, rel) for k, rel in _CLI_CRED_FILES if k in keys)
+
+
+def _run_phase_models(spec_dir: Path) -> list[str]:
+    """The model every phase of a build resolves to (task metadata, then defaults)."""
+    from phase_config import _resolve_phase_model  # noqa: PLC0415
+
+    return [
+        _resolve_phase_model(spec_dir, p)
+        for p in ("spec", "planning", "coding", "qa", "qa_fixer")
+    ]
+
+
 # emptyDir home dirs shared between the seed initContainer and the build container.
 _SEED_HOME_VOLUMES: tuple[tuple[str, str], ...] = (
     ("cc-claude", f"{_BUILD_HOME}/.claude"),
@@ -877,7 +909,10 @@ def build_run_py_job_manifest(
         # in-process has no reason to hold an API token.
         automount_service_account_token=_gates_dispatch_jobs(),
     )
-    return _inject_build_path(_inject_seed_creds(build_job_manifest(spec)))
+    cred_files = cred_files_for_models(
+        _run_phase_models(_spec_source_dir(project_path, spec_id))
+    )
+    return _inject_build_path(_inject_seed_creds(build_job_manifest(spec), cred_files))
 
 
 def _gates_dispatch_jobs() -> bool:
