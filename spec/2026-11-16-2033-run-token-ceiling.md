@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2033
 intent: intent/2026-11-16-2033-run-token-ceiling.md
 ---
