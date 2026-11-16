@@ -108,10 +108,11 @@ async def all_logs_websocket(websocket: WebSocket):
         nonlocal allowed
         if not await access.recheck():
             return False
+        fresh = await access.readable(agent_service.get_running_tasks())
         for unregister in unregister_callbacks:
             unregister()
         unregister_callbacks.clear()
-        allowed = await access.readable(agent_service.get_running_tasks())
+        allowed = fresh
         for task_id in allowed:
             unregister = agent_service.register_log_callback(task_id, log_callback)
             unregister_callbacks.append(unregister)
@@ -142,7 +143,8 @@ async def all_logs_websocket(websocket: WebSocket):
                 last_refresh = loop.time()
             if log is None:
                 await websocket.send_json({"type": "heartbeat"})
-            elif log.task_id in allowed:
+            # a finished task leaves running_tasks before its last event is processed: re-authorize
+            elif log.task_id in allowed or await access.readable([log.task_id]):
                 await websocket.send_json(
                     {
                         "type": "log",

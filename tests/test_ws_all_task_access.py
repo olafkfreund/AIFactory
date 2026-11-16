@@ -113,6 +113,20 @@ def emit(client, service, endpoint, task_id):
     client.portal.call(service.callbacks[endpoint][task_id], item(endpoint, task_id))
 
 
+def patch_clock(monkeypatch, endpoint):
+    clock = SimpleNamespace(now=0.0)
+    monkeypatch.setattr(
+        logs if endpoint == "logs" else progress,
+        "asyncio",
+        SimpleNamespace(
+            Queue=asyncio.Queue,
+            wait_for=asyncio.wait_for,
+            get_running_loop=lambda: SimpleNamespace(time=lambda: clock.now),
+        ),
+    )
+    return clock
+
+
 @pytest.mark.parametrize("endpoint", ["logs", "progress"])
 def test_member_only_subscribes_to_own_project(sockets, endpoint):
     client, service, state, _validator = sockets
@@ -172,18 +186,7 @@ def test_refresh_drops_queued_message_and_revoked_key(
     sockets, endpoint, failure, monkeypatch
 ):
     client, service, state, validator = sockets
-    clock = SimpleNamespace(now=0.0)
-    real_asyncio = asyncio
-    fake_loop = SimpleNamespace(time=lambda: clock.now)
-    monkeypatch.setattr(
-        logs if endpoint == "logs" else progress,
-        "asyncio",
-        SimpleNamespace(
-            Queue=real_asyncio.Queue,
-            wait_for=real_asyncio.wait_for,
-            get_running_loop=lambda: fake_loop,
-        ),
-    )
+    clock = patch_clock(monkeypatch, endpoint)
     monkeypatch.setattr(task_access, "_KEY_RECHECK_SECONDS", 0)
     with connect(client, endpoint, "acw_key") as ws:
         assert ws.receive_json()["type"] == "connected"
@@ -210,3 +213,59 @@ def test_refresh_drops_queued_message_and_revoked_key(
         with pytest.raises(WebSocketDisconnect) as exc:
             ws.receive_json()
         assert exc.value.code == 4001
+
+
+@pytest.mark.parametrize("endpoint", ["logs", "progress"])
+@pytest.mark.parametrize("authorized", [True, False])
+def test_final_event_after_task_leaves_running_list(
+    sockets, endpoint, authorized, monkeypatch
+):
+    client, service, state, _validator = sockets
+    clock = patch_clock(monkeypatch, endpoint)
+    with connect(client, endpoint) as ws:
+        assert ws.receive_json()["type"] == "connected"
+        service.running.remove("a:one")
+        if not authorized:
+            state["members"].clear()
+        clock.now = 5.0
+        emit(client, service, endpoint, "a:one")
+        message = ws.receive_json()
+        assert message["type"] == (
+            ("log" if endpoint == "logs" else "progress") if authorized else "heartbeat"
+        )
+        if authorized:
+            assert message["task_id"] == "a:one"
+        elif endpoint == "progress":
+            assert message["running_tasks"] == []
+        assert "a:one" not in service.callbacks[endpoint]
+
+
+@pytest.mark.parametrize("endpoint", ["logs", "progress"])
+def test_callbacks_stay_registered_during_slow_refresh(sockets, endpoint, monkeypatch):
+    client, service, _state, _validator = sockets
+    clock = patch_clock(monkeypatch, endpoint)
+    entered = asyncio.Event()
+    resume = asyncio.Event()
+    slow = {"enabled": False}
+    original = task_access._project_authorized
+
+    async def authorize(user, project_id):
+        if slow["enabled"] and project_id == "a":
+            entered.set()
+            await resume.wait()
+        return await original(user, project_id)
+
+    monkeypatch.setattr(task_access, "_project_authorized", authorize)
+    with connect(client, endpoint) as ws:
+        assert ws.receive_json()["type"] == "connected"
+        slow["enabled"] = True
+        clock.now = 5.0
+        emit(client, service, endpoint, "a:one")
+        client.portal.call(entered.wait)
+        try:
+            assert "a:one" in service.callbacks[endpoint]
+            emit(client, service, endpoint, "a:one")
+        finally:
+            client.portal.call(resume.set)
+        assert ws.receive_json()["task_id"] == "a:one"
+        assert ws.receive_json()["task_id"] == "a:one"
