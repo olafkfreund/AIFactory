@@ -62,6 +62,15 @@ phase)`, called at the `ToolUseBlock` and `ToolResultBlock` sites directly;
 `transcript.py` maps `tool_use_id` to the tool name. Everything else in the
 spec is unchanged, and display logging is untouched.
 
+### Deviations found while implementing
+
+- Step 3: `cli/main.py` imports `workspace_fetch` as `_wf` at the new call
+  site, so the later local `from core import workspace_fetch` cannot raise
+  `UnboundLocalError`.
+- Step 4: the transcript lookup runs in its own try block after the existing
+  fetch try (not inside it), so an earlier fetch failure cannot skip it.
+- Follow-up issue filed: olafkfreund/AIFactory#2054.
+
 ## Steps
 
 1. `apps/backend/task_logger/transcript.py` (new), `apps/backend/task_logger/test_transcript.py` (new):
