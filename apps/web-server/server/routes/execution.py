@@ -32,6 +32,7 @@ from server.services.audit_service import (
     audit_task_route,
 )
 from server.services.build_backend import BuildBackendUnavailableError
+from server.services.github_app import project_github_token
 from server.services.handback_receipt_store import record as record_handback_receipt
 from server.services.originator import principal_attribution
 from server.services.trusted_contract import handoff_contract, resolve_contract
@@ -1646,14 +1647,15 @@ async def dispatch_task_to_copilot(
             detail="Copilot dispatch is not enabled on this instance",
         )
 
-    *_, spec_dir = _resolve_task(task_id)
+    _, _, project_path, spec_dir = _resolve_task(task_id)
     task_metadata_path = spec_dir / "task_metadata.json"
 
     service = CopilotDispatchService()
     try:
-        dispatch_meta = await asyncio.to_thread(
-            service.dispatch, request.repo_full_name, request.issue_number
-        )
+        with project_github_token(project_path):
+            dispatch_meta = await asyncio.to_thread(
+                service.dispatch, request.repo_full_name, request.issue_number
+            )
     except RuntimeError as exc:
         logger.warning(
             "[copilot-dispatch] dispatch failed task=%s: %s",
@@ -1691,15 +1693,16 @@ async def dispatch_task_to_copilot(
                 emit_task_status(task_id, "copilot_pr_opened")
             )
 
-    spawn(
-        watch_for_copilot_pr(
-            task_id=task_id,
-            repo_full_name=request.repo_full_name,
-            issue_number=request.issue_number,
-            task_metadata_path=task_metadata_path,
-            on_pr_opened=_on_pr_opened,
+    with project_github_token(project_path):
+        spawn(
+            watch_for_copilot_pr(
+                task_id=task_id,
+                repo_full_name=request.repo_full_name,
+                issue_number=request.issue_number,
+                task_metadata_path=task_metadata_path,
+                on_pr_opened=_on_pr_opened,
+            )
         )
-    )
 
     await audit_task_action(
         _access,

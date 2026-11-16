@@ -3423,6 +3423,24 @@ components:
       required:
       - projectId
       title: PersistTokenRequest
+    PostMergeRegression:
+      properties:
+        merge_sha:
+          type: string
+          maxLength: 40
+          minLength: 7
+          pattern: ^[0-9a-fA-F]+$
+          title: Merge Sha
+        run_url:
+          type: string
+          maxLength: 500
+          pattern: ^https://\S+$
+          title: Run Url
+      type: object
+      required:
+      - merge_sha
+      - run_url
+      title: PostMergeRegression
     PostPRCommentRequest:
       properties:
         body:

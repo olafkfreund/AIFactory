@@ -20,6 +20,7 @@ import logging
 import os
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -352,6 +353,67 @@ def maybe_push_task_logs(spec_dir: str | os.PathLike[str], spec_id: str) -> bool
     except Exception as exc:  # noqa: BLE001 - must never break a green build
         _log.warning("[workspace_fetch] task_logs push failed: %s", exc)
         return False
+
+
+def _transcript_ref(spec_id: str, name: str = "x") -> Any:
+    from core.artifact_store import ArtifactRef  # noqa: PLC0415
+
+    return ArtifactRef(
+        service="aifactory",
+        job_id=spec_id,
+        role="evidence",
+        path=f"transcripts/{name}",
+    )
+
+
+def maybe_push_transcripts(spec_id: str) -> int:
+    """Upload this run's redacted transcript (#2034) and drop the local copy.
+
+    ``role="evidence"`` puts it under the MinIO 90-day ILM rule. Gated on
+    ``S3_ENDPOINT`` so local runs without object storage keep the local file.
+    Best-effort: never raises. Returns the number of files uploaded.
+    """
+    if not os.environ.get("S3_ENDPOINT", "").strip():
+        return 0
+    count = 0
+    try:
+        from core.artifact_store import ArtifactStore  # noqa: PLC0415
+        from task_logger import transcript  # noqa: PLC0415
+
+        store = ArtifactStore()
+        for path in transcript.written_files():
+            store.put_bytes(
+                str(_transcript_ref(spec_id, path.name).key()),
+                path.read_bytes(),
+                "application/x-ndjson",
+                role="evidence",
+            )
+            path.unlink(missing_ok=True)
+            count += 1
+    except Exception as exc:  # noqa: BLE001 - must never break a build
+        _log.warning("[workspace_fetch] transcript push failed: %s", exc)
+    return count
+
+
+def transcript_uris(spec_id: str) -> list[str]:
+    """Sorted ``s3://`` URIs of a spec's stored transcripts, ``[]`` on any error."""
+    if not os.environ.get("S3_ENDPOINT", "").strip():
+        return []
+    try:
+        from core.artifact_store import ArtifactStore  # noqa: PLC0415
+
+        store = ArtifactStore()
+        ref = _transcript_ref(spec_id)
+        prefix = str(ref.key()).removesuffix("x")
+        keys = sorted(
+            k
+            for k in store.list_artifacts(ref, role_scoped=True)
+            if k.startswith(prefix)
+        )
+        return [f"s3://{store.config.bucket}/{k}" for k in keys]
+    except Exception as exc:  # noqa: BLE001 - must never break the event
+        _log.warning("[workspace_fetch] transcript listing failed: %s", exc)
+        return []
 
 
 def maybe_fetch_task_logs(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
@@ -745,10 +807,19 @@ _SPEC_FILE_MAX_BYTES = 8 << 20
 _PLAN_VERDICT_KEYS = frozenset(
     {"qa_signoff", "qa_iteration_history", "qa_stats", "contractHold"}
 )
+# Progress the control plane owns: a Job's snapshot must not set or overwrite it.
+_PLAN_STATUS_KEYS = ("status", "planStatus", "reviewReason")
+_MISSING_CODES = frozenset({"NoSuchKey", "404", "NotFound"})
 
 
-def _checked_spec_json(name: str, data: bytes) -> bytes:
-    """Validate a fetched JSON file; a plan comes back without verdict keys."""
+def _checked_spec_json(
+    name: str, data: bytes, local: dict[str, Any] | None = None
+) -> bytes:
+    """Validate a fetched JSON file; a plan comes back without verdict keys.
+
+    A plan also loses the Job's progress: the top-level status keys come from
+    ``local`` (the control plane's plan, if any) and subtasks restart pending.
+    """
     doc = json.loads(data)
     if not isinstance(doc, dict | list):
         raise ValueError("not a JSON object or array")
@@ -756,26 +827,32 @@ def _checked_spec_json(name: str, data: bytes) -> bytes:
         return data
     if not isinstance(doc, dict):
         raise ValueError("plan is not a JSON object")
-    if doc.keys() & _PLAN_VERDICT_KEYS:
-        for key in _PLAN_VERDICT_KEYS:
-            doc.pop(key, None)
-        return json.dumps(doc, indent=2).encode()
-    return data
+    before = json.dumps(doc, sort_keys=True)
+    for key in _PLAN_VERDICT_KEYS | set(_PLAN_STATUS_KEYS):
+        doc.pop(key, None)
+    for key in _PLAN_STATUS_KEYS:
+        if local and key in local:
+            doc[key] = local[key]
+    for phase in doc.get("phases") or []:
+        for sub in (phase.get("subtasks") or []) if isinstance(phase, dict) else []:
+            if isinstance(sub, dict) and "status" in sub:
+                sub["status"] = "pending"
+    if json.dumps(doc, sort_keys=True) == before:
+        return data
+    return json.dumps(doc, indent=2).encode()
 
 
-def _read_capped(store: Any, key: str, limit: int) -> bytes:
-    """Read at most ``limit`` bytes of one object, so an oversize object is
-    never loaded whole."""
-    # shortcut: uses ArtifactStore._client() because artifact_store.py is a
-    # byte-exact hub copy with no size cap; switch to get_bytes(max_bytes=)
-    # once the hub canonical has one.
-    obj = store._client().get_object(Bucket=store.config.bucket, Key=key)
-    data = bytes(obj["Body"].read(limit))
-    size = obj.get("ContentLength")
-    # A capped read skips botocore's own length check.
-    if size is not None and len(data) != min(size, limit):
-        raise OSError(f"short read of {key}")
-    return data
+def _local_json(path: Path) -> dict[str, Any] | None:
+    with contextlib.suppress(OSError, ValueError):
+        doc = json.loads(path.read_bytes())
+        return doc if isinstance(doc, dict) else None
+    return None
+
+
+def _is_missing(exc: Exception) -> bool:
+    """True when the object was never pushed, not when the read failed."""
+    code = (getattr(exc, "response", None) or {}).get("Error", {}).get("Code")
+    return str(code) in _MISSING_CODES
 
 
 def _spec_file_key(fetch_id: str, name: str) -> str:
@@ -825,9 +902,20 @@ def maybe_push_spec_files(spec_dir: str | os.PathLike[str]) -> int:
     return count
 
 
-def fetch_spec_files(spec_dir: str | os.PathLike[str], fetch_id: str) -> list[str]:
-    """Restore validated spec documents without replacing local files on failure."""
+def fetch_spec_files(
+    spec_dir: str | os.PathLike[str],
+    fetch_id: str,
+    failed: list[str] | None = None,
+    cancel: threading.Event | None = None,
+) -> list[str]:
+    """Restore validated spec documents without replacing local files on failure.
+
+    ``failed`` collects files that exist but could not be read or were rejected
+    (a missing file is not a failure). Once ``cancel`` is set no more files are
+    read or written.
+    """
     written: list[str] = []
+    failed = [] if failed is None else failed
     try:
         from core.artifact_store import ArtifactStore  # noqa: PLC0415
 
@@ -837,29 +925,40 @@ def fetch_spec_files(spec_dir: str | os.PathLike[str], fetch_id: str) -> list[st
         return written
     dest_dir = Path(spec_dir)
     for name in SPEC_FETCH_FILES:
+        if cancel is not None and cancel.is_set():
+            break
         tmp = ""
         try:
             try:
-                data = _read_capped(
-                    store, _spec_file_key(fetch_id, name), _SPEC_FILE_MAX_BYTES + 1
+                data = store.get_bytes(
+                    _spec_file_key(fetch_id, name), max_bytes=_SPEC_FILE_MAX_BYTES
                 )
-            except Exception as exc:  # noqa: BLE001 - not pushed: optional file
-                _log.debug("[workspace_fetch] no spec file %s: %s", name, exc)
-                continue
-            if len(data) > _SPEC_FILE_MAX_BYTES:
+            except ValueError:
+                failed.append(name)
                 _log.warning("[workspace_fetch] fetched spec file too large: %s", name)
                 continue
+            except Exception as exc:  # noqa: BLE001 - missing is optional
+                if not _is_missing(exc):
+                    failed.append(name)
+                _log.debug("[workspace_fetch] no spec file %s: %s", name, exc)
+                continue
+            if cancel is not None and cancel.is_set():
+                break
             if name.endswith(".json"):
-                data = _checked_spec_json(name, data)
+                data = _checked_spec_json(name, data, _local_json(dest_dir / name))
             else:
                 data.decode("utf-8")
             dest_dir.mkdir(parents=True, exist_ok=True)
             fd, tmp = tempfile.mkstemp(dir=dest_dir)
             with os.fdopen(fd, "wb") as fh:
                 fh.write(data)
+            # mkstemp makes 0600; the subprocess path writes 0644 and a build
+            # Job may run as another uid.
+            Path(tmp).chmod(0o644)
             Path(tmp).replace(dest_dir / name)
             written.append(name)
-        except Exception as exc:  # noqa: BLE001 - missing, invalid, or unwritable
+        except Exception as exc:  # noqa: BLE001 - invalid, or unwritable
+            failed.append(name)
             _log.warning("[workspace_fetch] rejected spec file %s: %s", name, exc)
         finally:
             if tmp:

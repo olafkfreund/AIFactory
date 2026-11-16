@@ -16,6 +16,9 @@ build's base commit (#1948, ``security/script_validators.py``).
 
 import logging
 import os
+import posixpath
+import re
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -87,7 +90,10 @@ def _extract_commands_fail_closed(
     """
     if is_available():
         try:
-            return extract_command_segments_ast(command), ""
+            cmds = extract_command_segments_ast(command)
+            if reason := _path_command_refusal(cmds):
+                return None, reason
+            return cmds, ""
         except UnparseableCommand as exc:
             return None, (
                 "Command blocked: could not be safely parsed for security "
@@ -98,6 +104,56 @@ def _extract_commands_fail_closed(
     # rather than trust the regex parser (it cannot see through wrappers,
     # substitutions or quoting).
     return None, "Command blocked: bash commands cannot be validated without bashlex."
+
+
+# Directories the agent cannot write (#2028); everything else with a `/` can hold
+# an agent-written file that the basename check would take for an allowed command.
+_SYSTEM_BIN_DIRS = frozenset(
+    {"/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin"}
+    | {"/run/current-system/sw/bin"}
+)
+
+
+_NIX_BIN_DIR = re.compile(r"/nix/store/[0-9a-z]{32}-[A-Za-z0-9._+-]+/bin")
+
+
+def _is_system_binary(word: str) -> bool:
+    if not word.startswith("/") or ".." in word.split("/"):
+        return False
+    where = posixpath.dirname(posixpath.normpath(word))
+    return where in _SYSTEM_BIN_DIRS or bool(_NIX_BIN_DIR.fullmatch(where))
+
+
+def _path_command_refusal(cmds: list[tuple[str, str, bool]]) -> str | None:
+    """Refuse a path word that could stand in for a vetted command.
+
+    ``./echo`` is a file the agent wrote, yet the AST step reduces it to the
+    allowed name ``echo`` (#2028). That only matters when the basename is a
+    vetted base or validated command, or the path leaves the worktree or is
+    absolute outside the system dirs. A relative project path (``./gradlew``,
+    ``node_modules/.bin/x``, ``scripts/test.sh``) still needs its basename in
+    the allowlist, so it passes on to that check (#2055).
+    """
+    for _, seg, _ in cmds:
+        try:
+            word = shlex.split(seg)[0]
+        except (ValueError, IndexError):
+            word = "?/"  # cannot read the word: fail closed
+        if "/" not in word or _is_system_binary(word):
+            continue
+        base = posixpath.basename(word)
+        if (
+            word.startswith("/")
+            or ".." in word.split("/")
+            or base in BASE_COMMANDS
+            or base in VALIDATORS
+        ):
+            return (
+                f"Command '{word}' runs a file by path that could replace a "
+                "vetted command. Use the bare command name, or `bash <script>` "
+                "for a script tracked in the repository."
+            )
+    return None
 
 
 def _validator_refusal(cmds: list[tuple[str, str, bool]], root: str) -> str | None:

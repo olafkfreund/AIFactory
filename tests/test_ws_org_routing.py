@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -399,3 +399,146 @@ def test_org_bound_key_without_owner_is_not_a_service_client():
     client = event_bus.ConnectedClient(websocket=None, user_id=None, key_org_id="A")
     assert not event_bus._may_receive(client, "B")
     assert not event_bus._may_receive(client, None)
+
+
+def test_jwt_socket_follows_membership_on_recheck(sockets, monkeypatch):
+    client, memberships, sent = sockets
+    with connect(client, "jwt-a") as ws:
+        emit(client, events.broadcast_event, "event", {"projectId": "p-a"})
+        assert len(sent["jwt-a"]) == 1
+        memberships["rows"] = []
+        monkeypatch.setattr(events, "_KEY_RECHECK_SECONDS", 0)
+        ws.send_text("wake the receive loop")
+        _wait_for_no_orgs(client, next(iter(event_bus._clients.values())))
+        emit(client, events.broadcast_event, "event", {"projectId": "p-a"})
+        assert len(sent["jwt-a"]) == 1
+
+
+def test_key_recheck_rebinds_fresh_principal(sockets, monkeypatch):
+    client, _memberships, _sent = sockets
+    with connect(client, "acw_key") as ws:
+        socket = next(iter(event_bus._clients.values()))
+        monkeypatch.setattr(
+            events,
+            "_ws_acw_principal",
+            AsyncMock(
+                return_value={"id": "new-owner", "org_id": "B", "api_key_id": "key"}
+            ),
+        )
+        monkeypatch.setattr(events, "_KEY_RECHECK_SECONDS", 0)
+        ws.send_text("wake the receive loop")
+        for _ in range(200):
+            if socket.user_id == "new-owner":
+                break
+            client.portal.call(asyncio.sleep, 0.01)
+        assert socket.user_id == "new-owner"
+        assert socket.key_org_id == "B"
+
+
+def test_jwt_without_subject_closes(sockets, monkeypatch):
+    client, _memberships, _sent = sockets
+    monkeypatch.setattr(auth, "_try_decode_jwt", lambda _token: {"email": "x"})
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with connect(client, "jwt-empty") as ws:
+            ws.receive_json()
+    assert exc.value.code == 4001
+
+
+def test_payload_org_falls_back_from_empty_outer_org():
+    assert event_bus._payload_org({"org_id": "", "data": {"org_id": "A"}}) == "A"
+
+
+@pytest.mark.parametrize(
+    "principal", [{"id": "owner"}, {"id": "default", "is_service": True}]
+)
+@pytest.mark.parametrize("terminal", [False, True])
+def test_cli_start_routes_pass_principal(
+    sockets, monkeypatch, tmp_path, principal, terminal
+):
+    from server.pty import manager as pty_manager
+    from server.routes import cli_accounts
+
+    client, _memberships, _sent = sockets
+    calls = []
+    emitter = AsyncMock()
+    monkeypatch.setattr(events, "emit_org_less", emitter)
+    monkeypatch.setattr(cli_accounts.time, "sleep", lambda _: None)
+
+    class Thread:
+        def __init__(self, *, target, args=(), daemon=False):
+            calls.append((target, args))
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(cli_accounts.threading, "Thread", Thread)
+    monkeypatch.setitem(
+        cli_accounts.CLI_CONFIG["codex"], "credentials_file", tmp_path / "missing"
+    )
+    monkeypatch.setattr(cli_accounts, "_detect_cli_version", lambda _cli: "1.0")
+    monkeypatch.setattr(
+        pty_manager,
+        "get_pty_manager",
+        lambda: SimpleNamespace(
+            create_session=lambda **_: SimpleNamespace(
+                id="terminal", write=lambda _d: None
+            )
+        ),
+    )
+    request = SimpleNamespace(state=SimpleNamespace(user=principal))
+    route = (
+        cli_accounts.start_cli_login_terminal
+        if terminal
+        else cli_accounts.start_cli_login
+    )
+    result = client.portal.call(route, "codex", request)
+    assert result["success"]
+    poll = next(
+        args for target, args in calls if target is cli_accounts._poll_codex_token
+    )
+    assert poll[2] is principal
+    cli_accounts._poll_codex_token(*poll)
+    assert emitter.await_args.args[0] is principal
+
+
+@pytest.mark.parametrize(
+    "principal", [{"id": "owner"}, {"id": "default", "is_service": True}]
+)
+def test_github_start_route_passes_principal(sockets, monkeypatch, tmp_path, principal):
+    from server.routes import github
+
+    client, _memberships, _sent = sockets
+
+    class Stream:
+        lines = iter(
+            [
+                b"First, copy your one-time code: ABCD-EFGH\n",
+                b"Open https://github.com/login/device\n",
+            ]
+        )
+
+        async def readline(self):
+            return next(self.lines, b"")
+
+    async def wait():
+        return 1
+
+    proc = SimpleNamespace(stderr=Stream(), stdout=None, returncode=1, wait=wait)
+    emitter = AsyncMock()
+    monkeypatch.setattr(events, "emit_org_less", emitter)
+
+    monkeypatch.setattr(github.shutil, "which", lambda _name: "/usr/bin/gh")
+    monkeypatch.setattr(github.github_app, "multi_installation", lambda: False)
+    monkeypatch.setattr(github, "github_token", lambda: None)
+    monkeypatch.setattr(github.github_app, "_managed_gh_dir", lambda: tmp_path)
+    monkeypatch.setattr(github, "child_env", lambda **_: {})
+    monkeypatch.setattr(
+        github.asyncio, "create_subprocess_exec", AsyncMock(return_value=proc)
+    )
+    monkeypatch.setattr(github, "spawn", lambda coro: asyncio.create_task(coro))
+    monkeypatch.setattr(github, "_gh_auth_proc", None)
+    request = SimpleNamespace(state=SimpleNamespace(user=principal))
+    result = client.portal.call(github.start_github_auth, request)
+    assert result["success"]
+    client.portal.call(asyncio.sleep, 0)
+    assert emitter.await_args.args[0] is principal

@@ -8,10 +8,12 @@ import asyncio
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from ..auth import verify_websocket_token
-from ..services.agent_service import TaskLog, get_agent_service
+from server.services.agent_service import TaskLog, get_agent_service
+
+from .task_access import AllTaskSocketAccess, TaskSocketAccess
 
 router = APIRouter()
+_REFRESH_SECONDS = 5.0
 
 
 @router.websocket("/ws/tasks/{task_id}/logs")
@@ -28,8 +30,8 @@ async def task_logs_websocket(websocket: WebSocket, task_id: str):
         "source": "agent|stdout|stderr"
     }
     """
-    # Verify authentication
-    if not await verify_websocket_token(websocket):
+    access = TaskSocketAccess(websocket, task_id)
+    if not await access.connect():
         return
 
     await websocket.accept()
@@ -54,6 +56,8 @@ async def task_logs_websocket(websocket: WebSocket, task_id: str):
         )
 
         while True:
+            if not await access.recheck():
+                return
             try:
                 # Wait for log with timeout to allow checking for disconnection
                 log = await asyncio.wait_for(message_queue.get(), timeout=30.0)
@@ -86,7 +90,8 @@ async def all_logs_websocket(websocket: WebSocket):
     Connect to receive real-time logs from all running tasks.
     Useful for a unified log view.
     """
-    if not await verify_websocket_token(websocket):
+    access = AllTaskSocketAccess(websocket)
+    if not await access.connect():
         return
 
     await websocket.accept()
@@ -94,23 +99,28 @@ async def all_logs_websocket(websocket: WebSocket):
     agent_service = get_agent_service()
     message_queue: asyncio.Queue[TaskLog] = asyncio.Queue()
     unregister_callbacks: list[callable] = []
+    allowed: set[str] = set()
 
     async def log_callback(log: TaskLog):
         await message_queue.put(log)
 
-    async def update_subscriptions():
-        """Update subscriptions to match running tasks."""
-        # Unregister all current callbacks
+    async def refresh_subscriptions() -> bool:
+        nonlocal allowed
+        if not await access.recheck():
+            return False
+        fresh = await access.readable(agent_service.get_running_tasks())
         for unregister in unregister_callbacks:
             unregister()
         unregister_callbacks.clear()
-
-        # Register for all running tasks
-        for task_id in agent_service.get_running_tasks():
+        allowed = fresh
+        for task_id in allowed:
             unregister = agent_service.register_log_callback(task_id, log_callback)
             unregister_callbacks.append(unregister)
+        return True
 
     try:
+        if not await refresh_subscriptions():
+            return
         await websocket.send_json(
             {
                 "type": "connected",
@@ -118,12 +128,23 @@ async def all_logs_websocket(websocket: WebSocket):
             }
         )
 
-        last_task_check = asyncio.get_event_loop().time()
+        loop = asyncio.get_running_loop()
+        last_refresh = loop.time()
 
         while True:
+            timeout = max(0.0, _REFRESH_SECONDS - (loop.time() - last_refresh))
             try:
-                log = await asyncio.wait_for(message_queue.get(), timeout=5.0)
-
+                log = await asyncio.wait_for(message_queue.get(), timeout=timeout)
+            except TimeoutError:
+                log = None
+            if loop.time() - last_refresh >= _REFRESH_SECONDS:
+                if not await refresh_subscriptions():
+                    return
+                last_refresh = loop.time()
+            if log is None:
+                await websocket.send_json({"type": "heartbeat"})
+            # a finished task leaves running_tasks before its last event is processed: re-authorize
+            elif log.task_id in allowed or await access.readable([log.task_id]):
                 await websocket.send_json(
                     {
                         "type": "log",
@@ -134,15 +155,6 @@ async def all_logs_websocket(websocket: WebSocket):
                         "source": log.source,
                     }
                 )
-
-            except TimeoutError:
-                # Periodically update subscriptions
-                current_time = asyncio.get_event_loop().time()
-                if current_time - last_task_check > 5.0:
-                    await update_subscriptions()
-                    last_task_check = current_time
-
-                await websocket.send_json({"type": "heartbeat"})
 
     except WebSocketDisconnect:
         pass

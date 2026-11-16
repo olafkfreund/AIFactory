@@ -59,6 +59,37 @@ At verify time:
    removing a kid also holds the auto-merge of every trusted task signed with it
    that has not merged yet.
 
+## Key expiry (#3689)
+
+Set `AIFACTORY_TRUSTED_PLAN_EXPIRY` to a comma list of `authority/kid=DATE`
+(the legacy key is `authority=DATE`), for example
+`pfactory/2027q1=2027-04-30`. `DATE` is ISO 8601, UTC when no zone is given. A
+key at or past its date is rejected at ingest and again at merge, so unmerged
+plans signed with it are held, the same as a retired kid. An unparseable date
+fails closed (the key counts as expired). Unset means keys never expire. The
+variable has no `AIFACTORY_TRUSTED_PLAN_KEY_` prefix on purpose: that prefix
+registers a verification key.
+
+**Interval:** rotate every 90 days; set `DATE` 104 days after a key is
+introduced, which leaves a 14-day overlap with its successor.
+
+## Moving the live PFactory signer to a kid key (owner steps)
+
+Generate the key straight into the secret store, never to a terminal or a
+file you keep. With agenix in factory-gitops, run `agenix -e` on the secret
+file and enter the output of `openssl rand -hex 32` there.
+
+1. Add `AIFACTORY_TRUSTED_PLAN_KEY_PFACTORY__2026Q4` (same new secret) to BOTH
+   the `aifactory` and `pfactory` Deployments, keeping the legacy
+   `AIFACTORY_TRUSTED_PLAN_KEY_PFACTORY`. Add to `aifactory`:
+   `AIFACTORY_TRUSTED_PLAN_EXPIRY=pfactory/2026q4=2027-03-15`.
+2. Roll `aifactory` first, then `pfactory`. PFactory with exactly one keyed
+   variable signs with that kid; if you keep both keyed keys during a later
+   rotation, set `PFACTORY_TRUSTED_PLAN_KID`.
+3. Drain: once no in-flight plan was signed with the legacy key, remove
+   `AIFACTORY_TRUSTED_PLAN_KEY_PFACTORY` from both Deployments. Legacy envelopes
+   then fail verification (no key), which is the retirement.
+
 ## Emergency revocation (leaked key)
 
 Add the compromised kid to `AIFACTORY_TRUSTED_PLAN_RETIRED_KIDS` and roll out.

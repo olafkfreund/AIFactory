@@ -483,6 +483,16 @@ def main() -> None:
         handle_review_status_command(spec_dir)
         return
 
+    # #2034: record this run's full, redacted transcript and upload it on exit
+    # (atexit also covers --qa, --followup, failures and sys.exit).
+    import atexit  # noqa: PLC0415
+
+    from core import workspace_fetch as _wf  # noqa: PLC0415
+    from task_logger import transcript  # noqa: PLC0415
+
+    transcript.start(spec_dir)
+    atexit.register(_wf.maybe_push_transcripts, spec_dir.name)
+
     if args.qa:
         handle_qa_command(
             project_dir=project_dir,

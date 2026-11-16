@@ -39,6 +39,10 @@ old one retired without downtime:
   bare ``kid``) revokes a leaked/expired key: verification rejects any envelope
   signed with a retired kid even while the key material is still present.
 
+* ``AIFACTORY_TRUSTED_PLAN_EXPIRY`` (``authority/kid=2027-02-01,...``) sets a
+  ``not_after`` per key; a key at or past it is rejected, a bad date fails
+  closed. Unset means keys never expire.
+
 Rotation is therefore: add the new keyed env var, flip signers to the new kid,
 then retire the old kid — the verifier accepts both keys throughout the overlap.
 
@@ -55,6 +59,7 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -76,6 +81,12 @@ _KID_SEP = "__"
 # Comma-separated retired key ids (``authority/kid`` or bare ``kid``). A retired
 # kid is rejected at verify time even if its key material is still configured.
 _RETIRED_KIDS_ENV = "AIFACTORY_TRUSTED_PLAN_RETIRED_KIDS"
+
+# Key expiry (#3689): comma-separated ``authority/kid=DATE`` (or ``authority=DATE``
+# for the legacy key); DATE is ISO 8601, UTC when no zone is given. Deliberately
+# NOT prefixed ``AIFACTORY_TRUSTED_PLAN_KEY_``: the keyring loader would take
+# that as a verification key whose secret is the date string.
+_EXPIRY_ENV = "AIFACTORY_TRUSTED_PLAN_EXPIRY"
 
 # Reserved key under which the approval envelope is embedded in the plan. It is
 # excluded from the canonical payload so the signature covers the plan content,
@@ -147,6 +158,29 @@ def load_retired_kids_from_env(env: dict[str, str] | None = None) -> set[str]:
     source = os.environ if env is None else env
     raw = source.get(_RETIRED_KIDS_ENV, "")
     return {tok.strip().lower() for tok in raw.split(",") if tok.strip()}
+
+
+def load_expiry_from_env(
+    env: dict[str, str] | None = None,
+) -> dict[str, datetime | None]:
+    """Parse ``AIFACTORY_TRUSTED_PLAN_EXPIRY`` into ``{key: not_after}``.
+
+    An unparseable date maps to ``None``, which verification treats as expired:
+    a typo must never leave a key valid forever.
+    """
+    source = os.environ if env is None else env
+    out: dict[str, datetime | None] = {}
+    for tok in source.get(_EXPIRY_ENV, "").split(","):
+        name, sep, raw = tok.partition("=")
+        name = name.strip().lower()
+        if not (sep and name):
+            continue
+        try:
+            when = datetime.fromisoformat(raw.strip())
+            out[name] = when if when.tzinfo else when.replace(tzinfo=UTC)
+        except ValueError:
+            out[name] = None
+    return out
 
 
 # =============================================================================
@@ -254,11 +288,29 @@ def _select_verification_key(
     return legacy, ""
 
 
+def _expiry_reason(
+    authority: str,
+    kid: str | None,
+    expiry: dict[str, datetime | None],
+    now: datetime | None,
+) -> str:
+    """Why the key for ``(authority, kid)`` is past its ``not_after``, or ``""``."""
+    key_name = f"{authority}/{str(kid).strip().lower()}" if kid else authority
+    if key_name not in expiry:
+        return ""
+    not_after = expiry[key_name]
+    if not_after is None or (now or datetime.now(UTC)) >= not_after:
+        return f"key {key_name!r} expired (not_after {not_after or 'unparseable'})"
+    return ""
+
+
 def verify_plan_signature(
     plan: dict,
     *,
     keyring: dict[str, str] | None = None,
     retired_kids: set[str] | None = None,
+    expiry: dict[str, datetime | None] | None = None,
+    now: datetime | None = None,
 ) -> tuple[bool, str]:
     """Verify the embedded approval envelope against the authority's key.
 
@@ -270,6 +322,8 @@ def verify_plan_signature(
     retired_kids = (
         load_retired_kids_from_env() if retired_kids is None else retired_kids
     )
+
+    expiry = load_expiry_from_env() if expiry is None else expiry
 
     envelope = plan.get(APPROVAL_KEY)
     if not isinstance(envelope, dict):
@@ -290,7 +344,8 @@ def verify_plan_signature(
     authority = str(envelope["approved_by"]).strip().lower()
     kid = envelope.get("kid")
     key, reason = _select_verification_key(keyring, retired_kids, authority, kid)
-    if key is None:
+    reason = reason or _expiry_reason(authority, kid, expiry, now)
+    if key is None or reason:
         return False, reason
 
     expected = hmac.new(

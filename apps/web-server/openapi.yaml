@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: AIFactory Web API
   description: Web API for AIFactory — self-hosted AI task management + agent orchestration
-  version: 3.10.16
+  version: 3.11.1
 paths:
   /api/auth/register:
     post:
@@ -4733,6 +4733,41 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/{task_id}/post-merge-regression:
+    post:
+      tags:
+      - Tasks
+      summary: Post Merge Regression
+      description: Open a revert PR for ``body.merge_sha`` if the pipeline merged it.
+      operationId: post_merge_regression_api_tasks__task_id__post_merge_regression_post
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PostMergeRegression'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Post Merge Regression Api Tasks  Task Id  Post Merge Regression Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/tasks/{task_id}/qa-report:
     get:
       tags:
@@ -7093,7 +7128,7 @@ paths:
       tags:
       - Terminals
       summary: List Terminals
-      description: List all active terminal sessions.
+      description: List the caller's active terminal sessions.
       operationId: list_terminals_api_terminals_get
       responses:
         '200':
@@ -7163,7 +7198,7 @@ paths:
       tags:
       - Terminals
       summary: Get Sessions
-      description: Get terminal sessions for a project.
+      description: Get the caller's terminal sessions, for a project when given.
       operationId: get_sessions_api_terminals_sessions_get
       parameters:
       - name: project
@@ -12635,6 +12670,24 @@ components:
       required:
       - projectId
       title: PersistTokenRequest
+    PostMergeRegression:
+      properties:
+        merge_sha:
+          type: string
+          maxLength: 40
+          minLength: 7
+          pattern: ^[0-9a-fA-F]+$
+          title: Merge Sha
+        run_url:
+          type: string
+          maxLength: 500
+          pattern: ^https://\S+$
+          title: Run Url
+      type: object
+      required:
+      - merge_sha
+      - run_url
+      title: PostMergeRegression
     PostPRCommentRequest:
       properties:
         body:

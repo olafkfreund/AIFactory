@@ -156,6 +156,22 @@ def test_org_map_bad_id_fails(helm_available, chart_dir, bad: str) -> None:
 
 
 @pytest.mark.helm
+@pytest.mark.parametrize("key", ["a,b", "a=b", "a b"])
+def test_org_map_bad_key_fails(
+    helm_available,  # noqa: ARG001
+    chart_dir,
+    tmp_path,
+    key: str,
+) -> None:
+    vf = tmp_path / "v.yaml"
+    vf.write_text(f'githubApp:\n  orgInstallations:\n    "{key}": "9002"\n')
+    cmd = [*_cmd(chart_dir, [_PG, *_ON]), "-f", str(vf)]
+    out = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    assert out.returncode != 0
+    assert "githubApp.orgInstallations key" in out.stderr
+
+
+@pytest.mark.helm
 def test_org_map_float_in_values_file_fails(
     helm_available, chart_dir, tmp_path
 ) -> None:

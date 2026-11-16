@@ -4,6 +4,7 @@ Task management routes.
 Handles CRUD operations for tasks (specs) within projects.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -471,7 +472,7 @@ async def update_task_status(
 
     # Auto-close linked GitHub issue when task is marked done
     if update.status == "done":
-        _try_close_github_issue(project_path, spec_dir)
+        await asyncio.to_thread(_try_close_github_issue, project_path, spec_dir)
         # Emit the RFC-0001 completion event so CFactory can thread the unit of
         # work end to end (best-effort — never breaks the request). #342.
         try:
@@ -779,6 +780,11 @@ from .tasks_logs import get_task_logs  # noqa: E402,F401
 from .tasks_logs import router as tasks_logs_router  # noqa: E402
 
 router.include_router(tasks_logs_router)
+
+# Post-merge regression -> revert PR (#2054).
+from .tasks_regression import router as tasks_regression_router  # noqa: E402
+
+router.include_router(tasks_regression_router)
 
 # Task read-view endpoints — extracted into routes/tasks_views.py (#556);
 # mounted here so the public /api/tasks paths are unchanged.

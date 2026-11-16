@@ -246,3 +246,19 @@ def test_signed_contract_survives_trusted_plan_store_and_load(
     assert (
         payload["contract"]["provenance"]["github_issue"] == 382
     )  # overlay still there
+
+
+def test_ingest_payload_carries_originator_and_agent_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Factory#1960: handed on when recorded, absent otherwise."""
+    _stub_git(monkeypatch)
+    who = {"originator": "github:octocat", "agent_identity": "agent:aifactory/k1"}
+    payload = tc.build_ingest_payload(
+        _spec_dir(tmp_path, who), "048-feat", contract=None
+    )
+    assert {k: payload[k] for k in who} == who
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    payload = tc.build_ingest_payload(_spec_dir(bare, {}), "048-feat", contract=None)
+    assert "originator" not in payload and "agent_identity" not in payload

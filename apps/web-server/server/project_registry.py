@@ -78,6 +78,30 @@ def org_id_for_path(project_path: str | Path | None) -> str | None:
     return next(iter(orgs)) if len(orgs) == 1 and None not in orgs else None
 
 
+def overlaps_other_org(
+    path: str | Path,
+    org_id: str | None,
+    projects: dict[str, Any],
+    skip: str | None = None,
+) -> bool:
+    """True when ``path`` equals, holds or sits inside another org's project.
+
+    Such an overlap makes ``org_id_for_path`` ambiguous, so neither org would
+    get a GitHub token for it (#2038). Same-org overlap is harmless.
+    """
+    new = PurePath(os.path.normpath(path))
+    for pid, project in projects.items():
+        entry = project.get("path") if isinstance(project, dict) else None
+        if pid == skip or not isinstance(entry, str) or not entry:
+            continue
+        other = PurePath(os.path.normpath(entry))
+        if (new.is_relative_to(other) or other.is_relative_to(new)) and project.get(
+            "org_id"
+        ) != org_id:
+            return True
+    return False
+
+
 def resolve_project_path(project_id: str) -> Path:
     """Resolve a project id to its filesystem path, or raise 404.
 

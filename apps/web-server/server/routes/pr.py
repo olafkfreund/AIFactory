@@ -30,7 +30,8 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from server.error_ref import client_error
-from server.project_registry import get_projects_file
+from server.project_registry import get_projects_file, org_id_for_path
+from server.services import github_app
 from server.services.approval import find_pr
 from server.services.audit_service import ACTION_TASK_CREATE_PR, audit_task_route
 from server.services.build_backend import task_repo_dir
@@ -39,9 +40,9 @@ from server.services.task_branch import resolve_task_branch_fetching
 from server.specpath import safe_spec_component
 from server.utils.subprocess_env import (
     child_env,
-    github_env,
     lfs_upload,
     merge_driver_pins,
+    project_github_env,
 )
 
 from .project_authz import require_task_access
@@ -59,7 +60,7 @@ def _upload_and_push(
     Blocking (the upload may take ``LFS_UPLOAD_TIMEOUT``): run it in a thread.
     Hooks are off (#1680), so the upload is explicit (#1690, #1721).
     """
-    with github_env(child_env()) as env:
+    with project_github_env(worktree_path, child_env()) as env:
 
         def run(argv: list[str], timeout: int) -> tuple[int, str, str]:
             p = subprocess.run(  # noqa: S603, PLW1510
@@ -158,6 +159,8 @@ async def create_pr_from_task(
     spec_dir = project_path / ".aifactory" / "specs" / spec_id
     if not spec_dir.exists():
         return {"success": False, "error": f"Task {task_id} not found"}
+    if github_app.multi_installation():  # fill the token cache off the loop (#1700)
+        await github_app.warm_org_token(org_id_for_path(project_path))
 
     # The repo to push from: the linked task worktree when the in-pod backend
     # built there, else the kubejob build clone (#1467 moved it to
@@ -238,7 +241,7 @@ async def create_pr_from_task(
 
     # Fetch latest base branch from remote
     try:
-        with github_env(child_env()) as env:
+        with project_github_env(worktree_path, child_env()) as env:
             subprocess.run(
                 ["git", "fetch", "origin", base_branch],
                 cwd=worktree_path,
@@ -329,7 +332,7 @@ async def create_pr_from_task(
     # fetch is a harmless no-op — we log and fall through to the existing
     # behaviour.
     try:
-        with github_env(child_env()) as env:
+        with project_github_env(worktree_path, child_env()) as env:
             fetch_result = subprocess.run(  # noqa: S603, ASYNC221, PLW1510
                 ["git", "fetch", "origin", f"{worktree_branch}:{worktree_branch}"],  # noqa: S607
                 cwd=worktree_path,

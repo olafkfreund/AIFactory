@@ -31,6 +31,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -51,6 +52,7 @@ from providers.factory import get_provider
 from run_gates import RunGates
 from task_logger import LogPhase, TaskLogger
 
+from .act_loop_hooks import charge_tokens
 from .completion_gate import completion_refusal
 from .memory_manager import get_graphiti_context, save_session_memory
 from .parallel_runner import PhaseRunResult, SubtaskResult, run_parallel_phase
@@ -151,13 +153,22 @@ def _load_completion_emitter() -> Any:
             _completion_mod = False
             return None
         spec = importlib.util.spec_from_file_location(
-            "aifactory_completion_emitter", comp_path
+            "aifactory_completion_emitter",
+            comp_path,
+            # Package-style load so completion.py's relative `.billing` import
+            # resolves against its sibling directory (#2064).
+            submodule_search_locations=[str(comp_path.parent)],
         )
         if spec is None or spec.loader is None:
             _completion_mod = False
             return None
         mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
+        sys.modules[spec.name] = mod  # relative imports look the package up here
+        try:
+            spec.loader.exec_module(mod)
+        except BaseException:
+            sys.modules.pop(spec.name, None)
+            raise
         _completion_mod = mod
         return mod
     except Exception:  # noqa: BLE001 — emitter is optional; never break a build
@@ -632,6 +643,7 @@ async def run_parallel_coding_phase(
             try:
                 _usage_payload = (_err or {}).get("usage") if _err else None
                 if _usage_payload:
+                    charge_tokens(spec_dir, _usage_payload)  # #2033
                     _turn_usage = TurnUsage.from_sdk_usage(
                         {
                             "input_tokens": _usage_payload.get("input_tokens", 0),

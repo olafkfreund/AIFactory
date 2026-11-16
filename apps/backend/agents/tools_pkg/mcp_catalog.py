@@ -426,6 +426,27 @@ def get_catalog_entry(server_id: str) -> MCPCatalogEntry | None:
     return _effective_catalog().get(server_id)
 
 
+# Providers whose stdio server needs its credential in the process env. The agent
+# env blanks host names and swaps HOME for a private one, so a probe hit that
+# carries no ``env_vars`` (AWS keys, IRSA, in-cluster Kubernetes, ``az login``)
+# starts a server that fails on first use (Factory#3720).
+_ENV_CREDENTIAL_PROVIDERS = frozenset(
+    {"github", "gitlab", "azure_devops", "kubernetes", "aws", "azure"}
+)
+
+
+def unusable_credential_reason(entry: MCPCatalogEntry, creds: Any) -> str | None:
+    """Why ``entry`` would start without a credential the agent env can deliver, else None."""
+    if (
+        entry.credential_provider in _ENV_CREDENTIAL_PROVIDERS
+        and entry.transport == "stdio"
+        and not (creds and creds.env_vars)
+    ):
+        source = getattr(creds, "source", "none")
+        return f"credential found via {source} cannot be passed to the sandboxed agent"
+    return None
+
+
 def is_catalog_server(server_id: str) -> bool:
     """Cheap "do we ship/declare this server?" check used by models.py."""
     return server_id in _effective_catalog()
