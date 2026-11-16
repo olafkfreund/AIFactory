@@ -32,18 +32,37 @@ documented. All paths below are under `apps/backend/` except tests.
    shows the new tests failing.
    Traps: tests use `AIFACTORY_GIT_BASELINE_DIR` fixture `repo`.
 2. `project/config_parser.py:84-123`: add the verified walk (`_verified_tree`,
-   bytes `cat-file` helper, hash check); route `read_text`, `file_exists`,
-   `glob_files` through it when `ref` is set. → step 1 object tests pass.
+   bytes `cat-file` helper, hash check on raw bytes before any decode); a hex
+   `ref` is the commit oid, a non-hex ref (`HEAD`) is resolved once with
+   `rev-parse --verify`; walk `040000` subtrees (for `include sub/x.mk`),
+   accept only `100644`/`100755` blobs (a `120000` symlink is not a file),
+   sha1 and sha256 repos; route `read_text`, `file_exists`, `glob_files`
+   through it when `ref` is set; refuse `..` and a leading `/` in paths.
+   → step 1 object tests pass.
    Traps: keep `GIT_NO_REPLACE_OBJECTS`; decode utf-8 for text.
-3. `project/structure_analyzer.py:88-107`: new rule-line parser and include
-   following (depth 5). → Makefile tests pass.
-4. `security/hooks.py` (near `_validator_refusal`, called in
-   `bash_security_hook` and `validate_command`): `_path_command_refusal`. →
+3. `project/structure_analyzer.py:88-107`: new rule-line parser (join `\`
+   continuations, strip `#` comments, skip tab-indented recipes, `:`/`::` not
+   followed by `:` or `=`, skip `$`/`%` names) and `include`/`-include`/
+   `sinclude` following with several operands (depth 5, plain names only). →
+   Makefile tests pass.
+4. `security/hooks.py` (near `_validator_refusal`): `_path_command_refusal`
+   reads the first token of each segment (the original word, since `name` is
+   already a basename), runs BEFORE the `is_command_allowed` loop in both
+   `bash_security_hook` and `validate_command`, so its `bash build.sh` hint is
+   what the agent sees. A word with `/` passes only if it is absolute, has no
+   `..` component, and `posixpath.normpath` leaves its directory in the system
+   set. Add `/usr/bin/../../tmp/echo` to step 1's tests. →
    path tests pass; `tests/test_security.py`, `tests/test_command_sandbox.py`
    unchanged green.
-5. `security/script_validators.py:177-227`: drop `_is_worktree_script`, use
-   `_RUNNER_BUILTINS`; `bun run <arg>` base check. → runner tests pass.
-   Traps: import `_RUNNER_BUILTINS` lazily if `ast_parser` imports validators.
+5. `security/script_validators.py:177-227`: drop `_is_worktree_script`. In
+   `_target_script` for yarn/pnpm/bun: `bun run <arg>` returns `<arg>` (always
+   a base-script check, never a built-in exemption: `bun run test` runs the
+   script), bare `bun run` returns None; shorthand `<tool> <name>` returns
+   None when `name` is in `_RUNNER_BUILTINS[tool]` or is an
+   `_RUNNER_SUBCOMMANDS[tool]` entry (`exec`, `dlx`, `x`) or bun `exec`, else
+   `<name>`. → runner tests pass, `pnpm exec`, `yarn dlx`, `bun x` still pass.
+   Traps: `ast_parser` does not import the validators, so import its two
+   private tables at module level.
 6. `core/git_metadata.py` `record_base_sha`: comment that the base is not
    refreshed by design (spec item 6). No behaviour change.
 
