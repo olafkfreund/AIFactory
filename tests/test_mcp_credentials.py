@@ -224,6 +224,29 @@ def test_aws_default_credentials_file(tmp_path):
     assert s.source == "file:~/.aws/credentials"
 
 
+def test_aws_files_reach_the_server_env(tmp_path, monkeypatch):
+    # The agent's private HOME hides ~/.aws, so the server gets the real paths (#3737).
+    (tmp_path / ".aws").mkdir()
+    (tmp_path / ".aws" / "credentials").write_text("[work]\naws_access_key_id=xxx\n")
+    (tmp_path / ".aws" / "config").write_text("[profile work]\nregion=eu-west-1\n")
+    monkeypatch.setenv("AWS_PROFILE", "work")
+    s = mc.get_credential_status("aws")
+    assert s.env_vars == {
+        "AWS_PROFILE": "work",
+        "AWS_SHARED_CREDENTIALS_FILE": str(tmp_path / ".aws" / "credentials"),
+        "AWS_CONFIG_FILE": str(tmp_path / ".aws" / "config"),
+    }
+
+
+def test_aws_default_file_carries_its_path(tmp_path):
+    (tmp_path / ".aws").mkdir()
+    (tmp_path / ".aws" / "credentials").write_text("[default]\naws_access_key_id=xxx\n")
+    s = mc.get_credential_status("aws")
+    assert s.env_vars == {
+        "AWS_SHARED_CREDENTIALS_FILE": str(tmp_path / ".aws" / "credentials")
+    }
+
+
 def test_aws_irsa_detection(monkeypatch):
     monkeypatch.setenv("AWS_ROLE_ARN", "arn:aws:iam::123:role/x")
     monkeypatch.setenv("AWS_WEB_IDENTITY_TOKEN_FILE", "/var/run/secrets/x")
