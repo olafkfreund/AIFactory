@@ -46,10 +46,11 @@ def merge_driver_pins(
     """
     from core.git_metadata import check_git_metadata  # noqa: PLC0415 - import cycle
 
+    # Build the default env only when no runner is given (as before).
     pins: list[str] = agent_sandbox.merge_driver_pins(
         cwd,
         run,
-        env if env is not None else child_env(),
+        env if env is not None or run is not None else child_env(),
         check=check_git_metadata,
     )
     return pins
