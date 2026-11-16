@@ -130,6 +130,8 @@ class Settings(BaseSettings):
 
     # Authentication
     API_TOKEN: str = Field(default="", repr=False)  # Will generate default if not set
+    # Deployed setups: refuse to generate API_TOKEN / JWT_SECRET files (#1931).
+    REQUIRE_ENV_SECRETS: bool = False
     DISABLE_AUTH: bool = False  # Set to True to disable auth (dev only)
     ALLOW_INSECURE_AUTH: bool = (
         False  # Explicit opt-in for unauthenticated network binding
@@ -277,6 +279,15 @@ class Settings(BaseSettings):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+
+        if self.REQUIRE_ENV_SECRETS:
+            missing = [
+                f"APP_{n}" for n in ("API_TOKEN", "JWT_SECRET") if not getattr(self, n)
+            ]
+            if missing:
+                raise ValueError(
+                    f"APP_REQUIRE_ENV_SECRETS is set but {', '.join(missing)} is empty"
+                )
 
         # Generate default token if not set
         if not self.API_TOKEN:
