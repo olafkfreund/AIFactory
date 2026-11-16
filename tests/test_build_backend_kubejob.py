@@ -1258,15 +1258,10 @@ def test_seed_creds_injected_when_secret_configured(
     seed_mount = next(mt for mt in init["volumeMounts"] if mt["name"] == "cli-creds")
     assert seed_mount["mountPath"] == "/seed"
     assert seed_mount.get("readOnly") is True
-    # cp's every known provider file into HOME, tolerant of a partial secret.
+    # cp's the run's provider file into HOME (default phases: claude only,
+    # #2025), tolerant of a partial secret.
     script = init["args"][0]
-    for key in (
-        "claude-credentials.json",
-        "codex-auth.json",
-        "copilot-apps.json",
-        "gemini-oauth_creds.json",
-    ):
-        assert f"/seed/{key}" in script
+    assert "/seed/claude-credentials.json" in script
     assert "|| true" in script  # never aborts on a missing provider file
 
     # cli-creds secret volume points at the configured secret.
@@ -1281,6 +1276,68 @@ def test_seed_creds_injected_when_secret_configured(
         "/home/nonroot/.gemini",
         "/home/nonroot/.config",
     } <= build_mounts
+
+
+_ALL_CRED_KEYS = {
+    "claude": "claude-credentials.json",
+    "codex": "codex-auth.json",
+    "copilot": "copilot-apps.json",
+    "antigravity": "gemini-oauth_creds.json",
+}
+
+
+@pytest.mark.parametrize(
+    ("phase_models", "expected"),
+    [
+        (None, {"claude"}),  # defaults: opus/sonnet
+        ({"coding": "gpt-5.3-codex"}, {"claude", "codex"}),
+        ({"coding": "copilot:gpt-5"}, {"claude", "copilot"}),
+        ({"coding": "gemini-3-pro"}, {"claude", "antigravity"}),
+        (
+            dict.fromkeys(
+                ("spec", "planning", "coding", "qa", "qa_fixer"), "ollama:qwen3:14b"
+            ),
+            set(),
+        ),
+        (
+            {
+                "spec": "codex",
+                "planning": "codex",
+                "coding": "gemini-3-pro",
+                "qa": "copilot:gpt-5",
+                "qa_fixer": "ollama:x",
+            },
+            {"codex", "antigravity", "copilot"},
+        ),
+    ],
+)
+def test_build_job_seeds_only_logins_for_the_runs_providers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    phase_models: dict[str, str] | None,
+    expected: set[str],
+) -> None:
+    # #2025: the Job gets only the CLI logins its phase models resolve to.
+    monkeypatch.setenv("AIFACTORY_CLI_CREDS_SECRET", "factory-cli-creds")
+    monkeypatch.delenv("AIFACTORY_FALLBACK_MODEL", raising=False)
+    _seed_env(monkeypatch)
+    spec_dir = bb.spec_dir_for(tmp_path, "s")
+    spec_dir.mkdir(parents=True)
+    if phase_models:
+        (spec_dir / "task_metadata.json").write_text(
+            json.dumps({"phaseModels": phase_models})
+        )
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:s", project_path=tmp_path, spec_id="s"
+    )
+    init = next(
+        c
+        for c in m["spec"]["template"]["spec"]["initContainers"]
+        if c["name"] == "seed-creds"
+    )
+    script = init["args"][0]
+    for provider, key in _ALL_CRED_KEYS.items():
+        assert (f"/seed/{key}" in script) is (provider in expected), (provider, script)
 
 
 # --------------------------------------------------------------------------- #
