@@ -375,6 +375,24 @@ def _read_tenant_id(spec_dir: Path) -> str | None:
     return str(tenant) if tenant else None
 
 
+def _read_attribution(spec_dir: Path) -> dict[str, str | None]:
+    """``originator`` / ``agent_identity`` as recorded in ``requirements.json``.
+
+    Same constraints as :func:`_read_tenant_id`; values are copied unchanged and
+    each is ``None`` when absent (Factory#1960).
+    """
+    try:
+        req = json.loads((spec_dir / "requirements.json").read_text())
+    except (OSError, ValueError):
+        req = None
+    if not isinstance(req, dict):
+        req = {}
+    return {
+        k: v if isinstance(v := req.get(k), str) and v else None
+        for k in ("originator", "agent_identity")
+    }
+
+
 def _read_budget_usd(spec_dir: Path) -> float | None:
     """The optional soft cost budget (USD) for this task, if set (#45 P2).
 
@@ -556,6 +574,8 @@ def build_completion_event(
     tenant_id: str | None = None,
     repo: str | None = None,
     transcript_uri: str | None = None,
+    originator: str | None = None,
+    agent_identity: str | None = None,
 ) -> dict:
     """The RFC-0001 completion-event envelope (six core fields + chain block).
 
@@ -624,6 +644,9 @@ def build_completion_event(
         "time": when,
         # W3C trace context (#466) for OpenTelemetry correlation.
         "traceparent": traceparent or _new_traceparent(),
+        # Factory#1960: who asked, and which agent identity ran it (nullable).
+        "originator": originator,
+        "agent_identity": agent_identity,
     }
     if tracestate:
         event["tracestate"] = tracestate
@@ -667,6 +690,8 @@ def build_worker_event(
     traceparent: str | None = None,
     tracestate: str | None = None,
     repo: str | None = None,
+    originator: str | None = None,
+    agent_identity: str | None = None,
 ) -> dict:
     """A LIVE per-worker sub-event (RFC-0001 v1.3, #45 P1).
 
@@ -725,6 +750,8 @@ def build_worker_event(
         "time": when,
         "traceparent": traceparent or _new_traceparent(),
         "worker": worker_block,
+        "originator": originator,
+        "agent_identity": agent_identity,
     }
     if tracestate:
         event["tracestate"] = tracestate
@@ -743,6 +770,8 @@ def build_worker_progress_event(
     traceparent: str | None = None,
     tracestate: str | None = None,
     repo: str | None = None,
+    originator: str | None = None,
+    agent_identity: str | None = None,
 ) -> dict:
     """A LIVE per-worker PROGRESS heartbeat event (#45 Tier 2).
 
@@ -795,6 +824,8 @@ def build_worker_progress_event(
         "time": when,
         "traceparent": traceparent or _new_traceparent(),
         "worker": worker_block,
+        "originator": originator,
+        "agent_identity": agent_identity,
     }
     if tracestate:
         event["tracestate"] = tracestate
@@ -829,6 +860,7 @@ def emit_worker_completion(
             repo=read_issue_repo(spec_dir),
             project_id=project_id,
             worker=worker,
+            **_read_attribution(spec_dir),
         )
         _notify_worker(event, spec_dir=spec_dir)
         return event
@@ -929,6 +961,7 @@ def emit_worker_progress(
             repo=read_issue_repo(spec_dir),
             project_id=project_id,
             worker=worker,
+            **_read_attribution(spec_dir),
         )
         _notify_worker_progress(event, spec_dir=spec_dir)
         return event
@@ -1160,6 +1193,7 @@ def emit_terminal_completion(
         injection_scan=_read_injection_scan(spec_dir),
         tenant_id=_read_tenant_id(spec_dir),
         transcript_uri=transcript_uris[-1] if transcript_uris else None,
+        **_read_attribution(spec_dir),
     )
     # Serial single-'main'-worker live sub-event (#45 P1). Parallel workers each
     # emit their live sub-event as they finish (agents/parallel_integration.py);
@@ -1226,6 +1260,7 @@ def emit_usage_snapshot(  # noqa: PLR0913 - event fields, all required by the en
             usage=usage,
             injection_scan=_read_injection_scan(spec_dir),
             tenant_id=_read_tenant_id(spec_dir),
+            **_read_attribution(spec_dir),
         )
         notify_completion(event, spec_dir=spec_dir)
         return event
