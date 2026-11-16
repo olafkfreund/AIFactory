@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1973
 spec: spec/2026-11-16-1973-agent-token-admin-guard.md
 coders:
