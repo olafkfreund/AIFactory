@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2034
 spec: spec/2026-11-16-2034-run-transcript.md
 coders:
