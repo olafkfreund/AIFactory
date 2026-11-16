@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2037
 spec: spec/2026-11-16-2037-spec-job-followups.md
 coders:
