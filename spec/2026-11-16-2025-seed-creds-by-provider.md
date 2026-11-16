@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2025
 intent: intent/2026-11-16-2025-seed-creds-by-provider.md
 ---
