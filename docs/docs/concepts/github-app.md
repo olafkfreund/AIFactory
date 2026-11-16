@@ -42,10 +42,13 @@ On GitHub, create an App with these repository permissions and no others:
 
 - Contents: read and write
 - Pull requests: read and write
+- Issues: read and write
+- Checks: read
 - Metadata: read
 - Workflows: read and write, only if your PRs touch `.github/workflows`
+- Actions: read, only if the PR endgame has to read workflow runs
 
-Do not grant administration permissions. Generate a private key (PEM).
+Do not grant Administration, Secrets, Organization or Members permissions. Generate a private key (PEM).
 
 ## 2. Install it
 
@@ -86,6 +89,24 @@ render with the MCP GitHub PAT:
 - Remove any `github.com` token from the `gh` `hosts.yml`.
 - Remove PAT copies from project `.env` files and the UI settings token. The
   server does not clear these.
+
+## Cutover order for the gitops deployment
+
+The factory-gitops Deployment carries the three App variables as optional
+secret references, so they stay unset until the keys exist. The server refuses
+to start with a partial App set, and with any PAT still present, so do this in
+one window (full steps: `docs/aifactory-github-app-cutover.md` in factory-gitops):
+
+1. Create the App from the manifest and install it on the Factory repos only.
+2. Add all three keys, `AIFACTORY_GITHUB_APP_ID`,
+   `AIFACTORY_GITHUB_APP_INSTALLATION_ID` and `AIFACTORY_GITHUB_APP_PRIVATE_KEY`,
+   to `factory-secrets`, and merge the change that removes the Deployment's
+   `GITHUB_TOKEN` entry. A restart between the two steps would not boot.
+3. Check that no other PAT source is left (see "Remove old PATs"), that
+   `AIFACTORY_AGENT_GITHUB_TOKEN` is unset (it would override the App token for
+   children), and that `apps/backend/.env` holds no GitHub token.
+4. Revoke the admin, `delete_repo` and org scopes on the old PAT.
+5. Set `AIFACTORY_AGENT_TOKEN_ADMIN_POLICY=refuse`.
 
 ## Copilot review
 
@@ -163,6 +184,19 @@ The chart sets `AIFACTORY_AGENT_GITHUB_TOKEN` from this Secret. The web server
 passes it to the children as `GITHUB_TOKEN`, `GH_TOKEN` and
 `GITHUB_PERSONAL_ACCESS_TOKEN`. They never see the control plane's GitHub
 token, and never see the variable itself.
+
+Admin guard (#1973). Whatever token the children would get, a classic PAT or
+OAuth token whose scopes include `delete_repo` or an `admin:*` scope is
+checked once an hour against `GET /user`. With
+`AIFACTORY_AGENT_TOKEN_ADMIN_POLICY=warn` (the default) the server logs the
+scope names once per token and still passes it. With `refuse`, or any value
+other than `warn`, the children get no GitHub token and the `.env` loaders skip
+GitHub names, so a refused token cannot come back. An unreadable answer counts
+as a finding under `refuse`. App installation, fine-grained and GitHub App user
+tokens have no scopes to read and are not checked. The classic `repo` scope
+still includes repository admin on repos the token owner administers; the guard
+is a safety net, and the App is the fix. The control plane's own git and `gh`
+calls and a per-project token saved by a tenant are not changed.
 
 Notes:
 

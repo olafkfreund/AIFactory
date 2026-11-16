@@ -24,9 +24,17 @@ def test_manifest_permissions() -> None:
     assert manifest["default_permissions"] == {
         "contents": "write",
         "pull_requests": "write",
+        "issues": "write",
+        "checks": "read",
         "metadata": "read",
     }
-    assert "administration" not in manifest["default_permissions"]
+    for denied in (
+        "administration",
+        "secrets",
+        "organization_administration",
+        "members",
+    ):
+        assert denied not in manifest["default_permissions"]
     assert setup.load_manifest(True, None)["default_permissions"] == {
         **manifest["default_permissions"],
         "workflows": "write",

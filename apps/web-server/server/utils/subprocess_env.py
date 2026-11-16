@@ -15,9 +15,11 @@ exception — that's their own shell, they expect their normal env.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import logging
 import os
 import sys
+import time
 from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path
 
@@ -72,6 +74,86 @@ AGENT_GITHUB_TOKEN_VAR = "AIFACTORY_AGENT_GITHUB_TOKEN"  # noqa: S105
 _blank_agent_token_warned = False
 _log = logging.getLogger(__name__)
 
+# Scopes that let a token change or delete things an agent never needs (#1973).
+ADMIN_SCOPES = frozenset(
+    {
+        "delete_repo",
+        "admin:org",
+        "admin:org_hook",
+        "admin:repo_hook",
+        "admin:public_key",
+        "admin:gpg_key",
+        "admin:ssh_signing_key",
+        "admin:enterprise",
+        "site_admin",
+    }
+)
+ADMIN_POLICY_VAR = "AIFACTORY_AGENT_TOKEN_ADMIN_POLICY"
+# App and fine-grained tokens carry permissions, not OAuth scopes: no header to read.
+_UNSCOPED_PREFIXES = ("ghs_", "github_pat_", "ghu_")
+UNKNOWN = frozenset({"?"})
+_SCOPE_TTL = 3600.0
+_scope_cache: dict[str, tuple[float, frozenset[str] | None]] = {}
+_guard_logged: set[str] = set()
+
+
+def _fetch_scopes(token: str) -> frozenset[str]:
+    import httpx  # noqa: PLC0415
+
+    api = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
+    try:
+        resp = httpx.get(
+            f"{api}/user", headers={"Authorization": f"Bearer {token}"}, timeout=5
+        )
+    except httpx.HTTPError:
+        return UNKNOWN
+    header = resp.headers.get("x-oauth-scopes")
+    if resp.status_code != 200 or header is None:
+        return UNKNOWN
+    return frozenset(s.strip() for s in header.split(",") if s.strip())
+
+
+def admin_scopes(token: str) -> frozenset[str] | None:
+    """Admin-class scopes of a classic token; ``None`` if unscoped, ``UNKNOWN`` if unreadable."""
+    if token.startswith(_UNSCOPED_PREFIXES):
+        return None
+    key = hashlib.sha256(token.encode()).hexdigest()
+    hit = _scope_cache.get(key)
+    if hit and time.monotonic() - hit[0] < _SCOPE_TTL:
+        return hit[1]
+    scopes = _fetch_scopes(token)
+    found = scopes if scopes == UNKNOWN else scopes & ADMIN_SCOPES
+    _scope_cache[key] = (time.monotonic(), found)
+    return found
+
+
+def _admin_policy_refuses() -> bool:
+    return os.environ.get(ADMIN_POLICY_VAR, "warn").strip().lower() != "warn"
+
+
+def _token_allowed(token: str) -> bool:
+    """False when ``token`` may not go to an agent child (admin-scoped, policy ``refuse``)."""
+    found = admin_scopes(token)
+    if not found:
+        return True
+    refuse = _admin_policy_refuses()
+    key = hashlib.sha256(token.encode()).hexdigest()[:12]
+    if key not in _guard_logged:
+        _guard_logged.add(key)
+        what = (
+            "unreadable scopes" if found == UNKNOWN else f"admin scopes {sorted(found)}"
+        )
+        _log.log(
+            logging.ERROR if refuse else logging.WARNING,
+            "GitHub token for agent children has %s (token id %s); %s",
+            what,
+            key,
+            "withheld from children"
+            if refuse
+            else f"set {ADMIN_POLICY_VAR}=refuse to withhold it",
+        )
+    return not refuse
+
 
 def github_names() -> tuple[str, ...]:
     from core.auth import is_denied_env_key  # noqa: PLC0415
@@ -120,10 +202,13 @@ def runner_github_env(project_path: str | Path | None = None) -> dict[str, str]:
         )
     token = agent_github_token()
     if token:
+        if not _token_allowed(token):
+            return {}
         # The alias too: the runners load_dotenv() themselves, and a value
         # there for an absent alias would win in the MCP probe.
         return dict.fromkeys(github_names(), token)
-    return {name: os.environ[name] for name in github_names() if os.environ.get(name)}
+    env = {name: os.environ[name] for name in github_names() if os.environ.get(name)}
+    return {} if any(not _token_allowed(v) for v in set(env.values())) else env
 
 
 @contextlib.contextmanager
@@ -139,7 +224,7 @@ def project_github_env(
 
 def dotenv_key_blocked(key: str) -> bool:
     return key == AGENT_GITHUB_TOKEN_VAR or bool(
-        agent_github_token() and key in github_names()
+        (agent_github_token() or _admin_policy_refuses()) and key in github_names()
     )
 
 
