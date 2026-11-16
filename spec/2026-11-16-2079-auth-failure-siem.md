@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2079
 intent: intent/2026-11-16-2079-auth-failure-siem.md
 ---
