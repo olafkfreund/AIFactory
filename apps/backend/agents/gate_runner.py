@@ -450,6 +450,10 @@ _STORE_ENV_VARS = (
     "S3_ACCESS_KEY",
     "S3_SECRET_KEY",
     "S3_REGION",
+    # #2023: scoped STS session creds replace S3_ACCESS_KEY/S3_SECRET_KEY in the Job.
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
 )
 
 
