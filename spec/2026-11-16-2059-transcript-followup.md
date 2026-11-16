@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2059
 intent: intent/2026-11-16-2059-transcript-followup.md
 ---
