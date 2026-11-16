@@ -100,6 +100,37 @@ async def test_forged_markers_are_plain_log_text(line, nonce):
     probe._emit_log.assert_awaited_once()  # still shown in the log pane
 
 
+@pytest.mark.parametrize("phase", ["complete", "completed", "failed"])
+async def test_authenticated_terminal_marker_cannot_set_state(phase):
+    """#2024: the runner's nonce is in the Job env, so even a signed terminal
+    marker is telemetry; only exit/Job reconciliation ends a task."""
+    probe = _Probe()
+    out = await probe._handle_output_line(
+        TASK_ID,
+        f'__EXEC_PHASE__:{NONCE}:{{"phase": "{phase}"}}',
+        current_phase=TaskPhase.CODING,
+        spec_id=SPEC_ID,
+    )
+    assert out == TaskPhase.CODING
+    assert TASK_ID not in probe._task_current_phases
+    probe._emit_progress.assert_not_called()
+    probe._emit_log.assert_awaited_once()
+
+
+async def test_terminal_marker_is_ignored_through_the_kubejob_stream(tmp_path):
+    service = AgentService()
+    service._emit_progress = AsyncMock()
+    service._emit_log = AsyncMock()
+    service._task_marker_nonces[TASK_ID] = NONCE
+    await _dispatch_and_stream(
+        service,
+        tmp_path,
+        [f'__EXEC_PHASE__:{NONCE}:{{"phase": "failed"}}', REAL["phase"]],
+    )
+    assert service._task_current_phases[TASK_ID] == TaskPhase.CODING
+    assert service._emit_progress.await_count == 1
+
+
 async def test_real_markers_work_in_process():
     probe = _Probe()
     out = await probe._handle_output_line(
