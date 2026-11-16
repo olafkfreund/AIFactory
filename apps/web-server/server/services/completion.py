@@ -555,6 +555,7 @@ def build_completion_event(
     injection_scan: dict | None = None,
     tenant_id: str | None = None,
     repo: str | None = None,
+    transcript_uri: str | None = None,
 ) -> dict:
     """The RFC-0001 completion-event envelope (six core fields + chain block).
 
@@ -635,6 +636,10 @@ def build_completion_event(
             "total_tokens": int(usage.get("total_tokens", 0) or 0),
             "cost_usd": float(usage.get("cost_usd", 0.0) or 0.0),
         }
+    # #2034: optional URI of the run's full redacted transcript in the artifact
+    # store. Independent of ``usage`` and of the RFC-0001a ``evidence`` block.
+    if transcript_uri:
+        event["transcript_uri"] = transcript_uri
     # Multi-tenancy (#925): OPTIONAL additive tenant scope — present only when
     # the spec carries a tenant stamp; old/single-tenant envelopes are unchanged.
     if tenant_id:
@@ -1066,6 +1071,26 @@ def notify_completion(event: dict, *, spec_dir: Path | None = None) -> bool:
     return True
 
 
+def _record_transcript_uris(spec_dir: Path, uris: list[str]) -> None:
+    """Link the run transcripts from the task record (#2034).
+
+    Merges ``transcriptUris`` into ``task_metadata.json``. stdlib only: this
+    module is exec'd standalone, so it must not import ``server.tenancy``.
+    Best-effort: a write failure never loses the URI on the event.
+    """
+    if not uris:
+        return
+    tm_file = Path(spec_dir) / "task_metadata.json"
+    try:
+        meta = json.loads(tm_file.read_text()) if tm_file.exists() else {}
+        if not isinstance(meta, dict):
+            return
+        meta["transcriptUris"] = uris
+        tm_file.write_text(json.dumps(meta, indent=2))
+    except (OSError, ValueError):
+        logger.debug("transcript link skipped (best-effort)", exc_info=True)
+
+
 def emit_terminal_completion(
     spec_dir: Path,
     *,
@@ -1081,6 +1106,7 @@ def emit_terminal_completion(
     # spec dir — so fetch the copy the Job pushed to object storage before reading
     # it, else CFactory shows zero token usage. No-op on the co-mount path (file
     # already present) and best-effort (never raises).
+    transcript_uris: list[str] = []
     try:
         from core.workspace_fetch import (  # noqa: PLC0415
             maybe_fetch_gate_marker,
@@ -1109,6 +1135,15 @@ def emit_terminal_completion(
         _pool_memory_at_project_level(spec_dir)
     except Exception:  # noqa: BLE001 - defensive; emit must still proceed
         logger.debug("usage fetch skipped (best-effort)", exc_info=True)
+    try:
+        # #2034: the run transcripts the Job uploaded (``[]`` when none), looked
+        # up on its own so an earlier fetch failure cannot skip it.
+        from core.workspace_fetch import transcript_uris as _uris  # noqa: PLC0415
+
+        transcript_uris = _uris(spec_id)
+    except Exception:  # noqa: BLE001 - defensive; emit must still proceed
+        logger.debug("transcript lookup skipped (best-effort)", exc_info=True)
+    _record_transcript_uris(spec_dir, transcript_uris)
     usage = read_usage(spec_dir)
     # OTel per-worker metrics (#45 P1), once per terminal event (#1633): not from
     # usage_from_aggregate, which also serves snapshots and the live mapping.
@@ -1124,6 +1159,7 @@ def emit_terminal_completion(
         halt_reason=_read_halt_reason(spec_dir),
         injection_scan=_read_injection_scan(spec_dir),
         tenant_id=_read_tenant_id(spec_dir),
+        transcript_uri=transcript_uris[-1] if transcript_uris else None,
     )
     # Serial single-'main'-worker live sub-event (#45 P1). Parallel workers each
     # emit their live sub-event as they finish (agents/parallel_integration.py);
