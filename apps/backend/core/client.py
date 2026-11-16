@@ -957,7 +957,10 @@ def create_client(
     # the whole agent boot path; failures show up as missing tools, not a
     # subprocess crash.
     try:
-        from agents.tools_pkg.mcp_catalog import get_catalog_entry
+        from agents.tools_pkg.mcp_catalog import (
+            get_catalog_entry,
+            unusable_credential_reason,
+        )
         from core.mcp_credentials import get_credential_status
 
         for server_id in required_servers:
@@ -971,6 +974,9 @@ def create_client(
                 if entry.credential_provider
                 else None
             )
+            if (why := unusable_credential_reason(entry, creds)) is not None:
+                logger.warning("MCP server %s skipped: %s", entry.id, why)
+                continue
             cfg = entry.build_server_config(creds, read_only=True)
             mcp_servers[entry.id] = _externalize_secret_env(cfg, sdk_env)
     except ImportError as exc:

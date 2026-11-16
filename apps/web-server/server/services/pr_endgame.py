@@ -1826,6 +1826,18 @@ def _pr_title_body(spec_dir: Path, spec_id: str) -> tuple[str, str]:
             issue_number = prov["issue_number"]
         elif isinstance(gh, dict) and isinstance(gh.get("number"), int):
             issue_number = gh["number"]
+        # Factory#1960: the agent that authored this PR, and the human behind it.
+        # Single printable line: both values are recorded text, not trusted markup.
+        who = [
+            f"{label}: {v}"
+            for label, key in (
+                ("Authored by agent", "agent_identity"),
+                ("Originator", "originator"),
+            )
+            if isinstance(v := req.get(key), str) and v and v.isprintable()
+        ]
+        if who:
+            body = body + "\n\n" + "\n".join(who)
     except (OSError, ValueError) as exc:
         logger.warning(
             "[pr_endgame] Could not read requirements.json for %s, using default PR title/body: %s",
