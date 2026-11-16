@@ -355,6 +355,67 @@ def maybe_push_task_logs(spec_dir: str | os.PathLike[str], spec_id: str) -> bool
         return False
 
 
+def _transcript_ref(spec_id: str, name: str = "x") -> Any:
+    from core.artifact_store import ArtifactRef  # noqa: PLC0415
+
+    return ArtifactRef(
+        service="aifactory",
+        job_id=spec_id,
+        role="evidence",
+        path=f"transcripts/{name}",
+    )
+
+
+def maybe_push_transcripts(spec_id: str) -> int:
+    """Upload this run's redacted transcript (#2034) and drop the local copy.
+
+    ``role="evidence"`` puts it under the MinIO 90-day ILM rule. Gated on
+    ``S3_ENDPOINT`` so local runs without object storage keep the local file.
+    Best-effort: never raises. Returns the number of files uploaded.
+    """
+    if not os.environ.get("S3_ENDPOINT", "").strip():
+        return 0
+    count = 0
+    try:
+        from core.artifact_store import ArtifactStore  # noqa: PLC0415
+        from task_logger import transcript  # noqa: PLC0415
+
+        store = ArtifactStore()
+        for path in transcript.written_files():
+            store.put_bytes(
+                str(_transcript_ref(spec_id, path.name).key()),
+                path.read_bytes(),
+                "application/x-ndjson",
+                role="evidence",
+            )
+            path.unlink(missing_ok=True)
+            count += 1
+    except Exception as exc:  # noqa: BLE001 - must never break a build
+        _log.warning("[workspace_fetch] transcript push failed: %s", exc)
+    return count
+
+
+def transcript_uris(spec_id: str) -> list[str]:
+    """Sorted ``s3://`` URIs of a spec's stored transcripts, ``[]`` on any error."""
+    if not os.environ.get("S3_ENDPOINT", "").strip():
+        return []
+    try:
+        from core.artifact_store import ArtifactStore  # noqa: PLC0415
+
+        store = ArtifactStore()
+        ref = _transcript_ref(spec_id)
+        prefix = str(ref.key()).removesuffix("x")
+        keys = sorted(
+            k
+            for k in store.list_artifacts(ref, role_scoped=True)
+            if k.startswith(prefix)
+        )
+        return [f"s3://{store.config.bucket}/{k}" for k in keys]
+    except Exception as exc:  # noqa: BLE001 - must never break the event
+        _log.warning("[workspace_fetch] transcript listing failed: %s", exc)
+        return []
+
+
 def maybe_fetch_task_logs(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
     """Control-plane counterpart to :func:`maybe_push_task_logs`.
 
