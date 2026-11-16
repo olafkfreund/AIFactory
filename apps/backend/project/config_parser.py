@@ -115,7 +115,8 @@ class ConfigParser:
         """Names of the verified base entries in cwd."""
         entry = self._walk([])
         entries = self._tree(entry[1]) if entry else None
-        return list(entries) if entries else []
+        # A 120000 entry is a symlink, not a file the profile may rely on.
+        return [n for n, (mode, _) in (entries or {}).items() if mode != "120000"]
 
     def read_json(self, filename: str) -> dict | None:
         """Read a JSON file from project root (or from ``ref``)."""

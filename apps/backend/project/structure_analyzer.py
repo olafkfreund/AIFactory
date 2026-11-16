@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 _MAKE_RULE = re.compile(r"^([^\s:=#][^:=#]*?)\s*::?(?![:=])")
 _MAKE_INCLUDE = re.compile(r"^-?(?:include|sinclude)\s+(.+)$")
 _MAKE_INCLUDE_DEPTH = 5
+_MAKE_NAME = re.compile(r"[A-Za-z0-9_.+/-]+")
 
 
 def _base_ref(project_dir: Path) -> str | None:
@@ -95,12 +96,15 @@ class StructureAnalyzer:
         if not self.parser.file_exists("Makefile"):
             return
         seen: set[str] = set()
-        self._read_makefile("Makefile", seen, 0)
+        self._read_makefile("Makefile", seen, set(), 0)
         self.custom_scripts.make_targets.extend(sorted(seen - {""}))
         if self.custom_scripts.make_targets:
             self.script_commands.add("make")
 
-    def _read_makefile(self, name: str, targets: set[str], depth: int) -> None:
+    def _read_makefile(
+        self, name: str, targets: set[str], visited: set[str], depth: int
+    ) -> None:
+        visited.add(name)
         content = self.parser.read_text(name)
         if not content or depth > _MAKE_INCLUDE_DEPTH:
             return
@@ -112,12 +116,13 @@ class StructureAnalyzer:
             if m := _MAKE_INCLUDE.match(code):
                 for inc in m.group(1).split():
                     # shortcut: only plain relative names; a `$(var)` or glob adds nothing.
-                    if inc != name and not re.search(r"[$*?\[%]", inc):
-                        self._read_makefile(inc, targets, depth + 1)
+                    if inc not in visited and _MAKE_NAME.fullmatch(inc):
+                        self._read_makefile(inc, targets, visited, depth + 1)
             elif m := _MAKE_RULE.match(code):
-                for tgt in m.group(1).split():
-                    if not tgt.startswith(".") and not re.search(r"[$%()]", tgt):
-                        targets.add(tgt)
+                names = m.group(1).split()
+                # One odd word (`$(info x: y)`, `a\ b`, `%.o`) drops the line.
+                if all(_MAKE_NAME.fullmatch(n) for n in names):
+                    targets.update(n for n in names if not n.startswith("."))
 
     def _detect_poetry_scripts(self) -> None:
         """Detect Poetry scripts from pyproject.toml."""

@@ -8,6 +8,7 @@ script names against the security profile's base-commit script lists (#1948).
 
 from __future__ import annotations
 
+import json
 import re
 import shlex
 from itertools import pairwise
@@ -174,6 +175,23 @@ def _extract_pkg_positionals(tokens: list[str]) -> tuple[list[str], str]:
     return positionals, err
 
 
+def _is_worktree_script(name: str) -> bool:
+    """True when the working tree's package.json may define script ``name``.
+
+    A file Python cannot read strictly (BOM, comments) counts as defining it:
+    the runners parse more loosely. Every ``scripts`` object is read, since
+    runners disagree on which duplicate key wins.
+    """
+    path = Path(get_worktree_root() or "") / "package.json"
+    if not path.exists():
+        return False
+    try:
+        pairs = json.loads(path.read_text("utf-8"), object_pairs_hook=list)
+        return any(k == name for key, val in pairs if key == "scripts" for k, _ in val)
+    except (OSError, ValueError, TypeError):
+        return True
+
+
 # npm runs any unambiguous prefix of a command name or alias (`npm run-s x`,
 # `npm ur x`, `npm ts`). These other npm commands are prefixes of ours.
 _NPM_SCRIPT_COMMANDS = _RUN_SUBCOMMANDS | _TEST_SUBCOMMANDS | _LIFECYCLE_SUBCOMMANDS
@@ -211,7 +229,10 @@ def _target_script(tool: str, positionals: list[str]) -> str | None:
     # yarn, pnpm and bun run `<tool> <script>` without `run`. A parent
     # package.json may define it, so any name that is not a built-in is a script.
     builtin = sub in _RUNNER_BUILTINS.get(tool, ()) or sub in _runner_subcommands(tool)
-    return None if tool == "npm" or builtin else sub
+    # The built-in table spans runner versions (`yarn constraints` is a script
+    # in yarn 1), so a built-in name the working tree defines is checked too.
+    skip = tool == "npm" or (builtin and not _is_worktree_script(sub))
+    return None if skip else sub
 
 
 def _runner_subcommands(tool: str) -> set[str]:

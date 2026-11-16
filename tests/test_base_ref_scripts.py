@@ -412,3 +412,28 @@ def test_shorthand_runner_ignores_parent_package_json(
 )
 def test_runner_subcommands_stay_allowed(repo: Path, cmd: str) -> None:
     assert validate_command(cmd, repo)[0], cmd
+
+
+def test_makefile_escaped_target_and_include_cycle(tmp_path: Path, monkeypatch) -> None:
+    repo_dir = _repo_with_makefile(
+        tmp_path,
+        monkeypatch,
+        "include a.mk\nbuild\\ cache:\n\ttrue\n$(info x: y)\ntest:\n\ttrue\n",
+        **{"a.mk": "include b.mk\n", "b.mk": "include a.mk\nok:\n\ttrue\n"},
+    )
+    assert validate_command("make ok", repo_dir)[0]
+    assert not validate_command("make cache", repo_dir)[0]
+    assert not validate_command("make y", repo_dir)[0]
+
+
+def test_nix_store_path_with_traversal_refused(repo: Path) -> None:
+    cmd = "/nix/store/$'\\x2e\\x2e/\\x2e\\x2e/tmp'/bin/echo hi"
+    assert not validate_command(cmd, repo)[0]
+
+
+def test_builtin_named_script_in_worktree_is_checked(repo: Path) -> None:
+    (repo / "package.json").write_text(
+        json.dumps({"scripts": {"test": "echo ok", "constraints": "echo pwn"}})
+    )
+    reset_profile_cache()
+    assert not validate_command("yarn constraints", repo)[0]

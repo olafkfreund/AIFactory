@@ -17,6 +17,7 @@ build's base commit (#1948, ``security/script_validators.py``).
 import logging
 import os
 import posixpath
+import re
 import shlex
 from pathlib import Path
 from typing import Any
@@ -113,13 +114,14 @@ _SYSTEM_BIN_DIRS = frozenset(
 )
 
 
+_NIX_BIN_DIR = re.compile(r"/nix/store/[0-9a-z]{32}-[A-Za-z0-9._+-]+/bin")
+
+
 def _is_system_binary(word: str) -> bool:
     if not word.startswith("/") or ".." in word.split("/"):
         return False
     where = posixpath.dirname(posixpath.normpath(word))
-    return where in _SYSTEM_BIN_DIRS or (
-        where.startswith("/nix/store/") and where.endswith("/bin")
-    )
+    return where in _SYSTEM_BIN_DIRS or bool(_NIX_BIN_DIR.fullmatch(where))
 
 
 def _path_command_refusal(cmds: list[tuple[str, str, bool]]) -> str | None:
@@ -133,7 +135,7 @@ def _path_command_refusal(cmds: list[tuple[str, str, bool]]) -> str | None:
         try:
             word = shlex.split(seg)[0]
         except (ValueError, IndexError):
-            continue
+            word = "?/"  # cannot read the word: fail closed
         if "/" in word and not _is_system_binary(word):
             return (
                 f"Command '{word}' runs a file by path, which the agent may have "
