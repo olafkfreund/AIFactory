@@ -1395,6 +1395,14 @@ class KubeJobBuildBackend:
         if marker_nonce:
             extra_env["AIFACTORY_MARKER_NONCE"] = marker_nonce  # #1929
         extra_env["AIFACTORY_TASK_ID"] = task_id  # #1972: not a secret
+        # #2023: last, so no earlier merge can put the bucket-wide S3 key back.
+        from .job_s3_scope import scope_job_s3  # noqa: PLC0415
+
+        await asyncio.to_thread(
+            scope_job_s3,
+            extra_env,
+            [(correlation_key, task_id), (None, spec_id), (None, f"gate-{spec_id}")],
+        )
 
         manifest = build_run_py_job_manifest(
             task_id=task_id,
