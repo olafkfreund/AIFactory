@@ -134,9 +134,7 @@ def test_a_newline_in_the_exception_cannot_forge_a_log_record(
 
 def test_the_gh_helper_does_not_hand_back_the_exception_text() -> None:
     """The root of the flow: every `result.get("error")` sink reads this dict."""
-    with patch(
-        "subprocess.run", side_effect=OSError(f"cannot exec {CREDENTIALS_FILE}")
-    ):
+    with patch("subprocess.run", side_effect=OSError(f"cannot exec {CREDENTIALS_FILE}")):
         result = gh.run_gh_command(["repo", "view"])
 
     assert result["success"] is False
@@ -165,12 +163,15 @@ def test_a_real_route_response_body_leaks_nothing(
     one "confines to the configured set" and "confines to the first entry" are
     the same observation.
     """
-    monkeypatch.setenv(
-        "APP_FILE_BROWSE_ROOTS", f"{tmp_path.parent}{os.pathsep}{tmp_path}"
-    )
+    monkeypatch.setenv("APP_FILE_BROWSE_ROOTS", f"{tmp_path.parent}{os.pathsep}{tmp_path}")
 
     app = FastAPI()
     app.include_router(terminal.router, prefix="/api/terminals")
+
+    @app.middleware("http")
+    async def _service_principal(request, call_next):
+        request.state.user = {"id": "default", "is_service": True}
+        return await call_next(request)
 
     with patch.object(terminal, "get_pty_manager", return_value=_FailingPtyManager()):
         response = TestClient(app, raise_server_exceptions=False).post(

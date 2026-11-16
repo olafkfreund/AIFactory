@@ -33,6 +33,7 @@ import inspect
 import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -229,9 +230,7 @@ async def test_settings_ollama_probe_of_a_refused_url_has_a_status() -> None:
 @pytest.mark.asyncio
 async def test_settings_api_profile_probe_of_a_private_host_has_a_status() -> None:
     """`settings.test_api_connection` -- strict posture refuses a private host."""
-    request = settings.TestConnectionRequest(
-        baseUrl="http://127.0.0.1:9999", apiKey="sk-secret"
-    )
+    request = settings.TestConnectionRequest(baseUrl="http://127.0.0.1:9999", apiKey="sk-secret")
     with patch.object(settings, "build_no_redirect_opener") as opener:
         result = await settings.test_api_connection(request)
     opener.assert_not_called()
@@ -320,7 +319,12 @@ async def test_terminal_remove_worktree_refusal_has_a_status() -> None:
     with service as cls:
         cls.return_value.remove_worktree.return_value = False
         result = await terminal.remove_terminal_worktree(
-            name="wt", project="/nonexistent/project", deleteBranch=False
+            name="wt",
+            http_request=SimpleNamespace(
+                state=SimpleNamespace(user={"id": "default", "is_service": True})
+            ),
+            project="/nonexistent/project",
+            deleteBranch=False,
         )
     status, payload = verdict(result)
     assert status == REFUSED_STATUS
@@ -335,9 +339,7 @@ async def test_cli_accounts_install_refusal_has_a_status() -> None:
     wrapped it in a coroutine. See `test_a_sync_handler_stays_sync`.
     """
     with patch.object(cli_accounts.subprocess, "run") as run:
-        run.return_value = subprocess.CompletedProcess(
-            [], returncode=1, stdout="", stderr=""
-        )
+        run.return_value = subprocess.CompletedProcess([], returncode=1, stdout="", stderr="")
         result = cli_accounts.install_or_update_cli(cli="codex")
     status, payload = verdict(result)
     assert status == REFUSED_STATUS
