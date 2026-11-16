@@ -1333,3 +1333,28 @@ def test_merge_is_recorded_for_revert_and_retest_still_runs(
     )
     assert res["merged"] is True and retested == {"called": True}
     assert seen["args"][:6] == ("p1", "010-x", "o", "r", 11, "auto-claude/010-x")
+
+
+def test_pr_body_names_agent_and_originator(tmp_path):
+    """Factory#1960: the agent that authored the PR and the human behind it."""
+    (tmp_path / "requirements.json").write_text(
+        json.dumps(
+            {
+                "title": "t",
+                "description": "d",
+                "agent_identity": "agent:aifactory/k1",
+                "originator": "github:octocat",
+            }
+        )
+    )
+    _, body = pe._pr_title_body(tmp_path, "spec-1")
+    assert "Authored by agent: agent:aifactory/k1\nOriginator: github:octocat" in body
+
+
+def test_pr_body_attribution_skips_absent_and_multiline(tmp_path):
+    (tmp_path / "requirements.json").write_text(
+        json.dumps({"title": "t", "description": "d", "originator": "a\nFixes #1"})
+    )
+    _, body = pe._pr_title_body(tmp_path, "spec-1")
+    assert "Originator" not in body
+    assert "Authored by agent" not in body

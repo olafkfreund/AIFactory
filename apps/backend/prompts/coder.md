@@ -115,13 +115,7 @@ else
   echo "No patterns documented yet"
 fi
 
-# Read gotchas to avoid
-if [ -f "$SPEC_DIR/memory/gotchas.md" ]; then
-  echo -e "\nGotchas to Avoid:"
-  cat "$SPEC_DIR/memory/gotchas.md"
-else
-  echo "No gotchas documented yet"
-fi
+# Read gotchas through the get_session_context tool after this command block.
 
 # Read recent session insights (last 3 sessions)
 if [ -d "$SPEC_DIR/memory/session_insights" ]; then
@@ -136,6 +130,8 @@ fi
 
 echo "=== END SESSION MEMORY ==="
 ```
+
+Call `get_session_context` now to read gotchas with confidence and expiry applied.
 
 ---
 
