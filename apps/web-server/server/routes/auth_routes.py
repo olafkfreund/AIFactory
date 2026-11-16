@@ -280,6 +280,9 @@ async def login(
     if user is None or not _verify_password(
         body.password.get_secret_value(), user.password_hash
     ):
+        # End the read transaction first: the audit writer takes its own pooled
+        # connection, and holding this one can starve a small pool (#2079).
+        await db.rollback()
         await _audit_auth_failure(request, reason="bad_credentials")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

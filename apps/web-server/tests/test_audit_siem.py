@@ -202,6 +202,9 @@ async def test_failed_login_and_bad_refresh_emit(sent):
     from server.routes import auth_routes
 
     class _Db:
+        async def rollback(self):
+            self.rolled_back = True
+
         async def execute(self, *_a):
             return SimpleNamespace(scalar_one_or_none=lambda: None)
 

@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 
 
-def _enabled() -> bool:
+def enabled() -> bool:
     return os.environ.get("AIFACTORY_AGENT_COMMIT_TRAILERS", "").strip().lower() in (
         "1",
         "true",
@@ -22,7 +22,7 @@ def _enabled() -> bool:
 
 def commit_trailer_args(spec_dir: Path | None) -> list[str]:
     """Trailer argv items for a commit; ``[]`` when off or unreadable. Never raises."""
-    if spec_dir is None or not _enabled():
+    if spec_dir is None or not enabled():
         return []
     try:
         data = json.loads((spec_dir / "requirements.json").read_text())
