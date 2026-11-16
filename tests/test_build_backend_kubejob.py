@@ -500,6 +500,65 @@ def test_build_job_env_propagates_non_claude_provider_env(
     assert "GEMINI_CLI_TRUST_WORKSPACE" not in env
 
 
+@pytest.fixture(autouse=True)
+def _clear_gateway_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for var in ("AIFACTORY_MODEL_GATEWAY_URL", "AIFACTORY_MODEL_GATEWAY_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
+
+
+def _direct_provider_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for var in bb._PASSTHROUGH_BUILD_ENV:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+    monkeypatch.setenv("OPENAI_COMPATIBLE_BASE_URL", "https://ollama.com")
+    monkeypatch.setenv("OPENAI_COMPATIBLE_API_KEY", "oc-key")
+    monkeypatch.setenv("OLLAMA_API_KEY", "ol-key")
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama:11434")
+
+
+def test_build_job_env_gateway_swaps_direct_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Factory#1959 stage 4: the Job gets the gateway origin and token, no direct key.
+    _direct_provider_env(monkeypatch)
+    monkeypatch.setenv("AIFACTORY_MODEL_GATEWAY_URL", " http://gw:8080/ ")
+    monkeypatch.setenv("AIFACTORY_MODEL_GATEWAY_TOKEN", " gw-tok ")
+    env = bb.build_job_env("oauth")
+    assert env["OPENAI_COMPATIBLE_BASE_URL"] == "http://gw:8080"
+    assert env["OPENAI_COMPATIBLE_API_KEY"] == "gw-tok"
+    assert "OLLAMA_API_KEY" not in env
+    assert "oc-key" not in env.values()
+    assert env["OPENAI_API_KEY"] == "sk-openai"  # plane C stays
+    assert env["OLLAMA_BASE_URL"] == "http://ollama:11434"
+
+
+@pytest.mark.parametrize("token", [None, "", "   "])
+def test_build_job_env_gateway_without_token_never_uses_direct_key(
+    monkeypatch: pytest.MonkeyPatch, token: str | None
+) -> None:
+    _direct_provider_env(monkeypatch)
+    monkeypatch.setenv("AIFACTORY_MODEL_GATEWAY_URL", "http://gw:8080")
+    if token is not None:
+        monkeypatch.setenv("AIFACTORY_MODEL_GATEWAY_TOKEN", token)
+    env = bb.build_job_env(None)
+    assert env["OPENAI_COMPATIBLE_API_KEY"] == "gateway-token-not-configured"
+    assert "oc-key" not in env.values()
+
+
+@pytest.mark.parametrize("url", [None, "", "  "])
+def test_build_job_env_gateway_flag_off_keeps_direct_keys(
+    monkeypatch: pytest.MonkeyPatch, url: str | None
+) -> None:
+    _direct_provider_env(monkeypatch)
+    monkeypatch.setenv("AIFACTORY_MODEL_GATEWAY_TOKEN", "gw-tok")
+    if url is not None:
+        monkeypatch.setenv("AIFACTORY_MODEL_GATEWAY_URL", url)
+    env = bb.build_job_env(None)
+    assert env["OPENAI_COMPATIBLE_API_KEY"] == "oc-key"
+    assert env["OPENAI_COMPATIBLE_BASE_URL"] == "https://ollama.com"
+    assert env["OLLAMA_API_KEY"] == "ol-key"
+
+
 def test_build_job_env_propagates_artifact_store_s3_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
