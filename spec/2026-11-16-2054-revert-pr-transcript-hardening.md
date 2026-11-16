@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2054
 intent: intent/2026-11-16-2054-revert-pr-transcript-hardening.md
 ---
