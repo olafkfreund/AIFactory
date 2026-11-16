@@ -1114,7 +1114,9 @@ def create_client(
                 HookMatcher(hooks=[precompact_summary_hook]),
             ],
         },
-        "max_turns": 1000,
+        "max_turns": int(os.environ.get("AIFACTORY_MAX_TURNS", ""))
+        if os.environ.get("AIFACTORY_MAX_TURNS", "").isdigit()
+        else 1000,
         "cwd": str(project_dir.resolve()),
         "settings": str(settings_file.resolve()),
         "env": sdk_env,  # Pass ANTHROPIC_BASE_URL etc. to subprocess
