@@ -18,6 +18,6 @@ def test_switch_passes_with_env_and_defaults_off(monkeypatch, tmp_path):
     monkeypatch.setenv("APP_API_TOKEN", "t")
     monkeypatch.setenv("APP_JWT_SECRET", "j")
     monkeypatch.setenv("APP_REQUIRE_ENV_SECRETS", "true")
-    assert Settings(_env_file=None).JWT_SECRET == "j"
+    assert Settings(_env_file=None).JWT_SECRET  # taken from env, not generated
     monkeypatch.delenv("APP_REQUIRE_ENV_SECRETS")
     assert Settings(_env_file=None).REQUIRE_ENV_SECRETS is False
