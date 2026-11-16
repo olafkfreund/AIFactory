@@ -273,6 +273,19 @@ def _probe_kubernetes() -> CredentialStatus:
     return CredentialStatus(False, "none")
 
 
+def _aws_file_env(**extra: str) -> dict[str, str]:
+    """Real ~/.aws paths for the server; the private HOME hides them (#3737)."""
+    env = dict(extra)
+    for name, fname in (
+        ("AWS_SHARED_CREDENTIALS_FILE", "credentials"),
+        ("AWS_CONFIG_FILE", "config"),
+    ):
+        path = Path.home() / ".aws" / fname
+        if path.is_file():
+            env[name] = str(path)
+    return env
+
+
 def _probe_aws() -> CredentialStatus:
     op = _load_operator_config().get("aws") or {}
 
@@ -284,7 +297,7 @@ def _probe_aws() -> CredentialStatus:
             return CredentialStatus(
                 available=True,
                 source=f"profile:{profile}",
-                env_vars={"AWS_PROFILE": profile},
+                env_vars=_aws_file_env(AWS_PROFILE=profile),
             )
 
     # Explicit access keys via env (most direct)
@@ -295,11 +308,19 @@ def _probe_aws() -> CredentialStatus:
     env_profile = _resolve_env("AWS_PROFILE")
     creds_file = Path.home() / ".aws" / "credentials"
     if env_profile and creds_file.is_file():
-        return CredentialStatus(available=True, source=f"env:AWS_PROFILE={env_profile}")
+        return CredentialStatus(
+            available=True,
+            source=f"env:AWS_PROFILE={env_profile}",
+            env_vars=_aws_file_env(AWS_PROFILE=env_profile),
+        )
 
     # Default ~/.aws/credentials (default profile)
     if creds_file.is_file():
-        return CredentialStatus(available=True, source="file:~/.aws/credentials")
+        return CredentialStatus(
+            available=True,
+            source="file:~/.aws/credentials",
+            env_vars=_aws_file_env(),
+        )
 
     # IRSA — EKS service account web identity (presence of the projected token file is sufficient)
     if _resolve_env("AWS_ROLE_ARN") and _resolve_env("AWS_WEB_IDENTITY_TOKEN_FILE"):

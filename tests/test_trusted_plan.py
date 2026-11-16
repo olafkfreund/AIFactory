@@ -9,6 +9,7 @@ incomplete plan must be rejected.
 """
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,7 @@ from trusted_plan import (
     CONTRACT_VERSION,
     check_plan_completeness,
     ingest_trusted_plan,
+    load_expiry_from_env,
     load_keyring_from_env,
     load_retired_kids_from_env,
     sign_plan,
@@ -363,6 +365,65 @@ class TestKeyRotation:
     def test_retired_kids_env_parsing(self):
         env = {"AIFACTORY_TRUSTED_PLAN_RETIRED_KIDS": "cfactory/old, 2025q1 ,"}
         assert load_retired_kids_from_env(env) == {"cfactory/old", "2025q1"}
+
+
+class TestKeyExpiry:
+    NOW = datetime(2026, 12, 1, tzinfo=UTC)
+
+    def _kid_plan(self):
+        plan = _complete_plan()
+        plan[APPROVAL_KEY] = sign_plan(
+            plan, key=NEW_KEY, approved_by="cfactory", approval_timestamp=TS, kid=KID
+        )
+        return plan
+
+    def test_before_then_after_expiry(self):
+        plan = self._kid_plan()
+        exp = load_expiry_from_env(
+            {"AIFACTORY_TRUSTED_PLAN_EXPIRY": "cfactory/2026q3=2027-01-01"}
+        )
+        assert verify_plan_signature(
+            plan, keyring=KEYED_RING, expiry=exp, now=self.NOW
+        )[0]
+        late = datetime(2027, 1, 1, tzinfo=UTC)
+        ok, reason = verify_plan_signature(
+            plan, keyring=KEYED_RING, expiry=exp, now=late
+        )
+        assert not ok
+        assert "expired" in reason
+
+    def test_legacy_key_expires(self):
+        exp = {"cfactory": datetime(2026, 1, 1, tzinfo=UTC)}
+        ok, reason = verify_plan_signature(
+            _signed(_complete_plan()), keyring=KEYRING, expiry=exp, now=self.NOW
+        )
+        assert not ok
+        assert "expired" in reason
+
+    def test_other_key_unaffected_and_unset_means_no_expiry(self):
+        exp = {"cfactory/other": datetime(2026, 1, 1, tzinfo=UTC)}
+        plan = self._kid_plan()
+        assert verify_plan_signature(
+            plan, keyring=KEYED_RING, expiry=exp, now=self.NOW
+        )[0]
+        assert verify_plan_signature(plan, keyring=KEYED_RING, expiry={}, now=self.NOW)[
+            0
+        ]
+
+    def test_malformed_date_fails_closed(self):
+        exp = load_expiry_from_env(
+            {"AIFACTORY_TRUSTED_PLAN_EXPIRY": "cfactory/2026q3=soon"}
+        )
+        assert exp == {"cfactory/2026q3": None}
+        ok, reason = verify_plan_signature(
+            self._kid_plan(), keyring=KEYED_RING, expiry=exp, now=self.NOW
+        )
+        assert not ok
+        assert "expired" in reason
+
+    def test_expiry_var_is_not_a_signing_key(self):
+        env = {"AIFACTORY_TRUSTED_PLAN_EXPIRY": "cfactory=2027-01-01"}
+        assert load_keyring_from_env(env) == {}
 
 
 if __name__ == "__main__":
