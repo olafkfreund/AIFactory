@@ -48,6 +48,7 @@ from functools import lru_cache
 from fastapi import Request, WebSocket, status
 from jose import JWTError, jwt
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import HTTPConnection
 from starlette.responses import JSONResponse
 
 from .config import get_settings
@@ -140,7 +141,7 @@ def _is_legacy_api_token(token: str) -> bool:
     return hmac.compare_digest(token, configured)
 
 
-async def _audit_auth_failure(request: Request, reason: str) -> None:
+async def _audit_auth_failure(request: HTTPConnection, reason: str) -> None:
     """Record a chained audit event for a rejected credential (Factory#313).
 
     Emitted only when a token was PRESENTED and rejected (invalid / expired /
