@@ -60,6 +60,18 @@ def test_push_uploads_with_evidence_role_and_removes_local(tmp_path, monkeypatch
     assert not local.exists()
 
 
+def test_push_key_is_project_qualified_by_job_id(tmp_path, monkeypatch):
+    monkeypatch.setenv("S3_ENDPOINT", "http://minio")
+    monkeypatch.setenv("JOB_ID", "proj-a:001-x")
+    transcript.start(tmp_path)
+    transcript.record("tool_start", "Read", {})
+    assert wf.maybe_push_transcripts("001-x") == 1
+    other = "aifactory/_/proj-b:001-x/evidence/transcripts/z.jsonl"
+    _FakeStore.blobs[other] = (b"", None)
+    uris = wf.transcript_uris("proj-a:001-x")
+    assert len(uris) == 1 and "proj-a:001-x" in uris[0] and "proj-b" not in uris[0]
+
+
 def test_push_nothing_recorded_uploads_nothing(tmp_path, monkeypatch):
     monkeypatch.setenv("S3_ENDPOINT", "http://minio")
     transcript.start(tmp_path)
