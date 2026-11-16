@@ -447,6 +447,26 @@ This is attempt {previous_error.get("consecutive_errors", 1) + 1}. If you fail t
 # =============================================================================
 
 
+def _fallback_transcript(task_logger, block_type: str, block) -> None:
+    """Record a fallback provider's tool call or result in the run transcript (#2054)."""
+    if not task_logger:
+        return
+    if block_type == "ToolUseBlock":
+        task_logger.transcript_tool_start(
+            getattr(block, "name", "unknown"),
+            {} if getattr(block, "input", None) is None else block.input,
+            getattr(block, "id", None),
+            LogPhase.VALIDATION,
+        )
+    elif block_type == "ToolResultBlock":
+        task_logger.transcript_tool_end(
+            getattr(block, "tool_use_id", None),
+            getattr(block, "content", ""),
+            getattr(block, "is_error", False),
+            LogPhase.VALIDATION,
+        )
+
+
 async def _run_tool_fallback(
     qa_analysis: str,
     spec_dir: Path,
@@ -548,34 +568,14 @@ IMPORTANT: You MUST read and then write the implementation_plan.json file. Do NO
             fb_response = ""
             fb_tool_count = 0
             async for msg in fallback.receive_response():
-                msg_type = type(msg).__name__
-                if msg_type == "AssistantMessage" and hasattr(msg, "content"):
-                    for block in msg.content:
-                        block_type = type(block).__name__
-                        if block_type == "TextBlock" and hasattr(block, "text"):
-                            fb_response += block.text
-                        elif block_type == "ToolUseBlock":
-                            fb_tool_count += 1
-                            if task_logger:
-                                # #2054: the fallback's tool calls belong in the
-                                # run transcript too.
-                                task_logger.transcript_tool_start(
-                                    getattr(block, "name", "unknown"),
-                                    {}
-                                    if getattr(block, "input", None) is None
-                                    else block.input,
-                                    getattr(block, "id", None),
-                                    LogPhase.VALIDATION,
-                                )
-                elif msg_type == "UserMessage" and hasattr(msg, "content"):
-                    for block in msg.content:
-                        if type(block).__name__ == "ToolResultBlock" and task_logger:
-                            task_logger.transcript_tool_end(
-                                getattr(block, "tool_use_id", None),
-                                getattr(block, "content", ""),
-                                getattr(block, "is_error", False),
-                                LogPhase.VALIDATION,
-                            )
+                # Assistant text and tool calls, and the user-side tool results.
+                for block in getattr(msg, "content", None) or []:
+                    block_type = type(block).__name__
+                    if block_type == "TextBlock" and hasattr(block, "text"):
+                        fb_response += block.text
+                    elif block_type == "ToolUseBlock":
+                        fb_tool_count += 1
+                    _fallback_transcript(task_logger, block_type, block)
 
         # Check if the fallback actually wrote qa_signoff
         status = get_qa_signoff_status(spec_dir)

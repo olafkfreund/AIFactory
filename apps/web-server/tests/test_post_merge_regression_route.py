@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import sys
 from pathlib import Path
@@ -35,8 +36,6 @@ def env(tmp_path, monkeypatch):
     async def _warm(org):
         calls["warm"] = org
 
-    import contextlib
-
     @contextlib.contextmanager
     def _tok(org, *, pinned=False):
         calls["pinned"].append((org, pinned))
@@ -55,7 +54,7 @@ def env(tmp_path, monkeypatch):
 
 def _call(task_id="p1:010-x", sha=SHA, url="https://ci/run/1"):
     body = tr.PostMergeRegression(merge_sha=sha, run_url=url)
-    return asyncio.run(tr.post_merge_regression(task_id, body))
+    return asyncio.run(tr.post_merge_regression(task_id, body, {}))
 
 
 def test_happy_path_filters_uris_and_pins_the_org(env):

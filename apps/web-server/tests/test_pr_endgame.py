@@ -1290,10 +1290,10 @@ def test_1766_required_checks_green(kw: dict[str, Any], want: bool | None) -> No
 
 
 @pytest.mark.parametrize("boom", [False, True])
-def test_merge_is_recorded_for_revert_and_retest_still_runs(monkeypatch, boom):
+def test_merge_is_recorded_for_revert_and_retest_still_runs(
+    monkeypatch, tmp_path, boom
+):
     # #2054: the pipeline remembers what it merged; a failure must not skip re-test.
-    from server.services import revert_pr
-
     seen = {}
 
     def _record(*args):
@@ -1301,7 +1301,7 @@ def test_merge_is_recorded_for_revert_and_retest_still_runs(monkeypatch, boom):
         if boom:
             raise RuntimeError("disk")
 
-    monkeypatch.setattr(revert_pr, "record_pipeline_merge", _record)
+    monkeypatch.setattr("server.services.revert_pr.record_pipeline_merge", _record)
     r = FakeRunner(
         {
             "git push": CmdResult(0, "", ""),
@@ -1316,9 +1316,9 @@ def test_merge_is_recorded_for_revert_and_retest_still_runs(monkeypatch, boom):
     retested = {}
     res = asyncio.run(
         pe.run_pr_endgame(
-            spec_dir=Path("/tmp"),
+            spec_dir=tmp_path,
             spec_id="010-x",
-            worktree=Path("/tmp"),
+            worktree=tmp_path,
             branch="auto-claude/010-x",
             base="main",
             repo="o/r",

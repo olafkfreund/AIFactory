@@ -30,11 +30,15 @@ CREATED = {
 }
 
 
+def _raise_full(*_args):
+    raise OSError("full")
+
+
 class Runner:
     def __init__(self, view=VIEW, listing=()):
         self.view, self.listing, self.calls = view, listing, []
 
-    def __call__(self, argv, cwd=None):
+    def __call__(self, argv, _cwd=None):
         self.calls.append(argv)
         if argv[:3] == ["gh", "pr", "view"]:
             return CmdResult(0, json.dumps(self.view), "")
@@ -162,7 +166,7 @@ def test_url_persist_failure_keeps_the_record_and_retry_reconciles(monkeypatch):
     monkeypatch.setattr(
         rp,
         "atomic_write_secret_json",
-        lambda *a: (_ for _ in ()).throw(OSError("full")),
+        _raise_full,
     )
     r = Runner()
     assert _open(r)["reason"] == "created"

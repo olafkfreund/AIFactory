@@ -11,15 +11,15 @@ import json
 import logging
 import re
 from pathlib import Path
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from server.project_registry import load_projects, org_id_for_path
+from server.routes.project_authz import require_task_access
+from server.services import github_app, revert_pr
 from server.specpath import safe_spec_component
-
-from ..services import github_app, revert_pr
-from .project_authz import require_task_access
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -47,7 +47,7 @@ def _transcript_uris(spec_dir: Path) -> list[str]:
 async def post_merge_regression(
     task_id: str,
     body: PostMergeRegression,
-    _access: dict = Depends(require_task_access("member")),
+    _access: Annotated[dict, Depends(require_task_access("member"))],
 ):
     """Open a revert PR for ``body.merge_sha`` if the pipeline merged it."""
     project_id, _, spec_id = task_id.partition(":")

@@ -130,6 +130,28 @@ def _existing_revert(owner: str, repo: str, pr: int, runner: Runner) -> str | No
     return ""  # shortcut: first 100 search hits only; upgrade if a PR has more
 
 
+def _refusal(
+    found: tuple[Path, dict[str, Any]] | None, project_id: str, spec_id: str
+) -> dict[str, Any] | None:
+    """Refuse a record that is missing or belongs to another project or spec."""
+    if found is None:
+        return {"ok": False, "reason": "not_pipeline_merged"}
+    rec = found[1]
+    if rec.get("project_id") != project_id or rec.get("spec_id") != spec_id:
+        return {"ok": False, "reason": "not_pipeline_merged"}
+    return None
+
+
+def _confirmed(view: dict[str, Any] | None, rec: dict[str, Any]) -> bool:
+    """GitHub still shows the recorded PR as merged, from that branch and commit."""
+    return bool(
+        view
+        and view.get("state") == "MERGED"
+        and view.get("headRefName") == rec.get("branch")
+        and (view.get("mergeCommit") or {}).get("oid") == rec.get("merge_sha")
+    )
+
+
 def open_revert_pr(  # noqa: PLR0913 - the caller names every input
     *,
     project_id: str,
@@ -142,21 +164,15 @@ def open_revert_pr(  # noqa: PLR0913 - the caller names every input
     """Open (once) a revert PR for the pipeline-merged commit ``failing_sha``."""
     with _LOCK:
         found = _find_record(failing_sha)
-        if found is None:
-            return {"ok": False, "reason": "not_pipeline_merged"}
+        refusal = _refusal(found, project_id, spec_id)
+        if refusal or found is None:
+            return refusal or {"ok": False, "reason": "not_pipeline_merged"}
         path, rec = found
-        if rec.get("project_id") != project_id or rec.get("spec_id") != spec_id:
-            return {"ok": False, "reason": "not_pipeline_merged"}
         if rec.get("revert_pr_url"):
             return {"ok": True, "reason": "exists", "url": rec["revert_pr_url"]}
         owner, repo, pr = rec["owner"], rec["repo"], int(rec["pr"])
         view = _view(owner, repo, pr, runner)
-        if (
-            not view
-            or view.get("state") != "MERGED"
-            or view.get("headRefName") != rec.get("branch")
-            or (view.get("mergeCommit") or {}).get("oid") != rec.get("merge_sha")
-        ):
+        if not _confirmed(view, rec) or view is None:
             return {"ok": False, "reason": "merge_not_confirmed"}
         url = _existing_revert(owner, repo, pr, runner)
         if url is None:

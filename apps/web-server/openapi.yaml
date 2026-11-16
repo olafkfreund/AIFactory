@@ -4733,6 +4733,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/{task_id}/post-merge-regression:
+    post:
+      tags:
+      - Tasks
+      summary: Post Merge Regression
+      description: Open a revert PR for ``body.merge_sha`` if the pipeline merged it.
+      operationId: post_merge_regression_api_tasks__task_id__post_merge_regression_post
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PostMergeRegression'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/tasks/{task_id}/qa-report:
     get:
       tags:
@@ -12635,6 +12667,24 @@ components:
       required:
       - projectId
       title: PersistTokenRequest
+    PostMergeRegression:
+      properties:
+        merge_sha:
+          type: string
+          maxLength: 40
+          minLength: 7
+          pattern: ^[0-9a-fA-F]+$
+          title: Merge Sha
+        run_url:
+          type: string
+          maxLength: 500
+          pattern: ^https://\S+$
+          title: Run Url
+      type: object
+      required:
+      - merge_sha
+      - run_url
+      title: PostMergeRegression
     PostPRCommentRequest:
       properties:
         body:

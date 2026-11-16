@@ -116,3 +116,8 @@ adds a best-effort marker write; no data migration.
   line, and record writes are atomic (`atomic_write_secret_json`). The viewer
   denial is asserted via the route's `require_task_access("member")` dependency,
   not an HTTP call.
+- CI fixes: regenerated `apps/web-server/openapi.yaml` and the autonomy matrix
+  (generators, not hand edits); cleared the strict-ruff ratchet by moving the
+  merge hook to `pr_endgame._after_merge` and the fallback recording to
+  `reviewer._fallback_transcript`, and by using `Annotated` for the route's
+  dependency.
