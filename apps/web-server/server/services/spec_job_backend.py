@@ -228,6 +228,39 @@ class SpecJobProcess:
             self._run(batch_factory, finish, poll_interval, line_source)
         )
 
+    async def _feed(self, line: str) -> None:
+        # shortcut: reads StreamReader._buffer; no public unread size. Drop
+        # lines while a consumer lags rather than grow without bound.
+        if len(self.stdout._buffer) > _LOG_BUFFER_MAX:  # type: ignore[attr-defined]
+            return
+        self.stdout.feed_data((line[:_LOG_LINE_MAX] + "\n").encode())
+
+    async def _delete_job(self, batch: Any) -> None:
+        try:
+            await asyncio.wait_for(
+                batch.delete_namespaced_job(
+                    self.job_name, self.namespace, propagation_policy="Background"
+                ),
+                timeout=_API_CALL_TIMEOUT,
+            )
+        except Exception:  # noqa: BLE001 - stop still completes
+            _log.exception(
+                "[spec_job_backend] could not delete Job %s/%s",
+                sanitize_log(self.namespace),
+                sanitize_log(self.job_name),
+            )
+
+    async def _poll_outcome(self, batch: Any) -> str:
+        try:
+            return await asyncio.wait_for(
+                build_backend.KubeJobBuildBackend._job_outcome(
+                    batch, self.namespace, self.job_name
+                ),
+                timeout=_API_CALL_TIMEOUT,
+            )
+        except TimeoutError:  # a stalled call must not skip the deadline
+            return "running"
+
     async def _run(
         self,
         batch_factory: Callable[[], Awaitable[Any]],
@@ -237,18 +270,11 @@ class SpecJobProcess:
     ) -> None:
         outcome: str | None = None
 
-        async def feed(line: str) -> None:
-            # shortcut: reads StreamReader._buffer; no public unread size. Drop
-            # lines while a consumer lags rather than grow without bound.
-            if len(self.stdout._buffer) > _LOG_BUFFER_MAX:  # type: ignore[attr-defined]
-                return
-            self.stdout.feed_data((line[:_LOG_LINE_MAX] + "\n").encode())
-
         async def active() -> bool:
             return outcome is None and not self._stop.is_set()
 
         stream = asyncio.create_task(
-            KubeJobLogStreamer(log_sink=feed, line_source=line_source).stream(
+            KubeJobLogStreamer(log_sink=self._feed, line_source=line_source).stream(
                 namespace=self.namespace,
                 job_name=self.job_name,
                 spec_id=self.job_name,
@@ -268,33 +294,11 @@ class SpecJobProcess:
                         sanitize_log(self.job_name),
                     )
                 if self._stop.is_set() or timed_out:
-                    try:
-                        await asyncio.wait_for(
-                            batch.delete_namespaced_job(
-                                self.job_name,
-                                self.namespace,
-                                propagation_policy="Background",
-                            ),
-                            timeout=_API_CALL_TIMEOUT,
-                        )
-                    except Exception:  # noqa: BLE001 - stop still completes
-                        _log.exception(
-                            "[spec_job_backend] could not delete Job %s/%s",
-                            sanitize_log(self.namespace),
-                            sanitize_log(self.job_name),
-                        )
+                    await self._delete_job(batch)
                     self.returncode = 1 if timed_out else -15
                     outcome = "failed"  # ends the log follow
                     break
-                try:
-                    outcome = await asyncio.wait_for(
-                        build_backend.KubeJobBuildBackend._job_outcome(
-                            batch, self.namespace, self.job_name
-                        ),
-                        timeout=_API_CALL_TIMEOUT,
-                    )
-                except TimeoutError:  # a stalled call must not skip the deadline
-                    outcome = "running"
+                outcome = await self._poll_outcome(batch)
                 if outcome in {"succeeded", "failed", "gone"}:
                     break
                 outcome = None
