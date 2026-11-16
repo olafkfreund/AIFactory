@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import tomllib
 from dataclasses import dataclass, field
@@ -121,8 +122,11 @@ def generate_lock(nixpkgs: str = DEFAULT_NIXPKGS) -> str | None:
 
 
 # language -> (nix python attr | node attr). Extend as the fleet grows.
+# 3.11 is NOT here (#1020): at the pin its package set cannot build pip,
+# fastapi, httpx and more ("sphinx-9.1.0 not supported for interpreter
+# python3.11"), so a 3.11 lane with those libs got a flake that could not
+# evaluate. It now installs through uv like any version the pin cannot serve.
 _PY_ATTR = {
-    "3.11": "python311",
     "3.12": "python312",
     "3.13": "python313",
     "3.14": "python314",
@@ -345,6 +349,8 @@ def _go_attr(m: Manifest) -> str:
 # nixpkgs top-level attrs we know how to map system_packages onto. Browser libs
 # come bundled with playwright-driver.browsers, so a bare 'chromium' is dropped
 # in favour of the playwright stack (added separately) to avoid version skew.
+# `python`/`pip` are not here (#1020): dropping them is right only on the Python
+# branch, whose harness supplies them, so _system_pkg_attrs decides per language.
 _DROP_SYSTEM_PKGS = {
     "chromium",
     "playwright",
@@ -355,8 +361,8 @@ _DROP_SYSTEM_PKGS = {
     # runner itself comes from npm at lane setup, because nixpkgs has no jest
     # attribute to name (see the jest block in generate_flake).
     "jest",
-    # The Python harness already supplies all three via `withPackages` a few
-    # lines below, and NONE of them is a top-level nixpkgs attr -- `pkgs.pytest`
+    # The Python harness already supplies pytest via `withPackages` a few
+    # lines below, and it is not a top-level nixpkgs attr -- `pkgs.pytest`
     # does not exist (nixpkgs suggests "btest, cpptest, evtest"), so emitting it
     # failed the WHOLE flake eval, not just that package. A manifest naming
     # `pytest` in system_packages is the most obvious thing a planner writes for
@@ -367,8 +373,6 @@ _DROP_SYSTEM_PKGS = {
     # (Factory#1007) and invisible for the same reason: the unit tests assert on
     # the flake's TEXT, and nothing evaluated one.
     "pytest",
-    "pip",
-    "python",
     # `selenium` is a PyPI/npm package, not a nixpkgs top-level attr — the same
     # shape as `jest` above. Unlike `jest` it does NOT name a toolchain we can
     # infer: selenium bindings exist for Python and for node, and the manifest's
@@ -383,17 +387,19 @@ _DROP_SYSTEM_PKGS = {
 # pinned rev (Factory#1009). These differ from _DROP_SYSTEM_PKGS: they name a
 # REAL toolchain, so dropping them would silently take the toolchain away rather
 # than fix the flake. Each token below was measured against nixpkgs 567a49d1 —
-# `pkgs.node`, `pkgs.npm`, `pkgs.rust`, `pkgs.dotnet` and `pkgs.vitest` do not
-# exist, and a missing attr fails the WHOLE devShell eval, so the lane reports a
-# runner failure instead of a test result (reads as flakiness, is not).
+# `pkgs.node`, `pkgs.npm` and `pkgs.vitest` do not exist, and a missing attr
+# fails the WHOLE devShell eval, so the lane reports a runner failure instead of
+# a test result (reads as flakiness, is not).
 #
 #   node/npm -> nodejs_22, the same attr the jest and browser blocks add; npm
 #               ships inside the nodejs derivation, so it needs no attr of its own.
 #   vitest   -> nodejs_22 too: no nixpkgs attr exists, but unlike selenium it is
 #               unambiguously a node runner, so the token buys node and the
 #               runner comes from npm at lane setup (the jest contract).
-#   rust     -> rustc. `cargo` is already a valid top-level attr and needs no alias.
-#   dotnet   -> dotnet-sdk.
+#
+# `rust` and `dotnet` left this table (#1020): as a system_package `rust` meant
+# rustc alone while `language: rust` meant rustc + cargo, so `cargo test` died.
+# _system_pkg_attrs now reads _LANG_ATTRS for any language token, one meaning.
 #
 # Aliasing makes collisions routine — `node` + `npm` is the likeliest pair a
 # planner writes, and `vitest` beside a browser lane is another — so
@@ -404,17 +410,30 @@ _SYSTEM_PKG_ALIASES = {
     "node": "nodejs_22",
     "npm": "nodejs_22",
     "vitest": "nodejs_22",
-    "rust": "rustc",
-    "dotnet": "dotnet-sdk",
+    # Real attrs at the pin that are also _LANG_ATTRS keys. As a system_package
+    # they keep their own meaning: `typescript` is tsc, not just node (#1020).
+    "typescript": "typescript",
+    "nodejs": "nodejs",
 }
 
 
-def _system_pkg_attrs(m: Manifest) -> list[str]:
-    return [
-        _SYSTEM_PKG_ALIASES.get(p.lower(), p)
-        for p in m.system_packages
-        if p.lower() not in _DROP_SYSTEM_PKGS
-    ]
+def _system_pkg_attrs(m: Manifest, lang: str) -> list[str]:
+    """One lookup per token, lower-cased (#1020): python/pip, drop, alias, language."""
+    attrs: list[str] = []
+    for raw in m.system_packages:
+        package = raw.lower()
+        if package in ("python", "pip"):
+            if lang != "python":
+                attrs.append("python313")
+        elif package in _DROP_SYSTEM_PKGS:
+            continue
+        elif package in _SYSTEM_PKG_ALIASES:
+            attrs.append(_SYSTEM_PKG_ALIASES[package])
+        elif package in _LANG_ATTRS:
+            attrs.extend(_LANG_ATTRS[package])
+        else:
+            attrs.append(package)
+    return attrs
 
 
 # Declared `language` -> the nixpkgs attrs that put its toolchain on PATH
@@ -498,6 +517,86 @@ def _descriptor_for_language(lang: str) -> LanguageDescriptor | None:
     return descriptor
 
 
+# A toolchain version or package name that reaches the generated flake verbatim
+# (a comment, a Nix string, a shellHook) must not be able to end that context:
+# a newline, `"`, `''` or `${` in a manifest value would otherwise become Nix code.
+_VERSION_RE = re.compile(r"\d+(\.\d+){0,2}")
+_PIP_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+
+def _checked_version(tool: str, ver: object) -> str:
+    # A YAML/JSON number is refused, not stringified: 3.10 parses as 3.1 and the
+    # lane would get the wrong interpreter with no sign of why.
+    if not isinstance(ver, str) or not _VERSION_RE.fullmatch(ver):
+        raise ProvisionError(
+            f"toolchain.{tool} {ver!r} is not a quoted version string like '3.12' or '1.22.3'"
+        )
+    return ver
+
+
+def _installed_go_env(go_ver: object) -> str:
+    """GOTOOLCHAIN env for a Go version the pin does not carry, else ''."""
+    if not go_ver or go_ver in _GO_ATTR:
+        return ""
+    ver = _checked_version("go", go_ver)
+    parts = [int(x) for x in ver.split(".")]
+    # GOTOOLCHAIN can only switch to Go >= 1.21, the first release published as
+    # a downloadable toolchain, and only those name their first patch `X.Y.0`.
+    if len(parts) < 2 or (parts[0], parts[1]) < (1, 21):  # noqa: PLR2004
+        raise ProvisionError(
+            f"toolchain.go {ver!r}: only Go 1.21 or later can be installed via GOTOOLCHAIN"
+        )
+    full = f"{ver}.0" if len(parts) == 2 else ver  # noqa: PLR2004
+    logging.getLogger(__name__).warning(
+        "Go %s is not in _GO_ATTR; installing go%s via GOTOOLCHAIN", ver, full
+    )
+    return (
+        f"\n        # Go {ver} is not in nixpkgs pin; installed via GOTOOLCHAIN.\n"
+        f'        GOTOOLCHAIN = "go{full}";'
+    )
+
+
+def _installed_python_hook(py_ver: object, py_pkgs: list[str]) -> str:
+    """shellHook that installs a Python the pin does not carry, via uv."""
+    ver = _checked_version("python", py_ver)
+    bad = [p for p in py_pkgs if not _PIP_NAME_RE.fullmatch(p)]
+    if bad:
+        raise ProvisionError(f"python package names not installable via uv: {bad}")
+    logging.getLogger(__name__).warning(
+        "Python %s is not in _PY_ATTR; installing via uv in shellHook", ver
+    )
+    install = f"\n          uv pip install {' '.join(py_pkgs)}" if py_pkgs else ""
+    return (
+        f"\n        # Python {ver} is not in nixpkgs pin; installed via uv.\n"
+        "        shellHook = ''\n"
+        '          export VIRTUAL_ENV="$PWD/.factory-venv"\n'
+        f'          uv venv --python {ver} "$PWD/.factory-venv" --allow-existing'
+        f"{install}\n"
+        '          export PATH="$PWD/.factory-venv/bin:$PATH"\n'
+        "        '';"
+    )
+
+
+def _python_toolchain(m: Manifest, project_dir: Path | str | None = None) -> tuple[str, str]:
+    """(package line, shellHook) for the Python branch.
+
+    A version in _PY_ATTR gets the Nix interpreter (with its libs via
+    withPackages); one the pin does not carry gets uv and an install hook.
+    """
+    py_ver = m.toolchain.get("python")
+    py_pkgs = [_PY_PKG_ALIASES.get(p, p) for p in _python_libs(m, project_dir=project_dir)]
+    if py_ver and py_ver not in _PY_ATTR:
+        return "pkgs.uv", _installed_python_hook(py_ver, py_pkgs)
+    py = _python_attr(m)
+    if not py_pkgs:
+        return f"pkgs.{py}", ""
+    # Reference each attr as ``p."name"`` (quoted) rather than
+    # ``with p; [ name ]`` so hyphenated attrs (pytest-cov,
+    # scikit-learn) don't parse as Nix subtraction.
+    joined = " ".join(f'p."{name}"' for name in py_pkgs)
+    return f"(pkgs.{py}.withPackages (p: [ {joined} ]))", ""
+
+
 def generate_flake(env: dict, *, nixpkgs: str = DEFAULT_NIXPKGS, project_dir=None) -> str:
     """Render a reproducible `flake.nix` from an RFC-0005 environment manifest.
 
@@ -511,7 +610,7 @@ def generate_flake(env: dict, *, nixpkgs: str = DEFAULT_NIXPKGS, project_dir=Non
     """
     m = Manifest.from_contract(env)
     lang = (m.language or "python").lower()
-    sys_attrs = _system_pkg_attrs(m)
+    sys_attrs = _system_pkg_attrs(m, lang)
 
     # Descriptor-declared languages (swift, kotlin, ...): resolved FIRST so the
     # paved road extends the generator without touching it, but only for
@@ -521,6 +620,7 @@ def generate_flake(env: dict, *, nixpkgs: str = DEFAULT_NIXPKGS, project_dir=Non
 
     descriptor_env: dict[str, str] = {}
     pkg_lines: list[str] = []
+    env_lines = ""
     if descriptor is not None:
         # Same contract as _LANG_ATTRS: a fixed attr list, prepended so it flows
         # through the dedupe; libraries come from the language's own package
@@ -532,6 +632,7 @@ def generate_flake(env: dict, *, nixpkgs: str = DEFAULT_NIXPKGS, project_dir=Non
         # Go has no withPackages set — the toolchain is one attr; test/coverage
         # tools (gotestsum, gocover-cobertura) ride in as system_packages.
         pkg_lines.append(f"pkgs.{_go_attr(m)}")
+        env_lines += _installed_go_env(m.toolchain.get("go"))
     elif lang in _LANG_ATTRS:
         # Fixed attr list, no withPackages set — the language's own package
         # manager (cargo, maven, nuget, npm) installs libraries at lane setup,
@@ -545,16 +646,9 @@ def generate_flake(env: dict, *, nixpkgs: str = DEFAULT_NIXPKGS, project_dir=Non
         # python's is a `withPackages` expression, not a bare attr name.)
         sys_attrs = _LANG_ATTRS[lang] + sys_attrs
     elif lang == "python":
-        py = _python_attr(m)
-        py_pkgs = [_PY_PKG_ALIASES.get(p, p) for p in _python_libs(m, project_dir=project_dir)]
-        if py_pkgs:
-            # Reference each attr as ``p."name"`` (quoted) rather than
-            # ``with p; [ name ]`` so hyphenated attrs (pytest-cov,
-            # scikit-learn) don't parse as Nix subtraction.
-            joined = " ".join(f'p."{name}"' for name in py_pkgs)
-            pkg_lines.append(f"(pkgs.{py}.withPackages (p: [ {joined} ]))")
-        else:
-            pkg_lines.append(f"pkgs.{py}")
+        py_line, py_hook = _python_toolchain(m, project_dir)
+        pkg_lines.append(py_line)
+        env_lines += py_hook
     else:
         # FAIL CLOSED. Emitting the Python shell here is what #1012 was: the
         # generated flake builds, the lane starts, and the declared command dies
@@ -620,7 +714,6 @@ def generate_flake(env: dict, *, nixpkgs: str = DEFAULT_NIXPKGS, project_dir=Non
     packages = "\n          ".join(pkg_lines)
 
     let_lines = ""
-    env_lines = ""
     for var, value in descriptor_env.items():
         # Values are Nix string expressions from the descriptor ("${pkgs...}"
         # interpolation included), emitted verbatim into the devShell.
