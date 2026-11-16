@@ -60,3 +60,11 @@ def test_worker_events_use_env_task_id(tmp_path, monkeypatch, env, expected):
         elapsed_ms=1,
     )
     assert seen["task_id"] == expected
+
+
+def test_completion_emitter_loads_standalone(monkeypatch):
+    """#2064: the file-path load must resolve completion.py's relative imports."""
+    monkeypatch.setattr(pi, "_completion_mod", None)
+    mod = pi._load_completion_emitter()
+    assert mod is not None
+    assert callable(mod.classify_billing_mode)

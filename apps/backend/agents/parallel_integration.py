@@ -31,6 +31,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -152,13 +153,22 @@ def _load_completion_emitter() -> Any:
             _completion_mod = False
             return None
         spec = importlib.util.spec_from_file_location(
-            "aifactory_completion_emitter", comp_path
+            "aifactory_completion_emitter",
+            comp_path,
+            # Package-style load so completion.py's relative `.billing` import
+            # resolves against its sibling directory (#2064).
+            submodule_search_locations=[str(comp_path.parent)],
         )
         if spec is None or spec.loader is None:
             _completion_mod = False
             return None
         mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
+        sys.modules[spec.name] = mod  # relative imports look the package up here
+        try:
+            spec.loader.exec_module(mod)
+        except BaseException:
+            sys.modules.pop(spec.name, None)
+            raise
         _completion_mod = mod
         return mod
     except Exception:  # noqa: BLE001 — emitter is optional; never break a build
