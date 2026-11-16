@@ -4,6 +4,7 @@ Task management routes.
 Handles CRUD operations for tasks (specs) within projects.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -471,7 +472,7 @@ async def update_task_status(
 
     # Auto-close linked GitHub issue when task is marked done
     if update.status == "done":
-        _try_close_github_issue(project_path, spec_dir)
+        await asyncio.to_thread(_try_close_github_issue, project_path, spec_dir)
         # Emit the RFC-0001 completion event so CFactory can thread the unit of
         # work end to end (best-effort — never breaks the request). #342.
         try:

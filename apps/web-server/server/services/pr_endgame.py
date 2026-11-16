@@ -37,9 +37,9 @@ from server.services.build_backend import task_repo_dir
 from server.services.task_branch import resolve_task_branch
 from server.utils.subprocess_env import (
     child_env,
-    github_env,
     lfs_upload,
     merge_driver_pins,
+    project_github_env,
 )
 
 # subprocess_env above puts apps/backend on sys.path.
@@ -79,7 +79,7 @@ Runner = Callable[[list[str], "str | None"], CmdResult]
 def _default_runner(
     argv: list[str], cwd: str | None = None, timeout: int = 120
 ) -> CmdResult:
-    with github_env(child_env()) as env:
+    with project_github_env(cwd, child_env()) as env:
         p = subprocess.run(
             argv,
             cwd=cwd,

@@ -75,3 +75,19 @@ def test_malformed_registry_entries_are_skipped(
     assert project_registry.org_id_for_path(acme) == "acme"
     registry.write_text(json.dumps({"a": {"path": str(acme), "org_id": ["acme"]}}))
     assert project_registry.org_id_for_path(acme) is None
+
+
+def test_overlaps_other_org(tmp_path: Path) -> None:
+    acme = tmp_path / "acme"
+    projects = {
+        "a": {"path": str(acme), "org_id": "acme"},
+        "bad": {"path": 7, "org_id": "x"},
+    }
+    check = project_registry.overlaps_other_org
+    assert check(acme / "sub", "globex", projects)
+    assert check(tmp_path, "globex", projects)
+    assert check(acme, "globex", projects)
+    assert not check(acme / "sub", "acme", projects)
+    assert not check(tmp_path / "other", "globex", projects)
+    assert not check(acme, "globex", projects, skip="a")
+    assert not check(tmp_path / "acme2", "globex", projects)
