@@ -344,12 +344,9 @@ def verify_plan_signature(
     authority = str(envelope["approved_by"]).strip().lower()
     kid = envelope.get("kid")
     key, reason = _select_verification_key(keyring, retired_kids, authority, kid)
-    if key is None:
+    reason = reason or _expiry_reason(authority, kid, expiry, now)
+    if key is None or reason:
         return False, reason
-
-    expired = _expiry_reason(authority, kid, expiry, now)
-    if expired:
-        return False, expired
 
     expected = hmac.new(
         key.encode("utf-8"),
