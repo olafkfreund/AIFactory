@@ -41,7 +41,7 @@ import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 from urllib.parse import urlparse, urlsplit
 
 from factory_common.logsafe import sanitize_log
@@ -375,7 +375,12 @@ def _read_tenant_id(spec_dir: Path) -> str | None:
     return str(tenant) if tenant else None
 
 
-def _read_attribution(spec_dir: Path) -> dict[str, str | None]:
+class _Attribution(TypedDict):
+    originator: str | None
+    agent_identity: str | None
+
+
+def _read_attribution(spec_dir: Path) -> _Attribution:
     """``originator`` / ``agent_identity`` as recorded in ``requirements.json``.
 
     Same constraints as :func:`_read_tenant_id`; values are copied unchanged and
@@ -387,9 +392,10 @@ def _read_attribution(spec_dir: Path) -> dict[str, str | None]:
         req = None
     if not isinstance(req, dict):
         req = {}
+    o, a = req.get("originator"), req.get("agent_identity")
     return {
-        k: v if isinstance(v := req.get(k), str) and v else None
-        for k in ("originator", "agent_identity")
+        "originator": o if isinstance(o, str) and o else None,
+        "agent_identity": a if isinstance(a, str) and a else None,
     }
 
 
