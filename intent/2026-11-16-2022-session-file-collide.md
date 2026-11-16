@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2022
 author: olafkfreund
 ---
