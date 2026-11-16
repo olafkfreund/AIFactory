@@ -216,23 +216,51 @@ def test_no_token_passes_base_env_through(
     assert list(tmp_path.glob("aif-gh-*")) == []
 
 
-@pytest.mark.skipif(
-    not (shutil.which("git") and shutil.which("gh")), reason="needs git and gh"
-)
+_STUB_GH = """#!/bin/sh
+# Test stub: reads the token from the managed hosts.yml (JSON), never the host.
+tok=$(sed -n 's/.*"oauth_token": *"\\([^"]*\\)".*/\\1/p' "$GH_CONFIG_DIR/hosts.yml")
+case "$1 $2 $3" in
+  "auth token "*) printf '%s\\n' "$tok" ;;
+  "auth git-credential get")
+    printf 'protocol=https\\nhost=github.com\\nusername=x-access-token\\npassword=%s\\n' "$tok" ;;
+esac
+"""
+
+
+def _redact(s: str) -> str:
+    return f"<{len(s)} chars, token={'yes' if TOKEN in s else 'no'}>"
+
+
+def _isolate(
+    env: dict[str, str], root: Path, gitconfig: str = "/dev/null"
+) -> dict[str, str]:
+    """Env that cannot see the host's gh login, keyring or git config."""
+    bin_dir = root / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    gh = bin_dir / "gh"
+    gh.write_text(_STUB_GH)
+    gh.chmod(0o755)
+    home = root / "home"
+    home.mkdir(exist_ok=True)
+    return {
+        **env,
+        "PATH": f"{bin_dir}{os.pathsep}{env.get('PATH', '')}",
+        "HOME": str(home),
+        "XDG_CONFIG_HOME": str(home / ".config"),
+        "GIT_CONFIG_GLOBAL": gitconfig,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_TERMINAL_PROMPT": "0",
+    }
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="needs git and gh")
 def test_helper_reset_keeps_store_from_saving_token(tmp_path: Path) -> None:
     home = tmp_path / "home"
     home.mkdir()
     gitconfig = home / ".gitconfig"
     gitconfig.write_text("[credential]\n\thelper = store\n")
     with gc.github_env(ce.child_env()) as env:
-        env = {
-            **env,
-            "HOME": str(home),
-            "XDG_CONFIG_HOME": str(home / ".config"),
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_TERMINAL_PROMPT": "0",
-            "GIT_CONFIG_GLOBAL": str(gitconfig),
-        }
+        env = _isolate(env, tmp_path, str(gitconfig))
         req = "protocol=https\nhost=github.com\n\n"
         fill = subprocess.run(  # noqa: S603
             ["git", "credential", "fill"],  # noqa: S607
@@ -240,25 +268,28 @@ def test_helper_reset_keeps_store_from_saving_token(tmp_path: Path) -> None:
             capture_output=True,
             text=True,
             env=env,
+            cwd=tmp_path,
             check=False,
         )
         assert fill.returncode == 0
-        assert TOKEN in fill.stdout
+        has_token = TOKEN in fill.stdout  # bool first: pytest would echo operands
+        assert has_token, _redact(fill.stdout)
         approve = subprocess.run(  # noqa: S603
             ["git", "credential", "approve"],  # noqa: S607
             input=fill.stdout,
             capture_output=True,
             text=True,
             env=env,
+            cwd=tmp_path,
             check=False,
         )
         assert approve.returncode == 0
     assert not (home / ".git-credentials").exists()
 
 
-@pytest.mark.skipif(not shutil.which("gh"), reason="needs gh")
-def test_real_gh_reads_token_without_rewriting_hosts() -> None:
+def test_real_gh_reads_token_without_rewriting_hosts(tmp_path: Path) -> None:
     with gc.github_env(ce.child_env()) as env:
+        env = _isolate(env, tmp_path)
         d = Path(env["GH_CONFIG_DIR"])
         before = (d / "hosts.yml").read_bytes()
         r = subprocess.run(  # noqa: S603
@@ -266,9 +297,11 @@ def test_real_gh_reads_token_without_rewriting_hosts() -> None:
             capture_output=True,
             text=True,
             env=env,
+            cwd=tmp_path,
             check=False,
         )
-        assert r.stdout.strip() == TOKEN
+        same = r.stdout.strip() == TOKEN
+        assert same, _redact(r.stdout)
         assert sorted(p.name for p in d.iterdir()) == ["hosts.yml"]
         assert (d / "hosts.yml").read_bytes() == before
 

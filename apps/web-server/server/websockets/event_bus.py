@@ -150,11 +150,9 @@ Scope = BroadcastScope | UserScope | OrgScope
 
 def _payload_org(payload: dict[str, Any]) -> str | None:
     org: str | None = payload.get("org_id")
-    if org is not None:
-        return org
     data = payload.get("data")
     nested: str | None = data.get("org_id") if isinstance(data, dict) else None
-    return nested
+    return org or nested
 
 
 def _may_receive(client: ConnectedClient, org: str | None) -> bool:

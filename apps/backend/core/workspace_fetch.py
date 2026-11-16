@@ -20,7 +20,9 @@ import logging
 import os
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
+from typing import Any
 
 from core import process_hardening
 from core.child_env import child_env, lfs_upload
@@ -744,10 +746,19 @@ _SPEC_FILE_MAX_BYTES = 8 << 20
 _PLAN_VERDICT_KEYS = frozenset(
     {"qa_signoff", "qa_iteration_history", "qa_stats", "contractHold"}
 )
+# Progress the control plane owns: a Job's snapshot must not set or overwrite it.
+_PLAN_STATUS_KEYS = ("status", "planStatus", "reviewReason")
+_MISSING_CODES = frozenset({"NoSuchKey", "404", "NotFound"})
 
 
-def _checked_spec_json(name: str, data: bytes) -> bytes:
-    """Validate a fetched JSON file; a plan comes back without verdict keys."""
+def _checked_spec_json(
+    name: str, data: bytes, local: dict[str, Any] | None = None
+) -> bytes:
+    """Validate a fetched JSON file; a plan comes back without verdict keys.
+
+    A plan also loses the Job's progress: the top-level status keys come from
+    ``local`` (the control plane's plan, if any) and subtasks restart pending.
+    """
     doc = json.loads(data)
     if not isinstance(doc, dict | list):
         raise ValueError("not a JSON object or array")
@@ -755,11 +766,32 @@ def _checked_spec_json(name: str, data: bytes) -> bytes:
         return data
     if not isinstance(doc, dict):
         raise ValueError("plan is not a JSON object")
-    if doc.keys() & _PLAN_VERDICT_KEYS:
-        for key in _PLAN_VERDICT_KEYS:
-            doc.pop(key, None)
-        return json.dumps(doc, indent=2).encode()
-    return data
+    before = json.dumps(doc, sort_keys=True)
+    for key in _PLAN_VERDICT_KEYS | set(_PLAN_STATUS_KEYS):
+        doc.pop(key, None)
+    for key in _PLAN_STATUS_KEYS:
+        if local and key in local:
+            doc[key] = local[key]
+    for phase in doc.get("phases") or []:
+        for sub in (phase.get("subtasks") or []) if isinstance(phase, dict) else []:
+            if isinstance(sub, dict) and "status" in sub:
+                sub["status"] = "pending"
+    if json.dumps(doc, sort_keys=True) == before:
+        return data
+    return json.dumps(doc, indent=2).encode()
+
+
+def _local_json(path: Path) -> dict[str, Any] | None:
+    with contextlib.suppress(OSError, ValueError):
+        doc = json.loads(path.read_bytes())
+        return doc if isinstance(doc, dict) else None
+    return None
+
+
+def _is_missing(exc: Exception) -> bool:
+    """True when the object was never pushed, not when the read failed."""
+    code = (getattr(exc, "response", None) or {}).get("Error", {}).get("Code")
+    return str(code) in _MISSING_CODES
 
 
 def _spec_file_key(fetch_id: str, name: str) -> str:
@@ -809,9 +841,20 @@ def maybe_push_spec_files(spec_dir: str | os.PathLike[str]) -> int:
     return count
 
 
-def fetch_spec_files(spec_dir: str | os.PathLike[str], fetch_id: str) -> list[str]:
-    """Restore validated spec documents without replacing local files on failure."""
+def fetch_spec_files(
+    spec_dir: str | os.PathLike[str],
+    fetch_id: str,
+    failed: list[str] | None = None,
+    cancel: threading.Event | None = None,
+) -> list[str]:
+    """Restore validated spec documents without replacing local files on failure.
+
+    ``failed`` collects files that exist but could not be read or were rejected
+    (a missing file is not a failure). Once ``cancel`` is set no more files are
+    read or written.
+    """
     written: list[str] = []
+    failed = [] if failed is None else failed
     try:
         from core.artifact_store import ArtifactStore  # noqa: PLC0415
 
@@ -821,6 +864,8 @@ def fetch_spec_files(spec_dir: str | os.PathLike[str], fetch_id: str) -> list[st
         return written
     dest_dir = Path(spec_dir)
     for name in SPEC_FETCH_FILES:
+        if cancel is not None and cancel.is_set():
+            break
         tmp = ""
         try:
             try:
@@ -828,22 +873,31 @@ def fetch_spec_files(spec_dir: str | os.PathLike[str], fetch_id: str) -> list[st
                     _spec_file_key(fetch_id, name), max_bytes=_SPEC_FILE_MAX_BYTES
                 )
             except ValueError:
+                failed.append(name)
                 _log.warning("[workspace_fetch] fetched spec file too large: %s", name)
                 continue
-            except Exception as exc:  # noqa: BLE001 - not pushed: optional file
+            except Exception as exc:  # noqa: BLE001 - missing is optional
+                if not _is_missing(exc):
+                    failed.append(name)
                 _log.debug("[workspace_fetch] no spec file %s: %s", name, exc)
                 continue
+            if cancel is not None and cancel.is_set():
+                break
             if name.endswith(".json"):
-                data = _checked_spec_json(name, data)
+                data = _checked_spec_json(name, data, _local_json(dest_dir / name))
             else:
                 data.decode("utf-8")
             dest_dir.mkdir(parents=True, exist_ok=True)
             fd, tmp = tempfile.mkstemp(dir=dest_dir)
             with os.fdopen(fd, "wb") as fh:
                 fh.write(data)
+            # mkstemp makes 0600; the subprocess path writes 0644 and a build
+            # Job may run as another uid.
+            Path(tmp).chmod(0o644)
             Path(tmp).replace(dest_dir / name)
             written.append(name)
-        except Exception as exc:  # noqa: BLE001 - missing, invalid, or unwritable
+        except Exception as exc:  # noqa: BLE001 - invalid, or unwritable
+            failed.append(name)
             _log.warning("[workspace_fetch] rejected spec file %s: %s", name, exc)
         finally:
             if tmp:

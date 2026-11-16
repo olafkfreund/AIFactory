@@ -52,9 +52,16 @@ class FakeBatch:
 class FakeArtifactStore:
     objects: dict[str, bytes] = {}
     reads: list[tuple[str, int | None]] = []
+    errors: dict[str, Exception] = {}
 
     def get_bytes(self, key: str, max_bytes: int | None = None) -> bytes:
         self.reads.append((key, max_bytes))
+        if key in self.errors:
+            raise self.errors[key]
+        if key not in self.objects:
+            missing = KeyError(key)
+            missing.response = {"Error": {"Code": "NoSuchKey"}}  # type: ignore[attr-defined]
+            raise missing
         data = self.objects[key]
         if max_bytes is not None and len(data) > max_bytes:
             raise ValueError("too large")
@@ -65,6 +72,7 @@ class FakeArtifactStore:
 def fake_store(monkeypatch: pytest.MonkeyPatch) -> type[FakeArtifactStore]:
     FakeArtifactStore.objects = {}
     FakeArtifactStore.reads = []
+    FakeArtifactStore.errors = {}
     monkeypatch.setattr(artifact_store, "ArtifactStore", FakeArtifactStore)
     return FakeArtifactStore
 
@@ -413,7 +421,8 @@ async def test_sweep_treats_live_spec_job_as_owned(
 
 
 @pytest.mark.parametrize(
-    ("model", "seeded"), [("sonnet", False), ("copilot:gpt-5", True)]
+    ("model", "seeded"),
+    [("sonnet", False), ("copilot:gpt-5", True), ("gpt-5.3-codex", False)],
 )
 def test_spec_job_gets_copilot_login_only_for_copilot_model(
     monkeypatch: pytest.MonkeyPatch, model: str, seeded: bool
@@ -431,7 +440,8 @@ def test_spec_job_gets_copilot_login_only_for_copilot_model(
     assert seed["name"] == "seed-creds"
     script = seed["args"][0]
     assert ("copilot-apps.json" in script) is seeded
-    assert "claude-credentials.json" in script
+    assert "claude-credentials.json" in script  # phase summaries always use sonnet
+    assert ("codex-auth.json" in script) is (model == "gpt-5.3-codex")
 
 
 def test_partial_fetch_without_spec_md_drops_earlier_approval(
@@ -648,3 +658,131 @@ def test_fresh_task_without_auto_approve_gets_unapproved_review_state(
     fake_store.objects[workspace_fetch._spec_file_key("fetch", "spec.md")] = b"# spec"
     assert sj._finish_spec_fetch(spec_dir, "fetch", False) == 0
     assert json.loads((spec_dir / "review_state.json").read_text())["approved"] is False
+
+
+def test_fetched_plan_keeps_control_plane_status_not_the_jobs(
+    fake_store: type[FakeArtifactStore], tmp_path: Path
+) -> None:
+    spec_dir = tmp_path / "spec"
+    spec_dir.mkdir()
+    (spec_dir / "implementation_plan.json").write_text('{"status": "in_progress"}')
+    fake_store.objects[workspace_fetch._spec_file_key("fetch", "spec.md")] = b"# s"
+    fake_store.objects[
+        workspace_fetch._spec_file_key("fetch", "implementation_plan.json")
+    ] = (
+        b'{"status": "done", "planStatus": "x", "reviewReason": "y", "phases":'
+        b' [{"subtasks": [{"id": "1", "status": "completed"}]}]}'
+    )
+    assert sj._finish_spec_fetch(spec_dir, "fetch", True) == 0
+    plan = json.loads((spec_dir / "implementation_plan.json").read_text())
+    assert plan == {
+        "status": "in_progress",
+        "phases": [{"subtasks": [{"id": "1", "status": "pending"}]}],
+    }
+    assert (spec_dir / "spec.md").stat().st_mode & 0o777 == 0o644
+
+
+def test_failed_plan_read_is_not_no_plan_pushed(
+    fake_store: type[FakeArtifactStore], tmp_path: Path
+) -> None:
+    spec_dir = tmp_path / "spec"
+    spec_dir.mkdir()
+    fake_store.objects[workspace_fetch._spec_file_key("fetch", "spec.md")] = b"# s"
+    # Absent plan on a first run is fine; a read error is not.
+    assert sj._finish_spec_fetch(spec_dir, "fetch", True) == 0
+    fake_store.errors[
+        workspace_fetch._spec_file_key("fetch", "implementation_plan.json")
+    ] = OSError("boom")
+    assert sj._finish_spec_fetch(spec_dir, "fetch", True) == 1
+    assert json.loads((spec_dir / "review_state.json").read_text())["approved"] is False
+
+
+def test_short_read_through_fetch_is_a_failure(
+    fake_store: type[FakeArtifactStore], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def short(*_args: Any, **_kwargs: Any) -> bytes:
+        raise OSError("short read of key")
+
+    monkeypatch.setattr(FakeArtifactStore, "get_bytes", short)
+    failed: list[str] = []
+    assert workspace_fetch.fetch_spec_files(tmp_path, "fetch", failed) == []
+    assert "spec.md" in failed
+
+
+def test_cancelled_fetch_writes_nothing(
+    fake_store: type[FakeArtifactStore], tmp_path: Path
+) -> None:
+    import threading
+
+    fake_store.objects[workspace_fetch._spec_file_key("fetch", "spec.md")] = b"# s"
+    cancel = threading.Event()
+    cancel.set()
+    assert workspace_fetch.fetch_spec_files(tmp_path, "fetch", None, cancel) == []
+    assert sj._finish_spec_fetch(tmp_path, "fetch", True, cancel) == 1
+    assert not (tmp_path / "spec.md").exists()
+
+
+async def test_poller_gives_up_after_local_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    batch = FakeBatch()
+
+    async def batch_factory():
+        return batch
+
+    async def no_logs(self, **_kwargs):
+        return None
+
+    async def running(*_args):
+        return "running"
+
+    monkeypatch.setattr(sj.KubeJobLogStreamer, "stream", no_logs)
+    monkeypatch.setattr(KubeJobBuildBackend, "_job_outcome", staticmethod(running))
+    proc = sj.SpecJobProcess(
+        "ns",
+        "spec-job",
+        batch_factory=batch_factory,
+        finish=AsyncMock(),
+        poll_interval=0.01,
+        deadline=0.05,
+    )
+    assert await asyncio.wait_for(proc.wait(), timeout=5) == 1
+    assert batch.deleted == [("ns", "spec-job", "Background")]
+
+
+async def test_log_lines_are_truncated_and_buffer_is_capped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    batch = FakeBatch()
+
+    async def batch_factory():
+        return batch
+
+    async def flood(self, **_kwargs):
+        for _ in range(100):
+            await self._log_sink("x" * 200_000)
+
+    async def succeeded(*_args):
+        await asyncio.sleep(0.2)
+        return "succeeded"
+
+    monkeypatch.setattr(sj.KubeJobLogStreamer, "stream", flood)
+    monkeypatch.setattr(KubeJobBuildBackend, "_job_outcome", staticmethod(succeeded))
+    proc = sj.SpecJobProcess(
+        "ns", "spec-job", batch_factory=batch_factory, finish=AsyncMock(return_value=0)
+    )
+    assert await proc.wait() == 0
+    first = await proc.stdout.readline()
+    assert len(first) == sj._LOG_LINE_MAX + 1
+    assert len(proc.stdout._buffer) <= sj._LOG_BUFFER_MAX + sj._LOG_LINE_MAX + 1
+
+
+async def test_pidless_process_with_zero_exit_runs_spec_detection(
+    project: tuple[Path, Path], service: AgentService
+) -> None:
+    root, spec_dir = project
+    (spec_dir / "review_state.json").write_text('{"approved": false}')
+    service._spec_dirs["p:s1"] = spec_dir
+    proc = SimpleNamespace(pid=None, wait=AsyncMock(return_value=0))
+    await monitor_process(service, "p:s1", proc, root)
+    assert service._emit_progress.await_args.args[0].phase.value == "plan_review"

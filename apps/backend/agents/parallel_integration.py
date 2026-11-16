@@ -51,6 +51,7 @@ from providers.factory import get_provider
 from run_gates import RunGates
 from task_logger import LogPhase, TaskLogger
 
+from .act_loop_hooks import charge_tokens
 from .completion_gate import completion_refusal
 from .memory_manager import get_graphiti_context, save_session_memory
 from .parallel_runner import PhaseRunResult, SubtaskResult, run_parallel_phase
@@ -632,6 +633,7 @@ async def run_parallel_coding_phase(
             try:
                 _usage_payload = (_err or {}).get("usage") if _err else None
                 if _usage_payload:
+                    charge_tokens(spec_dir, _usage_payload)  # #2033
                     _turn_usage = TurnUsage.from_sdk_usage(
                         {
                             "input_tokens": _usage_payload.get("input_tokens", 0),
