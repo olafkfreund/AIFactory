@@ -50,9 +50,10 @@ def _prefix(corr: str | None, job_id: str) -> str:
             raise ValueError("unsafe S3 scope id")
     if not job_id.strip():
         raise ValueError("empty S3 scope id")
-    return ArtifactRef(
+    ref = ArtifactRef(
         service="aifactory", job_id=job_id, role="build", correlation_key=corr
-    ).prefix()
+    )
+    return str(ref.prefix())  # str(): the vendored module is untyped here
 
 
 def _lifetime() -> int:
