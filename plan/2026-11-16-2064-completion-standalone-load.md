@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 spec: spec/2026-11-16-2064-completion-standalone-load.md
 reviewers: [codex]
 ---
