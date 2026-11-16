@@ -24,9 +24,9 @@ from factory_common.logsafe import sanitize_log
 
 from server.background import spawn
 from server.specpath import spec_dir_for
+from server.utils.subprocess_env import dotenv_key_blocked, make_subprocess_env
 
 from ..config import get_settings
-from ..utils.subprocess_env import make_subprocess_env
 from . import job_state_store, project_settings_store, task_control
 from .agent_credential import CredentialMixin
 from .agent_emit import (
@@ -38,6 +38,8 @@ from .agent_queue import QueueMixin
 from .agent_skill_context import SkillContextMixin
 from .agent_spec_creation import SpecCreationMixin
 from .agent_worktree_sync import WorktreeSyncMixin
+from .build_backend import GatedTaskRefusedError, subprocess_gate_refusal
+from .spec_job_backend import SpecJobProcess
 
 # subprocess_env adds apps/backend to sys.path before this import.
 # isort: split
@@ -147,7 +149,11 @@ def _load_backend_env(path: Path, env: dict[str, str]) -> None:
             if line and not line.startswith("#") and "=" in line:
                 key, value = line.split("=", 1)
                 key = key.strip()
-                if key not in env and not is_denied_env_key(key):
+                if (
+                    key not in env
+                    and not is_denied_env_key(key)
+                    and not dotenv_key_blocked(key)
+                ):
                     env[key] = value.strip()
 
 
@@ -841,6 +847,10 @@ class AgentService(
             raise ValueError(f"Task {task_id} is already running")
         if any(q.task_id == task_id for q in self._task_queue):
             raise ValueError(f"Task {task_id} is already queued")
+        if problem := subprocess_gate_refusal(
+            spec_dir_for(project_path, spec_id), mode
+        ):
+            raise GatedTaskRefusedError(problem)
 
         # #376 shipped the parallel harness but left it dark for every caller
         # except the auto-continue monitor, which read task_metadata itself.
@@ -1102,7 +1112,9 @@ class AgentService(
         # Set environment — scrub ANTHROPIC_API_KEY so spawned subprocesses
         # can never silently bill the direct-API account (OAuth-only policy;
         # see apps/backend/core/auth.py).
-        env = make_subprocess_env()
+        env = await asyncio.to_thread(
+            make_subprocess_env, github=True, project_path=project_path
+        )
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
         # Run Claude in non-interactive mode - bypass permission prompts
@@ -1326,12 +1338,13 @@ class AgentService(
             spec_id,
         )
         worktree_spec_dir.mkdir(parents=True, exist_ok=True)
-        log_writer = TaskLogWriter(worktree_spec_dir)
+        _log_pid = task_id.split(":", 1)[0] if ":" in task_id else None
+        log_writer = TaskLogWriter(worktree_spec_dir, _log_pid)
 
         # Also write to main spec dir for immediate visibility
         main_spec_dir = spec_dir_for(project_path, spec_id)
         main_spec_dir.mkdir(parents=True, exist_ok=True)
-        main_log_writer = TaskLogWriter(main_spec_dir)
+        main_log_writer = TaskLogWriter(main_spec_dir, _log_pid)
 
         # Store log writers for cleanup
         self._task_log_writers[task_id] = (log_writer, main_log_writer)
@@ -1388,7 +1401,9 @@ class AgentService(
         return proc
 
     @staticmethod
-    def _signal_process_tree(proc: "asyncio.subprocess.Process", sig: int) -> None:
+    def _signal_process_tree(
+        proc: "asyncio.subprocess.Process | SpecJobProcess", sig: int
+    ) -> None:
         """Send ``sig`` to the whole process group, falling back to the proc.
 
         Builds are spawned with start_new_session=True, so the run.py pid leads a
@@ -1396,6 +1411,10 @@ class AgentService(
         Signalling the group terminates the entire tree; without this the children
         orphan and the build keeps running after a stop (the stop-resistance bug).
         """
+        if isinstance(proc, SpecJobProcess):
+            # A spec Job has no pid or process group; this deletes the Job (#1932).
+            proc.send_signal(sig)
+            return
         pid = getattr(proc, "pid", None)
         if pid is None:
             return

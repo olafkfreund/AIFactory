@@ -67,8 +67,11 @@ def test_ingest_payload_carries_contract_when_trusted(tmp_path):
     # #71 Phase 3: a trusted plan (implementation_plan.json with the tfactory
     # block / contract_version) rides along on the handoff so TFactory tests the
     # DECLARED ACs instead of inferring.
+    # #1984: the contract is read from context/task_contract.json only (the
+    # trusted-plan stash); the plan itself is agent-written.
     _spec(tmp_path, True)
-    (tmp_path / "implementation_plan.json").write_text(
+    (tmp_path / "context").mkdir()
+    (tmp_path / "context" / "task_contract.json").write_text(
         json.dumps(
             {
                 "feature": "x",

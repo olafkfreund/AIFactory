@@ -20,6 +20,7 @@ import re
 import threading
 import time
 import weakref
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -768,7 +769,8 @@ def create_client(
             original_project_str = project_path_posix.rsplit(marker, 1)[0]
             original_project_dir = Path(original_project_str)
 
-            permission_ops = ["Read", "Write", "Edit", "Glob", "Grep"]
+            # Original project directories are read-only in worktree sessions (#1985).
+            permission_ops = ["Read", "Glob", "Grep"]
             dirs_to_permit = [
                 original_project_dir / ".aifactory",
                 original_project_dir / ".worktrees",  # Legacy support
@@ -955,7 +957,10 @@ def create_client(
     # the whole agent boot path; failures show up as missing tools, not a
     # subprocess crash.
     try:
-        from agents.tools_pkg.mcp_catalog import get_catalog_entry
+        from agents.tools_pkg.mcp_catalog import (
+            get_catalog_entry,
+            unusable_credential_reason,
+        )
         from core.mcp_credentials import get_credential_status
 
         for server_id in required_servers:
@@ -969,6 +974,9 @@ def create_client(
                 if entry.credential_provider
                 else None
             )
+            if (why := unusable_credential_reason(entry, creds)) is not None:
+                logger.warning("MCP server %s skipped: %s", entry.id, why)
+                continue
             cfg = entry.build_server_config(creds, read_only=True)
             mcp_servers[entry.id] = _externalize_secret_env(cfg, sdk_env)
     except ImportError as exc:
@@ -1096,7 +1104,7 @@ def create_client(
                 # #1719: refuse agent writes into git metadata
                 HookMatcher(
                     matcher="Write|Edit|MultiEdit|NotebookEdit",
-                    hooks=[git_dir_write_hook],
+                    hooks=[partial(git_dir_write_hook, project_dir=str(project_dir))],
                 ),
                 # #474 anti-loop guardrail + #476 pre-mutation checkpoint — run on
                 # every tool (matcher=None); each no-ops unless its flag is on.
@@ -1112,7 +1120,9 @@ def create_client(
                 HookMatcher(hooks=[precompact_summary_hook]),
             ],
         },
-        "max_turns": 1000,
+        "max_turns": int(os.environ.get("AIFACTORY_MAX_TURNS", ""))
+        if os.environ.get("AIFACTORY_MAX_TURNS", "").isdigit()
+        else 1000,
         "cwd": str(project_dir.resolve()),
         "settings": str(settings_file.resolve()),
         "env": sdk_env,  # Pass ANTHROPIC_BASE_URL etc. to subprocess

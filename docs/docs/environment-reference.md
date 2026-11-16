@@ -218,7 +218,9 @@ Read across `apps/backend/` (`routing_policy.py`, `core/model_config.py`,
 | `AIFACTORY_GUARDRAIL_REPEAT_FAIL` | `5` | no | Repeated-failure count that trips the guardrail (`agents/guardrails.py`). |
 | `AIFACTORY_GUARDRAIL_TOOL_FAIL_HALT` | `8` | no | Tool-failure count that halts the agent. |
 | `AIFACTORY_GUARDRAIL_NOPROGRESS` | `5` | no | No-progress count that trips the guardrail. |
-| `AIFACTORY_ACT_GUARDRAIL` | off | no | Enable the act-loop guardrail hook (`agents/act_loop_hooks.py`). |
+| `AIFACTORY_ACT_GUARDRAIL` | on | no | Anti-loop guardrail hook (`agents/act_loop_hooks.py`). On by default; set `off` (or `0`/`false`/`no`) to disable. |
+| `AIFACTORY_RUN_TOKEN_CEILING` | `10000000` | no | Per-run token ceiling (input + output + cache writes, counted per build session). Passing it halts the build; the completion event carries `halt_reason: token_ceiling: ...`. `0` disables. |
+| `AIFACTORY_MAX_TURNS` | `1000` | no | SDK `max_turns` for each agent session. |
 | `AIFACTORY_CONTEXT_SUMMARY` | off | no | Enable rolling context summarization (`agents/context_summary.py`). |
 | `AIFACTORY_MUTATION_LEDGER` | off | no | Record agent file mutations to a ledger (`agents/mutation_ledger.py`). |
 | `AIFACTORY_TEST_EVIDENCE_GATE` | on (set to `off`/`0`/`false`/`no` to disable) | no | Honesty gate (`agents/test_evidence.py`). Two checks, both at `update_subtask_status(... "completed")`: (1) #851 — a test/verification subtask needs a real, non-failing test command recorded this build; (2) #1111 — a subtask naming an HTTP path needs at least one Python test mentioning that path which reaches the shipped app (imports an application entrypoint without building its own, or calls a live server), so a suite asserting against a `FastAPI()` built inside the test file no longer counts. Inert when the subtask names no HTTP path or no Python test mentions it. (3) #1123 — one post-merge gate (`agents/route_wiring.py`), run once at the trailing-gate step when every wave has merged, that imports the application entrypoint the repo's own tests name and asserts every HTTP path the plan promised resolves on the real app. No gate at all when the plan promises no HTTP path or no test names an entrypoint; reported `skipped` (never `passed`) when the app cannot be imported. |
@@ -244,9 +246,11 @@ How `run.py` executes and what lets a build schedule on any node. Read in
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
 | `AIFACTORY_BUILD_BACKEND` | `subprocess` | no | `subprocess` (in-pod asyncio) or `kubejob` (each build as its own k8s Job). Unknown values, and `kubejob` without `DATABASE_URL`, refuse agent launches (the server logs an error at startup). Unset in-cluster (`KUBERNETES_SERVICE_HOST` set) logs a warning that agents run unisolated. Auto-merge is held for every task unless this is `kubejob` and `DATABASE_URL` is set. |
+| `AIFACTORY_SPEC_BACKEND` | `subprocess` | no | `subprocess` (spec creation runs in the web-server pod) or `kubejob` (spec creation runs as its own k8s Job, #1932). Any other value refuses spec creation; it never falls back to in-pod. `kubejob` needs `S3_*` object storage (the workspace is packed, no PVC is mounted). The Job gets no GitHub token, database URL, JWT secret or API token; it does get the model credentials a build Job gets (CLI logins, provider keys, and the GCP credential mount when `FACTORY_GCP_CREDS_SECRET` is set). Only an allowlist of spec files is fetched back. Set it in factory-gitops after a soak. |
 | `AIFACTORY_IMAGE` | (built-in) | no | Running image; fallback build-Job image when `AIFACTORY_BUILD_IMAGE` unset. |
 | `AIFACTORY_BUILD_IMAGE` | (unset) | no | Override the image for the `kubejob` build Job only. Point at a `:sha-<short>-nix` tag for in-image Nix. |
 | `AIFACTORY_PACK_WORKSPACE` | off | no | Pack `/work` to object storage and unpack in the Job (removes the workspace node-pin). |
+| `AIFACTORY_SCOPED_JOB_S3` | off | no | Give each build/spec Job short-lived MinIO STS credentials limited to its own task's object prefixes instead of the bucket-wide `S3_ACCESS_KEY`/`S3_SECRET_KEY` (#2023). Needs `S3_STS_ACCESS_KEY` and `S3_STS_SECRET_KEY` (a non-root MinIO user, control plane only); STS failure refuses the dispatch. The shared graphify cache is not reachable from a scoped Job. |
 | `AIFACTORY_PACKED_NIX_IN_IMAGE` | off | no | Gate Jobs resolve `/nix` from the image instead of the Nix-store PVC (removes the last node-pin). Forwarded into the build Job (#1736). |
 | `WORKSPACE_URI` | `""` | conditional | Object-storage URI the Job unpacks `/work` from (set by the pack path; `core/workspace_fetch.py`). |
 | `AIFACTORY_DATA_ROOT` | `/home/nonroot/.aifactory` | no | Data PVC mount root; used to compute worktree subPaths and sandbox mounts. |
@@ -257,6 +261,7 @@ How `run.py` executes and what lets a build schedule on any node. Read in
 | `AIFACTORY_NIX_STORE_PVC` | `""` | no | Warm Nix-store PVC that gate Jobs mount (seeded from the image). Forwarded into the build Job; the build Job itself never mounts it (#1736). |
 | `AIFACTORY_CLI_CREDS_SECRET` | `""` | no | K8s Secret name holding CLI credentials mounted into the build Job. |
 | `APP_BACKEND_PATH` | `/home/projects/MagesticAI/apps/backend` | no | Backend path inside the build Job. |
+| `AIFACTORY_AGENT_COMMIT_TRAILERS` | off | no | Add `Agent-Identity`, `Autonomy-Tier` and `Originator` git trailers to factory commits and squash-merge bodies, from the spec's `requirements.json` (Factory#1960). Forwarded into the build Job, where the safety-net and wave commits run. |
 
 ### Build-Job env allowlist (`_PASSTHROUGH_BUILD_ENV`)
 
@@ -278,7 +283,7 @@ Forwarded when present: `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`,
 `OPENAI_COMPATIBLE_BASE_URL`, `GEMINI_API_KEY`, `GEMINI_CLI_TRUST_WORKSPACE`,
 `GOOGLE_API_KEY`, `OLLAMA_API_KEY`, `OLLAMA_CLOUD_BASE_URL`, `S3_ENDPOINT`,
 `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_REGION`,
-`AIFACTORY_GRAPHIFY_ENABLED`.
+`AIFACTORY_GRAPHIFY_ENABLED`, `AIFACTORY_AGENT_COMMIT_TRAILERS`.
 
 The `S3_*` namespace is what the Job-side `core/artifact_store` reads to
 reconstitute a packed workspace (distinct from the chart's fsspec
@@ -579,6 +584,7 @@ Baked into the static bundle at build time. Read in `apps/frontend-web/src/*`.
 | `AIFACTORY_TRUSTED_PLAN_KEY_<AUTHORITY>` | (none) | no | HMAC key verifying a signed Task Contract v2 from an upstream authority (e.g. `AIFACTORY_TRUSTED_PLAN_KEY_PFACTORY`). Legacy single-key entry; matches envelopes with no `kid`. See [Task Contract](./task-contract). Read in `apps/backend/trusted_plan.py`. |
 | `AIFACTORY_TRUSTED_PLAN_KEY_<AUTHORITY>__<KID>` | (none) | no | Keyed rotation entry: registers one verification key under `authority/kid` (kid case-insensitive). Multiple kids can be active at once for zero-downtime rotation. See [Trusted-plan Key Rotation](./compliance/trusted-plan-key-rotation). |
 | `AIFACTORY_TRUSTED_PLAN_RETIRED_KIDS` | (none) | no | Comma-separated `authority/kid` (or bare `kid`) to revoke; a retired kid is rejected at verify time even if its key material is still configured. |
+| `AIFACTORY_TRUSTED_PLAN_EXPIRY` | (none) | no | Comma-separated `authority/kid=DATE` (legacy key: `authority=DATE`); a key at or past DATE, or with an unparseable DATE, is rejected. See the key-rotation guide. |
 | `AIFACTORY_BASELINE_DRIFT` | `blast-radius` | no | Baseline-freshness policy on the trusted-plan path (#1109). `blast-radius` rejects with 422 only when a file in `baseline.blast_radius.files` changed between the approved commit and the target repo's HEAD, and records unrelated drift as a warning; `reject` rejects any divergence from `baseline.commit`; `warn` never rejects but still records the verdict on the spec's provenance; `off` skips the check. An unrecognised value falls back to `blast-radius` — a typo must not disable a supply-chain control. Read in `apps/backend/trusted_plan.py`. |
 
 ### Baseline freshness (#1109)

@@ -14,6 +14,7 @@ properties the RFC calls out:
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 import logging
@@ -31,6 +32,7 @@ for _p in (_REPO / "apps" / "web-server", _REPO / "apps" / "backend"):
     if str(_p) not in sys.path:
         sys.path.append(str(_p))
 
+from core import mcp_credentials  # noqa: E402
 from core.job_dispatch import DEFAULT_NIX_IMAGE  # noqa: E402
 from server.database.models import Base  # noqa: E402
 from server.services import build_backend as bb  # noqa: E402
@@ -308,6 +310,18 @@ def test_manifest_outside_data_root_has_no_worktree_mount(
 # --------------------------------------------------------------------------- #
 
 
+@pytest.fixture(autouse=True)
+def _isolate_build_github_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mcp_credentials, "_load_operator_config", lambda: {})
+    for name in (
+        "GITHUB_TOKEN",
+        "GH_TOKEN",
+        "GITHUB_PERSONAL_ACCESS_TOKEN",
+        "AIFACTORY_AGENT_GITHUB_TOKEN",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
 def test_build_job_env_injects_oauth_token_and_fixed_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -322,6 +336,85 @@ def test_build_job_env_injects_oauth_token_and_fixed_env(
     assert env["CI"] == "true"
     assert env["PYTHONUNBUFFERED"] == "1"
     assert env["PYTHONIOENCODING"] == "utf-8"
+    assert "GITHUB_TOKEN" not in env
+    assert "GH_TOKEN" not in env
+
+
+def test_build_job_env_uses_narrow_agent_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GITHUB_TOKEN", "cp-a")
+    monkeypatch.setenv("GH_TOKEN", "cp-b")
+    monkeypatch.setenv("GITHUB_PERSONAL_ACCESS_TOKEN", "cp-c")
+    monkeypatch.setenv("AIFACTORY_AGENT_GITHUB_TOKEN", "agent-x")
+    env = bb.build_job_env(None)
+    assert env["GITHUB_TOKEN"] == env["GH_TOKEN"] == "agent-x"  # noqa: S105
+    assert env["GITHUB_PERSONAL_ACCESS_TOKEN"] == "agent-x"  # noqa: S105
+    assert "AIFACTORY_AGENT_GITHUB_TOKEN" not in env
+    assert not any(value in env.values() for value in ("cp-a", "cp-b", "cp-c"))
+
+
+def test_build_job_env_uses_only_bound_org(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server import project_registry
+    from server.services import github_app
+
+    registry = tmp_path / "projects.json"
+    project = tmp_path / "acme"
+    other = tmp_path / "other"
+    registry.write_text(
+        json.dumps(
+            {
+                "a": {"path": str(project), "org_id": "acme"},
+                "b": {"path": str(other), "org_id": "other"},
+            }
+        )
+    )
+    monkeypatch.setattr(project_registry, "get_projects_file", lambda: registry)
+    monkeypatch.setattr(github_app, "multi_installation", lambda: True)
+    seen: list[tuple[str | None, int]] = []
+
+    def token_for_org(org: str | None, *, min_ttl: int = 900) -> str | None:
+        seen.append((org, min_ttl))
+        return "ghs_acme_1700" if org == "acme" else None
+
+    monkeypatch.setattr(github_app, "token_for_org", token_for_org)
+    for name in ("GITHUB_TOKEN", "GH_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN"):
+        monkeypatch.setenv(name, f"ambient-{name}")
+    monkeypatch.setenv("AIFACTORY_AGENT_GITHUB_TOKEN", "agent-secret-1700")
+    bound = bb.build_job_env("oauth", project)
+    assert bound["GITHUB_TOKEN"] == bound["GH_TOKEN"] == "ghs_acme_1700"
+    assert "GITHUB_PERSONAL_ACCESS_TOKEN" not in bound
+    assert not any(
+        "ambient-" in value or "agent-secret-1700" in value for value in bound.values()
+    )
+    for path in (other, tmp_path / "unknown", None):
+        env = bb.build_job_env("oauth", path)
+        assert all(
+            name not in env
+            for name in ("GITHUB_TOKEN", "GH_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN")
+        )
+    assert seen == [("acme", 3300), ("other", 3300), (None, 3300), (None, 3300)]
+
+
+def test_job_dispatch_builds_env_in_thread_with_project_path() -> None:
+    source = Path(bb.__file__).read_text()
+    tree = ast.parse(source)
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "to_thread"
+        and node.args
+        and isinstance(node.args[0], ast.Name)
+        and node.args[0].id == "build_job_env"
+    ]
+    assert len(calls) == 1
+    assert [arg.id for arg in calls[0].args[1:]] == ["oauth_token", "project_path"]
+    assert any(
+        isinstance(node, ast.Await) and node.value is calls[0]
+        for node in ast.walk(tree)
+    )
 
 
 def test_build_job_env_propagates_present_provider_env(
@@ -329,7 +422,7 @@ def test_build_job_env_propagates_present_provider_env(
 ) -> None:
     # Provider/runtime SDK env mirrors core/auth.py's agent-keep allowlist, but
     # ONLY when present on the control plane (no empty placeholders), plus
-    # GITHUB_TOKEN for run.py's PR endgame.
+    # GITHUB_TOKEN for run.py's base fetch and branch push.
     for var in bb._PASSTHROUGH_BUILD_ENV:
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://gw.example/v1")
@@ -374,6 +467,17 @@ def test_build_job_env_forwards_gate_env(monkeypatch: pytest.MonkeyPatch) -> Non
     assert "AIFACTORY_DATA_ROOT" not in env
 
 
+def test_build_job_env_forwards_commit_trailers_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Factory#1960: the safety-net and wave commits run in the Job and read the flag."""
+    for var in bb._PASSTHROUGH_BUILD_ENV:
+        monkeypatch.delenv(var, raising=False)
+    assert "AIFACTORY_AGENT_COMMIT_TRAILERS" not in bb.build_job_env("t")
+    monkeypatch.setenv("AIFACTORY_AGENT_COMMIT_TRAILERS", "1")
+    assert bb.build_job_env("t")["AIFACTORY_AGENT_COMMIT_TRAILERS"] == "1"
+
+
 def test_build_job_env_propagates_non_claude_provider_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -394,6 +498,65 @@ def test_build_job_env_propagates_non_claude_provider_env(
     assert "GOOGLE_API_KEY" not in env
     assert "OLLAMA_API_KEY" not in env
     assert "GEMINI_CLI_TRUST_WORKSPACE" not in env
+
+
+@pytest.fixture(autouse=True)
+def _clear_gateway_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for var in ("AIFACTORY_MODEL_GATEWAY_URL", "AIFACTORY_MODEL_GATEWAY_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
+
+
+def _direct_provider_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for var in bb._PASSTHROUGH_BUILD_ENV:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+    monkeypatch.setenv("OPENAI_COMPATIBLE_BASE_URL", "https://ollama.com")
+    monkeypatch.setenv("OPENAI_COMPATIBLE_API_KEY", "oc-key")
+    monkeypatch.setenv("OLLAMA_API_KEY", "ol-key")
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama:11434")
+
+
+def test_build_job_env_gateway_swaps_direct_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Factory#1959 stage 4: the Job gets the gateway origin and token, no direct key.
+    _direct_provider_env(monkeypatch)
+    monkeypatch.setenv("AIFACTORY_MODEL_GATEWAY_URL", " http://gw:8080/ ")
+    monkeypatch.setenv("AIFACTORY_MODEL_GATEWAY_TOKEN", " gw-tok ")
+    env = bb.build_job_env("oauth")
+    assert env["OPENAI_COMPATIBLE_BASE_URL"] == "http://gw:8080"
+    assert env["OPENAI_COMPATIBLE_API_KEY"] == "gw-tok"
+    assert "OLLAMA_API_KEY" not in env
+    assert "oc-key" not in env.values()
+    assert env["OPENAI_API_KEY"] == "sk-openai"  # plane C stays
+    assert env["OLLAMA_BASE_URL"] == "http://ollama:11434"
+
+
+@pytest.mark.parametrize("token", [None, "", "   "])
+def test_build_job_env_gateway_without_token_never_uses_direct_key(
+    monkeypatch: pytest.MonkeyPatch, token: str | None
+) -> None:
+    _direct_provider_env(monkeypatch)
+    monkeypatch.setenv("AIFACTORY_MODEL_GATEWAY_URL", "http://gw:8080")
+    if token is not None:
+        monkeypatch.setenv("AIFACTORY_MODEL_GATEWAY_TOKEN", token)
+    env = bb.build_job_env(None)
+    assert env["OPENAI_COMPATIBLE_API_KEY"] == "gateway-token-not-configured"
+    assert "oc-key" not in env.values()
+
+
+@pytest.mark.parametrize("url", [None, "", "  "])
+def test_build_job_env_gateway_flag_off_keeps_direct_keys(
+    monkeypatch: pytest.MonkeyPatch, url: str | None
+) -> None:
+    _direct_provider_env(monkeypatch)
+    monkeypatch.setenv("AIFACTORY_MODEL_GATEWAY_TOKEN", "gw-tok")
+    if url is not None:
+        monkeypatch.setenv("AIFACTORY_MODEL_GATEWAY_URL", url)
+    env = bb.build_job_env(None)
+    assert env["OPENAI_COMPATIBLE_API_KEY"] == "oc-key"
+    assert env["OPENAI_COMPATIBLE_BASE_URL"] == "https://ollama.com"
+    assert env["OLLAMA_API_KEY"] == "ol-key"
 
 
 def test_build_job_env_propagates_artifact_store_s3_env(
@@ -620,6 +783,63 @@ async def test_dispatch_records_worker_ref(
         "job_name": job_name,
     }
     assert fake.deleted == []
+
+
+async def test_scoped_s3_swaps_root_key_and_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#2023: flag on, the Job env holds STS creds scoped to this task, not the root key."""
+    from server.services import job_s3_scope as scope  # noqa: PLC0415
+
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    monkeypatch.setattr(bb, "populate_build_worktree", lambda *_a, **_k: None)
+    monkeypatch.setenv("AIFACTORY_SCOPED_JOB_S3", "true")
+    monkeypatch.setenv("S3_ACCESS_KEY", "root")
+    monkeypatch.setenv("S3_SECRET_KEY", "rootsecret")
+    seen: list[str] = []
+
+    def assume(policy: str) -> dict[str, str]:
+        seen.append(policy)
+        return {"AccessKeyId": "a", "SecretAccessKey": "s", "SessionToken": "t"}
+
+    monkeypatch.setattr(scope, "_assume", assume)
+    store = await _make_store(tmp_path / "d.db")
+    await store.admit("p:s1", _spawn_args("s1"), cap=2, correlation_key="9")
+    fake = _FakeBatch()
+    await bb.KubeJobBuildBackend(store).dispatch(
+        task_id="p:s1",
+        project_path=Path(_DATA_ROOT) / "workspaces" / "p",
+        spec_id="s1",
+        correlation_key="9",
+        batch=fake,
+    )
+    container = fake.created[0][1]["spec"]["template"]["spec"]["containers"][0]
+    env = {e["name"]: e.get("value") for e in container["env"]}
+    assert "S3_ACCESS_KEY" not in env and "S3_SECRET_KEY" not in env
+    assert env["AWS_SESSION_TOKEN"] == "t"
+    assert "rootsecret" not in str(fake.created)
+    assert json.loads(seen[0])["Statement"][0]["Resource"] == [
+        "arn:aws:s3:::factory-artifacts/aifactory/9/p:s1/*",
+        "arn:aws:s3:::factory-artifacts/aifactory/_/gate-s1/*",
+        "arn:aws:s3:::factory-artifacts/aifactory/_/s1/*",
+    ]
+
+    def boom(_policy: str) -> dict[str, str]:
+        raise OSError("sts down")
+
+    monkeypatch.setattr(scope, "_assume", boom)
+    await store.admit("p:s2", _spawn_args("s2"), cap=2, correlation_key="9")
+    fake2 = _FakeBatch()
+    with pytest.raises(bb.BuildBackendUnavailableError):
+        await bb.KubeJobBuildBackend(store).dispatch(
+            task_id="p:s2",
+            project_path=Path(_DATA_ROOT) / "workspaces" / "p",
+            spec_id="s2",
+            correlation_key="9",
+            batch=fake2,
+        )
+    assert fake2.created == []
 
 
 async def _dispatch_with_failing_ref(
@@ -1154,15 +1374,10 @@ def test_seed_creds_injected_when_secret_configured(
     seed_mount = next(mt for mt in init["volumeMounts"] if mt["name"] == "cli-creds")
     assert seed_mount["mountPath"] == "/seed"
     assert seed_mount.get("readOnly") is True
-    # cp's every known provider file into HOME, tolerant of a partial secret.
+    # cp's the run's provider file into HOME (default phases: claude only,
+    # #2025), tolerant of a partial secret.
     script = init["args"][0]
-    for key in (
-        "claude-credentials.json",
-        "codex-auth.json",
-        "copilot-apps.json",
-        "gemini-oauth_creds.json",
-    ):
-        assert f"/seed/{key}" in script
+    assert "/seed/claude-credentials.json" in script
     assert "|| true" in script  # never aborts on a missing provider file
 
     # cli-creds secret volume points at the configured secret.
@@ -1177,6 +1392,68 @@ def test_seed_creds_injected_when_secret_configured(
         "/home/nonroot/.gemini",
         "/home/nonroot/.config",
     } <= build_mounts
+
+
+_ALL_CRED_KEYS = {
+    "claude": "claude-credentials.json",
+    "codex": "codex-auth.json",
+    "copilot": "copilot-apps.json",
+    "antigravity": "gemini-oauth_creds.json",
+}
+
+
+@pytest.mark.parametrize(
+    ("phase_models", "expected"),
+    [
+        (None, {"claude"}),  # defaults: opus/sonnet
+        ({"coding": "gpt-5.3-codex"}, {"claude", "codex"}),
+        ({"coding": "copilot:gpt-5"}, {"claude", "copilot"}),
+        ({"coding": "gemini-3-pro"}, {"claude", "antigravity"}),
+        (
+            dict.fromkeys(
+                ("spec", "planning", "coding", "qa", "qa_fixer"), "ollama:qwen3:14b"
+            ),
+            set(),
+        ),
+        (
+            {
+                "spec": "codex",
+                "planning": "codex",
+                "coding": "gemini-3-pro",
+                "qa": "copilot:gpt-5",
+                "qa_fixer": "ollama:x",
+            },
+            {"codex", "antigravity", "copilot"},
+        ),
+    ],
+)
+def test_build_job_seeds_only_logins_for_the_runs_providers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    phase_models: dict[str, str] | None,
+    expected: set[str],
+) -> None:
+    # #2025: the Job gets only the CLI logins its phase models resolve to.
+    monkeypatch.setenv("AIFACTORY_CLI_CREDS_SECRET", "factory-cli-creds")
+    monkeypatch.delenv("AIFACTORY_FALLBACK_MODEL", raising=False)
+    _seed_env(monkeypatch)
+    spec_dir = bb.spec_dir_for(tmp_path, "s")
+    spec_dir.mkdir(parents=True)
+    if phase_models:
+        (spec_dir / "task_metadata.json").write_text(
+            json.dumps({"phaseModels": phase_models})
+        )
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:s", project_path=tmp_path, spec_id="s"
+    )
+    init = next(
+        c
+        for c in m["spec"]["template"]["spec"]["initContainers"]
+        if c["name"] == "seed-creds"
+    )
+    script = init["args"][0]
+    for provider, key in _ALL_CRED_KEYS.items():
+        assert (f"/seed/{key}" in script) is (provider in expected), (provider, script)
 
 
 # --------------------------------------------------------------------------- #

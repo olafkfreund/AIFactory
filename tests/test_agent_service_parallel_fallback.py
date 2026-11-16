@@ -26,6 +26,7 @@ sys.path.insert(0, str(_ROOT / "apps" / "web-server"))
 sys.path.insert(0, str(_ROOT / "apps" / "backend"))
 
 from server.services.agent_service import AgentService  # noqa: E402
+from server.services.build_backend import GatedTaskRefusedError  # noqa: E402
 
 
 def _write_metadata(project_path: Path, spec_id: str, meta: dict) -> None:
@@ -107,7 +108,7 @@ async def test_serial_metadata_stays_serial(
     assert spawned["parallel"] is False
 
 
-async def test_missing_or_malformed_metadata_is_not_an_error(
+async def test_missing_metadata_starts_and_malformed_is_refused(
     service: tuple[AgentService, dict], tmp_path: Path
 ) -> None:
     svc, spawned = service
@@ -120,5 +121,9 @@ async def test_missing_or_malformed_metadata_is_not_an_error(
     spec_dir.mkdir(parents=True, exist_ok=True)
     (spec_dir / "task_metadata.json").write_text("{not json")
 
-    await _start(svc, tmp_path, spec_id="spec-2")
-    assert spawned["parallel"] is None
+    # #1932: on the subprocess backend unreadable metadata may hide a gate, so
+    # the start is refused (fail closed) instead of spawning.
+    spawned.clear()
+    with pytest.raises(GatedTaskRefusedError):
+        await _start(svc, tmp_path, spec_id="spec-2")
+    assert spawned == {}

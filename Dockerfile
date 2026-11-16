@@ -77,7 +77,7 @@ FROM docker.io/node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b26014
 # py-build: compiles the Python venv (#1842). Compilers and -dev headers stay
 # here; only the finished venv is copied into `runtime`.
 # ---------------------------------------------------------------------------
-FROM cgr.dev/chainguard/python:latest-dev@sha256:dde1a2549dd62864f0263dae8e877680837b4e738a7ecc85c671c55c069848ac AS py-build
+FROM cgr.dev/chainguard/python:latest-dev@sha256:64f414bffa25ca9ff518f35975ad153a921b2e4850c4a84c31a96885fdb86a02 AS py-build
 
 USER root
 
@@ -137,7 +137,7 @@ RUN set -e; pip=/home/projects/MagesticAI/.venv/bin/pip; cd /tmp; \
     grep -vxFf run.names build.names | xargs -r $pip uninstall -y; \
     $pip uninstall -y pip
 
-FROM cgr.dev/chainguard/python:latest-dev@sha256:dde1a2549dd62864f0263dae8e877680837b4e738a7ecc85c671c55c069848ac AS runtime
+FROM cgr.dev/chainguard/python:latest-dev@sha256:64f414bffa25ca9ff518f35975ad153a921b2e4850c4a84c31a96885fdb86a02 AS runtime
 
 USER root
 
@@ -235,6 +235,8 @@ RUN want="$(tr -dc '0-9.' < /tmp/.nvmrc | cut -d. -f1)" \
 #                        8.23.0-r0. Named together: same origin.
 #   ca-certificates-bundle 20260909-r2 — CVE-2026-111943 (HIGH), fixed in
 #                        20260909-r3.
+#   uv 0.13.5-r1 — CVE-2026-111943 (HIGH, same Go x509 denylist), fixed in
+#                        0.13.6-r1. Agents launch MCP servers with uvx.
 #   libbrotlicommon1 / libbrotlidec1 / libbrotlienc1 1.2.0-r5 — CVE-2026-111497
 #                        (HIGH), fixed in 1.2.0-r7. Named together: same origin.
 #   py3-pip-wheel 26.2.2-r0 — CVE-2026-114613 (HIGH), msgpack map-deserialization
@@ -255,6 +257,7 @@ RUN apk add --no-cache \
         bubblewrap \
         ca-certificates \
         "ca-certificates-bundle>=20260909-r3" \
+        "uv>=0.13.6-r1" \
         "libbrotlicommon1>=1.2.0-r7" \
         "libbrotlidec1>=1.2.0-r7" \
         "libbrotlienc1>=1.2.0-r7" \
@@ -396,9 +399,9 @@ RUN mkdir -p /home/nonroot/.npm-global \
 # that needs it. The `antigravity` symlink is asserted through gemini, which it
 # points at.
 RUN npm install -g \
-        @anthropic-ai/claude-code@2.1.310 \
-        @openai/codex@0.164.0 \
-        @google/gemini-cli@0.65.0 \
+        @anthropic-ai/claude-code@2.1.319 \
+        @openai/codex@0.167.0 \
+        @google/gemini-cli@0.67.0 \
  && node /home/nonroot/.npm-global/lib/node_modules/@anthropic-ai/claude-code/install.cjs \
  && /home/nonroot/.npm-global/bin/claude --version \
  && /home/nonroot/.npm-global/bin/codex --version \
@@ -565,7 +568,7 @@ CMD ["/home/projects/MagesticAI/.venv/bin/python", "-m", "server.main"]
 # ---------------------------------------------------------------------------
 # Stdlib-only model gateway: one file, no venv, no app code. Built with
 # ``--target gateway``; same pinned base and security refresh as ``runtime``.
-FROM cgr.dev/chainguard/python:latest-dev@sha256:dde1a2549dd62864f0263dae8e877680837b4e738a7ecc85c671c55c069848ac AS gateway
+FROM cgr.dev/chainguard/python:latest-dev@sha256:64f414bffa25ca9ff518f35975ad153a921b2e4850c4a84c31a96885fdb86a02 AS gateway
 
 USER root
 
@@ -575,7 +578,7 @@ RUN echo "security refresh: ${SECURITY_REFRESH}" \
 
 # CVE-2026-114613 (pip's vendored msgpack 1.2.1): gateway.py is stdlib-only, so
 # pip goes as in the runtime stage; py3-pip-wheel (python dep) takes the floor.
-RUN apk add --no-cache "py3-pip-wheel>=26.2.2-r1" \
+RUN apk add --no-cache "py3-pip-wheel>=26.2.2-r1" "uv>=0.13.6-r1" \
  && apk del --no-cache py3.15-pip py3.15-pip-base \
  && ! apk info -e py3.15-pip && ! apk info -e py3.15-pip-base
 

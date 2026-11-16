@@ -60,6 +60,7 @@ from ui import (
     print_status,
 )
 
+from .act_loop_hooks import charge_tokens, start_run
 from .base import AUTO_CONTINUE_DELAY_SECONDS, HUMAN_INTERVENTION_FILE
 from .build_report import write_build_report
 from .compaction_recovery import CompactionDetector, build_operational_context
@@ -235,6 +236,8 @@ async def run_autonomous_agent(
     # Track which phase we're in for logging
     current_log_phase = LogPhase.CODING
     is_planning_phase = False
+
+    start_run(spec_dir)  # #2033: fresh token count, no stale halt
 
     if first_run:
         if solo_plans_inline:
@@ -460,11 +463,14 @@ async def run_autonomous_agent(
         phase_model = gates.model(current_phase)
         phase_thinking_budget = gates.thinking_budget(current_phase)
 
-        # Per-subtask model override (#376 right-sizing): a coding subtask may
-        # declare its own model (e.g. "haiku" for mechanical scaffolding) to run
-        # cheaper/faster than the phase default. Planning is never overridden.
-        if not first_run and next_subtask and next_subtask.get("model"):
-            phase_model = next_subtask["model"]
+        # Per-subtask model override comes from the approved-plan snapshot
+        # (#1979), not the live plan. Planning is never overridden.
+        if not first_run and next_subtask:
+            override = gates.subtask_model(
+                next_subtask.get("id"), next_subtask.get("model")
+            )
+            if override:
+                phase_model = override
 
         # Create client (fresh context) with phase-specific model and thinking
         # Route through provider factory for non-Claude models
@@ -791,6 +797,8 @@ async def run_autonomous_agent(
         # detection so the NEXT turn can re-anchor. Never break a build on a
         # bookkeeping error.
         usage_payload = error_info.get("usage") if error_info else None
+        # #2033: per-run ceiling; a halt is picked up at the top of the loop.
+        charge_tokens(spec_dir, usage_payload)
         if usage_payload:
             try:
                 turn_usage = TurnUsage.from_sdk_usage(
@@ -834,6 +842,7 @@ async def run_autonomous_agent(
                     provider=_sub_provider,
                     phase=_agent_phase,
                     duration_ms=_turn_duration_ms,
+                    routing_metadata=gates.metadata,
                 )
                 # Live per-worker PROGRESS heartbeat (#45 Tier 2): this worker is
                 # STILL RUNNING and just persisted another turn's spend — emit a

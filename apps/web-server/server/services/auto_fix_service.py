@@ -605,17 +605,24 @@ async def _pull_clone_if_any(project_id: str) -> None:
     if not project_path.is_dir():
         return
     try:
+        from .github_app import (  # noqa: PLC0415
+            project_github_token,
+            warm_org_token,
+        )
         from .project_workspace_service import (
             GitOperationError,
             clone_or_update,
         )
 
-        await clone_or_update(
-            git_url=git_url,
-            branch=proj.get("clonedBranch"),
-            slug=project_path.name,
-            root=project_path.parent,
-        )
+        org = proj.get("org_id")
+        await warm_org_token(org if isinstance(org, str) else None)
+        with project_github_token(project_path):
+            await clone_or_update(
+                git_url=git_url,
+                branch=proj.get("clonedBranch"),
+                slug=project_path.name,
+                root=project_path.parent,
+            )
         logger.debug("[auto_fix] pulled %s before poll", project_path)
     except GitOperationError as e:
         logger.warning(

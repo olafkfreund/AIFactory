@@ -90,11 +90,27 @@ render with the MCP GitHub PAT:
 ## Copilot review
 
 AIFactory's engine reviews PRs by default. Copilot gates a PR only when
-`AIFACTORY_PR_REVIEWER=copilot`. A missing Copilot review times out to a human
-stop.
+`AIFACTORY_PR_REVIEWER` is `copilot` or `copilot-ruleset`. A missing Copilot
+review times out after 20 minutes and stops for a human.
+
+With `copilot`, the server asks GitHub to add Copilot as a reviewer and checks
+that the answer lists Copilot. If the request fails or Copilot is not listed,
+the server logs one warning and keeps waiting. The warning does not mean the
+App token is at fault. A PAT deployment, a repository without Copilot and a PR
+that Copilot already reviewed give the same answer.
+
+With `copilot-ruleset`, Copilot's review gates the merge as before, but the
+server sends no request. A repository ruleset must request it: in the
+repository settings, add a branch ruleset with "Automatically request Copilot
+code review". The ruleset must exist on every repository that uses this value.
+Without it no review arrives, and the PR stops for a human after 20 minutes.
+To have fix cycles reviewed again, enable the ruleset option for new pushes.
+This is a GitHub option and was not tested here.
 
 To check whether the App can request Copilot review, run this probe on a test
-PR opened by the App. Use the App's PEM private key file. The probe needs
+PR opened by the App. Run it before the ruleset is enabled on that repository.
+With the ruleset on, Copilot is already listed and the probe passes for the
+wrong reason. Use the App's PEM private key file. The probe needs
 `python-jose` and `httpx` (the backend virtualenv has both) and never prints
 the token or key; it exits 0 only when GitHub lists Copilot as a reviewer:
 
@@ -102,8 +118,10 @@ the token or key; it exits 0 only when GitHub lists Copilot as a reviewer:
 python scripts/github_app_setup.py probe-copilot --repo OWNER/NAME --pr N --app-id ID --installation-id ID --key-file private-key.pem
 ```
 
-Record the result on #1701. If the request is refused, add a branch ruleset
-with "Automatically request Copilot code review".
+Record the result on #1701. A negative result does not by itself prove that
+installation tokens are unsupported. A repository without Copilot or an
+already-reviewed PR give the same answer. Read the printed status and message.
+If the request is not confirmed, use `copilot-ruleset`.
 
 ## Clone credentials
 
@@ -116,14 +134,109 @@ with no stored credential. Then delete the stored PAT through the UI or
 `DELETE /api/git-credentials/{id}`, and revoke it on GitHub. Keep a PAT only
 where the App cannot be installed.
 
+## Token for agent children
+
+Runner children and build Jobs use GitHub for the base-branch fetch, the
+packed-workspace branch push, PR review reads and the GitHub MCP tools. The PR
+create, review request and merge calls run in the web server and keep its own
+token.
+
+Without a dedicated token, the children that need GitHub share the control
+plane's token. To give them a narrower one, create a fine-grained PAT and put
+it in a Secret:
+
+- Repositories: only the ones AIFactory builds.
+- Permissions: Contents read and write, Pull requests read, Issues read,
+  Metadata read.
+
+```bash
+kubectl create secret generic agent-github-token --from-literal=token=<PAT>
+```
+
+```yaml
+agentGithubToken:
+  secretName: agent-github-token
+  secretKey: token
+```
+
+The chart sets `AIFACTORY_AGENT_GITHUB_TOKEN` from this Secret. The web server
+passes it to the children as `GITHUB_TOKEN`, `GH_TOKEN` and
+`GITHUB_PERSONAL_ACCESS_TOKEN`. They never see the control plane's GitHub
+token, and never see the variable itself.
+
+Notes:
+
+- An empty Secret value counts as "not set". The server logs a warning and
+  the children fall back to the control plane's token.
+- The agent can read the children's token whenever the GitHub MCP server is
+  on. Keep the PAT narrow.
+- Do not point `github.tokenEnv` at this variable. The App start refuses it
+  as a PAT.
+- Do not put GitHub tokens in `apps/backend/.env`. While this token is set,
+  the web server skips them when it builds a child's env, and it sets every
+  GitHub name the children read (including a `github.tokenEnv` alias) to the
+  narrow token, so a value in that file cannot replace it.
+- The `github-models` provider reads its key from `GITHUB_TOKEN`. With a
+  narrow token it needs the Models permission on that PAT, or another
+  provider.
+
+## Several installations
+
+By default one installation id serves every org. To give each org its own
+installation of the same App, the operator sets a map of org id to
+installation id:
+
+```yaml
+githubApp:
+  orgInstallations:
+    default: "9001"
+    acme: "9002"
+```
+
+The chart sets `AIFACTORY_GITHUB_APP_ORG_INSTALLATIONS=acme=9002,default=9001`.
+Write the ids as quoted strings; the chart rejects numbers (use `--set-string`
+on the command line). Only the operator sets the map. An installation id is
+not a secret, so tenants must not be able to choose one.
+
+A non-empty map turns on multi-installation mode, which fails closed:
+
+- No process-wide token is published. A call gets a GitHub token only when it
+  names a bound org. Bind every org, `default` included: an unbound org gets
+  no GitHub token.
+- A project path registered under two orgs (one inside the other) gets no
+  token. In this mode the server refuses (409) to add or repoint a project
+  whose path equals, holds or sits inside another org's project.
+- It cannot be combined with the token for agent children
+  (`agentGithubToken`); the chart and the boot check refuse both.
+- Wired: project clone and the Auto-Fix pull, build, spec and PR-review
+  runners, build Jobs, the PR endgame, the merger, the PR data service,
+  Copilot dispatch, task-branch git calls, the shared `gh` helper, the
+  control plane's worktree fetch for build Jobs, and the project routes of
+  the GitHub and git APIs (`/api/projects/{projectId}/github/...`, the PR and
+  git routes). The org comes from the project the call works on. Those routes
+  refuse a caller who has no access to the project (403), and a handler cannot
+  switch to another org's token.
+- Still no token in this mode, by design: routes with no project (web login,
+  `auth/status`, user, orgs, models), Kubernetes spec Jobs (they never carry
+  a GitHub token), and a path no org owns. The server never stores an
+  installation token in a project's settings (`/persist-token` refuses).
+- If GitHub refuses to mint a token, the call runs without one and fails with
+  an authentication error; the server log has the cause.
+- A runner's token is fixed at spawn and lasts at least 55 minutes.
+
+Rollback: empty the map (`githubApp.orgInstallations: {}`) and restart.
+
 ## Limits
 
+- Per-org installations: see Several installations.
 - GitHub Models is not supported with the App.
 - The token is process-wide with a 1 hour lifetime, refreshed every 30
   minutes. A build or Job gets at least 30 minutes at spawn, so a long packed
   build can fail its final push. Per-call tokens (#1688) remove this.
-- Claude agents never see the token. Non-Claude runners and the GitHub MCP
-  server do.
+- An agent can read the GitHub token of its runner whenever the GitHub MCP
+  server is enabled (it is passed to the agent CLI as
+  `GITHUB_PERSONAL_ACCESS_TOKEN`). Set a token for agent children to keep that
+  narrow.
 - Stored per-project clone PATs are an accepted risk; see Clone credentials.
 
 ## Rollback

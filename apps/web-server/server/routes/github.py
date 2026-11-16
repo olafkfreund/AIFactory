@@ -16,7 +16,7 @@ import sys
 from pathlib import Path as FilePath
 
 from factory_common.logsafe import sanitize_log
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -29,9 +29,12 @@ from server.services.http_verdict import honest_status
 from server.services.originator import issue_originator
 from server.utils.subprocess_env import child_env, github_token
 
+from .project_github import project_github_token
+
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+
+router = APIRouter(dependencies=[Depends(project_github_token)])
 
 
 # ============================================
@@ -107,6 +110,8 @@ async def _persist_cli_token_to_project(project_id: str) -> bool:
     """
     from server.project_registry import load_projects
 
+    if github_app.multi_installation():  # never store an installation token (#1700)
+        return False
     token_result = run_gh_command(["auth", "token"])
     if not token_result["success"] or not token_result["output"]:
         return False
@@ -541,7 +546,7 @@ _gh_auth_proc: asyncio.subprocess.Process | None = None
 _gh_auth_status: dict | None = None
 
 
-async def _monitor_gh_auth(proc: asyncio.subprocess.Process):
+async def _monitor_gh_auth(proc: asyncio.subprocess.Process, principal: object = None):
     """Monitor gh auth login process in background and broadcast result."""
     global _gh_auth_status, _gh_auth_proc
 
@@ -580,9 +585,9 @@ async def _monitor_gh_auth(proc: asyncio.subprocess.Process):
 
     # Broadcast completion via WebSocket
     try:
-        from ..websockets.events import broadcast_event
+        from ..websockets.events import emit_org_less
 
-        await broadcast_event("github:auth-complete", _gh_auth_status)
+        await emit_org_less(principal, "github:auth-complete", _gh_auth_status)
     except Exception as exc:
         log.warning(
             "gh auth: failed to broadcast github:auth-complete over WebSocket: %s", exc
@@ -590,7 +595,7 @@ async def _monitor_gh_auth(proc: asyncio.subprocess.Process):
 
 
 @router.post("/auth/start")
-async def start_github_auth():
+async def start_github_auth(request: Request):
     """Start GitHub CLI authentication flow using device code.
 
     Returns the device code and URL immediately so the user can complete
@@ -605,13 +610,18 @@ async def start_github_auth():
             "data": {"success": False, "message": "GitHub CLI (gh) is not installed."},
         }
 
-    if github_token():
-        # A server token already authenticates gh; a web login would store a second one.
+    multi = github_app.multi_installation()
+    if multi or github_token():
+        # A server token already authenticates gh; a web login would store a
+        # second one. With org installations no process token exists, and a
+        # stored web login would make the next start() refuse to boot (#1700).
         return {
             "success": True,
             "data": {
-                "success": True,
-                "message": "already authenticated via GITHUB_TOKEN",
+                "success": not multi,
+                "message": "Web login is disabled: GitHub App installations are configured."
+                if multi
+                else "already authenticated via GITHUB_TOKEN",
             },
         }
 
@@ -696,7 +706,7 @@ async def start_github_auth():
             }
 
         # Start background monitor for process completion
-        spawn(_monitor_gh_auth(proc))
+        spawn(_monitor_gh_auth(proc, getattr(request.state, "user", None)))
 
         return {
             "success": True,
@@ -883,7 +893,7 @@ async def add_git_remote(request: AddRemoteRequest):
 # These are mounted under /api/projects/{projectId}/github
 # ============================================
 
-project_router = APIRouter()
+project_router = APIRouter(dependencies=[Depends(project_github_token)])
 
 
 def _resolve_project_path(projectId: str) -> FilePath | None:

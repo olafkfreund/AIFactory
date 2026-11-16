@@ -21,15 +21,37 @@ from factory_common.logsafe import sanitize_log
 
 from server.background import spawn
 from server.specpath import spec_dir_for
+from server.utils.subprocess_env import dotenv_key_blocked, make_subprocess_env
 
-from ..utils.subprocess_env import make_subprocess_env
 from . import project_settings_store
 from .agent_task_models import TaskProgress
-from .build_backend import BuildBackendUnavailableError, backend_config_error
+from .build_backend import (
+    BuildBackendUnavailableError,
+    GatedTaskRefusedError,
+    backend_config_error,
+    subprocess_gate_refusal,
+)
+from .spec_job_backend import (
+    KubeJobSpecBackend,
+    SpecJobProcess,
+    spec_kubejob_enabled,
+)
 from .task_phase import TaskPhase
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+
+def _load_spec_env(path: Path, env: dict[str, str]) -> None:
+    with path.open() as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+                if key not in env and not dotenv_key_blocked(key):
+                    env[key] = value
 
 
 def build_chain_args(kubejob_enabled: bool) -> list[str]:
@@ -67,6 +89,7 @@ class SpecCreationMixin:
         _marker_nonce_env: Callable[..., dict[str, str]]
         _resolve_claude_token_pooled: Callable[..., Any]
         _kubejob_backend_enabled: Callable[..., bool]
+        _release_task_credential: Callable[[str], None]
 
     async def start_spec_creation(
         self,
@@ -77,7 +100,7 @@ class SpecCreationMixin:
         complexity: str | None = None,
         auto_continue: bool = True,
         user_id: str = "",
-    ) -> asyncio.subprocess.Process:
+    ) -> asyncio.subprocess.Process | SpecJobProcess:
         """Start spec creation for a task."""
 
         logger = logging.getLogger(__name__)
@@ -95,6 +118,13 @@ class SpecCreationMixin:
             # Fallback: no project ID prefix (shouldn't happen in web mode)
             spec_dir = None
             spec_id = None
+        if problem := subprocess_gate_refusal(spec_dir):
+            raise GatedTaskRefusedError(problem)
+        use_job = spec_kubejob_enabled()
+        if use_job and spec_dir is None:
+            raise BuildBackendUnavailableError(
+                "Spec creation refused: task has no spec directory"
+            )
 
         # Fix 5: Check if task requires manual review before coding
         # If requireReviewBeforeCoding is true, DON'T auto-approve (let user review the plan)
@@ -213,7 +243,9 @@ class SpecCreationMixin:
         # Set environment — scrub ANTHROPIC_API_KEY so spawned subprocesses
         # can never silently bill the direct-API account (OAuth-only policy;
         # see apps/backend/core/auth.py).
-        env = make_subprocess_env()
+        env = await asyncio.to_thread(
+            make_subprocess_env, github=True, project_path=project_path
+        )
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
         # Run Claude in non-interactive mode - bypass permission prompts
@@ -231,16 +263,7 @@ class SpecCreationMixin:
         backend_env_file = self.backend_path / ".env"
         if backend_env_file.exists():
             try:
-                with open(backend_env_file) as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith("#") and "=" in line:
-                            key, value = line.split("=", 1)
-                            key = key.strip()
-                            value = value.strip()
-                            # Don't override existing env vars
-                            if key not in env:
-                                env[key] = value
+                _load_spec_env(backend_env_file, env)
                 logger.info("[AgentService] Loaded backend .env for spec creation")
             except Exception as e:
                 logger.warning(f"[AgentService] Failed to load backend .env: {e}")
@@ -276,34 +299,62 @@ class SpecCreationMixin:
         # #1929: after make_subprocess_env(), which denies this name.
         env.update(self._marker_nonce_env(task_id))
 
-        # Start subprocess with a pseudo-TTY to prevent "Stream closed" errors
-        # Claude Code CLI expects a TTY for permission handling
-        import pty
+        proc: asyncio.subprocess.Process | SpecJobProcess
+        if use_job:
+            try:
+                if spec_id is None or spec_dir is None:
+                    # Refused above already; this narrows the types for mypy.
+                    raise BuildBackendUnavailableError(
+                        "Spec creation refused: task has no spec directory"
+                    )
+                proc = await KubeJobSpecBackend().dispatch(
+                    task_id=task_id,
+                    project_path=project_path,
+                    spec_id=spec_id,
+                    spec_dir=spec_dir,
+                    task_text=f"{title}\n\n{description}",
+                    model=spec_phase_model,
+                    complexity=complexity,
+                    auto_approve=should_auto_approve,
+                    oauth_token=token,
+                    mcp_env=await project_settings_store.mcp_spawn_env(project_path),
+                    marker_nonce=self._marker_nonce_env(task_id)[
+                        "AIFACTORY_MARKER_NONCE"
+                    ],
+                )
+            except BaseException:
+                # A refused dispatch must hand the pooled credential back.
+                self._release_task_credential(task_id)
+                raise
+        else:
+            # Start subprocess with a pseudo-TTY to prevent "Stream closed" errors
+            # Claude Code CLI expects a TTY for permission handling
+            import pty
 
-        master_fd, slave_fd = pty.openpty()
+            master_fd, slave_fd = pty.openpty()
 
-        # #363: optional OS sandbox — passthrough unless AIFACTORY_AGENT_SANDBOX
-        # is set and bwrap is installed (zero behaviour change by default).
-        from .sandbox import build_sandboxed_command
+            # #363: optional OS sandbox — passthrough unless AIFACTORY_AGENT_SANDBOX
+            # is set and bwrap is installed (zero behaviour change by default).
+            from .sandbox import build_sandboxed_command
 
-        cmd = build_sandboxed_command(cmd, project_path)
+            cmd = build_sandboxed_command(cmd, project_path)
 
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=slave_fd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(project_path),
-            env=env,
-            # Own session/process group so stop_task can kill the WHOLE tree —
-            # run.py spawns coder subprocesses (Claude SDK, git); without this,
-            # proc.terminate() only signals run.py and the children orphan and
-            # keep running (the stop-resistance bug).
-            start_new_session=True,
-        )
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=slave_fd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(project_path),
+                env=env,
+                # Own session/process group so stop_task can kill the WHOLE tree —
+                # run.py spawns coder subprocesses (Claude SDK, git); without this,
+                # proc.terminate() only signals run.py and the children orphan and
+                # keep running (the stop-resistance bug).
+                start_new_session=True,
+            )
 
-        # Close slave fd in parent process
-        os.close(slave_fd)
+            # Close slave fd in parent process
+            os.close(slave_fd)
 
         self.running_tasks[task_id] = proc
         self._spec_creation_procs[task_id] = proc
@@ -335,7 +386,11 @@ class SpecCreationMixin:
         # Pass cmd and env so model fallback can retry with a different model on failure
         spawn(
             self._monitor_process(
-                task_id, proc, project_path=project_path, cmd=cmd, env=env
+                task_id,
+                proc,
+                project_path=project_path,
+                cmd=None if use_job else cmd,
+                env=None if use_job else env,
             )
         )
 

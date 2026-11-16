@@ -23,7 +23,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "apps" / "backend"))
 
-from core.auth import get_agent_env_blanks  # noqa: E402
+from core.auth import (  # noqa: E402
+    get_agent_env_blanks,
+    is_agent_env_allowed,
+    is_denied_env_key,
+)
 
 _GIT = shutil.which("git")  # resolved before clean_env narrows PATH
 
@@ -179,20 +183,19 @@ def test_allowlist_blanks_unknown_names_and_honors_safe_extra(clean_env, monkeyp
 
 
 def test_dropped_names_logged_once_without_values(clean_env, monkeypatch, caplog):
-    from core import auth
+    from agent_sandbox import env as sandbox_env
     from core.child_env import child_env
 
-    monkeypatch.setattr(auth, "_logged_dropped_env_names", set())
+    monkeypatch.setattr(sandbox_env, "_logged_dropped", set())
     monkeypatch.setenv("FOO_MISC", "private-marker")
     monkeypatch.setenv("FOO_SECRETISH", "private-marker")
-    with caplog.at_level(logging.INFO, logger="core.auth"):
+    with caplog.at_level(logging.INFO, logger="agent_sandbox.env"):
         get_agent_env_blanks()
         get_agent_env_blanks()
         child_env(agent=True)
 
-    messages = [r.message for r in caplog.records if "#1757" in r.message]
+    messages = [r.message for r in caplog.records if "FOO_MISC" in r.message]
     assert len(messages) == 1
-    assert "FOO_MISC" in messages[0]
     assert "FOO_SECRETISH" not in messages[0]
     assert "private-marker" not in messages[0]
 
@@ -250,3 +253,30 @@ def test_simple_client_env_is_scrubbed(clean_env, monkeypatch, tmp_path):
     for key in SECRETS:
         assert seen["env"].get(key) == "", f"simple client inherits {key}"
     del client
+
+
+# Factory#3709: verdicts of the pre-shared-package code, held across the swap.
+_VERDICTS = {
+    "PATH": (False, True),
+    "HOME": (False, False),
+    "CLAUDE_CODE_OAUTH_TOKEN": (False, True),
+    "ANTHROPIC_BASE_URL": (False, True),
+    "JWT_SECRET": (True, False),
+    "AIFACTORY_AGENT_GITHUB_TOKEN": (True, False),
+    "GH_TOKEN": (True, False),
+    "FOO_MISC": (False, False),
+    "CFACTORY_READ_KEY": (True, False),
+    "CFACTORY_GITHUB_TOKEN": (True, False),
+    "GITLAB_TOKEN": (True, False),
+}
+
+
+@pytest.mark.parametrize(("name", "verdict"), sorted(_VERDICTS.items()))
+def test_verdict_table(clean_env, name, verdict):
+    assert (is_denied_env_key(name), is_agent_env_allowed(name)) == verdict
+
+
+def test_new_deny_names_stay_denied_through_extra(clean_env, monkeypatch):
+    monkeypatch.setenv("AIFACTORY_AGENT_ENV_EXTRA", "GITLAB_TOKEN,CFACTORY_READ_KEY")
+    assert not is_agent_env_allowed("GITLAB_TOKEN")
+    assert not is_agent_env_allowed("CFACTORY_READ_KEY")

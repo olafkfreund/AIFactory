@@ -46,6 +46,7 @@ import contextlib
 import json
 import os
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -472,6 +473,7 @@ def record_turn(
     subtask_id: str | None = None,
     provider: str | None = None,
     duration_ms: int,
+    routing_metadata: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Attribute one turn and fold it into the per-task aggregate (atomic).
 
@@ -493,6 +495,9 @@ def record_turn(
     "unmeasured", and the swarm comparison it feeds (Factory#345 wall-clock)
     silently had no denominator. A required kwarg makes the omission a
     TypeError at the call site instead of a zero in an artifact.
+
+    ``routing_metadata`` supplies the tier routing block from the caller's
+    run-start snapshot (#1979).
     """
     attribution = attribute_turn(segments, usage)
     window = max_tokens or context_window_for_model(model)
@@ -502,20 +507,7 @@ def record_turn(
         if subtask_id is not None
         else (worker_id if worker_id and worker_id != DEFAULT_WORKER_ID else None)
     )
-    # Routing metadata for the per-worker tier stamp (#803): when a contract
-    # routing block is present it lets tier_for_model reverse-map the tier even
-    # without a local env policy. Lazy import avoids a phase_config <->
-    # token_attribution cycle; best-effort — the stamp must never break
-    # accounting.
-    routing_metadata: dict[str, Any] | None = None
-    try:
-        from phase_config import load_task_metadata  # noqa: PLC0415
-
-        loaded = load_task_metadata(spec_dir)
-        routing_metadata = loaded if isinstance(loaded, dict) else None
-    except Exception:  # noqa: BLE001 - stamping is best-effort
-        routing_metadata = None
-
+    routing = dict(routing_metadata) if routing_metadata is not None else None
     try:
         agg = _read_aggregate(usage_file_path(spec_dir))
         agg["turns"] = int(agg.get("turns", 0)) + 1
@@ -554,7 +546,7 @@ def record_turn(
             subtask_id=sub_id,
             provider=provider,
             model=model,
-            routing_metadata=routing_metadata,
+            routing_metadata=routing,
             input_tokens=attribution.total_input_tokens,
             output_tokens=attribution.output_tokens,
             cost_usd=attribution.cost_usd,
@@ -604,7 +596,7 @@ def record_turn(
             subtask_id=sub_id,
             provider=provider,
             model=model,
-            routing_metadata=routing_metadata,
+            routing_metadata=routing,
             input_tokens=attribution.total_input_tokens,
             output_tokens=attribution.output_tokens,
             cost_usd=attribution.cost_usd,

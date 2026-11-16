@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import json
 import os
 import shutil
@@ -16,6 +17,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+_REQ = type("Req", (), {"state": type("State", (), {"user": None})()})()
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "apps" / "backend"))
 sys.path.insert(0, str(_ROOT / "apps" / "web-server"))
@@ -33,6 +35,8 @@ _SERVER = _ROOT / "apps" / "web-server" / "server"
 def _env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
     monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_PERSONAL_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("AIFACTORY_AGENT_GITHUB_TOKEN", raising=False)
     for k in ("GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"):
         monkeypatch.delenv(k, raising=False)
     # Without this the sweep tests delete a running dev server's real dirs.
@@ -64,6 +68,66 @@ def test_token_rides_in_owner_only_hosts_file() -> None:
         assert all(TOKEN not in v for v in env.values())
         for k in ("GITHUB_TOKEN", "GH_TOKEN", "GIT_PASS"):
             assert k not in env
+
+
+def test_control_plane_keeps_own_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GITHUB_TOKEN", "cp-a")
+    monkeypatch.setenv("AIFACTORY_AGENT_GITHUB_TOKEN", "agent-x")
+    with gc.github_env(ce.child_env()) as env:
+        entry = json.loads((Path(env["GH_CONFIG_DIR"]) / "hosts.yml").read_text())
+        assert entry["github.com"]["oauth_token"] == "cp-a"  # noqa: S105
+        assert "AIFACTORY_AGENT_GITHUB_TOKEN" not in env
+        assert "agent-x" not in env.values()
+
+
+def _file_token() -> str:
+    with gc.github_env(ce.child_env()) as env:
+        if "GH_CONFIG_DIR" not in env:
+            return ""
+        return json.loads((Path(env["GH_CONFIG_DIR"]) / "hosts.yml").read_text())[
+            "github.com"
+        ]["oauth_token"]
+
+
+def test_provider_overrides_ambient_and_resets() -> None:
+    provided = "ghs_provider_unique_1700"
+    with gc.use_github_token(lambda: f" {provided} "):
+        assert _file_token() == provided
+        with gc.use_github_token(lambda: ""):
+            assert _file_token() == ""
+        assert _file_token() == provided
+    assert _file_token() == TOKEN
+    with (
+        pytest.raises(RuntimeError),
+        gc.use_github_token(lambda: "ghs_other_unique_1700"),
+    ):
+        raise RuntimeError("stop")
+    assert _file_token() == TOKEN
+
+
+def test_provider_context_across_tasks_and_thread() -> None:
+    async def read(value: str) -> None:
+        with gc.use_github_token(lambda: value):
+            for _ in range(3):
+                assert _file_token() == value
+                await asyncio.sleep(0)
+            assert await asyncio.to_thread(_file_token) == value
+
+    async def run() -> None:
+        async def delayed_read() -> str:
+            await asyncio.sleep(0)
+            return _file_token()
+
+        before = asyncio.create_task(delayed_read())
+        with gc.use_github_token(lambda: "later"):
+            after = asyncio.create_task(delayed_read())
+        assert await before == TOKEN
+        assert await after == "later"
+        await asyncio.gather(
+            read("ghs_acme_unique_1700"), read("ghs_globex_unique_1700")
+        )
+
+    asyncio.run(run())
 
 
 def test_inherited_github_credentials_are_stripped() -> None:
@@ -152,23 +216,51 @@ def test_no_token_passes_base_env_through(
     assert list(tmp_path.glob("aif-gh-*")) == []
 
 
-@pytest.mark.skipif(
-    not (shutil.which("git") and shutil.which("gh")), reason="needs git and gh"
-)
+_STUB_GH = """#!/bin/sh
+# Test stub: reads the token from the managed hosts.yml (JSON), never the host.
+tok=$(sed -n 's/.*"oauth_token": *"\\([^"]*\\)".*/\\1/p' "$GH_CONFIG_DIR/hosts.yml")
+case "$1 $2 $3" in
+  "auth token "*) printf '%s\\n' "$tok" ;;
+  "auth git-credential get")
+    printf 'protocol=https\\nhost=github.com\\nusername=x-access-token\\npassword=%s\\n' "$tok" ;;
+esac
+"""
+
+
+def _redact(s: str) -> str:
+    return f"<{len(s)} chars, token={'yes' if TOKEN in s else 'no'}>"
+
+
+def _isolate(
+    env: dict[str, str], root: Path, gitconfig: str = "/dev/null"
+) -> dict[str, str]:
+    """Env that cannot see the host's gh login, keyring or git config."""
+    bin_dir = root / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    gh = bin_dir / "gh"
+    gh.write_text(_STUB_GH)
+    gh.chmod(0o755)
+    home = root / "home"
+    home.mkdir(exist_ok=True)
+    return {
+        **env,
+        "PATH": f"{bin_dir}{os.pathsep}{env.get('PATH', '')}",
+        "HOME": str(home),
+        "XDG_CONFIG_HOME": str(home / ".config"),
+        "GIT_CONFIG_GLOBAL": gitconfig,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_TERMINAL_PROMPT": "0",
+    }
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="needs git and gh")
 def test_helper_reset_keeps_store_from_saving_token(tmp_path: Path) -> None:
     home = tmp_path / "home"
     home.mkdir()
     gitconfig = home / ".gitconfig"
     gitconfig.write_text("[credential]\n\thelper = store\n")
     with gc.github_env(ce.child_env()) as env:
-        env = {
-            **env,
-            "HOME": str(home),
-            "XDG_CONFIG_HOME": str(home / ".config"),
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_TERMINAL_PROMPT": "0",
-            "GIT_CONFIG_GLOBAL": str(gitconfig),
-        }
+        env = _isolate(env, tmp_path, str(gitconfig))
         req = "protocol=https\nhost=github.com\n\n"
         fill = subprocess.run(  # noqa: S603
             ["git", "credential", "fill"],  # noqa: S607
@@ -176,25 +268,28 @@ def test_helper_reset_keeps_store_from_saving_token(tmp_path: Path) -> None:
             capture_output=True,
             text=True,
             env=env,
+            cwd=tmp_path,
             check=False,
         )
         assert fill.returncode == 0
-        assert TOKEN in fill.stdout
+        has_token = TOKEN in fill.stdout  # bool first: pytest would echo operands
+        assert has_token, _redact(fill.stdout)
         approve = subprocess.run(  # noqa: S603
             ["git", "credential", "approve"],  # noqa: S607
             input=fill.stdout,
             capture_output=True,
             text=True,
             env=env,
+            cwd=tmp_path,
             check=False,
         )
         assert approve.returncode == 0
     assert not (home / ".git-credentials").exists()
 
 
-@pytest.mark.skipif(not shutil.which("gh"), reason="needs gh")
-def test_real_gh_reads_token_without_rewriting_hosts() -> None:
+def test_real_gh_reads_token_without_rewriting_hosts(tmp_path: Path) -> None:
     with gc.github_env(ce.child_env()) as env:
+        env = _isolate(env, tmp_path)
         d = Path(env["GH_CONFIG_DIR"])
         before = (d / "hosts.yml").read_bytes()
         r = subprocess.run(  # noqa: S603
@@ -202,9 +297,11 @@ def test_real_gh_reads_token_without_rewriting_hosts() -> None:
             capture_output=True,
             text=True,
             env=env,
+            cwd=tmp_path,
             check=False,
         )
-        assert r.stdout.strip() == TOKEN
+        same = r.stdout.strip() == TOKEN
+        assert same, _redact(r.stdout)
         assert sorted(p.name for p in d.iterdir()) == ["hosts.yml"]
         assert (d / "hosts.yml").read_bytes() == before
 
@@ -273,7 +370,7 @@ def _non_test_sources() -> Iterator[Path]:
 def test_web_server_has_no_env_token_path() -> None:
     needles = (
         "keep=GITHUB_KEEP",
-        "*GITHUB_KEEP",
+        "runner_github_env(",
         '"setup-git"',
         'GIT_PASS"',
         '"GIT_PASS":',
@@ -284,9 +381,19 @@ def test_web_server_has_no_env_token_path() -> None:
         for line in p.read_text().splitlines()
         if any(s in line for s in needles)
     }
-    # RUNNER_KEEP keeps the token in the runner process by approver decision (#1723 D1).
     allowed = {
-        ("apps/web-server/server/utils/subprocess_env.py", "*GITHUB_KEEP,"),
+        (
+            "apps/web-server/server/utils/subprocess_env.py",
+            "def runner_github_env(project_path: str | Path | None = None) -> dict[str, str]:",
+        ),
+        (
+            "apps/web-server/server/utils/subprocess_env.py",
+            "env.update(runner_github_env(project_path))",
+        ),
+        (
+            "apps/web-server/server/services/build_backend.py",
+            "github = runner_github_env(project_path)",
+        ),
         (
             "apps/backend/core/git_credentials.py",
             '_STRIPPED = ("GITHUB_TOKEN", "GH_TOKEN", "GIT_PASS")',
@@ -322,7 +429,7 @@ async def test_login_route_spawns_nothing_when_token_set() -> None:
         patch("server.routes.github.shutil.which", return_value="/usr/bin/gh"),
         patch("server.routes.github.asyncio.create_subprocess_exec", spawn),
     ):
-        r = await github_routes.start_github_auth()  # type: ignore[no-untyped-call]
+        r = await github_routes.start_github_auth(_REQ)  # type: ignore[no-untyped-call]
     assert r["data"]["success"] is True
     assert "GITHUB_TOKEN" in r["data"]["message"]
     spawn.assert_not_awaited()
@@ -349,7 +456,7 @@ async def test_login_route_uses_managed_gh_config_dir(
         patch("server.routes.github.shutil.which", return_value="/usr/bin/gh"),
         patch("server.routes.github.asyncio.create_subprocess_exec", spawn),
     ):
-        await github_routes.start_github_auth()  # type: ignore[no-untyped-call]
+        await github_routes.start_github_auth(_REQ)  # type: ignore[no-untyped-call]
     assert seen[0]["GH_CONFIG_DIR"] == str(tmp_path / "aif-gh")
     assert "--insecure-storage" in argvs[0]  # token lands in the managed hosts.yml
 
@@ -414,7 +521,7 @@ async def test_already_authenticated_exit_publishes_before_success(
         patch("server.routes.github.shutil.which", return_value="/usr/bin/gh"),
         patch("server.routes.github.asyncio.create_subprocess_exec", spawn),
     ):
-        r = await github_routes.start_github_auth()  # type: ignore[no-untyped-call]
+        r = await github_routes.start_github_auth(_REQ)  # type: ignore[no-untyped-call]
     assert r["data"]["message"] == "Already authenticated with GitHub."
     assert seen == [None], "load_web_login must run before success is set"
     assert github_routes._gh_auth_status == {"complete": True, "success": True}

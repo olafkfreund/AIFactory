@@ -564,6 +564,14 @@ async def run_agent_session(
                             full_input=str(inp)[:500] if inp else None,
                         )
 
+                        if task_logger:
+                            task_logger.transcript_tool_start(
+                                tool_name,
+                                {} if inp is None else inp,
+                                getattr(block, "id", None),
+                                phase,
+                            )
+
                         # Log tool start (handles printing too)
                         if task_logger:
                             task_logger.tool_start(
@@ -591,6 +599,13 @@ async def run_agent_session(
                     if block_type == "ToolResultBlock":
                         result_content = getattr(block, "content", "")
                         is_error = getattr(block, "is_error", False)
+                        if task_logger:
+                            task_logger.transcript_tool_end(
+                                getattr(block, "tool_use_id", None),
+                                result_content,
+                                is_error,
+                                phase,
+                            )
                         # Track tool-result volume for token attribution (#262):
                         # these results become input on the next turn.
                         _tool_output_chars += len(str(result_content))

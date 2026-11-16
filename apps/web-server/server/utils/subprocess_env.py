@@ -15,8 +15,10 @@ exception — that's their own shell, they expect their normal env.
 from __future__ import annotations
 
 import contextlib
+import logging
+import os
 import sys
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path
 
 _BACKEND_DIR = Path(__file__).resolve().parents[3] / "backend"
@@ -37,21 +39,26 @@ pin_git_config = _core.pin_git_config
 lfs_upload = _core.lfs_upload
 
 __all__ = [
+    "AGENT_GITHUB_TOKEN_VAR",
     "GITHUB_KEEP",
     "RUNNER_KEEP",
+    "agent_github_token",
     "child_env",
+    "dotenv_key_blocked",
     "github_env",
+    "github_names",
     "github_token",
     "lfs_push_argv",
     "lfs_upload",
     "make_subprocess_env",
     "merge_driver_pins",
     "pin_git_config",
+    "project_github_env",
+    "runner_github_env",
     "sweep_github_dirs",
 ]
 
 RUNNER_KEEP: tuple[str, ...] = (
-    *GITHUB_KEEP,
     "OPENAI_API_KEY",
     "OPENAI_COMPATIBLE_API_KEY",
     "GEMINI_API_KEY",
@@ -60,6 +67,80 @@ RUNNER_KEEP: tuple[str, ...] = (
     "VOYAGE_API_KEY",
     "OLLAMA_API_KEY",
 )
+
+AGENT_GITHUB_TOKEN_VAR = "AIFACTORY_AGENT_GITHUB_TOKEN"  # noqa: S105
+_blank_agent_token_warned = False
+_log = logging.getLogger(__name__)
+
+
+def github_names() -> tuple[str, ...]:
+    from core.auth import is_denied_env_key  # noqa: PLC0415
+    from core.mcp_credentials import _load_operator_config  # noqa: PLC0415
+
+    names = (*GITHUB_KEEP, "GITHUB_PERSONAL_ACCESS_TOKEN")
+    github = _load_operator_config().get("github")
+    alias = github.get("tokenEnv") if isinstance(github, dict) else None
+    alias = alias.strip() if isinstance(alias, str) else ""
+    # A denied name (another secret, or the agent variable) is never an alias:
+    # it must not ride into a child through this list.
+    if not alias or alias in names or is_denied_env_key(alias):
+        return names
+    return (*names, alias)
+
+
+def agent_github_token() -> str:
+    global _blank_agent_token_warned  # noqa: PLW0603
+
+    token = os.environ.get(AGENT_GITHUB_TOKEN_VAR, "").strip()
+    if (
+        AGENT_GITHUB_TOKEN_VAR in os.environ
+        and not token
+        and not _blank_agent_token_warned
+    ):
+        _log.warning(
+            "Agent GitHub token is blank; runner children fall back to the "
+            "control plane's GitHub token"
+        )
+        _blank_agent_token_warned = True
+    return token
+
+
+def runner_github_env(project_path: str | Path | None = None) -> dict[str, str]:
+    from server import project_registry  # noqa: PLC0415 - avoid github_app import cycle
+    from server.services import github_app  # noqa: PLC0415
+
+    if github_app.multi_installation():
+        token = github_app.token_for_org(
+            project_registry.org_id_for_path(project_path), min_ttl=3300
+        )
+        return (
+            dict.fromkeys((*GITHUB_KEEP, "GITHUB_PERSONAL_ACCESS_TOKEN"), token)
+            if token
+            else {}
+        )
+    token = agent_github_token()
+    if token:
+        # The alias too: the runners load_dotenv() themselves, and a value
+        # there for an absent alias would win in the MCP probe.
+        return dict.fromkeys(github_names(), token)
+    return {name: os.environ[name] for name in github_names() if os.environ.get(name)}
+
+
+@contextlib.contextmanager
+def project_github_env(
+    path: str | Path | None, base_env: dict[str, str]
+) -> Iterator[dict[str, str]]:
+    """``github_env`` with the GitHub token of the org that owns ``path`` (#1700)."""
+    from server.services import github_app  # noqa: PLC0415 - avoid import cycle
+
+    with github_app.project_github_token(path), github_env(base_env) as env:
+        yield env
+
+
+def dotenv_key_blocked(key: str) -> bool:
+    return key == AGENT_GITHUB_TOKEN_VAR or bool(
+        agent_github_token() and key in github_names()
+    )
 
 
 def child_env(
@@ -79,10 +160,12 @@ def make_subprocess_env(
     extra: Mapping[str, str] | None = None,
     *,
     strip_anthropic_api_key: bool = True,
+    github: bool = False,
+    project_path: str | Path | None = None,
 ) -> dict[str, str]:
     """Return a scrubbed env for LLM runner subprocesses.
 
-    Keeps ``RUNNER_KEEP`` (GitHub and provider keys) and the SDK auth path
+    Keeps ``RUNNER_KEEP`` provider keys and the SDK auth path
     (``CLAUDE_CODE_OAUTH_TOKEN``, via the non-denied default). The Anthropic
     direct-API key is stripped unless ``strip_anthropic_api_key=False``, which
     only an explicitly consented batch invocation may pass.
@@ -92,7 +175,12 @@ def make_subprocess_env(
         if strip_anthropic_api_key
         else (*RUNNER_KEEP, "ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY_FILE")
     )
-    return child_env(keep=keep, extra=extra, runner=True)
+    env = child_env(keep=keep, extra=extra, runner=True)
+    for name in github_names():
+        env.pop(name, None)
+    if github:
+        env.update(runner_github_env(project_path))
+    return env
 
 
 def _traceparent() -> dict[str, str]:

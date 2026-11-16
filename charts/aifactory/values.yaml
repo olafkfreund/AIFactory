@@ -242,14 +242,22 @@ networkPolicy:
       extraRules: []
 
 migrations:
-  # Production: false. Operators run the alembic Job out-of-band so
-  # rollouts can be ordered/audited. Set true for POC/dev mode where
-  # the app autoApplies on boot.
+  # Production: false runs a pre-install/pre-upgrade hook Job that executes
+  # alembic upgrade head before pods roll; no init container is used.
+  # Set true for POC/dev mode where the app applies migrations on boot.
   autoApply: false
-  # When false, an alembic-upgrade Job is created and the deployment
-  # waits for it to complete via init container.
+  # The database, custom CA and image pull Secrets must exist before the first
+  # install: chart-managed ones (ExternalSecret, bundled Postgres) do not
+  # exist yet at pre-install. Pre-create them or install once with
+  # autoApply=true.
   jobImage: ""  # defaults to the same image as the app
   jobBackoffLimit: 3
+  # Covers scheduling, image pull, retries and the migration. Raise for long
+  # migrations; 0 disables the deadline.
+  jobActiveDeadlineSeconds: 300
+  # Empty uses the web container's `resources`. A non-empty value replaces
+  # them whole (no merge), so set both requests and limits.
+  jobResources: {}
 
 postgres:
   # When true: install cloudnative-pg sub-chart for POC mode.
@@ -770,6 +778,16 @@ githubApp:
   installationId: ""
   secretName: ""
   privateKeyKey: private-key
+  # Org id -> installation id, both strings (quote the id). A non-empty map
+  # turns on multi-installation mode; see docs/docs/concepts/github-app.md.
+  orgInstallations: {}
+
+# Narrow GitHub token for runner children and build Jobs (#1973). When
+# set, the control plane's own GitHub token never enters them.
+# See docs/docs/concepts/github-app.md.
+agentGithubToken:
+  secretName: ""
+  secretKey: token
 
 # Redis pub/sub for cross-replica WebSocket fan-out (Epic #35 #40).
 #

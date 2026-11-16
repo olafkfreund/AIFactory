@@ -1,3 +1,7 @@
 # #1799: fake test token in an intermediate commit; value replaced in f3a1d3d2
 24f009554ec7aba96f95e11b4fdfdf0bd8290a48:apps/web-server/tests/test_project_settings_store.py:generic-api-key:458
 24f009554ec7aba96f95e11b4fdfdf0bd8290a48:apps/web-server/tests/test_project_settings_store.py:generic-api-key:462
+# #1932: a code excerpt in a plan (`oauth_token=token, mcp_env=...`), not a credential
+6a3df5606d6e754e56ef6fa3e422442e2b43b374:plan/2026-10-31-1932-spec-creation-kubejob.md:generic-api-key:125
+# #1932: same plan excerpt, squash-merge sha of #2026
+55eaf37fc71e72f54cbdd9a95e1c7496a6ff191f:plan/2026-10-31-1932-spec-creation-kubejob.md:generic-api-key:125

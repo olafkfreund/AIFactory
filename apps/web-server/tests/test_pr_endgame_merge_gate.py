@@ -242,7 +242,9 @@ def test_recorded_approvals_do_not_lift_the_deployment_floor(
     floor sees no evidence and a declared gate keeps the tier floored."""
     monkeypatch.setenv(pe.PATH_RISK_FLOOR_ENV, "true")
     spec = _spec(tmp_path, reviewTier="auto", satisfiedSystemGates=["human-approval"])
-    (spec / "implementation_plan.json").write_text(
+    # #1984: the contract comes from context/task_contract.json only.
+    (spec / "context").mkdir()
+    (spec / "context" / "task_contract.json").write_text(
         json.dumps(
             {
                 "contract_version": "2",
@@ -265,7 +267,9 @@ def test_an_outstanding_gate_still_floors_the_tier(
     """The control for the test above."""
     monkeypatch.setenv(pe.PATH_RISK_FLOOR_ENV, "true")
     spec = _spec(tmp_path, reviewTier="auto")
-    (spec / "implementation_plan.json").write_text(
+    # #1984: the contract comes from context/task_contract.json only.
+    (spec / "context").mkdir()
+    (spec / "context" / "task_contract.json").write_text(
         json.dumps(
             {
                 "contract_version": "2",
@@ -507,7 +511,8 @@ async def test_the_background_watcher_is_strongly_referenced(
 
 @pytest.mark.parametrize(
     "where",
-    [("context", "task_contract.json"), ("implementation_plan.json",)],
+    # #1984: implementation_plan.json is agent-written and never a contract source.
+    [("context", "task_contract.json")],
 )
 def test_a_contract_that_raises_on_read_holds_instead(
     tmp_path: Path, where: tuple[str, ...]

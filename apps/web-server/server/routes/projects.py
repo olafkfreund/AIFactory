@@ -4,12 +4,14 @@ Project management routes.
 Handles CRUD operations for projects (git repositories that Magestic AI manages).
 """
 
+import asyncio
+import contextlib
 import json
 import logging
 import re
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -22,8 +24,12 @@ from server.error_ref import InputRejectedError, client_error
 # than left defined here so this module keeps its own `load_projects(...)`
 # call sites unchanged -- and so `patch("server.routes.projects.load_projects")`
 # still works for tests that drive THIS module's handlers.
-from server.project_registry import load_projects, save_projects
-from server.services import project_settings_store
+from server.project_registry import (
+    load_projects,
+    overlaps_other_org,
+    save_projects,
+)
+from server.services import github_app, project_settings_store
 from server.services.audit_service import ACTION_TASK_CREATE, audit_task_action
 from server.services.http_verdict import honest_status
 from server.services.originator import principal_attribution
@@ -413,6 +419,45 @@ class ScanProjectsRequest(BaseModel):
     )
 
 
+def _refuse_clone_overlap(org_id: str | None, git_url: str) -> None:
+    """Before any git work: a clone would fetch and reset the other org's copy."""
+    from server.services.project_workspace_service import (  # noqa: PLC0415
+        slug_from_git_url,
+        workspace_root,
+    )
+
+    with contextlib.suppress(InputRejectedError):  # the clone reports it as 400
+        _refuse_overlap(org_id, workspace_root() / slug_from_git_url(git_url))
+
+
+def _refuse_registered(projects: dict[str, Any], path: Path) -> None:
+    if any(p["path"] == str(path.resolve()) for p in projects.values()):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Project already registered",
+        )
+
+
+def _confine_new_path(path: str, org_id: str | None) -> Path:
+    """`within_roots` for a new project, then the overlap check (both before any mkdir)."""
+    confined = within_roots(
+        path, browse_roots(), "browsable directories", expand_user=True
+    )
+    _refuse_overlap(org_id, confined)
+    return confined
+
+
+def _refuse_overlap(org_id: str | None, path: Path, skip: str | None = None) -> None:
+    """409 when, with org installations on, ``path`` overlaps another org's project."""
+    if github_app.multi_installation() and overlaps_other_org(
+        path.resolve(), org_id, load_projects(), skip
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Path overlaps a project of another organization",
+        )
+
+
 @router.post("/scan")
 async def scan_for_projects(request: ScanProjectsRequest):
     """
@@ -559,6 +604,12 @@ async def add_project(
     the frontend api-client.ts adds the {success, data} wrapper automatically.
     """
     created_directory = False
+    # Resolve the owner before cloning so its installation supplies git auth.
+    org_id = DEFAULT_ORG_ID
+    if request is not None and isinstance(db, AsyncSession):
+        from .project_authz import resolve_owner_org_id
+
+        org_id = await resolve_owner_org_id(request, db)
 
     if project.gitUrl:
         # Clone mode — defer to project_workspace_service.
@@ -575,12 +626,21 @@ async def add_project(
         credential: tuple[str, str] | None = None
         if project.gitCredentialId:
             credential = await _resolve_git_credential(project.gitCredentialId)
+        _refuse_clone_overlap(org_id, project.gitUrl)
         try:
-            cloned_path = await clone_or_update(
-                git_url=project.gitUrl,
-                branch=project.branch,
-                credential=credential,
-            )
+            await asyncio.to_thread(github_app.token_for_org, org_id)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=client_error(logger, "Clone failed", e),
+            ) from e
+        try:
+            with github_app.org_github_token(org_id):
+                cloned_path = await clone_or_update(
+                    git_url=project.gitUrl,
+                    branch=project.branch,
+                    credential=credential,
+                )
         except (GitOperationError, InputRejectedError) as e:
             # InputRejectedError: the gitUrl's path is not a usable workspace
             # directory name (#1313). Its message is developer-written, so
@@ -610,9 +670,7 @@ async def add_project(
         # can reach — /etc/cron.d, ~/.ssh, /var/lib/anything.
         # `browse_roots`, not `registered_project_roots`: the whole point of
         # adding a project is that it is not registered yet.
-        project_path = within_roots(
-            project.path, browse_roots(), "browsable directories", expand_user=True
-        )
+        project_path = _confine_new_path(project.path, org_id)
 
         if not project_path.exists():
             try:
@@ -632,25 +690,11 @@ async def add_project(
 
     # Check if already registered
     projects = load_projects()
-    for pid, pdata in projects.items():
-        if pdata["path"] == str(project_path.resolve()):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Project already registered",
-            )
+    _refuse_registered(projects, project_path)
 
     # Create project entry
     project_id = str(uuid4())
     now = datetime.now(UTC).isoformat()
-    # Stamp the owning org (#319). Service/M2M creators → default org; human
-    # creators → their own org. Defensive: direct callers (MCP stdio proxy,
-    # tests) pass no Request / real session → fall back to the default org
-    # rather than break. Lazy import avoids a project_authz↔projects cycle.
-    org_id = DEFAULT_ORG_ID
-    if request is not None and isinstance(db, AsyncSession):
-        from .project_authz import resolve_owner_org_id
-
-        org_id = await resolve_owner_org_id(request, db)
     project_data = {
         "path": str(project_path.resolve()),
         "name": project.name or project_path.name,
@@ -724,6 +768,7 @@ async def update_project(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Path does not exist: {project.path}",
             )
+        _refuse_overlap(project_data.get("org_id"), project_path, skip=project_id)
         project_data["path"] = str(project_path)
 
     if project.name:
@@ -876,7 +921,8 @@ class ProjectSettingsUpdate(BaseModel):
     autoPr: bool | None = Field(default=None, alias="auto_pr")
     autoMerge: bool | None = Field(default=None, alias="auto_merge")
     # Which reviewer gates the auto-merge: "aifactory" (its own Claude/Ollama
-    # review engine — no Copilot credits), "copilot", or "any". Default aifactory.
+    # review engine — no Copilot credits), "copilot", "copilot-ruleset" (Copilot
+    # gates the merge, a repo ruleset requests the review), or "any". Default aifactory.
     prReviewer: str | None = Field(default=None, alias="pr_reviewer")
     # #320: data classification; treated as "internal" when unset. A bad value is a 422.
     dataClassification: DataClassification | None = Field(  # noqa: N815

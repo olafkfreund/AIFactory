@@ -13,10 +13,16 @@ with ``monkeypatch`` + ``tmp_path``. The frozen ``CredentialStatus`` and the
 from __future__ import annotations
 
 import json
+import os
+import sys
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
 from core import mcp_credentials as mc
+
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT / "apps" / "web-server"))
 
 
 @pytest.fixture(autouse=True)
@@ -43,6 +49,8 @@ def isolate_env(monkeypatch, tmp_path):
         "GITHUB_TOKEN",
         "GITHUB_PERSONAL_ACCESS_TOKEN",
         "GH_TOKEN",
+        "GITHUB_MCP_TOKEN",
+        "AIFACTORY_AGENT_GITHUB_TOKEN",
         "GITLAB_TOKEN",
         "GITLAB_API_TOKEN",
         "GITLAB_INSTANCE_URL",
@@ -127,6 +135,32 @@ def test_github_operator_config_indirects_to_named_env(tmp_path, monkeypatch):
     assert s.env_vars["GITHUB_PERSONAL_ACCESS_TOKEN"] == "ghp_robot"
 
 
+def test_github_probe_sees_only_selected_runner_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.utils.subprocess_env import make_subprocess_env  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        mc,
+        "_load_operator_config",
+        lru_cache(lambda: {"github": {"tokenEnv": "GITHUB_MCP_TOKEN"}}),
+    )
+    for name, value in {
+        "GITHUB_TOKEN": "cp-a",
+        "GH_TOKEN": "cp-b",
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "cp-c",
+        "GITHUB_MCP_TOKEN": "cp-d",
+        "AIFACTORY_AGENT_GITHUB_TOKEN": "agent-x",
+    }.items():
+        monkeypatch.setenv(name, value)
+    runner = make_subprocess_env(github=True)
+    plain = make_subprocess_env()
+    monkeypatch.setattr(os, "environ", runner)
+    assert mc._probe_github().env_vars == {"GITHUB_PERSONAL_ACCESS_TOKEN": "agent-x"}
+    monkeypatch.setattr(os, "environ", plain)
+    assert not mc._probe_github().available
+
+
 def test_github_no_token_is_unavailable():
     s = mc.get_credential_status("github")
     assert s.available is False
@@ -188,6 +222,29 @@ def test_aws_default_credentials_file(tmp_path):
     s = mc.get_credential_status("aws")
     assert s.available
     assert s.source == "file:~/.aws/credentials"
+
+
+def test_aws_files_reach_the_server_env(tmp_path, monkeypatch):
+    # The agent's private HOME hides ~/.aws, so the server gets the real paths (#3737).
+    (tmp_path / ".aws").mkdir()
+    (tmp_path / ".aws" / "credentials").write_text("[work]\naws_access_key_id=xxx\n")
+    (tmp_path / ".aws" / "config").write_text("[profile work]\nregion=eu-west-1\n")
+    monkeypatch.setenv("AWS_PROFILE", "work")
+    s = mc.get_credential_status("aws")
+    assert s.env_vars == {
+        "AWS_PROFILE": "work",
+        "AWS_SHARED_CREDENTIALS_FILE": str(tmp_path / ".aws" / "credentials"),
+        "AWS_CONFIG_FILE": str(tmp_path / ".aws" / "config"),
+    }
+
+
+def test_aws_default_file_carries_its_path(tmp_path):
+    (tmp_path / ".aws").mkdir()
+    (tmp_path / ".aws" / "credentials").write_text("[default]\naws_access_key_id=xxx\n")
+    s = mc.get_credential_status("aws")
+    assert s.env_vars == {
+        "AWS_SHARED_CREDENTIALS_FILE": str(tmp_path / ".aws" / "credentials")
+    }
 
 
 def test_aws_irsa_detection(monkeypatch):

@@ -7,10 +7,18 @@ Pre-tool-use hooks that validate agent tool calls:
 - ``web_fetch_security_hook``: SSRF guard on WebFetch URLs (#370).
 
 Main enforcement point for the security system.
+
+These checks are guardrails, not containment: a script, recipe, interpreter
+or test runner the allowlist permits can run anything inside it. The Job pod
+is the boundary (#1932). Make targets and package scripts are pinned to the
+build's base commit (#1948, ``security/script_validators.py``).
 """
 
 import logging
 import os
+import posixpath
+import re
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -82,7 +90,10 @@ def _extract_commands_fail_closed(
     """
     if is_available():
         try:
-            return extract_command_segments_ast(command), ""
+            cmds = extract_command_segments_ast(command)
+            if reason := _path_command_refusal(cmds):
+                return None, reason
+            return cmds, ""
         except UnparseableCommand as exc:
             return None, (
                 "Command blocked: could not be safely parsed for security "
@@ -93,6 +104,45 @@ def _extract_commands_fail_closed(
     # rather than trust the regex parser (it cannot see through wrappers,
     # substitutions or quoting).
     return None, "Command blocked: bash commands cannot be validated without bashlex."
+
+
+# Directories the agent cannot write (#2028); everything else with a `/` can hold
+# an agent-written file that the basename check would take for an allowed command.
+_SYSTEM_BIN_DIRS = frozenset(
+    {"/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin"}
+    | {"/run/current-system/sw/bin"}
+)
+
+
+_NIX_BIN_DIR = re.compile(r"/nix/store/[0-9a-z]{32}-[A-Za-z0-9._+-]+/bin")
+
+
+def _is_system_binary(word: str) -> bool:
+    if not word.startswith("/") or ".." in word.split("/"):
+        return False
+    where = posixpath.dirname(posixpath.normpath(word))
+    return where in _SYSTEM_BIN_DIRS or bool(_NIX_BIN_DIR.fullmatch(where))
+
+
+def _path_command_refusal(cmds: list[tuple[str, str, bool]]) -> str | None:
+    """Refuse a command word with a path unless it is an absolute system binary.
+
+    ``./echo`` is a file the agent wrote, yet the AST step reduces it to the
+    allowed name ``echo``. ``./build.sh`` tracked at base is refused too: a
+    `cd sub && ./build.sh` would run another file (`bash build.sh` is checked).
+    """
+    for _, seg, _ in cmds:
+        try:
+            word = shlex.split(seg)[0]
+        except (ValueError, IndexError):
+            word = "?/"  # cannot read the word: fail closed
+        if "/" in word and not _is_system_binary(word):
+            return (
+                f"Command '{word}' runs a file by path, which the agent may have "
+                "written. Use the bare command name, or `bash <script>` for a "
+                "script tracked in the repository."
+            )
+    return None
 
 
 def _validator_refusal(cmds: list[tuple[str, str, bool]], root: str) -> str | None:
@@ -273,8 +323,14 @@ async def git_dir_write_hook(
     input_data: dict[str, Any],
     _tool_use_id: str | None = None,
     _context: Any | None = None,
+    *,
+    project_dir: str | None = None,
 ) -> dict[str, Any]:
-    """Refuse file-tool writes into any ``.git`` path (#1719) or the profile file (#1944)."""
+    """Refuse file-tool writes to protected paths.
+
+    Covers .git (#1719), the profile file (#1944) and the source .aifactory (#1985).
+    ``project_dir`` is bound by create_client; the input's cwd moves with ``cd``.
+    """
     if input_data.get("tool_name") not in _GIT_DIR_WRITE_TOOLS:
         return {}
     tool_input = input_data.get("tool_input")
@@ -286,7 +342,7 @@ async def git_dir_write_hook(
     if not paths or not all(isinstance(p, str) and p for p in paths):
         return {"decision": "block", "reason": "Missing or invalid file path."}
     for path in paths:
-        refusal = protected_write_refusal(path, input_data.get("cwd"))
+        refusal = protected_write_refusal(path, input_data.get("cwd"), project_dir)
         if refusal:
             logger.warning("Blocked agent write into protected path")
             return {"decision": "block", "reason": refusal}

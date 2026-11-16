@@ -23,7 +23,7 @@ import re
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from mcp.server.lowlevel import Server
 from mcp.server.sse import SseServerTransport
 from mcp.types import (
@@ -106,7 +106,9 @@ _sse_transport = SseServerTransport("/api/mcp-remote/messages/")
 # from the same key the session dispatches as (#1910). The transport generates
 # the id internally; we read it from the ``endpoint`` event it sends.
 _session_keys: dict[str, str] = {}
-_SESSION_ID = re.compile(rb"session_id=([0-9a-f]{32})")
+_ENDPOINT_EVENT = re.compile(
+    rb"event: endpoint\r?\ndata: [^\r\n]*[?&]session_id=([0-9a-f]{32})\r?\n"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -134,10 +136,12 @@ async def sse_endpoint(request: Request):
         )
 
     session_ids: list[str] = []
+    first_body = [True]
 
     async def send(message: Any) -> None:
-        if not session_ids and message.get("type") == "http.response.body":
-            match = _SESSION_ID.search(message.get("body", b""))
+        if first_body[0] and message.get("type") == "http.response.body":
+            first_body[0] = False
+            match = _ENDPOINT_EVENT.match(message.get("body", b""))
             if match:
                 session_ids.append(match.group(1).decode())
                 _session_keys[session_ids[0]] = key.key_id
@@ -156,6 +160,8 @@ async def sse_endpoint(request: Request):
         _current_key.reset(token)
         for session_id in session_ids:
             _session_keys.pop(session_id, None)
+    # The transport already sent the whole SSE response.
+    return Response()
 
 
 @router.post("/messages/")

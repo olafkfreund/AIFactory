@@ -98,19 +98,29 @@ copies. The Job now gets them from its image. See ``_inject_build_path``.
 
 from __future__ import annotations
 
+import asyncio
 import importlib
+import json
 import logging
 import os
 import shutil
 import subprocess
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
 from factory_common.logsafe import sanitize_log
 
+from server.error_ref import InputRejectedError
 from server.services.task_branch import record_branch
 from server.specpath import safe_spec_component, spec_dir_for
-from server.utils.subprocess_env import child_env, github_env
+from server.utils.subprocess_env import (
+    GITHUB_KEEP,
+    agent_github_token,
+    child_env,
+    project_github_env,
+    runner_github_env,
+)
 
 from .task_phase import (
     _append_parallel_flags,
@@ -229,9 +239,9 @@ _BUILD_CLONE_TEMPLATE = ".aifactory/worktrees/builds/{spec_id}"
 #     ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN / model overrides / SDK behaviour)
 #     — but ONLY when present in the control-plane env (a fresh Job shouldn't get
 #     empty placeholders).
-#   * GITHUB_TOKEN / GH_TOKEN when present — run.py uses these for the PR endgame,
-#     exactly as the in-pod build does. (run.py re-applies core/auth.py's agent
-#     scrubbing to its OWN agent sub-subprocess, so this mirrors in-pod scope.)
+#   * GITHUB_TOKEN / GH_TOKEN when present — run.py uses these for the base-branch
+#     fetch, packed-workspace branch push and GitHub MCP server. The PR endgame
+#     runs in the web server.
 #   * The fixed non-interactive build env the in-pod path sets verbatim
 #     (CLAUDE_CODE_ENTRYPOINT/CI/PYTHONUNBUFFERED/PYTHONIOENCODING).
 #
@@ -262,7 +272,7 @@ _FIXED_BUILD_ENV: dict[str, str] = {
 
 # Provider/runtime env to propagate WHEN PRESENT in the control-plane env. Mirrors
 # core/auth.py::_AGENT_ENV_KEEP (the SDK passthrough the agent legitimately needs)
-# plus GITHUB_TOKEN/GH_TOKEN for run.py's PR endgame. ANTHROPIC_API_KEY is NOT
+# plus GitHub env from runner_github_env below. ANTHROPIC_API_KEY is NOT
 # here — OAuth-only policy (core.child_env._STRIP_VARS).
 _PASSTHROUGH_BUILD_ENV: tuple[str, ...] = (
     # The build Job runs the trailing gates itself, and
@@ -293,6 +303,8 @@ _PASSTHROUGH_BUILD_ENV: tuple[str, ...] = (
     "AIFACTORY_SANDBOX_NETWORK",
     # #1742: opt-in repo lint gates run in this Job's trailing gate.
     "AIFACTORY_REPO_LINT_GATE",
+    # Factory#1960: the safety-net and wave commits run in this Job (commit_trailers.py).
+    "AIFACTORY_AGENT_COMMIT_TRAILERS",
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_MODEL",
@@ -303,8 +315,6 @@ _PASSTHROUGH_BUILD_ENV: tuple[str, ...] = (
     "DISABLE_TELEMETRY",
     "DISABLE_COST_WARNINGS",
     "API_TIMEOUT_MS",
-    "GITHUB_TOKEN",
-    "GH_TOKEN",
     # Non-Claude provider credentials + config a non-Claude-routed build resolves
     # from env (byo_llm.py / phase routing). Mirrors TFactory #480's verify-Job
     # provider set; forwarded ONLY when present (the loop below skips empties), in
@@ -345,7 +355,21 @@ _PASSTHROUGH_BUILD_ENV: tuple[str, ...] = (
 )
 
 
-def build_job_env(oauth_token: str | None) -> dict[str, str]:
+# Factory#1959 stage 4: with AIFACTORY_MODEL_GATEWAY_URL set, the Job's OpenAI-compatible
+# plane goes through the model gateway, so the direct key/URL and the Ollama key are not
+# forwarded. OPENAI_API_KEY stays (Codex seeds auth from it, plane C). A missing token
+# becomes a placeholder the gateway rejects, never a fallback to a direct key.
+_ENV_GATEWAY_URL = "AIFACTORY_MODEL_GATEWAY_URL"
+_ENV_GATEWAY_TOKEN = "AIFACTORY_MODEL_GATEWAY_TOKEN"  # noqa: S105 - env var name
+_NO_GATEWAY_TOKEN = "gateway-token-not-configured"  # noqa: S105 - placeholder
+_GATEWAY_REPLACED: frozenset[str] = frozenset(
+    {"OPENAI_COMPATIBLE_API_KEY", "OPENAI_COMPATIBLE_BASE_URL", "OLLAMA_API_KEY"}
+)
+
+
+def build_job_env(
+    oauth_token: str | None, project_path: str | Path | None = None
+) -> dict[str, str]:
     """Resolve the env the build Job container needs (#671 OAuth-env defect).
 
     Mirrors the in-pod env construction so the Job behaves like the in-pod build:
@@ -360,10 +384,28 @@ def build_job_env(oauth_token: str | None) -> dict[str, str]:
     policy); control-plane secrets run.py doesn't use are never included (scope).
     """
     env: dict[str, str] = dict(_FIXED_BUILD_ENV)
+    gateway_url = os.environ.get(_ENV_GATEWAY_URL, "").strip().rstrip("/")
     for name in _PASSTHROUGH_BUILD_ENV:
+        if gateway_url and name in _GATEWAY_REPLACED:
+            continue
         val = os.environ.get(name)
         if val:  # only propagate real values; never empty placeholders
             env[name] = val
+    if gateway_url:
+        env["OPENAI_COMPATIBLE_BASE_URL"] = gateway_url
+        env["OPENAI_COMPATIBLE_API_KEY"] = (
+            os.environ.get(_ENV_GATEWAY_TOKEN, "").strip() or _NO_GATEWAY_TOKEN
+        )
+    from . import github_app  # noqa: PLC0415
+
+    github = runner_github_env(project_path)
+    # With the narrow token every GitHub name is set, so a .env in the Job
+    # cannot add another value; without it the Job gets the two names it always got.
+    env.update(
+        github
+        if not github_app.multi_installation() and agent_github_token()
+        else {name: val for name, val in github.items() if name in GITHUB_KEEP}
+    )
     if oauth_token:
         env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
     return env
@@ -378,8 +420,42 @@ class BuildBackendUnavailableError(RuntimeError):
     """Agent launches are refused: the build backend config can't run (#1932)."""
 
 
+class GatedTaskRefusedError(InputRejectedError):
+    """Review- or tier-gated task refused on the subprocess backend (#1932)."""
+
+
+_GATED_SUBPROCESS_REFUSAL = (
+    "This task is review- or tier-gated, so this task needs the kubejob "
+    "backend: in-pod agents can rewrite its gate state (#1932). Set "
+    "AIFACTORY_BUILD_BACKEND=kubejob, or clear the gate for local dev."
+)
+
+
 def _raw_backend() -> str:
     return (os.environ.get(_ENV_BACKEND) or "").strip().lower() or _DEFAULT_BACKEND
+
+
+def subprocess_gate_refusal(
+    spec_dir: Path | None, mode: str | None = None
+) -> str | None:
+    """Refusal sentence when a gated task is run on subprocess, else None (#1932)."""
+    if _raw_backend() != BACKEND_SUBPROCESS:
+        return None
+    meta: Any = {}
+    meta_file = spec_dir / "task_metadata.json" if spec_dir is not None else None
+    if meta_file is not None and meta_file.exists():
+        try:
+            meta = json.loads(meta_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            meta = None  # unreadable metadata fails closed
+    gated = (
+        mode == "quick"
+        or not isinstance(meta, dict)
+        or bool(meta.get("requireReviewBeforeCoding", False))
+        or meta.get("mode") == "quick"
+        or meta.get("reviewTier") == "blocking"
+    )
+    return _GATED_SUBPROCESS_REFUSAL if gated else None
 
 
 def selected_backend() -> str:
@@ -524,6 +600,37 @@ _CLI_CRED_FILES: tuple[tuple[str, str], ...] = (
     ("copilot-apps.json", ".config/github-copilot/apps.json"),
     ("gemini-oauth_creds.json", ".gemini/oauth_creds.json"),
 )
+# Which secret key each provider (phase_config.infer_provider_from_model) logs in
+# with. A provider not listed (ollama, openai-compatible, ...) needs no file.
+_PROVIDER_CRED_KEY = {
+    "claude": "claude-credentials.json",
+    "codex": "codex-auth.json",
+    "copilot": "copilot-apps.json",
+    "antigravity": "gemini-oauth_creds.json",
+}
+
+
+def cred_files_for_models(
+    models: Iterable[str | None],
+) -> tuple[tuple[str, str], ...]:
+    """#2025: only the logins the given phase models run on (build + spec Jobs
+    share this rule), so an agent in the Job cannot read the ones it does not use."""
+    from phase_config import infer_provider_from_model  # noqa: PLC0415
+
+    keys = {_PROVIDER_CRED_KEY.get(infer_provider_from_model(m)) for m in models if m}
+    return tuple((k, rel) for k, rel in _CLI_CRED_FILES if k in keys)
+
+
+def _run_phase_models(spec_dir: Path) -> list[str]:
+    """The model every phase of a build resolves to (task metadata, then defaults)."""
+    from phase_config import _resolve_phase_model  # noqa: PLC0415
+
+    return [
+        _resolve_phase_model(spec_dir, p)
+        for p in ("spec", "planning", "coding", "qa", "qa_fixer")
+    ]
+
+
 # emptyDir home dirs shared between the seed initContainer and the build container.
 _SEED_HOME_VOLUMES: tuple[tuple[str, str], ...] = (
     ("cc-claude", f"{_BUILD_HOME}/.claude"),
@@ -582,7 +689,10 @@ def _init_container_security_context(run_as_user: int) -> dict[str, Any]:
     }
 
 
-def _inject_seed_creds(manifest: dict[str, Any]) -> dict[str, Any]:
+def _inject_seed_creds(
+    manifest: dict[str, Any],
+    cred_files: tuple[tuple[str, str], ...] = _CLI_CRED_FILES,
+) -> dict[str, Any]:
     """Add a ``seed-creds`` initContainer that materializes the file-auth CLI
     credentials into the build Job pod (#690). No-op unless a secret name is
     configured. Mutates + returns the manifest. Pure (env-only) → unit-testable.
@@ -607,7 +717,7 @@ def _inject_seed_creds(manifest: dict[str, Any]) -> dict[str, Any]:
     lines = [f"mkdir -p {mkdirs}"]
     lines += [
         f"[ -f /seed/{key} ] && cp /seed/{key} {_BUILD_HOME}/{rel} || true"
-        for key, rel in _CLI_CRED_FILES
+        for key, rel in cred_files
     ]
     lines.append(
         f"chmod -R g+rwX {_BUILD_HOME}/.claude {_BUILD_HOME}/.codex "
@@ -819,7 +929,10 @@ def build_run_py_job_manifest(
         # in-process has no reason to hold an API token.
         automount_service_account_token=_gates_dispatch_jobs(),
     )
-    return _inject_build_path(_inject_seed_creds(build_job_manifest(spec)))
+    cred_files = cred_files_for_models(
+        _run_phase_models(_spec_source_dir(project_path, spec_id))
+    )
+    return _inject_build_path(_inject_seed_creds(build_job_manifest(spec), cred_files))
 
 
 def _gates_dispatch_jobs() -> bool:
@@ -979,7 +1092,8 @@ def _git(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[
     # GIT_TERMINAL_PROMPT=0: never block a dispatch on an interactive credential
     # prompt — an unreachable/unauthorised remote (e.g. the #960 refresh fetch)
     # must fail fast instead of hanging the server.
-    with github_env(child_env(extra={"GIT_TERMINAL_PROMPT": "0"})) as env:
+    cwd = args[1] if args[:1] == ["-C"] and len(args) > 1 else None
+    with project_github_env(cwd, child_env(extra={"GIT_TERMINAL_PROMPT": "0"})) as env:
         return subprocess.run(
             ["git", *args],
             check=check,
@@ -1293,7 +1407,7 @@ class KubeJobBuildBackend:
 
         await stamp_spawn(spec_dir_for(project_path, spec_id), "kubejob")
 
-        extra_env = build_job_env(oauth_token)
+        extra_env = await asyncio.to_thread(build_job_env, oauth_token, project_path)
         from . import project_settings_store  # noqa: PLC0415
         from .trusted_contract import spawn_env  # noqa: PLC0415
 
@@ -1302,6 +1416,14 @@ class KubeJobBuildBackend:
         if marker_nonce:
             extra_env["AIFACTORY_MARKER_NONCE"] = marker_nonce  # #1929
         extra_env["AIFACTORY_TASK_ID"] = task_id  # #1972: not a secret
+        # #2023: last, so no earlier merge can put the bucket-wide S3 key back.
+        from .job_s3_scope import scope_job_s3  # noqa: PLC0415
+
+        await asyncio.to_thread(
+            scope_job_s3,
+            extra_env,
+            [(correlation_key, task_id), (None, spec_id), (None, f"gate-{spec_id}")],
+        )
 
         manifest = build_run_py_job_manifest(
             task_id=task_id,
@@ -1645,6 +1767,9 @@ class KubeJobBuildBackend:
         owned = {
             row["job_name"] or _reconstructed_ref(row["job_id"])[0] for row in rows
         }
+        from .spec_job_backend import live_spec_job_names  # noqa: PLC0415
+
+        owned |= live_spec_job_names()
         namespace = _dispatch_namespace()
         owns_client = batch is None
         if owns_client:

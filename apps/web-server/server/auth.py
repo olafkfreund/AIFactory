@@ -216,6 +216,25 @@ def _acw_principal(key, *, scoped_service_tokens_enabled: bool) -> dict:
     return principal
 
 
+async def _ws_acw_principal(token: str) -> dict[str, object] | None:
+    try:
+        # Lazy, as on the REST path: the DB-backed module would form an import cycle.
+        from .mcp_remote.auth import authenticate_rest  # noqa: PLC0415
+
+        key = await authenticate_rest(f"Bearer {token}")
+        # shortcut: ownerless keys rejected on WS; revisit with Phase 4 scope enforcement
+        if key.user_id is None:
+            return None
+        return _acw_principal(
+            key,
+            scoped_service_tokens_enabled=getattr(
+                get_settings(), "SCOPED_SERVICE_TOKENS_ENABLED", False
+            ),
+        )
+    except Exception:  # noqa: BLE001 — any validator failure denies WS auth (4001)
+        return None
+
+
 class TokenAuthMiddleware(BaseHTTPMiddleware):
     """Middleware to validate bearer token on API routes.
 
@@ -449,6 +468,9 @@ async def authenticate_websocket(websocket: WebSocket) -> dict | None:
     # Try JWT — returns user info
     jwt_payload = _try_decode_jwt(token)
     if jwt_payload is not None:
+        if not jwt_payload.get("sub"):
+            await websocket.close(code=4001, reason="Unauthorized")
+            raise WebSocketAuthError("Token has no subject")
         return {
             "id": jwt_payload.get("sub"),
             "email": jwt_payload.get("email"),
@@ -459,6 +481,11 @@ async def authenticate_websocket(websocket: WebSocket) -> dict | None:
     if _is_legacy_api_token(token):
         _warn_legacy_api_token_once()
         return None
+
+    if token.startswith("acw_"):
+        principal = await _ws_acw_principal(token)
+        if principal is not None:
+            return principal
 
     await websocket.close(code=4001, reason="Unauthorized")
     raise WebSocketAuthError("Invalid token")

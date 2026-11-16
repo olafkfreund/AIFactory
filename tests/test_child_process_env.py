@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import ast
+import json
 import os
 import subprocess
 import sys
@@ -15,8 +17,10 @@ sys.path.insert(0, str(_ROOT / "apps" / "backend"))
 sys.path.insert(0, str(_ROOT / "apps" / "web-server"))
 
 from server.utils.subprocess_env import (  # noqa: E402
+    AGENT_GITHUB_TOKEN_VAR,
     GITHUB_KEEP,
     child_env,
+    dotenv_key_blocked,
     make_subprocess_env,
 )
 
@@ -221,7 +225,7 @@ def test_make_subprocess_env_keep_and_drop(secret_env: None) -> None:
     env = make_subprocess_env()
     assert env["OPENAI_API_KEY"] == "oa"
     assert env["OPENAI_COMPATIBLE_API_KEY"] == "oc"
-    assert env["GITHUB_TOKEN"] == "s3cret"
+    assert "GITHUB_TOKEN" not in env
     assert "DATABASE_URL" not in env
     assert "ANTHROPIC_API_KEY" not in env
 
@@ -579,3 +583,255 @@ def test_make_subprocess_env_drops_trusted_contract(
 def test_extra_trusted_contract_survives_strip(secret_env: None) -> None:
     env = make_subprocess_env(extra={"AIFACTORY_TRUSTED_CONTRACT": "d"})
     assert env["AIFACTORY_TRUSTED_CONTRACT"] == "d"
+
+
+@pytest.fixture
+def github_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    from core import mcp_credentials  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        mcp_credentials,
+        "_load_operator_config",
+        lambda: {"github": {"tokenEnv": "GITHUB_MCP_TOKEN"}},
+    )
+    for name in (
+        *GITHUB_KEEP,
+        "GITHUB_PERSONAL_ACCESS_TOKEN",
+        "GITHUB_MCP_TOKEN",
+        AGENT_GITHUB_TOKEN_VAR,
+    ):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in zip(
+        (*GITHUB_KEEP, "GITHUB_PERSONAL_ACCESS_TOKEN", "GITHUB_MCP_TOKEN"),
+        ("cp-a", "cp-b", "cp-c", "cp-d"),
+        strict=True,
+    ):
+        monkeypatch.setenv(name, value)
+
+
+def test_github_env_is_scoped_to_selected_runner(
+    github_tokens: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    names = (*GITHUB_KEEP, "GITHUB_PERSONAL_ACCESS_TOKEN", "GITHUB_MCP_TOKEN")
+    assert all(name not in make_subprocess_env() for name in names)
+    assert {name: make_subprocess_env(github=True)[name] for name in names} == dict(
+        zip(names, ("cp-a", "cp-b", "cp-c", "cp-d"), strict=True)
+    )
+    monkeypatch.setenv(AGENT_GITHUB_TOKEN_VAR, "agent-x")
+    plain = make_subprocess_env()
+    assert all(name not in plain for name in (*names, AGENT_GITHUB_TOKEN_VAR))
+    assert "agent-x" not in plain.values()
+    env = make_subprocess_env(github=True)
+    assert all(env[name] == "agent-x" for name in names)
+    assert AGENT_GITHUB_TOKEN_VAR not in env
+    assert not any(value in env.values() for value in ("cp-a", "cp-b", "cp-c", "cp-d"))
+    assert AGENT_GITHUB_TOKEN_VAR not in child_env()
+    from core.child_env import child_env as core_child_env  # noqa: PLC0415
+
+    assert AGENT_GITHUB_TOKEN_VAR not in core_child_env(agent=True)
+    from core.auth import is_denied_env_key  # noqa: PLC0415
+
+    assert is_denied_env_key(AGENT_GITHUB_TOKEN_VAR)
+
+
+@pytest.mark.parametrize("blank", ["", "  "])
+def test_blank_agent_token_warns_once_and_falls_back(
+    github_tokens: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    blank: str,
+) -> None:
+    from server.utils import subprocess_env  # noqa: PLC0415
+
+    expected = make_subprocess_env(github=True)
+    monkeypatch.setattr(subprocess_env, "_blank_agent_token_warned", False)
+    monkeypatch.setenv(AGENT_GITHUB_TOKEN_VAR, blank)
+    with caplog.at_level("WARNING"):
+        assert make_subprocess_env(github=True) == expected
+        assert make_subprocess_env(github=True) == expected
+    assert len(caplog.records) == 1
+    assert "control plane's GitHub token" in caplog.text
+    monkeypatch.delenv(AGENT_GITHUB_TOKEN_VAR)
+    monkeypatch.setattr(subprocess_env, "_blank_agent_token_warned", False)
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        assert make_subprocess_env(github=True) == expected
+    assert not caplog.records
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"github": {"tokenEnv": AGENT_GITHUB_TOKEN_VAR}},
+        {"github": {"tokenEnv": "DATABASE_URL"}},
+        {"github": {"tokenEnv": "   "}},
+        {"github": {"tokenEnv": ["x"]}},
+        {"github": "nope"},
+    ],
+)
+def test_bad_token_alias_is_ignored(
+    github_tokens: None, monkeypatch: pytest.MonkeyPatch, config: dict[str, object]
+) -> None:
+    from core import mcp_credentials  # noqa: PLC0415
+    from server.utils.subprocess_env import github_names  # noqa: PLC0415
+
+    monkeypatch.setattr(mcp_credentials, "_load_operator_config", lambda: config)
+    monkeypatch.setenv("DATABASE_URL", "db-secret")
+    assert github_names() == (*GITHUB_KEEP, "GITHUB_PERSONAL_ACCESS_TOKEN")
+    assert "db-secret" not in make_subprocess_env(github=True).values()
+    monkeypatch.setenv(AGENT_GITHUB_TOKEN_VAR, "agent-x")
+    env = make_subprocess_env(github=True)
+    assert AGENT_GITHUB_TOKEN_VAR not in env
+    assert "DATABASE_URL" not in env
+
+
+def test_token_alias_is_stripped(
+    github_tokens: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from core import mcp_credentials  # noqa: PLC0415
+    from server.utils.subprocess_env import github_names  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        mcp_credentials,
+        "_load_operator_config",
+        lambda: {"github": {"tokenEnv": " GITHUB_MCP_TOKEN "}},
+    )
+    assert github_names()[-1] == "GITHUB_MCP_TOKEN"
+    assert "GITHUB_MCP_TOKEN" not in make_subprocess_env()
+
+
+def test_dotenv_guard_and_loaders(
+    github_tokens: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from server.services.agent_service import _load_backend_env  # noqa: PLC0415
+    from server.services.agent_spec_creation import _load_spec_env  # noqa: PLC0415
+    from server.services.pr_review_service import _load_env_file  # noqa: PLC0415
+
+    file = tmp_path / ".env"
+    file.write_text(
+        "GITHUB_TOKEN=env-1\nGITHUB_PERSONAL_ACCESS_TOKEN=env-2\n"
+        "GITHUB_MCP_TOKEN=env-3\nAIFACTORY_AGENT_GITHUB_TOKEN=env-4\nFOO=bar\n"
+    )
+    for load in (_load_backend_env, _load_env_file, _load_spec_env):
+        monkeypatch.setenv(AGENT_GITHUB_TOKEN_VAR, "agent-x")
+        assert dotenv_key_blocked(AGENT_GITHUB_TOKEN_VAR)
+        assert all(
+            dotenv_key_blocked(k)
+            for k in (
+                "GITHUB_TOKEN",
+                "GITHUB_PERSONAL_ACCESS_TOKEN",
+                "GITHUB_MCP_TOKEN",
+            )
+        )
+        assert not dotenv_key_blocked("OPENAI_API_KEY")
+        env = make_subprocess_env(github=True)
+        load(file, env)
+        assert env["FOO"] == "bar"
+        assert not any(
+            value in env.values() for value in ("env-1", "env-2", "env-3", "env-4")
+        )
+        monkeypatch.delenv(AGENT_GITHUB_TOKEN_VAR)
+        assert not any(
+            dotenv_key_blocked(name)
+            for name in (
+                "GITHUB_TOKEN",
+                "GITHUB_PERSONAL_ACCESS_TOKEN",
+                "GITHUB_MCP_TOKEN",
+            )
+        )
+        env = make_subprocess_env(github=True)
+        env.pop("GITHUB_MCP_TOKEN")
+        load(file, env)
+        assert env["GITHUB_MCP_TOKEN"] == "env-3"
+        assert AGENT_GITHUB_TOKEN_VAR not in env
+
+
+def test_subprocess_env_callers_are_explicit() -> None:
+    server = _ROOT / "apps" / "web-server" / "server"
+    calls = {}
+    for path in server.rglob("*.py"):
+        found = [
+            node
+            for node in ast.walk(ast.parse(path.read_text()))
+            if isinstance(node, ast.Call)
+            and (
+                isinstance(node.func, ast.Name)
+                and node.func.id == "make_subprocess_env"
+                or isinstance(node.func, ast.Attribute)
+                and node.func.attr == "to_thread"
+                and node.args
+                and isinstance(node.args[0], ast.Name)
+                and node.args[0].id == "make_subprocess_env"
+            )
+        ]
+        if found:
+            calls[path.name] = [
+                [
+                    (kw.arg, ast.literal_eval(kw.value))
+                    for kw in node.keywords
+                    if kw.arg == "github"
+                ]
+                for node in found
+            ]
+            if path.name in {
+                "agent_service.py",
+                "agent_spec_creation.py",
+                "pr_review_service.py",
+            }:
+                assert all(
+                    isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "to_thread"
+                    and any(kw.arg == "project_path" for kw in node.keywords)
+                    for node in found
+                )
+    assert calls == {
+        "agent_service.py": [[("github", True)]],
+        "agent_spec_creation.py": [[("github", True)]],
+        "pr_review_service.py": [[("github", True)]],
+        "changelog_service.py": [[]],
+        "clarification_service.py": [[]],
+        "insights_service.py": [[]],
+    }
+
+
+def test_runner_github_env_uses_bound_org_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server import project_registry
+    from server.services import github_app
+
+    registry = tmp_path / "projects.json"
+    project = tmp_path / "acme"
+    unbound = tmp_path / "other"
+    registry.write_text(
+        json.dumps(
+            {
+                "a": {"path": str(project), "org_id": "acme"},
+                "b": {"path": str(unbound), "org_id": "other"},
+            }
+        )
+    )
+    monkeypatch.setattr(project_registry, "get_projects_file", lambda: registry)
+    monkeypatch.setattr(github_app, "multi_installation", lambda: True)
+    calls: list[tuple[str | None, int]] = []
+
+    def token_for_org(org: str | None, *, min_ttl: int = 900) -> str | None:
+        calls.append((org, min_ttl))
+        return "ghs_acme_1700" if org == "acme" else None
+
+    monkeypatch.setattr(github_app, "token_for_org", token_for_org)
+    for name in (*GITHUB_KEEP, "GITHUB_PERSONAL_ACCESS_TOKEN"):
+        monkeypatch.setenv(name, f"ambient-{name}")
+    monkeypatch.setenv(AGENT_GITHUB_TOKEN_VAR, "agent-secret-1700")
+    names = (*GITHUB_KEEP, "GITHUB_PERSONAL_ACCESS_TOKEN")
+    bound = make_subprocess_env(github=True, project_path=project)
+    assert {name: bound[name] for name in names} == dict.fromkeys(
+        names, "ghs_acme_1700"
+    )
+    assert not any(
+        "ambient-" in value or "agent-secret-1700" in value for value in bound.values()
+    )
+    for path in (unbound, tmp_path / "missing", None):
+        env = make_subprocess_env(github=True, project_path=path)
+        assert all(name not in env for name in names)
+    assert calls == [("acme", 3300), ("other", 3300), (None, 3300), (None, 3300)]

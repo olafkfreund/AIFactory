@@ -7,6 +7,7 @@ from pathlib import Path
 
 from core.debug import debug, debug_error, debug_info, debug_success, is_debug_enabled
 
+from . import transcript
 from .models import LogEntry, LogEntryType, LogPhase
 from .storage import LogStorage
 from .streaming import emit_marker
@@ -439,6 +440,40 @@ class TaskLogger:
 
         if print_to_console:
             print(f"\n[Tool: {tool_name}]", flush=True)
+
+    def transcript_tool_start(
+        self,
+        tool_name: str,
+        tool_input: object,
+        tool_use_id: str | None,
+        phase: LogPhase | None = None,
+    ) -> None:
+        """Record the full tool call in the run transcript (#2034)."""
+        transcript.tool_start(
+            tool_name,
+            tool_input,
+            str(tool_use_id),
+            phase=(phase or self.current_phase or LogPhase.CODING).value,
+            subtask_id=self.current_subtask,
+            session=self.current_session,
+        )
+
+    def transcript_tool_end(
+        self,
+        tool_use_id: str | None,
+        result: object,
+        is_error: bool,
+        phase: LogPhase | None = None,
+    ) -> None:
+        """Record the full tool result in the run transcript (#2034)."""
+        transcript.tool_end(
+            str(tool_use_id),
+            "" if result is None else result,
+            is_error,
+            phase=(phase or self.current_phase or LogPhase.CODING).value,
+            subtask_id=self.current_subtask,
+            session=self.current_session,
+        )
 
     def tool_end(
         self,

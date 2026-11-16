@@ -26,7 +26,8 @@ import json
 import os
 import shutil
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from contextvars import ContextVar
 from pathlib import Path
 
 from core.child_env import child_env
@@ -37,11 +38,30 @@ GITHUB_HTTPS_PREFIX = "https://github.com/"
 
 #: Conventional placeholder username for a GitHub PAT / app installation token.
 USERNAME = "x-access-token"
+_token_provider: ContextVar[Callable[[], str] | None] = ContextVar(
+    "github_token_provider", default=None
+)
 
 
 def github_token() -> str:
     """The ambient GitHub token, or ``""`` when the process has none."""
+    provider = _token_provider.get()
+    if provider is not None:
+        return provider().strip()
     return (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or "").strip()
+
+
+def has_github_token_provider() -> bool:
+    return _token_provider.get() is not None
+
+
+@contextlib.contextmanager
+def use_github_token(provider: Callable[[], str]) -> Iterator[None]:
+    token = _token_provider.set(provider)
+    try:
+        yield
+    finally:
+        _token_provider.reset(token)
 
 
 _GH_DIR_PREFIX = "aif-gh-"

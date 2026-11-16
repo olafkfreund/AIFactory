@@ -163,5 +163,22 @@ def test_both_producers_pass_a_duration(module_name: str):
     )
 
 
+@pytest.mark.parametrize("module_name", ["agents.coder", "agents.parallel_integration"])
+def test_both_producers_pass_routing_metadata(module_name: str):
+    import importlib
+
+    module = importlib.import_module(module_name)
+    call = _record_turn_call(inspect.getsource(module))
+
+    assert any(
+        kw.arg == "routing_metadata"
+        and isinstance(kw.value, ast.Attribute)
+        and isinstance(kw.value.value, ast.Name)
+        and kw.value.value.id == "gates"
+        and kw.value.attr == "metadata"
+        for kw in call.keywords
+    ), f"{module_name} must pass gates.metadata to record_turn"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
