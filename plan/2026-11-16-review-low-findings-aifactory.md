@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2055
 spec: spec/2026-11-16-review-low-findings-aifactory.md
 reviewers:
