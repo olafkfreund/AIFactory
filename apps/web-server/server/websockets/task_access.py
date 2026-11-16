@@ -4,14 +4,14 @@ import time
 
 from fastapi import WebSocket
 
-from ..auth import (
+from server.auth import (
     WebSocketAuthError,
     _ws_acw_principal,
     _ws_extract_token,
     authenticate_websocket,
 )
-from ..database import engine
-from ..routes.project_authz import authorize_project_for_user
+from server.database import engine
+from server.routes.project_authz import authorize_project_for_user
 
 _KEY_RECHECK_SECONDS = 300
 
@@ -30,7 +30,7 @@ class TaskSocketAccess:
             self.user = await authenticate_websocket(self.websocket)
         except WebSocketAuthError:
             return False
-        except Exception:
+        except Exception:  # noqa: BLE001 - unreadable auth state fails closed
             await self.websocket.close(code=4003)
             return False
         if self.user is None:
@@ -54,7 +54,7 @@ class TaskSocketAccess:
             return True
         try:
             principal = await _ws_acw_principal(self.key_token)
-        except Exception:
+        except Exception:  # noqa: BLE001 - a failing validator counts as revoked
             principal = None
         if principal is None:
             await self.websocket.close(code=4001)
@@ -69,7 +69,7 @@ class TaskSocketAccess:
         try:
             async with engine.async_session_factory() as db:
                 await authorize_project_for_user(user, self.project_id, db)
-        except Exception:
+        except Exception:  # noqa: BLE001 - denial or lookup failure fails closed
             await self.websocket.close(code=close_code)
             return False
         return True
