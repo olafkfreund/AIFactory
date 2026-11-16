@@ -51,6 +51,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
 from .config import get_settings
+from .services import audit_siem
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +157,6 @@ async def _audit_auth_failure(request: Request, reason: str) -> None:
     here if that write volume ever bites.
     """
     try:
-        from .services import audit_siem
         from .services.audit_service import ACTION_AUTH_FAILURE, log_audit_event_bg
 
         await log_audit_event_bg(

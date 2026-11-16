@@ -8,7 +8,10 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from server.services import audit_siem
+from fastapi import HTTPException
+from server import auth
+from server.routes import auth_routes
+from server.services import audit_service, audit_siem
 
 
 @pytest.fixture(autouse=True)
@@ -21,7 +24,9 @@ def clean_env(monkeypatch):
 def configured(monkeypatch):
     monkeypatch.setenv("AIFACTORY_AUDIT_SIEM_URL", "https://siem.example/")
     monkeypatch.setenv("AIFACTORY_AUDIT_SIEM_USER", "ingester")
-    monkeypatch.setenv("AIFACTORY_AUDIT_SIEM_PASSWORD", "private-password")
+    monkeypatch.setenv(
+        "AIFACTORY_AUDIT_SIEM_PASSWORD", "private-password"
+    )  # gitleaks:allow
 
 
 @pytest.fixture
@@ -48,14 +53,16 @@ def test_off_by_default(requests):
 
 
 @pytest.mark.parametrize("missing", ["URL", "USER", "PASSWORD"])
-def test_empty_required_setting_disables(configured, monkeypatch, requests, missing):
+@pytest.mark.usefixtures("configured")
+def test_empty_required_setting_disables(monkeypatch, requests, missing):
     monkeypatch.setenv(f"AIFACTORY_AUDIT_SIEM_{missing}", "")
     assert audit_siem.siem_config() is None
     asyncio.run(audit_siem.emit("auth.failure"))
     assert requests == []
 
 
-def test_record_and_basic_auth(configured, monkeypatch, requests):
+@pytest.mark.usefixtures("configured")
+def test_record_and_basic_auth(monkeypatch, requests):
     monkeypatch.setattr(audit_siem.time, "time", lambda: 1234.5)
     asyncio.run(
         audit_siem.emit(
@@ -83,9 +90,8 @@ def test_record_and_basic_auth(configured, monkeypatch, requests):
     ]
 
 
-def test_config_reads_custom_org_and_stream_at_call_time(
-    configured, monkeypatch, requests
-):
+@pytest.mark.usefixtures("configured")
+def test_config_reads_custom_org_and_stream_at_call_time(monkeypatch, requests):
     assert audit_siem.siem_config()[0].endswith("/api/default/audit_chain/_json")
     monkeypatch.setenv("AIFACTORY_AUDIT_SIEM_ORG", "security")
     monkeypatch.setenv("AIFACTORY_AUDIT_SIEM_STREAM", "failures")
@@ -96,7 +102,8 @@ def test_config_reads_custom_org_and_stream_at_call_time(
     assert requests[0].headers["Authorization"] == f"Basic {credentials}"
 
 
-def test_failure_warning_has_only_exception_type(configured, monkeypatch, caplog):
+@pytest.mark.usefixtures("configured")
+def test_failure_warning_has_only_exception_type(monkeypatch, caplog):
     endpoint, auth = audit_siem.siem_config()
 
     def fail(request):
@@ -119,12 +126,13 @@ def test_failure_warning_has_only_exception_type(configured, monkeypatch, caplog
 
 
 @pytest.mark.parametrize("status", [302, 401, 500])
-def test_non_2xx_swallowed(configured, monkeypatch, caplog, status):
+@pytest.mark.usefixtures("configured")
+def test_non_2xx_swallowed(monkeypatch, caplog, status):
     monkeypatch.setattr(
         audit_siem,
         "_client_factory",
         lambda: httpx.AsyncClient(
-            transport=httpx.MockTransport(lambda request: httpx.Response(status))
+            transport=httpx.MockTransport(lambda _request: httpx.Response(status))
         ),
     )
     with caplog.at_level(logging.WARNING, logger=audit_siem.__name__):
@@ -134,12 +142,14 @@ def test_non_2xx_swallowed(configured, monkeypatch, caplog, status):
     ]
 
 
-def test_schedule_without_loop(configured):
+@pytest.mark.usefixtures("configured")
+def test_schedule_without_loop():
     audit_siem.schedule("auth.failure")
     assert not audit_siem._tasks
 
 
-def test_schedule_retains_and_discards_task(configured, requests):
+@pytest.mark.usefixtures("configured")
+def test_schedule_retains_and_discards_task(requests):
     async def run():
         audit_siem.schedule("auth.failure", reason="bad_credentials")
         assert len(audit_siem._tasks) == 1
@@ -152,7 +162,7 @@ def test_schedule_retains_and_discards_task(configured, requests):
 
 
 def test_schedule_disabled_with_loop(monkeypatch):
-    def unexpected_task(*args, **kwargs):
+    def unexpected_task(*_args, **_kwargs):
         pytest.fail("disabled SIEM must not schedule a task")
 
     async def run():
@@ -173,8 +183,6 @@ class _Conn:
 
 @pytest.fixture
 def sent(monkeypatch):
-    from server.services import audit_service
-
     calls = []
 
     async def _no_db(**_kw):
@@ -186,9 +194,7 @@ def sent(monkeypatch):
 
 
 async def test_auth_failure_event_has_no_path_or_token(sent):
-    from server.auth import _audit_auth_failure
-
-    await _audit_auth_failure(_Conn(), reason="invalid_token")
+    await auth._audit_auth_failure(_Conn(), reason="invalid_token")
     assert sent == [
         (
             "auth.failure",
@@ -198,9 +204,6 @@ async def test_auth_failure_event_has_no_path_or_token(sent):
 
 
 async def test_failed_login_and_bad_refresh_emit(sent):
-    from fastapi import HTTPException
-    from server.routes import auth_routes
-
     class _Db:
         async def rollback(self):
             self.rolled_back = True
@@ -208,11 +211,11 @@ async def test_failed_login_and_bad_refresh_emit(sent):
         async def execute(self, *_a):
             return SimpleNamespace(scalar_one_or_none=lambda: None)
 
-    login = auth_routes.LoginRequest(email="a@example.com", password="pw-123456789")
+    login = auth_routes.LoginRequest(email="a@example.com", password="pw-123456789")  # noqa: S106 # gitleaks:allow
     with pytest.raises(HTTPException) as e:
         await auth_routes.login(login, _Conn(), _Db())
     assert e.value.status_code == 401
-    refresh = auth_routes.RefreshRequest(refresh_token="not-a-jwt")
+    refresh = auth_routes.RefreshRequest(refresh_token="not-a-jwt")  # noqa: S106 # gitleaks:allow
     with pytest.raises(HTTPException):
         await auth_routes.refresh(refresh, _Conn(), _Db())
     assert [f["reason"] for _a, f in sent] == [

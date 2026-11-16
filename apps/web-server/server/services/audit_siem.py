@@ -29,7 +29,7 @@ def _client_factory() -> httpx.AsyncClient:
     return httpx.AsyncClient(timeout=3)
 
 
-async def emit(action: str, **fields) -> None:
+async def emit(action: str, **fields: object) -> None:
     """Send one record without allowing delivery failures to affect auth."""
     try:
         config = siem_config()
@@ -47,11 +47,11 @@ async def emit(action: str, **fields) -> None:
                 endpoint, headers={"Authorization": auth}, json=[record]
             )
             response.raise_for_status()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - delivery must never affect auth
         logger.warning("audit SIEM push failed: %s", type(e).__name__)
 
 
-def schedule(action: str, **fields) -> None:
+def schedule(action: str, **fields: object) -> None:
     """Keep background delivery alive until it finishes."""
     if siem_config() is None:
         return

@@ -44,8 +44,7 @@ from server.utils.subprocess_env import (
 
 # subprocess_env above puts apps/backend on sys.path.
 # isort: split
-from core.commit_trailers import enabled as agent_trailers_enabled
-from core.commit_trailers import trailer_block
+from core.commit_trailers import trailer_block, trailers_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -1836,7 +1835,7 @@ def _pr_title_body(spec_dir: Path, spec_id: str) -> tuple[str, str]:
                 ("Authored by agent", "agent_identity"),
                 ("Originator", "originator"),
             )
-            if agent_trailers_enabled()
+            if trailers_enabled()
             and isinstance(v := req.get(key), str)
             and v
             and v.isprintable()

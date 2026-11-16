@@ -19,7 +19,7 @@ from pydantic import BaseModel, EmailStr, Field, SecretStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..auth import _audit_auth_failure, _try_decode_jwt
+from ..auth import _audit_auth_failure, _try_decode_jwt  # noqa: TID252
 from ..config import get_settings
 from ..database import Organization, OrgMember, User
 from ..database.engine import get_db
