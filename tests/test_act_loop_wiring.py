@@ -51,3 +51,40 @@ def test_handoff_payload_unchanged_without_spec_dir():
     payload = build_handoff_payload("001-x", {"title": "t"}, _Classification(), {})
     assert "mutations" not in payload
     assert payload["spec_id"] == "001-x"
+
+
+def test_guardrail_on_by_default_and_halts_repeated_failure(
+    tmp_path: Path, monkeypatch
+):
+    import asyncio
+
+    from agents import act_loop_hooks as h
+
+    monkeypatch.delenv("AIFACTORY_ACT_GUARDRAIL", raising=False)
+    assert h.guardrail_enabled()
+    monkeypatch.setenv("AIFACTORY_ACT_GUARDRAIL", "off")
+    assert not h.guardrail_enabled()
+    monkeypatch.delenv("AIFACTORY_ACT_GUARDRAIL")
+
+    h.register_session(tmp_path, tmp_path)
+    call = {"cwd": str(tmp_path), "tool_name": "Edit", "tool_input": {"f": "a"}}
+    for _ in range(20):
+        asyncio.run(h.guardrail_pretool_hook(call))
+        asyncio.run(
+            h.guardrail_posttool_hook({**call, "tool_response": {"is_error": True}})
+        )
+    assert read_halt_reason(tmp_path)
+
+
+def test_token_ceiling_halts_and_start_run_resets(tmp_path: Path, monkeypatch):
+    from agents import act_loop_hooks as h
+
+    monkeypatch.setenv("AIFACTORY_RUN_TOKEN_CEILING", "100")
+    h.start_run(tmp_path)
+    assert not h.charge_tokens(tmp_path, {"input_tokens": 60})
+    assert h.charge_tokens(tmp_path, {"output_tokens": 60})
+    assert read_halt_reason(tmp_path).startswith("token_ceiling")
+    h.start_run(tmp_path)
+    assert read_halt_reason(tmp_path) is None
+    monkeypatch.setenv("AIFACTORY_RUN_TOKEN_CEILING", "0")
+    assert not h.charge_tokens(tmp_path, {"input_tokens": 10**9})

@@ -35,3 +35,10 @@ off) enforced in `agents/coder.py` where session usage is read, halting via
 
 Revert the commit; or set `AIFACTORY_ACT_GUARDRAIL=off` and
 `AIFACTORY_RUN_TOKEN_CEILING=0`.
+
+## Deviations
+
+- `agents/parallel_integration.py` also charges each worker's usage (codex
+  review P1). The ceiling is checked between build-loop iterations, not
+  between waves of one parallel phase; a single phase can overshoot.
+- `start_run` is called before the already-complete early return (codex P2).

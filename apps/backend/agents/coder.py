@@ -60,6 +60,7 @@ from ui import (
     print_status,
 )
 
+from .act_loop_hooks import charge_tokens, start_run
 from .base import AUTO_CONTINUE_DELAY_SECONDS, HUMAN_INTERVENTION_FILE
 from .build_report import write_build_report
 from .compaction_recovery import CompactionDetector, build_operational_context
@@ -235,6 +236,8 @@ async def run_autonomous_agent(
     # Track which phase we're in for logging
     current_log_phase = LogPhase.CODING
     is_planning_phase = False
+
+    start_run(spec_dir)  # #2033: fresh token count, no stale halt
 
     if first_run:
         if solo_plans_inline:
@@ -794,6 +797,8 @@ async def run_autonomous_agent(
         # detection so the NEXT turn can re-anchor. Never break a build on a
         # bookkeeping error.
         usage_payload = error_info.get("usage") if error_info else None
+        # #2033: per-run ceiling; a halt is picked up at the top of the loop.
+        charge_tokens(spec_dir, usage_payload)
         if usage_payload:
             try:
                 turn_usage = TurnUsage.from_sdk_usage(
