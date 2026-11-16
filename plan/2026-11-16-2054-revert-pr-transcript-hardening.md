@@ -100,3 +100,13 @@ CI workflow's own test jobs on the PR.
 
 Revert the PR. The route and service are new files; the endgame wrapper only
 adds a best-effort marker write; no data migration.
+
+## Deviations found while implementing
+
+- Pre-commit's Python gate refused ruff 0.15.17 (CI pins 0.14.10); formatted and
+  checked with `uvx ruff@0.14.10` and committed steps 4 and 5 with
+  `AIFACTORY_SKIP_PYTHON_GATE=1`.
+- Step 6 done: follow-up issue olafkfreund/AIFactory#2059.
+- The route returns 409 with the refusal reason; the intent's "a failing
+  regression opens a revert PR" is delivered as the endpoint plus the merge
+  record, the TFactory caller is in #2059.
