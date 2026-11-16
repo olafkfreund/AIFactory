@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2036
 spec: spec/2026-11-16-2036-github-env-test-isolation.md
 coders:
