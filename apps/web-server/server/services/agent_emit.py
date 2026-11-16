@@ -38,6 +38,7 @@ _log = logging.getLogger(__name__)
 # the phase marker two functions down is duplicated for the same reason.
 _USAGE_MARKER = "__USAGE__:"
 _PHASE_MARKER = "__EXEC_PHASE__:"
+_TERMINAL_MARKER_PHASES = frozenset({"complete", "completed", "failed"})
 _RATE_LIMIT_MARKER = "__RATE_LIMIT__:"
 _NONCE_MASK = "<nonce>"
 
@@ -597,10 +598,17 @@ class EmitMixin:
                 "coding": TaskPhase.CODING,
                 "qa_review": TaskPhase.QA_REVIEW,
                 "qa_fixing": TaskPhase.QA_FIXING,
-                "complete": TaskPhase.COMPLETED,  # backend uses "complete"
-                "completed": TaskPhase.COMPLETED,
-                "failed": TaskPhase.FAILED,
             }
+            # #2024: the runner's nonce is in the Job env, so a marker is
+            # untrusted telemetry. Terminal state comes only from exit/Job
+            # reconciliation, never from a log line.
+            if phase_str in _TERMINAL_MARKER_PHASES:
+                logger.warning(
+                    "[AgentService] Ignoring terminal phase marker %r for task %s",
+                    phase_str,
+                    sanitize_log(task_id),
+                )
+                return current_phase
             old_phase = current_phase
             if phase_str in phase_map:
                 current_phase = phase_map[phase_str]
@@ -612,15 +620,7 @@ class EmitMixin:
                 if log_writer and spec_id:
                     if old_phase != current_phase:
                         log_writer.set_phase_status(spec_id, old_phase, "completed")
-                    # For COMPLETED/FAILED phases, don't set them as "active" - just mark previous complete
-                    if current_phase not in (TaskPhase.COMPLETED, TaskPhase.FAILED):
-                        log_writer.set_phase_status(spec_id, current_phase, "active")
-                    # Ensure validation phase is properly marked completed when task completes
-                    if current_phase == TaskPhase.COMPLETED and old_phase in (
-                        TaskPhase.QA_REVIEW,
-                        TaskPhase.QA_FIXING,
-                    ):
-                        log_writer.set_phase_status(spec_id, old_phase, "completed")
+                    log_writer.set_phase_status(spec_id, current_phase, "active")
 
             # Always emit progress for phase events (even if phase didn't change)
             progress = TaskProgress(

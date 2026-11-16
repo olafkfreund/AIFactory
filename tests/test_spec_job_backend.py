@@ -440,7 +440,8 @@ async def test_sweep_treats_live_spec_job_as_owned(
 
 
 @pytest.mark.parametrize(
-    ("model", "seeded"), [("sonnet", False), ("copilot:gpt-5", True)]
+    ("model", "seeded"),
+    [("sonnet", False), ("copilot:gpt-5", True), ("gpt-5.3-codex", False)],
 )
 def test_spec_job_gets_copilot_login_only_for_copilot_model(
     monkeypatch: pytest.MonkeyPatch, model: str, seeded: bool
@@ -458,7 +459,8 @@ def test_spec_job_gets_copilot_login_only_for_copilot_model(
     assert seed["name"] == "seed-creds"
     script = seed["args"][0]
     assert ("copilot-apps.json" in script) is seeded
-    assert "claude-credentials.json" in script
+    assert "claude-credentials.json" in script  # phase summaries always use sonnet
+    assert ("codex-auth.json" in script) is (model == "gpt-5.3-codex")
 
 
 def test_partial_fetch_without_spec_md_drops_earlier_approval(

@@ -100,13 +100,9 @@ def build_spec_job_manifest(  # noqa: PLR0913 - manifest coordinates
         workspace_uri=workspace_uri,
         automount_service_account_token=False,
     )
-    # #1932: this agent reads untrusted issue text, so it gets the Copilot
-    # (GitHub) login only when the spec model actually runs on Copilot.
-    cred_files = tuple(
-        (key, rel)
-        for key, rel in build_backend._CLI_CRED_FILES
-        if "copilot" not in key or (model or "").lower().startswith("copilot:")
-    )
+    # #1932/#2025: only the spec model's login (shared rule), plus Claude: the
+    # spec pipeline always summarizes phases with sonnet (orchestrator.py).
+    cred_files = build_backend.cred_files_for_models([model, "sonnet"])
     return build_backend._inject_build_path(
         build_backend._inject_seed_creds(build_job_manifest(spec), cred_files)
     )
