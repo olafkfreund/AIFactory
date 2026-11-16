@@ -150,6 +150,13 @@ as the code:
   token instead of minting when it runs on the event-loop thread, so cold
   reads fail closed and worker threads still mint; `routes/pr.py` warms the
   cache first).
+- Round 3 (Codex): `merge_worktree` (`routes/worktree_merge.py`) and the
+  done-status issue close (`routes/tasks.py`) called `gh` on the loop, where
+  a cold cache now means no token; both run in `asyncio.to_thread`. Review
+  cap reached (3 rounds, security fixes). Residual risk: any other async
+  handler that runs `gh`/`git` for a project directly on the loop with a
+  cold cache gets no token (it fails closed, with an auth error) instead of
+  blocking; none known beyond those fixed.
 - Tests added for the dependency through a real `gh` call, the pinned
   no-mint rule, a two-org merger sweep and Copilot dispatch.
 - Not covered: `/api/git` routes taking a raw `path` (local git only; no
