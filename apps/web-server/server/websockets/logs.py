@@ -10,6 +10,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from ..auth import verify_websocket_token
 from ..services.agent_service import TaskLog, get_agent_service
+from .task_access import TaskSocketAccess
 
 router = APIRouter()
 
@@ -28,8 +29,8 @@ async def task_logs_websocket(websocket: WebSocket, task_id: str):
         "source": "agent|stdout|stderr"
     }
     """
-    # Verify authentication
-    if not await verify_websocket_token(websocket):
+    access = TaskSocketAccess(websocket, task_id)
+    if not await access.connect():
         return
 
     await websocket.accept()
@@ -54,6 +55,8 @@ async def task_logs_websocket(websocket: WebSocket, task_id: str):
         )
 
         while True:
+            if not await access.recheck():
+                return
             try:
                 # Wait for log with timeout to allow checking for disconnection
                 log = await asyncio.wait_for(message_queue.get(), timeout=30.0)
