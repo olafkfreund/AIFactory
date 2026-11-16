@@ -1413,7 +1413,7 @@ _ALL_CRED_KEYS = {
             dict.fromkeys(
                 ("spec", "planning", "coding", "qa", "qa_fixer"), "ollama:qwen3:14b"
             ),
-            set(),
+            {"claude"},  # #2047: claude is always an enabled failover target
         ),
         (
             {
@@ -1423,7 +1423,7 @@ _ALL_CRED_KEYS = {
                 "qa": "copilot:gpt-5",
                 "qa_fixer": "ollama:x",
             },
-            {"codex", "antigravity", "copilot"},
+            {"claude", "codex", "antigravity", "copilot"},
         ),
     ],
 )
@@ -2330,3 +2330,20 @@ def test_build_job_env_provider_credentials_are_pinned(
     env = bb.build_job_env("oauth-tok")
     creds = {n for n in env if n.endswith(("_API_KEY", "_AUTH_TOKEN", "_OAUTH_TOKEN"))}
     assert creds == _PINNED_JOB_PROVIDER_CREDS
+
+
+def test_cred_files_include_enabled_failover_providers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #2047: all-claude phases still need the logins QA failover can reach.
+    monkeypatch.delenv("AIFACTORY_RUNTIMES", raising=False)
+    assert [k for k, _ in bb.cred_files_for_models(["sonnet"])] == [
+        "claude-credentials.json"
+    ]
+    monkeypatch.setenv("AIFACTORY_RUNTIMES", "codex,antigravity")
+    keys = {k for k, _ in bb.cred_files_for_models(["sonnet"])}
+    assert keys == {
+        "claude-credentials.json",
+        "codex-auth.json",
+        "gemini-oauth_creds.json",
+    }
