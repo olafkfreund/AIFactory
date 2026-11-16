@@ -1,6 +1,7 @@
 """Project access for per-task WebSocket streams."""
 
 import time
+from typing import Any
 
 from fastapi import WebSocket
 
@@ -21,7 +22,7 @@ class TaskSocketAccess:
         self.websocket = websocket
         self.task_id = task_id
         self.project_id = task_id.split(":", 1)[0] if ":" in task_id else None
-        self.user: dict | None = None
+        self.user: dict[str, Any] | None = None
         self.key_token: str | None = None
         self.last_check = time.monotonic()
 
@@ -65,7 +66,7 @@ class TaskSocketAccess:
         self.last_check = time.monotonic()
         return True
 
-    async def _authorized(self, user: dict, close_code: int) -> bool:
+    async def _authorized(self, user: dict[str, Any], close_code: int) -> bool:
         try:
             async with engine.async_session_factory() as db:
                 await authorize_project_for_user(user, self.project_id, db)

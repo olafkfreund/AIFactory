@@ -200,12 +200,13 @@ async def events_websocket(websocket: WebSocket):
             ):
                 if key_token:
                     principal = await _ws_acw_principal(key_token)
-                    if principal is None:
+                    if principal is None or not principal.get("id"):
                         await websocket.close(code=4001)
                         break
                     user_info = principal
-                    client.key_org_id = principal.get("org_id")
-                    client.user_id = principal.get("id")
+                    org_id = principal.get("org_id")
+                    client.key_org_id = str(org_id) if org_id else None
+                    client.user_id = str(principal["id"])
                 last_key_check = time.monotonic()
                 await _load_org_ids(client, user_info)
             try:
