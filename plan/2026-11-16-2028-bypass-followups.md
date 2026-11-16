@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2028
 spec: spec/2026-11-16-2028-bypass-followups.md
 # coders: none named. Six small edits across five files that depend on each
