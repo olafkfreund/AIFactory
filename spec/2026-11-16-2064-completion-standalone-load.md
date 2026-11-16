@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 intent: intent/2026-11-16-2064-completion-standalone-load.md
 ---
 
