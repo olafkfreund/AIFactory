@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from server.error_ref import client_error
 from server.services.http_verdict import honest_status
 from server.specpath import browse_roots, within_roots
-from server.utils.subprocess_env import child_env, github_env, merge_driver_pins
+from server.utils.subprocess_env import child_env, merge_driver_pins, project_github_env
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ def _confined(path: str) -> str:
 def run_git_command(args: list[str], cwd: str) -> dict:
     """Run a git command and return result."""
     try:
-        with github_env(child_env()) as env:
+        with project_github_env(cwd, child_env()) as env:
             result = subprocess.run(
                 ["git"] + args,
                 check=False,
@@ -1464,7 +1464,7 @@ def run_gh_command(args: list[str], cwd: str) -> dict:
         Dict with success status, output or error message
     """
     try:
-        with github_env(child_env()) as env:
+        with project_github_env(cwd, child_env()) as env:
             result = subprocess.run(
                 ["gh"] + args,
                 check=False,

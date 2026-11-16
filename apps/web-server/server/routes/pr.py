@@ -39,9 +39,9 @@ from server.services.task_branch import resolve_task_branch_fetching
 from server.specpath import safe_spec_component
 from server.utils.subprocess_env import (
     child_env,
-    github_env,
     lfs_upload,
     merge_driver_pins,
+    project_github_env,
 )
 
 from .project_authz import require_task_access
@@ -59,7 +59,7 @@ def _upload_and_push(
     Blocking (the upload may take ``LFS_UPLOAD_TIMEOUT``): run it in a thread.
     Hooks are off (#1680), so the upload is explicit (#1690, #1721).
     """
-    with github_env(child_env()) as env:
+    with project_github_env(worktree_path, child_env()) as env:
 
         def run(argv: list[str], timeout: int) -> tuple[int, str, str]:
             p = subprocess.run(  # noqa: S603, PLW1510
@@ -238,7 +238,7 @@ async def create_pr_from_task(
 
     # Fetch latest base branch from remote
     try:
-        with github_env(child_env()) as env:
+        with project_github_env(worktree_path, child_env()) as env:
             subprocess.run(
                 ["git", "fetch", "origin", base_branch],
                 cwd=worktree_path,
@@ -329,7 +329,7 @@ async def create_pr_from_task(
     # fetch is a harmless no-op — we log and fall through to the existing
     # behaviour.
     try:
-        with github_env(child_env()) as env:
+        with project_github_env(worktree_path, child_env()) as env:
             fetch_result = subprocess.run(  # noqa: S603, ASYNC221, PLW1510
                 ["git", "fetch", "origin", f"{worktree_branch}:{worktree_branch}"],  # noqa: S607
                 cwd=worktree_path,

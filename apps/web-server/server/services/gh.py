@@ -14,7 +14,7 @@ import subprocess
 from typing import Any
 
 from server.error_ref import client_error
-from server.utils.subprocess_env import child_env, github_env
+from server.utils.subprocess_env import child_env, project_github_env
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ def run_gh_command(args: list[str], cwd: str | None = None) -> dict[str, Any]:
         # S603/S607: the executable is the literal "gh" and there is no shell.
         # PLW1510: check=False is the point -- a non-zero exit is returned as
         # data, not raised, so callers get one shape for every outcome.
-        with github_env(child_env()) as env:
+        with project_github_env(cwd, child_env()) as env:
             result = subprocess.run(  # noqa: S603, PLW1510
                 ["gh", *args],  # noqa: S607 - gh is resolved from PATH by design
                 capture_output=True,

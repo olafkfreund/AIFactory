@@ -5,6 +5,7 @@ Handles CRUD operations for projects (git repositories that Magestic AI manages)
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import re
@@ -23,7 +24,11 @@ from server.error_ref import InputRejectedError, client_error
 # than left defined here so this module keeps its own `load_projects(...)`
 # call sites unchanged -- and so `patch("server.routes.projects.load_projects")`
 # still works for tests that drive THIS module's handlers.
-from server.project_registry import load_projects, save_projects
+from server.project_registry import (
+    load_projects,
+    overlaps_other_org,
+    save_projects,
+)
 from server.services import github_app, project_settings_store
 from server.services.audit_service import ACTION_TASK_CREATE, audit_task_action
 from server.services.http_verdict import honest_status
@@ -414,6 +419,17 @@ class ScanProjectsRequest(BaseModel):
     )
 
 
+def _refuse_overlap(org_id: str | None, path: Path, skip: str | None = None) -> None:
+    """409 when, with org installations on, ``path`` overlaps another org's project."""
+    if github_app.multi_installation() and overlaps_other_org(
+        path.resolve(), org_id, load_projects(), skip
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Path overlaps a project of another organization",
+        )
+
+
 @router.post("/scan")
 async def scan_for_projects(request: ScanProjectsRequest):
     """
@@ -573,6 +589,7 @@ async def add_project(
         from server.services.project_workspace_service import (
             GitOperationError,
             clone_or_update,
+            slug_from_git_url,
             workspace_root,
         )
 
@@ -582,6 +599,11 @@ async def add_project(
         credential: tuple[str, str] | None = None
         if project.gitCredentialId:
             credential = await _resolve_git_credential(project.gitCredentialId)
+        # Before any git work: a clone would fetch and reset the other org's copy.
+        with contextlib.suppress(InputRejectedError):  # the clone reports it as 400
+            _refuse_overlap(
+                org_id, workspace_root() / slug_from_git_url(project.gitUrl)
+            )
         try:
             await asyncio.to_thread(github_app.token_for_org, org_id)
         except Exception as e:
@@ -628,6 +650,8 @@ async def add_project(
         project_path = within_roots(
             project.path, browse_roots(), "browsable directories", expand_user=True
         )
+
+        _refuse_overlap(org_id, project_path)
 
         if not project_path.exists():
             try:
@@ -730,6 +754,7 @@ async def update_project(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Path does not exist: {project.path}",
             )
+        _refuse_overlap(project_data.get("org_id"), project_path, skip=project_id)
         project_data["path"] = str(project_path)
 
     if project.name:

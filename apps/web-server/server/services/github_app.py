@@ -22,7 +22,7 @@ from pathlib import Path
 
 import httpx
 import yaml
-from core.git_credentials import use_github_token
+from core.git_credentials import has_github_token_provider, use_github_token
 from jose import JOSEError, jwt
 
 from server.utils.subprocess_env import AGENT_GITHUB_TOKEN_VAR, child_env, github_token
@@ -73,9 +73,13 @@ def _parse_org_map(raw: str) -> dict[str, str]:
                 f"{_ORG_MAP_VAR} entry {position} needs org=installation"
             )
         org, installation = (part.strip() for part in item.split("=", 1))
-        if not org or org in result or not _valid_installation_id(installation):
+        if not org or org in result:
             raise RuntimeError(
                 f"{_ORG_MAP_VAR} has invalid or duplicate org id {org!r}"
+            )
+        if not _valid_installation_id(installation):
+            raise RuntimeError(
+                f"{_ORG_MAP_VAR} has an invalid installation id for org {org!r}"
             )
         result[org] = installation
     if not result:
@@ -120,6 +124,29 @@ def org_github_token(org_id: str | None) -> Iterator[None]:
 
     with use_github_token(provider):
         yield
+
+
+@contextlib.contextmanager
+def project_github_token(path: str | Path | None) -> Iterator[None]:
+    """``org_github_token`` for the org that owns ``path``.
+
+    No path keeps an outer block's provider; a path with no owner never does.
+    """
+    if not multi_installation() or (not path and has_github_token_provider()):
+        yield
+        return
+    from server.project_registry import org_id_for_path  # noqa: PLC0415 - cycle
+
+    with org_github_token(org_id_for_path(path)):
+        yield
+
+
+async def warm_org_token(org_id: str | None) -> None:
+    """Fill the token cache off the event loop; a mint error is logged, not raised."""
+    try:
+        await asyncio.to_thread(token_for_org, org_id)
+    except MINT_ERRORS:
+        logger.warning("GitHub App token mint failed for org %s", org_id, exc_info=True)
 
 
 def configured() -> bool:

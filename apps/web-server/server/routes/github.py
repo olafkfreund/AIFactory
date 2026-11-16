@@ -13,14 +13,16 @@ import re
 import shutil
 import subprocess
 import sys
+from collections.abc import AsyncIterator
 from pathlib import Path as FilePath
 
 from factory_common.logsafe import sanitize_log
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from server.background import spawn
+from server.database.engine import get_db
 from server.error_ref import client_error
 from server.services import github_app, project_settings_store
 from server.services.gh import run_gh_command  # re-exported: see services/gh.py
@@ -31,7 +33,35 @@ from server.utils.subprocess_env import child_env, github_token
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+
+async def _project_github_token(request: Request) -> AsyncIterator[None]:
+    """Give a project route its org's GitHub token (#1700); no-op without the map.
+
+    The caller's `projectId` picks the org only after the project access check.
+    An async generator, so the set and the reset run in the handler's context.
+    """
+    if not github_app.multi_installation():
+        yield
+        return
+    from server.project_registry import load_projects  # noqa: PLC0415
+    from server.routes.project_authz import require_project_access  # noqa: PLC0415
+
+    org: object = None
+    pid = request.path_params.get("projectId") or request.query_params.get("projectId")
+    if pid:
+        try:
+            async with contextlib.asynccontextmanager(get_db)() as db:
+                await require_project_access("viewer")._authorize(pid, request, db)
+            org = (load_projects().get(pid) or {}).get("org_id")
+        except HTTPException:
+            org = None
+    org_id = org if isinstance(org, str) else None
+    await github_app.warm_org_token(org_id)
+    with github_app.org_github_token(org_id):
+        yield
+
+
+router = APIRouter(dependencies=[Depends(_project_github_token)])
 
 
 # ============================================
@@ -107,6 +137,8 @@ async def _persist_cli_token_to_project(project_id: str) -> bool:
     """
     from server.project_registry import load_projects
 
+    if github_app.multi_installation():  # never store an installation token (#1700)
+        return False
     token_result = run_gh_command(["auth", "token"])
     if not token_result["success"] or not token_result["output"]:
         return False
@@ -888,7 +920,7 @@ async def add_git_remote(request: AddRemoteRequest):
 # These are mounted under /api/projects/{projectId}/github
 # ============================================
 
-project_router = APIRouter()
+project_router = APIRouter(dependencies=[Depends(_project_github_token)])
 
 
 def _resolve_project_path(projectId: str) -> FilePath | None:

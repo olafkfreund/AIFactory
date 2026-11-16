@@ -118,7 +118,7 @@ from server.utils.subprocess_env import (
     GITHUB_KEEP,
     agent_github_token,
     child_env,
-    github_env,
+    project_github_env,
     runner_github_env,
 )
 
@@ -1072,7 +1072,8 @@ def _git(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[
     # GIT_TERMINAL_PROMPT=0: never block a dispatch on an interactive credential
     # prompt — an unreachable/unauthorised remote (e.g. the #960 refresh fetch)
     # must fail fast instead of hanging the server.
-    with github_env(child_env(extra={"GIT_TERMINAL_PROMPT": "0"})) as env:
+    cwd = args[1] if args[:1] == ["-C"] and len(args) > 1 else None
+    with project_github_env(cwd, child_env(extra={"GIT_TERMINAL_PROMPT": "0"})) as env:
         return subprocess.run(
             ["git", *args],
             check=check,

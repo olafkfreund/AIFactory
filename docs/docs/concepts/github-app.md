@@ -204,14 +204,21 @@ A non-empty map turns on multi-installation mode, which fails closed:
   names a bound org. Bind every org, `default` included: an unbound org gets
   no GitHub token.
 - A project path registered under two orgs (one inside the other) gets no
-  token.
+  token. In this mode the server refuses (409) to add or repoint a project
+  whose path equals, holds or sits inside another org's project.
 - It cannot be combined with the token for agent children
   (`agentGithubToken`); the chart and the boot check refuse both.
-- Wired: project clone, build, spec and PR-review runners, build Jobs and the
-  PR endgame. No token in this mode yet (#1700 stays open for them): the
-  interactive GitHub, PR and git routes, Kubernetes spec Jobs, the PR data
-  service, Copilot dispatch, task-branch push, the merger, the shared `gh`
-  helper, and the control plane's worktree fetch for build Jobs.
+- Wired: project clone and the Auto-Fix pull, build, spec and PR-review
+  runners, build Jobs, the PR endgame, the merger, the PR data service,
+  Copilot dispatch, task-branch git calls, the shared `gh` helper, the
+  control plane's worktree fetch for build Jobs, and the project routes of
+  the GitHub and git APIs (`/api/projects/{projectId}/github/...`, the PR and
+  git routes). The org comes from the project the call works on; a caller
+  who has no access to that project gets no token.
+- Still no token in this mode, by design: routes with no project (web login,
+  `auth/status`, user, orgs, models), Kubernetes spec Jobs (they never carry
+  a GitHub token), and a path no org owns. The server never stores an
+  installation token in a project's settings (`/persist-token` refuses).
 - If GitHub refuses to mint a token, the call runs without one and fails with
   an authentication error; the server log has the cause.
 - A runner's token is fixed at spawn and lasts at least 55 minutes.

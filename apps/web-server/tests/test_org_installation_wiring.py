@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -165,7 +166,10 @@ def test_terminal_endgame_uses_project_org(
     monkeypatch.setattr(pr_endgame, "resolve_pr_reviewer", lambda _path: "copilot")
     seen: list[str] = []
 
+    loop_thread = threading.get_ident()
+
     def gather(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        assert threading.get_ident() != loop_thread  # reads may mint (#2038)
         seen.append(github_token())
         return {
             "worktree": project,
@@ -253,3 +257,222 @@ def test_web_login_is_refused_in_multi_installation_mode(
     monkeypatch.setattr(github_routes.asyncio, "create_subprocess_exec", no_spawn)
     result = asyncio.run(github_routes.start_github_auth(object()))
     assert result["data"]["success"] is False
+
+
+def _two_orgs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
+    acme = tmp_path / "acme"
+    other = tmp_path / "other"
+    acme.mkdir()
+    other.mkdir()
+    registry = tmp_path / "projects.json"
+    registry.write_text(
+        json.dumps(
+            {
+                "a": {"path": str(acme), "org_id": "acme"},
+                "o": {"path": str(other), "org_id": "other"},
+            }
+        )
+    )
+    monkeypatch.setattr(project_registry, "get_projects_file", lambda: registry)
+    monkeypatch.setenv("GITHUB_TOKEN", "ambient-1700")
+    monkeypatch.setattr(github_app, "_org_installations", {"acme": "12", "other": "13"})
+    monkeypatch.setattr(
+        github_app,
+        "_tokens",
+        {
+            "12": ("ghs_acme_1700", time.time() + 3600),
+            "13": ("ghs_other_1700", time.time() + 3600),
+        },
+    )
+    return acme, other
+
+
+def test_project_github_token_follows_the_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    acme, other = _two_orgs(tmp_path, monkeypatch)
+    with github_app.project_github_token(acme / "wt"):
+        assert github_token() == "ghs_acme_1700"
+        # No path keeps the outer org; an unowned path never does.
+        with github_app.project_github_token(None):
+            assert github_token() == "ghs_acme_1700"
+        with github_app.project_github_token(tmp_path / "unregistered"):
+            assert github_token() == ""
+        with github_app.project_github_token(other):
+            assert github_token() == "ghs_other_1700"
+    with github_app.project_github_token(None):
+        assert github_token() == ""
+
+
+def test_project_github_token_is_a_noop_without_the_map(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GITHUB_TOKEN", "ambient-1700")
+    monkeypatch.setattr(github_app, "_org_installations", {})
+    with github_app.project_github_token(tmp_path):
+        assert github_token() == "ambient-1700"
+
+
+def test_gh_helper_sends_the_project_orgs_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.services import gh  # noqa: PLC0415
+
+    acme, other = _two_orgs(tmp_path, monkeypatch)
+    seen: list[str] = []
+
+    def run(*_args: Any, env: dict[str, str], **_kw: Any) -> Any:
+        hosts = (
+            Path(env["GH_CONFIG_DIR"]) / "hosts.yml" if "GH_CONFIG_DIR" in env else None
+        )
+        seen.append(
+            json.loads(hosts.read_text())["github.com"]["oauth_token"] if hosts else ""
+        )
+        return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(gh.subprocess, "run", run)
+    gh.run_gh_command(["x"], cwd=str(acme))
+    gh.run_gh_command(["x"], cwd=str(other / "wt"))
+    gh.run_gh_command(["x"], cwd=str(tmp_path))
+    gh.run_gh_command(["x"])
+    assert seen == ["ghs_acme_1700", "ghs_other_1700", "", ""]
+
+
+def test_github_route_dependency_binds_the_authorised_org(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fastapi import FastAPI, HTTPException  # noqa: PLC0415
+    from fastapi.testclient import TestClient  # noqa: PLC0415
+
+    _two_orgs(tmp_path, monkeypatch)
+
+    class Checker:
+        async def _authorize(self, pid: str, _request: object, _db: object) -> None:
+            if pid != "a":
+                raise HTTPException(status_code=403)
+
+    async def db():  # stands in for the get_db generator
+        yield object()
+
+    monkeypatch.setattr(github_routes, "get_db", db)
+    monkeypatch.setattr(project_authz, "require_project_access", lambda _r: Checker())
+    app = FastAPI()
+    router = github_routes.APIRouter(
+        dependencies=[github_routes.Depends(github_routes._project_github_token)]
+    )
+
+    @router.get("/p/{projectId}")
+    async def by_path(projectId: str) -> dict[str, str]:  # noqa: N803
+        return {"token": github_token()}
+
+    @router.get("/q")
+    async def by_query() -> dict[str, str]:
+        return {"token": github_token()}
+
+    app.include_router(router)
+    client = TestClient(app)
+    assert client.get("/p/a").json() == {"token": "ghs_acme_1700"}
+    assert client.get("/q", params={"projectId": "a"}).json() == {
+        "token": "ghs_acme_1700"
+    }
+    assert client.get("/p/o").json() == {"token": ""}  # not authorised
+    assert client.get("/q").json() == {"token": ""}
+    assert github_token() == "ambient-1700"  # provider reset after the requests
+
+
+def test_installation_token_is_never_persisted_in_the_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(github_app, "_org_installations", {"acme": "12"})
+
+    def no_gh(*_args: Any, **_kw: Any) -> None:
+        raise AssertionError("gh must not run")
+
+    monkeypatch.setattr(github_routes, "run_gh_command", no_gh)
+    assert asyncio.run(github_routes._persist_cli_token_to_project("p")) is False
+
+
+def test_org_map_errors_name_the_bad_part() -> None:
+    with pytest.raises(RuntimeError, match="installation id for org 'acme'") as exc:
+        github_app._parse_org_map("acme=12a")
+    assert "12a" not in str(exc.value)
+    with pytest.raises(RuntimeError, match="duplicate org id 'acme'"):
+        github_app._parse_org_map("acme=1,acme=2")
+    with pytest.raises(RuntimeError, match="invalid or duplicate org id ''"):
+        github_app._parse_org_map("=12")
+
+
+def test_overlapping_project_is_refused_before_any_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    acme, _other = _two_orgs(tmp_path, monkeypatch)
+    child = acme / "child"
+    monkeypatch.setattr(projects, "browse_roots", lambda: [tmp_path])
+
+    async def owner(_request: object, _db: AsyncSession) -> str:
+        return "other"
+
+    monkeypatch.setattr(project_authz, "resolve_owner_org_id", owner)
+
+    class Db(AsyncSession):  # isinstance check only; never used
+        def __init__(self) -> None:
+            pass
+
+    async def run() -> None:
+        with pytest.raises(HTTPException) as exc:
+            await projects.add_project(
+                projects.ProjectCreate(path=str(child)), request=object(), db=Db()
+            )
+        assert exc.value.status_code == 409
+        assert "acme" not in str(exc.value.detail)
+
+    asyncio.run(run())
+    assert not child.exists()  # nothing was created
+    monkeypatch.setattr(github_app, "_org_installations", {})
+
+
+def test_warm_up_waits_for_auto_pr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    registry = tmp_path / "projects.json"
+    registry.write_text(json.dumps({"p": {"path": str(project), "org_id": "acme"}}))
+    monkeypatch.setattr(project_registry, "get_projects_file", lambda: registry)
+    monkeypatch.setattr(github_app, "_org_installations", {"acme": "12"})
+    monkeypatch.setattr(completion, "_build_wrote_nothing", lambda *_args: False)
+    monkeypatch.setattr(completion, "sync_spec_file_from_worktree", lambda *_a: None)
+    monkeypatch.setattr(completion, "handoff_contract", lambda *_args: None)
+
+    async def no_settings(_path: Path) -> dict[str, str]:
+        return {}
+
+    async def no_trust(_path: Path) -> None:
+        return None
+
+    monkeypatch.setattr(project_settings_store, "get_settings", no_settings)
+    monkeypatch.setattr(completion, "lookup", no_trust)
+    monkeypatch.setattr(pr_endgame, "is_auto_pr_enabled", lambda _path: False)
+    monkeypatch.setattr(merger, "process_one", lambda *_args: {})
+    warmed: list[str | None] = []
+
+    async def warm(org: str | None) -> None:
+        warmed.append(org)
+
+    monkeypatch.setattr(github_app, "warm_org_token", warm)
+    asyncio.run(
+        completion.run_terminal_completion(
+            spec_dir=spec,
+            project_path=project,
+            spec_id="1",
+            task_id="p:1",
+            backend_path=BACKEND,
+            is_terminal=False,
+            is_completed=True,
+            terminal_status="completed",
+            logger=logging.getLogger(__name__),
+        )
+    )
+    assert warmed == []

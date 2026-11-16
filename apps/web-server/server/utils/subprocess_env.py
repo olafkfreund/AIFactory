@@ -18,7 +18,7 @@ import contextlib
 import logging
 import os
 import sys
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path
 
 _BACKEND_DIR = Path(__file__).resolve().parents[3] / "backend"
@@ -46,6 +46,7 @@ __all__ = [
     "child_env",
     "dotenv_key_blocked",
     "github_env",
+    "project_github_env",
     "github_names",
     "github_token",
     "lfs_push_argv",
@@ -123,6 +124,17 @@ def runner_github_env(project_path: str | Path | None = None) -> dict[str, str]:
         # there for an absent alias would win in the MCP probe.
         return dict.fromkeys(github_names(), token)
     return {name: os.environ[name] for name in github_names() if os.environ.get(name)}
+
+
+@contextlib.contextmanager
+def project_github_env(
+    path: str | Path | None, base_env: dict[str, str]
+) -> Iterator[dict[str, str]]:
+    """``github_env`` with the GitHub token of the org that owns ``path`` (#1700)."""
+    from server.services import github_app  # noqa: PLC0415 - avoid import cycle
+
+    with github_app.project_github_token(path), github_env(base_env) as env:
+        yield env
 
 
 def dotenv_key_blocked(key: str) -> bool:
