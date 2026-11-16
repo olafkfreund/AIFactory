@@ -419,6 +419,25 @@ class ScanProjectsRequest(BaseModel):
     )
 
 
+def _refuse_clone_overlap(org_id: str | None, git_url: str) -> None:
+    """Before any git work: a clone would fetch and reset the other org's copy."""
+    from server.services.project_workspace_service import (  # noqa: PLC0415
+        slug_from_git_url,
+        workspace_root,
+    )
+
+    with contextlib.suppress(InputRejectedError):  # the clone reports it as 400
+        _refuse_overlap(org_id, workspace_root() / slug_from_git_url(git_url))
+
+
+def _refuse_registered(projects: dict, path: Path) -> None:
+    if any(p["path"] == str(path.resolve()) for p in projects.values()):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Project already registered",
+        )
+
+
 def _refuse_overlap(org_id: str | None, path: Path, skip: str | None = None) -> None:
     """409 when, with org installations on, ``path`` overlaps another org's project."""
     if github_app.multi_installation() and overlaps_other_org(
@@ -589,7 +608,6 @@ async def add_project(
         from server.services.project_workspace_service import (
             GitOperationError,
             clone_or_update,
-            slug_from_git_url,
             workspace_root,
         )
 
@@ -599,11 +617,7 @@ async def add_project(
         credential: tuple[str, str] | None = None
         if project.gitCredentialId:
             credential = await _resolve_git_credential(project.gitCredentialId)
-        # Before any git work: a clone would fetch and reset the other org's copy.
-        with contextlib.suppress(InputRejectedError):  # the clone reports it as 400
-            _refuse_overlap(
-                org_id, workspace_root() / slug_from_git_url(project.gitUrl)
-            )
+        _refuse_clone_overlap(org_id, project.gitUrl)
         try:
             await asyncio.to_thread(github_app.token_for_org, org_id)
         except Exception as e:
@@ -671,12 +685,7 @@ async def add_project(
 
     # Check if already registered
     projects = load_projects()
-    for pid, pdata in projects.items():
-        if pdata["path"] == str(project_path.resolve()):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Project already registered",
-            )
+    _refuse_registered(projects, project_path)
 
     # Create project entry
     project_id = str(uuid4())

@@ -46,7 +46,6 @@ __all__ = [
     "child_env",
     "dotenv_key_blocked",
     "github_env",
-    "project_github_env",
     "github_names",
     "github_token",
     "lfs_push_argv",
@@ -54,6 +53,7 @@ __all__ = [
     "make_subprocess_env",
     "merge_driver_pins",
     "pin_git_config",
+    "project_github_env",
     "runner_github_env",
     "sweep_github_dirs",
 ]

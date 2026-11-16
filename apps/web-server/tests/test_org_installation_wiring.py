@@ -375,7 +375,7 @@ def test_project_route_dependency_pins_the_authorised_org(
     )
 
     @router.get("/p/{projectId}")
-    async def by_path(projectId: str) -> dict[str, str]:  # noqa: N803
+    async def by_path(projectId: str) -> dict[str, str]:  # noqa: ARG001, N803
         gh.run_gh_command(["x"], cwd=str(acme / "wt"))  # same org: kept
         gh.run_gh_command(["x"], cwd=str(other))  # another org's path: no token
         return {"token": github_token()}
@@ -436,7 +436,7 @@ def test_event_loop_thread_never_mints(
 def test_sweep_uses_each_projects_org(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    acme, other = _two_orgs(tmp_path, monkeypatch)
+    _two_orgs(tmp_path, monkeypatch)
     seen: dict[str, str] = {}
 
     def process(project_id: str, *_args: Any, **_kw: Any) -> dict[str, Any]:

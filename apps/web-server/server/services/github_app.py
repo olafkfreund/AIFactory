@@ -39,6 +39,7 @@ _APP_VARS = (
 )
 _PAT_VARS = ("GITHUB_TOKEN", "GH_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN")
 _OK_DELAY = 1800
+_READ_TTL = 60  # a token read must have at least this long to live
 _RETRY_DELAY = 60
 
 _app_id: str | None = None
@@ -120,7 +121,7 @@ def org_github_token(org_id: str | None, *, pinned: bool = False) -> Iterator[No
         # cold cache means no token rather than a mint that blocks the loop for
         # up to the 30 s timeout; a worker thread may mint.
         cached = _tokens.get(installation)
-        if cached and cached[1] - time.time() >= 60:
+        if cached and cached[1] - time.time() >= _READ_TTL:
             return cached[0]
         try:
             asyncio.get_running_loop()
@@ -129,7 +130,7 @@ def org_github_token(org_id: str | None, *, pinned: bool = False) -> Iterator[No
         else:
             return ""
         try:
-            return installation_token(installation, min_ttl=60)
+            return installation_token(installation, min_ttl=_READ_TTL)
         except MINT_ERRORS:  # fail closed: no token, gh/git report the auth error
             logger.warning(
                 "GitHub App token mint failed for org %s", org_id, exc_info=True
