@@ -781,6 +781,11 @@ from .tasks_logs import router as tasks_logs_router  # noqa: E402
 
 router.include_router(tasks_logs_router)
 
+# Post-merge regression -> revert PR (#2054).
+from .tasks_regression import router as tasks_regression_router  # noqa: E402
+
+router.include_router(tasks_regression_router)
+
 # Task read-view endpoints — extracted into routes/tasks_views.py (#556);
 # mounted here so the public /api/tasks paths are unchanged.
 from .tasks_views import router as tasks_views_router  # noqa: E402
