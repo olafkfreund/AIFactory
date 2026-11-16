@@ -14,13 +14,15 @@ from factory_common.url_safety import (
     assert_safe_outbound_url,
     build_no_redirect_opener,
 )
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from server.error_ref import client_error
 from server.services.http_verdict import honest_status
 from server.specpath import browse_roots, within_roots
 from server.utils.subprocess_env import child_env, merge_driver_pins, project_github_env
+
+from .project_github import project_github_token
 
 logger = logging.getLogger(__name__)
 
@@ -1118,7 +1120,7 @@ async def get_source_version():
 # Project-specific at /api/projects/{projectId}/releases
 # ============================================
 
-releases_router = APIRouter()
+releases_router = APIRouter(dependencies=[Depends(project_github_token)])
 
 
 @releases_router.get("/versions")
@@ -1131,7 +1133,7 @@ async def get_releaseable_versions(projectId: str):
 # Project-specific Git Operations
 # ============================================
 
-project_router = APIRouter()
+project_router = APIRouter(dependencies=[Depends(project_github_token)])
 
 
 class SquashCommitsRequest(BaseModel):

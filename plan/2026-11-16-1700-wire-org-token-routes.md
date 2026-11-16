@@ -133,4 +133,19 @@ removes the code.
 
 ## Deviations
 
-None yet.
+Final review (Codex, round 1) found three defects; fixed in the same commit
+as the code:
+
+- The dependency moved to `routes/project_github.py` and is attached to the
+  `github` router and project router and to the `git` project and releases
+  routers. It now refuses (propagates the access check's 403/404) instead of
+  continuing with an empty provider, and it pins the org
+  (`org_github_token(org, pinned=True)`): path-based wiring in the handler
+  cannot swap a pinned org, and a pinned provider reads the cache only
+  (never mints on the event loop; a failed warm-up means no token).
+- Tests added for the dependency through a real `gh` call, the pinned
+  no-mint rule, a two-org merger sweep and Copilot dispatch.
+- Not covered: `/api/git` routes taking a raw `path` (local git only; no
+  network operation uses a token there), and handlers outside these routers
+  that call `gh` with a project path and have their own access checks
+  (`execution`, `pr`).

@@ -338,13 +338,15 @@ def test_gh_helper_sends_the_project_orgs_token(
     assert seen == ["ghs_acme_1700", "ghs_other_1700", "", ""]
 
 
-def test_github_route_dependency_binds_the_authorised_org(
+def test_project_route_dependency_pins_the_authorised_org(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from fastapi import FastAPI, HTTPException  # noqa: PLC0415
     from fastapi.testclient import TestClient  # noqa: PLC0415
+    from server.routes import project_github  # noqa: PLC0415
+    from server.services import gh  # noqa: PLC0415
 
-    _two_orgs(tmp_path, monkeypatch)
+    acme, other = _two_orgs(tmp_path, monkeypatch)
 
     class Checker:
         async def _authorize(self, pid: str, _request: object, _db: object) -> None:
@@ -354,30 +356,114 @@ def test_github_route_dependency_binds_the_authorised_org(
     async def db():  # stands in for the get_db generator
         yield object()
 
-    monkeypatch.setattr(github_routes, "get_db", db)
+    monkeypatch.setattr(project_github, "get_db", db)
     monkeypatch.setattr(project_authz, "require_project_access", lambda _r: Checker())
-    app = FastAPI()
+    seen: list[str] = []
+
+    def run(*_args: Any, env: dict[str, str], **_kw: Any) -> Any:
+        hosts = Path(env["GH_CONFIG_DIR"]) / "hosts.yml"
+        seen.append(json.loads(hosts.read_text())["github.com"]["oauth_token"])
+        return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(gh.subprocess, "run", run)
     router = github_routes.APIRouter(
-        dependencies=[github_routes.Depends(github_routes._project_github_token)]
+        dependencies=[github_routes.Depends(project_github.project_github_token)]
     )
 
     @router.get("/p/{projectId}")
     async def by_path(projectId: str) -> dict[str, str]:  # noqa: N803
+        # Even a cwd of the other org's project cannot swap the pinned org.
+        gh.run_gh_command(["x"], cwd=str(other))
         return {"token": github_token()}
 
     @router.get("/q")
     async def by_query() -> dict[str, str]:
         return {"token": github_token()}
 
+    app = FastAPI()
     app.include_router(router)
     client = TestClient(app)
     assert client.get("/p/a").json() == {"token": "ghs_acme_1700"}
+    assert seen == ["ghs_acme_1700"]
     assert client.get("/q", params={"projectId": "a"}).json() == {
         "token": "ghs_acme_1700"
     }
-    assert client.get("/p/o").json() == {"token": ""}  # not authorised
-    assert client.get("/q").json() == {"token": ""}
+    assert client.get("/q").json() == {"token": ""}  # no project: no token
+    assert client.get("/p/o").status_code == 403  # denied: handler never runs
+    assert seen == ["ghs_acme_1700"]
     assert github_token() == "ambient-1700"  # provider reset after the requests
+
+
+def test_pinned_provider_never_mints(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _two_orgs(tmp_path, monkeypatch)
+    monkeypatch.setattr(github_app, "_tokens", {})  # cold cache
+
+    def no_mint(*_args: Any, **_kw: Any) -> None:
+        raise AssertionError("must not mint on a request")
+
+    monkeypatch.setattr(github_app, "installation_token", no_mint)
+    with github_app.org_github_token("acme", pinned=True):
+        assert github_token() == ""
+
+
+def test_sweep_uses_each_projects_org(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    acme, other = _two_orgs(tmp_path, monkeypatch)
+    seen: dict[str, str] = {}
+
+    def process(project_id: str, *_args: Any, **_kw: Any) -> dict[str, Any]:
+        seen[project_id] = github_token()
+        return {"action": "skipped", "project": project_id}
+
+    monkeypatch.setattr(merger, "_process_spec", process)
+    monkeypatch.setattr(merger, "get_spec_dirs", lambda _path: [Path("spec")])
+    monkeypatch.setattr(merger, "_sync_status", lambda *_args: True)
+    merger.sweep(dry_run=False)
+    assert seen == {"a": "ghs_acme_1700", "o": "ghs_other_1700"}
+
+
+def test_copilot_dispatch_uses_the_task_projects_org(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.routes import execution  # noqa: PLC0415
+    from server.services import copilot_dispatch_service as cds  # noqa: PLC0415
+
+    acme, _other = _two_orgs(tmp_path, monkeypatch)
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    monkeypatch.setenv("AIFACTORY_COPILOT_DISPATCH_ENABLED", "true")
+    monkeypatch.setattr(execution, "_resolve_task", lambda _id: ("a", "1", acme, spec))
+    seen: list[str] = []
+
+    def dispatch(_self: object, *_args: Any) -> dict[str, str]:
+        seen.append(github_token())
+        return {"agent_handle": "h", "dispatched_at": "now"}
+
+    async def watch(**_kw: Any) -> None:
+        seen.append(github_token())
+
+    async def noop(*_args: Any, **_kw: Any) -> None:
+        return None
+
+    monkeypatch.setattr(cds.CopilotDispatchService, "dispatch", dispatch)
+    monkeypatch.setattr(cds, "watch_for_copilot_pr", watch)
+    monkeypatch.setattr(execution, "emit_task_status", noop)
+    monkeypatch.setattr(execution, "audit_task_action", noop)
+    monkeypatch.setattr(execution, "_patch_task_metadata", lambda *_args: None)
+
+    async def run() -> None:
+        await execution.dispatch_task_to_copilot(
+            "a:1",
+            execution.CopilotDispatchRequest(repo_full_name="acme/r", issue_number=3),
+            _access={},
+        )
+        await asyncio.sleep(0)  # let the spawned watcher run
+
+    asyncio.run(run())
+    assert seen == ["ghs_acme_1700", "ghs_acme_1700"]
 
 
 def test_installation_token_is_never_persisted_in_the_mode(

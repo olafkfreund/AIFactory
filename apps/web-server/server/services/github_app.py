@@ -17,6 +17,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Iterator
+from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
 
@@ -46,6 +47,9 @@ _key: str | None = None
 _org_installations: dict[str, str] = {}
 _tokens: dict[str, tuple[str, float]] = {}
 _tokens_lock = threading.Lock()
+#: Set inside a request whose org the access check settled: path-based
+#: wiring must not replace it, and token reads never mint on the event loop.
+_pinned: ContextVar[bool] = ContextVar("github_app_pinned", default=False)
 #: What a mint can raise: HTTP, a bad id or empty reply, bad or odd JSON, JWT signing.
 MINT_ERRORS = (
     httpx.HTTPError,
@@ -101,7 +105,7 @@ def token_for_org(org_id: str | None, *, min_ttl: int = 900) -> str | None:
 
 
 @contextlib.contextmanager
-def org_github_token(org_id: str | None) -> Iterator[None]:
+def org_github_token(org_id: str | None, *, pinned: bool = False) -> Iterator[None]:
     if not multi_installation():
         yield
         return
@@ -110,6 +114,9 @@ def org_github_token(org_id: str | None) -> Iterator[None]:
     def provider() -> str:
         if not installation:
             return ""
+        if pinned:  # a request: the dependency warmed the cache; never mint here
+            cached = _tokens.get(installation)
+            return cached[0] if cached and cached[1] - time.time() >= 60 else ""
         # Callers warm the cache in a thread first, so this is a cache read on
         # the event loop. shortcut: a block that outlives the warmed token
         # (>14 min) mints inline once, up to the 30 s timeout; move the reads
@@ -122,8 +129,13 @@ def org_github_token(org_id: str | None) -> Iterator[None]:
             )
             return ""
 
-    with use_github_token(provider):
-        yield
+    pin = _pinned.set(True) if pinned else None
+    try:
+        with use_github_token(provider):
+            yield
+    finally:
+        if pin is not None:
+            _pinned.reset(pin)
 
 
 @contextlib.contextmanager
@@ -131,8 +143,13 @@ def project_github_token(path: str | Path | None) -> Iterator[None]:
     """``org_github_token`` for the org that owns ``path``.
 
     No path keeps an outer block's provider; a path with no owner never does.
+    A request's pinned org (see ``org_github_token``) is never replaced.
     """
-    if not multi_installation() or (not path and has_github_token_provider()):
+    if (
+        not multi_installation()
+        or _pinned.get()
+        or (not path and has_github_token_provider())
+    ):
         yield
         return
     from server.project_registry import org_id_for_path  # noqa: PLC0415 - cycle
