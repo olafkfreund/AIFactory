@@ -288,6 +288,22 @@ def _select_verification_key(
     return legacy, ""
 
 
+def _expiry_reason(
+    authority: str,
+    kid: str | None,
+    expiry: dict[str, datetime | None],
+    now: datetime | None,
+) -> str:
+    """Why the key for ``(authority, kid)`` is past its ``not_after``, or ``""``."""
+    key_name = f"{authority}/{str(kid).strip().lower()}" if kid else authority
+    if key_name not in expiry:
+        return ""
+    not_after = expiry[key_name]
+    if not_after is None or (now or datetime.now(UTC)) >= not_after:
+        return f"key {key_name!r} expired (not_after {not_after or 'unparseable'})"
+    return ""
+
+
 def verify_plan_signature(
     plan: dict,
     *,
@@ -331,14 +347,9 @@ def verify_plan_signature(
     if key is None:
         return False, reason
 
-    key_name = f"{authority}/{str(kid).strip().lower()}" if kid else authority
-    if key_name in expiry:
-        not_after = expiry[key_name]
-        if not_after is None or (now or datetime.now(UTC)) >= not_after:
-            return (
-                False,
-                f"key {key_name!r} expired (not_after {not_after or 'unparseable'})",
-            )
+    expired = _expiry_reason(authority, kid, expiry, now)
+    if expired:
+        return False, expired
 
     expected = hmac.new(
         key.encode("utf-8"),
