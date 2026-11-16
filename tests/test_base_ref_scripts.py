@@ -276,3 +276,139 @@ def test_loosely_parsed_package_json_fails_closed(repo: Path, text: str) -> None
     reset_profile_cache()
     for cmd in ("yarn echo hi", "bun echo hi", "bun run echo hi"):
         assert not validate_command(cmd, repo)[0], cmd
+
+
+# --- #2028: follow-ups from the #1948 bypass reviews ---
+
+
+def _rev(repo: Path, spec: str) -> str:
+    out = subprocess.run(
+        ["git", "rev-parse", spec], cwd=repo, check=True, capture_output=True, text=True
+    )
+    return out.stdout.strip()
+
+
+def _loose(repo: Path, oid: str) -> Path:
+    return repo / ".git" / "objects" / oid[:2] / oid[2:]
+
+
+@pytest.mark.parametrize("kind", ["commit", "tree", "blob"])
+def test_forged_base_object_is_ignored(repo: Path, kind: str) -> None:
+    """A loose object overwritten with other content must not stand in (#2028)."""
+    oids = {
+        "commit": (_rev(repo, "HEAD~1"), _rev(repo, "HEAD")),
+        "tree": (_rev(repo, "HEAD~1^{tree}"), _rev(repo, "HEAD^{tree}")),
+        "blob": (_rev(repo, "HEAD~1:Makefile"), _rev(repo, "HEAD:Makefile")),
+    }
+    victim, forged = (_loose(repo, o) for o in oids[kind])
+    victim.chmod(0o644)
+    victim.write_bytes(forged.read_bytes())
+    reset_profile_cache()
+    assert not validate_command("make evil", repo)[0]
+    assert not validate_command("npm run evil", repo)[0]
+
+
+def test_tag_named_like_base_sha_is_ignored(repo: Path) -> None:
+    base = _rev(repo, "HEAD~1")
+    _loose(repo, base).chmod(0o644)
+    _loose(repo, base).unlink()
+    _git(repo, "tag", base, "HEAD")
+    reset_profile_cache()
+    assert not validate_command("make evil", repo)[0]
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "./echo hi",
+        "cd sub && ./echo hi",
+        "sub/echo hi",
+        "env ./echo hi",
+        "/tmp/echo hi",
+        "/usr/bin/../../tmp/echo hi",
+        "./build.sh",
+        "./evil.sh",
+        ".venv/bin/python -V",
+    ],
+)
+def test_path_bearing_commands_refused(repo: Path, cmd: str) -> None:
+    (repo / "echo").write_text("#!/bin/sh\necho pwn\n")
+    assert not validate_command(cmd, repo)[0], cmd
+
+
+@pytest.mark.parametrize("cmd", ["echo hi", "/usr/bin/env true", "/bin/echo hi"])
+def test_bare_and_system_commands_still_allowed(repo: Path, cmd: str) -> None:
+    assert validate_command(cmd, repo)[0], cmd
+
+
+def _repo_with_makefile(tmp_path: Path, monkeypatch, makefile: str, **files) -> Path:
+    monkeypatch.setenv("AIFACTORY_GIT_BASELINE_DIR", str(tmp_path / "bl"))
+    reset_profile_cache()
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    _git(repo_dir, "init")
+    (repo_dir / "Makefile").write_text(makefile)
+    for name, text in files.items():
+        (repo_dir / name).write_text(text)
+    _git(repo_dir, "add", ".")
+    _git(repo_dir, "commit", "-m", "base")
+    record_base_sha(repo_dir)
+    return repo_dir
+
+
+def test_makefile_target_shapes(tmp_path: Path, monkeypatch) -> None:
+    mk = (
+        "include common.mk\n"
+        "-include missing.mk\n"
+        "build.all lint: test\n\t@echo ok\n"
+        "dist/app.js:\n\ttouch $@\n"
+        "VAR := a: b\n"
+        "OTHER ::= c\n"
+        "test:\n\techo 'recipe: line'\n"
+        "multi \\\n  second:\n\ttrue\n"
+        "%.o: %.c\n\ttrue\n"
+    )
+    repo_dir = _repo_with_makefile(
+        tmp_path, monkeypatch, mk, **{"common.mk": "shared:\n\ttrue\n"}
+    )
+    for ok in ("make lint", "make build.all", "make dist/app.js", "make shared"):
+        assert validate_command(ok, repo_dir)[0], ok
+    for bad in ("make VAR", "make OTHER", "make recipe", "make missing"):
+        assert not validate_command(bad, repo_dir)[0], bad
+
+
+def test_makefile_include_with_traversal_adds_nothing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_dir = _repo_with_makefile(
+        tmp_path, monkeypatch, "include ../x.mk\ninclude $(X)\ntest:\n\ttrue\n"
+    )
+    assert validate_command("make test", repo_dir)[0]
+
+
+def test_shorthand_runner_ignores_parent_package_json(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("AIFACTORY_GIT_BASELINE_DIR", str(tmp_path / "bl"))
+    reset_profile_cache()
+    repo_dir = tmp_path / "repo"
+    (repo_dir / "pkg").mkdir(parents=True)
+    _git(repo_dir, "init")
+    (repo_dir / "pkg" / "package.json").write_text(
+        json.dumps({"scripts": {"test": "true"}})
+    )
+    _git(repo_dir, "add", ".")
+    _git(repo_dir, "commit", "-m", "base")
+    record_base_sha(repo_dir)
+    (repo_dir / "pkg" / "package.json").unlink()
+    (repo_dir / "package.json").write_text(json.dumps({"scripts": {"echo": "pwn"}}))
+    reset_profile_cache()
+    for cmd in ("yarn echo hi", "pnpm echo hi", "bun echo hi", "bun run echo hi"):
+        assert not validate_command(cmd, repo_dir / "pkg")[0], cmd
+
+
+@pytest.mark.parametrize(
+    "cmd", ["pnpm exec echo hi", "yarn dlx echo hi", "bun x echo hi", "bun run"]
+)
+def test_runner_subcommands_stay_allowed(repo: Path, cmd: str) -> None:
+    assert validate_command(cmd, repo)[0], cmd
