@@ -748,6 +748,11 @@ def build_ingest_payload(
         payload["contract"] = contract
     if signed:
         payload["signed_contract"] = signed  # type: ignore[assignment]  # payload is inferred dict[str, str]
+    # Factory#1960: who asked, and which agent identity built it, so TFactory's
+    # completion event can carry both. Absent stays absent (never invented).
+    for key in ("originator", "agent_identity"):
+        if isinstance(req.get(key), str) and req[key]:
+            payload[key] = req[key]
     # PARR seam: hand TFactory the repo + the build branch so it can fetch the
     # ACTUAL built code (separate PVC). Pushes the branch (best-effort) and lets
     # TFactory self-register the project from git_url when it isn't pre-registered.
