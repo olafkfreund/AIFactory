@@ -108,7 +108,7 @@ def _fetch_scopes(token: str) -> frozenset[str]:
     except httpx.HTTPError:
         return UNKNOWN
     header = resp.headers.get("x-oauth-scopes")
-    if resp.status_code != 200 or header is None:
+    if resp.status_code != httpx.codes.OK or header is None:
         return UNKNOWN
     return frozenset(s.strip() for s in header.split(",") if s.strip())
 
