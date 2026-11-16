@@ -248,6 +248,7 @@ How `run.py` executes and what lets a build schedule on any node. Read in
 | `AIFACTORY_IMAGE` | (built-in) | no | Running image; fallback build-Job image when `AIFACTORY_BUILD_IMAGE` unset. |
 | `AIFACTORY_BUILD_IMAGE` | (unset) | no | Override the image for the `kubejob` build Job only. Point at a `:sha-<short>-nix` tag for in-image Nix. |
 | `AIFACTORY_PACK_WORKSPACE` | off | no | Pack `/work` to object storage and unpack in the Job (removes the workspace node-pin). |
+| `AIFACTORY_SCOPED_JOB_S3` | off | no | Give each build/spec Job short-lived MinIO STS credentials limited to its own task's object prefixes instead of the bucket-wide `S3_ACCESS_KEY`/`S3_SECRET_KEY` (#2023). Needs `S3_STS_ACCESS_KEY` and `S3_STS_SECRET_KEY` (a non-root MinIO user, control plane only); STS failure refuses the dispatch. The shared graphify cache is not reachable from a scoped Job. |
 | `AIFACTORY_PACKED_NIX_IN_IMAGE` | off | no | Gate Jobs resolve `/nix` from the image instead of the Nix-store PVC (removes the last node-pin). Forwarded into the build Job (#1736). |
 | `WORKSPACE_URI` | `""` | conditional | Object-storage URI the Job unpacks `/work` from (set by the pack path; `core/workspace_fetch.py`). |
 | `AIFACTORY_DATA_ROOT` | `/home/nonroot/.aifactory` | no | Data PVC mount root; used to compute worktree subPaths and sandbox mounts. |
