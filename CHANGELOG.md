@@ -1,3 +1,21 @@
+## 3.11.1 - 2026-11-16
+
+Review fixes merged to `dev` since 3.11.0.
+
+### Security
+
+- Script runners: refuse only absolute non-system paths, `..` paths and
+  basenames that shadow a base or validated command; `./tool`,
+  `node_modules/.bin/x` and `.venv/bin/x` reach the unchanged allowlist
+  check. Router dependency also binds a body `projectId` to the token's
+  access check and org pin on writes (#2055, #2053, #2075).
+
+### Bug Fixes
+
+- CLI login terminal is bound to its owner, returns the session id and
+  writes the login command through the session; a project-less terminal
+  session is usable by its owner alone (#2067, #2074).
+
 ## 3.11.0 - 2026-11-16
 
 Everything merged to `dev` since 3.10.16. Security hardening across the
