@@ -56,9 +56,9 @@ def _prefix(corr: str | None, job_id: str) -> str:
 
 
 def _lifetime() -> int:
-    """The longer of the build and spec Job deadlines plus an hour for a Job that sits Pending first."""
+    """Longer of the build and spec Job deadlines, plus 1h Pending slack (seconds)."""
     try:
-        deadline = int(os.environ.get(_DEADLINE_ENV, 6 * 3600))
+        deadline = int(os.environ.get(_DEADLINE_ENV) or 6 * 3600)
     except ValueError:
         deadline = 6 * 3600
     return max(deadline, 7200) + 3600  # 7200 = the spec Job deadline
@@ -107,7 +107,7 @@ def scope_job_s3(env: dict[str, str], ids: Iterable[tuple[str | None, str]]) -> 
             AWS_SECRET_ACCESS_KEY=cred["SecretAccessKey"],
             AWS_SESSION_TOKEN=cred["SessionToken"],
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - any STS failure must fail closed
         raise BuildBackendUnavailableError(
             f"scoped Job S3 credentials unavailable ({type(exc).__name__})"
         ) from None

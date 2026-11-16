@@ -67,7 +67,7 @@ def test_unsafe_id_fails_closed_without_root_key(sts: list[str], bad: str) -> No
 def test_sts_failure_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AIFACTORY_SCOPED_JOB_S3", "1")
 
-    def boom(policy: str) -> dict[str, str]:
+    def boom(_policy: str) -> dict[str, str]:
         raise KeyError("S3_STS_ACCESS_KEY")
 
     monkeypatch.setattr(scope, "_assume", boom)
