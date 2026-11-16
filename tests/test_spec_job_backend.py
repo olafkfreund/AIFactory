@@ -253,6 +253,52 @@ def test_fetch_back_skips_oversize_and_invalid_json_without_clobbering(
     assert all(limit == (8 << 20) + 1 for _, limit in fake_store.reads)
 
 
+async def test_scoped_s3_gives_spec_job_session_creds_only(
+    monkeypatch: pytest.MonkeyPatch,
+    project: tuple[Path, Path],
+    service: AgentService,
+    fake_store: type[FakeArtifactStore],
+) -> None:
+    """#2023: with the flag on the spec Job holds scoped STS creds, never the root key."""
+    from server.services import job_s3_scope as scope  # noqa: PLC0415
+
+    root, _spec_dir = project
+    batch = FakeBatch()
+    monkeypatch.setenv("AIFACTORY_SPEC_BACKEND", "kubejob")
+    monkeypatch.setenv("AIFACTORY_SCOPED_JOB_S3", "true")
+    monkeypatch.setenv("S3_ACCESS_KEY", "root")
+    monkeypatch.setenv("S3_SECRET_KEY", "rootsecret")
+    seen: list[str] = []
+
+    def assume(policy: str) -> dict[str, str]:
+        seen.append(policy)
+        return {"AccessKeyId": "a", "SecretAccessKey": "s", "SessionToken": "t"}
+
+    async def batch_factory():
+        return batch
+
+    async def no_logs(self, **_kwargs):
+        return None
+
+    monkeypatch.setattr(scope, "_assume", assume)
+    monkeypatch.setattr(artifact_store, "pack_workspace", lambda *_a: "s3://b/w.tgz")
+    monkeypatch.setattr(KubeJobBuildBackend, "_batch_api", staticmethod(batch_factory))
+    monkeypatch.setattr(sj.KubeJobLogStreamer, "stream", no_logs)
+    proc = await service.start_spec_creation("p:s1", root, "t", "b")
+    container = batch.created[0][1]["spec"]["template"]["spec"]["containers"][0]
+    env = {i["name"]: i.get("value") for i in container["env"]}
+    assert "S3_ACCESS_KEY" not in env and "S3_SECRET_KEY" not in env
+    assert env["AWS_SESSION_TOKEN"] == "t"
+    fetch_id = env["AIFACTORY_SPEC_FETCH_ID"]
+    resources = json.loads(seen[0])["Statement"][0]["Resource"]
+    assert sorted(resources) == sorted(
+        f"arn:aws:s3:::factory-artifacts/aifactory/_/{j}/*"
+        for j in (f"p:s1-spec-{fetch_id[:8]}", fetch_id)
+    )
+    proc.send_signal(signal.SIGTERM)
+    await proc.wait()
+
+
 @pytest.mark.parametrize("return_code", [1, -15])
 @pytest.mark.parametrize("approved", [None, True])
 async def test_failed_spec_job_never_starts_build(

@@ -726,6 +726,63 @@ async def test_dispatch_records_worker_ref(
     assert fake.deleted == []
 
 
+async def test_scoped_s3_swaps_root_key_and_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#2023: flag on, the Job env holds STS creds scoped to this task, not the root key."""
+    from server.services import job_s3_scope as scope  # noqa: PLC0415
+
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    monkeypatch.setattr(bb, "populate_build_worktree", lambda *_a, **_k: None)
+    monkeypatch.setenv("AIFACTORY_SCOPED_JOB_S3", "true")
+    monkeypatch.setenv("S3_ACCESS_KEY", "root")
+    monkeypatch.setenv("S3_SECRET_KEY", "rootsecret")
+    seen: list[str] = []
+
+    def assume(policy: str) -> dict[str, str]:
+        seen.append(policy)
+        return {"AccessKeyId": "a", "SecretAccessKey": "s", "SessionToken": "t"}
+
+    monkeypatch.setattr(scope, "_assume", assume)
+    store = await _make_store(tmp_path / "d.db")
+    await store.admit("p:s1", _spawn_args("s1"), cap=2, correlation_key="9")
+    fake = _FakeBatch()
+    await bb.KubeJobBuildBackend(store).dispatch(
+        task_id="p:s1",
+        project_path=Path(_DATA_ROOT) / "workspaces" / "p",
+        spec_id="s1",
+        correlation_key="9",
+        batch=fake,
+    )
+    container = fake.created[0][1]["spec"]["template"]["spec"]["containers"][0]
+    env = {e["name"]: e.get("value") for e in container["env"]}
+    assert "S3_ACCESS_KEY" not in env and "S3_SECRET_KEY" not in env
+    assert env["AWS_SESSION_TOKEN"] == "t"
+    assert "rootsecret" not in str(fake.created)
+    assert json.loads(seen[0])["Statement"][0]["Resource"] == [
+        "arn:aws:s3:::factory-artifacts/aifactory/9/p:s1/*",
+        "arn:aws:s3:::factory-artifacts/aifactory/_/gate-s1/*",
+        "arn:aws:s3:::factory-artifacts/aifactory/_/s1/*",
+    ]
+
+    def boom(_policy: str) -> dict[str, str]:
+        raise OSError("sts down")
+
+    monkeypatch.setattr(scope, "_assume", boom)
+    await store.admit("p:s2", _spawn_args("s2"), cap=2, correlation_key="9")
+    fake2 = _FakeBatch()
+    with pytest.raises(bb.BuildBackendUnavailableError):
+        await bb.KubeJobBuildBackend(store).dispatch(
+            task_id="p:s2",
+            project_path=Path(_DATA_ROOT) / "workspaces" / "p",
+            spec_id="s2",
+            correlation_key="9",
+            batch=fake2,
+        )
+    assert fake2.created == []
+
+
 async def _dispatch_with_failing_ref(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

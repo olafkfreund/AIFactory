@@ -218,7 +218,9 @@ Read across `apps/backend/` (`routing_policy.py`, `core/model_config.py`,
 | `AIFACTORY_GUARDRAIL_REPEAT_FAIL` | `5` | no | Repeated-failure count that trips the guardrail (`agents/guardrails.py`). |
 | `AIFACTORY_GUARDRAIL_TOOL_FAIL_HALT` | `8` | no | Tool-failure count that halts the agent. |
 | `AIFACTORY_GUARDRAIL_NOPROGRESS` | `5` | no | No-progress count that trips the guardrail. |
-| `AIFACTORY_ACT_GUARDRAIL` | off | no | Enable the act-loop guardrail hook (`agents/act_loop_hooks.py`). |
+| `AIFACTORY_ACT_GUARDRAIL` | on | no | Anti-loop guardrail hook (`agents/act_loop_hooks.py`). On by default; set `off` (or `0`/`false`/`no`) to disable. |
+| `AIFACTORY_RUN_TOKEN_CEILING` | `10000000` | no | Per-run token ceiling (input + output + cache writes, counted per build session). Passing it halts the build; the completion event carries `halt_reason: token_ceiling: ...`. `0` disables. |
+| `AIFACTORY_MAX_TURNS` | `1000` | no | SDK `max_turns` for each agent session. |
 | `AIFACTORY_CONTEXT_SUMMARY` | off | no | Enable rolling context summarization (`agents/context_summary.py`). |
 | `AIFACTORY_MUTATION_LEDGER` | off | no | Record agent file mutations to a ledger (`agents/mutation_ledger.py`). |
 | `AIFACTORY_TEST_EVIDENCE_GATE` | on (set to `off`/`0`/`false`/`no` to disable) | no | Honesty gate (`agents/test_evidence.py`). Two checks, both at `update_subtask_status(... "completed")`: (1) #851 — a test/verification subtask needs a real, non-failing test command recorded this build; (2) #1111 — a subtask naming an HTTP path needs at least one Python test mentioning that path which reaches the shipped app (imports an application entrypoint without building its own, or calls a live server), so a suite asserting against a `FastAPI()` built inside the test file no longer counts. Inert when the subtask names no HTTP path or no Python test mentions it. (3) #1123 — one post-merge gate (`agents/route_wiring.py`), run once at the trailing-gate step when every wave has merged, that imports the application entrypoint the repo's own tests name and asserts every HTTP path the plan promised resolves on the real app. No gate at all when the plan promises no HTTP path or no test names an entrypoint; reported `skipped` (never `passed`) when the app cannot be imported. |
@@ -248,6 +250,7 @@ How `run.py` executes and what lets a build schedule on any node. Read in
 | `AIFACTORY_IMAGE` | (built-in) | no | Running image; fallback build-Job image when `AIFACTORY_BUILD_IMAGE` unset. |
 | `AIFACTORY_BUILD_IMAGE` | (unset) | no | Override the image for the `kubejob` build Job only. Point at a `:sha-<short>-nix` tag for in-image Nix. |
 | `AIFACTORY_PACK_WORKSPACE` | off | no | Pack `/work` to object storage and unpack in the Job (removes the workspace node-pin). |
+| `AIFACTORY_SCOPED_JOB_S3` | off | no | Give each build/spec Job short-lived MinIO STS credentials limited to its own task's object prefixes instead of the bucket-wide `S3_ACCESS_KEY`/`S3_SECRET_KEY` (#2023). Needs `S3_STS_ACCESS_KEY` and `S3_STS_SECRET_KEY` (a non-root MinIO user, control plane only); STS failure refuses the dispatch. The shared graphify cache is not reachable from a scoped Job. |
 | `AIFACTORY_PACKED_NIX_IN_IMAGE` | off | no | Gate Jobs resolve `/nix` from the image instead of the Nix-store PVC (removes the last node-pin). Forwarded into the build Job (#1736). |
 | `WORKSPACE_URI` | `""` | conditional | Object-storage URI the Job unpacks `/work` from (set by the pack path; `core/workspace_fetch.py`). |
 | `AIFACTORY_DATA_ROOT` | `/home/nonroot/.aifactory` | no | Data PVC mount root; used to compute worktree subPaths and sandbox mounts. |

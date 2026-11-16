@@ -29,7 +29,7 @@ import subprocess
 from pathlib import Path
 
 from server.specpath import spec_dir_for
-from server.utils.subprocess_env import child_env, github_env
+from server.utils.subprocess_env import child_env, project_github_env
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ def _git(args: list[str], cwd: Path) -> list[str]:
         # *args is built in this module from fixed strings -- no shell, and no
         # caller-supplied argv. spec_id reaches git only as a comparison value
         # in _matches, never as an argument.
-        with github_env(child_env()) as env:
+        with project_github_env(cwd, child_env()) as env:
             out = subprocess.run(  # noqa: S603
                 ["git", *args],  # noqa: S607
                 cwd=cwd,
