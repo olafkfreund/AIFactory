@@ -355,6 +355,18 @@ _PASSTHROUGH_BUILD_ENV: tuple[str, ...] = (
 )
 
 
+# Factory#1959 stage 4: with AIFACTORY_MODEL_GATEWAY_URL set, the Job's OpenAI-compatible
+# plane goes through the model gateway, so the direct key/URL and the Ollama key are not
+# forwarded. OPENAI_API_KEY stays (Codex seeds auth from it, plane C). A missing token
+# becomes a placeholder the gateway rejects, never a fallback to a direct key.
+_ENV_GATEWAY_URL = "AIFACTORY_MODEL_GATEWAY_URL"
+_ENV_GATEWAY_TOKEN = "AIFACTORY_MODEL_GATEWAY_TOKEN"  # noqa: S105 - env var name
+_NO_GATEWAY_TOKEN = "gateway-token-not-configured"  # noqa: S105 - placeholder
+_GATEWAY_REPLACED: frozenset[str] = frozenset(
+    {"OPENAI_COMPATIBLE_API_KEY", "OPENAI_COMPATIBLE_BASE_URL", "OLLAMA_API_KEY"}
+)
+
+
 def build_job_env(
     oauth_token: str | None, project_path: str | Path | None = None
 ) -> dict[str, str]:
@@ -372,10 +384,18 @@ def build_job_env(
     policy); control-plane secrets run.py doesn't use are never included (scope).
     """
     env: dict[str, str] = dict(_FIXED_BUILD_ENV)
+    gateway_url = os.environ.get(_ENV_GATEWAY_URL, "").strip().rstrip("/")
     for name in _PASSTHROUGH_BUILD_ENV:
+        if gateway_url and name in _GATEWAY_REPLACED:
+            continue
         val = os.environ.get(name)
         if val:  # only propagate real values; never empty placeholders
             env[name] = val
+    if gateway_url:
+        env["OPENAI_COMPATIBLE_BASE_URL"] = gateway_url
+        env["OPENAI_COMPATIBLE_API_KEY"] = (
+            os.environ.get(_ENV_GATEWAY_TOKEN, "").strip() or _NO_GATEWAY_TOKEN
+        )
     from . import github_app  # noqa: PLC0415
 
     github = runner_github_env(project_path)
