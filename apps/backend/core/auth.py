@@ -14,10 +14,11 @@ import os
 import platform
 import re
 import subprocess
-from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+import agent_sandbox
+from agent_sandbox import Policy
 from factory_common.logsafe import sanitize_log
 
 logger = logging.getLogger(__name__)
@@ -186,57 +187,44 @@ _AGENT_ENV_ALLOW = re.compile(
     # devShell browser wiring (nix_provisioner); not credentials.
     r"|PLAYWRIGHT_BROWSERS_PATH|PLAYWRIGHT_SKIP_\w+|FONTCONFIG_FILE"
 )
-_logged_dropped_env_names: set[str] = set()
+# Factory#3709: the rules are one shared implementation (agent_sandbox, vendored
+# from the hub); this module keeps AIFactory's data as a Policy.
+AGENT_ENV_POLICY = Policy(
+    extra_env="AIFACTORY_AGENT_ENV_EXTRA",
+    deny_exact=frozenset(_AGENT_ENV_DENY_EXACT),
+    deny_pattern=_AGENT_ENV_DENY_PATTERN,
+    allow_pattern=_AGENT_ENV_ALLOW,
+    keep=frozenset(_AGENT_ENV_KEEP),
+    keep_is_allowed=True,
+    strip_vars=frozenset(
+        {"ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY_FILE", "AIFACTORY_TRUSTED_CONTRACT"}
+    ),
+    # When the operator opted into API-key auth, the agent legitimately needs
+    # ANTHROPIC_API_KEY: don't blank it. Default (off) still scrubs it.
+    blank_exempt=lambda name: name == "ANTHROPIC_API_KEY" and api_key_auth_enabled(),
+)
 
 
 def is_denied_env_key(name: str) -> bool:
     """True when ``name`` is a host secret that must not reach a child process."""
-    return name.upper() in _AGENT_ENV_DENY_EXACT or bool(
-        _AGENT_ENV_DENY_PATTERN.search(name)
-    )
+    denied: bool = agent_sandbox.is_denied_env_key(AGENT_ENV_POLICY, name)
+    return denied
 
 
 def is_agent_env_allowed(name: str) -> bool:
     """Allow only the agent's auth, runtime, and explicitly named variables."""
-    if name in _AGENT_ENV_KEEP:
-        return True
-    extra = {
-        n.strip() for n in os.environ.get("AIFACTORY_AGENT_ENV_EXTRA", "").split(",")
-    }
-    return (
-        bool(_AGENT_ENV_ALLOW.fullmatch(name)) or name in extra
-    ) and not is_denied_env_key(name)
-
-
-def _log_dropped(names: Iterable[str]) -> None:
-    """Log each newly dropped non-secret variable name once per process."""
-    new = {
-        name for name in names if not is_denied_env_key(name)
-    } - _logged_dropped_env_names
-    if new:
-        _logged_dropped_env_names.update(new)
-        logger.info("agent env allowlist dropped (names only, #1757): %s", sorted(new))
+    allowed: bool = agent_sandbox.is_agent_env_allowed(AGENT_ENV_POLICY, name)
+    return allowed
 
 
 def get_agent_env_blanks() -> dict[str, str]:
     """Return ``{var: ""}`` for host variables outside the agent allowlist.
 
     Blanking (not deleting) because the SDK merges ``options.env`` over the
-    inherited environment — an explicit empty value overrides the inherited
+    inherited environment: an explicit empty value overrides the inherited
     variable. Never blanks the agent's own auth vars (:data:`_AGENT_ENV_KEEP`).
     """
-    allow_api_key = api_key_auth_enabled()
-    blanks: dict[str, str] = {}
-    for key in os.environ:
-        if key in _AGENT_ENV_KEEP:
-            continue
-        # When the operator opted into API-key auth, the agent legitimately needs
-        # ANTHROPIC_API_KEY — don't blank it. Default (off) still scrubs it.
-        if key == "ANTHROPIC_API_KEY" and allow_api_key:
-            continue
-        if not is_agent_env_allowed(key):
-            blanks[key] = ""
-    _log_dropped(blanks)
+    blanks: dict[str, str] = agent_sandbox.get_agent_env_blanks(AGENT_ENV_POLICY)
     return blanks
 
 

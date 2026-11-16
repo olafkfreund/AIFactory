@@ -86,6 +86,9 @@ extend-exclude = [
     # the apps/backend copy; see apps/web-server/factory_common/README.md.
     # Excluded for exactly the same reason as the copy above.
     "apps/web-server/factory_common/",
+    # Factory#3709: byte-exact mirror of the hub shared/factory-sandbox/ package,
+    # kept identical by agent-sandbox-drift.yml (hub formats at 100 columns).
+    "apps/backend/agent_sandbox/",
     # Same reason, same deal: the vendored factory-github provider layer is a
     # byte-exact mirror of the hub canonical (formatted at the fleet
     # line-length 100) and is kept identical by factory-github-drift.yml.

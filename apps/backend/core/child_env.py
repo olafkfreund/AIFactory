@@ -13,16 +13,17 @@ import shutil
 import subprocess
 from collections.abc import Callable, Iterable, Mapping
 
-from core.auth import _log_dropped, is_agent_env_allowed, is_denied_env_key
+import agent_sandbox
+from agent_sandbox import pin_git_config  # noqa: F401 - re-exported
+from agent_sandbox.git_pins import (
+    _GIT_PINS,  # noqa: F401 - scripts/gen_autonomy_matrix.py
+)
+from core.auth import AGENT_ENV_POLICY
 
 logger = logging.getLogger(__name__)
 
 # Stripped so a child never silently bills the direct Anthropic API.
-_STRIP_VARS: tuple[str, ...] = (
-    "ANTHROPIC_API_KEY",
-    "ANTHROPIC_API_KEY_FILE",
-    "AIFACTORY_TRUSTED_CONTRACT",
-)
+_STRIP_VARS: tuple[str, ...] = tuple(sorted(AGENT_ENV_POLICY.strip_vars))
 
 GITHUB_KEEP: tuple[str, ...] = ("GITHUB_TOKEN", "GH_TOKEN")
 
@@ -33,106 +34,24 @@ GITHUB_KEEP: tuple[str, ...] = ("GITHUB_TOKEN", "GH_TOKEN")
 _CREDENTIAL_NAME = re.compile(r"(_KEY|_TOKEN)$", re.IGNORECASE)
 
 
-# (key, value) pins; None means the editor/pager argument (#1689, #1717, #1745).
-_GIT_PINS: tuple[tuple[str, str | None], ...] = (
-    ("core.hooksPath", "/dev/null"),
-    ("core.fsmonitor", "false"),
-    ("protocol.ext.allow", "never"),
-    ("core.sshCommand", "ssh"),
-    ("core.pager", None),
-    ("core.editor", None),
-    ("core.askPass", ""),
-    ("credential.helper", ""),  # empty resets every inherited helper
-    ("credential.https://github.com.helper", "!gh auth git-credential"),
-    ("sequence.editor", None),
-)
-
-
-def pin_git_config(
-    env: dict[str, str], *, editor: str = "true", pager: str = "cat"
-) -> dict[str, str]:
-    """Append git command-scope pins and default ``GIT_PAGER`` onto ``env``."""
-    try:
-        n = max(int(env.get("GIT_CONFIG_COUNT", "0")), 0)
-    except ValueError:
-        n = 0
-    for i, (key, val) in enumerate(_GIT_PINS):
-        env[f"GIT_CONFIG_KEY_{n + i}"] = key
-        env[f"GIT_CONFIG_VALUE_{n + i}"] = (
-            pager if key == "core.pager" else editor if val is None else val
-        )
-    env["GIT_CONFIG_COUNT"] = str(n + len(_GIT_PINS))
-    env.setdefault("GIT_PAGER", pager)
-    return env
-
-
-_MERGE_DRIVER_KEYS = (
-    "git",
-    "config",
-    "-z",
-    "--includes",
-    "--name-only",
-    "--list",
-)
-
-
 def merge_driver_pins(
     cwd: str | os.PathLike[str],
     run: Callable[[list[str]], tuple[int, str]] | None = None,
     env: Mapping[str, str] | None = None,
 ) -> list[str]:
-    """Return empty command-scope pins for merge drivers and content filters.
+    """Empty command-scope pins for merge drivers and content filters.
 
-    An agent can define ``merge.<name>.driver`` in ``.git/config`` and bind it in
-    ``.git/info/attributes``; overriding each key with an empty value makes git
-    report a conflict instead of running the program. The same pins disable
-    ``filter.<name>.clean``, ``.smudge`` and ``.process`` commands; ``.required``
-    remains untouched. Callers fail closed on
-    ``RuntimeError``. Keys are filtered in Python, not by ``--get-regexp``:
-    under a UTF-8 locale git's regex skips a non-UTF-8 subsection. ``run``
-    must decode with ``surrogateescape`` so such a key round-trips to argv.
     Raises RuntimeError when git metadata changed since the baseline (#1746).
+    See ``agent_sandbox.git_pins.merge_driver_pins`` for the rest.
     """
     from core.git_metadata import check_git_metadata  # noqa: PLC0415 - import cycle
 
-    check_git_metadata(cwd, run)
-    argv = list(_MERGE_DRIVER_KEYS)
-    try:
-        if run is not None:
-            rc, out = run(argv)
-        else:
-            proc = subprocess.run(  # noqa: S603 - fixed argv
-                argv,
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-                errors="surrogateescape",
-                env=dict(env) if env is not None else child_env(),
-                timeout=60,
-                check=False,
-            )
-            rc, out = proc.returncode, proc.stdout
-    except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
-        raise RuntimeError(f"git config failed: {exc}") from exc
-    if rc != 0:
-        raise RuntimeError(f"git config exited {rc}")
-    pins: list[str] = []
-    for key in out.split("\0"):
-        if not (
-            (
-                key.startswith("merge.")
-                and key.endswith(".driver")
-                and len(key) >= len("merge..driver")
-            )
-            or (
-                key.startswith("filter.")
-                and key.endswith((".clean", ".smudge", ".process"))
-            )
-        ):
-            continue
-        if "=" in key:
-            raise RuntimeError(f"git config key contains '=': {key!r}")
-        pins.extend(("-c", f"{key}="))
+    pins: list[str] = agent_sandbox.merge_driver_pins(
+        cwd,
+        run,
+        env if env is not None else child_env(),
+        check=check_git_metadata,
+    )
     return pins
 
 
@@ -162,21 +81,10 @@ def child_env(
     ``github_env`` does).
     Build it per call: ``os.environ`` changes at runtime.
     """
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if not is_denied_env_key(k)
-        # Linux env names are case-sensitive: a lowercase copy is its own variable.
-        and k.upper() not in _STRIP_VARS
-        and (runner or not _CREDENTIAL_NAME.search(k))
-        and (not agent or is_agent_env_allowed(k))
-    }
-    if agent:
-        _log_dropped(k for k in os.environ if not is_agent_env_allowed(k))
-    env.update({k: os.environ[k] for k in keep if k in os.environ})
-    if extra:
-        env.update(extra)
-    return pin_git_config(env)
+    env: dict[str, str] = agent_sandbox.child_env(
+        AGENT_ENV_POLICY, keep, extra, runner=runner, agent=agent
+    )
+    return env
 
 
 _GITHUB_ORIGIN = re.compile(
