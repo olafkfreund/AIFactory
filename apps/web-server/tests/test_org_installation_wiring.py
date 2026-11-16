@@ -374,13 +374,13 @@ def test_project_route_dependency_pins_the_authorised_org(
         dependencies=[github_routes.Depends(project_github.project_github_token)]
     )
 
-    @router.get("/p/{projectId}")
+    @router.get("/p/{projectId}")  # type: ignore[untyped-decorator]
     async def by_path(projectId: str) -> dict[str, str]:  # noqa: ARG001, N803
         gh.run_gh_command(["x"], cwd=str(acme / "wt"))  # same org: kept
         gh.run_gh_command(["x"], cwd=str(other))  # another org's path: no token
         return {"token": github_token()}
 
-    @router.get("/q")
+    @router.get("/q")  # type: ignore[untyped-decorator]
     async def by_query() -> dict[str, str]:
         return {"token": github_token()}
 
@@ -397,11 +397,12 @@ def test_project_route_dependency_pins_the_authorised_org(
     assert seen == ["ghs_acme_1700", ""]
     # Writes need the member role: a viewer may read but not POST.
     roles: list[str] = []
-    monkeypatch.setattr(
-        project_authz,
-        "require_project_access",
-        lambda role: roles.append(role) or Checker(),
-    )
+
+    def access(role: str) -> Checker:
+        roles.append(role)
+        return Checker()
+
+    monkeypatch.setattr(project_authz, "require_project_access", access)
     client.get("/q", params={"projectId": "a"})
     router.post("/w")(by_query)
     app.include_router(router)
@@ -425,7 +426,7 @@ def test_event_loop_thread_never_mints(
 
     async def on_loop() -> str:
         with github_app.org_github_token("acme"):
-            return github_token()
+            return str(github_token())
 
     assert asyncio.run(on_loop()) == ""
     assert minted == []
