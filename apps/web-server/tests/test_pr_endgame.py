@@ -1287,3 +1287,49 @@ def test_1766_required_checks_green(kw: dict[str, Any], want: bool | None) -> No
         pe.required_checks_green("o", "r", "main", "abc", runner=_req_runner(**kw))
         is want
     )
+
+
+@pytest.mark.parametrize("boom", [False, True])
+def test_merge_is_recorded_for_revert_and_retest_still_runs(monkeypatch, boom):
+    # #2054: the pipeline remembers what it merged; a failure must not skip re-test.
+    from server.services import revert_pr
+
+    seen = {}
+
+    def _record(*args):
+        seen["args"] = args
+        if boom:
+            raise RuntimeError("disk")
+
+    monkeypatch.setattr(revert_pr, "record_pipeline_merge", _record)
+    r = FakeRunner(
+        {
+            "git push": CmdResult(0, "", ""),
+            "pr create": CmdResult(0, "https://github.com/o/r/pull/11", ""),
+            "requested_reviewers": CmdResult(
+                0, '{"requested_reviewers": [{"login": "Copilot"}]}', ""
+            ),
+            "reviews": _reviews(("APPROVED", COPILOT)),
+            "pr merge": CmdResult(0, "merged", ""),
+        }
+    )
+    retested = {}
+    res = asyncio.run(
+        pe.run_pr_endgame(
+            spec_dir=Path("/tmp"),
+            spec_id="010-x",
+            worktree=Path("/tmp"),
+            branch="auto-claude/010-x",
+            base="main",
+            repo="o/r",
+            auto_merge=True,
+            reviewer="copilot",
+            re_test=lambda: retested.update(called=True),
+            project_id="p1",
+            runner=r,
+            background=False,
+            trusted=None,
+        )
+    )
+    assert res["merged"] is True and retested == {"called": True}
+    assert seen["args"][:6] == ("p1", "010-x", "o", "r", 11, "auto-claude/010-x")
