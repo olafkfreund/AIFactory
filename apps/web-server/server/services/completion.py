@@ -1179,7 +1179,7 @@ def emit_terminal_completion(
         # up on its own so an earlier fetch failure cannot skip it.
         from core.workspace_fetch import transcript_uris as _uris  # noqa: PLC0415
 
-        transcript_uris = _uris(spec_id)
+        transcript_uris = _uris(task_id)
     except Exception:  # noqa: BLE001 - defensive; emit must still proceed
         logger.debug("transcript lookup skipped (best-effort)", exc_info=True)
     _record_transcript_uris(spec_dir, transcript_uris)
