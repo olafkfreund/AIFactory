@@ -57,6 +57,7 @@ if str(_BACKEND_DIR) not in sys.path:
 from intake import build_execution_block  # noqa: E402 — needs sys.path above
 from pfactory.tiers import classify_parallel, classify_tier, tier_for  # noqa: E402
 from repo_ref import parse_repo_ref, qualify_repo  # noqa: E402
+from runners.github.providers.protocol import as_issue_int  # noqa: E402
 from trusted_plan import apply_execution_profile  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -261,8 +262,6 @@ async def _fetch_issue_via_provider(
     worse failure than either alone: the issue reads fine and the work lands
     somewhere else.
     """
-    from runners.github.providers.protocol import as_issue_int
-
     from .github import _get_project_provider
 
     provider = _get_project_provider(project_id, repo_ref=repo_ref)

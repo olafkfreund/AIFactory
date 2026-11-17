@@ -32,6 +32,13 @@ from server.utils.subprocess_env import child_env, github_token
 
 from .project_github import project_github_token
 
+# Backend seams (providers) resolve from apps/backend; mirrors from_issue.py's shim.
+_BACKEND_DIR = FilePath(__file__).resolve().parents[3] / "backend"
+if str(_BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_DIR))
+
+from runners.github.providers.protocol import as_issue_int  # noqa: E402
+
 logger = logging.getLogger(__name__)
 
 
@@ -1091,8 +1098,6 @@ def _map_provider_issue(issue, repo_full_name: str = "") -> dict:
     """Map IssueData from GitProvider to frontend shape."""
     from datetime import datetime
 
-    from runners.github.providers.protocol import as_issue_int
-
     return {
         "id": as_issue_int(issue.number),
         "number": as_issue_int(issue.number),
@@ -1538,8 +1543,6 @@ async def investigate_github_issue(
         if _use_provider_api(projectId):
             try:
                 provider = _get_project_provider(projectId)
-                from runners.github.providers.protocol import as_issue_int
-
                 issue_obj = await provider.fetch_issue(issueNumber)
                 issue_data = {
                     "number": as_issue_int(issue_obj.number),

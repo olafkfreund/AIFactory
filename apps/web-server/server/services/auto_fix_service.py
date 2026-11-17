@@ -50,6 +50,7 @@ _BACKEND_PATH = Path(__file__).resolve().parents[3] / "backend"
 if str(_BACKEND_PATH) not in sys.path:
     sys.path.insert(0, str(_BACKEND_PATH))
 
+from runners.github.providers.protocol import as_issue_int  # noqa: E402
 
 # Default AutoFixConfig — matches the AutoFixConfig type at
 # apps/frontend-web/src/shared/types/github-api.ts:21
@@ -366,7 +367,7 @@ async def check_new_issues(project_id: str) -> list[dict[str, Any]]:
     existing = _existing_issue_numbers(project_path)
 
     # Fetch open issues from the provider
-    from runners.github.providers.protocol import IssueFilters, as_issue_int
+    from runners.github.providers.protocol import IssueFilters
 
     provider = _provider_for(project_id)
     cfg = get_config(project_id) or {}
@@ -476,8 +477,6 @@ async def start_auto_fix(project_id: str, issue_number: int) -> dict[str, Any]:
     if spec_id is None:
         # Fetch the issue and create the spec
         provider = _provider_for(project_id)
-        from runners.github.providers.protocol import as_issue_int
-
         iss = await provider.fetch_issue(issue_number)
         issue_dict = {
             "number": as_issue_int(iss.number),

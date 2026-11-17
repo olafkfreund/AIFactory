@@ -38,6 +38,7 @@ from intake.poller import (  # noqa: E402
 )
 from pfactory.tiers import Tier  # noqa: E402
 from repo_ref import parse_repo_ref, qualify_repo  # noqa: E402
+from runners.github.providers.protocol import as_issue_int  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +164,7 @@ def _fetch_issues(cfg: RepoConfig) -> list[IntakeIssue]:
     the control plane once per queued issue per tick — cheap at fleet volume; add
     a fetch-side "queued but recent" filter only if a repo ever has thousands.
     """
-    from runners.github.providers.protocol import IssueFilters, as_issue_int
+    from runners.github.providers.protocol import IssueFilters
 
     async def _go() -> list[IntakeIssue]:
         provider = _provider_for(cfg)
