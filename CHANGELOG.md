@@ -1,5 +1,15 @@
 ## [Unreleased]
 
+## 3.13.0 - 2026-11-17
+
+Merged to `dev` since 3.12.0.
+
+### Added
+
+- Memory (RFC-0021): loaded gotchas are ranked by last confirmation, a scratchpad
+  observation layer records dead ends for recall, and validation and trust gates
+  decide which scratchpad signals are promoted (#2091).
+
 ### Security
 
 - `AIFACTORY_REVIEW_BACKEND=kubejob` runs PR review and task clarification sessions as Kubernetes Jobs; only `review_{N}.json` or the capped clarification text returns to the control plane. Off by default (#1932, slice A4).
