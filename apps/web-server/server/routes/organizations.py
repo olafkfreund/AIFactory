@@ -22,6 +22,8 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from server.utils.roles import ROLE_LEVELS, _role_level
+
 from ..database import Organization, OrgMember, User
 from ..database.engine import get_db
 from ..utils.slug import slugify
@@ -35,19 +37,7 @@ router = APIRouter(prefix="/api/orgs", tags=["Organizations"])
 # Role hierarchy
 # ---------------------------------------------------------------------------
 
-ROLE_LEVELS: dict[str, int] = {
-    "viewer": 0,
-    "member": 1,
-    "admin": 2,
-    "owner": 3,
-}
-
 VALID_ROLES = set(ROLE_LEVELS.keys())
-
-
-def _role_level(role: str) -> int:
-    """Return the numeric level for a role string, defaulting to -1."""
-    return ROLE_LEVELS.get(role, -1)
 
 
 # ---------------------------------------------------------------------------
