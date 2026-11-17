@@ -23,6 +23,15 @@ upload in a daemon thread, bounded by `AIFACTORY_TRANSCRIPT_SIGTERM_SECONDS`
 serialization stays; chart env `AIFACTORY_REPLICAS`, startup warning above 1,
 module note, docs.
 
+The cutoff is a heuristic, not proof (spec Risks): clock skew between control plane
+and Job can, in either direction, hide the current transcript or pass an earlier
+one; accepted, do not add compensating logic.
+
+Run checks from the repo root with CI's interpreter (`PY=apps/backend/.venv/bin/pytest`;
+in a worktree use the main clone's venv path). CI suites: `$PY tests/ -m "not slow" -q`,
+`$PY apps/backend -q -o asyncio_mode=auto`,
+`$PY apps/web-server/tests -q -o asyncio_mode=auto` with `GRAPHITI_ENABLED=false APP_DISABLE_AUTH=true`.
+
 Stamp format: `datetime.now(UTC).strftime("%Y%m%dT%H%M%S_%fZ")`, the prefix of
 every transcript file name.
 
@@ -40,9 +49,13 @@ every transcript file name.
    Tests: `apps/backend/core/test_workspace_fetch_transcript.py` (since cutoff, names
    just before and after), `apps/web-server/tests/test_completion_emitter.py`
    (marker respected, stale record cleared, no marker unchanged),
-   a dispatch test next to the existing build_backend dispatch tests.
-   Check: `cd apps/web-server && python -m pytest tests/test_completion_emitter.py -q`
-   and `python -m pytest apps/backend/core/test_workspace_fetch_transcript.py -q`.
+   a dispatch test in `tests/test_build_backend_kubejob.py`. The existing one-argument
+   `transcript_uris` mocks in `test_completion_emitter.py` (~l.1610, 1625, 1637) change
+   to accept `since`, and a test asserts the cutoff argument (production swallows a
+   `TypeError` from a stale mock as an empty list).
+   Check: `$PY apps/web-server/tests/test_completion_emitter.py -q -o asyncio_mode=auto`,
+   `$PY apps/backend/core/test_workspace_fetch_transcript.py -q -o asyncio_mode=auto`,
+   `$PY tests/test_build_backend_kubejob.py -q`.
    Traps: `completion.py` is exec'd standalone (stdlib only, no `server.*` imports);
    ruff alias-sort trap (plain names in parenthesised imports).
 2. Item 4. `workspace_fetch.py`: `install_sigterm_upload(spec_id)` as in the spec;
@@ -50,19 +63,23 @@ every transcript file name.
    Test in `core/test_workspace_fetch_transcript.py`: subprocess child with a fake
    uploader gets SIGTERM and uploaded before exit 143; a child whose uploader sleeps
    exits 143 within the bound (bound set to 1 s by env).
-   Check: `python -m pytest apps/backend/core/test_workspace_fetch_transcript.py -q`.
+   Check: `$PY apps/backend/core/test_workspace_fetch_transcript.py -q -o asyncio_mode=auto`.
    Traps: signal handlers only install from the main thread (guard with try/except
    ValueError); handler must not raise.
 3. Item 3 (codex). `apps/backend/runners/spec_runner.py` (~l.324, before the
-   orchestrator runs): `transcript.start(args.spec_dir)`, `atexit.register(maybe_push_transcripts, <spec dir name>)`,
-   `install_sigterm_upload(...)` (the key comes from `JOB_ID`, which the spec Job
-   sets; the argument is only the fallback). `apps/backend/spec/pipeline/agent_runner.py`
+   orchestrator runs): `transcript.start(orchestrator.spec_dir)` (`args.spec_dir` may be None; the
+   orchestrator holds the resolved directory), `atexit.register(maybe_push_transcripts, orchestrator.spec_dir.name)`,
+   `install_sigterm_upload(orchestrator.spec_dir.name)` (the key comes from `JOB_ID`,
+   which the spec Job sets; the argument is only the fallback). `apps/backend/spec/pipeline/agent_runner.py`
    (~l.243 and ~l.275): call `task_logger.transcript_tool_start/_end` beside the
    existing `tool_start/_end`, mirroring `agents/session.py:567-615`
-   (tool id from `block.id` / `block.tool_use_id`). Tests: a spec_runner test that the
-   transcript is started and registered, an agent_runner test that tool events reach
-   `transcript.written_files()`.
-   Check: `python -m pytest <the new tests> apps/backend -q -k "transcript or spec_runner"`.
+   (tool id from `block.id` / `block.tool_use_id`). Tests: new
+   `tests/test_spec_runner_transcript.py` (transcript started on `orchestrator.spec_dir`,
+   including a run without `--spec-dir`; atexit registered) and
+   `apps/backend/spec/pipeline/test_agent_runner_transcript.py` (tool events reach
+   `transcript.written_files()`).
+   Check: `$PY tests/test_spec_runner_transcript.py -q` and
+   `$PY apps/backend/spec/pipeline/test_agent_runner_transcript.py -q -o asyncio_mode=auto`.
    Traps: no secrets in test fixtures; do not change the existing display logging.
 4. Item 7. `charts/aifactory/templates/deployment.yaml`: env `AIFACTORY_REPLICAS`
    (`autoscaling.maxReplicas` if `autoscaling.enabled`, else 1 if `rmux.enabled`,
@@ -72,16 +89,17 @@ every transcript file name.
    `apps/web-server/server/services/revert_pr.py`: module note on per-process
    serialization. `docs/docs/environment-reference.md`: `AIFACTORY_REPLICAS` and
    `AIFACTORY_TRANSCRIPT_SIGTERM_SECONDS` rows; `.env.example` commented entries;
-   `CHANGELOG.md` Unreleased. Tests: warning for 2, silent for 1/unset/garbage;
-   `helm template` default, `--set rmux.enabled=true`, `--set autoscaling.enabled=true`.
-   Check: `python -m pytest apps/web-server/tests/<new test> -q`; `helm template charts/aifactory | grep -A1 AIFACTORY_REPLICAS`.
+   `CHANGELOG.md` Unreleased. Tests: new `apps/web-server/tests/test_replica_warning.py` (warning for 2, silent for
+   1/unset/garbage); `helm template` default, `--set rmux.enabled=true`,
+   `--set autoscaling.enabled=true`.
+   Check: `$PY apps/web-server/tests/test_replica_warning.py -q -o asyncio_mode=auto`; `helm template charts/aifactory | grep -A1 AIFACTORY_REPLICAS`.
    Traps: the autonomy matrix (`docs/docs/compliance/autonomy-matrix.*`) is
    generated: regenerate if CI reports it stale, never hand-merge.
 
 ## Tests
 
 `ruff check` and `ruff format --check` on touched files; the pytest files named in
-the steps; the repo's pytest job for `apps/backend` and `apps/web-server`.
+the steps; then the three CI suites above for the directories touched.
 
 ## Rollback
 
