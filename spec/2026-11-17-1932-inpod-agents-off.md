@@ -17,7 +17,7 @@ Code audit (AIFactory dev, read-only). `inpod_agent_refusal()` guards exactly fo
 creation (`agent_spec_creation.py`), builds (`build_backend.py`, `agent_kubejob.py`), PR review
 (`pr_review_service.py`) and clarification (`clarification_service.py`). With BUILD, SPEC and REVIEW
 backends all on kubejob, none takes the in-pod path, so FORBID refuses nothing in normal use. The build QA loop runs
-inside the build Job. Codex review (confirmed): \`POST /{task_id}/apply-correction\` (\`qa/correction.py\`) still runs a QA fixer in-pod without the guard; it stays in-pod and is added to slice D. Conflict resolution, insights, changelog and the settings probe are not guarded
+inside the build Job. Codex review (confirmed): `POST /{task_id}/apply-correction` (`qa/correction.py`) still runs a QA fixer in-pod without the guard; it stays in-pod and is added to slice D. Conflict resolution, insights, changelog and the settings probe are not guarded
 and keep working (slice D, tracked in #1932).
 
 ## Alternatives rejected
