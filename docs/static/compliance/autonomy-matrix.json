@@ -170,6 +170,7 @@
         "apps/backend/pfactory/__init__.py",
         "apps/backend/prompts_pkg/__init__.py",
         "apps/backend/providers/__init__.py",
+        "apps/backend/qa/__init__.py",
         "apps/backend/runners/__init__.py",
         "apps/backend/runners/github/__init__.py",
         "apps/web-server/server/database/__init__.py",
@@ -768,8 +769,8 @@
               "`server.services.pr_review_service`",
               "model-assisted (dynamic import: core.auth:356 (+5 more))",
               "`anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
-              "yes (20): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
-              "386",
+              "yes (21): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
+              "392",
               "`runners/github/runner.py`"
             ],
             [
