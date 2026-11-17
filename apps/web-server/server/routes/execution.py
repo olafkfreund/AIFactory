@@ -61,8 +61,8 @@ _BACKEND_DIR = Path(__file__).resolve().parents[3] / "backend"
 if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
-from core.commit_trailers import (
-    stamp_plan_slug,  # noqa: E402 — needs sys.path above (#2109)
+from core.commit_trailers import (  # noqa: E402 — needs sys.path above (#2109)
+    stamp_plan_slug,
 )
 from qa.correction import apply_correction  # noqa: E402 — needs sys.path above
 from review.state import ReviewState  # noqa: E402 — needs sys.path above (#1922)
