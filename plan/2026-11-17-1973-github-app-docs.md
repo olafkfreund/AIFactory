@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1973
 spec: spec/2026-11-17-1973-github-app-docs.md
 reviewers:
