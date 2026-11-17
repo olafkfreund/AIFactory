@@ -6,6 +6,7 @@ Settings are loaded from environment variables with sensible defaults.
 
 import json
 import logging
+import os
 import secrets
 from pathlib import Path
 from typing import Annotated
@@ -36,6 +37,25 @@ def warn_if_auth_disabled(settings: "Settings") -> None:
             "⚠️  APP_DISABLE_AUTH=true — authentication is BYPASSED; every "
             "request is treated as admin. Local development only; never expose "
             "this to a network."
+        )
+
+
+def warn_if_multi_replica() -> None:
+    """Warn when the chart reaches more than one control-plane replica (#2059).
+
+    ``AIFACTORY_REPLICAS`` is rendered by the chart. Revert-PR idempotency
+    (``services/revert_pr.py``) is serialized per process only, so two replicas
+    can open two reverts for one merge. Unset or unparsable: silent.
+    """
+    try:
+        replicas = int(os.environ.get("AIFACTORY_REPLICAS", ""))
+    except ValueError:
+        return
+    if replicas > 1:
+        logger.warning(
+            "AIFACTORY_REPLICAS=%d: revert-PR idempotency is per process, so "
+            "two replicas can open two reverts for one merge (#2059).",
+            replicas,
         )
 
 

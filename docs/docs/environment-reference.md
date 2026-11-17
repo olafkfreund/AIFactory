@@ -208,6 +208,13 @@ Read in `services/audit_siem.py`, called from `auth.py` and `routes/auth_routes.
 | `AIFACTORY_AUDIT_SIEM_ORG` | `default` | no | OpenObserve organization. |
 | `AIFACTORY_AUDIT_SIEM_STREAM` | `audit_chain` | no | Target stream. |
 
+### Run transcripts and replicas (#2059)
+
+| Variable | Default | Required | Purpose |
+|----------|---------|----------|---------|
+| `AIFACTORY_TRANSCRIPT_SIGTERM_SECONDS` | `20` | no | Longest a Job spends uploading its transcript after SIGTERM before exiting 143. Keep it under the pod's termination grace. |
+| `AIFACTORY_REPLICAS` | unset | no | Set by the chart to the control-plane replica count it can reach (autoscaling `maxReplicas`, else 1 with rmux, else `replicaCount`). Above 1 the server logs a warning: revert-PR idempotency is per process, so two replicas can open two reverts for one merge. |
+
 ## Model, agent & routing tuning
 
 Read across `apps/backend/` (`routing_policy.py`, `core/model_config.py`,
