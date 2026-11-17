@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2109
 intent: intent/2026-11-17-2109-plan-slug-trailer.md
 ---
