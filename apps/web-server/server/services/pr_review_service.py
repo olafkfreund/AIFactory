@@ -31,7 +31,13 @@ from server.utils.subprocess_env import dotenv_key_blocked
 from ..config import get_settings
 from ..websockets.events import broadcast_event
 from . import project_settings_store
-from .build_backend import inpod_agent_refusal
+from .agent_job_backend import (
+    claude_oauth_token,
+    dispatch_pr_review,
+    review_kubejob_enabled,
+)
+from .build_backend import BuildBackendUnavailableError, inpod_agent_refusal
+from .spec_job_backend import SpecJobProcess
 
 
 class PRReviewPhase(str, Enum):
@@ -174,7 +180,9 @@ class PRReviewService:
     """
 
     def __init__(self):
-        self.running_reviews: dict[str, asyncio.subprocess.Process] = {}
+        self.running_reviews: dict[
+            str, asyncio.subprocess.Process | SpecJobProcess
+        ] = {}
         self._current_phases: dict[str, PRReviewPhase] = {}
         self._log_writers: dict[str, PRReviewLogWriter] = {}
         self._review_start_times: dict[str, str] = {}
@@ -238,7 +246,13 @@ class PRReviewService:
             logger.error(f"GitHub runner not found at {runner_script}")
             await self._emit_error(project_id, pr_number, "GitHub runner not found")
             return False
-        if problem := inpod_agent_refusal():  # #1932: before any env or log setup
+        try:
+            use_job = review_kubejob_enabled()
+        except BuildBackendUnavailableError as exc:  # no fallback to in-pod
+            await self._emit_error(project_id, pr_number, str(exc))
+            return False
+        # #1932: before any env or log setup; only the in-pod spawn is refused.
+        if not use_job and (problem := inpod_agent_refusal()):
             logger.error("PR review refused: %s", sanitize_log(problem))
             await self._emit_error(project_id, pr_number, problem)
             return False
@@ -292,13 +306,29 @@ class PRReviewService:
         self._log_writers[key] = log_writer
 
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(project_path),
-                env=env,
-            )
+            proc: asyncio.subprocess.Process | SpecJobProcess
+            if (
+                use_job
+            ):  # A4 (#1932): the session runs as a Job; refusals never fall back
+                job_env: dict[str, str] = {}
+                await project_settings_store.load_project_env(project_path, job_env)
+                job_env.update(await project_settings_store.mcp_spawn_env(project_path))
+                token = await asyncio.to_thread(claude_oauth_token)
+                proc = await dispatch_pr_review(
+                    project_path=project_path,
+                    pr_number=pr_number,
+                    followup=followup,
+                    project_env=job_env,
+                    oauth_token=token,
+                )
+            else:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=str(project_path),
+                    env=env,
+                )
 
             self.running_reviews[key] = proc
             self._current_phases[key] = PRReviewPhase.STARTING

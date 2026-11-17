@@ -14,6 +14,12 @@ import shutil
 from pathlib import Path
 
 from . import project_settings_store
+from .agent_job_backend import (
+    claude_oauth_token,
+    dispatch_clarification,
+    read_clarification,
+    review_kubejob_enabled,
+)
 from .build_backend import inpod_agent_refusal
 from .insights_providers.base import scrub_insights_outbound
 
@@ -184,6 +190,17 @@ async def generate_clarification_questions(
             "[ClarificationService] Outbound scrub failed; not sending", exc_info=True
         )
         return safe_default
+
+    if review_kubejob_enabled():  # A4 (#1932): the session runs as a Job, never in-pod
+        try:
+            job = await dispatch_clarification(
+                prompt=prompt, oauth_token=claude_oauth_token()
+            )
+            response = await read_clarification(job)
+        except Exception:  # noqa: BLE001 - never block the user; no in-pod fallback
+            logger.error("[ClarificationService] Job dispatch failed", exc_info=True)
+            return safe_default
+        return _parse_clarification_json(response) if response else safe_default
 
     if problem := inpod_agent_refusal():  # #1932: never block the user, skip instead
         logger.error("[ClarificationService] %s", problem)

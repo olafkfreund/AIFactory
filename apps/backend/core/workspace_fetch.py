@@ -970,3 +970,93 @@ def fetch_spec_files(
                 with contextlib.suppress(OSError):
                     Path(tmp).unlink(missing_ok=True)
     return written
+
+
+# --- PR review result (A4, #1932) ------------------------------------------------
+# A PR review Job returns exactly one file: .aifactory/github/pr/review_{N}.json.
+PR_REVIEW_FETCH_ID_ENV = "AIFACTORY_REVIEW_FETCH_ID"
+_PR_REVIEW_MAX_BYTES = 8 << 20
+_PR_REVIEW_DIR = Path(".aifactory") / "github" / "pr"
+
+
+def _pr_review_key(fetch_id: str, pr_number: int) -> str:
+    from core.artifact_store import ArtifactRef  # noqa: PLC0415
+
+    return str(
+        ArtifactRef(
+            service="aifactory",
+            job_id=fetch_id,
+            role="doc",
+            path=f"pr-review/{int(pr_number)}.json",
+        ).key()
+    )
+
+
+def maybe_push_pr_review(pr_number: int, project_dir: str | os.PathLike[str]) -> bool:
+    """Upload ``review_{N}.json`` from a PR review Job. Best effort; False if absent."""
+    fetch_id = os.environ.get(PR_REVIEW_FETCH_ID_ENV, "").strip()
+    if not fetch_id:
+        return False
+    try:
+        from core.artifact_store import ArtifactStore  # noqa: PLC0415
+
+        src = Path(project_dir) / _PR_REVIEW_DIR / f"review_{int(pr_number)}.json"
+        if src.is_symlink() or not src.is_file():
+            return False
+        if src.stat().st_size > _PR_REVIEW_MAX_BYTES:
+            _log.warning("[workspace_fetch] PR review result too large")
+            return False
+        ArtifactStore().put_bytes(
+            _pr_review_key(fetch_id, pr_number),
+            src.read_bytes(),
+            "application/json",
+            role="doc",
+        )
+    except Exception as exc:  # noqa: BLE001 - the Job's exit code stays the review's
+        _log.warning("[workspace_fetch] could not push PR review: %s", exc)
+        return False
+    return True
+
+
+def _checked_pr_review_dest(project_path: Path) -> Path:
+    """The review directory, refusing symlinked ancestors or an escape from the project."""
+    root = project_path.resolve()
+    current = project_path
+    for part in _PR_REVIEW_DIR.parts:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError(f"{part} is a symlink")
+    dest = project_path / _PR_REVIEW_DIR
+    dest.mkdir(parents=True, exist_ok=True)
+    if not dest.resolve().is_relative_to(root):
+        raise ValueError("review directory leaves the project")
+    return dest
+
+
+def fetch_pr_review(
+    project_path: str | os.PathLike[str],
+    fetch_id: str,
+    pr_number: int,
+    cancel: threading.Event | None = None,
+) -> bool:
+    """Restore the Job's review result; True only when a valid object was written."""
+    from core.artifact_store import ArtifactStore  # noqa: PLC0415
+
+    data = ArtifactStore().get_bytes(
+        _pr_review_key(fetch_id, pr_number), max_bytes=_PR_REVIEW_MAX_BYTES
+    )
+    if cancel is not None and cancel.is_set():
+        return False
+    if not isinstance(json.loads(data), dict):
+        raise ValueError("review result is not a JSON object")
+    dest = _checked_pr_review_dest(Path(project_path))
+    fd, tmp = tempfile.mkstemp(dir=dest)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        Path(tmp).chmod(0o644)
+        Path(tmp).replace(dest / f"review_{int(pr_number)}.json")
+    finally:
+        with contextlib.suppress(OSError):
+            Path(tmp).unlink(missing_ok=True)
+    return True
