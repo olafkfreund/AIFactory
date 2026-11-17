@@ -95,7 +95,7 @@ class FileLockError(Exception):
     pass
 
 
-class FileLockTimeout(FileLockError):
+class FileLockTimeoutError(FileLockError):
     """Raised when lock acquisition times out."""
 
     pass
@@ -163,7 +163,7 @@ class FileLock:
                 if elapsed >= self.timeout:
                     os.close(self._fd)
                     self._fd = None
-                    raise FileLockTimeout(
+                    raise FileLockTimeoutError(
                         f"Failed to acquire lock on {self.filepath} within "
                         f"{self.timeout}s"
                     )
@@ -227,7 +227,7 @@ class FileLock:
                 if time.time() - start_time >= self.timeout:
                     os.close(self._fd)
                     self._fd = None
-                    raise FileLockTimeout(
+                    raise FileLockTimeoutError(
                         f"Failed to acquire lock on {self.filepath} within "
                         f"{self.timeout}s"
                     ) from None
@@ -305,7 +305,7 @@ async def locked_write(
             json.dump(data, f, indent=2)
 
     Raises:
-        FileLockTimeout: If lock cannot be acquired within timeout
+        FileLockTimeoutError: If lock cannot be acquired within timeout
     """
     filepath = Path(filepath)
 
@@ -367,7 +367,7 @@ async def locked_read(filepath: str | Path, timeout: float = 5.0) -> Any:
             data = json.load(f)
 
     Raises:
-        FileLockTimeout: If lock cannot be acquired within timeout
+        FileLockTimeoutError: If lock cannot be acquired within timeout
         FileNotFoundError: If file doesn't exist
     """
     filepath = Path(filepath)
@@ -404,7 +404,7 @@ async def locked_json_write(
         await locked_json_write("/path/to/file.json", {"key": "value"})
 
     Raises:
-        FileLockTimeout: If lock cannot be acquired within timeout
+        FileLockTimeoutError: If lock cannot be acquired within timeout
     """
     async with locked_write(filepath, timeout=timeout) as f:
         json.dump(data, f, indent=indent)
@@ -425,7 +425,7 @@ async def locked_json_read(filepath: str | Path, timeout: float = 5.0) -> Any:
         data = await locked_json_read("/path/to/file.json")
 
     Raises:
-        FileLockTimeout: If lock cannot be acquired within timeout
+        FileLockTimeoutError: If lock cannot be acquired within timeout
         FileNotFoundError: If file doesn't exist
         json.JSONDecodeError: If file contains invalid JSON
     """
@@ -462,7 +462,7 @@ async def locked_json_update(
         updated = await locked_json_update("/path/to/file.json", add_item)
 
     Raises:
-        FileLockTimeout: If lock cannot be acquired within timeout
+        FileLockTimeoutError: If lock cannot be acquired within timeout
     """
     filepath = Path(filepath)
 
