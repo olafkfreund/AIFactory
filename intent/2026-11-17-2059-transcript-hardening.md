@@ -24,9 +24,13 @@ event. Four gaps remain (numbers follow #2059):
 ## Proposed outcome
 
 - A completion event only names transcripts written after the current dispatch.
-  A run that dies before upload yields no `transcript_uri`, not the previous one.
+  A run that dies before upload yields no `transcript_uri`, not the previous one,
+  and its `transcriptUris` in `task_metadata.json` is cleared at dispatch rather
+  than left stale. The key stays the task's `JOB_ID` (project isolation, #2080);
+  run isolation within a task comes from a dispatch time, not a new id.
 - A spec Job uploads its transcript under its own Job id.
-- A Job that gets SIGTERM uploads the transcript before it exits.
+- A Job that gets SIGTERM attempts the transcript upload, best-effort and within
+  the termination grace period, before it exits.
 - The per-process limit is documented, and the control plane logs a warning at
   startup when more than one replica is configured.
 
