@@ -14,9 +14,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from memory import scratchpad
+from memory import scratchpad, trust
 from memory.novelty import drop_repeats
-from memory.retention import CAPS, confirm, gotchas_context, session_type
+from memory.retention import (
+    CAPS,
+    confirm,
+    escape_headings,
+    gotchas_context,
+    session_type,
+)
 
 try:
     from claude_agent_sdk import tool
@@ -149,22 +155,22 @@ def create_memory_tools(
 
             # Escape header-looking lines (injective: backslashes shift by one)
             # so the split below cannot cut inside an entry.
-            body = re.sub(
-                r"(?m)^(\\*## \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\])", r"\\\1", body
-            )
+            body = escape_headings(body)
 
             seen: set[str] = set()
             if gotchas_file.exists():
                 tail = gotchas_file.read_text()[-GOTCHA_CONTEXT_CHARS:]
                 seen = {
-                    segment.strip()
+                    trust.strip_marker(segment.strip())
                     for segment in re.split(
                         r"(?m)^## \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\r?\n", tail
                     )[1:]
                 }
             rejected: list[str] = []
             if not drop_repeats([body], seen, "gotchas.md", rejected):
-                confirm(memory_dir, rejected)
+                confirm(
+                    memory_dir, [*rejected, *(k + trust.UNVERIFIED for k in rejected)]
+                )
                 return {
                     "content": [
                         {"type": "text", "text": f"Gotcha already recorded: {gotcha}"}
@@ -181,6 +187,8 @@ def create_memory_tools(
                     ]
                 }
 
+            if trust.tainted():
+                body += trust.UNVERIFIED
             entry = f"\n## [{timestamp}]\n{body}\n"
 
             with gotchas_file.open("a") as f:
@@ -229,7 +237,9 @@ def create_memory_tools(
                 and dead_ends_written.get(memory_dir, 0) >= CAPS[session_type()]
             ):
                 text = "Dead end cap reached; new dead end not recorded."
-            elif scratchpad.record_dead_end(memory_dir, approach, reason):
+            elif scratchpad.record_dead_end(
+                memory_dir, approach, reason, untrusted=trust.tainted()
+            ):
                 if not known:
                     dead_ends_written[memory_dir] = (
                         dead_ends_written.get(memory_dir, 0) + 1

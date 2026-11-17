@@ -226,7 +226,7 @@ from core.auth import (
     is_denied_env_key,
     require_auth_token,
 )
-from memory.hooks import make_failure_hook  # noqa: E402
+from memory.hooks import make_failure_hook, taint_hook  # noqa: E402
 from prompts_pkg.project_context import (
     detect_infra_markers,
     detect_project_capabilities,
@@ -1102,6 +1102,9 @@ def create_client(
                 # URLs to cloud metadata / loopback / private / non-http(s).
                 HookMatcher(matcher="WebFetch", hooks=[web_fetch_security_hook]),
                 HookMatcher(matcher="WebSearch", hooks=[web_fetch_security_hook]),
+                # RFC-0021 Phase 4: external content opens the untrusted window.
+                HookMatcher(matcher="WebFetch", hooks=[taint_hook]),
+                HookMatcher(matcher="WebSearch", hooks=[taint_hook]),
                 # #1719: refuse agent writes into git metadata
                 HookMatcher(
                     matcher="Write|Edit|MultiEdit|NotebookEdit",

@@ -58,7 +58,7 @@ def read(memory_dir: Path) -> Store:
     }
 
 
-def _write(memory_dir: Path, store: Store) -> None:
+def write(memory_dir: Path, store: Store) -> None:
     memory_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
         "w", dir=memory_dir, delete=False, suffix=".tmp"
@@ -114,7 +114,7 @@ def observe(  # noqa: PLR0913
     try:
         store = read(memory_dir)
         _bump(store, kind, text, reason, untrusted, (now or datetime.now(UTC)))
-        _write(memory_dir, store)
+        write(memory_dir, store)
         return True
     except (OSError, TypeError, ValueError):
         logger.warning("scratchpad: could not record in %s", memory_dir, exc_info=True)
@@ -149,7 +149,7 @@ def record_dead_end(
                 if now - last <= timedelta(seconds=ABANDON_WINDOW):
                     entry["ab"] = int(entry.get("n", 0))
         _bump(store, "dead_end", approach, reason, untrusted, now)
-        _write(memory_dir, store)
+        write(memory_dir, store)
         return True
     except (OSError, TypeError, ValueError):
         logger.warning("scratchpad: could not record in %s", memory_dir, exc_info=True)

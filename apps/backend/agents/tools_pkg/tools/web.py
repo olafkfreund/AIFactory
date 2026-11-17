@@ -68,6 +68,7 @@ from typing import Any
 # scripts/cq_ratchet.py, which invokes mypy so that `security.*` resolves, and
 # there the ignore is an `unused-ignore` error instead. Two invocations, two
 # opposite verdicts -- this file follows the one CI actually runs.
+from memory import trust
 from security.url_guard import fetch_following_safe_redirects
 
 tool: Any
@@ -119,6 +120,7 @@ async def guarded_web_fetch(args: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(url, str) or not url:
         return _text("web_fetch: 'url' is required and must be a string.")
 
+    trust.taint()  # RFC-0021 Phase 4: what comes back is untrusted memory input
     try:
         final_url, status, body = fetch_following_safe_redirects(url, headers=_HEADERS)
     except ValueError as exc:

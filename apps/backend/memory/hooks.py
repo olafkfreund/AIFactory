@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from . import scratchpad
+from . import scratchpad, trust
 
 logger = logging.getLogger(__name__)
 Hook = Callable[[dict[str, Any], str | None, Any], Awaitable[dict[str, Any]]]
@@ -32,9 +32,21 @@ def make_failure_hook(memory_dir: Path) -> Hook:
                         memory_dir,
                         "error_fingerprint",
                         f"{input_data.get('tool_name', '')}: {error}",
+                        untrusted=trust.tainted(),
                     )
         except Exception:  # noqa: BLE001 - a hook must never break the tool call
             logger.debug("scratchpad failure hook skipped", exc_info=True)
         return {}
 
     return failure_hook
+
+
+async def taint_hook(
+    input_data: dict[str, Any],
+    tool_use_id: str | None = None,
+    context: Any | None = None,
+) -> dict[str, Any]:
+    """PreToolUse hook for WebFetch/WebSearch: open the untrusted window."""
+    del input_data, tool_use_id, context
+    trust.taint()
+    return {}

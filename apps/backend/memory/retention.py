@@ -167,3 +167,9 @@ def gotchas_context(
     chunks = [(pos, entry) for _, pos, entry in sorted(demoted, reverse=True)]
     low = "".join(c for _, c in _pack(chunks, remaining))
     return fresh_text + heading + low if low else fresh_text
+
+
+def escape_headings(body: str) -> str:
+    """Escape header-looking lines (injective: backslashes shift by one) so a
+    stored entry cannot be split in two by ``split_gotchas``."""
+    return re.sub(r"(?m)^(\\*## \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\])", r"\\\1", body)
