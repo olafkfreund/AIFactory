@@ -1,8 +1,28 @@
 ## [Unreleased]
 
+## 3.14.0 - 2026-11-17
+
+Merged to `dev` since 3.13.1.
+
 ### Added
 
-- Model gateway resolves capability-class routes from `GATEWAY_ROUTES_PATH` and answers `X-Model-Route` (#2107); `execution.phase_routes` is consumed behind `AIFACTORY_PHASE_ROUTES=on` (#2108). Both are off by default.
+- Model gateway resolves capability-class routes from `GATEWAY_ROUTES_PATH` and answers `X-Model-Route` (#2107); `execution.phase_routes` is consumed behind `AIFACTORY_PHASE_ROUTES=on` (#2108). Both are off by default. (#2112)
+- Commits stamp a `Plan-Slug` trailer so a deploy can be joined to its plan. (#2109, #2111)
+- In-pod agent paths still open are refused under FORBID. (#2095, #1932, #2104)
+
+### Fixed
+
+- Memory: a cross-process lock, pool merge and Graphiti caps. (#389, #2110)
+
+### Changed
+
+- GitHub service callers use the provider protocol; factory-github re-vendored (RFC-0022 2b). (#2103)
+- Agent sandbox `.hub-sha` pinned to hub main merge fa47f57. (#2102)
+- CI installs a pinned gVisor release verified by sha512 instead of apt. (#2100, #2105)
+
+### Tests
+
+- The marker-nonce dispatch test isolates project settings. (#2101, #2106)
 
 ## 3.13.1 - 2026-11-17
 
