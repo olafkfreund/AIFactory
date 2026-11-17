@@ -397,6 +397,9 @@ def _prepare_correction_workspace(spec_dir: Path, job_id: str) -> str:
         dest = clone / spec_rel
         dest.mkdir(parents=True, exist_ok=True)
         for src in sources:
+            (dest / src.name).unlink(
+                missing_ok=True
+            )  # a cloned symlink, not its target
             shutil.copyfile(src, dest / src.name)
         return str(
             pack_workspace(

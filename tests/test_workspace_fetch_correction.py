@@ -40,10 +40,13 @@ def _hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _file(data: bytes, old: bytes | None = None) -> dict[str, str | None]:
+def _file(
+    data: bytes, old: bytes | None = None, *, exec_bit: bool = False
+) -> dict[str, object]:
     return {
         "b64": base64.b64encode(data).decode(),
         "base_sha256": _hash(old) if old is not None else None,
+        "exec": exec_bit,
     }
 
 
@@ -212,6 +215,8 @@ def test_push_includes_committed_untracked_and_deleted(
     git("add", "-u")
     git("commit", "-qm", "job")
     (tmp_path / "new").write_bytes(b"untracked")
+    (tmp_path / "run.sh").write_bytes(b"#!/bin/sh\n")
+    (tmp_path / "run.sh").chmod(0o755)
     control = tmp_path / ".aifactory"
     control.mkdir()
     (control / "ignored").write_bytes(b"control")
@@ -219,7 +224,11 @@ def test_push_includes_committed_untracked_and_deleted(
     assert workspace_fetch.maybe_push_correction(tmp_path, base)
     doc = json.loads(store.objects[workspace_fetch._correction_key("fid")])
     assert doc == {
-        "files": {"edit": _file(b"job", b"base"), "new": _file(b"untracked")},
+        "files": {
+            "edit": _file(b"job", b"base"),
+            "new": _file(b"untracked"),
+            "run.sh": _file(b"#!/bin/sh\n", exec_bit=True),
+        },
         "deleted": {"gone": _hash(b"gone")},
     }
     store.objects.clear()
@@ -234,3 +243,30 @@ def test_push_noop_without_id(
     monkeypatch.delenv(workspace_fetch.CORRECTION_FETCH_ID_ENV, raising=False)
     assert workspace_fetch.maybe_push_correction(tmp_path, "base") is False
     assert store.objects == {}
+
+
+def test_fetch_applies_executable_bit(store: type[FakeStore], tmp_path: Path) -> None:
+    (tmp_path / "tool").write_bytes(b"v1")
+    (tmp_path / "tool").chmod(0o755)
+    _put(
+        store,
+        {
+            "run.sh": _file(b"#!/bin/sh\n", exec_bit=True),
+            "plain": _file(b"x"),
+            "tool": _file(b"v2", b"v1"),
+        },
+        {},
+    )
+    assert workspace_fetch.fetch_correction(tmp_path, "fid") is True
+    assert os.access(tmp_path / "run.sh", os.X_OK)
+    assert not os.access(tmp_path / "plain", os.X_OK)
+    assert not os.access(tmp_path / "tool", os.X_OK)  # the mode follows the payload
+
+
+def test_fetch_rejects_non_bool_exec(store: type[FakeStore], tmp_path: Path) -> None:
+    bad = _file(b"x")
+    bad["exec"] = "yes"
+    _put(store, {"a": bad}, {})
+    with pytest.raises(ValueError, match="mode"):
+        workspace_fetch.fetch_correction(tmp_path, "fid")
+    assert not (tmp_path / "a").exists()

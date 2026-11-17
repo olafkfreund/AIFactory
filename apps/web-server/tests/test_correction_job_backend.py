@@ -170,6 +170,39 @@ def test_workspace_has_clone_and_top_level_spec_files(monkeypatch, tmp_path) -> 
     assert not (proj / ".aifactory/worktrees/corrections/job1").exists()
 
 
+def test_workspace_does_not_follow_a_cloned_symlink(monkeypatch, tmp_path) -> None:
+    proj = _project(tmp_path)
+    spec = proj / ".aifactory/specs/001-x"
+    target = tmp_path / "outside"
+    target.write_text("keep")
+    # HEAD holds a symlink at the spec filename; the working tree has a regular file.
+    (spec / "notes.md").symlink_to(target)
+    subprocess.run(
+        ["git", "-C", str(proj), "add", "-f", str(spec / "notes.md")], check=True
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(proj),
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "-m",
+            "link",
+        ],
+        check=True,
+    )
+    (spec / "notes.md").unlink()
+    (spec / "notes.md").write_text("real")
+    _capture_pack(monkeypatch)
+    ajb._prepare_correction_workspace(spec, "job1")
+    assert target.read_text() == "keep"
+
+
 def test_workspace_refuses_oversize_spec_file_and_symlinked_dir(
     monkeypatch, tmp_path
 ) -> None:

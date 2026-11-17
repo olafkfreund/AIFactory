@@ -1162,7 +1162,7 @@ def maybe_push_correction(  # noqa: PLR0912 - one refusal per check, kept flat
         }
         if len(paths) > _CORRECTION_MAX_ENTRIES:
             raise ValueError("too many correction files")
-        files: dict[str, dict[str, str | None]] = {}
+        files: dict[str, dict[str, Any]] = {}
         deleted: dict[str, str] = {}
         total = 0
         for path, status in paths.items():
@@ -1201,6 +1201,7 @@ def maybe_push_correction(  # noqa: PLR0912 - one refusal per check, kept flat
             files[path] = {
                 "b64": base64.b64encode(data).decode("ascii"),
                 "base_sha256": old_hash,
+                "exec": bool(src.stat().st_mode & stat.S_IXUSR),
             }
         ArtifactStore().put_bytes(
             _correction_key(fetch_id),
@@ -1241,6 +1242,7 @@ def fetch_correction(  # noqa: PLR0912, PLR0915 - validate everything, then appl
     root = Path(project_path)
     resolved_root = root.resolve()
     contents: dict[str, bytes] = {}
+    execs: dict[str, bool] = {}
     targets: dict[str, Path] = {}
     expected: dict[str, str | None] = {}
     total = 0
@@ -1279,6 +1281,9 @@ def fetch_correction(  # noqa: PLR0912, PLR0915 - validate everything, then appl
                 content = base64.b64decode(value["b64"], validate=True)
             except ValueError as exc:  # binascii.Error is a ValueError
                 raise ValueError("invalid correction base64") from exc
+            if not isinstance(value.get("exec", False), bool):
+                raise ValueError("invalid correction mode")
+            execs[name] = value.get("exec", False)
             total += len(content)
             if total > _CORRECTION_MAX_BYTES:
                 raise ValueError("correction files too large")
@@ -1328,7 +1333,8 @@ def fetch_correction(  # noqa: PLR0912, PLR0915 - validate everything, then appl
                 with os.fdopen(fd, "wb") as fh:
                     fh.write(content)
                 orig = originals[name]
-                temps[name].chmod(orig[1] if orig else 0o644)
+                mode = orig[1] if orig else 0o644
+                temps[name].chmod(mode | 0o111 if execs[name] else mode & ~0o111)
             for name, target in targets.items():
                 if cancel is not None and cancel.is_set():
                     raise InterruptedError("correction cancelled")
