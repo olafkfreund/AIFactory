@@ -282,9 +282,10 @@ def test_promotion_runs_when_graphiti_is_the_primary_store(tmp_path, monkeypatch
         async def close(self):
             pass
 
-    fake = types.ModuleType("integrations.graphiti.memory")
-    fake.GraphitiMemory = FakeGraphiti
-    monkeypatch.setitem(sys.modules, "integrations.graphiti.memory", fake)
+    for name in ("integrations.graphiti.memory", "graphiti_memory"):  # per-repo path
+        fake = types.ModuleType(name)
+        fake.GraphitiMemory = FakeGraphiti
+        monkeypatch.setitem(sys.modules, name, fake)
     monkeypatch.setattr(memory_manager, "is_graphiti_enabled", lambda: True)
     spec = tmp_path / "spec"
     _seed(spec / "memory", "graphiti era trap", n=3)
