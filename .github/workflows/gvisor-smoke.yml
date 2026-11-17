@@ -45,8 +45,8 @@ on:
       - 'tests/helm/conftest.py'
       - 'docs/docs/concepts/gvisor-sandbox.md'
       - '.github/workflows/gvisor-smoke.yml'
-  # Liveness: catch upstream drift (gVisor releases, Kind node images)
-  # even in weeks where nobody touches the paths above.
+  # Liveness: catch upstream drift (Kind node images; gVisor is pinned, bump
+  # it in step 3) even in weeks where nobody touches the paths above.
   schedule:
     - cron: '17 4 * * 1'
   workflow_dispatch:
@@ -98,29 +98,31 @@ jobs:
       # ------------------------------------------------------------------ #
       # 3. Install gVisor runsc + containerd shim on host runner
       #
-      # The gVisor apt package installs both:
-      #   runsc                    — the main runtime binary
-      #   containerd-shim-runsc-v1 — the containerd shim
+      # Pinned release tarball with a sha512 check, NOT the apt repo: the apt
+      # index was once served mid-update ("File has unexpected size ... Mirror
+      # sync in progress?", run 44067273459, #2100) and floated the version.
+      # The tarball holds runsc, containerd-shim-runsc-v1 and gvisor-bin/.
+      #
+      # To bump: pick a directory under gs://gvisor/releases/release/ (e.g.
+      # 20261116.0), fetch <ver>/x86_64/gvisor.tar.bz2.sha512, and update both
+      # values below.
       # ------------------------------------------------------------------ #
       - name: Install gVisor runsc + shim on host
+        env:
+          GVISOR_VERSION: "20261109.0"
+          GVISOR_SHA512: 1a6b8f74c37b4931ef473f67ec1f601690855bedc52ac709f2fac965c69677aa0426ef44598d8eee1aed72cfdb9df87a2a5f352cb3348880fc61a7732bc10f2a
         run: |
           set -euo pipefail
 
-          curl -fsSL https://gvisor.dev/archive.key \
-            | sudo gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
-
-          echo "deb [arch=$(dpkg --print-architecture) \
-            signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] \
-            https://storage.googleapis.com/gvisor/releases release main" \
-            | sudo tee /etc/apt/sources.list.d/gvisor.list
-
-          sudo apt-get update -qq
-          sudo apt-get install -y runsc
+          TARBALL="${RUNNER_TEMP}/gvisor.tar.bz2"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "${TARBALL}" \
+            "https://storage.googleapis.com/gvisor/releases/release/${GVISOR_VERSION}/x86_64/gvisor.tar.bz2"
+          echo "${GVISOR_SHA512}  ${TARBALL}" | sha512sum -c -
+          sudo tar -xjf "${TARBALL}" -C /usr/local/bin
 
           echo "runsc location: $(which runsc)"
           runsc --version
           echo "shim location: $(which containerd-shim-runsc-v1 2>/dev/null || echo 'not found')"
-          dpkg -L runsc 2>/dev/null | head -20
 
       # ------------------------------------------------------------------ #
       # 4. Create the Kind cluster
