@@ -21,6 +21,7 @@ from ..config import get_settings
 from ..websockets.events import broadcast_event
 from . import project_settings_store
 from .argv_safety import assert_safe_git_ref
+from .build_backend import inpod_agent_refusal
 
 
 class ChangelogPhase(str, Enum):
@@ -112,6 +113,11 @@ class ChangelogService:
             logger.warning(
                 f"Changelog generation already running for project {sanitize_log(project_id)}"
             )
+            return False
+
+        if problem := inpod_agent_refusal():  # #2095 slice D
+            logger.error("Changelog generation refused: %s", sanitize_log(problem))
+            await self._emit_error(project_id, problem)
             return False
 
         settings = get_settings()

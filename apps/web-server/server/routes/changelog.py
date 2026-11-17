@@ -20,6 +20,7 @@ from server.services.argv_safety import (
     assert_safe_git_ref,
     bounded_count,
 )
+from server.services.build_backend import inpod_agent_refusal
 from server.services.http_verdict import honest_status
 from server.specpath import safe_spec_component
 from server.utils.subprocess_env import child_env
@@ -1089,6 +1090,8 @@ async def generate_task_from_chat(
     project_path = _get_project_path(projectId)
     service = get_insights_service()
 
+    if problem := inpod_agent_refusal():  # #2095 slice D: say why, not a log reference
+        return {"success": False, "error": problem}
     try:
         result = await service.generate_task_from_chat(
             project_path=project_path,

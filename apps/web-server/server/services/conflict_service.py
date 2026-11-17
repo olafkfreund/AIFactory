@@ -15,6 +15,7 @@ from factory_common.logsafe import sanitize_log
 
 from ..config import get_settings
 from . import project_settings_store
+from .build_backend import inpod_agent_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -443,6 +444,9 @@ class ConflictService:
         task_label: str,
     ) -> dict[str, Any]:
         """Synchronous AI merge (runs in executor)."""
+        if problem := inpod_agent_refusal():  # #2095 slice D: refused, never silent
+            logger.error("AI merge refused: %s", sanitize_log(problem))
+            return {"success": False, "error": problem}
         self._ensure_backend_path()
 
         try:
@@ -568,6 +572,9 @@ TASK: Intelligently merge both sets of changes into the base.
         content: str,
     ) -> dict[str, Any]:
         """Synchronous conflict marker resolution (runs in executor)."""
+        if problem := inpod_agent_refusal():  # #2095 slice D: refused, never silent
+            logger.error("AI merge refused: %s", sanitize_log(problem))
+            return {"success": False, "error": problem}
         self._ensure_backend_path()
 
         try:
