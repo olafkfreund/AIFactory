@@ -404,6 +404,41 @@ spec:
                   key: OTEL_EXPORTER_OTLP_HEADERS
             {{- end }}
             {{- end }}
+            {{- if .Values.modelGateway.url }}
+            # Factory#1959: route the build Job's OpenAI-compatible plane through the
+            # model gateway (build_backend.build_job_env). Token only via a Secret.
+            - name: AIFACTORY_MODEL_GATEWAY_URL
+              value: {{ .Values.modelGateway.url | quote }}
+            {{- if .Values.modelGateway.tokenSecretName }}
+            - name: AIFACTORY_MODEL_GATEWAY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.modelGateway.tokenSecretName | quote }}
+                  key: AIFACTORY_MODEL_GATEWAY_TOKEN
+            {{- end }}
+            {{- end }}
+            {{- if .Values.auditSiem.url }}
+            # #2079: push auth.failure events to the OpenObserve audit_chain stream
+            # (services/audit_siem.py). Inert unless user and password Secret are set.
+            - name: AIFACTORY_AUDIT_SIEM_URL
+              value: {{ .Values.auditSiem.url | quote }}
+            - name: AIFACTORY_AUDIT_SIEM_ORG
+              value: {{ .Values.auditSiem.org | quote }}
+            - name: AIFACTORY_AUDIT_SIEM_STREAM
+              value: {{ .Values.auditSiem.stream | quote }}
+            {{- if .Values.auditSiem.credentialsSecretName }}
+            - name: AIFACTORY_AUDIT_SIEM_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auditSiem.credentialsSecretName | quote }}
+                  key: AIFACTORY_AUDIT_SIEM_USER
+            - name: AIFACTORY_AUDIT_SIEM_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auditSiem.credentialsSecretName | quote }}
+                  key: AIFACTORY_AUDIT_SIEM_PASSWORD
+            {{- end }}
+            {{- end }}
             {{- /* Validate audit.anchor.scheduler enum */ -}}
             {{- if .Values.audit.anchor.enabled }}
             {{- $scheduler := .Values.audit.anchor.scheduler | default "cronjob" }}

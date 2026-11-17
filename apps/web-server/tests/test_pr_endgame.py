@@ -1335,8 +1335,9 @@ def test_merge_is_recorded_for_revert_and_retest_still_runs(
     assert seen["args"][:6] == ("p1", "010-x", "o", "r", 11, "auto-claude/010-x")
 
 
-def test_pr_body_names_agent_and_originator(tmp_path):
+def test_pr_body_names_agent_and_originator(tmp_path, monkeypatch):
     """Factory#1960: the agent that authored the PR and the human behind it."""
+    monkeypatch.setenv("AIFACTORY_AGENT_COMMIT_TRAILERS", "1")
     (tmp_path / "requirements.json").write_text(
         json.dumps(
             {
@@ -1351,7 +1352,18 @@ def test_pr_body_names_agent_and_originator(tmp_path):
     assert "Authored by agent: agent:aifactory/k1\nOriginator: github:octocat" in body
 
 
-def test_pr_body_attribution_skips_absent_and_multiline(tmp_path):
+def test_pr_body_attribution_off_by_default(tmp_path, monkeypatch):
+    """#2062: without AIFACTORY_AGENT_COMMIT_TRAILERS the PR body carries no attribution."""
+    monkeypatch.delenv("AIFACTORY_AGENT_COMMIT_TRAILERS", raising=False)
+    (tmp_path / "requirements.json").write_text(
+        json.dumps({"title": "t", "description": "d", "originator": "github:octocat"})
+    )
+    _, body = pe._pr_title_body(tmp_path, "spec-1")
+    assert "Originator" not in body and "Authored by agent" not in body
+
+
+def test_pr_body_attribution_skips_absent_and_multiline(tmp_path, monkeypatch):
+    monkeypatch.setenv("AIFACTORY_AGENT_COMMIT_TRAILERS", "1")
     (tmp_path / "requirements.json").write_text(
         json.dumps({"title": "t", "description": "d", "originator": "a\nFixes #1"})
     )

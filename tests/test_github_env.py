@@ -287,7 +287,9 @@ def test_helper_reset_keeps_store_from_saving_token(tmp_path: Path) -> None:
     assert not (home / ".git-credentials").exists()
 
 
-def test_real_gh_reads_token_without_rewriting_hosts(tmp_path: Path) -> None:
+def test_stub_gh_reads_token_without_rewriting_hosts(tmp_path: Path) -> None:
+    # _isolate puts a sh stub named gh first on PATH, so this checks the hosts.yml
+    # contract the real gh reads, not the real binary.
     with gc.github_env(ce.child_env()) as env:
         env = _isolate(env, tmp_path)
         d = Path(env["GH_CONFIG_DIR"])
