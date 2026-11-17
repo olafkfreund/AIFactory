@@ -10,6 +10,7 @@ the method runs as a bound method via the MRO, so external callers
 from __future__ import annotations
 
 import asyncio
+import importlib
 import logging
 import os
 import sys
@@ -67,6 +68,19 @@ def build_chain_args(kubejob_enabled: bool) -> list[str]:
     (#1538). Empty in-pod (today's behaviour), ``--no-build`` under kubejob.
     """
     return ["--no-build"] if kubejob_enabled else []
+
+
+def _spec_phase_model(metadata: dict[str, Any]) -> str | None:
+    """The ``--model`` for spec creation: a gateway phase route (#2108), else the
+    auto profile's ``phaseModels.spec``, else None (the runner's default)."""
+    # import_module: the mypy ratchet cannot resolve backend-local packages.
+    routed = importlib.import_module("phase_config").phase_route_model("spec", metadata)
+    if isinstance(routed, str) and routed:
+        return routed
+    if metadata.get("isAutoProfile") and metadata.get("phaseModels"):
+        spec_model = metadata["phaseModels"].get("spec")
+        return spec_model if isinstance(spec_model, str) else None
+    return None
 
 
 class SpecCreationMixin:
@@ -146,9 +160,7 @@ class SpecCreationMixin:
                             "[AgentService] Task %s requires manual review - NOT auto-approving spec",
                             sanitize_log(task_id),
                         )
-                    # Read spec phase model from auto profile config
-                    if metadata.get("isAutoProfile") and metadata.get("phaseModels"):
-                        spec_phase_model = metadata["phaseModels"].get("spec")
+                    spec_phase_model = _spec_phase_model(metadata)
                 except (json.JSONDecodeError, OSError) as e:
                     # FAIL CLOSED. `should_auto_approve` defaults to True and
                     # the ONLY thing that clears it is

@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from file_lock import (
     FileLock,
-    FileLockTimeout,
+    FileLockTimeoutError,
     locked_json_read,
     locked_json_update,
     locked_json_write,
@@ -212,7 +212,7 @@ async def test_lock_timeout():
             lock2 = FileLock(test_file, timeout=0.5)
             await lock2.__aenter__()
             print("✗ Second lock acquired (should have timed out!)")
-        except FileLockTimeout as e:
+        except FileLockTimeoutError as e:
             print(f"✓ Second lock timed out as expected: {e}")
         finally:
             await lock1.__aexit__(None, None, None)

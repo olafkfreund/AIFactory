@@ -15,11 +15,13 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from factory_common.logsafe import sanitize_log
 
 from ..websockets.events import broadcast_event
 from . import project_settings_store
+from .build_backend import inpod_agent_refusal
 from .insights_providers import get_provider
 from .insights_providers.base import scrub_insights_outbound
 
@@ -335,6 +337,23 @@ class InsightsService:
         return False
 
     async def send_message(
+        self,
+        project_path: Path,
+        project_id: str,
+        message: str,
+        model_config: dict[str, Any] | None = None,
+    ) -> None:
+        """Refuse under FORBID (every provider is a CLI), else run the chat turn."""
+        if problem := inpod_agent_refusal():  # #2095 slice D: every provider is a CLI
+            logger.error("Insights chat refused: %s", sanitize_log(problem))
+            await broadcast_event(
+                "insights:chunk",
+                {"projectId": project_id, "type": "error", "error": problem},
+            )
+            return
+        await self._send_message(project_path, project_id, message, model_config)
+
+    async def _send_message(
         self,
         project_path: Path,
         project_id: str,

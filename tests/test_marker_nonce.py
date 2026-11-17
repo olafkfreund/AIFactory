@@ -241,6 +241,14 @@ def test_marker_nonce_env_is_fresh_per_spawn():
 
 
 async def test_kubejob_dispatch_puts_the_nonce_in_the_job_env(tmp_path, monkeypatch):
+    # No DB here (#2101): dispatch reads project settings, which would open the
+    # process-wide default engine and fail closed on any row it cannot decrypt.
+    async def _no_settings(*_args, **_kwargs):
+        return {}
+
+    monkeypatch.setattr(
+        "server.services.project_settings_store.get_settings", _no_settings
+    )
     monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
     monkeypatch.setattr(bb, "populate_build_worktree", lambda *_a, **_k: None)
     store = await _make_store(tmp_path / "d.db")

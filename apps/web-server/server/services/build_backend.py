@@ -393,7 +393,11 @@ def build_job_env(
         val = os.environ.get(name)
         if val:  # only propagate real values; never empty placeholders
             env[name] = val
+    phase_routes = os.environ.get("AIFACTORY_PHASE_ROUTES", "")
+    if phase_routes and not os.environ.get("LITELLM_GATEWAY_URL", "").strip():
+        env["AIFACTORY_PHASE_ROUTES"] = phase_routes
     if gateway_url:
+        env[_ENV_GATEWAY_URL] = gateway_url
         env["OPENAI_COMPATIBLE_BASE_URL"] = gateway_url
         env["OPENAI_COMPATIBLE_API_KEY"] = (
             os.environ.get(_ENV_GATEWAY_TOKEN, "").strip() or _NO_GATEWAY_TOKEN

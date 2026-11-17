@@ -195,6 +195,8 @@ Read in `services/build_backend.py` (`build_job_env`). Chart: `modelGateway.*` (
 |----------|---------|----------|---------|
 | `AIFACTORY_MODEL_GATEWAY_URL` | `""` | no | Base URL of the in-house model gateway. When set, build Jobs send the OpenAI-compatible plane through it: `OPENAI_COMPATIBLE_BASE_URL` becomes this URL and the direct `OPENAI_COMPATIBLE_*` and `OLLAMA_API_KEY` values are not forwarded. Empty = direct providers. |
 | `AIFACTORY_MODEL_GATEWAY_TOKEN` | `""` | conditional | Bearer the gateway checks, forwarded as `OPENAI_COMPATIBLE_API_KEY`. Keep it in a Secret. If unset while the URL is set, a placeholder the gateway rejects is used, never a direct key. |
+| `AIFACTORY_PHASE_ROUTES` | `off` | no | `on` makes a phase use the contract's `execution.phase_routes` class (`local`, `cheap`, `balanced`, `frontier`) as `openai-compatible:<class>`, which the model gateway resolves. Outranks `phaseModels`; `pinnedModel` and a control-plane fallback still win; the RFC-0011 difficulty floor raises the class (low `cheap`, medium `balanced`, hard `frontier`). Needs `AIFACTORY_MODEL_GATEWAY_URL`, a gateway `GATEWAY_ROUTES_PATH` covering the classes, `AIFACTORY_RUNTIMES=openai-compatible`, and `LITELLM_GATEWAY_URL` unset (otherwise it stays off). A class the gateway cannot resolve is rejected upstream. Under `AIFACTORY_MODEL_REGISTRY_ENFORCE=deny` the route model must be registered. The run-level `execution.route` is not consumed. |
+| `GATEWAY_ROUTES_PATH` | `""` | no | Model gateway side (`apps/model-gateway`): path to a JSON object mapping a class to a model, e.g. `{"cheap": "qwen3:8b", "frontier": "gpt-oss:120b"}` (a mounted ConfigMap; re-read on every request). A request whose `model` is exactly a class name with an entry is rewritten to that model and the response carries `X-Model-Route: <class>`. Any other request, a missing or invalid file, or no path forwards the body unchanged with no header. |
 
 ### Auth-failure SIEM push (#2079)
 
@@ -276,7 +278,7 @@ How `run.py` executes and what lets a build schedule on any node. Read in
 | `AIFACTORY_BUILD_BACKEND` | `subprocess` | no | `subprocess` (in-pod asyncio) or `kubejob` (each build as its own k8s Job). Unknown values, and `kubejob` without `DATABASE_URL`, refuse agent launches (the server logs an error at startup). Unset in-cluster (`KUBERNETES_SERVICE_HOST` set) logs a warning that agents run unisolated. Auto-merge is held for every task unless this is `kubejob` and `DATABASE_URL` is set. |
 | `AIFACTORY_SPEC_BACKEND` | `subprocess` | no | `subprocess` (spec creation runs in the web-server pod) or `kubejob` (spec creation runs as its own k8s Job, #1932). Any other value refuses spec creation; it never falls back to in-pod. `kubejob` needs `S3_*` object storage (the workspace is packed, no PVC is mounted). The Job gets no GitHub token, database URL, JWT secret or API token; it does get the model credentials a build Job gets (CLI logins, provider keys, and the GCP credential mount when `FACTORY_GCP_CREDS_SECRET` is set). Only an allowlist of spec files is fetched back. Set it in factory-gitops after a soak. |
 | `AIFACTORY_REVIEW_BACKEND` | `subprocess` | no | `subprocess` (PR review and task clarification run in the web-server pod) or `kubejob` (each runs as its own k8s Job, 1800 s deadline, #1932 slice A4). Any other value refuses the session; it never falls back to in-pod. Needs `DATABASE_URL` and `S3_*` object storage. A PR review Job gets the project packed as its workspace and returns only `review_{N}.json` (8 MiB cap, JSON object); a clarification Job has no workspace, no GitHub token and no object-store key, and its answer is the Job log (64 KiB cap). Set it in factory-gitops after the spec Job soak. |
-| `AIFACTORY_FORBID_INPOD_AGENTS` | unset (off) | no | When truthy, in-pod agent spawns (spec creation, builds, PR review, clarification) are refused; only Jobs may run agents (#1932). Insights, changelog and the settings probe are not covered yet. `AIFACTORY_LOCAL_DEV=1` re-allows them for local development. Turn it on in factory-gitops only after the spec, build, PR-review and clarification Jobs have soaked. |
+| `AIFACTORY_FORBID_INPOD_AGENTS` | unset (off) | no | When truthy, in-pod agent spawns (spec creation, builds, PR review, clarification) are refused; only Jobs may run agents (#1932). Also refused (#2095 slice D): insights chat and generate-task, changelog generation, AI merge-conflict resolution, and `POST /tasks/{id}/apply-correction`. See [Refused in production](#refused-in-production-slice-d). The settings probe runs `--version` and `pgrep`, not an agent, so it is not covered. `AIFACTORY_LOCAL_DEV=1` re-allows them for local development. Turn it on in factory-gitops only after the spec, build, PR-review and clarification Jobs have soaked. |
 | `AIFACTORY_IMAGE` | (built-in) | no | Running image; fallback build-Job image when `AIFACTORY_BUILD_IMAGE` unset. |
 | `AIFACTORY_BUILD_IMAGE` | (unset) | no | Override the image for the `kubejob` build Job only. Point at a `:sha-<short>-nix` tag for in-image Nix. |
 | `AIFACTORY_PACK_WORKSPACE` | off | no | Pack `/work` to object storage and unpack in the Job (removes the workspace node-pin). |
@@ -698,3 +700,15 @@ This reference was reconciled against an exhaustive grep of the codebase
   vars, the analyzer `PORT` example) — a subset of the fuller excluded list
   above, which also names OS vars read only via `env.get`/fixtures.
 - **0** unaccounted for.
+
+### Refused in production (slice D)
+
+With `AIFACTORY_FORBID_INPOD_AGENTS=true` (factory-gitops#372) these features stop working until they get a Job path (#2095, #1932). Each says why instead of failing silently:
+
+| Feature | Behaviour when refused |
+| --- | --- |
+| `POST /tasks/{id}/apply-correction` (`confirm=true`) | HTTP 409, nothing written. The TFactory fix loop needs a QA-only Job (follow-up) before FORBID is on. |
+| Insights chat (all providers) | An `insights:chunk` error event; no session message is added. |
+| Insights "generate task" | `success: false` with the refusal text. |
+| Changelog generation | Changelog error event; generation does not start. |
+| AI merge-conflict resolution | `success: false`; the merge falls back to manual conflict handling. |

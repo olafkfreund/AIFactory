@@ -43,7 +43,7 @@ def upstream():
             seen.update(
                 path=self.path, auth=self.headers.get("Authorization"), body=body
             )
-            self.send_response(201)
+            self.send_response(seen.get("status", 201))
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(b'{"ok":true}')
@@ -69,9 +69,9 @@ def _post(base, body=b"{}", token=TOKEN):
     )
     try:
         with urllib.request.urlopen(req, timeout=5) as resp:
-            return resp.status, resp.read()
+            return resp.status, resp.read(), resp.headers.get("X-Model-Route")
     except urllib.error.HTTPError as err:
-        return err.code, err.read()
+        return err.code, err.read(), err.headers.get("X-Model-Route")
 
 
 def test_healthz():
@@ -122,21 +122,94 @@ def test_forward_swaps_auth_and_passes_response_back(upstream):
         "GATEWAY_CLIENT_TOKEN": TOKEN,
     }
     server, base = _gateway(env)
-    assert _post(base, body=b'{"m":1}') == (201, b'{"ok":true}')
+    assert _post(base, body=b'{"m":1}') == (201, b'{"ok":true}', None)
     assert seen["path"] == "/v1/chat/completions"
     assert seen["auth"] == "Bearer upstream-key"
     assert seen["body"] == b'{"m":1}'
     server.shutdown()
 
 
-def test_upstream_down_returns_502():
+def test_upstream_down_returns_502(tmp_path):
     dead = ThreadingHTTPServer(("127.0.0.1", 0), BaseHTTPRequestHandler)
     url = f"http://127.0.0.1:{dead.server_address[1]}"
     dead.server_close()
+    routes = tmp_path / "routes.json"
+    routes.write_text('{"cheap":"routed"}')
     server, base = _gateway(
-        {"GATEWAY_UPSTREAM_URL": url, "GATEWAY_CLIENT_TOKEN": TOKEN}
+        {
+            "GATEWAY_UPSTREAM_URL": url,
+            "GATEWAY_CLIENT_TOKEN": TOKEN,
+            "GATEWAY_ROUTES_PATH": str(routes),
+        }
     )
-    assert _post(base)[0] == 502
+    status, _, route = _post(base, b'{"model":"cheap"}')
+    assert (status, route) == (502, None)
+    server.shutdown()
+
+
+def test_routes_resolve_and_reload(upstream, tmp_path):
+    url, seen = upstream
+    routes = tmp_path / "routes.json"
+    routes.write_text('{"cheap":"first-model"}')
+    server, base = _gateway(
+        {
+            "GATEWAY_UPSTREAM_URL": url,
+            "GATEWAY_CLIENT_TOKEN": TOKEN,
+            "GATEWAY_ROUTES_PATH": str(routes),
+        }
+    )
+    assert _post(base, b'{"model":"cheap","messages":[]}') == (
+        201,
+        b'{"ok":true}',
+        "cheap",
+    )
+    assert json.loads(seen["body"])["model"] == "first-model"
+    routes.write_text('{"cheap":"second-model"}')
+    seen["status"] = 429
+    assert _post(base, b'{"model":"cheap"}') == (429, b'{"ok":true}', "cheap")
+    assert json.loads(seen["body"])["model"] == "second-model"
+    server.shutdown()
+
+
+@pytest.mark.parametrize(
+    ("routes_content", "body"),
+    [
+        ('{"cheap":"routed"}', b'{ "model": "concrete" }'),
+        ('{"concrete":"routed"}', b'{ "model": "concrete" }'),
+        ('{"cheap":"routed"}', b'{ "model": "local" }'),
+        ('{"local":""}', b'{ "model": "local" }'),
+        ('{"local":7}', b'{ "model": "local" }'),
+        ('{"cheap":"routed"}', b"not json"),
+        ('{"cheap":"routed"}', b'["cheap"]'),
+        ("not json", b'{ "model": "cheap" }'),
+    ],
+)
+def test_unresolved_requests_are_unchanged(upstream, tmp_path, routes_content, body):
+    url, seen = upstream
+    routes = tmp_path / "routes.json"
+    routes.write_text(routes_content)
+    server, base = _gateway(
+        {
+            "GATEWAY_UPSTREAM_URL": url,
+            "GATEWAY_CLIENT_TOKEN": TOKEN,
+            "GATEWAY_ROUTES_PATH": str(routes),
+        }
+    )
+    assert _post(base, body) == (201, b'{"ok":true}', None)
+    assert seen["body"] == body
+    server.shutdown()
+
+
+@pytest.mark.parametrize("routes_path", [None, "missing"])
+def test_no_routes_file_forwards_unchanged(upstream, tmp_path, routes_path):
+    url, seen = upstream
+    env = {"GATEWAY_UPSTREAM_URL": url, "GATEWAY_CLIENT_TOKEN": TOKEN}
+    if routes_path:
+        env["GATEWAY_ROUTES_PATH"] = str(tmp_path / routes_path)
+    server, base = _gateway(env)
+    body = b'{ "model": "cheap" }'
+    assert _post(base, body) == (201, b'{"ok":true}', None)
+    assert seen["body"] == body
     server.shutdown()
 
 

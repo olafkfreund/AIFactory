@@ -4,7 +4,7 @@ Forwards ``POST /v1/chat/completions`` to an OpenAI-compatible upstream,
 swapping the caller's bearer token for the upstream API key.
 
 Env: GATEWAY_UPSTREAM_URL, GATEWAY_UPSTREAM_API_KEY (optional),
-GATEWAY_CLIENT_TOKEN, GATEWAY_PORT (default 8080).
+GATEWAY_CLIENT_TOKEN, GATEWAY_ROUTES_PATH (optional), GATEWAY_PORT (default 8080).
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ UPSTREAM_TIMEOUT = 120
 # Per-socket inbound timeout: without it a silent or short-body client holds a
 # handler thread forever (slowloris, and rfile.read on a short body).
 CLIENT_TIMEOUT = 30
+ROUTE_CLASSES = {"local", "cheap", "balanced", "frontier"}
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -39,6 +40,7 @@ class Config:
     upstream_url: str
     upstream_key: str
     client_token: str
+    routes_path: str
 
 
 def load_config(env) -> Config:
@@ -53,17 +55,42 @@ def load_config(env) -> Config:
         url,
         env.get("GATEWAY_UPSTREAM_API_KEY", ""),
         env.get("GATEWAY_CLIENT_TOKEN", ""),
+        env.get("GATEWAY_ROUTES_PATH", ""),
     )
+
+
+def _resolve_route(routes_path: str, body: bytes) -> tuple[bytes, str | None]:
+    if not routes_path:
+        return body, None
+    try:
+        with open(routes_path, encoding="utf-8") as routes_file:
+            routes = json.load(routes_file)
+        payload = json.loads(body)
+    except (OSError, UnicodeError, ValueError, RecursionError):
+        return body, None
+    if not isinstance(routes, dict) or not isinstance(payload, dict):
+        return body, None
+    cls = payload.get("model")
+    if not isinstance(cls, str) or cls not in ROUTE_CLASSES:
+        return body, None
+    model = routes.get(cls)
+    if not isinstance(model, str) or not model:
+        return body, None
+    payload["model"] = model
+    return json.dumps(payload).encode(), cls
 
 
 def make_server(config: Config, host: str, port: int) -> ThreadingHTTPServer:
     class Handler(BaseHTTPRequestHandler):
         timeout = CLIENT_TIMEOUT
 
-        def _reply(self, status, body=b"", ctype="application/json"):
+        def _reply(self, status, body=b"", ctype="application/json", extra=None):
             self.send_response(status)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
+            for name, value in (extra or {}).items():
+                # CR/LF stripped so a header value can never split the response.
+                self.send_header(name, value.replace("\r", "").replace("\n", ""))
             self.end_headers()
             self.wfile.write(body)
 
@@ -94,6 +121,7 @@ def make_server(config: Config, host: str, port: int) -> ThreadingHTTPServer:
                 return self._error(400, "bad Content-Length")
             if length > MAX_BODY:
                 return self._error(413, "body too large")
+            body, cls = _resolve_route(config.routes_path, self.rfile.read(length))
             headers = {
                 "Content-Type": self.headers.get("Content-Type", "application/json")
             }
@@ -101,7 +129,7 @@ def make_server(config: Config, host: str, port: int) -> ThreadingHTTPServer:
                 headers["Authorization"] = f"Bearer {config.upstream_key}"
             req = urllib.request.Request(
                 config.upstream_url + "/v1/chat/completions",
-                self.rfile.read(length),
+                body,
                 headers,
                 method="POST",
             )
@@ -124,7 +152,8 @@ def make_server(config: Config, host: str, port: int) -> ThreadingHTTPServer:
                 status, ctype = err.code, err.headers.get("Content-Type")
             except (urllib.error.URLError, OSError):
                 return self._error(502, "upstream unreachable")
-            return self._reply(status, body, ctype or "application/json")
+            extra = {"X-Model-Route": cls} if cls else None
+            return self._reply(status, body, ctype or "application/json", extra)
 
         def log_message(self, fmt, *args):
             pass

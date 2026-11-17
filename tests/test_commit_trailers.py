@@ -97,3 +97,51 @@ def test_trailer_block(tmp_path, monkeypatch):
     assert trailer_block(spec) == "Agent-Identity: coder-1\nAutonomy-Tier: medium"
     monkeypatch.delenv("AIFACTORY_AGENT_COMMIT_TRAILERS")
     assert trailer_block(spec) == ""
+
+
+# --- Plan-Slug (#2109) ---
+from core.commit_trailers import stamp_plan_slug  # noqa: E402
+
+
+def _args(tmp_path, **extra):
+    return commit_trailer_args(_spec(tmp_path, {**FULL, **extra}))
+
+
+def test_plan_slug_present_and_last(tmp_path):
+    assert _args(tmp_path, plan_slug="owner/Repo#18")[-2:] == [
+        "--trailer",
+        "Plan-Slug: owner/Repo#18",
+    ]
+
+
+def test_plan_slug_absent_without_plan(tmp_path):
+    assert not any("Plan-Slug" in a for a in _args(tmp_path))
+
+
+@pytest.mark.parametrize("bad", [None, 5, "", "a b", "a\nb", "x" * 129])
+def test_plan_slug_bad_omitted(tmp_path, bad):
+    assert not any("Plan-Slug" in a for a in _args(tmp_path, plan_slug=bad))
+
+
+def test_plan_slug_flag_off_and_not_duplicated(tmp_path, monkeypatch):
+    spec = _spec(tmp_path, {**FULL, "plan_slug": "18"})
+    block = trailer_block(spec)
+    assert block.count("Plan-Slug:") == 1
+    assert commit_message_args("m", spec).count("Plan-Slug: 18") == 1
+    monkeypatch.delenv("AIFACTORY_AGENT_COMMIT_TRAILERS")
+    assert commit_message_args("m", spec) == ["-m", "m"]
+
+
+@pytest.mark.parametrize("corr", ["18", 18, "owner/Repo#18"])
+def test_stamp_plan_slug(tmp_path, corr):
+    spec = _spec(tmp_path, FULL)
+    assert stamp_plan_slug(spec, corr)
+    saved = json.loads((spec / "requirements.json").read_text())
+    assert saved["plan_slug"] == str(corr) and saved["originator"] == "alice"
+
+
+@pytest.mark.parametrize("corr", [None, True, "a b", ""])
+def test_stamp_plan_slug_rejects(tmp_path, corr):
+    spec = _spec(tmp_path, FULL)
+    assert not stamp_plan_slug(spec, corr)
+    assert "plan_slug" not in json.loads((spec / "requirements.json").read_text())

@@ -776,6 +776,10 @@ _EXECUTION_TO_METADATA = {
     "runtime": "runtime",
     "model": "model",
     "phase_models": "phaseModels",
+    # Factory#1959 stage 3 (#2108): catalog classes per phase; used only when the
+    # model gateway resolves them (phase_config.phase_route_model). Does not set
+    # isAutoProfile. The run-level execution.route is not consumed.
+    "phase_routes": "phaseRoutes",
     "phase_thinking": "phaseThinking",
     "parallel": "parallel",
     "workers": "workers",
