@@ -61,6 +61,7 @@ _BACKEND_DIR = Path(__file__).resolve().parents[3] / "backend"
 if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
+from core.commit_trailers import stamp_plan_slug  # noqa: E402 — needs sys.path above (#2109)
 from qa.correction import apply_correction  # noqa: E402 — needs sys.path above
 from review.state import ReviewState  # noqa: E402 — needs sys.path above (#1922)
 from trusted_plan import (  # noqa: E402 — needs sys.path above (#390)
@@ -1500,8 +1501,6 @@ async def create_from_trusted_plan(
             )
 
     # #2109: the plan's key becomes the Plan-Slug commit trailer (any key form).
-    from core.commit_trailers import stamp_plan_slug
-
     stamp_plan_slug(spec_dir, corr)
 
     # Multi-tenancy (#925): record the creating tenant (no-op unless enabled).
