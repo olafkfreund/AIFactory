@@ -20,6 +20,7 @@ from factory_common.logsafe import sanitize_log
 
 from ..websockets.events import broadcast_event
 from . import project_settings_store
+from .build_backend import inpod_agent_refusal
 from .insights_providers import get_provider
 from .insights_providers.base import scrub_insights_outbound
 
@@ -342,6 +343,13 @@ class InsightsService:
         model_config: dict | None = None,
     ) -> None:
         """Send a message and stream the response via the appropriate provider."""
+        if problem := inpod_agent_refusal():  # #2095 slice D: every provider is a CLI
+            logger.error("Insights chat refused: %s", sanitize_log(problem))
+            await broadcast_event(
+                "insights:chunk",
+                {"projectId": project_id, "type": "error", "error": problem},
+            )
+            return
         # Get current session
         session = self.get_current_session(project_path, project_id)
 
@@ -477,6 +485,11 @@ class InsightsService:
         no streaming) to produce a JSON ``{title, description}`` object.
         """
         import shutil
+
+        if (
+            problem := inpod_agent_refusal()
+        ):  # #2095 slice D; route returns success:false
+            raise RuntimeError(problem)
 
         session = self.get_current_session(project_path, project_id)
         if not session or not session.messages:
