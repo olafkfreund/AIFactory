@@ -1,5 +1,14 @@
 ## [Unreleased]
 
+### Fixed
+
+- Run transcripts (#2059): a completion event links only transcripts newer than
+  the build's dispatch, so a run that dies before upload no longer shows the
+  previous run's URI; spec Jobs now record and upload a transcript; a Job that
+  receives SIGTERM tries the upload (bounded, `AIFACTORY_TRANSCRIPT_SIGTERM_SECONDS`)
+  before exiting; the server warns at startup when the chart reaches more than
+  one replica (`AIFACTORY_REPLICAS`), since revert-PR idempotency is per process.
+
 ## 3.12.0 - 2026-11-17
 
 Merged to `dev` since 3.11.1.

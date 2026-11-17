@@ -24,6 +24,7 @@ from server.services.completion import (  # noqa: E402
     emit_terminal_completion,
     emit_worker_completion,
     emit_worker_progress,
+    mark_transcript_dispatch,
     notify_completion,
     read_issue_number,
     read_issue_repo,
@@ -1607,8 +1608,9 @@ def test_event_and_task_record_link_the_transcript(tmp_path, monkeypatch):
     uris = ["s3://b/a.jsonl", "s3://b/z.jsonl"]
     seen: list[str] = []
 
-    def _uris(key: str) -> list[str]:
+    def _uris(key: str, since: str | None = None) -> list[str]:
         seen.append(key)
+        assert since is None  # no dispatch marker: unchanged behaviour
         return uris
 
     monkeypatch.setattr("core.workspace_fetch.transcript_uris", _uris)
@@ -1622,7 +1624,9 @@ def test_event_and_task_record_link_the_transcript(tmp_path, monkeypatch):
 
 def test_no_transcript_leaves_event_and_record_unchanged(tmp_path, monkeypatch):
     _no_webhook(monkeypatch)
-    monkeypatch.setattr("core.workspace_fetch.transcript_uris", lambda _s: [])
+    monkeypatch.setattr(
+        "core.workspace_fetch.transcript_uris", lambda _s, _since=None: []
+    )
     spec = _spec_with_issue(tmp_path, 412)
     tm = spec / "task_metadata.json"
     before = tm.read_text() if tm.exists() else None
@@ -1634,9 +1638,40 @@ def test_no_transcript_leaves_event_and_record_unchanged(tmp_path, monkeypatch):
 def test_metadata_write_failure_still_emits_the_uri(tmp_path, monkeypatch):
     _no_webhook(monkeypatch)
     monkeypatch.setattr(
-        "core.workspace_fetch.transcript_uris", lambda _s: ["s3://b/a.jsonl"]
+        "core.workspace_fetch.transcript_uris",
+        lambda _s, _since=None: ["s3://b/a.jsonl"],
     )
     spec = _spec_with_issue(tmp_path, 412)
     (spec / "task_metadata.json").write_text("{not json")
     ev = _emit(spec)
     assert ev["transcript_uri"] == "s3://b/a.jsonl"
+
+
+def test_dispatch_marker_cutoff_reaches_the_lookup(tmp_path, monkeypatch):
+    """#2059: completion lists only transcripts newer than the dispatch."""
+    _no_webhook(monkeypatch)
+    spec = _spec_with_issue(tmp_path, 412)
+    mark_transcript_dispatch(spec)
+    since = json.loads((spec / "transcript_dispatch.json").read_text())["since"]
+    seen: list[str | None] = []
+
+    def _uris(_key: str, cutoff: str | None = None) -> list[str]:
+        seen.append(cutoff)
+        return []
+
+    monkeypatch.setattr("core.workspace_fetch.transcript_uris", _uris)
+    _emit(spec)
+    assert seen == [since] and len(since) == len("20261117T120000_000000Z")
+
+
+def test_run_without_new_transcript_clears_stale_links(tmp_path, monkeypatch):
+    _no_webhook(monkeypatch)
+    monkeypatch.setattr(
+        "core.workspace_fetch.transcript_uris", lambda _s, _since=None: []
+    )
+    spec = _spec_with_issue(tmp_path, 412)
+    tm = spec / "task_metadata.json"
+    tm.write_text(json.dumps({"keep": 1, "transcriptUris": ["s3://b/old.jsonl"]}))
+    ev = _emit(spec)
+    assert "transcript_uri" not in ev
+    assert json.loads(tm.read_text()) == {"keep": 1}
