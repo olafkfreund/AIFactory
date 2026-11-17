@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2101
 intent: intent/2026-11-17-2101-marker-nonce-settings-isolation.md
 ---
