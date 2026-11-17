@@ -240,6 +240,12 @@ class AgentRunner:
                                 )
 
                                 if self.task_logger:
+                                    self.task_logger.transcript_tool_start(
+                                        tool_name,
+                                        {} if inp is None else inp,
+                                        getattr(block, "id", None),
+                                        LogPhase.PLANNING,
+                                    )
                                     self.task_logger.tool_start(
                                         tool_name,
                                         tool_input_display,
@@ -269,6 +275,12 @@ class AgentRunner:
                                         result_length=len(str(result_content)),
                                     )
                                 if self.task_logger and current_tool:
+                                    self.task_logger.transcript_tool_end(
+                                        getattr(block, "tool_use_id", None),
+                                        result_content,
+                                        is_error,
+                                        LogPhase.PLANNING,
+                                    )
                                     detail_content = self._get_tool_detail_content(
                                         current_tool, result_content
                                     )
