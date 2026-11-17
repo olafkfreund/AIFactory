@@ -89,7 +89,8 @@ def make_server(config: Config, host: str, port: int) -> ThreadingHTTPServer:
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
             for name, value in (extra or {}).items():
-                self.send_header(name, value)
+                # CR/LF stripped so a header value can never split the response.
+                self.send_header(name, value.replace("\r", "").replace("\n", ""))
             self.end_headers()
             self.wfile.write(body)
 
