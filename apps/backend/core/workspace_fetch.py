@@ -14,11 +14,16 @@ no-op and today's behaviour is unchanged.
 
 from __future__ import annotations
 
+import base64
 import contextlib
+import hashlib
+import itertools
 import json
 import logging
 import os
+import re
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -1100,3 +1105,253 @@ def fetch_pr_review(
         with contextlib.suppress(OSError):
             Path(tmp).unlink(missing_ok=True)
     return True
+
+
+CORRECTION_FETCH_ID_ENV = "AIFACTORY_CORRECTION_FETCH_ID"
+_CORRECTION_MAX_BYTES = 8 << 20
+_CORRECTION_MAX_ENTRIES = 500
+_CORRECTION_LOCK = threading.Lock()
+
+
+def _correction_key(fetch_id: str) -> str:
+    from core.artifact_store import ArtifactRef  # noqa: PLC0415
+
+    return str(
+        ArtifactRef(
+            service="aifactory",
+            job_id=fetch_id,
+            role="doc",
+            path="correction/result.json",
+        ).key()
+    )
+
+
+def maybe_push_correction(  # noqa: PLR0912 - one refusal per check, kept flat
+    project_dir: str | os.PathLike[str], base: str
+) -> bool:
+    """Upload changed regular files from a correction Job, including committed edits."""
+    fetch_id = os.environ.get(CORRECTION_FETCH_ID_ENV, "").strip()
+    if not fetch_id:
+        return False
+    try:
+        from core.artifact_store import ArtifactStore  # noqa: PLC0415
+
+        root = Path(project_dir)
+
+        def git(*args: str) -> bytes:
+            return subprocess.run(  # noqa: S603
+                ["git", *args],  # noqa: S607
+                cwd=root,
+                env=child_env(),
+                check=True,
+                capture_output=True,
+            ).stdout
+
+        changes = git("diff", "--name-status", "--no-renames", "-z", base).split(b"\0")
+        paths: dict[str, str] = {}
+        for raw_status, raw_path in zip(changes[0::2], changes[1::2], strict=False):
+            if raw_status and raw_path:
+                paths[raw_path.decode()] = raw_status.decode()[:1]
+        for raw_path in git("ls-files", "-o", "--exclude-standard", "-z").split(b"\0"):
+            if raw_path:
+                paths.setdefault(raw_path.decode(), "A")
+        paths = {
+            path: status
+            for path, status in paths.items()
+            if not ({".git", ".aifactory"} & set(Path(path).parts))
+        }
+        if len(paths) > _CORRECTION_MAX_ENTRIES:
+            raise ValueError("too many correction files")
+        files: dict[str, dict[str, str | None]] = {}
+        deleted: dict[str, str] = {}
+        total = 0
+        for path, status in paths.items():
+            src = root / path
+            if status not in {"A", "M", "D"}:
+                raise ValueError("unsupported correction change")
+            if src.is_symlink() or any(
+                root.joinpath(*Path(path).parts[:i]).is_symlink()
+                for i in range(1, len(Path(path).parts))
+            ):
+                raise ValueError("correction contains symlink")
+            old_entry = git("ls-tree", "-z", base, "--", path)
+            if old_entry and not old_entry.startswith((b"100644 ", b"100755 ")):
+                raise ValueError("correction contains non-regular base file")
+            old = subprocess.run(  # noqa: S603
+                ["git", "show", f"{base}:{path}"],  # noqa: S607
+                cwd=root,
+                env=child_env(),
+                capture_output=True,
+                check=False,
+            )
+            old_hash = (
+                hashlib.sha256(old.stdout).hexdigest() if old.returncode == 0 else None
+            )
+            if status == "D":
+                if old_hash is None or src.exists():
+                    raise ValueError("invalid correction deletion")
+                deleted[path] = old_hash
+                continue
+            if not src.is_file():
+                raise ValueError("correction contains non-regular file")
+            data = src.read_bytes()
+            total += len(data)
+            if total > _CORRECTION_MAX_BYTES:
+                raise ValueError("correction files too large")
+            files[path] = {
+                "b64": base64.b64encode(data).decode("ascii"),
+                "base_sha256": old_hash,
+            }
+        ArtifactStore().put_bytes(
+            _correction_key(fetch_id),
+            json.dumps({"files": files, "deleted": deleted}).encode(),
+            "application/json",
+            role="doc",
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001 - Job reports a failed handback
+        _log.warning("[workspace_fetch] could not push correction: %s", exc)
+        return False
+
+
+def fetch_correction(  # noqa: PLR0912, PLR0915 - validate everything, then apply
+    project_path: str | os.PathLike[str],
+    fetch_id: str,
+    cancel: threading.Event | None = None,
+) -> bool:
+    """Validate and apply one correction result with rollback on failure."""
+    from core.artifact_store import ArtifactStore  # noqa: PLC0415
+
+    data = ArtifactStore().get_bytes(_correction_key(fetch_id), max_bytes=12 << 20)
+    if cancel is not None and cancel.is_set():
+        return False
+    doc = json.loads(data)
+    if (
+        not isinstance(doc, dict)
+        or not isinstance(doc.get("files"), dict)
+        or not isinstance(doc.get("deleted"), dict)
+    ):
+        raise ValueError("invalid correction result")
+    files, deleted = doc["files"], doc["deleted"]
+    names = list(files) + list(deleted)
+    if files.keys() & deleted.keys():
+        raise ValueError("correction path both written and deleted")
+    if len(names) > _CORRECTION_MAX_ENTRIES:
+        raise ValueError("too many correction files")
+    root = Path(project_path)
+    resolved_root = root.resolve()
+    contents: dict[str, bytes] = {}
+    targets: dict[str, Path] = {}
+    expected: dict[str, str | None] = {}
+    total = 0
+    for name in names:
+        if (
+            not isinstance(name, str)
+            or not name
+            or name.startswith("/")
+            or "\\" in name
+            or "\0" in name
+        ):
+            raise ValueError("invalid correction path")
+        parts = name.split("/")
+        if any(part in ("", ".", "..", ".git", ".aifactory") for part in parts):
+            raise ValueError("invalid correction path")
+        target = root.joinpath(*parts)
+        for i in range(1, len(parts)):
+            ancestor = root.joinpath(*parts[:i])
+            if ancestor.is_symlink() or (ancestor.exists() and not ancestor.is_dir()):
+                raise ValueError("invalid correction ancestor")
+        if (
+            not target.resolve().is_relative_to(resolved_root)
+            or target.is_symlink()
+            or (target.exists() and not target.is_file())
+        ):
+            raise ValueError("invalid correction target")
+        value = files[name] if name in files else deleted[name]
+        if name in files:
+            if (
+                not isinstance(value, dict)
+                or not isinstance(value.get("b64"), str)
+                or "base_sha256" not in value
+            ):
+                raise ValueError("invalid correction file")
+            try:
+                content = base64.b64decode(value["b64"], validate=True)
+            except ValueError as exc:  # binascii.Error is a ValueError
+                raise ValueError("invalid correction base64") from exc
+            total += len(content)
+            if total > _CORRECTION_MAX_BYTES:
+                raise ValueError("correction files too large")
+            contents[name] = content
+            base_hash = value["base_sha256"]
+        else:
+            base_hash = value
+        if base_hash is not None and (
+            not isinstance(base_hash, str)
+            or re.fullmatch(r"[0-9a-fA-F]{64}", base_hash) is None
+        ):
+            raise ValueError("invalid correction base hash")
+        targets[name] = target
+        expected[name] = base_hash.lower() if base_hash is not None else None
+    ordered = sorted(names)
+    if any(b.startswith(a + "/") for a, b in itertools.pairwise(ordered)):
+        raise ValueError("overlapping correction paths")
+
+    with _CORRECTION_LOCK:
+        originals: dict[str, tuple[bytes, int] | None] = {}
+        for name, target in targets.items():
+            if target.is_symlink() or (target.exists() and not target.is_file()):
+                raise ValueError("invalid correction target")
+            old = target.read_bytes() if target.exists() else None
+            actual = hashlib.sha256(old).hexdigest() if old is not None else None
+            if actual != expected[name]:
+                raise ValueError("correction base hash conflict")
+            originals[name] = (
+                (old, stat.S_IMODE(target.stat().st_mode)) if old is not None else None
+            )
+        temps: dict[str, Path] = {}
+        made_dirs: list[Path] = []
+        applied: list[str] = []
+        try:
+            for name, content in contents.items():
+                target = targets[name]
+                missing = []
+                parent = target.parent
+                while not parent.exists():
+                    missing.append(parent)
+                    parent = parent.parent
+                for directory in reversed(missing):
+                    directory.mkdir()
+                    made_dirs.append(directory)
+                fd, tmp = tempfile.mkstemp(dir=target.parent)
+                temps[name] = Path(tmp)
+                with os.fdopen(fd, "wb") as fh:
+                    fh.write(content)
+                orig = originals[name]
+                temps[name].chmod(orig[1] if orig else 0o644)
+            for name, target in targets.items():
+                if cancel is not None and cancel.is_set():
+                    raise InterruptedError("correction cancelled")
+                if name in contents:
+                    temps[name].replace(target)
+                elif target.exists():
+                    target.unlink()
+                applied.append(name)
+            return True
+        except Exception as exc:  # noqa: BLE001 - restore every applied path
+            for name in reversed(applied):
+                target = targets[name]
+                original = originals[name]
+                if original is None:
+                    target.unlink(missing_ok=True)
+                else:
+                    target.write_bytes(original[0])
+                    target.chmod(original[1])
+            _log.warning("[workspace_fetch] could not apply correction: %s", exc)
+            return False
+        finally:
+            for tmp_path in temps.values():
+                tmp_path.unlink(missing_ok=True)
+            for directory in reversed(made_dirs):
+                with contextlib.suppress(OSError):
+                    directory.rmdir()
