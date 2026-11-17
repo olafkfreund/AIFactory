@@ -328,7 +328,7 @@ def sync_memory_to_source(spec_dir: Path, source_spec_dir: Path | None) -> bool:
         # dirs_exist_ok so a re-sync merges into an existing store rather than
         # failing; copy2 preserves mtimes, which the expiry policy in RFC-0021
         # will want to trust.
-        merge_into(memory_dir, target)  # merge, not overwrite (#3795)
+        merge_into(memory_dir, target, same_spec=True)  # merge, not overwrite (#3795)
         logger.debug(f"Synced memory to source: {target}")
         return True
     # Narrow rather than blind: these are what copytree can actually raise

@@ -36,7 +36,8 @@ class FakeGraphiti:
 
 
 @pytest.fixture(autouse=True)
-def _clean_trust():
+def _clean_trust(monkeypatch):
+    monkeypatch.setenv("MEMORY_SESSION_TYPE", "build")  # repos differ in their default
     trust._state.clear()
     patterns._sent.clear()
     yield
@@ -101,6 +102,27 @@ def test_gotchas_are_marked_only_while_the_trust_window_is_open():
     ]  # patterns are not marked
 
 
+def test_structured_gotcha_dicts_are_marked_and_keep_their_fields():
+    trust.taint()
+    item = {"gotcha": "g", "trigger": "t", "solution": "s"}
+    out = graphiti_helpers.gate_for_graphiti({"gotchas_discovered": [item]}, "build")
+    got = out["gotchas_discovered"][0]
+    assert got["gotcha"] == "g" + trust.UNVERIFIED
+    assert (got["trigger"], got["solution"]) == ("t", "s")
+
+
+def test_a_repeated_gotcha_is_not_written_twice_while_tainted(monkeypatch, tmp_path):
+    trust.taint()
+    fake = FakeGraphiti()
+    monkeypatch.setattr(patterns, "is_graphiti_memory_enabled", lambda: True)
+    monkeypatch.setattr(patterns, "get_graphiti_memory", lambda *_a, **_k: fake)
+    monkeypatch.setattr(patterns, "run_async", asyncio.run)
+    patterns.append_gotcha(tmp_path, "same")
+    patterns.append_gotcha(tmp_path, "same")
+    assert len(fake.gotchas) == 1
+    assert (tmp_path / "memory" / "gotchas.md").read_text().count("- same") == 1
+
+
 def _save(monkeypatch, fake):
     monkeypatch.setattr(graphiti_helpers, "get_graphiti_memory", lambda *_a, **_k: fake)
     return asyncio.run(graphiti_helpers.save_to_graphiti_async(None, 1, _insights(30)))
@@ -159,7 +181,8 @@ def test_memory_manager_gates_both_graphiti_saves(monkeypatch, tmp_path):
     fake = FakeGraphiti()
     stub = types.ModuleType("integrations.graphiti.memory")
     stub.GraphitiMemory = lambda *_a, **_k: fake
-    monkeypatch.setitem(sys.modules, "integrations.graphiti.memory", stub)
+    for name in ("integrations.graphiti.memory", "graphiti_memory"):  # repos differ
+        monkeypatch.setitem(sys.modules, name, stub)
     monkeypatch.setattr(memory_manager, "is_graphiti_enabled", lambda: True)
     rich = {
         "file_insights": [{"f": i} for i in range(40)],
