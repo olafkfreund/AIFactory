@@ -29,7 +29,16 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     spec = tmp_path / ".aifactory" / "specs" / "010-x"
     spec.mkdir(parents=True)
     (spec / "task_metadata.json").write_text(
-        json.dumps({"transcriptUris": ["s3://b/k.jsonl", "evil`\n[x](y)", 3]})
+        json.dumps(
+            {
+                "transcriptUris": [
+                    "s3://b/k.jsonl",
+                    "s3://b/proj:s/k.jsonl",
+                    "evil`\n[x](y)",
+                    3,
+                ]
+            }
+        )
     )
     monkeypatch.setattr(tr, "load_projects", lambda: {"p1": {"path": str(tmp_path)}})
     monkeypatch.setattr(tr, "org_id_for_path", lambda _p: "org-1")
@@ -67,7 +76,10 @@ def _call(
 def test_happy_path_filters_uris_and_pins_the_org(env: dict[str, Any]) -> None:
     assert _call()["url"] == "u/9"
     assert env["pinned"] == [("org-1", True)]
-    assert env["open"][0]["transcript_uris"] == ["s3://b/k.jsonl"]
+    assert env["open"][0]["transcript_uris"] == [
+        "s3://b/k.jsonl",
+        "s3://b/proj:s/k.jsonl",
+    ]
     assert env["open"][0]["project_id"] == "p1"
 
 

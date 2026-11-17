@@ -894,6 +894,27 @@ otel:
   headersSecretName: ""
 
 # ---------------------------------------------------------------------------
+# In-house model gateway (Factory#1959). Default off: empty ``url`` renders no
+# env. When set, the build Job's OpenAI-compatible plane goes through it and the
+# direct OPENAI_COMPATIBLE_* / OLLAMA keys are not forwarded. The token comes from
+# a Secret with key AIFACTORY_MODEL_GATEWAY_TOKEN (never a plain value here).
+modelGateway:
+  url: ""
+  tokenSecretName: ""
+
+# ---------------------------------------------------------------------------
+# SIEM push of auth.failure events (#2079). Default off: empty ``url`` renders
+# no env. Feeds the OpenObserve ``audit_chain`` stream that factory-gitops
+# security-alerts reads (action = 'auth.failure'). Use an ingest-only OpenObserve
+# user; the Secret needs keys AIFACTORY_AUDIT_SIEM_USER and
+# AIFACTORY_AUDIT_SIEM_PASSWORD. Without it the push stays inert.
+auditSiem:
+  url: ""  # e.g. http://observe.factory.svc.cluster.local:5080
+  org: "default"
+  stream: "audit_chain"
+  credentialsSecretName: ""
+
+# ---------------------------------------------------------------------------
 # Signed audit-chain anchor (Epic #35 #43).
 #
 # The v1.0 audit chain (Epic #26 P5) hashes every row to its

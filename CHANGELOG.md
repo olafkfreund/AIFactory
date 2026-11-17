@@ -1,3 +1,21 @@
+## Unreleased
+
+### Security
+
+- Auth failures (rejected token, failed login, bad refresh token, rejected
+  WebSocket token) can be pushed to the OpenObserve `audit_chain` stream as
+  `action = "auth.failure"` so factory-gitops `security-alerts` can count them.
+  Off by default (`AIFACTORY_AUDIT_SIEM_*`, chart `auditSiem`); no token, email
+  or path is sent. Failed logins and bad refresh tokens now also write the
+  chained audit row (#2079).
+
+### Changed
+
+- The auto-PR `Authored by agent` / `Originator` lines follow
+  `AIFACTORY_AGENT_COMMIT_TRAILERS` like the commit trailers (#2062). Documented
+  `AIFACTORY_MODEL_GATEWAY_URL` / `_TOKEN` in the environment reference,
+  `.env.example` and chart (`modelGateway`, default off) (#2079).
+
 ## 3.11.1 - 2026-11-16
 
 Review fixes merged to `dev` since 3.11.0.
