@@ -19,11 +19,13 @@ and the factory-gitops image bump drops any trailer.
 
 - A task built from a trusted PFactory plan records the plan's `correlation_key`
   in `requirements.json`.
-- With `AIFACTORY_AGENT_COMMIT_TRAILERS` on, every commit a factory task makes
-  (build, safety-net, wave, squash-merge body) carries one `Plan-Slug: <key>`
+- With `AIFACTORY_AGENT_COMMIT_TRAILERS` on, every commit the framework creates for a task
+  (the paths already using commit_trailers: safety-net, wave, worktree merge,
+  squash-merge body). Commits an agent makes itself via `git commit` in the coder
+  prompt are out of scope carries one `Plan-Slug: <key>`
   trailer. No plan, no trailer.
-- The AIFactory deploy workflow copies the `Plan-Slug` trailer of the commit being
-  deployed onto the factory-gitops image-SHA bump commit.
+- The AIFactory deploy workflow copies the `Plan-Slug` trailer of the resolved deployed ref
+  (`needs.changes.outputs.ref`, not necessarily `github.sha`) onto the factory-gitops image-SHA bump commit.
 
 ## Affected users and systems
 
@@ -34,7 +36,9 @@ trailer, no file change).
 
 ## Constraints
 
-- Same opt-in flag as the existing trailers; off means byte-identical commits.
+- Same opt-in flag as the existing trailers; off means AIFactory-created commits
+  are byte-identical. The deploy copy is a pure copy of a trailer already present,
+  so it needs no flag.
 - Value is printable, single line (forged-trailer safe), never duplicated.
 - No change to the live cluster.
 
