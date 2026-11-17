@@ -31,6 +31,7 @@ from server.utils.subprocess_env import dotenv_key_blocked
 from ..config import get_settings
 from ..websockets.events import broadcast_event
 from . import project_settings_store
+from .build_backend import inpod_agent_refusal
 
 
 class PRReviewPhase(str, Enum):
@@ -236,6 +237,10 @@ class PRReviewService:
         if not runner_script.exists():
             logger.error(f"GitHub runner not found at {runner_script}")
             await self._emit_error(project_id, pr_number, "GitHub runner not found")
+            return False
+        if problem := inpod_agent_refusal():  # #1932: before any env or log setup
+            logger.error("PR review refused: %s", sanitize_log(problem))
+            await self._emit_error(project_id, pr_number, problem)
             return False
 
         # Build command

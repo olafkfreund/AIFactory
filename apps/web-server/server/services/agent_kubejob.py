@@ -28,6 +28,7 @@ from .build_backend import (
     _TERMINAL_STATES,
     BuildBackendUnavailableError,
     backend_config_error,
+    inpod_agent_refusal,
     kubejob_enabled,
     orphaned_worktree_registrations,
 )
@@ -583,6 +584,8 @@ class KubejobMixin:
                 mode=mode,
             )
             return None
+        if problem := inpod_agent_refusal():
+            raise BuildBackendUnavailableError(f"Builds refused: {problem}")
         # #1705: claim before spawn so a crash between them leaves this pod's row;
         # a claim error is a spawn failure and callers free the slot.
         if getattr(self, "_store_enabled", False):

@@ -14,6 +14,7 @@ import shutil
 from pathlib import Path
 
 from . import project_settings_store
+from .build_backend import inpod_agent_refusal
 from .insights_providers.base import scrub_insights_outbound
 
 logger = logging.getLogger(__name__)
@@ -182,6 +183,10 @@ async def generate_clarification_questions(
         logger.error(
             "[ClarificationService] Outbound scrub failed; not sending", exc_info=True
         )
+        return safe_default
+
+    if problem := inpod_agent_refusal():  # #1932: never block the user, skip instead
+        logger.error("[ClarificationService] %s", problem)
         return safe_default
 
     # Resolve Claude CLI path

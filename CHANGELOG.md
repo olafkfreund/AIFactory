@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Security
+
+- `AIFACTORY_FORBID_INPOD_AGENTS=true` refuses in-pod agent spawns for spec creation, builds, PR review and clarification, unless `AIFACTORY_LOCAL_DEV=1`. Off by default (#1932).
+
 ## 3.12.0 - 2026-11-17
 
 Merged to `dev` since 3.11.1.

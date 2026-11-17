@@ -431,6 +431,28 @@ _GATED_SUBPROCESS_REFUSAL = (
 )
 
 
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def inpod_agent_refusal() -> str | None:
+    """Refusal sentence for an in-pod agent spawn, or None when it is allowed (#1932).
+
+    Off unless ``AIFACTORY_FORBID_INPOD_AGENTS`` is truthy; ``AIFACTORY_LOCAL_DEV``
+    is the explicit local-dev escape. Call it only on the subprocess path.
+    """
+    if (
+        os.environ.get("AIFACTORY_FORBID_INPOD_AGENTS", "").strip().lower()
+        not in _TRUTHY
+    ):
+        return None
+    if os.environ.get("AIFACTORY_LOCAL_DEV", "").strip().lower() in _TRUTHY:
+        return None
+    return (
+        "In-pod agents are disabled (AIFACTORY_FORBID_INPOD_AGENTS): agent sessions "
+        "run only as Jobs. Set AIFACTORY_LOCAL_DEV=1 for local development."
+    )
+
+
 def _raw_backend() -> str:
     return (os.environ.get(_ENV_BACKEND) or "").strip().lower() or _DEFAULT_BACKEND
 
@@ -493,6 +515,8 @@ def backend_config_error(store_enabled: bool) -> str | None:
 def log_backend_config(logger: logging.Logger, store_enabled: bool) -> None:
     """Startup log of an unrunnable backend config, or unisolated in-cluster agents."""
     problem = backend_config_error(store_enabled)
+    if forbid := inpod_agent_refusal():
+        logger.warning("[build_backend] %s", forbid)
     if problem:
         logger.error("[build_backend] agent launches are refused: %s", problem)
     elif _raw_backend() == BACKEND_SUBPROCESS and os.environ.get(
