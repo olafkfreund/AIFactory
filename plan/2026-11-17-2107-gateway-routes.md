@@ -33,13 +33,14 @@ neighbouring tests run (`pytest tests/model_gateway`, `pytest apps/backend/test_
    `load_config` and its docstring. In `do_POST`, after the length check and body
    read, add `_resolve_route(config.routes_path, body) -> (body, cls|None)`: with no
    path, or an unreadable or invalid routes file, or a body that is not a JSON
-   object, or `model` not a string key of the routes map with a non-empty string
-   value, return the original bytes and None; else return `json.dumps` of the body
+   object, or `model` not one of `local|cheap|balanced|frontier` AND a key of the routes map
+   with a non-empty string value (a concrete model name is never rewritten, even if
+   a routes file lists it), return the original bytes and None; else return `json.dumps` of the body
    with `model` replaced, and the class. `_reply` gains optional `extra` headers; the
    success and the upstream-`HTTPError` replies add `X-Model-Route` when a class
    was resolved (not 502 gateway errors). Tests per spec Verification (resolved +
    header, error status carries header, concrete model byte-identical and no header,
-   class without entry, missing/invalid file, non-JSON/non-object body, no path,
+   class without entry, a concrete model that is also a routes-file key (unchanged), missing/invalid file, non-JSON/non-object body, no path,
    file edited between requests).
    → `pytest tests/model_gateway -q` and `ruff check apps/model-gateway tests/model_gateway`.
    Traps: stdlib only; AIFactory ruff and `standards/ruff.toml` disagree on "as"
@@ -53,22 +54,29 @@ neighbouring tests run (`pytest tests/model_gateway`, `pytest apps/backend/test_
    and `get_phase_model_betas` right after the `pinnedModel` block (betas via
    `get_model_betas`); in `get_provider_extra_kwargs` for `openai-compatible`, a
    stripped class name with the feature on returns the gateway URL/token before the
-   saved-endpoint lookups; `apps/web-server/server/services/agent_spec_creation.py:150`
-   lazily imports `phase_route_model` and uses its result for `spec` as `--model`
-   when set. New `apps/backend/test_phase_routes.py` per spec Verification (reuse
+   saved-endpoint lookups; `apps/web-server/server/services/agent_spec_creation.py:150`:
+   extract a module-level `_spec_phase_model(metadata)` (route model via a lazy import
+   of `phase_route_model`, else the existing auto-profile `phaseModels.spec`), used
+   where `spec_phase_model` is set today; test it in
+   `tests/test_agent_spec_creation_mixin.py` (route wins; flag off, pin and fallback
+   give the old result; the source still passes it as `--model`). New `apps/backend/test_phase_routes.py` per spec Verification (reuse
    the helpers of `test_routing_policy.py`, including its autouse env scrub; also
    clear the new env vars).
    → `pytest apps/backend/test_phase_routes.py apps/backend/test_routing_policy.py -q`
-   (and the web-server spec-creation test if one exists), `ruff check` on touched files.
+   and `pytest tests/test_agent_spec_creation_mixin.py -q`, `ruff check` on touched files.
    Traps: `phaseModels` behaviour must stay byte-identical when the route is None;
    backend modules are imported lazily from the web-server (see
    `build_backend.py:662`); mypy ratchet: use `importlib` only where the neighbours do.
-3. `apps/web-server/server/services/build_backend.py` (codex): add
-   `"AIFACTORY_PHASE_ROUTES"` to `_PASSTHROUGH_BUILD_ENV`, and in `build_job_env`'s
+3. `apps/web-server/server/services/build_backend.py` (codex): forward
+   `AIFACTORY_PHASE_ROUTES` to the Job only when `LITELLM_GATEWAY_URL` is unset in the
+   control plane (so the Job cannot re-enable what the control plane disabled; not added
+   to the plain passthrough tuple), and in `build_job_env`'s
    `if gateway_url:` block also `env["AIFACTORY_MODEL_GATEWAY_URL"] = gateway_url`.
    Add tests to `tests/test_build_backend_kubejob.py`: URL set -> Job env has
    `AIFACTORY_MODEL_GATEWAY_URL`; unset -> absent; `AIFACTORY_PHASE_ROUTES` forwarded
-   when set and absent when not (clear it in the autouse fixture).
+   when set and absent when not or when `LITELLM_GATEWAY_URL` is set (clear both in
+   the autouse fixture), and `phase_route_model` under the env `build_job_env`
+   returns is None when both gateway URLs were set.
    → `pytest tests/test_build_backend_kubejob.py -q`; ruff on both files.
    Traps: do not forward the token under a new name; direct keys stay swapped.
 4. Docs (lead): rows for `GATEWAY_ROUTES_PATH` (format, hot reload, header) and
@@ -77,11 +85,12 @@ neighbouring tests run (`pytest tests/model_gateway`, `pytest apps/backend/test_
    unset; registry `deny` mode note) in `docs/docs/environment-reference.md`; commented
    lines in `apps/backend/.env.example`; a CHANGELOG entry. Gitops follow-up
    (mount the routes ConfigMap) named in the PR, not built.
-   → docs build/lint if the repo has one (`grep docs` in CI); markdown has no ratchet otherwise.
+   → `python -m mkdocs build -f mkdocs.yml -d /tmp/techdocs-site` (as techdocs.yml:180), if mkdocs is installed.
 
 ## Tests
 
-`pytest tests/model_gateway tests/test_build_backend_kubejob.py apps/backend/test_phase_routes.py apps/backend/test_routing_policy.py -q` passes; repo lint per CI
+`pytest tests/model_gateway tests/test_build_backend_kubejob.py tests/test_agent_spec_creation_mixin.py -q` and
+`pytest -o asyncio_mode=auto apps/backend/test_phase_routes.py apps/backend/test_routing_policy.py -q` pass (as CI runs suites outside `tests/`, ci.yml:206); repo lint per CI
 (`ruff check`, `ruff format --check`, mypy ratchet as CI runs it); the generated
 autonomy matrix is not touched, regenerate (never hand-merge) if a rebase conflicts.
 
