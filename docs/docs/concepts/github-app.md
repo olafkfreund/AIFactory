@@ -24,17 +24,30 @@ repository root. Add `--org ORG` for an organization-owned App. Add
 GitHub; pass `--name NAME` if "AIFactory" is taken. `manifest` and `convert`
 need only the Python standard library, and neither touches the cluster.
 
-Open `app.html` and create the App. Copy the `code` value from the redirect URL
-within one hour, then run:
+Open `app.html` and create the App. GitHub then redirects to
+`http://localhost/?code=...`. That page does not load, which is expected: copy
+the `code` value from the browser's address bar. The code works once and expires
+after one hour. Then run:
 
 ```bash
 python scripts/github_app_setup.py convert CODE --out secret.yaml
 ```
 
-The command prints the App ID and install URL. Install the App on the repo,
-then read the installation ID from the number at the end of its settings URL.
-The operator applies the Secret with `kubectl apply -f secret.yaml`, then
-deletes the local file. Keep the App's private key secure.
+The command writes the private key into a Secret manifest (file mode 0600) and
+prints the App ID, the App slug and the install URL.
+
+The Secret is named `aifactory-github-app` with the key `private-key`. That
+matches the Helm values below, so with Helm you can `kubectl apply -f
+secret.yaml`. It does not match a deployment that reads the three
+`AIFACTORY_GITHUB_APP_*` variables from a shared Secret, as the gitops
+deployment does. For that, extract the raw PEM (the 4-space-indented lines):
+
+```bash
+(umask 077; sed -n 's/^    //p' secret.yaml > private-key.pem)
+```
+
+`private-key.pem` is as sensitive as the Secret. Delete both files once the key
+is stored, and keep one copy in a password manager.
 
 ### Register manually
 
@@ -52,8 +65,14 @@ Do not grant Administration, Secrets, Organization or Members permissions. Gener
 
 ## 2. Install it
 
-Install the App on every repo AIFactory opens PRs against. A repo without the
-App fails with the existing push or `pr create` warning.
+Install the App on every repo AIFactory opens PRs against. Choose "Only select
+repositories" and pick the repos your AIFactory projects build on. A project
+whose repo is not covered cannot push: it fails with the existing push or
+`pr create` warning.
+
+The installation ID is the number at the end of the installation settings URL
+(`https://github.com/settings/installations/<ID>`). You can also read it from
+`GET /app/installations`, called with an App JWT.
 
 ## 3. Configure AIFactory
 
@@ -71,6 +90,20 @@ githubApp:
 Outside Helm, set `AIFACTORY_GITHUB_APP_ID`, `AIFACTORY_GITHUB_APP_INSTALLATION_ID`
 and `AIFACTORY_GITHUB_APP_PRIVATE_KEY`. All three or none; a partial set stops
 the server at boot.
+
+When the variables come from a shared Kubernetes Secret, load the three values
+without printing them, from the PEM file made above:
+
+```bash
+jq -n --arg id "$APP_ID" --arg inst "$INSTALLATION_ID" --rawfile pem private-key.pem \
+  '{stringData:{AIFACTORY_GITHUB_APP_ID:$id,
+                AIFACTORY_GITHUB_APP_INSTALLATION_ID:$inst,
+                AIFACTORY_GITHUB_APP_PRIVATE_KEY:$pem}}' |
+  kubectl -n NAMESPACE patch secret SECRET_NAME --type merge --patch-file /dev/stdin
+```
+
+Also put the same three values into your declarative secret source (agenix,
+sealed or external secrets), or the next rebuild drops them.
 
 At boot the server mints an installation token, writes it to `GH_TOKEN` and
 `GITHUB_TOKEN`, removes the private key from its environment and refreshes the
@@ -94,55 +127,86 @@ render with the MCP GitHub PAT:
 
 The factory-gitops Deployment carries the three App variables as optional
 secret references, so they stay unset until the keys exist. The server refuses
-to start with a partial App set, and with any PAT still present, so do this in
-one window (full steps: `docs/aifactory-github-app-cutover.md` in factory-gitops):
+to start with a partial App set, with any PAT still present (`GITHUB_TOKEN`,
+`GH_TOKEN`, `GITHUB_PERSONAL_ACCESS_TOKEN`, the `github.tokenEnv` alias) and
+with a token in the `gh` `hosts.yml`. Do this in one window (full steps:
+`docs/aifactory-github-app-cutover.md` in factory-gitops):
 
-1. Create the App from the manifest and install it on the Factory repos only.
-2. Add all three keys, `AIFACTORY_GITHUB_APP_ID`,
-   `AIFACTORY_GITHUB_APP_INSTALLATION_ID` and `AIFACTORY_GITHUB_APP_PRIVATE_KEY`,
-   to `factory-secrets`, and merge the change that removes the Deployment's
+1. Create the App from the manifest and install it on the repos your projects
+   build on.
+2. Add all three keys to `factory-secrets` (and to your declarative secret
+   source), then immediately merge the change that removes the Deployment's
    `GITHUB_TOKEN` entry. A restart between the two steps would not boot.
 3. Check that no other PAT source is left (see "Remove old PATs"), that
    `AIFACTORY_AGENT_GITHUB_TOKEN` is unset (it would override the App token for
    children), and that `apps/backend/.env` holds no GitHub token.
-4. Revoke the admin, `delete_repo` and org scopes on the old PAT.
+4. Verify: the pod boots and its logs are clean, no PAT variable is set in the
+   pod, and one small task opens a PR authored by `app/<slug>`.
 5. Set `AIFACTORY_AGENT_TOKEN_ADMIN_POLICY=refuse`.
+6. Reduce the old classic PAT's scopes (other services may still use it) to
+   `repo`, `workflow`, `copilot` and `read:org`, with an expiry.
+
+The server mints installation tokens (1 hour, refreshed every 30 minutes) and
+exports `GH_TOKEN` and `GITHUB_TOKEN` inside its own process, so the `gh`
+git-credential helper keeps working with no token in the pod's environment.
 
 ## Copilot review
 
-AIFactory's engine reviews PRs by default. Copilot gates a PR only when
-`AIFACTORY_PR_REVIEWER` is `copilot` or `copilot-ruleset`. A missing Copilot
-review times out after 20 minutes and stops for a human.
+AIFactory's own review engine reviews PRs by default (`AIFACTORY_PR_REVIEWER`
+unset or `aifactory`). Copilot review is opt-in. Copilot gates a PR only when the
+reviewer is `copilot` or `copilot-ruleset`. A missing Copilot review times out
+after 20 minutes and stops for a human.
+
+What was observed: on one deployment, `probe-copilot` run against a test PR
+with an App installation token returned `HTTP 201; copilot_listed: False`. The
+request was accepted, but GitHub did not list Copilot as a reviewer, so Copilot
+was not requested through the App token there. A repository without Copilot
+entitlement or a PR that Copilot already reviewed give the same answer, so
+treat a negative result as strong evidence for your setup, not as proof. The
+probe sends a real review request: run it only on a test PR, and before any
+Copilot ruleset is active on that repository, or the ruleset makes it pass for
+the wrong reason.
 
 With `copilot`, the server asks GitHub to add Copilot as a reviewer and checks
 that the answer lists Copilot. If the request fails or Copilot is not listed,
-the server logs one warning and keeps waiting. The warning does not mean the
-App token is at fault. A PAT deployment, a repository without Copilot and a PR
-that Copilot already reviewed give the same answer.
+the server logs one warning and keeps waiting.
 
-With `copilot-ruleset`, Copilot's review gates the merge as before, but the
-server sends no request. A repository ruleset must request it: in the
-repository settings, add a branch ruleset with "Automatically request Copilot
-code review". The ruleset must exist on every repository that uses this value.
-Without it no review arrives, and the PR stops for a human after 20 minutes.
-To have fix cycles reviewed again, enable the ruleset option for new pushes.
-This is a GitHub option and was not tested here.
+With `copilot-ruleset`, the server sends no request and a repository ruleset
+must. This is the way to use Copilot with an App token. To opt in a project:
 
-To check whether the App can request Copilot review, run this probe on a test
-PR opened by the App. Run it before the ruleset is enabled on that repository.
-With the ruleset on, Copilot is already listed and the probe passes for the
-wrong reason. Use the App's PEM private key file. The probe needs
-`python-jose` and `httpx` (the backend virtualenv has both) and never prints
-the token or key; it exits 0 only when GitHub lists Copilot as a reviewer:
+1. In Project settings, set the project's reviewer to `copilot-ruleset`. The
+   instance-wide default is `AIFACTORY_PR_REVIEWER`; leave it unset to keep
+   `aifactory` for every other project.
+2. On that repository, create the ruleset (or set an existing one to
+   `enforcement=active`). The rule type is `copilot_code_review`; the values
+   below review on open, not on every push, and skip drafts:
+
+   ```bash
+   gh api -X POST repos/OWNER/REPO/rulesets --input - <<'JSON'
+   {"name": "Copilot code review", "target": "branch", "enforcement": "active",
+    "conditions": {"ref_name": {"include": ["~ALL"], "exclude": []}},
+    "rules": [{"type": "copilot_code_review",
+               "parameters": {"review_on_push": false,
+                              "review_draft_pull_requests": false}}]}
+   JSON
+   # enable an existing ruleset:
+   gh api -X PUT repos/OWNER/REPO/rulesets/ID -f enforcement=active
+   ```
+
+A repository without the ruleset never gets a Copilot review, so a project on
+`copilot-ruleset` there stops for a human after 20 minutes. Keep such projects
+on `aifactory`. Set `review_on_push` to `true` to have fix cycles reviewed
+again; that option was not tested here.
+
+To run the probe:
 
 ```bash
 python scripts/github_app_setup.py probe-copilot --repo OWNER/NAME --pr N --app-id ID --installation-id ID --key-file private-key.pem
 ```
 
-Record the result on #1701. A negative result does not by itself prove that
-installation tokens are unsupported. A repository without Copilot or an
-already-reviewed PR give the same answer. Read the printed status and message.
-If the request is not confirmed, use `copilot-ruleset`.
+It needs `python-jose` and `httpx` (the backend virtualenv has both), never
+prints the token or key, and exits 0 only when GitHub lists Copilot as a
+reviewer. Record the result on #1701.
 
 ## Clone credentials
 
