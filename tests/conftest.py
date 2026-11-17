@@ -1337,3 +1337,16 @@ except ImportError:
 def _git_baseline_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Isolate git metadata baselines (#1746) from the developer's home dir."""
     monkeypatch.setenv("AIFACTORY_GIT_BASELINE_DIR", str(tmp_path / "git-baselines"))
+
+
+@pytest.fixture(autouse=True)
+def _reset_memory_trust_window():
+    """The untrusted-content window is process state; never leak it across tests."""
+    try:
+        from memory import trust
+    except ImportError:
+        yield
+        return
+    trust._state.clear()
+    yield
+    trust._state.clear()

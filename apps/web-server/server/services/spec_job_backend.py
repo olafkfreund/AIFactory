@@ -217,6 +217,7 @@ class SpecJobProcess:
         self.stderr = asyncio.StreamReader()
         self.stderr.feed_eof()
         self.returncode: int | None = None
+        self.truncated = False  # a log line was cut or dropped: stdout is incomplete
         self._stop = asyncio.Event()
         self._cancel = cancel or threading.Event()
         self._deadline = deadline
@@ -228,7 +229,10 @@ class SpecJobProcess:
         # shortcut: reads StreamReader._buffer; no public unread size. Drop
         # lines while a consumer lags rather than grow without bound.
         if len(self.stdout._buffer) > _LOG_BUFFER_MAX:  # type: ignore[attr-defined]
+            self.truncated = True
             return
+        if len(line) > _LOG_LINE_MAX:
+            self.truncated = True
         self.stdout.feed_data((line[:_LOG_LINE_MAX] + "\n").encode())
 
     async def _delete_job(self, batch: Any) -> None:

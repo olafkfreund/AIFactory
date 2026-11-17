@@ -492,6 +492,7 @@ def main() -> None:
 
     transcript.start(spec_dir)
     atexit.register(_wf.maybe_push_transcripts, spec_dir.name)
+    _wf.install_sigterm_upload(spec_dir.name)  # #2059: SIGTERM skips atexit
 
     if args.qa:
         handle_qa_command(
