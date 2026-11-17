@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2116
 spec: spec/2026-11-17-2116-correction-job.md
 coders:
