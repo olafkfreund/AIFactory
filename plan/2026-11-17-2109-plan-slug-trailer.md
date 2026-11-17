@@ -24,20 +24,23 @@ resolved ref's HEAD onto the gitops bump. Plan-less tasks get nothing.
    `fullmatch(PLAN_SLUG_RE)` (keep other fields' `isprintable` rule).
    → `pytest tests/test_commit_trailers.py`
    Traps: use plain names in imports (ruff vs standards/ruff.toml).
-2. `apps/web-server/server/routes/execution.py` ~L1479: after the numeric-guard
-   block, separate try: if `corr` is a str/int and `fullmatch(PLAN_SLUG_RE)`, set
-   `reqs["plan_slug"]`. Existing `issue_number` logic unchanged.
-   → `pytest tests/test_trusted_plan.py` plus new test
+2. `core/commit_trailers.py`: add `stamp_plan_slug(spec_dir, corr) -> bool`
+   (reads requirements.json, sets `plan_slug` iff `str(corr)` fullmatches
+   `PLAN_SLUG_RE`, never raises). `apps/web-server/server/routes/execution.py`
+   ~L1479: call it after the numeric-guard block, outside that guard; the
+   `issue_number` logic is unchanged. Helper keeps the stamp unit-testable
+   without the HTTP route.
+   → `pytest tests/test_commit_trailers.py tests/test_trusted_plan.py`
 3. `.github/workflows/deploy.yml`: build-push "Compute tags" step also emits
    `plan_slug` output (HEAD message, `git interpret-trailers --parse`, first
    `Plan-Slug:`, regex-checked, empty if none); job `outputs.plan_slug`; the gitops
    commit step takes it via `env: PLAN_SLUG` and appends `Plan-Slug: $PLAN_SLUG`
-   to BODY when non-empty. No `${{ }}` inside the script body for it.
-   → `python -c yaml.safe_load` and a local run of the snippet on a sample commit
-4. `tests/test_commit_trailers.py` and `tests/test_trusted_plan.py`: well-formed,
+   to BODY after a BLANK line (`$'\n\n'`) when non-empty, so it parses as a trailer. No `${{ }}` inside the script body for it.
+   → `python -c yaml.safe_load` and a local run of the snippet on a sample commit, then `git interpret-trailers --parse` on the complete resulting message
+4. `tests/test_commit_trailers.py`: well-formed,
    absent when no plan, bad value omitted, flag off, not duplicated in
-   `commit_message_args`/`trailer_block`; ingest stamps `18` and `owner/Repo#18`,
-   rejects `a b`, and does not stamp when plan has no correlation_key.
+   `commit_message_args`/`trailer_block`; `stamp_plan_slug` stamps `18` and `owner/Repo#18`, rejects `a b`/None,
+   and leaves other requirements keys intact.
 
 ## Tests
 
