@@ -397,10 +397,13 @@ def maybe_push_transcripts(spec_id: str) -> int:
     return count
 
 
-def transcript_uris(job_id: str) -> list[str]:
+def transcript_uris(job_id: str, since: str | None = None) -> list[str]:
     """Sorted ``s3://`` URIs of a task's stored transcripts, ``[]`` on any error.
 
     ``job_id`` is the task id (``<project>:<spec>``) that the build Job got as ``JOB_ID``.
+    ``since`` is a UTC stamp (``%Y%m%dT%H%M%S_%fZ``): only transcripts whose file name
+    sorts at or after it are kept, so an earlier run's objects are not linked (#2059).
+    A heuristic across clocks, not proof.
     """
     if not os.environ.get("S3_ENDPOINT", "").strip():
         return []
@@ -413,7 +416,7 @@ def transcript_uris(job_id: str) -> list[str]:
         keys = sorted(
             k
             for k in store.list_artifacts(ref, role_scoped=True)
-            if k.startswith(prefix)
+            if k.startswith(prefix) and (not since or k[len(prefix) :] >= since)
         )
         return [f"s3://{store.config.bucket}/{k}" for k in keys]
     except Exception as exc:  # noqa: BLE001 - must never break the event

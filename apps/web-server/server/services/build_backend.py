@@ -1416,6 +1416,10 @@ class KubeJobBuildBackend:
         from .trusted_contract_store import stamp_spawn  # noqa: PLC0415
 
         await stamp_spawn(spec_dir_for(project_path, spec_id), "kubejob")
+        from .completion import mark_transcript_dispatch  # noqa: PLC0415
+
+        # #2059: completion links only transcripts newer than this dispatch.
+        mark_transcript_dispatch(spec_dir_for(project_path, spec_id))
 
         extra_env = await asyncio.to_thread(build_job_env, oauth_token, project_path)
         from . import project_settings_store  # noqa: PLC0415

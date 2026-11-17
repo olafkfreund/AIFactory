@@ -100,3 +100,15 @@ def test_uris_filtered_sorted_and_errors_swallowed(monkeypatch):
     assert wf.transcript_uris("001-x") == []
     monkeypatch.delenv("S3_ENDPOINT")
     assert wf.transcript_uris("001-x") == []
+
+
+def test_since_drops_earlier_runs_at_the_cutoff(monkeypatch):
+    monkeypatch.setenv("S3_ENDPOINT", "http://minio")
+    base = "aifactory/_/p:s/evidence/transcripts/"
+    for stamp in ("20261117T100000_000000Z", "20261117T100001_000000Z"):
+        _FakeStore.blobs[f"{base}{stamp}-0000001.jsonl"] = (b"", None)
+    assert len(wf.transcript_uris("p:s")) == 2
+    # Names equal to or after the cutoff stay; the one just before goes.
+    kept = wf.transcript_uris("p:s", "20261117T100001_000000Z")
+    assert [u.rsplit("/", 1)[-1][:23] for u in kept] == ["20261117T100001_000000Z"]
+    assert wf.transcript_uris("p:s", "20261117T100002_000000Z") == []
