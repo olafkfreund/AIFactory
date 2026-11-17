@@ -48,6 +48,7 @@ Merged to `dev` since 3.12.0.
 
 ### Security
 
+- `AIFACTORY_CORRECTION_BACKEND=kubejob` runs the QA fixer of `POST /tasks/{id}/apply-correction` as a Kubernetes Job, so the TFactory fix loop works under `AIFACTORY_FORBID_INPOD_AGENTS`. The fix returns as a validated, size-capped file set applied all-or-nothing with a base-hash conflict check; no GitHub credential in the Job, scoped S3 credentials required, no in-pod fallback. Off by default; unset keeps the 409 refusal (#2116).
 - `AIFACTORY_REVIEW_BACKEND=kubejob` runs PR review and task clarification sessions as Kubernetes Jobs; only `review_{N}.json` or the capped clarification text returns to the control plane. Off by default (#1932, slice A4).
 - `AIFACTORY_FORBID_INPOD_AGENTS=true` refuses in-pod agent spawns for spec creation, builds, PR review and clarification, unless `AIFACTORY_LOCAL_DEV=1`. Off by default (#1932).
 

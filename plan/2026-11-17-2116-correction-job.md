@@ -30,3 +30,8 @@ Commands above plus the full touched test directories; ruff check and format; CI
 ## Rollback
 
 Revert the PR. Flag off by default, so nothing changes in production until the owner sets it.
+
+## Deviations (recorded at implementation)
+- Step 1: Codex used two-argument signatures `maybe_push_correction(project_dir, base)` and `fetch_correction(project_path, fetch_id, cancel=None)`; the unused `spec_dir` argument and the plan return are dropped (no plan is returned, per the spec revision). `noqa: PLR0912/PLR0915` on the two functions (validate-then-apply is kept flat).
+- Tests live in root `tests/` (backend) and `apps/web-server/tests/`, as in the plan; the web-server dispatch test patches `core.workspace_fetch.fetch_correction` and the artifact store rather than running a cluster.
+- Mutation check run by script (route flag, `.git` path rule, size cap, scoped-credential check, fixer status): all five mutants killed after adding `test_env_refuses_without_any_scoped_key`.

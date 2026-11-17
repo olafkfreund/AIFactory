@@ -20,6 +20,10 @@ from server.background import spawn
 from server.config import get_settings
 from server.error_ref import client_error
 from server.project_registry import load_projects, resolve_project_id
+from server.services.agent_job_backend import (
+    correction_kubejob_enabled,
+    dispatch_correction_fixer,
+)
 from server.services.audit_service import (
     ACTION_TASK_APPLY_CORRECTION,
     ACTION_TASK_CREATE,
@@ -1590,17 +1594,28 @@ async def apply_task_correction(
     *_, spec_dir = _resolve_task(task_id)
 
     # #2095: the QA fixer is an agent session; refuse before writing anything.
-    if request.confirm and (problem := inpod_agent_refusal()):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=problem)
+    # #2116: AIFACTORY_CORRECTION_BACKEND=kubejob runs it as a Job instead.
+    use_job = False
+    if request.confirm:
+        try:
+            use_job = correction_kubejob_enabled()
+        except BuildBackendUnavailableError as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc)) from None
+        if not use_job and (problem := inpod_agent_refusal()):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=problem)
 
-    result = await apply_correction(
-        spec_dir,
-        request.fix_request_md,
-        confirm=request.confirm,
-        triage=request.triage,
-        manifest_hash=request.manifest_hash,
-        correlation_key=request.correlation_key,
-    )
+    try:
+        result = await apply_correction(
+            spec_dir,
+            request.fix_request_md,
+            confirm=request.confirm,
+            fixer_fn=dispatch_correction_fixer if use_job else None,
+            triage=request.triage,
+            manifest_hash=request.manifest_hash,
+            correlation_key=request.correlation_key,
+        )
+    except BuildBackendUnavailableError as exc:  # never falls back to in-pod
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc)) from None
     # A confirm=False preview and a rejected triage write nothing: not an action.
     if result.get("success") and result.get("confirm"):
         # The QA Fixer can delete the spec-dir receipt; this copy holds the merge.
