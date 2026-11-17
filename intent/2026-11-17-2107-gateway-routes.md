@@ -28,7 +28,17 @@ Factory#3801 added `execution.route` / `execution.phase_routes` (class names
   turns it on and a gateway is configured, uses `openai-compatible:<class>` as the
   phase model so the gateway resolves it. Otherwise `phase_models` and every other
   source behave exactly as today.
+- The class model string reaches the gateway, not another endpoint: when the route
+  is active, the OpenAI-compatible config for a class name uses the gateway URL and
+  token (not a saved endpoint or `api.openai.com`), and the build Job carries what
+  that needs.
+- Route precedence is stated: `pinnedModel` and the control-plane fallback first,
+  then the phase route (with the RFC-0011 difficulty floor applied to its class),
+  then `phaseModels` and the existing order. The beta-header path mirrors it.
 - Everything is inert by default: no routes file, no flag, no gateway URL = no change.
+
+Out of scope: the scalar `execution.route` (run-level) is not consumed; only
+`phase_routes` is. A contract with only `route` behaves as today.
 
 ## Affected users and systems
 
@@ -38,6 +48,8 @@ Factory#3801 added `execution.route` / `execution.phase_routes` (class names
 
 ## Constraints
 
+- Codex review (confirmed): selecting `openai-compatible:<class>` alone would not
+  pick the gateway endpoint; the scope above covers it.
 - Stdlib only in the gateway; the client token and upstream key are never logged.
 - `pinnedModel` and the control-plane fallback still outrank a route.
 - No new route vocabulary: the catalog classes only.
