@@ -366,7 +366,7 @@ async def check_new_issues(project_id: str) -> list[dict[str, Any]]:
     existing = _existing_issue_numbers(project_path)
 
     # Fetch open issues from the provider
-    from runners.github.providers.protocol import IssueFilters
+    from runners.github.providers.protocol import IssueFilters, as_issue_int
 
     provider = _provider_for(project_id)
     cfg = get_config(project_id) or {}
@@ -376,11 +376,11 @@ async def check_new_issues(project_id: str) -> list[dict[str, Any]]:
 
     new: list[dict[str, Any]] = []
     for iss in issues:
-        if iss.number in existing:
+        if as_issue_int(iss.number) in existing:
             continue
         new.append(
             {
-                "number": iss.number,
+                "number": as_issue_int(iss.number),
                 "title": iss.title,
                 "body": iss.body,
                 "state": iss.state,
@@ -476,9 +476,11 @@ async def start_auto_fix(project_id: str, issue_number: int) -> dict[str, Any]:
     if spec_id is None:
         # Fetch the issue and create the spec
         provider = _provider_for(project_id)
+        from runners.github.providers.protocol import as_issue_int
+
         iss = await provider.fetch_issue(issue_number)
         issue_dict = {
-            "number": iss.number,
+            "number": as_issue_int(iss.number),
             "title": iss.title,
             "body": iss.body,
             "state": iss.state,

@@ -163,7 +163,7 @@ def _fetch_issues(cfg: RepoConfig) -> list[IntakeIssue]:
     the control plane once per queued issue per tick — cheap at fleet volume; add
     a fetch-side "queued but recent" filter only if a repo ever has thousands.
     """
-    from runners.github.providers.protocol import IssueFilters
+    from runners.github.providers.protocol import IssueFilters, as_issue_int
 
     async def _go() -> list[IntakeIssue]:
         provider = _provider_for(cfg)
@@ -177,7 +177,7 @@ def _fetch_issues(cfg: RepoConfig) -> list[IntakeIssue]:
                 continue
             out.append(
                 IntakeIssue(
-                    number=iss.number,
+                    number=as_issue_int(iss.number),
                     labels=labels,
                     title=getattr(iss, "title", "") or "",
                     body=getattr(iss, "body", "") or "",

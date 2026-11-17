@@ -261,6 +261,8 @@ async def _fetch_issue_via_provider(
     worse failure than either alone: the issue reads fine and the work lands
     somewhere else.
     """
+    from runners.github.providers.protocol import as_issue_int
+
     from .github import _get_project_provider
 
     provider = _get_project_provider(project_id, repo_ref=repo_ref)
@@ -268,7 +270,7 @@ async def _fetch_issue_via_provider(
     kind = getattr(provider, "provider_type", None)
     kind = getattr(kind, "value", kind)
     return {
-        "number": issue.number,
+        "number": as_issue_int(issue.number),
         "title": issue.title,
         "body": issue.body,
         "url": issue.url,

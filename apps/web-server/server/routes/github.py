@@ -1091,9 +1091,11 @@ def _map_provider_issue(issue, repo_full_name: str = "") -> dict:
     """Map IssueData from GitProvider to frontend shape."""
     from datetime import datetime
 
+    from runners.github.providers.protocol import as_issue_int
+
     return {
-        "id": issue.number,
-        "number": issue.number,
+        "id": as_issue_int(issue.number),
+        "number": as_issue_int(issue.number),
         "title": issue.title,
         "body": issue.body,
         "state": issue.state.lower(),
@@ -1536,9 +1538,11 @@ async def investigate_github_issue(
         if _use_provider_api(projectId):
             try:
                 provider = _get_project_provider(projectId)
+                from runners.github.providers.protocol import as_issue_int
+
                 issue_obj = await provider.fetch_issue(issueNumber)
                 issue_data = {
-                    "number": issue_obj.number,
+                    "number": as_issue_int(issue_obj.number),
                     "title": issue_obj.title,
                     "body": issue_obj.body,
                     "state": issue_obj.state,
