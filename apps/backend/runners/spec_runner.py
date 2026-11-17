@@ -416,6 +416,11 @@ Examples:
             print(f"  {muted('Running:')} {' '.join(run_cmd)}")
             print()
 
+            # os.execv skips atexit: upload this spec run's transcript first (#2059).
+            from core import workspace_fetch as _wf  # noqa: PLC0415
+
+            _wf.maybe_push_transcripts(orchestrator.spec_dir.name)
+
             # Execute run.py - replace current process
             os.execv(sys.executable, run_cmd)
 

@@ -785,6 +785,15 @@ async def test_dispatch_records_worker_ref(
     assert fake.deleted == []
 
 
+def test_sigterm_upload_bound_reaches_jobs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#2059: the server's setting must reach the Job that consumes it."""
+    monkeypatch.setenv("AIFACTORY_TRANSCRIPT_SIGTERM_SECONDS", "7")
+    assert (
+        bb.build_job_env(None, Path(_DATA_ROOT))["AIFACTORY_TRANSCRIPT_SIGTERM_SECONDS"]
+        == "7"
+    )
+
+
 async def test_dispatch_marks_the_transcript_cutoff(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

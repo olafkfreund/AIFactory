@@ -275,6 +275,8 @@ _FIXED_BUILD_ENV: dict[str, str] = {
 # plus GitHub env from runner_github_env below. ANTHROPIC_API_KEY is NOT
 # here — OAuth-only policy (core.child_env._STRIP_VARS).
 _PASSTHROUGH_BUILD_ENV: tuple[str, ...] = (
+    # #2059: bound on the Job's SIGTERM transcript upload (build and spec Jobs).
+    "AIFACTORY_TRANSCRIPT_SIGTERM_SECONDS",
     # The build Job runs the trailing gates itself, and
     # `gate_runner._select_runner` reads these to decide whether a gate goes to a
     # per-task Nix sandbox or to a plain host subprocess. Unset in the Job, it

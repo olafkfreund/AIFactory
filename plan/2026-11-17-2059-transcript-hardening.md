@@ -102,6 +102,13 @@ every transcript file name.
   daemon thread. A worker thread would block on the transcript's RLock when the
   signal lands while the main thread is inside `record()`, losing the upload.
 
+- Final review (codex, round 1), accepted: step 3 also writes every tool result of a
+  multi-tool message (`agent_runner.py`, matched by `tool_use_id`, outside the
+  `current_tool` guard) and uploads the spec transcript before the `os.execv` build
+  handoff (`spec_runner.py`, `atexit` does not run there); step 2's bound variable
+  `AIFACTORY_TRANSCRIPT_SIGTERM_SECONDS` joins `_PASSTHROUGH_BUILD_ENV`
+  (`build_backend.py`) so it reaches Jobs. Tests added for each.
+
 ## Tests
 
 `ruff check` and `ruff format --check` on touched files; the pytest files named in
