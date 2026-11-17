@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1931
 spec: spec/2026-11-17-1931-env-secrets-flip.md
 coders:
