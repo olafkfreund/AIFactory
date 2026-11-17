@@ -18,6 +18,7 @@ import ast
 import asyncio
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -32,6 +33,7 @@ for _p in (_REPO / "apps" / "web-server", _REPO / "apps" / "backend"):
     if str(_p) not in sys.path:
         sys.path.append(str(_p))
 
+import phase_config  # noqa: E402
 from core import mcp_credentials  # noqa: E402
 from core.job_dispatch import DEFAULT_NIX_IMAGE  # noqa: E402
 from server.database.models import Base  # noqa: E402
@@ -502,7 +504,12 @@ def test_build_job_env_propagates_non_claude_provider_env(
 
 @pytest.fixture(autouse=True)
 def _clear_gateway_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for var in ("AIFACTORY_MODEL_GATEWAY_URL", "AIFACTORY_MODEL_GATEWAY_TOKEN"):
+    for var in (
+        "AIFACTORY_MODEL_GATEWAY_URL",
+        "AIFACTORY_MODEL_GATEWAY_TOKEN",
+        "AIFACTORY_PHASE_ROUTES",
+        "LITELLM_GATEWAY_URL",
+    ):
         monkeypatch.delenv(var, raising=False)
 
 
@@ -524,6 +531,7 @@ def test_build_job_env_gateway_swaps_direct_keys(
     monkeypatch.setenv("AIFACTORY_MODEL_GATEWAY_URL", " http://gw:8080/ ")
     monkeypatch.setenv("AIFACTORY_MODEL_GATEWAY_TOKEN", " gw-tok ")
     env = bb.build_job_env("oauth")
+    assert env["AIFACTORY_MODEL_GATEWAY_URL"] == "http://gw:8080"
     assert env["OPENAI_COMPATIBLE_BASE_URL"] == "http://gw:8080"
     assert env["OPENAI_COMPATIBLE_API_KEY"] == "gw-tok"
     assert "OLLAMA_API_KEY" not in env
@@ -554,9 +562,42 @@ def test_build_job_env_gateway_flag_off_keeps_direct_keys(
     if url is not None:
         monkeypatch.setenv("AIFACTORY_MODEL_GATEWAY_URL", url)
     env = bb.build_job_env(None)
+    assert "AIFACTORY_MODEL_GATEWAY_URL" not in env
     assert env["OPENAI_COMPATIBLE_API_KEY"] == "oc-key"
     assert env["OPENAI_COMPATIBLE_BASE_URL"] == "https://ollama.com"
     assert env["OLLAMA_API_KEY"] == "ol-key"
+
+
+@pytest.mark.parametrize("flag", [None, "", "on"])
+@pytest.mark.parametrize("litellm", [None, " ", "http://litellm:4000"])
+def test_build_job_env_forwards_phase_routes_only_without_litellm(
+    monkeypatch: pytest.MonkeyPatch, flag: str | None, litellm: str | None
+) -> None:
+    if flag is not None:
+        monkeypatch.setenv("AIFACTORY_PHASE_ROUTES", flag)
+    if litellm is not None:
+        monkeypatch.setenv("LITELLM_GATEWAY_URL", litellm)
+    env = bb.build_job_env(None)
+    if flag and litellm != "http://litellm:4000":
+        assert env["AIFACTORY_PHASE_ROUTES"] == flag
+    else:
+        assert "AIFACTORY_PHASE_ROUTES" not in env
+
+
+def test_build_job_env_litellm_guard_applies_in_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AIFACTORY_MODEL_GATEWAY_URL", "http://gw:8080")
+    monkeypatch.setenv("AIFACTORY_PHASE_ROUTES", "on")
+    monkeypatch.setenv("LITELLM_GATEWAY_URL", "http://litellm:4000")
+    job_env = bb.build_job_env(None)
+    assert job_env["AIFACTORY_MODEL_GATEWAY_URL"] == "http://gw:8080"
+    assert "AIFACTORY_PHASE_ROUTES" not in job_env
+    monkeypatch.setattr(os, "environ", job_env)
+    assert (
+        phase_config.phase_route_model("coding", {"phaseRoutes": {"coding": "cheap"}})
+        is None
+    )
 
 
 def test_build_job_env_propagates_artifact_store_s3_env(
