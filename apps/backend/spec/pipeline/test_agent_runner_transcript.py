@@ -13,7 +13,9 @@ async def test_tool_events_are_written(tmp_path, monkeypatch):
     class ToolUseBlock:
         name = "Read"
         id = "tool-1"
-        input = {"file_path": "example.txt"}
+
+        def __init__(self):
+            self.input = {"file_path": "example.txt"}
 
     class ToolResultBlock:
         tool_use_id = "tool-1"
@@ -36,10 +38,12 @@ async def test_tool_events_are_written(tmp_path, monkeypatch):
 
     # The runner checks message class names supplied by the SDK.
     class AssistantMessage:
-        content = [ToolUseBlock()]
+        def __init__(self):
+            self.content = [ToolUseBlock()]
 
     class UserMessage:
-        content = [ToolResultBlock()]
+        def __init__(self):
+            self.content = [ToolResultBlock()]
 
     monkeypatch.setattr(agent_runner, "create_client", lambda *_a, **_kw: Client())
     transcript.start(tmp_path)

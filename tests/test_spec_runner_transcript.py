@@ -9,6 +9,7 @@ import pytest
 _BACKEND = Path(__file__).resolve().parents[1] / "apps" / "backend"
 sys.path.insert(0, str(_BACKEND))
 
+import task_logger  # noqa: E402
 from core import workspace_fetch  # noqa: E402
 from runners import spec_runner  # noqa: E402
 from task_logger import transcript  # noqa: E402
@@ -16,6 +17,10 @@ from task_logger import transcript  # noqa: E402
 
 @pytest.mark.parametrize("pass_spec_dir", [False, True])
 def test_transcript_uses_resolved_spec_dir(tmp_path, monkeypatch, pass_spec_dir):
+    # Other test modules leave a MagicMock task_logger in sys.modules; the runner
+    # imports it at call time, so pin the real ones.
+    monkeypatch.setitem(sys.modules, "task_logger", task_logger)
+    monkeypatch.setitem(sys.modules, "task_logger.transcript", transcript)
     spec_dir = tmp_path / ".aifactory" / "specs" / "001-test"
     orchestrator = MagicMock(spec_dir=spec_dir)
     orchestrator.run = AsyncMock(return_value=False)
