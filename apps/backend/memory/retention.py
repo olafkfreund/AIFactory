@@ -108,7 +108,8 @@ def _last_confirmed(
                 datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC),
             )
     except ValueError:
-        pass
+        # A malformed confirmation timestamp falls back to the entry's own time.
+        return entry_time
     return last
 
 
