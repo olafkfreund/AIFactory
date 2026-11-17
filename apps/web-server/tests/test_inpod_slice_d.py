@@ -31,7 +31,8 @@ def _boom(*_a, **_k):
     raise AssertionError("agent must not be spawned")
 
 
-def test_conflict_merge_refused(forbid, monkeypatch):
+@pytest.mark.usefixtures("forbid")
+def test_conflict_merge_refused(monkeypatch):
     svc = conflict_service.ConflictService.__new__(conflict_service.ConflictService)
     monkeypatch.setattr(svc, "_ensure_backend_path", _boom)
     for res in (
@@ -42,7 +43,8 @@ def test_conflict_merge_refused(forbid, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_changelog_refused(forbid, monkeypatch, tmp_path):
+@pytest.mark.usefixtures("forbid")
+async def test_changelog_refused(monkeypatch, tmp_path):
     svc = changelog_service.ChangelogService()
     errors = []
 
@@ -56,7 +58,8 @@ async def test_changelog_refused(forbid, monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_insights_chat_refused(forbid, monkeypatch, tmp_path):
+@pytest.mark.usefixtures("forbid")
+async def test_insights_chat_refused(monkeypatch, tmp_path):
     sent = []
 
     async def _bcast(name, payload):
@@ -69,7 +72,8 @@ async def test_insights_chat_refused(forbid, monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_generate_task_refused(forbid, monkeypatch, tmp_path):
+@pytest.mark.usefixtures("forbid")
+async def test_generate_task_refused(monkeypatch, tmp_path):
     monkeypatch.setattr(changelog_routes, "_get_project_path", lambda _p: tmp_path)
     req = changelog_routes.GenerateTaskRequest(modelConfig=None)
     res = await changelog_routes.generate_task_from_chat(projectId="p", request=req)
@@ -91,7 +95,8 @@ def _correction_req(confirm=True):
 
 
 @pytest.mark.asyncio
-async def test_apply_correction_refused_writes_nothing(forbid, monkeypatch, tmp_path):
+@pytest.mark.usefixtures("forbid")
+async def test_apply_correction_refused_writes_nothing(monkeypatch, tmp_path):
     monkeypatch.setattr(
         execution, "_resolve_task", lambda _t: ("p", "s", tmp_path, tmp_path)
     )
