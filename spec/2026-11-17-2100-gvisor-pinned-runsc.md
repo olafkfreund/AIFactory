@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2100
 intent: intent/2026-11-17-2100-gvisor-pinned-runsc.md
 ---
