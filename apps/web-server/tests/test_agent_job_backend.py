@@ -82,6 +82,8 @@ async def test_clarification_job_env_has_no_github_or_s3(
             "S3_ACCESS_KEY": "a",
             "S3_BUCKET": "b",
             "GITHUB_TOKEN": "g",
+            "GITHUB_PERSONAL_ACCESS_TOKEN": "g2",
+            "GH_ENTERPRISE_TOKEN": "g3",
             "KEEP": "1",
         },
     )
@@ -102,7 +104,7 @@ async def test_clarification_job_env_has_no_github_or_s3(
         for e in batch.created[0][1]["spec"]["template"]["spec"]["containers"][0]["env"]
     }
     assert "KEEP" in env
-    assert not env & {"S3_ACCESS_KEY", "S3_BUCKET", "GITHUB_TOKEN"}
+    assert not {n for n in env if n.startswith(("S3_", "GITHUB_", "GH_"))}
     assert await proc.wait() == 0
 
 
@@ -296,3 +298,26 @@ async def test_start_review_refused_in_pod_when_forbidden(
     monkeypatch.setattr(prs.asyncio, "create_subprocess_exec", spawn)
     assert await svc.start_review("p", 7, tmp_path) is False
     assert "disabled" in svc.errors[0]
+
+
+async def test_read_clarification_stops_at_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    proc = _proc(monkeypatch, b"x" * (ajb.CLARIFICATION_MAX_BYTES * 3))
+    assert await ajb.read_clarification(proc, timeout=2) is None
+
+
+def test_followup_workspace_refuses_symlinked_review_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import subprocess
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    subprocess.run(["git", "init", "-q", str(proj)], check=True)
+    (tmp_path / "elsewhere").mkdir()
+    (proj / ".aifactory").symlink_to(tmp_path / "elsewhere")
+    monkeypatch.setattr(
+        "core.artifact_store.pack_workspace", lambda *a, **k: "s3://x", raising=False
+    )
+    with pytest.raises(BuildBackendUnavailableError):
+        ajb._prepare_review_workspace(proj, 7, True, "job1")
+    assert not list((tmp_path / "elsewhere").iterdir())

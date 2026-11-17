@@ -127,6 +127,30 @@ async def _create_job(manifest: dict[str, Any], batch: Any) -> tuple[Any, str, s
     return batch, namespace, job_name
 
 
+def _has_symlink(root: Path, rel: Path) -> bool:
+    current = root
+    for part in rel.parts:
+        current = current / part
+        if current.is_symlink():
+            return True
+    return False
+
+
+def _restore_origin(project_path: Path, clone: Path) -> None:
+    """Point the clone's origin at the project's GitHub remote, without credentials."""
+    from urllib.parse import urlsplit, urlunsplit  # noqa: PLC0415
+
+    url = build_backend._git(
+        ["-C", str(project_path), "remote", "get-url", "origin"], check=False
+    ).stdout.strip()
+    if not url:
+        return
+    parts = urlsplit(url)
+    if parts.scheme in {"http", "https"} and "@" in parts.netloc:
+        url = urlunsplit(parts._replace(netloc=parts.netloc.rpartition("@")[2]))
+    build_backend._git(["-C", str(clone), "remote", "set-url", "origin", url])
+
+
 def _prepare_review_workspace(
     project_path: Path, pr_number: int, followup: bool, job_id: str
 ) -> str:
@@ -136,17 +160,30 @@ def _prepare_review_workspace(
         pack_workspace,
     )
 
+    if _has_symlink(project_path, Path(".aifactory/worktrees/reviews")):
+        raise build_backend.BuildBackendUnavailableError(
+            "Review worktree directory contains a symlink"
+        )
     clone = project_path / ".aifactory/worktrees/reviews" / job_id
     try:
         clone.parent.mkdir(parents=True, exist_ok=True)
         build_backend._git(
             ["clone", "--local", "--no-hardlinks", str(project_path), str(clone)]
         )
+        _restore_origin(project_path, clone)  # the runner finds the repo via origin
         if followup:
             # The follow-up loads the previous result; ship only that one file.
-            prev = (
-                project_path / ".aifactory/github/pr" / f"review_{int(pr_number)}.json"
-            )
+            rel = Path(".aifactory/github/pr")
+            prev = project_path / rel / f"review_{int(pr_number)}.json"
+            # A symlink in the project or the fresh clone must not redirect the copy.
+            if _has_symlink(project_path, rel) or _has_symlink(clone, rel):
+                raise build_backend.BuildBackendUnavailableError(
+                    "Review directory contains a symlink"
+                )
+            if (clone / rel / prev.name).is_symlink():
+                raise build_backend.BuildBackendUnavailableError(
+                    "Review file is a symlink"
+                )
             if not prev.is_symlink() and prev.is_file():
                 if prev.stat().st_size > _REVIEW_FILE_MAX_BYTES:
                     raise build_backend.BuildBackendUnavailableError(
@@ -246,7 +283,7 @@ async def dispatch_clarification(
     _require_prerequisites()
     env = build_backend.build_job_env(oauth_token)
     # Nothing to read or write remotely: no GitHub or object-store credential.
-    for name in [n for n in env if n.startswith("S3_")] + ["GITHUB_TOKEN", "GH_TOKEN"]:
+    for name in [n for n in env if n.startswith(("S3_", "GITHUB_", "GH_"))]:
         env.pop(name, None)
     manifest = build_agent_job_manifest(
         job_id=f"clarify-{uuid4().hex[:8]}",
@@ -275,14 +312,23 @@ async def dispatch_clarification(
 async def read_clarification(
     proc: SpecJobProcess, *, timeout: float = 60.0
 ) -> str | None:
-    """The Job's stdout, or None when it failed, was cut, or ran out of time."""
+    """The Job's stdout, or None when it failed, was cut, too long, or out of time."""
+    buf = bytearray()
+
+    async def drain() -> bool:
+        while chunk := await proc.stdout.read(4096):
+            buf.extend(chunk)
+            if len(buf) > CLARIFICATION_MAX_BYTES:
+                return False
+        return True
+
     try:
-        # The feed caps the buffer (1 MiB), so reading to EOF is bounded.
-        data = await asyncio.wait_for(proc.stdout.read(), timeout=timeout)
-        failed = await asyncio.wait_for(proc.wait(), timeout=5.0)
-        if failed or proc.truncated or len(data) > CLARIFICATION_MAX_BYTES:
+        complete = await asyncio.wait_for(drain(), timeout=timeout)
+        if not complete or proc.truncated:
             return None
-        return data.decode("utf-8", errors="replace")
+        if await asyncio.wait_for(proc.wait(), timeout=5.0):  # non-zero: Job failed
+            return None
+        return buf.decode("utf-8", errors="replace")
     except Exception:  # noqa: BLE001 - the caller skips on None
         _log.warning("[agent_job_backend] clarification Job gave no answer")
         return None

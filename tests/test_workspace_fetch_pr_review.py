@@ -109,3 +109,25 @@ def test_push_is_noop_without_fetch_id(
     monkeypatch.delenv(workspace_fetch.PR_REVIEW_FETCH_ID_ENV, raising=False)
     assert workspace_fetch.maybe_push_pr_review(7, tmp_path) is False
     assert store.objects == {}
+
+
+def test_fetch_cancelled_before_commit_leaves_no_file(
+    store: type[FakeStore], tmp_path: Path
+) -> None:
+    import threading
+
+    store.objects[_key()] = b"{}"
+    cancel = threading.Event()
+    real = workspace_fetch._checked_pr_review_dest
+
+    def dest_then_cancel(path: Path) -> Path:
+        out = real(path)
+        cancel.set()  # the stop arrives while the file is being written
+        return out
+
+    workspace_fetch._checked_pr_review_dest = dest_then_cancel
+    try:
+        assert workspace_fetch.fetch_pr_review(tmp_path, "fid", 7, cancel) is False
+    finally:
+        workspace_fetch._checked_pr_review_dest = real
+    assert not (tmp_path / ".aifactory/github/pr/review_7.json").exists()

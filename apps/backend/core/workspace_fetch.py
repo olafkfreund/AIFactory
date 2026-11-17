@@ -1055,6 +1055,8 @@ def fetch_pr_review(
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
         Path(tmp).chmod(0o644)
+        if cancel is not None and cancel.is_set():  # a stopped review must not land
+            return False
         Path(tmp).replace(dest / f"review_{int(pr_number)}.json")
     finally:
         with contextlib.suppress(OSError):
