@@ -112,7 +112,14 @@ async def _create_job(manifest: dict[str, Any], batch: Any) -> tuple[Any, str, s
         batch = await build_backend.KubeJobBuildBackend._batch_api()
     try:
         await batch.create_namespaced_job(namespace, manifest)
-    except Exception:
+    except BaseException:  # incl. cancellation: the API may have accepted the Job
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(
+                batch.delete_namespaced_job(
+                    job_name, namespace, propagation_policy="Background"
+                ),
+                timeout=10,
+            )
         api = getattr(batch, "api_client", None)
         if api is not None:
             with contextlib.suppress(Exception):
@@ -283,7 +290,12 @@ async def dispatch_clarification(
     _require_prerequisites()
     env = build_backend.build_job_env(oauth_token)
     # Nothing to read or write remotely: no GitHub or object-store credential.
-    for name in [n for n in env if n.startswith(("S3_", "GITHUB_", "GH_"))]:
+    from ..utils.subprocess_env import github_names  # noqa: PLC0415
+
+    drop = {*github_names(), "GITHUB_TOKEN", "GH_TOKEN"}
+    for name in [
+        n for n in env if n in drop or n.startswith(("S3_", "GITHUB_", "GH_"))
+    ]:
         env.pop(name, None)
     manifest = build_agent_job_manifest(
         job_id=f"clarify-{uuid4().hex[:8]}",

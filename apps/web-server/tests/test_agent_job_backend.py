@@ -321,3 +321,108 @@ def test_followup_workspace_refuses_symlinked_review_dir(
     with pytest.raises(BuildBackendUnavailableError):
         ajb._prepare_review_workspace(proj, 7, True, "job1")
     assert not list((tmp_path / "elsewhere").iterdir())
+
+
+async def test_cancel_during_create_deletes_the_job() -> None:
+    class Slow(FakeBatch):
+        async def create_namespaced_job(self, namespace, manifest):
+            await super().create_namespaced_job(namespace, manifest)
+            raise asyncio.CancelledError
+
+    batch = Slow()
+    manifest = {"metadata": {"namespace": "ns", "name": "job-x"}}
+    with pytest.raises(asyncio.CancelledError):
+        await ajb._create_job(manifest, batch)
+    assert batch.deleted == ["job-x"]
+    assert "job-x" not in sj._LIVE_SPEC_JOBS
+
+
+async def test_clarification_parse_error_skips(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("AIFACTORY_REVIEW_BACKEND", "kubejob")
+    monkeypatch.setattr(clarification_service, "claude_oauth_token", lambda: None)
+
+    async def dispatch(**_k):
+        return object()
+
+    async def read(_job):
+        return '{"questions": [{"question": "Q?", "options": null}]}'
+
+    monkeypatch.setattr(clarification_service, "dispatch_clarification", dispatch)
+    monkeypatch.setattr(clarification_service, "read_clarification", read)
+    out = await clarification_service.generate_clarification_questions(
+        "t", "d", tmp_path
+    )
+    assert out["skip"] is True
+
+
+def test_followup_refuses_tracked_symlinked_review_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import subprocess
+
+    proj = tmp_path / "proj"
+    d = proj / ".aifactory/github/pr"
+    d.mkdir(parents=True)
+    (d / "review_7.json").write_text("{}")
+    outside = tmp_path / "outside.json"
+    outside.write_text("keep")
+    subprocess.run(["git", "init", "-q", str(proj)], check=True)
+    # the tracked tree holds a symlink where the copy would land
+    (d / "review_7.json").unlink()
+    (d / "review_7.json").symlink_to(outside)
+    subprocess.run(["git", "-C", str(proj), "add", "-f", "."], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(proj),
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-qm",
+            "x",
+        ],
+        check=True,
+    )
+    d_file = d / "review_7.json"
+    d_file.unlink()
+    d_file.write_text("{}")  # the project's own result is a regular file
+    monkeypatch.setattr(
+        "core.artifact_store.pack_workspace", lambda *a, **k: "s3://x", raising=False
+    )
+    with pytest.raises(BuildBackendUnavailableError):
+        ajb._prepare_review_workspace(proj, 7, True, "job2")
+    assert outside.read_text() == "keep"
+
+
+def test_origin_is_restored_without_credentials(tmp_path: Path) -> None:
+    import subprocess
+
+    proj = tmp_path / "proj"
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "init", "-q", str(proj)], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(proj),
+            "remote",
+            "add",
+            "origin",
+            "https://user:tok@github.com/o/r.git",
+        ],
+        check=True,
+    )
+    subprocess.run(["git", "clone", "-q", str(proj), str(clone)], check=True)
+    ajb._restore_origin(proj, clone)
+    url = subprocess.run(
+        ["git", "-C", str(clone), "remote", "get-url", "origin"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert url == "https://github.com/o/r.git"

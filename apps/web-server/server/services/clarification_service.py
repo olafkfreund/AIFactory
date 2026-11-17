@@ -197,10 +197,10 @@ async def generate_clarification_questions(
                 prompt=prompt, oauth_token=claude_oauth_token()
             )
             response = await read_clarification(job)
+            return _parse_clarification_json(response) if response else safe_default
         except Exception:  # noqa: BLE001 - never block the user; no in-pod fallback
-            logger.error("[ClarificationService] Job dispatch failed", exc_info=True)
+            logger.error("[ClarificationService] Job session failed", exc_info=True)
             return safe_default
-        return _parse_clarification_json(response) if response else safe_default
 
     if problem := inpod_agent_refusal():  # #1932: never block the user, skip instead
         logger.error("[ClarificationService] %s", problem)
