@@ -1147,7 +1147,15 @@ def maybe_push_correction(  # noqa: PLR0912 - one refusal per check, kept flat
                 capture_output=True,
             ).stdout
 
-        changes = git("diff", "--name-status", "--no-renames", "-z", base).split(b"\0")
+        changes = git(
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--name-status",
+            "--no-renames",
+            "-z",
+            base,
+        ).split(b"\0")
         paths: dict[str, str] = {}
         for raw_status, raw_path in zip(changes[0::2], changes[1::2], strict=False):
             if raw_status and raw_path:

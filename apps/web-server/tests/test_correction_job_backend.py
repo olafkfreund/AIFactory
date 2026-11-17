@@ -1,7 +1,7 @@
 """QA apply-correction as a Job (#2116)."""
 
 # mypy: ignore-errors
-# ruff: noqa: ARG001, ARG002, ARG005, I001, PLC0415, S106, S603, S607
+# ruff: noqa: ARG001, ARG002, ARG005, I001, S603, S607
 # (test doubles take unused args; git fixtures call the git CLI)
 
 from __future__ import annotations
@@ -289,7 +289,7 @@ async def test_dispatch_creates_job_applies_result_and_runs_guard(
 
 
 async def test_failed_fetch_is_recorded_as_failed(monkeypatch, job) -> None:
-    batch, spec, fetches = job
+    _batch, spec, _fetches = job
     monkeypatch.setattr("core.workspace_fetch.fetch_correction", lambda *a, **k: False)
     monkeypatch.setattr("qa.correction.check_fix_cycle_assertions", lambda d: None)
     await ajb.dispatch_correction_fixer(spec)
@@ -378,14 +378,16 @@ async def test_route_preview_is_not_refused(monkeypatch, route) -> None:
     assert route[0]["fixer_fn"] is None
 
 
-async def test_route_invalid_flag_is_409(monkeypatch, route) -> None:
-    monkeypatch.setenv(FLAG, "k8s")
-    with pytest.raises(HTTPException) as exc:
+async def test_route_invalid_flag_refuses_before_anything_runs(
+    monkeypatch, route
+) -> None:
+    monkeypatch.setenv(FLAG, "k8s")  # the app maps this error to a 503
+    with pytest.raises(BuildBackendUnavailableError):
         await execution.apply_task_correction("p:s", _req(), _access={})
-    assert exc.value.status_code == 409 and route == []
+    assert route == []
 
 
-async def test_route_dispatch_failure_is_409_without_fallback(
+async def test_route_dispatch_failure_propagates_without_fallback(
     monkeypatch, tmp_path
 ) -> None:
     monkeypatch.setenv(FLAG, "kubejob")
@@ -407,11 +409,10 @@ async def test_route_dispatch_failure_is_409_without_fallback(
         raise BuildBackendUnavailableError("requires DATABASE_URL")
 
     monkeypatch.setattr(execution, "dispatch_correction_fixer", refuse)
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(BuildBackendUnavailableError, match="DATABASE_URL"):
         await execution.apply_task_correction(
             "p:s",
             execution.ApplyCorrectionRequest(fix_request_md="fix", confirm=True),
             _access={},
         )
-    assert exc.value.status_code == 409 and "DATABASE_URL" in exc.value.detail
     assert (tmp_path / "QA_FIX_REQUEST.md").exists()  # request kept; nothing ran

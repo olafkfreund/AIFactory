@@ -54,14 +54,14 @@ async def test_run_fixer_bg_true_only_when_fixed(
 def _repo(tmp_path: Path) -> Path:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)  # noqa: S603, S607
     subprocess.run(  # noqa: S603
-        [
+        [  # noqa: S607
             "git",
             "-C",
             str(tmp_path),
             "-c",
             "user.name=t",
             "-c",
-            "user.email=t@t",  # noqa: S607
+            "user.email=t@t",
             "commit",
             "-q",
             "--allow-empty",

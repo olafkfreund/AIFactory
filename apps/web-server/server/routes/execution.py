@@ -1597,25 +1597,21 @@ async def apply_task_correction(
     # #2116: AIFACTORY_CORRECTION_BACKEND=kubejob runs it as a Job instead.
     use_job = False
     if request.confirm:
-        try:
-            use_job = correction_kubejob_enabled()
-        except BuildBackendUnavailableError as exc:
-            raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc)) from None
+        # An invalid flag or a failed dispatch raises BuildBackendUnavailableError,
+        # which the app maps to 503; it never falls back to the in-pod fixer.
+        use_job = correction_kubejob_enabled()
         if not use_job and (problem := inpod_agent_refusal()):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=problem)
 
-    try:
-        result = await apply_correction(
-            spec_dir,
-            request.fix_request_md,
-            confirm=request.confirm,
-            fixer_fn=dispatch_correction_fixer if use_job else None,
-            triage=request.triage,
-            manifest_hash=request.manifest_hash,
-            correlation_key=request.correlation_key,
-        )
-    except BuildBackendUnavailableError as exc:  # never falls back to in-pod
-        raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc)) from None
+    result = await apply_correction(
+        spec_dir,
+        request.fix_request_md,
+        confirm=request.confirm,
+        fixer_fn=dispatch_correction_fixer if use_job else None,
+        triage=request.triage,
+        manifest_hash=request.manifest_hash,
+        correlation_key=request.correlation_key,
+    )
     # A confirm=False preview and a rejected triage write nothing: not an action.
     if result.get("success") and result.get("confirm"):
         # The QA Fixer can delete the spec-dir receipt; this copy holds the merge.

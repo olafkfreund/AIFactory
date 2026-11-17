@@ -1,5 +1,7 @@
 """Correction Job handback validates a complete file set before applying it."""
 
+# ruff: noqa: S603, S607, RUF012
+
 from __future__ import annotations
 
 import base64
@@ -13,7 +15,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps/backend"))
-from core import artifact_store, workspace_fetch  # noqa: E402
+from core import artifact_store, workspace_fetch
 
 
 class FakeStore:
