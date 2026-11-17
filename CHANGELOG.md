@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Added
+
+- Model gateway resolves capability-class routes from `GATEWAY_ROUTES_PATH` and answers `X-Model-Route` (#2107); `execution.phase_routes` is consumed behind `AIFACTORY_PHASE_ROUTES=on` (#2108). Both are off by default.
+
 ## 3.13.1 - 2026-11-17
 
 Merged to `dev` since 3.13.0.
