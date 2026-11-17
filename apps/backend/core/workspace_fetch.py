@@ -18,7 +18,9 @@ import contextlib
 import json
 import logging
 import os
+import signal
 import subprocess
+import sys
 import tempfile
 import threading
 from pathlib import Path
@@ -395,6 +397,39 @@ def maybe_push_transcripts(spec_id: str) -> int:
     except Exception as exc:  # noqa: BLE001 - must never break a build
         _log.warning("[workspace_fetch] transcript push failed: %s", exc)
     return count
+
+
+def install_sigterm_upload(spec_id: str) -> None:
+    """On SIGTERM, try the transcript upload, then exit 143 (#2059).
+
+    ``atexit`` does not run when SIGTERM kills the process. The upload runs in the
+    main thread (the transcript lock is re-entrant there) under a SIGALRM bound of
+    ``AIFACTORY_TRANSCRIPT_SIGTERM_SECONDS`` (default 20, inside the 30 s grace),
+    and the exit is hard: unwinding asyncio and SDK cleanup could outlast the grace.
+    """
+
+    def _exit(*_a: object) -> None:
+        os._exit(143)
+
+    def _on_term(*_a: object) -> None:
+        try:
+            bound = max(
+                1, int(os.environ.get("AIFACTORY_TRANSCRIPT_SIGTERM_SECONDS") or 20)
+            )
+        except ValueError:
+            bound = 20
+        signal.signal(signal.SIGALRM, _exit)
+        signal.alarm(bound)
+        try:
+            maybe_push_transcripts(spec_id)
+            with contextlib.suppress(Exception):
+                sys.stdout.flush()
+                sys.stderr.flush()
+        finally:
+            os._exit(143)
+
+    with contextlib.suppress(ValueError):  # not the main thread: keep the default
+        signal.signal(signal.SIGTERM, _on_term)
 
 
 def transcript_uris(job_id: str, since: str | None = None) -> list[str]:

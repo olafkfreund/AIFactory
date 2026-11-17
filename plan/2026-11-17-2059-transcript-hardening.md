@@ -18,7 +18,7 @@ Approved decisions (spec): the transcript key stays the project-qualified `JOB_I
 `{"since": "<UTC stamp>"}`; completion lists only objects whose file name is
 `>= since` and clears `transcriptUris` when none; old objects are kept. (3) spec
 Jobs record and upload a transcript under their own `JOB_ID`. (4) SIGTERM handler:
-upload in a daemon thread, bounded by `AIFACTORY_TRANSCRIPT_SIGTERM_SECONDS`
+upload bounded by `AIFACTORY_TRANSCRIPT_SIGTERM_SECONDS`
 (default 20), flush, `os._exit(143)`; no chunked upload. (7) per-process
 serialization stays; chart env `AIFACTORY_REPLICAS`, startup warning above 1,
 module note, docs.
@@ -95,6 +95,12 @@ every transcript file name.
    Check: `$PY apps/web-server/tests/test_replica_warning.py -q -o asyncio_mode=auto`; `helm template charts/aifactory | grep -A1 AIFACTORY_REPLICAS`.
    Traps: the autonomy matrix (`docs/docs/compliance/autonomy-matrix.*`) is
    generated: regenerate if CI reports it stale, never hand-merge.
+
+## Deviations
+
+- Step 2: the bound is a SIGALRM timer with the upload run in the main thread, not a
+  daemon thread. A worker thread would block on the transcript's RLock when the
+  signal lands while the main thread is inside `record()`, losing the upload.
 
 ## Tests
 
