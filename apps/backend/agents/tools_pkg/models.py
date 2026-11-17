@@ -53,6 +53,7 @@ TOOL_UPDATE_SUBTASK_STATUS = "mcp__aifactory__update_subtask_status"
 TOOL_GET_BUILD_PROGRESS = "mcp__aifactory__get_build_progress"
 TOOL_RECORD_DISCOVERY = "mcp__aifactory__record_discovery"
 TOOL_RECORD_GOTCHA = "mcp__aifactory__record_gotcha"
+TOOL_RECORD_DEAD_END = "mcp__aifactory__record_dead_end"
 TOOL_GET_SESSION_CONTEXT = "mcp__aifactory__get_session_context"
 TOOL_UPDATE_QA_STATUS = "mcp__aifactory__update_qa_status"
 TOOL_TEST_MEMORY_INTEGRATION = "mcp__aifactory__test_memory_integration"
@@ -63,6 +64,7 @@ AI_FACTORY_TOOLS = [
     TOOL_GET_BUILD_PROGRESS,
     TOOL_RECORD_DISCOVERY,
     TOOL_RECORD_GOTCHA,
+    TOOL_RECORD_DEAD_END,
     TOOL_GET_SESSION_CONTEXT,
     TOOL_UPDATE_QA_STATUS,
     TOOL_TEST_MEMORY_INTEGRATION,
@@ -193,6 +195,7 @@ AGENT_CONFIGS = {
             TOOL_GET_BUILD_PROGRESS,
             TOOL_RECORD_DISCOVERY,
             TOOL_RECORD_GOTCHA,
+            TOOL_RECORD_DEAD_END,
             TOOL_GET_SESSION_CONTEXT,
             TOOL_TEST_MEMORY_INTEGRATION,
         ],
@@ -222,6 +225,7 @@ AGENT_CONFIGS = {
             TOOL_GET_BUILD_PROGRESS,
             TOOL_UPDATE_QA_STATUS,
             TOOL_RECORD_GOTCHA,
+            TOOL_RECORD_DEAD_END,
             TOOL_TEST_MEMORY_INTEGRATION,
         ],
         "thinking_default": "medium",

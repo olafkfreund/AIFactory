@@ -226,6 +226,7 @@ from core.auth import (
     is_denied_env_key,
     require_auth_token,
 )
+from memory.hooks import make_failure_hook  # noqa: E402
 from prompts_pkg.project_context import (
     detect_infra_markers,
     detect_project_capabilities,
@@ -1113,6 +1114,10 @@ def create_client(
             "PostToolUse": [
                 # #474 record tool outcomes + #476 record mutations.
                 HookMatcher(hooks=[guardrail_posttool_hook, mutation_posttool_hook]),
+            ],
+            "PostToolUseFailure": [
+                # RFC-0021 Phase 3: count normalised tool errors per spec.
+                HookMatcher(hooks=[make_failure_hook(spec_dir / "memory")]),
             ],
             "PreCompact": [
                 # #475 refresh the structured active-task summary at the
