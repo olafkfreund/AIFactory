@@ -16,6 +16,7 @@ from pathlib import Path
 
 from core.commit_trailers import commit_message_args
 from memory.paths import project_memory_dir, project_memory_dir_from_aifactory
+from memory.pool import merge_into
 
 logger = logging.getLogger(__name__)
 
@@ -327,7 +328,7 @@ def sync_memory_to_source(spec_dir: Path, source_spec_dir: Path | None) -> bool:
         # dirs_exist_ok so a re-sync merges into an existing store rather than
         # failing; copy2 preserves mtimes, which the expiry policy in RFC-0021
         # will want to trust.
-        shutil.copytree(memory_dir, target, dirs_exist_ok=True)
+        merge_into(memory_dir, target)  # merge, not overwrite (#3795)
         logger.debug(f"Synced memory to source: {target}")
         return True
     # Narrow rather than blind: these are what copytree can actually raise
@@ -374,10 +375,8 @@ def sync_memory_to_project(spec_dir: Path, source_spec_dir: Path | None) -> bool
     project_root_aifactory = source_spec_dir.parent.parent
 
     try:
-        shutil.copytree(
-            memory_dir,
-            project_memory_dir_from_aifactory(project_root_aifactory),
-            dirs_exist_ok=True,
+        merge_into(
+            memory_dir, project_memory_dir_from_aifactory(project_root_aifactory)
         )
         return True
     except (OSError, shutil.Error) as e:

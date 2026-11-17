@@ -161,7 +161,7 @@ def test_a_failing_copy_never_raises(tmp_path, monkeypatch):
     def boom(*a, **k):
         raise OSError("disk full")
 
-    monkeypatch.setattr(utils.shutil, "copytree", boom)
+    monkeypatch.setattr(utils, "merge_into", boom)
     assert (
         utils.sync_memory_to_project(
             spec, tmp_path / "p" / ".aifactory" / "specs" / "x"
