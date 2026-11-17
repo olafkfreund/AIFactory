@@ -31,7 +31,10 @@ from server.services.audit_service import (
     audit_task_action,
     audit_task_route,
 )
-from server.services.build_backend import BuildBackendUnavailableError
+from server.services.build_backend import (
+    BuildBackendUnavailableError,
+    inpod_agent_refusal,
+)
 from server.services.github_app import project_github_token
 from server.services.handback_receipt_store import record as record_handback_receipt
 from server.services.originator import principal_attribution
@@ -1579,6 +1582,10 @@ async def apply_task_correction(
             "send the structured 'triage' block with the hand-back.",
         )
     *_, spec_dir = _resolve_task(task_id)
+
+    # #2095: the QA fixer is an agent session; refuse before writing anything.
+    if request.confirm and (problem := inpod_agent_refusal()):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=problem)
 
     result = await apply_correction(
         spec_dir,
