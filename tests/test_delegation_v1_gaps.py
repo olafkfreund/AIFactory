@@ -17,6 +17,7 @@ import asyncio
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -132,7 +133,7 @@ async def test_run_delegation_awaits_planner_before_reading_plan(tmp_path: Path)
 
     mock_provider = MagicMock()
     mock_provider.repo = "acme/widgets"
-    mock_provider.api_get = AsyncMock(return_value=[])  # no existing comments
+    mock_provider.fetch_comments = AsyncMock(return_value=[])  # no existing comments
     mock_provider.add_comment = AsyncMock(return_value=1)
     mock_provider.assign_to_user = AsyncMock(return_value=None)
 
@@ -189,7 +190,7 @@ async def test_run_delegation_planner_timeout_does_not_block(
 
     mock_provider = MagicMock()
     mock_provider.repo = "acme/widgets"
-    mock_provider.api_get = AsyncMock(return_value=[])
+    mock_provider.fetch_comments = AsyncMock(return_value=[])
     mock_provider.add_comment = AsyncMock(return_value=1)
     mock_provider.assign_to_user = AsyncMock(return_value=None)
 
@@ -243,9 +244,11 @@ async def test_run_delegation_skips_comment_if_marker_already_present(
 
     mock_provider = MagicMock()
     mock_provider.repo = "acme/widgets"
-    mock_provider.api_get = AsyncMock(
+    mock_provider.fetch_comments = AsyncMock(
         return_value=[
-            {"id": 999, "body": f"{ENRICHMENT_MARKER}\n\n…prior run output…"},
+            SimpleNamespace(
+                id="999", body=f"{ENRICHMENT_MARKER}\n\n…prior run output…"
+            ),
         ]
     )
     mock_provider.add_comment = AsyncMock(return_value=1)
