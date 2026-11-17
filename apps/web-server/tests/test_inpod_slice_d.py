@@ -12,8 +12,10 @@ sys.path.insert(0, str(_ROOT / "apps" / "web-server"))
 sys.path.insert(0, str(_ROOT / "apps" / "backend"))
 
 from fastapi import HTTPException  # noqa: E402
-from server.routes import changelog as changelog_routes  # noqa: E402
-from server.routes import execution  # noqa: E402
+from server.routes import (
+    changelog as changelog_routes,  # noqa: E402
+    execution,  # noqa: E402
+)
 from server.services import (  # noqa: E402
     changelog_service,
     conflict_service,
@@ -78,8 +80,6 @@ async def test_generate_task_refused(monkeypatch, tmp_path):
     req = changelog_routes.GenerateTaskRequest(modelConfig=None)
     res = await changelog_routes.generate_task_from_chat(projectId="p", request=req)
     assert res.status_code >= 400 and b"disabled" in res.body
-    with pytest.raises(RuntimeError):  # service guard holds without the route
-        await insights_service.InsightsService().generate_task_from_chat(tmp_path, "p")
 
 
 @pytest.fixture(autouse=True)

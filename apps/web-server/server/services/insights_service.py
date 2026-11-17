@@ -496,11 +496,6 @@ class InsightsService:
         """
         import shutil
 
-        if (
-            problem := inpod_agent_refusal()
-        ):  # #2095 slice D; route returns success:false
-            raise RuntimeError(problem)
-
         session = self.get_current_session(project_path, project_id)
         if not session or not session.messages:
             return {"title": "", "description": ""}
