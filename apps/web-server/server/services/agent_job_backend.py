@@ -90,7 +90,8 @@ def claude_oauth_token() -> str | None:
     from .insights_providers import get_provider  # noqa: PLC0415
 
     try:
-        return get_provider("claude")._resolve_claude_token()[0] or None
+        provider: Any = get_provider("claude")
+        return provider._resolve_claude_token()[0] or None
     except Exception:  # noqa: BLE001 - optional, as for the in-pod clarification
         _log.warning(
             "[agent_job_backend] could not resolve a Claude token", exc_info=True
@@ -222,7 +223,6 @@ async def dispatch_pr_review(
     followup: bool,
     project_env: dict[str, str],
     oauth_token: str | None,
-    batch: Any = None,
 ) -> SpecJobProcess:
     """Run ``runner.py review-pr N`` in a Job; success fetches only review_{N}.json."""
     from core.workspace_fetch import (  # noqa: PLC0415
@@ -261,7 +261,7 @@ async def dispatch_pr_review(
         extra_env=env,
         models=["sonnet", "opus"],
     )
-    batch, namespace, job_name = await _create_job(manifest, batch)
+    batch, namespace, job_name = await _create_job(manifest, None)
     cancel = threading.Event()
 
     async def finish() -> int:
@@ -290,7 +290,7 @@ async def dispatch_clarification(
     _require_prerequisites()
     env = build_backend.build_job_env(oauth_token)
     # Nothing to read or write remotely: no GitHub or object-store credential.
-    from ..utils.subprocess_env import github_names  # noqa: PLC0415
+    from server.utils.subprocess_env import github_names  # noqa: PLC0415
 
     drop = {*github_names(), "GITHUB_TOKEN", "GH_TOKEN"}
     for name in [
@@ -322,7 +322,7 @@ async def dispatch_clarification(
 
 
 async def read_clarification(
-    proc: SpecJobProcess, *, timeout: float = 60.0
+    proc: SpecJobProcess, *, max_wait: float = 60.0
 ) -> str | None:
     """The Job's stdout, or None when it failed, was cut, too long, or out of time."""
     buf = bytearray()
@@ -335,7 +335,7 @@ async def read_clarification(
         return True
 
     try:
-        complete = await asyncio.wait_for(drain(), timeout=timeout)
+        complete = await asyncio.wait_for(drain(), timeout=max_wait)
         if not complete or proc.truncated:
             return None
         if await asyncio.wait_for(proc.wait(), timeout=5.0):  # non-zero: Job failed

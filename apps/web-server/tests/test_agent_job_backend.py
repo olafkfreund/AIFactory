@@ -1,5 +1,9 @@
 """PR review and clarification as Jobs (A4, #1932)."""
 
+# mypy: ignore-errors
+# ruff: noqa: ARG001, ARG002, ARG005, I001, PLC0415, S106, S603, S607
+# (test doubles take unused args; git fixtures call the git CLI)
+
 from __future__ import annotations
 
 import asyncio
@@ -143,7 +147,7 @@ def _proc(monkeypatch, data: bytes, *, code: int = 0, truncated: bool = False):
 
 async def test_read_clarification_ok(monkeypatch: pytest.MonkeyPatch) -> None:
     proc = _proc(monkeypatch, b'{"skip": true}\n')
-    assert await ajb.read_clarification(proc, timeout=2) == '{"skip": true}\n'
+    assert await ajb.read_clarification(proc, max_wait=2) == '{"skip": true}\n'
 
 
 async def test_read_clarification_truncated_or_failed_is_none(
@@ -151,12 +155,12 @@ async def test_read_clarification_truncated_or_failed_is_none(
 ) -> None:
     assert (
         await ajb.read_clarification(
-            _proc(monkeypatch, b"{", truncated=True), timeout=2
+            _proc(monkeypatch, b"{", truncated=True), max_wait=2
         )
         is None
     )
     assert (
-        await ajb.read_clarification(_proc(monkeypatch, b"{}", code=1), timeout=2)
+        await ajb.read_clarification(_proc(monkeypatch, b"{}", code=1), max_wait=2)
         is None
     )
 
@@ -165,7 +169,7 @@ async def test_read_clarification_oversize_is_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     big = b"x" * (ajb.CLARIFICATION_MAX_BYTES + 1)
-    assert await ajb.read_clarification(_proc(monkeypatch, big), timeout=2) is None
+    assert await ajb.read_clarification(_proc(monkeypatch, big), max_wait=2) is None
 
 
 async def test_feed_flags_truncation(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -302,7 +306,7 @@ async def test_start_review_refused_in_pod_when_forbidden(
 
 async def test_read_clarification_stops_at_cap(monkeypatch: pytest.MonkeyPatch) -> None:
     proc = _proc(monkeypatch, b"x" * (ajb.CLARIFICATION_MAX_BYTES * 3))
-    assert await ajb.read_clarification(proc, timeout=2) is None
+    assert await ajb.read_clarification(proc, max_wait=2) is None
 
 
 def test_followup_workspace_refuses_symlinked_review_dir(

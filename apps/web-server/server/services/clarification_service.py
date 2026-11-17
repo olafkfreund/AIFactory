@@ -12,6 +12,7 @@ import logging
 import re
 import shutil
 from pathlib import Path
+from typing import Any
 
 from . import project_settings_store
 from .agent_job_backend import (
@@ -155,6 +156,29 @@ If skip is true, questions should be an empty array.
 Respond with ONLY the JSON object, no other text."""
 
 
+async def _job_or_refusal(
+    prompt: str, safe_default: dict[str, Any]
+) -> dict[str, Any] | None:
+    """The answer when the session runs as a Job (A4, #1932) or is refused in-pod.
+
+    None means: continue with the in-pod subprocess. Never blocks the user.
+    """
+    if review_kubejob_enabled():  # no in-pod fallback on any failure
+        try:
+            job = await dispatch_clarification(
+                prompt=prompt, oauth_token=claude_oauth_token()
+            )
+            response = await read_clarification(job)
+            return _parse_clarification_json(response) if response else safe_default
+        except Exception:
+            logger.error("[ClarificationService] Job session failed", exc_info=True)
+            return safe_default
+    if problem := inpod_agent_refusal():
+        logger.error("[ClarificationService] %s", problem)
+        return safe_default
+    return None
+
+
 async def generate_clarification_questions(
     title: str,
     description: str,
@@ -191,20 +215,9 @@ async def generate_clarification_questions(
         )
         return safe_default
 
-    if review_kubejob_enabled():  # A4 (#1932): the session runs as a Job, never in-pod
-        try:
-            job = await dispatch_clarification(
-                prompt=prompt, oauth_token=claude_oauth_token()
-            )
-            response = await read_clarification(job)
-            return _parse_clarification_json(response) if response else safe_default
-        except Exception:  # noqa: BLE001 - never block the user; no in-pod fallback
-            logger.error("[ClarificationService] Job session failed", exc_info=True)
-            return safe_default
-
-    if problem := inpod_agent_refusal():  # #1932: never block the user, skip instead
-        logger.error("[ClarificationService] %s", problem)
-        return safe_default
+    early = await _job_or_refusal(prompt, safe_default)
+    if early is not None:
+        return early
 
     # Resolve Claude CLI path
     claude_bin = shutil.which("claude") or "claude"
@@ -258,7 +271,6 @@ async def generate_clarification_questions(
 
         if proc.returncode != 0 and not response:
             logger.error(f"[ClarificationService] CLI exited {proc.returncode}")
-            return safe_default
 
         if response:
             result = _parse_clarification_json(response)
