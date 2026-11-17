@@ -6,16 +6,13 @@ import sys
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 
 _ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_ROOT / "apps" / "web-server"))
 sys.path.insert(0, str(_ROOT / "apps" / "backend"))
 
-from fastapi import HTTPException  # noqa: E402
-from server.routes import (
-    changelog as changelog_routes,  # noqa: E402
-    execution,  # noqa: E402
-)
+from server.routes import changelog, execution  # noqa: E402
 from server.services import (  # noqa: E402
     changelog_service,
     conflict_service,
@@ -76,9 +73,9 @@ async def test_insights_chat_refused(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("forbid")
 async def test_generate_task_refused(monkeypatch, tmp_path):
-    monkeypatch.setattr(changelog_routes, "_get_project_path", lambda _p: tmp_path)
-    req = changelog_routes.GenerateTaskRequest(modelConfig=None)
-    res = await changelog_routes.generate_task_from_chat(projectId="p", request=req)
+    monkeypatch.setattr(changelog, "_get_project_path", lambda _p: tmp_path)
+    req = changelog.GenerateTaskRequest(modelConfig=None)
+    res = await changelog.generate_task_from_chat(projectId="p", request=req)
     assert res.status_code >= 400 and b"disabled" in res.body
 
 
@@ -87,7 +84,7 @@ def _no_triage_gate(monkeypatch):
     class _S:
         REQUIRE_CORRECTION_TRIAGE = False
 
-    monkeypatch.setattr(execution, "get_settings", lambda: _S())
+    monkeypatch.setattr(execution, "get_settings", _S)
 
 
 def _correction_req(confirm=True):
