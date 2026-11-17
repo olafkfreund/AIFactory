@@ -3,6 +3,11 @@
 The PR is never merged here: no code path in this module calls ``gh pr merge``.
 The merge record lives in the server data dir, not in the project spec dir,
 because project members can write ``.aifactory`` files.
+
+Idempotency holds per process only: ``_LOCK`` is a ``threading.Lock`` and the
+existing-revert check is a body phrase search, which GitHub's search index can lag.
+With several control-plane replicas two reverts for one merge can both be opened;
+the server warns at startup when ``AIFACTORY_REPLICAS`` is above 1 (#2059).
 """
 
 from __future__ import annotations

@@ -1110,6 +1110,35 @@ def notify_completion(event: dict, *, spec_dir: Path | None = None) -> bool:
     return True
 
 
+_DISPATCH_FILE = "transcript_dispatch.json"
+
+
+def mark_transcript_dispatch(spec_dir: str | Path) -> None:
+    """Record the dispatch time so completion links only newer transcripts (#2059).
+
+    Its own file, written only here, so it cannot race the many writers of
+    ``task_metadata.json``. Transcript names start with the same UTC stamp.
+    Best-effort: never raises.
+    """
+    try:
+        d = Path(spec_dir)
+        d.mkdir(parents=True, exist_ok=True)
+        since = datetime.now(UTC).strftime("%Y%m%dT%H%M%S_%fZ")
+        tmp = d / (_DISPATCH_FILE + ".tmp")
+        tmp.write_text(json.dumps({"since": since}))
+        tmp.replace(d / _DISPATCH_FILE)
+    except OSError:
+        logger.debug("transcript dispatch marker skipped (best-effort)", exc_info=True)
+
+
+def _read_transcript_since(spec_dir: Path) -> str | None:
+    try:
+        since = json.loads((Path(spec_dir) / _DISPATCH_FILE).read_text()).get("since")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return since if isinstance(since, str) else None
+
+
 def _record_transcript_uris(spec_dir: Path, uris: list[str]) -> None:
     """Link the run transcripts from the task record (#2034).
 
@@ -1117,14 +1146,20 @@ def _record_transcript_uris(spec_dir: Path, uris: list[str]) -> None:
     module is exec'd standalone, so it must not import ``server.tenancy``.
     Best-effort: a write failure never loses the URI on the event.
     """
-    if not uris:
-        return
     tm_file = Path(spec_dir) / "task_metadata.json"
+    if not uris and not tm_file.exists():
+        return
     try:
         meta = json.loads(tm_file.read_text()) if tm_file.exists() else {}
         if not isinstance(meta, dict):
             return
-        meta["transcriptUris"] = uris
+        if not uris:
+            # #2059: a run with no new transcript must not keep an earlier run's links.
+            if "transcriptUris" not in meta:
+                return
+            del meta["transcriptUris"]
+        else:
+            meta["transcriptUris"] = uris
         tm_file.write_text(json.dumps(meta, indent=2))
     except (OSError, ValueError):
         logger.debug("transcript link skipped (best-effort)", exc_info=True)
@@ -1179,7 +1214,7 @@ def emit_terminal_completion(
         # up on its own so an earlier fetch failure cannot skip it.
         from core.workspace_fetch import transcript_uris as _uris  # noqa: PLC0415
 
-        transcript_uris = _uris(task_id)
+        transcript_uris = _uris(task_id, _read_transcript_since(spec_dir))
     except Exception:  # noqa: BLE001 - defensive; emit must still proceed
         logger.debug("transcript lookup skipped (best-effort)", exc_info=True)
     _record_transcript_uris(spec_dir, transcript_uris)

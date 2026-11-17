@@ -785,6 +785,38 @@ async def test_dispatch_records_worker_ref(
     assert fake.deleted == []
 
 
+def test_sigterm_upload_bound_reaches_jobs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#2059: the server's setting must reach the Job that consumes it."""
+    monkeypatch.setenv("AIFACTORY_TRANSCRIPT_SIGTERM_SECONDS", "7")
+    assert (
+        bb.build_job_env(None, Path(_DATA_ROOT))["AIFACTORY_TRANSCRIPT_SIGTERM_SECONDS"]
+        == "7"
+    )
+
+
+async def test_dispatch_marks_the_transcript_cutoff(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#2059: dispatch stamps the time completion filters earlier transcripts by."""
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    monkeypatch.setattr(bb, "populate_build_worktree", lambda *_a, **_k: None)
+    marked: list[object] = []
+    monkeypatch.setattr(
+        "server.services.completion.mark_transcript_dispatch", marked.append
+    )
+    store = await _make_store(tmp_path / "d.db")
+    await store.admit("p:s1", _spawn_args("s1"), cap=2, correlation_key="9")
+    await bb.KubeJobBuildBackend(store).dispatch(
+        task_id="p:s1",
+        project_path=Path(_DATA_ROOT) / "workspaces" / "p",
+        spec_id="s1",
+        correlation_key="9",
+        batch=_FakeBatch(),
+    )
+    assert marked == [bb.spec_dir_for(Path(_DATA_ROOT) / "workspaces" / "p", "s1")]
+
+
 async def test_scoped_s3_swaps_root_key_and_fails_closed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

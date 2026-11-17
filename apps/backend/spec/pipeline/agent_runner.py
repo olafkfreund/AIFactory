@@ -240,6 +240,12 @@ class AgentRunner:
                                 )
 
                                 if self.task_logger:
+                                    self.task_logger.transcript_tool_start(
+                                        tool_name,
+                                        {} if inp is None else inp,
+                                        getattr(block, "id", None),
+                                        LogPhase.PLANNING,
+                                    )
                                     self.task_logger.tool_start(
                                         tool_name,
                                         tool_input_display,
@@ -267,6 +273,15 @@ class AgentRunner:
                                         "agent_runner",
                                         f"Tool success: {current_tool}",
                                         result_length=len(str(result_content)),
+                                    )
+                                if self.task_logger:
+                                    # Every result, matched by id: a message can carry
+                                    # several tool calls but ``current_tool`` holds one.
+                                    self.task_logger.transcript_tool_end(
+                                        getattr(block, "tool_use_id", None),
+                                        result_content,
+                                        is_error,
+                                        LogPhase.PLANNING,
                                     )
                                 if self.task_logger and current_tool:
                                     detail_content = self._get_tool_detail_content(

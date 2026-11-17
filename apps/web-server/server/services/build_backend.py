@@ -275,6 +275,8 @@ _FIXED_BUILD_ENV: dict[str, str] = {
 # plus GitHub env from runner_github_env below. ANTHROPIC_API_KEY is NOT
 # here — OAuth-only policy (core.child_env._STRIP_VARS).
 _PASSTHROUGH_BUILD_ENV: tuple[str, ...] = (
+    # #2059: bound on the Job's SIGTERM transcript upload (build and spec Jobs).
+    "AIFACTORY_TRANSCRIPT_SIGTERM_SECONDS",
     # The build Job runs the trailing gates itself, and
     # `gate_runner._select_runner` reads these to decide whether a gate goes to a
     # per-task Nix sandbox or to a plain host subprocess. Unset in the Job, it
@@ -1416,6 +1418,10 @@ class KubeJobBuildBackend:
         from .trusted_contract_store import stamp_spawn  # noqa: PLC0415
 
         await stamp_spawn(spec_dir_for(project_path, spec_id), "kubejob")
+        from .completion import mark_transcript_dispatch  # noqa: PLC0415
+
+        # #2059: completion links only transcripts newer than this dispatch.
+        mark_transcript_dispatch(spec_dir_for(project_path, spec_id))
 
         extra_env = await asyncio.to_thread(build_job_env, oauth_token, project_path)
         from . import project_settings_store  # noqa: PLC0415

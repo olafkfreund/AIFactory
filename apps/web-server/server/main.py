@@ -28,6 +28,7 @@ from .config import (
     enforce_disable_auth_safety,
     get_settings,
     warn_if_auth_disabled,
+    warn_if_multi_replica,
 )
 from .crypto.kms import enforce_kms_safety
 from .database.engine import init_db
@@ -121,6 +122,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"Backend path: {settings.BACKEND_PATH}")
     logger.info(f"Projects data dir: {settings.PROJECTS_DATA_DIR}")
     warn_if_auth_disabled(settings)
+    warn_if_multi_replica()
 
     # Ensure data directory exists
     Path(settings.PROJECTS_DATA_DIR).mkdir(parents=True, exist_ok=True)
