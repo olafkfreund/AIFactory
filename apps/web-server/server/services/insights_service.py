@@ -15,6 +15,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from factory_common.logsafe import sanitize_log
 
@@ -340,7 +341,7 @@ class InsightsService:
         project_path: Path,
         project_id: str,
         message: str,
-        model_config: dict | None = None,
+        model_config: dict[str, Any] | None = None,
     ) -> None:
         """Refuse under FORBID (every provider is a CLI), else run the chat turn."""
         if problem := inpod_agent_refusal():  # #2095 slice D: every provider is a CLI

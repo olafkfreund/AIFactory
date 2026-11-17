@@ -87,7 +87,7 @@ def _no_triage_gate(monkeypatch):
     monkeypatch.setattr(execution, "get_settings", _S)
 
 
-def _correction_req(confirm=True):
+def _correction_req(confirm: bool = True) -> execution.ApplyCorrectionRequest:
     return execution.ApplyCorrectionRequest(fix_request_md="fix", confirm=confirm)
 
 
