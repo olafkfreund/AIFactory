@@ -37,14 +37,19 @@ intent: intent/2026-11-17-2107-gateway-routes.md
    Scalar `execution.route` is not consumed (out of scope).
 2. `phase_config.py`:
    - Env `AIFACTORY_PHASE_ROUTES` (`on` enables, anything else is off; default
-     off) AND `AIFACTORY_MODEL_GATEWAY_URL` set. The flag is the operator's
+     off) AND `AIFACTORY_MODEL_GATEWAY_URL` set AND `LITELLM_GATEWAY_URL` unset (the provider's
+     `resolve_base_url` prefers LiteLLM unconditionally, `providers/_gateway.py:65`,
+     so with both set the class would go to LiteLLM; the feature stays off then:
+     fail closed to today's behaviour). The flag is the operator's
      assertion that the gateway has a routes file covering the classes; AIFactory
      cannot ask. `TaskMetadataConfig` gains `phaseRoutes`.
    - `_phase_route_model(phase, metadata)` returns `openai-compatible:<class>` or
-     `None`. It returns `None` unless the feature is on, `metadata["phaseRoutes"]`
+     `None`. It returns `None` when a control-plane fallback is set or
+     `metadata["pinnedModel"]` is set, so every caller honours those two above the
+     route, and unless the feature is on, `metadata["phaseRoutes"]`
      is a dict, and its value for `phase` is one of the four classes. The class is
-     raised to the RFC-0011 difficulty floor (`difficultyTier`: low none, medium
-     `balanced`, hard `frontier`; never lowered; `local` is the lowest rank).
+     raised to the RFC-0011 difficulty floor (`difficultyTier`, same mapping as
+     `routing_policy._RFC0011_FLOOR`: low `cheap`, medium `balanced`, hard `frontier`; never lowered; `local` is the lowest rank).
    - `_resolve_phase_model` and `get_phase_model_betas` call it right after
      `pinnedModel` and before `phaseModels`. So: control-plane fallback >
      `pinnedModel` > phase route > `phaseModels` > CLI > contract routing >
@@ -58,11 +63,20 @@ intent: intent/2026-11-17-2107-gateway-routes.md
      saved-endpoint lookups, so a class name never reaches a saved endpoint or
      `api.openai.com`. The `model` sent to the gateway is the bare class, which
      the gateway resolves.
+   - `agent_spec_creation.py:150` reads `phaseModels.spec` itself and passes
+     `--model` to the spec runner (which only does `resolve_model_id`). It lazily
+     imports `phase_route_model` (public name; same lazy-import precedent as
+     `build_backend.py:662`) and, when it returns a model for `spec`, passes that
+     as `--model` instead, so the spec runner and the build agree.
 3. `build_backend.build_job_env`: add `AIFACTORY_PHASE_ROUTES` to
    `_PASSTHROUGH_BUILD_ENV`, and when the gateway URL is set also set
    `AIFACTORY_MODEL_GATEWAY_URL` in the Job env (the token already reaches the Job
    as `OPENAI_COMPATIBLE_API_KEY`). With no gateway URL the Job env is unchanged.
-4. Docs: `GATEWAY_ROUTES_PATH` and `AIFACTORY_PHASE_ROUTES` in
+4. Prerequisite, documented not changed: the `openai-compatible` runtime must be
+   allowed (`AIFACTORY_RUNTIMES=openai-compatible`, `core/runtime_gating.py`);
+   the allowlist stays enforced, so an operator who forgets it gets the existing
+   clear refusal, not a silent fallback.
+5. Docs: `GATEWAY_ROUTES_PATH` and `AIFACTORY_PHASE_ROUTES` in
    `docs/docs/environment-reference.md` and `apps/backend/.env.example`;
    CHANGELOG line. The routes file format is documented there.
 
@@ -102,12 +116,12 @@ intent: intent/2026-11-17-2107-gateway-routes.md
   invalid file, non-JSON body, non-object body: unchanged, no header; no
   `GATEWAY_ROUTES_PATH`: today's behaviour; file edited between requests takes
   effect.
-- `apps/backend/test_phase_routes.py`: feature off (no flag, or no gateway URL):
+- `apps/backend/test_phase_routes.py`: feature off (no flag, no gateway URL, or `LITELLM_GATEWAY_URL` set):
   `phaseModels` result is unchanged for every phase; on: route wins over
   `phaseModels`, `pinnedModel` and the fallback still outrank it; phase absent or
   invalid class: `phaseModels` wins; difficulty floor raises, never lowers; betas
   mirror; `get_provider_extra_kwargs` returns the gateway URL/token for a class and
-  is unchanged for a real model name; `execution_profile_to_metadata` maps
+  is unchanged for a real model name; the spec-creation entry returns the route model as `--model` (pin and fallback outrank); `execution_profile_to_metadata` maps
   `phase_routes` and omits `isAutoProfile`.
 - `tests/test_build_backend_kubejob.py`: Job env gets `AIFACTORY_MODEL_GATEWAY_URL`
   only when the gateway URL is set, and forwards `AIFACTORY_PHASE_ROUTES`.
