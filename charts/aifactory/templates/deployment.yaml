@@ -404,6 +404,10 @@ spec:
                   key: OTEL_EXPORTER_OTLP_HEADERS
             {{- end }}
             {{- end }}
+            # #2059: the replica count this chart can reach; the server warns above 1
+            # (revert idempotency is per process). An HPA renders even with rmux.
+            - name: AIFACTORY_REPLICAS
+              value: "{{ if .Values.autoscaling.enabled }}{{ .Values.autoscaling.maxReplicas }}{{ else if .Values.rmux.enabled }}1{{ else }}{{ .Values.replicaCount }}{{ end }}"
             {{- if .Values.modelGateway.url }}
             # Factory#1959: route the build Job's OpenAI-compatible plane through the
             # model gateway (build_backend.build_job_env). Token only via a Secret.
