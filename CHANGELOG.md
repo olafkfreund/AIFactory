@@ -1,3 +1,37 @@
+## [Unreleased]
+
+## 3.12.0 - 2026-11-17
+
+Merged to `dev` since 3.11.1.
+
+### Security
+
+- Auth failures (rejected token, failed login, bad refresh token, rejected
+  WebSocket token) can be pushed to the OpenObserve `audit_chain` stream as
+  `action = "auth.failure"` so factory-gitops `security-alerts` can count them.
+  Off by default (`AIFACTORY_AUDIT_SIEM_*`, chart `auditSiem`); no token, email
+  or path is sent. Failed logins and bad refresh tokens now also write the
+  chained audit row (#2079, #2082).
+- Agent children: a classic GitHub token with admin scopes is warned about or,
+  with `AIFACTORY_AGENT_TOKEN_ADMIN_POLICY=refuse`, withheld; the GitHub App
+  manifest permissions are widened (#1973, #2083).
+- `APP_REQUIRE_ENV_SECRETS=true` makes startup fail when `APP_API_TOKEN` or
+  `APP_JWT_SECRET` is empty (default off); transcript objects are keyed by the
+  project-qualified job id (#1931, #2059, #2080).
+- Build/spec Jobs also get the logins of operator-enabled failover providers
+  (#2047, #2076).
+
+### Changed
+
+- Baked agent CLIs: claude-code 2.1.325, gemini-cli 0.68.0, codex 0.169.0
+  (#2043).
+- Re-vendored hub shared packages `factory_common` and `agent_sandbox` (#2081,
+  #2084).
+- The auto-PR `Authored by agent` / `Originator` lines follow
+  `AIFACTORY_AGENT_COMMIT_TRAILERS` like the commit trailers (#2062). Documented
+  `AIFACTORY_MODEL_GATEWAY_URL` / `_TOKEN` in the environment reference,
+  `.env.example` and chart (`modelGateway`, default off) (#2079).
+
 ## 3.11.1 - 2026-11-16
 
 Review fixes merged to `dev` since 3.11.0.

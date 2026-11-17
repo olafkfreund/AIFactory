@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from server.database.engine import get_db
 from server.database.models import ApiKey, Organization, OrgMember, User
 from server.error_ref import InputRejectedError
-from server.routes.organizations import _role_level
+from server.utils.roles import _role_level
 
 MCP_READ_SCOPE = "mcp:read"
 MCP_WRITE_SCOPE = "mcp:write"

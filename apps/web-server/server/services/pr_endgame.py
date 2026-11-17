@@ -44,7 +44,7 @@ from server.utils.subprocess_env import (
 
 # subprocess_env above puts apps/backend on sys.path.
 # isort: split
-from core.commit_trailers import trailer_block
+from core.commit_trailers import trailer_block, trailers_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -1826,7 +1826,8 @@ def _pr_title_body(spec_dir: Path, spec_id: str) -> tuple[str, str]:
             issue_number = prov["issue_number"]
         elif isinstance(gh, dict) and isinstance(gh.get("number"), int):
             issue_number = gh["number"]
-        # Factory#1960: the agent that authored this PR, and the human behind it.
+        # Factory#1960: the agent that authored this PR, and the human behind it;
+        # behind the same flag as the commit trailers (#2062).
         # Single printable line: both values are recorded text, not trusted markup.
         who = [
             f"{label}: {v}"
@@ -1834,7 +1835,10 @@ def _pr_title_body(spec_dir: Path, spec_id: str) -> tuple[str, str]:
                 ("Authored by agent", "agent_identity"),
                 ("Originator", "originator"),
             )
-            if isinstance(v := req.get(key), str) and v and v.isprintable()
+            if trailers_enabled()
+            and isinstance(v := req.get(key), str)
+            and v
+            and v.isprintable()
         ]
         if who:
             body = body + "\n\n" + "\n".join(who)

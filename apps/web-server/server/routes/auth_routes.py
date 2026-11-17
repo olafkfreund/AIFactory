@@ -19,7 +19,7 @@ from pydantic import BaseModel, EmailStr, Field, SecretStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..auth import _try_decode_jwt
+from ..auth import _audit_auth_failure, _try_decode_jwt  # noqa: TID252
 from ..config import get_settings
 from ..database import Organization, OrgMember, User
 from ..database.engine import get_db
@@ -266,7 +266,9 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     response_model=AuthResponse,
     summary="Authenticate and receive JWT tokens",
 )
-async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
+async def login(
+    body: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)
+):
     """Authenticate with email and password.
 
     Returns a short-lived access token (15 min) and a long-lived refresh
@@ -278,6 +280,10 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     if user is None or not _verify_password(
         body.password.get_secret_value(), user.password_hash
     ):
+        # End the read transaction first: the audit writer takes its own pooled
+        # connection, and holding this one can starve a small pool (#2079).
+        await db.rollback()
+        await _audit_auth_failure(request, reason="bad_credentials")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
@@ -304,7 +310,9 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     response_model=TokenResponse,
     summary="Refresh an expired access token",
 )
-async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
+async def refresh(
+    body: RefreshRequest, request: Request, db: AsyncSession = Depends(get_db)
+):
     """Exchange a valid refresh token for a new access token.
 
     The refresh token itself is not rotated; it remains valid until its
@@ -319,6 +327,7 @@ async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
             algorithms=[settings.JWT_ALGORITHM],
         )
     except JWTError:
+        await _audit_auth_failure(request, reason="invalid_refresh_token")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired refresh token",
@@ -326,6 +335,7 @@ async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
         )
 
     if payload.get("type") != "refresh":
+        await _audit_auth_failure(request, reason="invalid_refresh_token")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token is not a refresh token",

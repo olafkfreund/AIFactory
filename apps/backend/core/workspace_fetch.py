@@ -376,6 +376,8 @@ def maybe_push_transcripts(spec_id: str) -> int:
     if not os.environ.get("S3_ENDPOINT", "").strip():
         return 0
     count = 0
+    # The Job's JOB_ID is "<project>:<spec>"; spec ids repeat across projects (#2059).
+    job_id = os.environ.get("JOB_ID", "").strip() or spec_id
     try:
         from core.artifact_store import ArtifactStore  # noqa: PLC0415
         from task_logger import transcript  # noqa: PLC0415
@@ -383,7 +385,7 @@ def maybe_push_transcripts(spec_id: str) -> int:
         store = ArtifactStore()
         for path in transcript.written_files():
             store.put_bytes(
-                str(_transcript_ref(spec_id, path.name).key()),
+                str(_transcript_ref(job_id, path.name).key()),
                 path.read_bytes(),
                 "application/x-ndjson",
                 role="evidence",
@@ -395,15 +397,18 @@ def maybe_push_transcripts(spec_id: str) -> int:
     return count
 
 
-def transcript_uris(spec_id: str) -> list[str]:
-    """Sorted ``s3://`` URIs of a spec's stored transcripts, ``[]`` on any error."""
+def transcript_uris(job_id: str) -> list[str]:
+    """Sorted ``s3://`` URIs of a task's stored transcripts, ``[]`` on any error.
+
+    ``job_id`` is the task id (``<project>:<spec>``) that the build Job got as ``JOB_ID``.
+    """
     if not os.environ.get("S3_ENDPOINT", "").strip():
         return []
     try:
         from core.artifact_store import ArtifactStore  # noqa: PLC0415
 
         store = ArtifactStore()
-        ref = _transcript_ref(spec_id)
+        ref = _transcript_ref(job_id)
         prefix = str(ref.key()).removesuffix("x")
         keys = sorted(
             k

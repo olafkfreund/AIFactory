@@ -31,9 +31,16 @@ def test_empty_string_returns_empty() -> None:
 
 
 def test_sk_api_key_redacted_with_original_placeholder() -> None:
+    # Not sk-ant-: the fleet table now owns Anthropic keys (Factory#3745).
+    out = sanitize_error_message("boom sk-abcdefghijklmnopqrstuvwxyz done")
+    assert "sk-abcdefghijkl" not in out
+    assert "[REDACTED_API_KEY]" in out
+
+
+def test_anthropic_key_redacted_by_fleet_layer() -> None:
     out = sanitize_error_message("boom sk-ant-api03-AAAABBBBCCCCDDDDEEEE done")
     assert "sk-ant-api03" not in out
-    assert "[REDACTED_API_KEY]" in out
+    assert FLEET_REDACTED in out
 
 
 def test_key_prefixed_api_key_redacted() -> None:
