@@ -229,9 +229,9 @@ def create_memory_tools(
 
         try:
             memory_dir.mkdir(exist_ok=True)
-            known = scratchpad.fingerprint(approach) in scratchpad.read(memory_dir).get(
-                "dead_end", {}
-            )
+            known = scratchpad.fingerprint(approach, "dead_end") in scratchpad.read(
+                memory_dir
+            ).get("dead_end", {})
             if (
                 not known
                 and dead_ends_written.get(memory_dir, 0) >= CAPS[session_type()]
