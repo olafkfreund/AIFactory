@@ -1,5 +1,10 @@
 ## [Unreleased]
 
+### Security
+
+- `AIFACTORY_REVIEW_BACKEND=kubejob` runs PR review and task clarification sessions as Kubernetes Jobs; only `review_{N}.json` or the capped clarification text returns to the control plane. Off by default (#1932, slice A4).
+- `AIFACTORY_FORBID_INPOD_AGENTS=true` refuses in-pod agent spawns for spec creation, builds, PR review and clarification, unless `AIFACTORY_LOCAL_DEV=1`. Off by default (#1932).
+
 ### Fixed
 
 - Run transcripts (#2059): a completion event links only transcripts newer than
