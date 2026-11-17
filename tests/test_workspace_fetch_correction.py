@@ -270,3 +270,30 @@ def test_fetch_rejects_non_bool_exec(store: type[FakeStore], tmp_path: Path) -> 
     with pytest.raises(ValueError, match="mode"):
         workspace_fetch.fetch_correction(tmp_path, "fid")
     assert not (tmp_path / "a").exists()
+
+
+def test_push_base_hash_uses_the_checkout_form(
+    store: type[FakeStore], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", *args], cwd=tmp_path, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    git("init", "-q")
+    git("config", "user.email", "test@example.com")
+    git("config", "user.name", "Test")
+    (tmp_path / ".gitattributes").write_text("*.txt text eol=crlf\n")
+    (tmp_path / "a.txt").write_bytes(b"one\n")
+    git("add", ".")
+    git("commit", "-qm", "base")
+    (tmp_path / "a.txt").unlink()
+    git("checkout", "a.txt")  # the working copy is now CRLF, as in the control plane
+    local = (tmp_path / "a.txt").read_bytes()
+    assert local == b"one\r\n"
+    base = git("rev-parse", "HEAD")
+    (tmp_path / "a.txt").write_bytes(b"two\r\n")
+    monkeypatch.setenv(workspace_fetch.CORRECTION_FETCH_ID_ENV, "fid")
+    assert workspace_fetch.maybe_push_correction(tmp_path, base)
+    doc = json.loads(store.objects[workspace_fetch._correction_key("fid")])
+    assert doc["files"]["a.txt"]["base_sha256"] == _hash(local)

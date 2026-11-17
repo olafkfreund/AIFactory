@@ -497,14 +497,19 @@ async def dispatch_correction_fixer(spec_dir: Path | str) -> dict[str, Any]:
             f"could not prepare the correction workspace ({type(exc).__name__})"
         ) from None
     script = Path(build_backend._resolve_run_py_path()).parent / "qa/correction_job.py"
-    manifest = build_agent_job_manifest(
-        job_id=job_id,
-        argv=["python", str(script), "--project", "/work", "--spec-id", spec.name],
-        workspace_uri=uri,
-        extra_env=env,
-        models=["sonnet", "opus"],
-    )
-    batch, namespace, job_name = await _create_job(manifest, None)
+    try:
+        manifest = build_agent_job_manifest(
+            job_id=job_id,
+            argv=["python", str(script), "--project", "/work", "--spec-id", spec.name],
+            workspace_uri=uri,
+            extra_env=env,
+            models=["sonnet", "opus"],
+        )
+        batch, namespace, job_name = await _create_job(manifest, None)
+    except Exception as exc:  # noqa: BLE001 - an API error is a refusal, not a 500
+        raise build_backend.BuildBackendUnavailableError(
+            f"could not create the correction Job ({type(exc).__name__})"
+        ) from None
     cancel = threading.Event()
 
     async def finish() -> int:

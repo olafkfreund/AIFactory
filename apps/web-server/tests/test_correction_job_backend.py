@@ -300,6 +300,17 @@ async def test_failed_fetch_is_recorded_as_failed(monkeypatch, job) -> None:
     )
 
 
+async def test_api_error_on_create_is_a_refusal(monkeypatch, job) -> None:
+    batch, spec, _f = job
+
+    async def forbidden(namespace, manifest):
+        raise RuntimeError("403 Forbidden")
+
+    monkeypatch.setattr(batch, "create_namespaced_job", forbidden)
+    with pytest.raises(BuildBackendUnavailableError, match="RuntimeError"):
+        await ajb.dispatch_correction_fixer(spec)
+
+
 async def test_dispatch_requires_the_store(monkeypatch, job) -> None:
     _batch, spec, _f = job
     monkeypatch.setattr(ajb, "store_enabled", lambda: False)

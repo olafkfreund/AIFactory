@@ -1178,7 +1178,7 @@ def maybe_push_correction(  # noqa: PLR0912 - one refusal per check, kept flat
             if old_entry and not old_entry.startswith((b"100644 ", b"100755 ")):
                 raise ValueError("correction contains non-regular base file")
             old = subprocess.run(  # noqa: S603
-                ["git", "show", f"{base}:{path}"],  # noqa: S607
+                ["git", "cat-file", "--filters", f"{base}:{path}"],  # noqa: S607  # checkout form
                 cwd=root,
                 env=child_env(),
                 capture_output=True,
