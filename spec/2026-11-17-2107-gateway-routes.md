@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2107
 also: 2108
 intent: intent/2026-11-17-2107-gateway-routes.md
