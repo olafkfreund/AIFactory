@@ -29,6 +29,7 @@ from .build_backend import (
     BuildBackendUnavailableError,
     GatedTaskRefusedError,
     backend_config_error,
+    inpod_agent_refusal,
     subprocess_gate_refusal,
 )
 from .spec_job_backend import (
@@ -121,6 +122,8 @@ class SpecCreationMixin:
         if problem := subprocess_gate_refusal(spec_dir):
             raise GatedTaskRefusedError(problem)
         use_job = spec_kubejob_enabled()
+        if not use_job and (problem := inpod_agent_refusal()):
+            raise BuildBackendUnavailableError(f"Spec creation refused: {problem}")
         if use_job and spec_dir is None:
             raise BuildBackendUnavailableError(
                 "Spec creation refused: task has no spec directory"

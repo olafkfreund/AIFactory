@@ -801,8 +801,20 @@ def main():
         print(f"Unknown command: {args.command}")
         sys.exit(1)
 
+    # A4 (#1932): in a review Job the project arrives packed (WORKSPACE_URI) and
+    # only review_{N}.json goes back (AIFACTORY_REVIEW_FETCH_ID); both are no-ops in-pod.
+    is_review = args.command in ("review-pr", "followup-review-pr")
+    if is_review:
+        from core.workspace_fetch import maybe_unpack_workspace  # noqa: PLC0415
+
+        maybe_unpack_workspace(args.project)
+
     try:
         exit_code = asyncio.run(handler(args))
+        if is_review and exit_code == 0:
+            from core.workspace_fetch import maybe_push_pr_review  # noqa: PLC0415
+
+            maybe_push_pr_review(args.pr_number, args.project)
         sys.exit(exit_code)
     except KeyboardInterrupt:
         print("\nInterrupted.")
