@@ -48,9 +48,11 @@ from functools import lru_cache
 from fastapi import Request, WebSocket, status
 from jose import JWTError, jwt
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import HTTPConnection
 from starlette.responses import JSONResponse
 
 from .config import get_settings
+from .services import audit_siem
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +141,7 @@ def _is_legacy_api_token(token: str) -> bool:
     return hmac.compare_digest(token, configured)
 
 
-async def _audit_auth_failure(request: Request, reason: str) -> None:
+async def _audit_auth_failure(request: HTTPConnection, reason: str) -> None:
     """Record a chained audit event for a rejected credential (Factory#313).
 
     Emitted only when a token was PRESENTED and rejected (invalid / expired /
@@ -162,6 +164,14 @@ async def _audit_auth_failure(request: Request, reason: str) -> None:
             action=ACTION_AUTH_FAILURE,
             resource_type="auth",
             details={"reason": reason, "path": request.url.path},
+            ip=request.client.host if request.client else None,
+        )
+        # SIEM stream the security-alerts rule reads (#2079); off unless configured.
+        # No path: it can carry ids; it stays in the DB row above.
+        audit_siem.schedule(
+            ACTION_AUTH_FAILURE,
+            resource_type="auth",
+            reason=reason,
             ip=request.client.host if request.client else None,
         )
     except Exception:  # pragma: no cover - defensive; bg already swallows
@@ -436,6 +446,7 @@ async def verify_websocket_token(websocket: WebSocket) -> bool:
         _warn_legacy_api_token_once()
         return True
 
+    await _audit_auth_failure(websocket, reason="invalid_ws_token")
     await websocket.close(code=4001, reason="Unauthorized")
     return False
 
@@ -487,6 +498,7 @@ async def authenticate_websocket(websocket: WebSocket) -> dict | None:
         if principal is not None:
             return principal
 
+    await _audit_auth_failure(websocket, reason="invalid_ws_token")
     await websocket.close(code=4001, reason="Unauthorized")
     raise WebSocketAuthError("Invalid token")
 

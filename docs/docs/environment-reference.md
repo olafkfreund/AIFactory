@@ -187,6 +187,27 @@ Read in `providers/_gateway.py`, `phase_config.py`, `core/enforcement.py`,
 | `LITELLM_AUDIT_SCRUB_OUTBOUND` | on | no | Scrub high-precision PII (SSN, email, phone, Luhn-checked CC) from the prompt BEFORE it is sent to the LLM provider (#320). On by default; kill-switch — set `false`/`0`/`no`/`off` to disable and restore audit-row-only redaction. |
 | `LITELLM_AUDIT_EXTRA_PATTERNS` | `""` | no | Extra comma-separated regex patterns for the audit scrubber. |
 
+### Model gateway (Factory#1959)
+
+Read in `services/build_backend.py` (`build_job_env`). Chart: `modelGateway.*` (default off).
+
+| Variable | Default | Required | Purpose |
+|----------|---------|----------|---------|
+| `AIFACTORY_MODEL_GATEWAY_URL` | `""` | no | Base URL of the in-house model gateway. When set, build Jobs send the OpenAI-compatible plane through it: `OPENAI_COMPATIBLE_BASE_URL` becomes this URL and the direct `OPENAI_COMPATIBLE_*` and `OLLAMA_API_KEY` values are not forwarded. Empty = direct providers. |
+| `AIFACTORY_MODEL_GATEWAY_TOKEN` | `""` | conditional | Bearer the gateway checks, forwarded as `OPENAI_COMPATIBLE_API_KEY`. Keep it in a Secret. If unset while the URL is set, a placeholder the gateway rejects is used, never a direct key. |
+
+### Auth-failure SIEM push (#2079)
+
+Read in `services/audit_siem.py`, called from `auth.py` and `routes/auth_routes.py`. Chart: `auditSiem.*` (default off). Sends `{action: "auth.failure", reason, ip, source: "aifactory"}` to the OpenObserve stream that factory-gitops `security-alerts` counts; no token, password, email or request path. Delivery is background and best effort.
+
+| Variable | Default | Required | Purpose |
+|----------|---------|----------|---------|
+| `AIFACTORY_AUDIT_SIEM_URL` | `""` | no | OpenObserve base URL. Empty = off. |
+| `AIFACTORY_AUDIT_SIEM_USER` | `""` | conditional | Ingest user. Off unless URL, user and password are all set. |
+| `AIFACTORY_AUDIT_SIEM_PASSWORD` | `""` | conditional | Its password. Keep it in a Secret. |
+| `AIFACTORY_AUDIT_SIEM_ORG` | `default` | no | OpenObserve organization. |
+| `AIFACTORY_AUDIT_SIEM_STREAM` | `audit_chain` | no | Target stream. |
+
 ## Model, agent & routing tuning
 
 Read across `apps/backend/` (`routing_policy.py`, `core/model_config.py`,
@@ -261,7 +282,7 @@ How `run.py` executes and what lets a build schedule on any node. Read in
 | `AIFACTORY_NIX_STORE_PVC` | `""` | no | Warm Nix-store PVC that gate Jobs mount (seeded from the image). Forwarded into the build Job; the build Job itself never mounts it (#1736). |
 | `AIFACTORY_CLI_CREDS_SECRET` | `""` | no | K8s Secret name holding CLI credentials mounted into the build Job. |
 | `APP_BACKEND_PATH` | `/home/projects/MagesticAI/apps/backend` | no | Backend path inside the build Job. |
-| `AIFACTORY_AGENT_COMMIT_TRAILERS` | off | no | Add `Agent-Identity`, `Autonomy-Tier` and `Originator` git trailers to factory commits and squash-merge bodies, from the spec's `requirements.json` (Factory#1960). Forwarded into the build Job, where the safety-net and wave commits run. |
+| `AIFACTORY_AGENT_COMMIT_TRAILERS` | off | no | Add `Agent-Identity`, `Autonomy-Tier` and `Originator` git trailers to factory commits and squash-merge bodies, and the `Authored by agent` / `Originator` lines to the auto-PR body (#2062), from the spec's `requirements.json` (Factory#1960). Forwarded into the build Job, where the safety-net and wave commits run. |
 
 ### Build-Job env allowlist (`_PASSTHROUGH_BUILD_ENV`)
 
