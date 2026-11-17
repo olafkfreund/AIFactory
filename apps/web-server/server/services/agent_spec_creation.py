@@ -69,6 +69,19 @@ def build_chain_args(kubejob_enabled: bool) -> list[str]:
     return ["--no-build"] if kubejob_enabled else []
 
 
+def _spec_phase_model(metadata: dict[str, Any]) -> str | None:
+    """The ``--model`` for spec creation: a gateway phase route (#2108), else the
+    auto profile's ``phaseModels.spec``, else None (the runner's default)."""
+    from phase_config import phase_route_model  # noqa: PLC0415
+
+    routed = phase_route_model("spec", metadata)  # type: ignore[arg-type]
+    if routed:
+        return routed
+    if metadata.get("isAutoProfile") and metadata.get("phaseModels"):
+        return metadata["phaseModels"].get("spec")
+    return None
+
+
 class SpecCreationMixin:
     """Spec-creation entry point for AgentService."""
 
@@ -146,9 +159,7 @@ class SpecCreationMixin:
                             "[AgentService] Task %s requires manual review - NOT auto-approving spec",
                             sanitize_log(task_id),
                         )
-                    # Read spec phase model from auto profile config
-                    if metadata.get("isAutoProfile") and metadata.get("phaseModels"):
-                        spec_phase_model = metadata["phaseModels"].get("spec")
+                    spec_phase_model = _spec_phase_model(metadata)
                 except (json.JSONDecodeError, OSError) as e:
                     # FAIL CLOSED. `should_auto_approve` defaults to True and
                     # the ONLY thing that clears it is

@@ -72,3 +72,25 @@ async def test_unrunnable_backend_config_refuses_spec_creation(tmp_path, monkeyp
     with pytest.raises(BuildBackendUnavailableError):
         await svc.start_spec_creation("p:s1", tmp_path, "t", "d")
     spawned.assert_not_called()
+
+
+def test_spec_phase_model_prefers_gateway_route(monkeypatch):
+    """#2108: the spec runner's --model follows the same route precedence."""
+    from server.services.agent_spec_creation import _spec_phase_model
+
+    meta = {
+        "isAutoProfile": True,
+        "phaseModels": {"spec": "opus"},
+        "phaseRoutes": {"spec": "frontier"},
+    }
+    for var in ("AIFACTORY_FALLBACK_MODEL", "LITELLM_GATEWAY_URL"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.delenv("AIFACTORY_PHASE_ROUTES", raising=False)
+    assert _spec_phase_model(meta) == "opus"  # off: today's behaviour
+    assert _spec_phase_model({"phaseRoutes": {"spec": "frontier"}}) is None
+    monkeypatch.setenv("AIFACTORY_PHASE_ROUTES", "on")
+    monkeypatch.setenv("AIFACTORY_MODEL_GATEWAY_URL", "http://gw")
+    assert _spec_phase_model(meta) == "openai-compatible:frontier"
+    assert _spec_phase_model({**meta, "pinnedModel": "sonnet"}) == "opus"
+    monkeypatch.setenv("AIFACTORY_FALLBACK_MODEL", "sonnet")
+    assert _spec_phase_model(meta) == "opus"
