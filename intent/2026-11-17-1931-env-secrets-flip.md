@@ -8,7 +8,7 @@ author: olafkfreund
 
 ## Problem
 
-`APP_REQUIRE_ENV_SECRETS` (AIFactory#2080, released in 3.12.0, default off) makes the server refuse to start when `APP_API_TOKEN` or `APP_JWT_SECRET` is empty, so no auto-generated token or JWT file can exist for an in-pod agent to read. Prod sets both from env but does not set the flag, so a missing Secret key would silently regenerate the files.
+`APP_REQUIRE_ENV_SECRETS` (AIFactory#2080, released in 3.12.0, default off) makes the server refuse to start when `APP_API_TOKEN` or `APP_JWT_SECRET` is empty, so the server never falls back to an auto-generated token or JWT file. Existing files are not deleted by the flag (the JWT file was already removed from the PVCs on 2026-10-27, #1931). Prod sets both from env but does not set the flag, so a missing Secret key would silently regenerate the files.
 
 ## Proposed outcome
 
@@ -20,7 +20,7 @@ factory-gitops `apps/aifactory/manifests/manifests.yaml` (Argo CD syncs it). Dep
 
 ## Constraints
 
-Both secrets are already set from `factory-secrets` (`APP_API_TOKEN`, `AIFACTORY_JWT_SECRET`), so the pod must start. Revert is one line.
+Both secrets are already set from `factory-secrets`: env `APP_API_TOKEN` from key `APP_API_TOKEN`, env `APP_JWT_SECRET` from key `AIFACTORY_JWT_SECRET` (manifests.yaml lines 402-405), so the pod must start. Revert is one line.
 
 ## Open questions
 
