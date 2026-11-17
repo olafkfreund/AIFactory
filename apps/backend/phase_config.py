@@ -133,6 +133,7 @@ class TaskMetadataConfig(TypedDict, total=False):
 
     isAutoProfile: bool
     phaseModels: PhaseModelConfig
+    phaseRoutes: dict[str, str]
     phaseThinking: PhaseThinkingConfig
     model: str
     thinkingLevel: str
@@ -414,6 +415,56 @@ def fallback_model_override() -> str | None:
     return os.environ.get(FALLBACK_MODEL_ENV, "").strip() or None
 
 
+# Factory#1959 stage 3 (#2108): prefer the contract's per-phase capability class
+# (execution.phase_routes) when the in-house model gateway resolves class names.
+PHASE_ROUTES_ENV = "AIFACTORY_PHASE_ROUTES"
+GATEWAY_URL_ENV = "AIFACTORY_MODEL_GATEWAY_URL"
+GATEWAY_TOKEN_ENV = "AIFACTORY_MODEL_GATEWAY_TOKEN"  # noqa: S105 - env var name
+# Catalog class ladder, weakest first, and the RFC-0011 difficulty floors on it
+# (same mapping as routing_policy._RFC0011_FLOOR: small=cheap, mid=balanced).
+_ROUTE_CLASSES = ("local", "cheap", "balanced", "frontier")
+_DIFFICULTY_CLASS_FLOOR = {"low": "cheap", "medium": "balanced", "hard": "frontier"}
+
+
+def _phase_routes_active() -> bool:
+    """Operator opted in, a model gateway is set, and LiteLLM does not take over.
+
+    The flag asserts the gateway has a routes file covering the classes (it
+    cannot be asked). ``providers._gateway.resolve_base_url`` prefers
+    ``LITELLM_GATEWAY_URL`` unconditionally, so with both set the class would
+    reach LiteLLM: stay off then (fail closed to today's behaviour).
+    """
+    return (
+        os.environ.get(PHASE_ROUTES_ENV, "").strip().lower() == "on"
+        and bool(os.environ.get(GATEWAY_URL_ENV, "").strip())
+        and not os.environ.get("LITELLM_GATEWAY_URL", "").strip()
+    )
+
+
+def phase_route_model(phase: str, metadata: TaskMetadataConfig | None) -> str | None:
+    """``openai-compatible:<class>`` for this phase's contract route, else ``None``.
+
+    ``None`` (the caller keeps today's resolution) unless the feature is active,
+    no control-plane fallback or ``pinnedModel`` outranks it, and
+    ``phaseRoutes[phase]`` is one of the catalog classes. The class is raised to
+    the RFC-0011 difficulty floor, never lowered.
+    """
+    if not metadata or not _phase_routes_active():
+        return None
+    if fallback_model_override() or metadata.get("pinnedModel"):
+        return None
+    routes = metadata.get("phaseRoutes")
+    cls = routes.get(phase) if isinstance(routes, dict) else None
+    if cls not in _ROUTE_CLASSES:
+        return None
+    floor = _DIFFICULTY_CLASS_FLOOR.get(
+        str(metadata.get("difficultyTier") or "").lower()
+    )
+    if floor and _ROUTE_CLASSES.index(floor) > _ROUTE_CLASSES.index(cls):
+        cls = floor
+    return f"openai-compatible:{cls}"
+
+
 def get_phase_model(
     spec_dir: Path,
     phase: Phase,
@@ -484,8 +535,13 @@ def _resolve_phase_model(
         metadata = load_task_metadata(spec_dir)
 
     # Contract-pinned model wins over everything (RFC-0014 routing block).
-    if metadata and metadata.get("pinnedModel"):
-        return resolve_model_id(metadata["pinnedModel"])
+    # Then a contract phase route resolved by the model gateway (#2108), which
+    # outranks `phaseModels`; it is None when off, pinned or an unknown class.
+    pinned_or_routed = (metadata or {}).get("pinnedModel") or phase_route_model(
+        phase, metadata
+    )
+    if pinned_or_routed:
+        return resolve_model_id(pinned_or_routed)
 
     # `phaseModels` is honoured whenever it names THIS phase. It used to also
     # require `isAutoProfile`, an undocumented companion flag: a request
@@ -561,8 +617,11 @@ def get_phase_model_betas(
 
     metadata = load_task_metadata(spec_dir)
 
-    if metadata and metadata.get("pinnedModel"):
-        return get_model_betas(metadata["pinnedModel"])
+    pinned_or_routed = (metadata or {}).get("pinnedModel") or phase_route_model(
+        phase, metadata
+    )
+    if pinned_or_routed:
+        return get_model_betas(pinned_or_routed)
 
     # Must mirror _resolve_phase_model exactly. It stopped requiring
     # `isAutoProfile` in #1397; leaving this one behind would be worse than the
@@ -1021,19 +1080,29 @@ def get_provider_extra_kwargs(provider_name: str, model: str) -> dict:
 
     stripped = strip_provider_prefix(model).strip()
 
-    # Special handling for Google AI Studio
+    # Fixed-endpoint cases, resolved before any saved endpoint:
+    direct: dict[str, str | None] | None = None
     if model.lower().startswith("studio:"):
-        base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
-        api_key = (
-            os.environ.get("GOOGLE_API_KEY", "").strip()
-            or os.environ.get("GEMINI_API_KEY", "").strip()
-            or None
-        )
-        return {
+        # Google AI Studio
+        direct = {
             "model": stripped or "gemini-2.5-flash",
-            "base_url": base_url,
-            "api_key": api_key,
+            "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+            "api_key": os.environ.get("GOOGLE_API_KEY", "").strip()
+            or os.environ.get("GEMINI_API_KEY", "").strip()
+            or None,
         }
+    elif stripped in _ROUTE_CLASSES and _phase_routes_active():
+        # Gateway class route (#2108): a bare class name goes to the model
+        # gateway, never to a saved endpoint or api.openai.com.
+        direct = {
+            "model": stripped,
+            "base_url": os.environ[GATEWAY_URL_ENV].strip().rstrip("/"),
+            "api_key": os.environ.get(GATEWAY_TOKEN_ENV, "").strip()
+            or os.environ.get("OPENAI_COMPATIBLE_API_KEY", "").strip()
+            or None,
+        }
+    if direct:
+        return direct
 
     # 1) "<label>:<model>" — disambiguate among multiple endpoints
     if ":" in stripped:
