@@ -21,7 +21,7 @@ All work is in factory-gitops (branch feat/2079-aifactory-siem-env, base main). 
    Traps: Argo syncs this live; the Secret is `optional: true`.
 2. `apps/security-alerts/manifests/test_alerts.py`: add the sqlite fixture test → verify by running the file.
    Traps: SQL must stay unchanged in `alerts.py`.
-3. `scripts/mint-audit-ingest-user.sh` (new, executable) → verify by `bash -n` and `DRY_RUN=1`. Order: Secret first, then user create-or-reset, then rollout restart and status.
+3. `scripts/mint-audit-ingest-user.sh` (new, executable) → verify by `bash -n` and `DRY_RUN=1`. Order: user delete+create, then Secret, then rollout restart and status (deviation from the first draft, found by Codex review: Secret-first would break running pods on a failed create).
    Traps: never echo passwords; read root login only via curl `-K -`; fail on non-2xx.
 4. `docs/audit-siem-forwarding.md`: AIFactory section with owner commands (script, restart) and the proof request (invalid Bearer on a protected endpoint, audit_chain query, alert run) → verify by reading.
 
