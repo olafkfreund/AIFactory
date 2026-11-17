@@ -45,6 +45,14 @@ npm run dev
 
 Open **http://localhost:3100** — you should see the welcome screen. Add your first project and create a task.
 
+## Connect GitHub (optional)
+
+Out of the box AIFactory pushes and opens PRs with a maintainer's token. To make
+the PR author a bot, so a maintainer can approve and merge it, register a GitHub
+App: [GitHub App identity: operator setup](./concepts/github-app). It covers
+creating and installing the App, loading its key and checking that the first PR
+is authored by the App. Copilot reviews are opt-in; the same page explains how.
+
 ## What's next
 
 - **[Run the demo →](./demo)** to see the full end-to-end flow against a public sample repo

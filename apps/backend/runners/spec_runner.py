@@ -321,6 +321,14 @@ Examples:
 
     try:
         debug("spec_runner", "Starting spec orchestrator run...")
+        import atexit  # noqa: PLC0415
+
+        from core import workspace_fetch as _wf  # noqa: PLC0415
+        from task_logger import transcript  # noqa: PLC0415
+
+        transcript.start(orchestrator.spec_dir)
+        atexit.register(_wf.maybe_push_transcripts, orchestrator.spec_dir.name)
+        _wf.install_sigterm_upload(orchestrator.spec_dir.name)
         success = asyncio.run(
             orchestrator.run(
                 interactive=args.interactive or not task_description,
@@ -407,6 +415,11 @@ Examples:
             )
             print(f"  {muted('Running:')} {' '.join(run_cmd)}")
             print()
+
+            # os.execv skips atexit: upload this spec run's transcript first (#2059).
+            from core import workspace_fetch as _wf  # noqa: PLC0415
+
+            _wf.maybe_push_transcripts(orchestrator.spec_dir.name)
 
             # Execute run.py - replace current process
             os.execv(sys.executable, run_cmd)
