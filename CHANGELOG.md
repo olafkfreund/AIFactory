@@ -1,5 +1,17 @@
 ## [Unreleased]
 
+## 3.13.1 - 2026-11-17
+
+Merged to `dev` since 3.13.0.
+
+### Security
+
+- Agent sandbox: a git metadata baseline and refusal of remote programs in the sandboxed git environment (#2090, #3737).
+
+### Documentation
+
+- GitHub App setup gotchas and verified cutover (#2092); intent, spec and plan for Job-only agent flags (#2096) and GitOps SIEM wiring (#2097).
+
 ## 3.13.0 - 2026-11-17
 
 Merged to `dev` since 3.12.0.
