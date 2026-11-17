@@ -8,7 +8,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
+
+# One format for the writer, the trailer and the deploy step (#2109).
+PLAN_SLUG_RE = re.compile(r"[A-Za-z0-9._/#:-]{1,128}")
 
 
 def trailers_enabled() -> bool:
@@ -41,7 +45,29 @@ def commit_trailer_args(spec_dir: Path | None) -> list[str]:
         # isprintable() refuses line breaks (forged trailers) and NUL (argv ValueError).
         if isinstance(value, str) and value and value.isprintable():
             out += ["--trailer", f"{key}: {value}"]
+    slug = data.get("plan_slug")
+    if isinstance(slug, str) and PLAN_SLUG_RE.fullmatch(slug):
+        out += ["--trailer", f"Plan-Slug: {slug}"]
     return out
+
+
+def stamp_plan_slug(spec_dir: Path, corr: object) -> bool:
+    """Record a trusted plan's correlation key as ``plan_slug``; never raises."""
+    key = (
+        str(corr) if isinstance(corr, str | int) and not isinstance(corr, bool) else ""
+    )
+    if not PLAN_SLUG_RE.fullmatch(key):
+        return False
+    path = spec_dir / "requirements.json"
+    try:
+        data = json.loads(path.read_text())
+        if not isinstance(data, dict):
+            return False
+        data["plan_slug"] = key
+        path.write_text(json.dumps(data, indent=2))
+    except (OSError, ValueError):
+        return False
+    return True
 
 
 def trailer_block(spec_dir: Path | None) -> str:

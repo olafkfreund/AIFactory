@@ -1499,6 +1499,11 @@ async def create_from_trusted_plan(
                 sanitize_log(e),
             )
 
+    # #2109: the plan's key becomes the Plan-Slug commit trailer (any key form).
+    from core.commit_trailers import stamp_plan_slug
+
+    stamp_plan_slug(spec_dir, corr)
+
     # Multi-tenancy (#925): record the creating tenant (no-op unless enabled).
     # After ingest_trusted_plan, which merges the execution profile into
     # task_metadata.json — the stamp merges rather than clobbers.
