@@ -50,6 +50,7 @@ _BACKEND_PATH = Path(__file__).resolve().parents[3] / "backend"
 if str(_BACKEND_PATH) not in sys.path:
     sys.path.insert(0, str(_BACKEND_PATH))
 
+from runners.github.providers.protocol import as_issue_int  # noqa: E402
 
 # Default AutoFixConfig — matches the AutoFixConfig type at
 # apps/frontend-web/src/shared/types/github-api.ts:21
@@ -376,11 +377,11 @@ async def check_new_issues(project_id: str) -> list[dict[str, Any]]:
 
     new: list[dict[str, Any]] = []
     for iss in issues:
-        if iss.number in existing:
+        if as_issue_int(iss.number) in existing:
             continue
         new.append(
             {
-                "number": iss.number,
+                "number": as_issue_int(iss.number),
                 "title": iss.title,
                 "body": iss.body,
                 "state": iss.state,
@@ -478,7 +479,7 @@ async def start_auto_fix(project_id: str, issue_number: int) -> dict[str, Any]:
         provider = _provider_for(project_id)
         iss = await provider.fetch_issue(issue_number)
         issue_dict = {
-            "number": iss.number,
+            "number": as_issue_int(iss.number),
             "title": iss.title,
             "body": iss.body,
             "state": iss.state,
