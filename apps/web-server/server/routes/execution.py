@@ -245,6 +245,9 @@ class TaskExecutionStatus(BaseModel):
     is_running: bool
     phase: str | None = None
     message: str | None = None
+    queued: bool = False
+    overall_progress: int | None = None
+    current_subtask: str | None = None
 
 
 class RunningTasksResponse(BaseModel):
@@ -263,7 +266,7 @@ class RunningTasksResponse(BaseModel):
 async def get_running_tasks():
     """Get list of all currently running tasks."""
     agent_service = get_agent_service()
-    running = agent_service.get_running_tasks()
+    running = agent_service.get_running_task_ids()
     return RunningTasksResponse(tasks=running, count=len(running))
 
 
@@ -272,14 +275,51 @@ async def get_task_status(
     task_id: str,
     _access: dict = Depends(require_task_access("viewer")),
 ):
-    """Get execution status for a specific task."""
+    """Get execution status for a specific task.
+
+    #2144: phase and progress come from the same source as the portal
+    (``task_to_dict().executionProgress``); ``queued`` is the admission queue,
+    in memory or durable, so a parked task is not mistaken for backlog.
+    """
     agent_service = get_agent_service()
     is_running = await agent_service.is_running_anywhere(task_id)
+    queued = agent_service.is_queued(task_id) or await _durably_queued(
+        agent_service, task_id
+    )
 
+    progress: dict = {}
+    try:
+        from .tasks import get_task
+
+        detail = await get_task(task_id, _access=_access)
+        progress = (detail.get("executionProgress") if detail else None) or {}
+    except HTTPException:
+        pass  # no spec dir yet: report liveness only
+
+    # A queued retry can still carry a previous run's task_logs.json phase.
+    phase = "queued" if queued else progress.get("phase")
+    if phase is None and is_running:
+        phase = "starting"
     return TaskExecutionStatus(
         task_id=task_id,
         is_running=is_running,
+        phase=phase,
+        message=None if queued else progress.get("message"),
+        queued=queued,
+        overall_progress=None if queued else progress.get("overallProgress"),
+        current_subtask=None if queued else progress.get("currentSubtask"),
     )
+
+
+async def _durably_queued(agent_service: Any, task_id: str) -> bool:
+    """True when the durable job-state row says ``queued`` (best-effort)."""
+    if not getattr(agent_service, "_store_enabled", False):
+        return False
+    try:
+        state = await agent_service._store().get_state(task_id)
+    except Exception:  # noqa: BLE001 - status read must not fail on the store
+        return False
+    return (state or {}).get("lifecycle_state") == "queued"
 
 
 @router.get("/{task_id}/running")

@@ -134,6 +134,40 @@ async def test_task_running(tools_by_name, monkeypatch):
     assert payload["running"][0]["phase"] == "coding"
 
 
+async def test_task_running_keeps_string_ids(tools_by_name, monkeypatch):
+    """#2144: /api/tasks/running returns bare ids; they were all dropped."""
+    _make_request_stub(monkeypatch, {"tasks": ["proj:001-demo"], "count": 1})
+    payload = json.loads(_content_text(await tools_by_name["task_running"]({})))
+    assert payload["count"] == 1
+    assert payload["running"][0]["id"] == "proj:001-demo"
+    assert payload["running"][0]["project_id"] == "proj"
+
+
+async def test_agent_status_shows_phase_progress_and_queue(tools_by_name, monkeypatch):
+    """#2144: phase/progress from /status win over the board status."""
+    _make_request_stub(
+        monkeypatch,
+        lambda _m, path, **_k: (
+            {
+                "is_running": True,
+                "phase": "coding",
+                "overall_progress": 40,
+                "current_subtask": "Add pagination",
+                "queued": False,
+            }
+            if path.endswith("/status")
+            else {"status": "backlog"}
+        ),
+    )
+    out = json.loads(
+        _content_text(await tools_by_name["agent_status"]({"task_id": "p:s"}))
+    )
+    assert out["phase"] == "coding"
+    assert out["overall_progress"] == 40
+    assert out["current_subtask_title"] == "Add pagination"
+    assert out["queued"] is False
+
+
 async def test_task_get_truncates_heavy_fields(tools_by_name, monkeypatch):
     huge_plan = "x" * 5000
     _make_request_stub(

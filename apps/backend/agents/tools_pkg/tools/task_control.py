@@ -186,16 +186,28 @@ def create_task_control_tools() -> list[Any]:
         except MCPHTTPError as exc:
             return _format_error(exc)
         items = raw if isinstance(raw, list) else raw.get("tasks", raw.get("data", []))
+        # #2144: /api/tasks/running returns bare "project_id:spec_id" strings;
+        # only dict rows were kept, so every running task was dropped (count 0).
         lean = [
-            {
-                "id": t.get("id"),
-                "title": t.get("title") or t.get("spec_id"),
-                "project_id": t.get("project_id"),
-                "phase": t.get("phase") or t.get("current_phase"),
-                "started_at": t.get("started_at"),
-            }
+            (
+                {
+                    "id": t.get("id"),
+                    "title": t.get("title") or t.get("spec_id"),
+                    "project_id": t.get("project_id"),
+                    "phase": t.get("phase") or t.get("current_phase"),
+                    "started_at": t.get("started_at"),
+                }
+                if isinstance(t, dict)
+                else {
+                    "id": t,
+                    "title": t.partition(":")[2],
+                    "project_id": t.partition(":")[0],
+                    "phase": None,
+                    "started_at": None,
+                }
+            )
             for t in items
-            if isinstance(t, dict)
+            if isinstance(t, (dict, str))
         ]
         return _format_json({"count": len(lean), "running": lean})
 
@@ -828,6 +840,8 @@ def create_task_control_tools() -> list[Any]:
             or task_data.get("metadata", {}).get("phaseModels")
             or {}
         )
+        # #2144: /status now carries the phase (queued/starting/planning/...);
+        # the task's board status ("backlog") is only a last resort.
         current_phase = (
             status_data.get("phase")
             or status_data.get("current_phase")
@@ -847,6 +861,9 @@ def create_task_control_tools() -> list[Any]:
                 "current_subtask_title": status_data.get("current_subtask")
                 or status_data.get("current_subtask_title"),
                 "overall_progress": status_data.get("overall_progress"),
+                "queued": bool(status_data.get("queued")),
+                "message": status_data.get("message"),
+                "is_running": status_data.get("is_running"),
             }
         )
 
