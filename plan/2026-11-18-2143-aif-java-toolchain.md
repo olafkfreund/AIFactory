@@ -76,3 +76,8 @@ tests/test_gates_for_descriptor_languages.py -q` all green.
 
 Revert the PR. Inference falls back to returning None for rust/java (today),
 and Java has no gate (today).
+
+## Deviations
+
+- Step 2: split into helpers (`_scan_java`, `_builtin_languages`, `_verify_commands`) for the complexity caps; pom read by regex, not an XML parser (untrusted repo content). Step 3: as planned (module helper in gate_runner.py, no new marker keys).
+- Step 2 and 3 were first-cut by codex; the lead reworked step 2 and committed both.
