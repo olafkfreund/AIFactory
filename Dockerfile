@@ -586,6 +586,8 @@ RUN apk add --no-cache "py3-pip-wheel>=26.2.2-r1" "uv>=0.13.6-r1" \
 # traverse it; create it explicitly.
 RUN mkdir -m 0755 /app
 COPY --chmod=0644 apps/model-gateway/gateway.py /app/gateway.py
+# Price source for spend attribution (GATEWAY_METRICS=on); the vendored hub catalog.
+COPY --chmod=0644 apps/backend/core/model-catalog.json /app/model-catalog.json
 
 USER 65532
 EXPOSE 8080
