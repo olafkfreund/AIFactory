@@ -131,7 +131,9 @@ _JDK_PROP = re.compile(
     r"<(?:maven\.compiler\.release|maven\.compiler\.source|java\.version)>"
     r"\s*(?:1\.)?(\d+)"
 )
-_DESCRIPTORLESS = {"rust": "rust", "go": "go", "java": "java"}
+# java is found by _scan_java markers only: StackDetector globs **/*.java into
+# nested task worktrees.
+_DESCRIPTORLESS = {"rust": "rust", "go": "go"}
 _VERIFY = {
     "rust": ["cargo test --quiet"],
     "go": ["go test ./..."],
@@ -148,7 +150,7 @@ def _scan_java(project_dir: Path) -> tuple[list[Path], bool]:
         dirs[:] = (
             []
             if depth >= _MAX_MODULE_DEPTH
-            else [d for d in dirs if d not in _SKIP_DIRS]
+            else [d for d in dirs if d not in _SKIP_DIRS and not d.startswith(".")]
         )
         if "pom.xml" in files:
             poms.append(Path(directory) / "pom.xml")

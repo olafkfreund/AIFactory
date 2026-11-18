@@ -264,3 +264,10 @@ def test_kotlin_gradle_repo_does_not_buy_maven(tmp_path):
     (root / "build.gradle").write_text("// groovy build\n")
 
     assert "pkgs.maven" not in _flake_for(root)
+
+
+def test_other_task_worktrees_do_not_trigger_java(tmp_path):
+    _maven(tmp_path / ".aifactory/worktrees/tasks/other")
+    (tmp_path / "x.f90").write_text("program p\nend program p\n")
+
+    assert infer_environment(tmp_path) is None

@@ -91,3 +91,10 @@ def test_no_java_markers_no_java_gate(tmp_path):
     names = _by_name(tmp_path)
 
     assert not any(n.startswith(("maven", "gradle")) for n in names)
+
+
+def test_other_task_worktrees_are_not_scanned(tmp_path):
+    _pom(tmp_path / ".aifactory/worktrees/tasks/other")
+    _pom(tmp_path / ".worktrees/other")
+
+    assert not any(n.startswith("maven") for n in _by_name(tmp_path))

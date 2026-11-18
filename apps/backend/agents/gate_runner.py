@@ -243,7 +243,13 @@ def _java_module_dirs(project_dir: Path) -> list[tuple[Path, str]]:
             dirs[:] = (
                 []
                 if depth >= _MODULE_MAX_DEPTH
-                else sorted(name for name in dirs if name not in _MODULE_SKIP_DIRS)
+                else sorted(
+                    name
+                    for name in dirs
+                    # dot dirs: .git, .gradle and managed task worktrees
+                    # (.aifactory/, .worktrees/) hold other checkouts
+                    if name not in _MODULE_SKIP_DIRS and not name.startswith(".")
+                )
             )
             if markers.intersection(files):
                 modules.append((module_dir, build_system))
