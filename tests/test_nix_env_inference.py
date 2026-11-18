@@ -267,6 +267,7 @@ def test_kotlin_gradle_repo_does_not_buy_maven(tmp_path):
 
 
 def test_other_task_worktrees_do_not_trigger_java(tmp_path):
+    (tmp_path / ".aifactory/worktrees/tasks/other").mkdir(parents=True)
     _maven(tmp_path / ".aifactory/worktrees/tasks/other")
     (tmp_path / "x.f90").write_text("program p\nend program p\n")
 
