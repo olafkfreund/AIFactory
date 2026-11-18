@@ -1,5 +1,19 @@
 ## [Unreleased]
 
+## 3.16.0 - 2026-11-18
+
+Merged to `dev` since 3.15.1.
+
+### Added
+
+- `AIFACTORY_JOB_SA` sets the ServiceAccount for spec and agent Jobs; falls back to `AIFACTORY_BUILD_SA`, then `aifactory-sandbox`, so nothing changes until set. (#2126, #2130)
+- Bitbucket and Jira code providers vendored from the hub. (Factory#3776, #2122)
+
+### Fixed
+
+- The frontend WebSocket client keeps its handlers across reconnects. (#2125, #2129)
+- Docs site overrides `tinypool` to `^2.1.2` (Dependabot #105, #106). (#2128)
+
 ## 3.15.1 - 2026-11-18
 
 Merged to `dev` since 3.15.0.
