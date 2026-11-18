@@ -79,12 +79,7 @@ def build_spec_job_manifest(  # noqa: PLR0913 - manifest coordinates
         argv.extend(("--model", model))
     if complexity:
         argv.extend(("--complexity", complexity))
-    service_account = (
-        os.environ.get(
-            build_backend._ENV_SERVICE_ACCOUNT, build_backend._DEFAULT_SERVICE_ACCOUNT
-        ).strip()
-        or build_backend._DEFAULT_SERVICE_ACCOUNT
-    )
+    service_account = build_backend._job_service_account()
     spec = JobSpec(
         service="aifactory",
         job_id=f"{task_id}-spec-{fetch_id[:8]}",
