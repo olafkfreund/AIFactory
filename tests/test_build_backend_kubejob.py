@@ -135,6 +135,32 @@ def _spawn_args(spec_id: str) -> SpawnArgs:
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.parametrize(
+    ("build_sa", "job_sa", "expected"),
+    [
+        (" build-sa ", None, "build-sa"),
+        (" build-sa ", " job-sa ", "build-sa"),
+        (None, None, "aifactory-sandbox"),
+        ("   ", " job-sa ", "aifactory-sandbox"),
+    ],
+)
+def test_build_job_service_account(
+    monkeypatch: pytest.MonkeyPatch,
+    build_sa: str | None,
+    job_sa: str | None,
+    expected: str,
+) -> None:
+    for name, value in (("AIFACTORY_BUILD_SA", build_sa), ("AIFACTORY_JOB_SA", job_sa)):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    manifest = bb.build_run_py_job_manifest(
+        task_id="p:s", project_path=Path(_DATA_ROOT), spec_id="s"
+    )
+    assert manifest["spec"]["template"]["spec"]["serviceAccountName"] == expected
+
+
 def test_manifest_runs_run_py_on_build_image_with_mounts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

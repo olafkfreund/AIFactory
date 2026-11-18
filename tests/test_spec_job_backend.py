@@ -490,6 +490,39 @@ def test_spec_job_gets_copilot_login_only_for_copilot_model(
     assert ("codex-auth.json" in script) is (model == "gpt-5.3-codex")
 
 
+@pytest.mark.parametrize(
+    ("build_sa", "job_sa", "expected"),
+    [
+        (" build-sa ", None, "build-sa"),
+        (" build-sa ", " job-sa ", "job-sa"),
+        (None, None, "aifactory-sandbox"),
+        (" build-sa ", "   ", "build-sa"),
+        ("   ", "   ", "aifactory-sandbox"),
+    ],
+)
+def test_spec_job_service_account(
+    monkeypatch: pytest.MonkeyPatch,
+    build_sa: str | None,
+    job_sa: str | None,
+    expected: str,
+) -> None:
+    for name, value in (("AIFACTORY_BUILD_SA", build_sa), ("AIFACTORY_JOB_SA", job_sa)):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    manifest = sj.build_spec_job_manifest(
+        task_id="p:s1",
+        fetch_id="a" * 32,
+        spec_id="s1",
+        workspace_uri="s3://bucket/w.tar.gz",
+        extra_env={},
+    )
+    pod = manifest["spec"]["template"]["spec"]
+    assert pod["serviceAccountName"] == expected
+    assert pod["automountServiceAccountToken"] is False
+
+
 def test_partial_fetch_without_spec_md_drops_earlier_approval(
     fake_store: type[FakeArtifactStore], tmp_path: Path
 ) -> None:

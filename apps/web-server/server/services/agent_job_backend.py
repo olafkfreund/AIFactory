@@ -72,12 +72,7 @@ def build_agent_job_manifest(
         build_job_manifest,
     )
 
-    service_account = (
-        os.environ.get(
-            build_backend._ENV_SERVICE_ACCOUNT, build_backend._DEFAULT_SERVICE_ACCOUNT
-        ).strip()
-        or build_backend._DEFAULT_SERVICE_ACCOUNT
-    )
+    service_account = build_backend._job_service_account()
     spec = JobSpec(
         service="aifactory",
         job_id=job_id,

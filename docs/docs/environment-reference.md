@@ -289,6 +289,7 @@ How `run.py` executes and what lets a build schedule on any node. Read in
 | `AIFACTORY_DATA_ROOT` | `/home/nonroot/.aifactory` | no | Data PVC mount root; used to compute worktree subPaths and sandbox mounts. |
 | `AIFACTORY_SANDBOX_NAMESPACE` | `factory` | no | K8s namespace the build Job runs in. |
 | `AIFACTORY_BUILD_SA` | `aifactory-sandbox` | no | ServiceAccount for the build Job. |
+| `AIFACTORY_JOB_SA` | `AIFACTORY_BUILD_SA` | no | ServiceAccount for spec, apply-correction, PR-review and clarification Jobs; falls back to `AIFACTORY_BUILD_SA`. |
 | `AIFACTORY_BUILD_DEADLINE_SECONDS` | `21600` (6h) | no | Active-deadline for the build Job. |
 | `AIFACTORY_SANDBOX_REPO_PVC` | `aifactory-data` | no | PVC holding the repo/worktree (co-mounted into the Job). |
 | `AIFACTORY_NIX_STORE_PVC` | `""` | no | Warm Nix-store PVC that gate Jobs mount (seeded from the image). Forwarded into the build Job; the build Job itself never mounts it (#1736). |
