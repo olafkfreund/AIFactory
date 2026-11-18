@@ -259,7 +259,7 @@ async def test_event_endpoint_narrows_key_to_its_org(
     ws = EndpointWebSocket()
     task = asyncio.create_task(events.events_websocket(ws))
     if membership_error:
-        await task
+        assert await task is None
         # A key socket without its orgs closes so the client reconnects.
         assert ws.closed == [{"code": 1011}]
         assert not event_bus._clients
