@@ -1,5 +1,17 @@
 ## [Unreleased]
 
+## 3.15.0 - 2026-11-18
+
+Merged to `dev` since 3.14.0.
+
+### Added
+
+- `apply-correction` can run as a Kubernetes Job behind `AIFACTORY_CORRECTION_BACKEND`; off by default. (#2116, #2118)
+
+### Changed
+
+- GitHub work-item identifiers are strings across the provider protocol; factory-github re-vendored at hub 92d2508. (Factory#3774, #2117)
+
 ## 3.14.0 - 2026-11-17
 
 Merged to `dev` since 3.13.1.
