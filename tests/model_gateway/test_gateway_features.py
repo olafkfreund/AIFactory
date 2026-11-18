@@ -462,3 +462,62 @@ def test_upstream_gauge_uses_host_only_and_tracks_health(fakes, tmp_path, clock)
     assert f'gateway_upstream_up{{upstream="{host_a}"}} 0' in text
     assert "http://" not in text
     server.shutdown()
+
+
+def test_request_emits_populated_span(fakes, tmp_path):
+    seen: list = []
+    arrived = threading.Event()
+
+    class Collector(BaseHTTPRequestHandler):
+        def do_POST(self):
+            seen.append(
+                json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            )
+            arrived.set()
+            self.send_response(200)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    collector = ThreadingHTTPServer(("127.0.0.1", 0), Collector)
+    threading.Thread(target=collector.serve_forever, daemon=True).start()
+    up = fakes(
+        body={"model": "m", "usage": {"prompt_tokens": 10, "completion_tokens": 5}}
+    )
+    cat = _catalog(
+        tmp_path,
+        {"m": {"price": {"mode": "metered", "in_per_mtok": 1, "out_per_mtok": 1}}},
+    )
+    env = {
+        "GATEWAY_UPSTREAM_URL": up.url,
+        "GATEWAY_CATALOG_PATH": cat,
+        "GATEWAY_OTLP_ENDPOINT": f"http://127.0.0.1:{collector.server_address[1]}",
+    }
+    server, base = _start(env, tmp_path, {"cheap": "m"})
+    assert (
+        _call(
+            base,
+            body={
+                "model": "cheap",
+                "messages": [{"role": "user", "content": "SECRET-PROMPT"}],
+            },
+            headers={"X-Caller-Service": "cfactory"},
+        )[0]
+        == 200
+    )
+    assert arrived.wait(5)
+    span = seen[0]["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+    attrs = {a["key"]: a["value"] for a in span["attributes"]}
+    assert attrs["factory.genai.route"] == {"stringValue": "cheap"}
+    assert attrs["factory.genai.caller_service"] == {"stringValue": "cfactory"}
+    assert attrs["factory.genai.resolved_model"] == {"stringValue": "m"}
+    assert attrs["factory.genai.outcome"] == {"stringValue": "ok"}
+    assert attrs["gen_ai.usage.input_tokens"] == {"intValue": "10"}
+    assert attrs["gen_ai.usage.output_tokens"] == {"intValue": "5"}
+    assert attrs["gen_ai.request.model"] == {"stringValue": "cheap"}
+    assert "factory.genai.latency_ms" in attrs and "factory.genai.cost_usd" in attrs
+    assert "SECRET-PROMPT" not in json.dumps(seen)
+    server.shutdown()
+    collector.shutdown()
