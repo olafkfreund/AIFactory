@@ -170,6 +170,11 @@ _ENV_SERVICE_ACCOUNT = "AIFACTORY_BUILD_SA"
 _ENV_JOB_SERVICE_ACCOUNT = "AIFACTORY_JOB_SA"
 _ENV_DEADLINE = "AIFACTORY_BUILD_DEADLINE_SECONDS"
 _ENV_SWEEP_DRY_RUN = "AIFACTORY_JOB_SWEEP_DRY_RUN"
+_ENV_JOB_TTL = "AIFACTORY_JOB_TTL_SECONDS"
+_ENV_JOB_RETAIN_MAX = "AIFACTORY_JOB_RETAIN_MAX"
+_DEFAULT_JOB_TTL_SECONDS = 300
+JOB_TTL_MAX_SECONDS = 3600
+_DEFAULT_JOB_RETAIN_MAX = 20
 _SWEEP_GRACE_SECONDS = 600
 _SWEEP_SELECTOR = "app=aifactory,factory.io/kind=task"
 
@@ -206,6 +211,38 @@ _DEFAULT_DEADLINE_SECONDS = 6 * 3600  # a full build is long-lived
 # APP_BACKEND_PATH=/home/projects/MagesticAI/apps/backend). Only used as a
 # fallback when the env is somehow unset; the image always sets it.
 _DEFAULT_BACKEND_PATH = "/home/projects/MagesticAI/apps/backend"
+
+
+def job_ttl_seconds() -> int:
+    """ttlSecondsAfterFinished for build, spec, review and apply-correction Jobs (#2133).
+
+    Unset keeps today's 300 s; invalid or < 1 falls back to it; above the hard
+    maximum is clamped (finished pods cost node disk).
+    """
+    raw = os.environ.get(_ENV_JOB_TTL, "").strip()
+    if not raw:
+        return _DEFAULT_JOB_TTL_SECONDS
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value < 1:
+        _log.warning(
+            "[build_backend] %s=%r is not a positive integer; using %ds",
+            _ENV_JOB_TTL,
+            sanitize_log(raw),
+            _DEFAULT_JOB_TTL_SECONDS,
+        )
+        return _DEFAULT_JOB_TTL_SECONDS
+    if value > JOB_TTL_MAX_SECONDS:
+        _log.warning(
+            "[build_backend] %s=%d exceeds the maximum; clamped to %ds",
+            _ENV_JOB_TTL,
+            value,
+            JOB_TTL_MAX_SECONDS,
+        )
+        return JOB_TTL_MAX_SECONDS
+    return value
 
 
 def _job_service_account() -> str:
@@ -964,6 +1001,7 @@ def build_run_py_job_manifest(
         worktree_subpath=worktree_subpath,
         namespace=namespace,
         deadline_seconds=deadline,
+        ttl_seconds=job_ttl_seconds(),
         nix_develop=False,
         extra_env=extra_env or {},
         # RFC-0017 #190: when the producer packed the worktree, the Job receives
