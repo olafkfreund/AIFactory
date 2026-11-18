@@ -25,8 +25,13 @@ descriptor languages.
 ## Proposed outcome
 
 A repo with `Cargo.toml` and no contract environment gets a generated flake
-with rustc, cargo and clippy, and its `cargo test` gate runs inside it. The
-agent never needs to install a toolchain.
+with rustc, cargo and clippy, and its `cargo test` gate (the verification of
+record, run by the framework outside the agent command hook) executes inside it
+when the `nixjob` backend is active. Scope is that gate path: the coding
+agent's own bash during subtasks is not given the toolchain by this change
+(`coder.py` materializes the flake only at trailing-gate time). Making agent
+sessions run inside the flake is a separate, larger change, recorded as a
+follow-up, not promised here.
 
 ## Affected users and systems
 
@@ -38,9 +43,11 @@ AIFactory build Jobs on the `nixjob` sandbox backend (`core/nix_env.py`,
 - `core/nix_provisioner.py` is byte-checked against the Factory hub: not edited here.
 - No bigger base image, no per-subtask downloads; use the existing flake path.
 - The sandbox and command allowlist stay on; nothing is disabled.
+- An inferred flake must never overwrite a repository-owned `flake.nix`.
 - Out of scope: status/phase reporting (team aif-status).
 
 ## Open questions
 
-None. Decision (owner delegation 2026-11-18): provision via the per-task flake,
+None. Codex review 2026-11-18 (P1 x2, P2 x3) folded in: scope narrowed, repo flake
+preserved, clippy via system_packages, descriptor languages keep priority. Decision (owner delegation 2026-11-18): provision via the per-task flake,
 extend inference to builtin languages. Shared with #2143 (one PR).

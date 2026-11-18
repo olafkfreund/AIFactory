@@ -38,8 +38,12 @@ builds), a `mvn -B -q test` gate runs in it, the gate evidence is recorded, and
   compiles any `maven.compiler.release` / `java.version` up to 21. A pom asking
   for more than 21 is logged loudly, not silently mis-provisioned (follow-up on
   the Factory hub to add versioned JDK attrs).
+- Kotlin/Swift descriptor inference keeps priority: `java` is also detected for
+  Gradle projects that are really Kotlin, so builtin inference runs only after
+  the descriptor pass finds nothing.
+- An inferred flake never overwrites a repository-owned `flake.nix`.
 - Out of scope: the 7-minute backlog queue visibility observation (status team).
 
 ## Open questions
 
-None. Shares the fix and the PR with #2142.
+None. Codex review folded in (see the Rust intent). Shares the fix and the PR with #2142.
