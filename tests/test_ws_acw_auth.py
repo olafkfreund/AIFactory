@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -59,20 +60,99 @@ async def test_owned_key_has_rest_principal(ws_auth, monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", ["unknown", "expired", "scope"])
+@pytest.mark.parametrize("failure", ["unknown", "scope"])
 async def test_invalid_key_closes(ws_auth, monkeypatch, failure):
     async def lookup(session, digest):
         if failure == "scope":
             return key(scopes=frozenset({"mcp:read"}))
-        raise mcp_auth.MCPAuthError(
-            "Invalid API key" if failure == "unknown" else "API key has expired"
-        )
+        raise mcp_auth.MCPAuthError("Invalid API key")
 
     monkeypatch.setattr(mcp_auth, "_lookup_by_digest", lookup)
     ws = FakeWebSocket()
     with pytest.raises(auth_mod.WebSocketAuthError):
         await auth_mod.authenticate_websocket(ws)
     assert ws.closed == [{"code": 4001, "reason": "Unauthorized"}]
+
+
+class _FakeDb:
+    """Session holding one stored key, so the real ``_lookup_by_digest`` runs."""
+
+    def __init__(self, row):
+        self.row = row
+
+    async def execute(self, statement):
+        return SimpleNamespace(scalar_one_or_none=lambda: self.row)
+
+    async def get(self, model, pk):
+        return SimpleNamespace(is_active=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("expires_at", "closed"),
+    [(datetime.now(UTC) - timedelta(minutes=1), True), (None, False)],
+)
+async def test_expired_key_closes_through_real_lookup(
+    ws_auth, monkeypatch, expires_at, closed
+):
+    row = SimpleNamespace(
+        id="key-id",
+        key_hash="abcd1234$digest",
+        user_id="user",
+        org_id=None,
+        expires_at=expires_at,
+        scopes="api",
+    )
+
+    async def get_db():
+        yield _FakeDb(row)
+
+    async def owner_scopes(session, row, scopes):
+        return scopes
+
+    monkeypatch.setattr(mcp_auth, "get_db", get_db)
+    monkeypatch.setattr(mcp_auth, "_cap_by_owner_role", owner_scopes)
+    ws = FakeWebSocket()
+    if closed:
+        with pytest.raises(auth_mod.WebSocketAuthError):
+            await auth_mod.authenticate_websocket(ws)
+        assert ws.closed == [{"code": 4001, "reason": "Unauthorized"}]
+    else:
+        principal = await auth_mod.authenticate_websocket(ws)
+        assert principal["id"] == "user"
+        assert ws.closed == []
+
+
+@pytest.mark.asyncio
+async def test_scoped_service_tokens_flag_on_keeps_parity(ws_auth, monkeypatch):
+    monkeypatch.setattr(
+        auth_mod,
+        "get_settings",
+        lambda: SimpleNamespace(
+            DISABLE_AUTH=False, API_TOKEN="legacy", SCOPED_SERVICE_TOKENS_ENABLED=True
+        ),
+    )
+
+    async def lookup(session, digest):
+        return key()
+
+    monkeypatch.setattr(mcp_auth, "_lookup_by_digest", lookup)
+    principal = await auth_mod.authenticate_websocket(FakeWebSocket())
+    assert principal == auth_mod._acw_principal(
+        key(), scoped_service_tokens_enabled=True
+    )
+    assert principal["scoped_service"] is False
+
+
+@pytest.mark.asyncio
+async def test_query_token_warning_never_contains_the_token(caplog):
+    auth_mod._warn_ws_query_token_once.cache_clear()
+    ws = FakeWebSocket()
+    ws.query_params = {"token": "acw_sentinel_secret"}
+    with caplog.at_level("WARNING", logger=auth_mod.logger.name):
+        assert auth_mod._ws_extract_token(ws) == "acw_sentinel_secret"
+    assert "DEPRECATED" in caplog.text
+    assert "acw_sentinel_secret" not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -88,7 +168,7 @@ async def test_ownerless_key_closes(ws_auth, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_validator_exception_closes(ws_auth, monkeypatch):
+async def test_validator_exception_closes(ws_auth, monkeypatch, caplog):
     async def broken(header):
         raise RuntimeError("database unavailable")
 
@@ -97,6 +177,8 @@ async def test_validator_exception_closes(ws_auth, monkeypatch):
     with pytest.raises(auth_mod.WebSocketAuthError):
         await auth_mod.authenticate_websocket(ws)
     assert ws.closed[0]["code"] == 4001
+    assert "WS key validation failed: RuntimeError" in caplog.text
+    assert "acw_test" not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -176,13 +258,17 @@ async def test_event_endpoint_narrows_key_to_its_org(
 
     ws = EndpointWebSocket()
     task = asyncio.create_task(events.events_websocket(ws))
+    if membership_error:
+        assert await task is None
+        # A key socket without its orgs closes so the client reconnects.
+        assert ws.closed == [{"code": 1011}]
+        assert not event_bus._clients
+        return
     try:
         await wait_for_registration()
         await event_bus.deliver_local(OrgScope("A"), "from-a", {})
         await event_bus.deliver_local(OrgScope("B"), "from-b", {})
-        assert ws.sent == (
-            [] if membership_error else [{"type": "from-a", "payload": {}}]
-        )
+        assert ws.sent == [{"type": "from-a", "payload": {}}]
     finally:
         ws.disconnect.set()
         await task
