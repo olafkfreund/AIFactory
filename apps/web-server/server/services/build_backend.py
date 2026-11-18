@@ -106,6 +106,7 @@ import os
 import shutil
 import subprocess
 from collections.abc import Iterable
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -176,6 +177,9 @@ _DEFAULT_JOB_TTL_SECONDS = 300
 JOB_TTL_MAX_SECONDS = 3600
 _DEFAULT_JOB_RETAIN_MAX = 20
 _SWEEP_GRACE_SECONDS = 600
+# #2141: an admitted row has no Job until dispatch has populated and packed the
+# worktree; the reaper must not read that window as "no worker ever claimed it".
+_DISPATCH_GRACE_SECONDS = 300
 _SWEEP_SELECTOR = "app=aifactory,factory.io/kind=task"
 
 
@@ -1884,6 +1888,15 @@ class KubeJobBuildBackend:
                             reaped.append(job_id)
                     continue
 
+                # #2141: a reconstructed ref with no Job is also what a dispatch
+                # still populating/packing looks like. Only a row older than the
+                # grace is a crashed dispatch (#1606).
+                if reconstructed:
+                    ts = _to_epoch(row.get("updated_at"))
+                    clock = now if now is not None else _time.time()
+                    if ts is not None and (clock - ts) < _DISPATCH_GRACE_SECONDS:
+                        continue
+
                 # Job is gone but the row is still running → it vanished without
                 # writing a terminal state. Don't strand it. Post-#857 this is a
                 # GENUINE anomaly (evicted / GC'd before any tick observed it),
@@ -2122,6 +2135,11 @@ def _to_epoch(value: Any) -> float | None:
     ts = getattr(value, "timestamp", None)
     if callable(ts):
         try:
+            # job_states timestamps are naive UTC (func.now()); .timestamp()
+            # would read them as local time.
+            if getattr(value, "tzinfo", 1) is None:
+                value = value.replace(tzinfo=UTC)
+                ts = value.timestamp
             return float(ts())
         except Exception:  # noqa: BLE001
             return None

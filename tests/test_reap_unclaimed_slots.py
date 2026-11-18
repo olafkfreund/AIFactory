@@ -14,6 +14,7 @@ task's verdict, and the fact that the slot actually comes back.
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -195,7 +196,10 @@ async def test_unclaimed_row_with_no_job_is_failed_and_frees_the_slot(
     # ...and with the slot still held, nothing can be promoted into it.
     assert await store.drain(cap=1) == []
 
-    reaped = await backend.reap_vanished_jobs(batch=_FakeBatch({}))
+    # Past the dispatch grace (#2141): this is a crashed dispatch, not a live one.
+    reaped = await backend.reap_vanished_jobs(
+        batch=_FakeBatch({}), now=time.time() + bb._DISPATCH_GRACE_SECONDS + 5
+    )
 
     assert reaped == [_TASK]
     state = await store.get_state(_TASK)
@@ -281,3 +285,31 @@ async def test_verified_reference_is_persisted_for_later_ticks(
     rows = await store.get_active_kubejobs()
     assert rows[0]["job_name"] == _JOB_NAME
     assert rows[0]["namespace"] == "factory"
+
+
+async def test_row_inside_dispatch_grace_is_not_reaped(tmp_path: Path) -> None:
+    """#2141: dispatch is still packing the worktree, so no Job exists yet. The
+    reconciler must not fail the build it is about to create."""
+    store = await _store_with_refless_row(tmp_path / "g.db")
+    backend = bb.KubeJobBuildBackend(store)
+
+    reaped = await backend.reap_vanished_jobs(batch=_FakeBatch({}))
+
+    assert reaped == []
+    state = await store.get_state(_TASK)
+    assert state is not None
+    assert state["lifecycle_state"] == "running"
+
+
+def test_naive_utc_timestamp_is_read_as_utc(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#2141: job_states stamps naive UTC; a non-UTC pod must not skew the age."""
+    import datetime as dt
+
+    monkeypatch.setenv("TZ", "Asia/Tokyo")
+    time.tzset()
+    try:
+        naive = dt.datetime.now(dt.UTC).replace(tzinfo=None)
+        assert abs(time.time() - bb._to_epoch(naive)) < 5
+    finally:
+        monkeypatch.undo()
+        time.tzset()
