@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2143
 intent: intent/2026-11-18-2143-aif-java-toolchain.md
 ---
