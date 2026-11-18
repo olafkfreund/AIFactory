@@ -394,9 +394,23 @@ class _FakeBatch:
             raise self.delete_error
 
 
-def _job(name, created):
+def _job(name, created, *, finished=None, failed=False, counters=False):
     return SimpleNamespace(
-        metadata=SimpleNamespace(name=name, creation_timestamp=created)
+        metadata=SimpleNamespace(name=name, creation_timestamp=created),
+        status=SimpleNamespace(
+            conditions=[
+                SimpleNamespace(
+                    type="Failed" if failed else "Complete",
+                    status="True",
+                    last_transition_time=finished,
+                )
+            ]
+            if finished is not None
+            else [],
+            succeeded=1 if counters else 0,
+            failed=0,
+            completion_time=finished,
+        ),
     )
 
 
@@ -478,6 +492,125 @@ async def test_sweep_404_counts_as_deleted_but_other_delete_errors_do_not(
         batch = _FakeBatch([_job("orphan", old)], delete_error=_PodError(status))
         assert await backend.sweep_orphan_jobs(batch=batch) == expected
         assert batch.deleted == [("orphan", "factory", "Background")]
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+async def test_sweep_caps_finished_by_finish_time_and_keeps_owned(monkeypatch, dry_run):
+    monkeypatch.setenv("AIFACTORY_JOB_RETAIN_MAX", "2")
+    monkeypatch.setenv("AIFACTORY_JOB_SWEEP_DRY_RUN", "true" if dry_run else "false")
+    now = datetime.now(UTC)
+    old = now - timedelta(seconds=1200)
+    jobs = [
+        _job("newest", old, finished=now - timedelta(seconds=1)),
+        _job("oldest", old, finished=now - timedelta(seconds=100)),
+        _job("middle", old, finished=now - timedelta(seconds=50)),
+        _job("owned", old, finished=now - timedelta(seconds=200)),
+    ]
+    batch = _FakeBatch(jobs)
+    store = SimpleNamespace(
+        get_active_kubejobs=AsyncMock(
+            return_value=[{"job_id": TASK, "job_name": "owned"}]
+        )
+    )
+    assert await build_backend.KubeJobBuildBackend(store).sweep_orphan_jobs(
+        now=now.timestamp(), batch=batch
+    ) == ["oldest"]
+    assert batch.deleted == ([] if dry_run else [("oldest", "factory", "Background")])
+
+
+async def test_sweep_finished_jobs_are_not_age_swept(monkeypatch):
+    monkeypatch.setenv("AIFACTORY_JOB_SWEEP_DRY_RUN", "false")
+    monkeypatch.setenv("AIFACTORY_JOB_RETAIN_MAX", "2")
+    now = datetime.now(UTC)
+    old = now - timedelta(seconds=1200)
+    batch = _FakeBatch(
+        [
+            _job("long-build-just-finished", old, finished=now - timedelta(seconds=1)),
+            _job(
+                "failed-condition-zero-counters",
+                old,
+                finished=now - timedelta(seconds=2),
+                failed=True,
+            ),
+        ]
+    )
+    store = SimpleNamespace(get_active_kubejobs=AsyncMock(return_value=[]))
+    assert (
+        await build_backend.KubeJobBuildBackend(store).sweep_orphan_jobs(
+            now=now.timestamp(), batch=batch
+        )
+        == []
+    )
+    assert batch.deleted == []
+
+
+@pytest.mark.parametrize("counter", ["succeeded", "failed"])
+async def test_sweep_finished_counter_uses_completion_then_creation(
+    monkeypatch, counter
+):
+    monkeypatch.setenv("AIFACTORY_JOB_RETAIN_MAX", "1")
+    monkeypatch.setenv("AIFACTORY_JOB_SWEEP_DRY_RUN", "false")
+    now = datetime.now(UTC)
+    old = now - timedelta(seconds=1200)
+    jobs = [_job("older", old), _job("newer", old)]
+    for job in jobs:
+        setattr(job.status, counter, 1)
+    jobs[1].status.completion_time = now - timedelta(seconds=1)
+    batch = _FakeBatch(jobs)
+    store = SimpleNamespace(get_active_kubejobs=AsyncMock(return_value=[]))
+    assert await build_backend.KubeJobBuildBackend(store).sweep_orphan_jobs(
+        now=now.timestamp(), batch=batch
+    ) == ["older"]
+    assert batch.deleted == [("older", "factory", "Background")]
+
+
+@pytest.mark.parametrize("value", ["bad", "0", "-1"])
+async def test_sweep_invalid_cap_uses_default(monkeypatch, value, caplog):
+    monkeypatch.setenv("AIFACTORY_JOB_RETAIN_MAX", value)
+    monkeypatch.setenv("AIFACTORY_JOB_SWEEP_DRY_RUN", "false")
+    now = datetime.now(UTC)
+    batch = _FakeBatch(
+        [
+            _job(
+                f"finished-{i}",
+                now - timedelta(seconds=1200),
+                finished=now - timedelta(seconds=i),
+            )
+            for i in range(21)
+        ]
+    )
+    store = SimpleNamespace(get_active_kubejobs=AsyncMock(return_value=[]))
+    assert await build_backend.KubeJobBuildBackend(store).sweep_orphan_jobs(
+        now=now.timestamp(), batch=batch
+    ) == ["finished-20"]
+    assert len(batch.deleted) == 1
+    assert "using 20" in caplog.text
+
+
+async def test_sweep_cap_overrides_ttl(monkeypatch):
+    monkeypatch.setenv("AIFACTORY_JOB_RETAIN_MAX", "1")
+    monkeypatch.setenv("AIFACTORY_JOB_TTL_SECONDS", "3600")
+    monkeypatch.setenv("AIFACTORY_JOB_SWEEP_DRY_RUN", "false")
+    now = datetime.now(UTC)
+    batch = _FakeBatch(
+        [
+            _job(
+                "older",
+                now - timedelta(seconds=30),
+                finished=now - timedelta(seconds=20),
+            ),
+            _job(
+                "newer",
+                now - timedelta(seconds=10),
+                finished=now - timedelta(seconds=1),
+            ),
+        ]
+    )
+    store = SimpleNamespace(get_active_kubejobs=AsyncMock(return_value=[]))
+    assert await build_backend.KubeJobBuildBackend(store).sweep_orphan_jobs(
+        now=now.timestamp(), batch=batch
+    ) == ["older"]
+    assert batch.deleted == [("older", "factory", "Background")]
 
 
 @pytest.mark.parametrize("reaper_error", [False, True])

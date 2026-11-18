@@ -170,6 +170,11 @@ _ENV_SERVICE_ACCOUNT = "AIFACTORY_BUILD_SA"
 _ENV_JOB_SERVICE_ACCOUNT = "AIFACTORY_JOB_SA"
 _ENV_DEADLINE = "AIFACTORY_BUILD_DEADLINE_SECONDS"
 _ENV_SWEEP_DRY_RUN = "AIFACTORY_JOB_SWEEP_DRY_RUN"
+_ENV_JOB_TTL = "AIFACTORY_JOB_TTL_SECONDS"
+_ENV_JOB_RETAIN_MAX = "AIFACTORY_JOB_RETAIN_MAX"
+_DEFAULT_JOB_TTL_SECONDS = 300
+JOB_TTL_MAX_SECONDS = 3600
+_DEFAULT_JOB_RETAIN_MAX = 20
 _SWEEP_GRACE_SECONDS = 600
 _SWEEP_SELECTOR = "app=aifactory,factory.io/kind=task"
 
@@ -206,6 +211,92 @@ _DEFAULT_DEADLINE_SECONDS = 6 * 3600  # a full build is long-lived
 # APP_BACKEND_PATH=/home/projects/MagesticAI/apps/backend). Only used as a
 # fallback when the env is somehow unset; the image always sets it.
 _DEFAULT_BACKEND_PATH = "/home/projects/MagesticAI/apps/backend"
+
+
+def job_ttl_seconds() -> int:
+    """ttlSecondsAfterFinished for build, spec, review and apply-correction Jobs (#2133).
+
+    Unset keeps today's 300 s; invalid or < 1 falls back to it; above the hard
+    maximum is clamped (finished pods cost node disk).
+    """
+    raw = os.environ.get(_ENV_JOB_TTL, "").strip()
+    if not raw:
+        return _DEFAULT_JOB_TTL_SECONDS
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value < 1:
+        _log.warning(
+            "[build_backend] %s=%r is not a positive integer; using %ds",
+            _ENV_JOB_TTL,
+            sanitize_log(raw),
+            _DEFAULT_JOB_TTL_SECONDS,
+        )
+        return _DEFAULT_JOB_TTL_SECONDS
+    if value > JOB_TTL_MAX_SECONDS:
+        _log.warning(
+            "[build_backend] %s=%d exceeds the maximum; clamped to %ds",
+            _ENV_JOB_TTL,
+            value,
+            JOB_TTL_MAX_SECONDS,
+        )
+        return JOB_TTL_MAX_SECONDS
+    return value
+
+
+def _retain_max() -> int:
+    raw = os.environ.get(_ENV_JOB_RETAIN_MAX, "").strip()
+    if not raw:
+        return _DEFAULT_JOB_RETAIN_MAX
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value < 1:
+        _log.warning(
+            "[build_backend] %s=%r is not a positive integer; using %d",
+            _ENV_JOB_RETAIN_MAX,
+            sanitize_log(raw),
+            _DEFAULT_JOB_RETAIN_MAX,
+        )
+        return _DEFAULT_JOB_RETAIN_MAX
+    return value
+
+
+def _job_finish_time(job: Any) -> float | None:
+    """Epoch the Job finished, -1.0 when finished but unstamped, None if running (#2133)."""
+    status: Any = getattr(job, "status", None)
+    terminal = [
+        c
+        for c in (getattr(status, "conditions", None) or [])
+        if getattr(c, "type", None) in {"Complete", "Failed"}
+        and str(getattr(c, "status", "")).lower() == "true"
+    ]
+    counted = bool(getattr(status, "succeeded", 0) or getattr(status, "failed", 0))
+    if not (terminal or counted):
+        return None
+    stamps = [_to_epoch(getattr(c, "last_transition_time", None)) for c in terminal]
+    stamps.append(_to_epoch(getattr(status, "completion_time", None)))
+    return next((t for t in stamps if t is not None), -1.0)
+
+
+def _sweep_candidates(jobs: Any, owned: set[str], clock: float) -> list[str]:
+    """Unowned Jobs to delete: unfinished past grace, plus finished beyond the cap (#2133)."""
+    orphans: list[str] = []
+    finished: list[tuple[float, str]] = []
+    for job in jobs:
+        name = job.metadata.name
+        if not name or name in owned:
+            continue
+        created = _to_epoch(job.metadata.creation_timestamp)
+        finish = _job_finish_time(job)
+        if finish is not None:
+            finished.append((finish if finish >= 0 else (created or 0), name))
+        elif created is not None and clock - created >= _SWEEP_GRACE_SECONDS:
+            orphans.append(name)
+    finished.sort()
+    return orphans + [name for _, name in finished[: -_retain_max()]]
 
 
 def _job_service_account() -> str:
@@ -964,6 +1055,7 @@ def build_run_py_job_manifest(
         worktree_subpath=worktree_subpath,
         namespace=namespace,
         deadline_seconds=deadline,
+        ttl_seconds=job_ttl_seconds(),
         nix_develop=False,
         extra_env=extra_env or {},
         # RFC-0017 #190: when the producer packed the worktree, the Job receives
@@ -1810,7 +1902,7 @@ class KubeJobBuildBackend:
     async def sweep_orphan_jobs(
         self, *, now: float | None = None, batch: Any = None
     ) -> list[str]:
-        """Report or delete old build Jobs with no active owner row (#1714)."""
+        """Sweep unfinished orphans after grace and cap retained finished Jobs."""
         import time as _time  # noqa: PLC0415
 
         try:
@@ -1845,16 +1937,8 @@ class KubeJobBuildBackend:
 
             clock = now if now is not None else _time.time()
             swept: list[str] = []
-            for job in listing.items or []:
-                name = job.metadata.name
-                created = _to_epoch(job.metadata.creation_timestamp)
-                if (
-                    not name
-                    or name in owned
-                    or created is None
-                    or clock - created < _SWEEP_GRACE_SECONDS
-                ):
-                    continue
+            orphans = _sweep_candidates(listing.items or [], owned, clock)
+            for name in orphans:
                 if sweep_dry_run():
                     _log.warning(
                         "[build_backend] #1714 dry-run: would delete orphan Job %s/%s",
