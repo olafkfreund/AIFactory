@@ -105,6 +105,7 @@ import logging
 import os
 import shutil
 import subprocess
+import time
 from collections.abc import Iterable
 from datetime import UTC
 from pathlib import Path
@@ -1777,7 +1778,7 @@ class KubeJobBuildBackend:
         )
 
     async def _resolve_row_ref(
-        self, batch: Any, row: dict[str, Any]
+        self, batch: Any, row: dict[str, Any], *, now: float | None = None
     ) -> tuple[str, str, str, bool] | None:
         """``(job_name, namespace, outcome, reconstructed)`` for one active row.
 
@@ -1807,6 +1808,14 @@ class KubeJobBuildBackend:
         )
 
         outcome = await self._job_outcome(batch, namespace, job_name)
+        if reconstructed and outcome == "gone":
+            # #2141: no Job under a reconstructed ref is also what a dispatch
+            # still populating/packing looks like. Only a row older than the
+            # grace is a crashed dispatch (#1606).
+            ts = _to_epoch(row.get("updated_at"))
+            clock = now if now is not None else time.time()
+            if ts is not None and (clock - ts) < _DISPATCH_GRACE_SECONDS:
+                return None
         if reconstructed and outcome != "gone":
             job_id = row["job_id"]
             if not await self._reconstructed_job_is_ours(
@@ -1849,7 +1858,7 @@ class KubeJobBuildBackend:
         try:
             for row in rows:
                 job_id = row["job_id"]
-                resolved = await self._resolve_row_ref(batch, row)
+                resolved = await self._resolve_row_ref(batch, row, now=now)
                 if resolved is None:
                     continue
                 job_name, namespace, outcome, reconstructed = resolved
@@ -1887,15 +1896,6 @@ class KubeJobBuildBackend:
                             )
                             reaped.append(job_id)
                     continue
-
-                # #2141: a reconstructed ref with no Job is also what a dispatch
-                # still populating/packing looks like. Only a row older than the
-                # grace is a crashed dispatch (#1606).
-                if reconstructed:
-                    ts = _to_epoch(row.get("updated_at"))
-                    clock = now if now is not None else _time.time()
-                    if ts is not None and (clock - ts) < _DISPATCH_GRACE_SECONDS:
-                        continue
 
                 # Job is gone but the row is still running → it vanished without
                 # writing a terminal state. Don't strand it. Post-#857 this is a
