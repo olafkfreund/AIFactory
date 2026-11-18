@@ -161,6 +161,7 @@ def _usage(data: bytes):
                 try:
                     objs.append(json.loads(line[5:]))
                 except (ValueError, RecursionError):
+                    # Skip a malformed SSE data line.
                     pass
     usage = model = None
     for obj in objs:
@@ -241,6 +242,7 @@ class _Telemetry:
         try:
             self.queue.put_nowait(span)
         except queue.Full:
+            # Telemetry is best-effort: drop the span when the queue is full.
             pass
 
     def _run(self) -> None:
@@ -275,6 +277,7 @@ class _Telemetry:
                 with _opener.open(request, timeout=5):
                     pass
             except Exception:
+                # Best-effort export: a failed POST must not affect requests.
                 pass
 
 
