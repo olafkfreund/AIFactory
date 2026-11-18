@@ -83,6 +83,7 @@ def build_agent_job_manifest(
         data_pvc=None,
         worktree_subpath=None,
         deadline_seconds=_DEADLINE_SECONDS,
+        ttl_seconds=build_backend.job_ttl_seconds(),
         nix_develop=False,
         extra_env=extra_env,
         workspace_uri=workspace_uri,

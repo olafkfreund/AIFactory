@@ -90,6 +90,7 @@ def build_spec_job_manifest(  # noqa: PLR0913 - manifest coordinates
         data_pvc=None,
         worktree_subpath=None,
         deadline_seconds=7200,
+        ttl_seconds=build_backend.job_ttl_seconds(),
         nix_develop=False,
         extra_env=extra_env,
         workspace_uri=workspace_uri,

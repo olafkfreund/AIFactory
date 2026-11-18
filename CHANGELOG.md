@@ -1,5 +1,23 @@
 ## [Unreleased]
 
+## 3.17.0 - 2026-11-18
+
+Merged to `dev` since 3.16.0.
+
+### Added
+
+- Model gateway, all off until configured: per-route quota (429 with `Retry-After`), token and cost counters on `/metrics` (`GATEWAY_METRICS=on`) with a `--self-test`, ordered upstream failover with cooldown, and OTLP spans with `factory.genai.*` and `gen_ai.*` attributes (`GATEWAY_OTLP_ENDPOINT`). (Factory#1959)
+- `AIFACTORY_JOB_TTL_SECONDS` (default 300, recommended 600, max 3600) sets how long finished build, spec, review and apply-correction Job pods stay; `AIFACTORY_JOB_RETAIN_MAX` (default 20) caps retained finished Jobs. (#2133)
+
+### Fixed
+
+- Orphaned task worktrees are deregistered safely. (#2134, #2135)
+- The orphan sweep no longer deletes a finished Job by creation age, which removed a long build right after it finished. (#2133)
+
+### Docs
+
+- `deployment-runbook` skill over the existing runbook. (Factory#1958, #2136)
+
 ## 3.16.0 - 2026-11-18
 
 Merged to `dev` since 3.15.1.
