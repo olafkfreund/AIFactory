@@ -264,6 +264,42 @@ def _retain_max() -> int:
     return value
 
 
+def _job_finish_time(job: Any) -> float | None:
+    """Epoch the Job finished, -1.0 when finished but unstamped, None if running (#2133)."""
+    status = getattr(job, "status", None)
+    terminal = [
+        c
+        for c in (getattr(status, "conditions", None) or [])
+        if getattr(c, "type", None) in {"Complete", "Failed"}
+        and str(getattr(c, "status", "")).lower() == "true"
+    ]
+    if not (
+        terminal or getattr(status, "succeeded", 0) or getattr(status, "failed", 0)
+    ):
+        return None
+    stamps = [_to_epoch(getattr(c, "last_transition_time", None)) for c in terminal]
+    stamps.append(_to_epoch(getattr(status, "completion_time", None)))
+    return next((t for t in stamps if t is not None), -1.0)
+
+
+def _sweep_candidates(jobs: Any, owned: set[str], clock: float) -> list[str]:
+    """Unowned Jobs to delete: unfinished past grace, plus finished beyond the cap (#2133)."""
+    orphans: list[str] = []
+    finished: list[tuple[float, str]] = []
+    for job in jobs:
+        name = job.metadata.name
+        if not name or name in owned:
+            continue
+        created = _to_epoch(job.metadata.creation_timestamp)
+        finish = _job_finish_time(job)
+        if finish is not None:
+            finished.append((finish if finish >= 0 else (created or 0), name))
+        elif created is not None and clock - created >= _SWEEP_GRACE_SECONDS:
+            orphans.append(name)
+    finished.sort()
+    return orphans + [name for _, name in finished[: -_retain_max()]]
+
+
 def _job_service_account() -> str:
     return (
         os.environ.get(_ENV_JOB_SERVICE_ACCOUNT, "").strip()
@@ -1902,50 +1938,7 @@ class KubeJobBuildBackend:
 
             clock = now if now is not None else _time.time()
             swept: list[str] = []
-            orphans: list[str] = []
-            finished: list[tuple[float, str]] = []
-            for job in listing.items or []:
-                name = job.metadata.name
-                if not name or name in owned:
-                    continue
-                created = _to_epoch(job.metadata.creation_timestamp)
-                status = getattr(job, "status", None)
-                terminal = [
-                    condition
-                    for condition in (getattr(status, "conditions", None) or [])
-                    if getattr(condition, "type", None) in {"Complete", "Failed"}
-                    and str(getattr(condition, "status", "")).lower() == "true"
-                ]
-                if (
-                    terminal
-                    or getattr(status, "succeeded", 0)
-                    or getattr(status, "failed", 0)
-                ):
-                    finish = next(
-                        (
-                            epoch
-                            for condition in terminal
-                            if (
-                                epoch := _to_epoch(
-                                    getattr(condition, "last_transition_time", None)
-                                )
-                            )
-                            is not None
-                        ),
-                        None,
-                    )
-                    if finish is None:
-                        finish = _to_epoch(getattr(status, "completion_time", None))
-                    finished.append(
-                        (
-                            finish if finish is not None else (created or 0),
-                            name,
-                        )
-                    )
-                elif created is not None and clock - created >= _SWEEP_GRACE_SECONDS:
-                    orphans.append(name)
-            finished.sort()
-            orphans.extend(name for _, name in finished[: -_retain_max()])
+            orphans = _sweep_candidates(listing.items or [], owned, clock)
             for name in orphans:
                 if sweep_dry_run():
                     _log.warning(
