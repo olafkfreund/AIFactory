@@ -266,16 +266,15 @@ def _retain_max() -> int:
 
 def _job_finish_time(job: Any) -> float | None:
     """Epoch the Job finished, -1.0 when finished but unstamped, None if running (#2133)."""
-    status = getattr(job, "status", None)
+    status: Any = getattr(job, "status", None)
     terminal = [
         c
         for c in (getattr(status, "conditions", None) or [])
         if getattr(c, "type", None) in {"Complete", "Failed"}
         and str(getattr(c, "status", "")).lower() == "true"
     ]
-    if not (
-        terminal or getattr(status, "succeeded", 0) or getattr(status, "failed", 0)
-    ):
+    counted = bool(getattr(status, "succeeded", 0) or getattr(status, "failed", 0))
+    if not (terminal or counted):
         return None
     stamps = [_to_epoch(getattr(c, "last_transition_time", None)) for c in terminal]
     stamps.append(_to_epoch(getattr(status, "completion_time", None)))
