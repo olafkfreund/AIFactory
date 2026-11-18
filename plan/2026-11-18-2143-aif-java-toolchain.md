@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2143
 spec: spec/2026-11-18-2143-aif-java-toolchain.md
 coders:
