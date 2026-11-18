@@ -15,7 +15,14 @@ Both issues share one mechanism (spec/2026-11-18-2143-aif-java-toolchain.md carr
    languages with a small table `_BUILTIN_INFERENCE` (rust, java, go,
    javascript/typescript). Python is deliberately absent: it keeps today's
    behaviour (default harness / venv), and a test pins that.
-   - rust: `language: rust`, `system_packages: [clippy]` (the provisioner's
+   - Multi-language repos (Codex P1): the flake must carry the toolchain of EVERY
+     detected builtin language, because gates for all of them run in it. Primary
+     language = first descriptor language, else python if detected (keeps the
+     pytest harness), else the first builtin one. Every other detected builtin
+     language (rust, go, java, node) is added as a \`system_packages\` token
+     (\`rust\`->rustc+cargo via _LANG_ATTRS, \`java\`->jdk21+maven, \`go\`, \`node\`).
+     Python alone still infers nothing.
+   - rust: \`language: rust`, `system_packages: [clippy]` (the provisioner's
      rust mapping gives rustc+cargo; clippy rides in as a plain attr, so the
      vendored provisioner is untouched), verify `cargo test --quiet`.
    - go: `language: go`, verify `go test ./...`.
