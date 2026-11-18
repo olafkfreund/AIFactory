@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Added
+
+- Model gateway, all off until configured: per-route quota (429 with `Retry-After`), token and cost counters on `/metrics` (`GATEWAY_METRICS=on`) with a `--self-test`, ordered upstream failover with cooldown, and OTLP spans with `factory.genai.*` and `gen_ai.*` attributes (`GATEWAY_OTLP_ENDPOINT`). (Factory#1959)
+
 ## 3.16.0 - 2026-11-18
 
 Merged to `dev` since 3.15.1.
