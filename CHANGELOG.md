@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+## 3.15.1 - 2026-11-18
+
+Merged to `dev` since 3.15.0.
+
+### Fixed
+
+- WebSocket key and org-lookup failures are now logged, and key sockets are closed when the org lookup fails. (#312, #2121)
+
 ## 3.15.0 - 2026-11-18
 
 Merged to `dev` since 3.14.0.
