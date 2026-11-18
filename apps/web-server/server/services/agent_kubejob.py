@@ -384,7 +384,7 @@ class KubejobMixin:
         try:
             store = self._store()
             return {
-                *self.running_tasks,
+                *getattr(self, "running_tasks", {}),
                 *await store.get_running_job_ids(),
                 *await store.get_queued_job_ids(),
             }
