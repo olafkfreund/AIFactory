@@ -245,6 +245,25 @@ def job_ttl_seconds() -> int:
     return value
 
 
+def _retain_max() -> int:
+    raw = os.environ.get(_ENV_JOB_RETAIN_MAX, "").strip()
+    if not raw:
+        return _DEFAULT_JOB_RETAIN_MAX
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value < 1:
+        _log.warning(
+            "[build_backend] %s=%r is not a positive integer; using %d",
+            _ENV_JOB_RETAIN_MAX,
+            sanitize_log(raw),
+            _DEFAULT_JOB_RETAIN_MAX,
+        )
+        return _DEFAULT_JOB_RETAIN_MAX
+    return value
+
+
 def _job_service_account() -> str:
     return (
         os.environ.get(_ENV_JOB_SERVICE_ACCOUNT, "").strip()
@@ -1848,7 +1867,7 @@ class KubeJobBuildBackend:
     async def sweep_orphan_jobs(
         self, *, now: float | None = None, batch: Any = None
     ) -> list[str]:
-        """Report or delete old build Jobs with no active owner row (#1714)."""
+        """Sweep unfinished orphans after grace and cap retained finished Jobs."""
         import time as _time  # noqa: PLC0415
 
         try:
@@ -1883,16 +1902,51 @@ class KubeJobBuildBackend:
 
             clock = now if now is not None else _time.time()
             swept: list[str] = []
+            orphans: list[str] = []
+            finished: list[tuple[float, str]] = []
             for job in listing.items or []:
                 name = job.metadata.name
-                created = _to_epoch(job.metadata.creation_timestamp)
-                if (
-                    not name
-                    or name in owned
-                    or created is None
-                    or clock - created < _SWEEP_GRACE_SECONDS
-                ):
+                if not name or name in owned:
                     continue
+                created = _to_epoch(job.metadata.creation_timestamp)
+                status = getattr(job, "status", None)
+                terminal = [
+                    condition
+                    for condition in (getattr(status, "conditions", None) or [])
+                    if getattr(condition, "type", None) in {"Complete", "Failed"}
+                    and str(getattr(condition, "status", "")).lower() == "true"
+                ]
+                if (
+                    terminal
+                    or getattr(status, "succeeded", 0)
+                    or getattr(status, "failed", 0)
+                ):
+                    finish = next(
+                        (
+                            epoch
+                            for condition in terminal
+                            if (
+                                epoch := _to_epoch(
+                                    getattr(condition, "last_transition_time", None)
+                                )
+                            )
+                            is not None
+                        ),
+                        None,
+                    )
+                    if finish is None:
+                        finish = _to_epoch(getattr(status, "completion_time", None))
+                    finished.append(
+                        (
+                            finish if finish is not None else (created or 0),
+                            name,
+                        )
+                    )
+                elif created is not None and clock - created >= _SWEEP_GRACE_SECONDS:
+                    orphans.append(name)
+            finished.sort()
+            orphans.extend(name for _, name in finished[: -_retain_max()])
+            for name in orphans:
                 if sweep_dry_run():
                     _log.warning(
                         "[build_backend] #1714 dry-run: would delete orphan Job %s/%s",

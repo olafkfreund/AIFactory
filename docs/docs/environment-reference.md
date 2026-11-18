@@ -291,6 +291,8 @@ How `run.py` executes and what lets a build schedule on any node. Read in
 | `AIFACTORY_BUILD_SA` | `aifactory-sandbox` | no | ServiceAccount for the build Job. |
 | `AIFACTORY_JOB_SA` | `AIFACTORY_BUILD_SA` | no | ServiceAccount for spec, apply-correction, PR-review and clarification Jobs; falls back to `AIFACTORY_BUILD_SA`. |
 | `AIFACTORY_BUILD_DEADLINE_SECONDS` | `21600` (6h) | no | Active-deadline for the build Job. |
+| `AIFACTORY_JOB_TTL_SECONDS` | `300` | no | `ttlSecondsAfterFinished` for build, spec, review and apply-correction Jobs (failed ones too), so a finished pod stays inspectable. Recommended `600`; above `3600` is clamped, invalid values fall back to `300`. |
+| `AIFACTORY_JOB_RETAIN_MAX` | `20` | no | Orphan sweep keeps at most this many finished Jobs and deletes the longest-finished above it (overrides the TTL; honours `AIFACTORY_JOB_SWEEP_DRY_RUN`). Finished Jobs are no longer age-swept. |
 | `AIFACTORY_SANDBOX_REPO_PVC` | `aifactory-data` | no | PVC holding the repo/worktree (co-mounted into the Job). |
 | `AIFACTORY_NIX_STORE_PVC` | `""` | no | Warm Nix-store PVC that gate Jobs mount (seeded from the image). Forwarded into the build Job; the build Job itself never mounts it (#1736). |
 | `AIFACTORY_CLI_CREDS_SECRET` | `""` | no | K8s Secret name holding CLI credentials mounted into the build Job. |

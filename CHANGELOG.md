@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+### Added
+
+- `AIFACTORY_JOB_TTL_SECONDS` (default 300, recommended 600, max 3600) sets how long finished build, spec, review and apply-correction Job pods stay; `AIFACTORY_JOB_RETAIN_MAX` (default 20) caps retained finished Jobs. (#2133)
+
+### Fixed
+
+- The orphan sweep no longer deletes a finished Job by creation age, which removed a long build right after it finished. (#2133)
+
 ## 3.16.0 - 2026-11-18
 
 Merged to `dev` since 3.15.1.
