@@ -231,7 +231,7 @@ _MAX_KEY_LEN = 128  # CFactory's correlation_key column width
 
 
 def correlation_key(
-    task_id: str, issue_number: int | None, repo: str | None = None
+    task_id: str, issue_number: int | str | None, repo: str | None = None
 ) -> str | None:
     """RFC-0001 §2: ``<repo>#<n>`` when the repo is known, else the synthetic
     ``af-<project_id>:<spec_id>`` (never a bare number, #1960; project-scoped

@@ -38,6 +38,7 @@ from intake.poller import (  # noqa: E402
 )
 from pfactory.tiers import Tier  # noqa: E402
 from repo_ref import parse_repo_ref, qualify_repo  # noqa: E402
+from runners.github.providers.protocol import as_issue_int  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -177,7 +178,7 @@ def _fetch_issues(cfg: RepoConfig) -> list[IntakeIssue]:
                 continue
             out.append(
                 IntakeIssue(
-                    number=iss.number,
+                    number=as_issue_int(iss.number),
                     labels=labels,
                     title=getattr(iss, "title", "") or "",
                     body=getattr(iss, "body", "") or "",

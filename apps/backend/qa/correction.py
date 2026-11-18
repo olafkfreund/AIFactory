@@ -148,13 +148,15 @@ def check_fix_cycle_assertions(spec_dir: Path | str) -> dict:
         return {"ok": True, "violations": [], "skipped": "error"}
 
 
-async def _run_fixer_bg(spec_dir: Path) -> None:
+async def _run_fixer_bg(spec_dir: Path) -> bool:
     """Run a real QA-fixer session to completion (detached background task).
 
     Mirrors ``qa/loop.py``'s human-feedback fixer path (model + provider
     resolution). SDK imports are lazy so this module stays import-light.
-    Best-effort: failures are logged, never raised.
+    Best-effort: failures are logged, never raised. Returns True only when the
+    fixer session reported ``"fixed"`` (the Job entrypoint exits on it, #2116).
     """
+    fixed = False
     try:
         from core.client import create_client
         from phase_config import (
@@ -189,7 +191,8 @@ async def _run_fixer_bg(spec_dir: Path) -> None:
                 **get_provider_extra_kwargs(provider, qa_model),
             )
         async with client:
-            await run_qa_fixer_session(client, spec_dir, 0, False)
+            status, _ = await run_qa_fixer_session(client, spec_dir, 0, False)
+        fixed = status == "fixed"
     except Exception:  # noqa: BLE001 — background best-effort
         _log.exception("background QA fixer failed for %s", spec_dir)
     finally:
@@ -198,9 +201,10 @@ async def _run_fixer_bg(spec_dir: Path) -> None:
         # even on fixer failure so a crashed-after-editing cycle is still
         # checked. Best-effort; only flags when a baseline was recorded.
         await asyncio.to_thread(check_fix_cycle_assertions, spec_dir)
+    return fixed
 
 
-_BACKGROUND_FIXERS: set[asyncio.Task[None]] = set()
+_BACKGROUND_FIXERS: set[asyncio.Task[bool]] = set()
 
 
 async def _default_fixer(spec_dir: Path) -> dict:

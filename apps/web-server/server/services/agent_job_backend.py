@@ -14,6 +14,7 @@ import logging
 import os
 import shlex
 import shutil
+import subprocess
 import threading
 from pathlib import Path
 from typing import Any
@@ -31,17 +32,30 @@ _DEADLINE_SECONDS = 1800
 _LOCAL_DEADLINE = _DEADLINE_SECONDS + 300.0  # stop polling shortly after the Job's own
 CLARIFICATION_MAX_BYTES = 64 << 10
 _REVIEW_FILE_MAX_BYTES = 8 << 20
+_ENV_CORRECTION_BACKEND = "AIFACTORY_CORRECTION_BACKEND"
+_CORRECTION_SPEC_FILE_MAX_BYTES = 1 << 20
+_CORRECTION_RESULT_FILE = "handback_job_result.json"
+_CORRECTION_WAITERS: set[asyncio.Task[None]] = set()
 
 
-def review_kubejob_enabled() -> bool:
-    value = os.environ.get(_ENV_REVIEW_BACKEND, "").strip().lower()
+def _kubejob_flag(name: str) -> bool:
+    value = os.environ.get(name, "").strip().lower()
     if value in {"", "subprocess"}:
         return False
     if value == "kubejob":
         return True
     raise build_backend.BuildBackendUnavailableError(
-        f"Invalid {_ENV_REVIEW_BACKEND}; valid values: subprocess, kubejob"
+        f"Invalid {name}; valid values: subprocess, kubejob"
     )
+
+
+def review_kubejob_enabled() -> bool:
+    return _kubejob_flag(_ENV_REVIEW_BACKEND)
+
+
+def correction_kubejob_enabled() -> bool:
+    """QA apply-correction runs as a Job (#2116); off by default."""
+    return _kubejob_flag(_ENV_CORRECTION_BACKEND)
 
 
 def build_agent_job_manifest(
@@ -99,10 +113,10 @@ def claude_oauth_token() -> str | None:
         return None
 
 
-def _require_prerequisites() -> None:
+def _require_prerequisites(flag: str = _ENV_REVIEW_BACKEND) -> None:
     if not store_enabled():
         raise build_backend.BuildBackendUnavailableError(
-            f"{_ENV_REVIEW_BACKEND}=kubejob requires DATABASE_URL, which is not set"
+            f"{flag}=kubejob requires DATABASE_URL, which is not set"
         )
 
 
@@ -348,3 +362,173 @@ async def read_clarification(
         proc.terminate()  # no-op once the Job has finished
         with contextlib.suppress(Exception):
             await asyncio.wait_for(proc.wait(), timeout=5.0)
+
+
+def _prepare_correction_workspace(spec_dir: Path, job_id: str) -> str:
+    """Pack a clone of the project (committed state) plus the spec's top-level files."""
+    from core.artifact_store import (  # noqa: PLC0415 - avoid boto3 at import time
+        ArtifactRef,
+        ArtifactStore,
+        pack_workspace,
+    )
+
+    project = spec_dir.parent.parent.parent
+    spec_rel = Path(".aifactory/specs") / spec_dir.name
+    if spec_dir.parent.name != "specs" or _has_symlink(project, spec_rel):
+        raise build_backend.BuildBackendUnavailableError("Spec directory is not safe")
+    if _has_symlink(project, Path(".aifactory/worktrees/corrections")):
+        raise build_backend.BuildBackendUnavailableError(
+            "Correction worktree directory contains a symlink"
+        )
+    sources = [f for f in spec_dir.iterdir() if f.is_file() and not f.is_symlink()]
+    if any(f.stat().st_size > _CORRECTION_SPEC_FILE_MAX_BYTES for f in sources):
+        raise build_backend.BuildBackendUnavailableError("A spec file is too large")
+    clone = project / ".aifactory/worktrees/corrections" / job_id
+    try:
+        clone.parent.mkdir(parents=True, exist_ok=True)
+        build_backend._git(
+            ["clone", "--local", "--no-hardlinks", str(project), str(clone)]
+        )
+        _restore_origin(project, clone)
+        if _has_symlink(clone, spec_rel):
+            raise build_backend.BuildBackendUnavailableError(
+                "Spec directory in the clone contains a symlink"
+            )
+        dest = clone / spec_rel
+        dest.mkdir(parents=True, exist_ok=True)
+        for src in sources:
+            (dest / src.name).unlink(
+                missing_ok=True
+            )  # a cloned symlink, not its target
+            shutil.copyfile(src, dest / src.name)
+        return str(
+            pack_workspace(
+                ArtifactStore(),
+                ArtifactRef(service="aifactory", job_id=job_id, role="workspace"),
+                clone,
+            )
+        )
+    finally:
+        if clone.exists():
+            shutil.rmtree(clone)
+
+
+def _correction_env(
+    oauth_token: str | None, project: Path, ids: list[str]
+) -> dict[str, str]:
+    from server.utils.subprocess_env import github_names  # noqa: PLC0415
+
+    from .job_s3_scope import scope_job_s3  # noqa: PLC0415
+
+    env = build_backend.build_job_env(oauth_token, project)
+    drop = {*github_names(), "GITHUB_TOKEN", "GH_TOKEN"}
+    for name in [n for n in env if n in drop or n.startswith(("GITHUB_", "GH_"))]:
+        env.pop(name, None)
+    scope_job_s3(env, [(None, i) for i in ids])
+    # scope_job_s3 is a silent no-op when scoping is off: this Job must never
+    # hold the bucket-wide key, because its output is a code edit.
+    if (
+        not env.get("AWS_ACCESS_KEY_ID")
+        or env.get("S3_ACCESS_KEY")
+        or env.get("S3_SECRET_KEY")
+    ):
+        raise build_backend.BuildBackendUnavailableError(
+            "scoped Job S3 credentials are required for a correction Job"
+        )
+    return env
+
+
+async def _await_correction(proc: SpecJobProcess, spec_dir: Path) -> None:
+    """Record the Job's outcome, then run the assertion guard on the applied tree."""
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    from qa.correction import check_fix_cycle_assertions  # noqa: PLC0415
+
+    try:
+        code = await proc.wait()
+    except Exception:  # noqa: BLE001 - recorded as a failure below
+        _log.exception("[agent_job_backend] correction Job wait failed")
+        code = -1
+    result = {
+        "status": "applied" if code == 0 else "failed",
+        "job": proc.job_name,
+        "finished_at": datetime.now(UTC).isoformat(),
+    }
+    with contextlib.suppress(OSError):
+        (spec_dir / _CORRECTION_RESULT_FILE).write_text(json.dumps(result))
+    _log.info(
+        "[agent_job_backend] correction Job %s %s",
+        sanitize_log(proc.job_name),
+        result["status"],
+    )
+    await asyncio.to_thread(check_fix_cycle_assertions, spec_dir)
+
+
+async def dispatch_correction_fixer(spec_dir: Path | str) -> dict[str, Any]:
+    """Run the QA fixer for an apply-correction as a Job; the fix returns as a file set.
+
+    The ``fixer_fn`` the route hands to ``apply_correction`` when
+    ``AIFACTORY_CORRECTION_BACKEND=kubejob``. A failure raises
+    ``BuildBackendUnavailableError``; it never falls back to the in-pod fixer.
+    """
+    from core.workspace_fetch import (  # noqa: PLC0415
+        CORRECTION_FETCH_ID_ENV,
+        fetch_correction,
+    )
+
+    spec = Path(spec_dir)
+    project = spec.parent.parent.parent
+    _require_prerequisites(_ENV_CORRECTION_BACKEND)
+    fetch_id = uuid4().hex
+    job_id = f"correction-{fetch_id[:8]}"
+    try:
+        env = await asyncio.to_thread(
+            _correction_env,
+            await asyncio.to_thread(claude_oauth_token),
+            project,
+            [job_id, fetch_id],
+        )
+        env[CORRECTION_FETCH_ID_ENV] = fetch_id
+        uri = await asyncio.to_thread(_prepare_correction_workspace, spec, job_id)
+    except build_backend.BuildBackendUnavailableError:
+        raise
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        raise build_backend.BuildBackendUnavailableError(
+            f"could not prepare the correction workspace ({type(exc).__name__})"
+        ) from None
+    script = Path(build_backend._resolve_run_py_path()).parent / "qa/correction_job.py"
+    try:
+        manifest = build_agent_job_manifest(
+            job_id=job_id,
+            argv=["python", str(script), "--project", "/work", "--spec-id", spec.name],
+            workspace_uri=uri,
+            extra_env=env,
+            models=["sonnet", "opus"],
+        )
+        batch, namespace, job_name = await _create_job(manifest, None)
+    except Exception as exc:  # noqa: BLE001 - an API error is a refusal, not a 500
+        raise build_backend.BuildBackendUnavailableError(
+            f"could not create the correction Job ({type(exc).__name__})"
+        ) from None
+    cancel = threading.Event()
+
+    async def finish() -> int:
+        ok = await asyncio.to_thread(fetch_correction, project, fetch_id, cancel)
+        return 0 if ok else 1
+
+    async def existing_batch() -> object:
+        return batch
+
+    proc = SpecJobProcess(
+        namespace,
+        job_name,
+        batch_factory=existing_batch,
+        finish=finish,
+        cancel=cancel,
+        deadline=_LOCAL_DEADLINE,
+    )
+    # A strong reference: the loop keeps only a weak one (#1484).
+    task = asyncio.create_task(_await_correction(proc, spec))
+    _CORRECTION_WAITERS.add(task)
+    task.add_done_callback(_CORRECTION_WAITERS.discard)
+    return {"status": "qa_fixing", "scheduled": True, "job": job_name}

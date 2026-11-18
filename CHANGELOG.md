@@ -1,5 +1,17 @@
 ## [Unreleased]
 
+## 3.15.0 - 2026-11-18
+
+Merged to `dev` since 3.14.0.
+
+### Added
+
+- `apply-correction` can run as a Kubernetes Job behind `AIFACTORY_CORRECTION_BACKEND`; off by default. (#2116, #2118)
+
+### Changed
+
+- GitHub work-item identifiers are strings across the provider protocol; factory-github re-vendored at hub 92d2508. (Factory#3774, #2117)
+
 ## 3.14.0 - 2026-11-17
 
 Merged to `dev` since 3.13.1.
@@ -48,6 +60,7 @@ Merged to `dev` since 3.12.0.
 
 ### Security
 
+- `AIFACTORY_CORRECTION_BACKEND=kubejob` runs the QA fixer of `POST /tasks/{id}/apply-correction` as a Kubernetes Job, so the TFactory fix loop works under `AIFACTORY_FORBID_INPOD_AGENTS`. The fix returns as a validated, size-capped file set applied all-or-nothing with a base-hash conflict check; no GitHub credential in the Job, scoped S3 credentials required, no in-pod fallback. Off by default; unset keeps the 409 refusal (#2116).
 - `AIFACTORY_REVIEW_BACKEND=kubejob` runs PR review and task clarification sessions as Kubernetes Jobs; only `review_{N}.json` or the capped clarification text returns to the control plane. Off by default (#1932, slice A4).
 - `AIFACTORY_FORBID_INPOD_AGENTS=true` refuses in-pod agent spawns for spec creation, builds, PR review and clarification, unless `AIFACTORY_LOCAL_DEV=1`. Off by default (#1932).
 
