@@ -192,7 +192,7 @@ async def _org_lookup_ok(
 
 
 @router.websocket("/ws/events")
-async def events_websocket(websocket: WebSocket):
+async def events_websocket(websocket: WebSocket):  # noqa: PLR0912 - already branchy; #312 adds guards
     """WebSocket endpoint for global events."""
     await websocket.accept()
 
