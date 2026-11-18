@@ -257,3 +257,10 @@ def test_pom_asking_for_a_newer_jdk_than_the_flake_ships_warns(tmp_path, caplog)
     assert any(
         "25" in r.getMessage() and "jdk21" in r.getMessage() for r in caplog.records
     )
+
+
+def test_kotlin_gradle_repo_does_not_buy_maven(tmp_path):
+    root = _kotlin_project(tmp_path)
+    (root / "build.gradle").write_text("// groovy build\n")
+
+    assert "pkgs.maven" not in _flake_for(root)
