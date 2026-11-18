@@ -75,6 +75,39 @@ def test_manifest_has_no_service_account_token_and_short_deadline() -> None:
     assert spec["template"]["spec"]["automountServiceAccountToken"] is False
 
 
+@pytest.mark.parametrize(
+    ("build_sa", "job_sa", "expected"),
+    [
+        (" build-sa ", None, "build-sa"),
+        (" build-sa ", " job-sa ", "job-sa"),
+        (None, None, "aifactory-sandbox"),
+        (" build-sa ", "   ", "build-sa"),
+        ("   ", "   ", "aifactory-sandbox"),
+    ],
+)
+def test_agent_job_service_account(
+    monkeypatch: pytest.MonkeyPatch,
+    build_sa: str | None,
+    job_sa: str | None,
+    expected: str,
+) -> None:
+    for name, value in (("AIFACTORY_BUILD_SA", build_sa), ("AIFACTORY_JOB_SA", job_sa)):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    manifest = ajb.build_agent_job_manifest(
+        job_id="clarify-abcd1234",
+        argv=["claude"],
+        workspace_uri=None,
+        extra_env={},
+        models=["haiku"],
+    )
+    pod = manifest["spec"]["template"]["spec"]
+    assert pod["serviceAccountName"] == expected
+    assert pod["automountServiceAccountToken"] is False
+
+
 async def test_clarification_job_env_has_no_github_or_s3(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
