@@ -2,6 +2,11 @@
 status: draft
 issue: 2143
 spec: spec/2026-11-18-2143-aif-java-toolchain.md
+coders:
+  2: codex   # small tricky logic, contained edit in nix_env.py
+  3: codex   # contained edit in gate_runner.py
+reviewers:
+  - codex    # final diff review; independent read of detection edge cases
 ---
 
 # Plan: infer builtin-language toolchains and Java gates (#2142 Rust, #2143 Java)
@@ -34,12 +39,6 @@ Self-contained. Approved decisions (spec/2026-11-18-2142-aif-rust-toolchain.md, 
   same cwd.
 - NOT touched: `core/nix_provisioner.py` (byte-checked vendored), qa.py,
   command allowlist, sandbox. Agent-session toolchain is a follow-up.
-
-coders:
-  2: codex   # small tricky logic, contained edit in nix_env.py
-  3: codex   # contained edit in gate_runner.py
-reviewers:
-  - codex    # final diff review; reasons: independent read of detection edge cases
 
 ## Steps
 
