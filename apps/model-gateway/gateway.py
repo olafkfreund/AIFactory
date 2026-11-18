@@ -26,6 +26,7 @@ import http.client
 import json
 import math
 import os
+import queue
 import re
 import sys
 import threading
@@ -195,13 +196,86 @@ def _host(url: str) -> str:
 
 
 class _Telemetry:
-    """OTLP span exporter; step 2 of plan/2026-11-18-1959-gateway-features fills it in."""
+    """Best-effort OTLP/HTTP span exporter."""
 
     def __init__(self, endpoint: str = "", headers: str = ""):
         self.enabled = bool(endpoint)
+        if not self.enabled:
+            return
+        self.url = endpoint.rstrip("/") + "/v1/traces"
+        self.headers = {"Content-Type": "application/json"}
+        for item in headers.split(","):
+            if "=" in item:
+                key, value = item.split("=", 1)
+                self.headers[key.strip().replace("\r", "").replace("\n", "")] = (
+                    value.strip().replace("\r", "").replace("\n", "")
+                )
+        self.queue = queue.Queue(maxsize=256)
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
 
     def emit(self, attrs: dict, start_ns: int, end_ns: int, ok: bool) -> None:
-        pass
+        if not self.enabled:
+            return
+        attributes = []
+        for key, value in attrs.items():
+            if isinstance(value, bool):
+                typed = {"boolValue": value}
+            elif isinstance(value, int):
+                typed = {"intValue": str(value)}
+            elif isinstance(value, float):
+                typed = {"doubleValue": value}
+            else:
+                typed = {"stringValue": value}
+            attributes.append({"key": key, "value": typed})
+        span = {
+            "traceId": os.urandom(16).hex(),
+            "spanId": os.urandom(8).hex(),
+            "name": f"chat {attrs.get('factory.genai.route', '')}",
+            "kind": 3,
+            "startTimeUnixNano": str(start_ns),
+            "endTimeUnixNano": str(end_ns),
+            "attributes": attributes,
+            "status": {"code": 1 if ok else 2},
+        }
+        try:
+            self.queue.put_nowait(span)
+        except queue.Full:
+            pass
+
+    def _run(self) -> None:
+        while True:
+            span = self.queue.get()
+            try:
+                body = json.dumps(
+                    {
+                        "resourceSpans": [
+                            {
+                                "resource": {
+                                    "attributes": [
+                                        {
+                                            "key": "service.name",
+                                            "value": {"stringValue": "model-gateway"},
+                                        }
+                                    ]
+                                },
+                                "scopeSpans": [
+                                    {
+                                        "scope": {"name": "model-gateway"},
+                                        "spans": [span],
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                ).encode()
+                request = urllib.request.Request(
+                    self.url, body, self.headers, method="POST"
+                )
+                with _opener.open(request, timeout=5):
+                    pass
+            except Exception:
+                pass
 
 
 class _State:
