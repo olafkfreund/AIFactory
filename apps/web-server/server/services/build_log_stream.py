@@ -99,7 +99,7 @@ async def tail_job_logs(
         api = None
         try:
             if core is None:
-                from kubernetes_asyncio import client, config
+                from kubernetes_asyncio import client, config  # noqa: PLC0415
 
                 try:
                     config.load_incluster_config()

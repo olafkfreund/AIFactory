@@ -39,8 +39,8 @@ async def _job_log_entries(task_id: str, tail: int | None) -> list[dict]:
     source then. Best-effort: any failure returns ``[]``. The marker nonce is
     redacted exactly as the cockpit stream does (#1929).
     """
-    from ..services.agent_service import get_agent_service
-    from ..services.build_log_stream import tail_job_logs
+    from server.services.agent_service import get_agent_service  # noqa: PLC0415
+    from server.services.build_log_stream import tail_job_logs  # noqa: PLC0415
 
     n = tail if isinstance(tail, int) and tail > 0 else _DEFAULT_JOB_TAIL
     try:

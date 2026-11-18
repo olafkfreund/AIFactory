@@ -289,7 +289,7 @@ async def get_task_status(
 
     progress: dict = {}
     try:
-        from .tasks import get_task
+        from server.routes.tasks import get_task  # noqa: PLC0415
 
         detail = await get_task(task_id, _access=_access)
         progress = (detail.get("executionProgress") if detail else None) or {}
