@@ -16,11 +16,17 @@ intent: intent/2026-11-18-2143-aif-java-toolchain.md
    - The pom's `maven.compiler.release`/`java.version`/`maven.compiler.source`
      is read; above 21 logs a warning (jdk21 cannot build it) and below is fine
      (jdk21 `--release` covers 8..21).
+   Java is recognised by direct marker check (pom.xml, build.gradle,
+   build.gradle.kts, gradlew; root or nested), not only by StackDetector, which
+   misses `build.gradle.kts`/`gradlew` without .java sources (Codex P2).
 2. `agents/gate_runner.py` `detect_gates()`: add `maven-test`
-   (`mvn -B -q test`) when `pom.xml` exists, and `gradle-test` for a Gradle
-   Java project not already covered by the kotlin descriptor gate (name
-   `kotlin-unit`); built from the module marker so nested modules work via the
-   existing `_module_dir_for` helper (add a `java` marker use, which exists).
+   (`mvn -B -q test`) with `Gate.cwd` = the directory of the matched
+   `pom.xml`, and `gradle-test` with cwd = the matched Gradle module. Two new
+   marker keys `maven` and `gradle` in `_MODULE_MARKERS_BY_LANGUAGE` so
+   `_module_dir_for` never mixes build systems (the existing `java` key does).
+   Dedupe by directory, not name: a `gradle-test` gate is skipped only when an
+   existing gate (e.g. descriptor `kotlin-unit`) already runs gradle in the
+   same cwd; a separate Java module still gets its own gate.
 3. QA sign-off: no code change in qa.py. The approval guard already accepts
    executed gate evidence (#1496); the gap was that Java produced no gate. With
    the gate recorded, `update_qa_status(approved)` passes, so no hand-written
