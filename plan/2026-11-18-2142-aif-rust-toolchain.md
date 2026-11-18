@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2142
 spec: spec/2026-11-18-2142-aif-rust-toolchain.md
 coders:
