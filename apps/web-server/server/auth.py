@@ -241,7 +241,9 @@ async def _ws_acw_principal(token: str) -> dict[str, object] | None:
                 get_settings(), "SCOPED_SERVICE_TOKENS_ENABLED", False
             ),
         )
-    except Exception:  # noqa: BLE001 — any validator failure denies WS auth (4001)
+    except Exception as exc:  # noqa: BLE001 — any validator failure denies WS auth (4001)
+        # Class only, never the token: tells a DB outage from a bad key (#312).
+        logger.warning("WS key validation failed: %s", type(exc).__name__)
         return None
 
 

@@ -320,7 +320,15 @@ def _wait_for_no_orgs(client, socket):
     raise AssertionError("memberships were not reloaded")
 
 
-def test_key_socket_follows_membership_on_recheck(sockets, monkeypatch):
+def _close_code(ws):
+    # Skips any event already queued ahead of the close frame.
+    with pytest.raises(WebSocketDisconnect) as closed:
+        for _ in range(5):
+            ws.receive_text()
+    return closed.value.code
+
+
+def test_key_socket_closes_on_failed_membership_recheck(sockets, monkeypatch, caplog):
     client, _memberships, sent = sockets
     monkeypatch.setattr(events, "_KEY_RECHECK_SECONDS", 0)
     with connect(client, "acw_key") as ws:
@@ -328,9 +336,30 @@ def test_key_socket_follows_membership_on_recheck(sockets, monkeypatch):
         assert len(sent["acw_key"]) == 1
         monkeypatch.setattr(_engine(), "async_session_factory", _no_database)
         ws.send_text("wake the receive loop")
+        assert _close_code(ws) == 1011
+    assert not event_bus._clients
+    assert "Could not load org memberships for WS client: RuntimeError" in caplog.text
+    assert "acw_key" not in caplog.text
+
+
+def test_key_socket_closes_on_failed_initial_membership(sockets, monkeypatch):
+    client, _memberships, _sent = sockets
+    monkeypatch.setattr(_engine(), "async_session_factory", _no_database)
+    with connect(client, "acw_key") as ws:
+        assert _close_code(ws) == 1011
+    assert not event_bus._clients
+
+
+def test_jwt_socket_stays_open_on_failed_membership_recheck(sockets, monkeypatch):
+    client, _memberships, sent = sockets
+    monkeypatch.setattr(events, "_KEY_RECHECK_SECONDS", 0)
+    with connect(client, "jwt-a") as ws:
+        monkeypatch.setattr(_engine(), "async_session_factory", _no_database)
+        ws.send_text("wake the receive loop")
         _wait_for_no_orgs(client, next(iter(event_bus._clients.values())))
         emit(client, events.broadcast_event, "event", {"projectId": "p-a"})
-        assert len(sent["acw_key"]) == 1
+        assert sent.get("jwt-a", []) == []
+        assert event_bus._clients
 
 
 def test_login_emitters_route_by_starting_principal(sockets, monkeypatch):

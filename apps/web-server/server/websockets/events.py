@@ -145,10 +145,14 @@ async def send_to_org(org_id: str, event_type: str, payload: dict):
 
 async def _load_org_ids(
     client: ConnectedClient, user_info: dict[str, Any] | None
-) -> None:
-    """Load the user's org memberships for routing; a failed lookup leaves none."""
+) -> bool:
+    """Load the user's org memberships for routing; a failed lookup leaves none.
+
+    Returns False only when the lookup raised (#312); success, an empty
+    membership and the no-user case return True.
+    """
     if not (user_info and user_info.get("id")):
-        return
+        return True
     try:
         from sqlalchemy import select
 
@@ -163,9 +167,28 @@ async def _load_org_ids(
             if user_info.get("org_id"):
                 org_ids &= {user_info["org_id"]}
             client.org_ids = org_ids
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 - fail closed, then tell the caller
         client.org_ids = set()
-        logger.debug("Could not load org memberships for WS client", exc_info=True)
+        logger.warning(
+            "Could not load org memberships for WS client: %s", type(exc).__name__
+        )
+        return False
+    return True
+
+
+async def _org_lookup_ok(
+    websocket: WebSocket, client: ConnectedClient, user_info: dict[str, Any] | None
+) -> bool:
+    """Load orgs; on failure close a key (machine) socket with 1011 so it reconnects.
+
+    Human sockets stay open: the browser reconnect drops its handlers (#312).
+    """
+    if await _load_org_ids(client, user_info):
+        return True
+    if (user_info or {}).get("api_key_id"):
+        await websocket.close(code=1011)
+        return False
+    return True
 
 
 @router.websocket("/ws/events")
@@ -189,9 +212,9 @@ async def events_websocket(websocket: WebSocket):
         key_token = None
     last_key_check = time.monotonic()
 
-    await _load_org_ids(client, user_info)
-
     try:
+        if not await _org_lookup_ok(websocket, client, user_info):
+            return
         # Keep connection alive and listen for pings
         while True:
             if (
@@ -208,7 +231,8 @@ async def events_websocket(websocket: WebSocket):
                     client.key_org_id = str(org_id) if org_id else None
                     client.user_id = str(principal["id"])
                 last_key_check = time.monotonic()
-                await _load_org_ids(client, user_info)
+                if not await _org_lookup_ok(websocket, client, user_info):
+                    break
             try:
                 data = await asyncio.wait_for(websocket.receive_text(), timeout=30)
 
