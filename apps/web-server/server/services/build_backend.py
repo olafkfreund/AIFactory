@@ -167,6 +167,7 @@ _ENV_REPO_PVC = "AIFACTORY_SANDBOX_REPO_PVC"
 _ENV_DATA_ROOT = "AIFACTORY_DATA_ROOT"
 _ENV_NAMESPACE = "AIFACTORY_SANDBOX_NAMESPACE"
 _ENV_SERVICE_ACCOUNT = "AIFACTORY_BUILD_SA"
+_ENV_JOB_SERVICE_ACCOUNT = "AIFACTORY_JOB_SA"
 _ENV_DEADLINE = "AIFACTORY_BUILD_DEADLINE_SECONDS"
 _ENV_SWEEP_DRY_RUN = "AIFACTORY_JOB_SWEEP_DRY_RUN"
 _SWEEP_GRACE_SECONDS = 600
@@ -205,6 +206,15 @@ _DEFAULT_DEADLINE_SECONDS = 6 * 3600  # a full build is long-lived
 # APP_BACKEND_PATH=/home/projects/MagesticAI/apps/backend). Only used as a
 # fallback when the env is somehow unset; the image always sets it.
 _DEFAULT_BACKEND_PATH = "/home/projects/MagesticAI/apps/backend"
+
+
+def _job_service_account() -> str:
+    return (
+        os.environ.get(_ENV_JOB_SERVICE_ACCOUNT, "").strip()
+        or os.environ.get(_ENV_SERVICE_ACCOUNT, "").strip()
+        or _DEFAULT_SERVICE_ACCOUNT
+    )
+
 
 # The standalone build clone a dispatched Job runs in, co-mounted at ``/work``.
 #
