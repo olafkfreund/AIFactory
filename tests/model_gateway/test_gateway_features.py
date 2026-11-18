@@ -579,3 +579,12 @@ def test_stalled_4xx_body_does_not_fail_over(fakes, tmp_path, clock, monkeypatch
     assert len(b.seen) == 0
     server.shutdown()
     sock.close()
+
+
+def test_charge_after_window_change_lands_in_current_window(clock):
+    state = gateway._State(gateway.load_config({}))
+    old, new = {"window_s": 60, "tokens": 100}, {"window_s": 30, "tokens": 100}
+    assert state.admit("cheap", old) == 0
+    assert state.admit("cheap", new) == 0  # new window, under its limit
+    state.charge("cheap", old, 150)  # old request completes
+    assert state.admit("cheap", new) > 0

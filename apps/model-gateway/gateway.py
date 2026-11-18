@@ -348,11 +348,12 @@ class _State:
         return 0
 
     def charge(self, cls: str, quota: dict, tokens: int) -> None:
+        now = _now()
         with self.lock:
             win = self.windows.get(cls)
-            if win and win[3] != quota["window_s"]:
-                return  # stale response from before a window change: do not reset the new window
-            self._window(cls, quota, _now())[2] += tokens
+            if win is None or now - win[0] >= win[3]:
+                win = self.windows[cls] = [now, 0, 0, quota["window_s"]]
+            win[2] += tokens  # the window current at completion, whatever its length
 
     def inc(self, name: str, labels: dict, value: float = 1) -> None:
         key = (name, tuple(sorted(labels.items())))
