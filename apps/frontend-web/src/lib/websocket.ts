@@ -10,13 +10,13 @@ type ConnectionHandler = () => void;
 
 interface WebSocketConnection {
   ws: WebSocket;
-  handlers: Set<MessageHandler>;
   reconnectAttempts: number;
   reconnectTimeout?: ReturnType<typeof setTimeout>;
 }
 
 class WebSocketManager {
   private connections: Map<string, WebSocketConnection> = new Map();
+  private handlers: Map<string, Set<MessageHandler>> = new Map();
   private onConnectHandlers: Map<string, Set<ConnectionHandler>> = new Map();
   private onDisconnectHandlers: Map<string, Set<ConnectionHandler>> = new Map();
   private maxReconnectAttempts = 5;
@@ -36,7 +36,6 @@ class WebSocketManager {
 
     const connection: WebSocketConnection = {
       ws,
-      handlers: new Set(),
       reconnectAttempts: 0,
     };
 
@@ -47,16 +46,24 @@ class WebSocketManager {
     };
 
     ws.onmessage = (event) => {
+      if (this.connections.get(endpoint) !== connection) return;
+      let data: unknown = event.data;
       try {
-        const data = JSON.parse(event.data);
-        connection.handlers.forEach((handler) => { handler(data); });
+        data = JSON.parse(event.data);
       } catch {
         // Handle non-JSON messages (e.g., terminal raw output)
-        connection.handlers.forEach((handler) => { handler(event.data); });
       }
+      this.handlers.get(endpoint)?.forEach((handler) => {
+        try {
+          handler(data);
+        } catch (error) {
+          console.error(`[WebSocket] Handler error: ${endpoint}`, error);
+        }
+      });
     };
 
     ws.onclose = (event) => {
+      if (this.connections.get(endpoint) !== connection) return;
       console.log(`[WebSocket] Disconnected: ${endpoint}`, event.code, event.reason);
       this.onDisconnectHandlers.get(endpoint)?.forEach((h) => { h(); });
 
@@ -66,6 +73,7 @@ class WebSocketManager {
         const delay = this.reconnectDelay * Math.pow(2, connection.reconnectAttempts - 1);
         console.log(`[WebSocket] Reconnecting in ${delay}ms (attempt ${connection.reconnectAttempts})`);
         connection.reconnectTimeout = setTimeout(() => {
+          if (this.connections.get(endpoint) !== connection) return;
           this.connections.delete(endpoint);
           this.connect(endpoint);
         }, delay);
@@ -84,17 +92,22 @@ class WebSocketManager {
    * Subscribe to messages on an endpoint
    */
   subscribe(endpoint: string, handler: MessageHandler): () => void {
-    let connection = this.connections.get(endpoint);
-    if (!connection) {
-      this.connect(endpoint);
-      connection = this.connections.get(endpoint)!;
+    let handlers = this.handlers.get(endpoint);
+    if (!handlers) {
+      handlers = new Set();
+      this.handlers.set(endpoint, handlers);
     }
-    connection.handlers.add(handler);
+    handlers.add(handler);
+    if (!this.connections.has(endpoint)) {
+      this.connect(endpoint);
+    }
 
     return () => {
-      connection.handlers.delete(handler);
+      if (this.handlers.get(endpoint) !== handlers) return;
+      handlers.delete(handler);
       // Close connection if no more handlers
-      if (connection.handlers.size === 0) {
+      if (handlers.size === 0) {
+        this.handlers.delete(endpoint);
         this.disconnect(endpoint);
       }
     };
@@ -119,6 +132,7 @@ class WebSocketManager {
    * Disconnect from endpoint
    */
   disconnect(endpoint: string): void {
+    this.handlers.delete(endpoint);
     const connection = this.connections.get(endpoint);
     if (connection) {
       if (connection.reconnectTimeout) {
