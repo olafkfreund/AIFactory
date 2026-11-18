@@ -30,11 +30,11 @@ from .build_backend import (
     backend_config_error,
     inpod_agent_refusal,
     kubejob_enabled,
-    orphaned_worktree_registrations,
 )
 from .build_log_stream import PlanSync
 from .task_log_writer import TaskLogWriter
 from .task_phase import TaskPhase
+from .worktree_cleanup import cleanup_orphaned_worktrees
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -42,35 +42,35 @@ if TYPE_CHECKING:
 _log = logging.getLogger(__name__)
 
 
-def _report_orphaned_worktrees(job_id: str) -> list[str]:
-    """#1467 invariant: no registered worktree may be a non-worktree on disk.
+async def _report_orphaned_worktrees(
+    job_id: str, active_job_ids: set[str] | None
+) -> list[str]:
+    """Deregister stale #1467 worktree registrations that are provably unused.
 
-    An orphaned registration holds the branch lock, so create-PR pushes from
-    a repo without the branch and TFactory's git_writer cannot check it out —
-    both in the looks-finished-delivers-nothing shape. Checked here because
-    build completion is the moment the state matters and the cheapest place
-    to catch it without a full pipeline run. Report-only: the remedy
-    (``git worktree remove``) deletes a directory, which is not a thing to do
-    unattended on a completion path.
+    An orphaned registration holds the branch lock (create-PR pushes and
+    TFactory's git_writer fail on it). #2134: instead of only reporting, drop
+    registrations of terminal/deleted tasks that nothing holds; see
+    ``worktree_cleanup``. ``active_job_ids`` None means the active set was
+    unreadable: fail closed and touch nothing.
     """
     project_id, _, _spec = job_id.partition(":")
-    try:
-        orphans = orphaned_worktree_registrations(resolve_project_path(project_id))
-    except Exception:  # noqa: BLE001 - a diagnostic must never fail a build
-        _log.exception(
-            "[AgentService] worktree-registration check failed for %s (ignored)",
+    if active_job_ids is None:
+        _log.warning(
+            "[AgentService] #2134 worktree cleanup skipped after %s: active job "
+            "state unreadable",
             sanitize_log(job_id),
         )
         return []
-    if orphans:
-        _log.error(
-            "[AgentService] #1467 orphaned worktree registrations after %s: %s "
-            "— these hold the branch lock; deregister with "
-            "`git worktree remove --force <path>`",
-            sanitize_log(job_id),
-            sanitize_log(", ".join(orphans)),
+    try:
+        return cleanup_orphaned_worktrees(
+            resolve_project_path(project_id), project_id, active_job_ids
         )
-    return orphans
+    except Exception:  # noqa: BLE001 - a diagnostic must never fail a build
+        _log.exception(
+            "[AgentService] worktree cleanup failed for %s (ignored)",
+            sanitize_log(job_id),
+        )
+        return []
 
 
 _REVIEW_PAUSE_REASONS = ("plan_review", "injection_scan")
@@ -353,7 +353,7 @@ class KubejobMixin:
                 )
             # The board must leave running/planning now, not at the next poll.
             await self._safe_emit_task_status(job_id, "human_review", pause[1])
-            _report_orphaned_worktrees(job_id)
+            await _report_orphaned_worktrees(job_id, await self._active_job_ids())
             await self._drain_queue()
             await self._report_kubejob_usage(job_id, "human_review")
             return
@@ -376,8 +376,20 @@ class KubejobMixin:
                 "[AgentService] kubejob terminal-status record failed for %s (ignored)",
                 job_id,
             )
-        _report_orphaned_worktrees(job_id)
+        await _report_orphaned_worktrees(job_id, await self._active_job_ids())
         await self._drain_queue()
+
+    async def _active_job_ids(self) -> set[str] | None:
+        """Job ids running or queued (#2134), or None when state is unreadable."""
+        try:
+            store = self._store()
+            return {
+                *self.running_tasks,
+                *await store.get_running_job_ids(),
+                *await store.get_queued_job_ids(),
+            }
+        except Exception:  # noqa: BLE001 - fail closed: caller skips cleanup
+            return None
 
     async def _emit_kubejob_terminal_completion(self, job_id: str) -> str:
         """Emit the RFC-0001 completion event + side-effects for a done kubejob.
