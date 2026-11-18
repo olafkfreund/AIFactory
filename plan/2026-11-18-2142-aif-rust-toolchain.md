@@ -8,21 +8,30 @@ spec: spec/2026-11-18-2142-aif-rust-toolchain.md
 
 Self-contained. Approved decisions (spec/2026-11-18-2142-aif-rust-toolchain.md, spec/2026-11-18-2143-aif-java-toolchain.md):
 
-- `core/nix_env.py::infer_environment`: descriptor pass first (unchanged). If
-  none, builtin pass. Primary language = first descriptor language, else
-  `python` if detected (only when other builtin languages exist), else first
-  builtin. Every OTHER detected builtin language is added as a `system_packages`
-  token: rust, go, java, node. Rust also adds `clippy`. Python alone -> None.
-- Java is detected by direct markers (pom.xml, build.gradle, build.gradle.kts,
-  gradlew; root or nested depth<=4) as well as StackDetector. Gradle-only Java
-  adds `gradle` to system_packages. A pom release/java.version/
-  maven.compiler.release/source > 21 logs a warning.
+- `core/nix_env.py::infer_environment`: ONE selection followed by shared
+  enrichment (no early return on the descriptor path). Collect: `desc` = first
+  language with a descriptor (kotlin, swift); builtin set B from detected
+  languages and direct markers: rust (Cargo.toml), go (go.mod), node
+  (javascript/typescript), java (pom.xml / build.gradle / build.gradle.kts /
+  gradlew, root or nested depth<=4), python flag. Primary language = `desc.name`
+  if any, else `python` if python is detected and B is non-empty, else B[0]; if
+  nothing at all is selected return None (python alone -> None, unknown -> None).
+  Every language in B that is not the primary is added as a `system_packages`
+  token (rust, go, java, node; rust always also adds `clippy` when rust is in the
+  flake). `gradle` is added whenever any Gradle Java module exists (also beside
+  Maven). verify_commands come from the primary. A pom
+  release/java.version/maven.compiler.release/source > 21 logs a warning.
 - Inferred env: `provisioning.generated` is True only if `project_dir/flake.nix`
-  does not exist (repo-owned flake preserved). This applies to Kotlin/Swift too.
-- `agents/gate_runner.py::detect_gates`: `maven-test` (`mvn -B -q test`, cwd =
-  pom dir) and `gradle-test` (`gradle test --no-daemon --console=plain`, cwd =
-  gradle module), via new `_MODULE_MARKERS_BY_LANGUAGE` keys `maven`, `gradle`;
-  `gradle-test` skipped when an existing gate already runs gradle in that cwd.
+  does not exist (repo-owned flake preserved). Applies to Kotlin/Swift too.
+- `agents/gate_runner.py::detect_gates`: after `_descriptor_gates` has run, add
+  Java gates. Independent module discovery: a helper returns every top-most
+  directory (depth<=4, skip dirs as `_MODULE_SKIP_DIRS`, do not descend into a
+  matched dir) holding `pom.xml` (maven) or a Gradle build file (gradle). One
+  gate per dir: `maven-test` (`mvn -B -q test`) / `gradle-test`
+  (`gradle test --no-daemon --console=plain`), named plainly for the root and
+  `<name>:<reldir>` for nested ones, cwd = that dir. A gradle gate is skipped
+  only when an existing gate (e.g. `kotlin-unit`) already runs gradle with the
+  same cwd.
 - NOT touched: `core/nix_provisioner.py` (byte-checked vendored), qa.py,
   command allowlist, sandbox. Agent-session toolchain is a follow-up.
 
@@ -36,10 +45,15 @@ reviewers:
 
 1. tests/test_nix_env_inference.py (extend) and tests/test_gates_java_maven.py
    (new): rust, maven, nested maven, gradle-java, kotlin-priority (java+kotlin
-   gradle repo infers kotlin), go, node, python-only None, python+rust, rust+node
-   union, repo-owned flake preserved, pom release 25 warns, flake text contains
-   rustc/cargo/clippy and jdk21/maven; gate tests: maven gate cwd, nested pom with
-   root build.gradle, gradle dedupe vs kotlin-unit. Owner: me. -> verify: new
+   gradle repo infers kotlin), kotlin+rust union (flake text has rustc, cargo,
+   gradle), maven+gradle module repo (flake has maven and gradle), go, node,
+   python-only None, python+rust, rust+node union, pom release 25 warns, flake
+   text contains rustc/cargo/clippy and jdk21/maven. Preservation test: write a
+   sentinel `flake.nix`, call `infer_environment()`, pass ITS result to
+   `materialize_flake_into()`, assert the sentinel is unchanged. Gate tests:
+   maven gate cwd, nested pom with root build.gradle, sibling Kotlin and Java
+   gradle modules both get a gate, same-dir dedupe vs `kotlin-unit`.
+   Owner: me. -> verify: new
    tests FAIL on dev (`pytest tests/test_nix_env_inference.py tests/test_gates_java_maven.py`).
    Traps: tests add `apps/backend` to sys.path like the existing file.
 2. apps/backend/core/nix_env.py `infer_environment`: implement the builtin pass
