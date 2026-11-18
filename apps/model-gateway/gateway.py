@@ -349,6 +349,9 @@ class _State:
 
     def charge(self, cls: str, quota: dict, tokens: int) -> None:
         with self.lock:
+            win = self.windows.get(cls)
+            if win and win[3] != quota["window_s"]:
+                return  # stale response from before a window change: do not reset the new window
             self._window(cls, quota, _now())[2] += tokens
 
     def inc(self, name: str, labels: dict, value: float = 1) -> None:
@@ -419,8 +422,9 @@ def _forward(url: str, key: str, body: bytes, ctype: str):
         # quote a masked form of the key in them.
         try:
             return err.code, err.headers.get("Content-Type"), err.read()
-        except OSError:
-            return None
+        except (OSError, http.client.HTTPException):
+            # The status is known: a 4xx stays terminal, a 5xx still fails over.
+            return err.code, err.headers.get("Content-Type"), b""
     except (urllib.error.URLError, OSError, http.client.HTTPException):
         return None
 

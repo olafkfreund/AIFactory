@@ -521,3 +521,61 @@ def test_request_emits_populated_span(fakes, tmp_path):
     assert "SECRET-PROMPT" not in json.dumps(seen)
     server.shutdown()
     collector.shutdown()
+
+
+def test_stale_charge_does_not_reset_new_window(clock):
+    state = gateway._State(gateway.load_config({}))
+    old, new = {"window_s": 60, "tokens": 10}, {"window_s": 30, "tokens": 10}
+    state.charge("cheap", new, 10)
+    assert state.admit("cheap", new) > 0
+    state.charge("cheap", old, 5)  # response admitted under the old config
+    assert state.admit("cheap", new) > 0
+
+
+def _raw_upstream(status, partial_body, stall=0.0):
+    """Upstream that promises more body than it sends."""
+    import socket
+
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    sock.listen(5)
+
+    def run():
+        while True:
+            try:
+                conn, _ = sock.accept()
+            except OSError:
+                return
+            conn.recv(65536)
+            conn.sendall(
+                f"HTTP/1.1 {status} X\r\nContent-Length: 100\r\n\r\n".encode()
+                + partial_body
+            )
+            time.sleep(stall)
+            conn.close()
+
+    threading.Thread(target=run, daemon=True).start()
+    return sock, f"http://127.0.0.1:{sock.getsockname()[1]}"
+
+
+def test_truncated_5xx_body_still_fails_over(fakes, tmp_path, clock):
+    sock, bad = _raw_upstream(503, b"par")
+    b = fakes()
+    a = type("A", (), {"url": bad})
+    server, base = _two(fakes, tmp_path, a, b)
+    assert _call(base, body={"model": "cheap"})[0] == 200
+    assert len(b.seen) == 1
+    server.shutdown()
+    sock.close()
+
+
+def test_stalled_4xx_body_does_not_fail_over(fakes, tmp_path, clock, monkeypatch):
+    monkeypatch.setattr(gateway, "UPSTREAM_TIMEOUT", 0.3)
+    sock, bad = _raw_upstream(429, b"par", stall=1.0)
+    b = fakes()
+    a = type("A", (), {"url": bad})
+    server, base = _two(fakes, tmp_path, a, b)
+    assert _call(base, body={"model": "cheap"})[0] == 429
+    assert len(b.seen) == 0
+    server.shutdown()
+    sock.close()
