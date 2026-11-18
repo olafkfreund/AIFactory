@@ -48,6 +48,7 @@ class Fake:
                     self.end_headers()
                     self.wfile.write(outer.body)
                 except OSError:
+                    # The client may already have disconnected; nothing to send to.
                     pass
 
             def log_message(self, *args):
