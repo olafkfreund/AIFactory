@@ -491,9 +491,12 @@ def _kj(
     monkeypatch.setattr(svc, "_safe_emit_task_status", noop)
     monkeypatch.setattr(svc, "_safe_emit_task_update", noop)
     monkeypatch.setattr(svc, "_reap_kubejob_console", noop)
-    monkeypatch.setattr(
-        agent_kubejob, "_report_orphaned_worktrees", lambda j: orphans.append(j) or []
-    )
+
+    async def report_orphans(j, _active):
+        orphans.append(j)
+        return []
+
+    monkeypatch.setattr(agent_kubejob, "_report_orphaned_worktrees", report_orphans)
     return SimpleNamespace(
         svc=svc,
         spec_dir=spec_dir,

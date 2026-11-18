@@ -126,6 +126,9 @@ class _Recorder:
     async def _drain_queue(self) -> None:
         self.drained += 1
 
+    async def _active_job_ids(self) -> None:
+        return None  # #2134: unreadable -> worktree cleanup skipped
+
 
 @pytest.mark.asyncio
 async def test_a_successful_build_records_completed() -> None:
