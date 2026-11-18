@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 _DEFAULT_JOB_TAIL = 200
 
 
-async def _job_log_entries(task_id: str, tail: int | None) -> list[dict]:
+async def _job_log_entries(task_id: str, tail: int | None) -> list[dict[str, str]]:
     """Tail of the build Job's pod log for a kubejob task (#2144).
 
     Dispatch creates an empty ``task_logs.json`` and the packed path never ships

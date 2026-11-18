@@ -287,7 +287,7 @@ async def get_task_status(
         agent_service, task_id
     )
 
-    progress: dict = {}
+    progress: dict[str, Any] = {}
     try:
         from server.routes.tasks import get_task  # noqa: PLC0415
 

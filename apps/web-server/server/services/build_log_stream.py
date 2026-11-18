@@ -102,7 +102,7 @@ async def tail_job_logs(
                 from kubernetes_asyncio import client, config  # noqa: PLC0415
 
                 try:
-                    config.load_incluster_config()
+                    config.load_incluster_config()  # type: ignore[no-untyped-call]
                 except Exception:  # noqa: BLE001 - dev/test fallback to kubeconfig
                     await config.load_kube_config()
                 api = client.ApiClient()
@@ -118,7 +118,8 @@ async def tail_job_logs(
                 namespace,
                 tail_lines=max(1, min(tail, 500)),
             )
-            return logs.splitlines()
+            lines: list[str] = logs.splitlines()
+            return lines
         finally:
             if api is not None:
                 await api.close()

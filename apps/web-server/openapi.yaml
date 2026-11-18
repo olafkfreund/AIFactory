@@ -3675,7 +3675,14 @@ paths:
       tags:
       - Task Execution
       summary: Get Task Status
-      description: Get execution status for a specific task.
+      description: 'Get execution status for a specific task.
+
+
+        #2144: phase and progress come from the same source as the portal
+
+        (``task_to_dict().executionProgress``); ``queued`` is the admission queue,
+
+        in memory or durable, so a parked task is not mistaken for backlog.'
       operationId: get_task_status_api_tasks__task_id__status_get
       parameters:
       - name: task_id
@@ -4659,6 +4666,16 @@ paths:
         schema:
           type: string
           title: Task Id
+      - name: tail
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+            maximum: 500
+            minimum: 1
+          - type: 'null'
+          title: Tail
       responses:
         '200':
           description: Successful Response
@@ -13974,6 +13991,20 @@ components:
           - type: string
           - type: 'null'
           title: Message
+        queued:
+          type: boolean
+          title: Queued
+          default: false
+        overall_progress:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Overall Progress
+        current_subtask:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Current Subtask
       type: object
       required:
       - task_id
