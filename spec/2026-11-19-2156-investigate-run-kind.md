@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2156
 intent: intent/2026-11-19-2156-investigate-run-kind.md
 ---
