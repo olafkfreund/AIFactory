@@ -91,10 +91,21 @@ A run kind `investigate`, off by default behind a switch and kubejob only. It is
 - **Secrets.** Configured secret paths are excluded from the export, and Git history is never exposed. Secrets elsewhere in the source are caught only by pattern scrubbing of the log and report, which is a list and patterns, not a proof; the caller redacts again.
 - **Releases.** The release lead's cadence and the existing gates apply; nothing here is deployed outside a release.
 
-## Open questions
+## Decisions on the open questions
 
-1. **Registry proxy:** reuse an existing egress proxy in the cluster, or a small new one in the chart?
-2. **Test command source:** a project setting (`test_command`) in AIFactory, or passed by CFactory and checked against CFactory's project configuration (RFactory#18's plan has CFactory refuse a changed command)? Either way it is fixed for the run (outcome 8).
-5. **Test pod per call or per run:** one test pod for each `run_tests` call (a clean start every time), or one per run that is reset between calls?
-3. **Default caps:** 2 M tokens and 200 turns are RFactory's defaults; should AIFactory enforce caps given per run, or fixed ones per kind?
-4. **Secret-file list:** which patterns beyond `.env*`, `*.pem`, `*.key`, `id_*`, `.npmrc`/`.pypirc`/`.netrc` with tokens and `credentials*`?
+The owner said on 2026-11-19 to use the recommendations ("use your recommendations for this, use what makes most sense"):
+
+1. **Registry proxy: a small new one in AIFactory's chart.** No general egress proxy exists in the cluster. The only CONNECT proxy is RFactory's desktop proxy (`rfactory-desktops/rfactory-proxy`, from RFactory `desktop/proxy/proxy.js`), which is CONNECT-only with a host allowlist and has already been reviewed. AIFactory runs its **own instance** of that pattern in its namespace, with a registry allowlist (npm, PyPI, crates.io, Go proxy, Maven Central). It does not share RFactory's instance, because the two are separate trust domains.
+2. **Test command: CFactory supplies it, AIFactory fixes it.** CFactory's project configuration is the source; it sends the command in the dispatch and refuses a changed one (CFactory#561). AIFactory stores the command on the run at dispatch and never changes it for that run. It never reads the command from the repository or the request. Absent → "no tests run".
+3. **Caps: given per run, bounded per kind.** The caller sends its limits. AIFactory refuses any limit above the kind's maximum (30 minutes, 2 M tokens, 200 turns, 10 `run_tests` calls) and applies the kind's maximum when none is given.
+4. **Secret paths excluded from the export:**
+   - `.env*` and `.envrc`;
+   - `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks` and `*.keystore`;
+   - `id_*` and `.ssh/`;
+   - `.npmrc`, `.pypirc`, `.netrc` and `.git-credentials`;
+   - `credentials*` and `secrets.*`;
+   - `.aws/`, `.kube/`, `kubeconfig*` and `.docker/config.json`;
+   - `*.tfstate*`, `*.tfvars` and `.terraform/`.
+
+   The list is configurable per project, and it can only be added to.
+5. **Test pod: a fresh one for each `run_tests` call.** Each call gets a clean start and no state carries over; this is the simplest isolation. It costs a pod start per call, which the 10-call cap bounds.
