@@ -66,13 +66,19 @@ def test_every_new_id_is_priced_registered_and_cataloged():
     from core.enforcement import _CLAUDE_PRICING
     from model_registry import DEFAULT_REGISTRY
 
-    catalog = json.loads((BACKEND / "core" / "model-catalog.json").read_text())["models"]
+    catalog = json.loads((BACKEND / "core" / "model-catalog.json").read_text())[
+        "models"
+    ]
     for full in [*NEW.values(), *LEGACY.values(), *MODEL_ID_MAP.values()]:
         assert full in _CLAUDE_PRICING, full
         assert full in DEFAULT_REGISTRY, full
     for full in NEW.values():
         assert full in catalog, full
-    assert {"claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-2"} <= ADAPTIVE_THINKING_MODELS
+    assert {
+        "claude-sonnet-5-5",
+        "claude-haiku-5-5",
+        "claude-fable-5-2",
+    } <= ADAPTIVE_THINKING_MODELS
 
 
 def test_budget_shorthands_follow_phase_config():
