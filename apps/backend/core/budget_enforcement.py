@@ -142,6 +142,15 @@ _SHORTHAND_TO_CATALOG: dict[str, str] = {
     "sonnet": "claude-sonnet-5-5",
     "haiku": "claude-haiku-5-5",
     "fable": "claude-fable-5-2",
+    # Pinned legacy aliases (phase_config.MODEL_ID_MAP): without these a pinned
+    # run would look unpriced and slip past the ceiling.
+    "opus-4.8": "claude-opus-4-8",
+    "opus-4.7": "claude-opus-4-7",
+    "opus-1m": "claude-opus-4-6",
+    "opus-4.5": "claude-opus-4-5-20251101",
+    "sonnet-5": "claude-sonnet-5",
+    "sonnet-4.6": "claude-sonnet-4-6",
+    "haiku-4.5": "claude-haiku-4-5-20251001",
 }
 
 

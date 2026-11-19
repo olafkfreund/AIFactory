@@ -22,7 +22,21 @@ from .base import ProviderInfo, ProviderModel, ProviderStrategy
 
 logger = logging.getLogger(__name__)
 
-# Claude models (static — CLI supports these shorthands)
+
+def _cli_model(value: str) -> str:
+    """Expand an app shorthand (fable, sonnet-5, haiku-4.5, ...) to a full id.
+
+    The CLI only knows opus/sonnet/haiku; the legacy and fable shorthands are
+    app aliases, so they must be resolved before they reach ``--model``.
+    """
+    try:
+        from phase_config import resolve_model_id  # noqa: PLC0415
+    except ImportError:  # backend not on the path: pass the value through
+        return value
+    return resolve_model_id(value)
+
+
+# Claude models (static — app shorthands, expanded by _cli_model)
 CLAUDE_MODELS = [
     ProviderModel(id="fable", label="Claude Fable 5.2"),
     ProviderModel(id="opus", label="Claude Opus 5.5"),
@@ -179,7 +193,7 @@ class ClaudeProvider(ProviderStrategy):
         if model_config:
             model_value = model_config.get("model") or model
             if model_value:
-                cmd.extend(["--model", model_value])
+                cmd.extend(["--model", _cli_model(model_value)])
 
             thinking_level = model_config.get("thinkingLevel")
             if thinking_level and thinking_level != "none":
@@ -188,7 +202,7 @@ class ClaudeProvider(ProviderStrategy):
                 if effort:
                     cmd.extend(["--effort", effort])
         elif model:
-            cmd.extend(["--model", model])
+            cmd.extend(["--model", _cli_model(model)])
 
         cmd.append(message)
 

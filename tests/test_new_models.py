@@ -84,5 +84,6 @@ def test_every_new_id_is_priced_registered_and_cataloged():
 def test_budget_shorthands_follow_phase_config():
     from core.budget_enforcement import _SHORTHAND_TO_CATALOG
 
+    assert set(_SHORTHAND_TO_CATALOG) == set(MODEL_ID_MAP)
     for short, full in _SHORTHAND_TO_CATALOG.items():
         assert resolve_model_id(short) == full

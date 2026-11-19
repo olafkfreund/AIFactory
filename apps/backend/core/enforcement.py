@@ -123,8 +123,9 @@ _CLAUDE_PRICING: dict[str, dict[str, float]] = {
         "cache_creation": 3.75,
     },
     # Haiku 5.5 — current Haiku. $0.10 / $0.50 per MTok for prompts up to 100K
-    # tokens. Cache rates are DERIVED (0.1x read, 1.25x write): the claude-api
-    # reference does not publish them. Replace once confirmed.
+    # tokens. Above that it is $0.50 / $2.50, which is NOT modelled here, so
+    # prompts over 100K are under-counted 5x. Cache rates are DERIVED (0.1x
+    # read, 1.25x write): the claude-api reference does not publish them.
     "claude-haiku-5-5": {
         "input": 0.10,
         "output": 0.50,
