@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2156
 spec: spec/2026-11-19-2156-investigate-run-kind.md
 coders:
