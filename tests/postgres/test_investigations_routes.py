@@ -120,8 +120,14 @@ def env(test_postgres_url: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
 
     asyncio.run(seed())
     projects = {project_id: {"path": str(tmp_path), "org_id": org_id}}
+
+    async def aload() -> dict[str, dict[str, str]]:
+        return projects
+
+    # #2157 moved project lookup to the async DB registry (aload_projects).
     monkeypatch.setattr(project_registry, "load_projects", lambda: projects)
-    monkeypatch.setattr(investigations, "load_projects", lambda: projects)
+    monkeypatch.setattr(project_registry, "aload_projects", aload)
+    monkeypatch.setattr(investigations, "aload_projects", aload)
 
     async def db():
         async with sessions() as session:

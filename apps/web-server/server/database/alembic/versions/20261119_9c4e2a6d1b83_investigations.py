@@ -10,7 +10,7 @@ Adds:
 Additive: nothing reads either table once the code is reverted.
 
 Revision ID: 9c4e2a6d1b83
-Revises: 7a1f3c9e2b50
+Revises: 3c8e5a1d7f42
 Create Date: 2026-11-19
 """
 
@@ -22,7 +22,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "9c4e2a6d1b83"
-down_revision: str | Sequence[str] | None = "7a1f3c9e2b50"
+down_revision: str | Sequence[str] | None = "3c8e5a1d7f42"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

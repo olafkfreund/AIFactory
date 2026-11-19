@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Changed
+
+- Projects live in the database only: stable `id`, renamable unique `slug`, normalized repo identity, default team per org, `GET /api/projects/by-slug/{slug}`; `DELETE /api/projects/{id}` archives. `projects.json` is imported once and can be exported for rollback. (#2157, Factory#3857)
+
 ## 3.17.2 - 2026-11-19
 
 Merged to `dev` since 3.17.1.

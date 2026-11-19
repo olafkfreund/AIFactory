@@ -26,7 +26,15 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import (
+    DeclarativeBase,
+    Mapped,
+    mapped_column,
+    relationship,
+    validates,
+)
+
+from server.utils.roles import ROLE_LEVELS
 
 # Re-export under a private alias so the model definitions read cleanly
 # while making it obvious this is the encrypted-at-rest column type
@@ -301,6 +309,7 @@ class Project(Base):
     """A project managed within an organization."""
 
     __tablename__ = "projects"
+    __table_args__ = (UniqueConstraint("org_id", "slug", name="uq_projects_org_slug"),)
 
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=_generate_uuid
@@ -311,7 +320,18 @@ class Project(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     path: Mapped[str] = mapped_column(String(1024), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Registry blob (#2157): the legacy projects.json entry minus the identity
+    # columns below, kept whole so import/export is lossless.
     settings_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Identity (#2157). Renamable slug, unique per org; archived slugs stay reserved.
+    slug: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Normalized host/namespace/repo, NULL for remote-less folders. Never unique:
+    # recorded, not used to merge projects.
+    repo_identity: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    team_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("teams.id"), nullable=True
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now()
     )
@@ -331,6 +351,71 @@ class Project(Base):
 
     def __repr__(self) -> str:
         return f"<Project id={self.id!r} name={self.name!r}>"
+
+
+# ---------------------------------------------------------------------------
+# Teams (#2157): own projects; enforcement arrives in a later phase
+# ---------------------------------------------------------------------------
+
+
+class Team(Base):
+    """A team inside an org. Every org has one default team."""
+
+    __tablename__ = "teams"
+    __table_args__ = (UniqueConstraint("org_id", "slug", name="uq_teams_org_slug"),)
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=_generate_uuid
+    )
+    org_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("organizations.id"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    slug: Mapped[str] = mapped_column(String(64), nullable=False)
+    is_default: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+
+
+class TeamMembership(Base):
+    """A user's role in a team; ``provenance`` keeps SSO sync off manual grants."""
+
+    __tablename__ = "team_memberships"
+    __table_args__ = (
+        UniqueConstraint("team_id", "user_id", name="uq_team_memberships_team_user"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=_generate_uuid
+    )
+    team_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("teams.id"), nullable=False
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=False
+    )
+    role: Mapped[str] = mapped_column(String(50), nullable=False, default="member")
+    provenance: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="manual"
+    )  # sso | manual
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+
+    @validates("role")
+    def _check_role(self, _key: str, role: str) -> str:
+        if role not in ROLE_LEVELS:
+            raise ValueError(f"Unknown team role {role!r}")
+        return role
+
+    @validates("provenance")
+    def _check_provenance(self, _key: str, provenance: str) -> str:
+        if provenance not in ("sso", "manual"):
+            raise ValueError(f"Unknown membership provenance {provenance!r}")
+        return provenance
 
 
 # ---------------------------------------------------------------------------

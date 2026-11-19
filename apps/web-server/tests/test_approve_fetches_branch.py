@@ -22,6 +22,7 @@ from unittest.mock import patch
 
 import pytest
 from fastapi.responses import JSONResponse
+from server.project_registry import save_projects
 from server.routes import pr, worktree_merge
 
 PROJECT_ID = "proj"
@@ -77,9 +78,8 @@ def repos(tmp_path: Path) -> dict[str, Path]:
     assert SPEC_ID not in refs  # the precondition prod had
 
     (project / ".aifactory" / "specs" / SPEC_ID).mkdir(parents=True)
-    projects_file = tmp_path / "projects.json"
-    projects_file.write_text(json.dumps({PROJECT_ID: {"path": str(project)}}))
-    return {"project": project, "projects_file": projects_file}
+    save_projects({PROJECT_ID: {"path": str(project), "name": PROJECT_ID}})
+    return {"project": project}
 
 
 class FakeGh:
@@ -101,12 +101,10 @@ def _body(result: Any) -> dict[str, Any]:
     return result
 
 
-def test_merge_resolves_a_branch_only_on_origin(repos: dict[str, Path]) -> None:
+@pytest.mark.usefixtures("repos")
+def test_merge_resolves_a_branch_only_on_origin() -> None:
     gh = FakeGh()
     with (
-        patch.object(
-            worktree_merge, "get_projects_file", return_value=repos["projects_file"]
-        ),
         patch("server.services.approval.run_gh_command", gh),
     ):
         body = _body(asyncio.run(worktree_merge.merge_worktree(TASK_ID, _access={})))
@@ -114,10 +112,10 @@ def test_merge_resolves_a_branch_only_on_origin(repos: dict[str, Path]) -> None:
     assert ["pr", "merge", "7", "--squash"] in gh.calls
 
 
-def test_create_pr_resolves_a_branch_only_on_origin(repos: dict[str, Path]) -> None:
+@pytest.mark.usefixtures("repos")
+def test_create_pr_resolves_a_branch_only_on_origin() -> None:
     gh = FakeGh()
     with (
-        patch.object(pr, "get_projects_file", return_value=repos["projects_file"]),
         patch.object(pr, "task_repo_dir", return_value=None),
         patch("server.services.approval.run_gh_command", gh),
         patch("server.routes.github.run_gh_command", gh),

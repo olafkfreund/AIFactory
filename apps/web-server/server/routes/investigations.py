@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.database.engine import get_db
-from server.project_registry import load_projects
+from server.project_registry import aload_projects
 from server.routes.project_authz import authorize_project_for_user
 from server.services import project_settings_store
 from server.services.agent_service import get_agent_service
@@ -51,7 +51,7 @@ def _backend(request: Request) -> InvestigationBackend:
 async def _project(
     request: Request, db: AsyncSession, project_id: str, role: str
 ) -> dict[str, Any]:
-    projects = load_projects()
+    projects = await aload_projects()
     project = projects.get(project_id)
     if project is None:
         raise HTTPException(404, "Project not found")

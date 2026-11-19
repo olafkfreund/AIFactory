@@ -767,18 +767,18 @@
             ],
             [
               "`server.services.pr_review_service`",
-              "model-assisted (dynamic import: core.auth:356 (+5 more))",
+              "model-assisted (dynamic import: core.auth:356 (+8 more))",
               "`anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
               "yes (21): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
-              "393",
+              "395",
               "`runners/github/runner.py`"
             ],
             [
               "`server.services.pr_endgame`",
-              "model-assisted (dynamic import: core.auth:356 (+4 more))",
+              "model-assisted (dynamic import: core.auth:356 (+7 more))",
               "`anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
               "yes (21): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
-              "406",
+              "409",
               "-"
             ]
           ]

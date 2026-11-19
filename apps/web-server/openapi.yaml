@@ -1078,6 +1078,43 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/MarkAllReadResponse'
+  /api/projects/by-slug/{slug}:
+    get:
+      tags:
+      - Projects
+      summary: Get Project By Slug
+      description: Resolve a slug among the projects the caller can see, then authorize it.
+      operationId: get_project_by_slug_api_projects_by_slug__slug__get
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Slug
+      - name: org_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Org Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Get Project By Slug Api Projects By Slug  Slug  Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/projects/{projectId}/github/repositories:
     get:
       tags:
@@ -3261,7 +3298,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ProjectCreate'
+              $ref: '#/components/schemas/ProjectUpdate'
       responses:
         '200':
           description: Successful Response
@@ -3278,7 +3315,7 @@ paths:
       tags:
       - Projects
       summary: Remove Project
-      description: Remove a project (unregister, does not delete files).
+      description: 'Archive a project: it leaves every list and lookup, files and history stay.'
       operationId: remove_project_api_projects__project_id__delete
       parameters:
       - name: project_id
@@ -12763,6 +12800,12 @@ components:
           - type: 'null'
           title: Git Url
           description: Git URL to clone (HTTPS or SSH). Triggers the portal-managed clone path.
+        slug:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Slug
+          description: URL slug (lowercase a-z0-9 and '-'); derived from the name when omitted
         branch:
           anyOf:
           - type: string
@@ -12980,6 +13023,26 @@ components:
         BUG-1.2-005: Added notifications field to allow updating notification preferences.
 
         BUG-1.2-003: Added memoryBackend validation.'
+    ProjectUpdate:
+      properties:
+        path:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Path
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
+        slug:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Slug
+      type: object
+      title: ProjectUpdate
+      description: 'Body of ``PUT /projects/{id}``: any of path, name, slug (rename keeps the id).'
     PullModelRequest:
       properties:
         modelName:

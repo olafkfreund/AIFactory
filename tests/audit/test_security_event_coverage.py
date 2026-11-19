@@ -91,12 +91,15 @@ def test_authz_denial_writes_chained_audit(fresh_db, monkeypatch) -> None:
     monkeypatch.setattr(project_authz, "_auth_disabled", lambda: False)
 
     # A project owned by an org the user is NOT a member of → membership=None →
-    # 403 authz.denied. Stub load_projects so no real project store is needed.
+    # 403 authz.denied. Stub the async loader so no real project store is needed.
     project_authz_projects = {"proj-1": {"id": "proj-1", "org_id": "org-x"}}
 
     import server.project_registry as projects_mod
 
-    monkeypatch.setattr(projects_mod, "load_projects", lambda: project_authz_projects)
+    async def projects_for_authz():
+        return project_authz_projects
+
+    monkeypatch.setattr(projects_mod, "aload_projects", projects_for_authz)
 
     user = {"id": "user-9", "role": "user"}
 

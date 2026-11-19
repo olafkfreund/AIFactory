@@ -20,6 +20,8 @@ from .models import (
     Project,
     ProjectSettings,
     Task,
+    Team,
+    TeamMembership,
     TrustedContract,
     User,
 )
@@ -34,6 +36,8 @@ __all__ = [
     "Organization",
     "OrgMember",
     "Project",
+    "Team",
+    "TeamMembership",
     "Task",
     "ApiKey",
     "AuditLog",
