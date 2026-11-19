@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2158
 spec: spec/2026-11-19-2158-aif-url-projects.md
 coders:
