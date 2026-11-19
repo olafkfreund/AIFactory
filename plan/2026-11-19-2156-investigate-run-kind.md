@@ -32,6 +32,24 @@ Codex's plan review found two gaps the spec left open. Approving the plan approv
    A crash between steps 2 and 4 is repaired by reconcile: a Job with no Secret gets one while the lease is valid, otherwise it is terminated.
 2. **Kubernetes creates happen under the row lock.** Each Job create (agent and test) is made **while holding** the run's `SELECT … FOR UPDATE` lock, with a 10 s client timeout. `_terminate` and the pod-gone check take the same lock, so they cannot run between "name recorded" and "create returned". A process crash ends both the lock and the request, and reconcile then checks by name and label.
 
+## Deviations found during implementation
+
+1. **Production does not use the Helm chart; the data PVC comes from the environment** (step 8, coder report, 2026-11-19).
+   - **How production is deployed:** factory-gitops deploys AIFactory from plain manifests (`apps/aifactory/manifests/manifests.yaml`).
+     - The data PVC `aifactory-data` reaches the server as `AIFACTORY_SANDBOX_REPO_PVC` (line 465) and is mounted there (line 855).
+     - The chart only has an `emptyDir` with that name.
+   - **What the code does:** step 4's manifests read the PVC name and data root from the environment at runtime, the same way builds do (`_ENV_REPO_PVC`, `AIFACTORY_DATA_ROOT`).
+   - **What the chart does:** step 8 adds **no** PVC wiring, and its "subPath from `_ENV_REPO_PVC`" test is dropped.
+2. **The production network pieces live in factory-gitops, so a new step 13 (lead, before step 12) mirrors them there:**
+   - **The build egress policy:** the live task policy is `factory-namespace`'s `factory-sandbox-jobs-egress` (`podSelector factory.io/kind=task`), not the chart's. It gets the same `run-kind DoesNotExist` term.
+   - **The investigation resources:** the four investigation policies, the squid proxy and the Role rules are added to `apps/aifactory/manifests/manifests.yaml`, matching the chart.
+   - **The Kyverno gate:** `gate-task-pods-on-network-policy` injects a `netpol-gate` init container into every `kind: task` pod. Its "allowed" probe is the Kubernetes API (`nc 10.43.0.1 443`), which the investigation policies deny, so the pod would block forever.
+
+     For pods with `factory.io/run-kind` in `investigate-*`, the gate's "allowed" probe becomes kube-dns port 53, and its "denied" probe (kubelet 10250) stays.
+   - **How it is checked:** `kyverno test` on the policy's test fixtures, plus a fixture for each investigation pod.
+
+   Until step 13 merges, the network check (step 4) refuses every dispatch on the live cluster, because the live build policy lacks the term. The design fails closed.
+
 ## Decisions carried over (approved intent and spec)
 
 ### Separation of duties
