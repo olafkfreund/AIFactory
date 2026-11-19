@@ -2,10 +2,12 @@ name: factory-ui drift gate
 
 # Blocking drift gate for the vendored @factory/ui portal chrome.
 #
-# AIFactory hand-vendors two shared components from the Factory hub's canonical
+# AIFactory hand-vendors shared components from the Factory hub's canonical
 # shared/factory-ui/ surface:
 #   apps/frontend-web/src/components/CommandPalette.tsx
 #   apps/frontend-web/src/components/PortalSwitcher.tsx
+#   apps/frontend-web/src/components/ProjectBreadcrumb.tsx (checked once HUB_PIN_SHA
+#   includes it; the hub gate tolerates it until then)
 #
 # These copies MUST stay byte-identical to the hub canonical. This job checks out
 # the hub at a PINNED SHA and runs the hub's own drift gate
@@ -21,6 +23,7 @@ on:
     paths:
       - "apps/frontend-web/src/components/CommandPalette.tsx"
       - "apps/frontend-web/src/components/PortalSwitcher.tsx"
+      - "apps/frontend-web/src/components/ProjectBreadcrumb.tsx"
       - ".github/workflows/factory-ui-drift.yml"
   push:
     branches: [dev, main]
