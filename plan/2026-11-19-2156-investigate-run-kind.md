@@ -70,6 +70,8 @@ Codex's plan review found two gaps the spec left open. Approving the plan approv
      Both must report 0 regressed.
    - **Steps 5 and 6** run the same ratchet on their own files before they hand back.
 
+8. **A missing Secret after a full crash fails closed** (step 5, Codex). Only the run token's hash is stored, so the Secret cannot be rebuilt after a restart. Instead of creating it, reconcile deletes the Job (`_terminate(failed, "secret lost")`), and the slot stays held until the pods are gone. This replaces deviation 1's "reconcile creates the Secret while the lease is valid" for the restart case; within one process lifetime the Secret is still created.
+
 ## Decisions carried over (approved intent and spec)
 
 ### Separation of duties
