@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2151
 intent: intent/2026-11-19-2151-log-viewer-tool-input.md
 ---
