@@ -73,8 +73,8 @@ def test_get_antigravity_binary_alias_exists():
 # ---------------------------------------------------------------------------
 
 
-def test_npm_install_antigravity_uses_prefixed_install_dir_and_symlink():
-    """Antigravity install scopes npm to the install dir and creates symlink."""
+def test_npm_install_antigravity_uses_user_prefix_and_symlink():
+    """Antigravity install scopes npm to the writable user prefix and symlinks."""
     captured = {}
 
     def fake_run(args, timeout=60):
@@ -94,9 +94,9 @@ def test_npm_install_antigravity_uses_prefixed_install_dir_and_symlink():
 
     assert result.returncode == 0
     args = captured["args"]
-    # npm install -g --prefix <install_dir> @google/gemini-cli
+    # npm install -g --prefix <user prefix> @google/gemini-cli
     assert args[:4] == ["npm", "install", "-g", "--prefix"]
-    assert args[4] == str(ca.ANTIGRAVITY_INSTALL_DIR)
+    assert args[4] == str(ca.user_cli_prefix())
     assert args[5] == "@google/gemini-cli"
     # Symlink (antigravity -> gemini) created after a successful install.
     mock_symlink.assert_called_once()
@@ -121,8 +121,8 @@ def test_npm_install_antigravity_skips_symlink_on_failure():
     mock_symlink.assert_not_called()
 
 
-def test_npm_install_codex_uses_plain_global_install():
-    """Non-Antigravity CLIs install globally without a prefix or symlink."""
+def test_npm_install_codex_uses_user_prefix_not_the_read_only_image_prefix():
+    """EROFS fix: the image's ~/.npm-global is read-only, so codex installs to the user prefix."""
     captured = {}
 
     def fake_run(args, timeout=60):
@@ -131,10 +131,20 @@ def test_npm_install_codex_uses_plain_global_install():
         result.returncode = 0
         return result
 
-    with patch.object(ca, "_run_login_shell", side_effect=fake_run):
+    with (
+        patch.object(ca, "_run_login_shell", side_effect=fake_run),
+        patch("pathlib.Path.mkdir"),
+    ):
         ca._npm_install_cli("codex", "@openai/codex")
 
-    assert captured["args"] == ["npm", "install", "-g", "@openai/codex"]
+    assert captured["args"] == [
+        "npm",
+        "install",
+        "-g",
+        "--prefix",
+        str(ca.user_cli_prefix()),
+        "@openai/codex",
+    ]
 
 
 def test_install_endpoint_reports_update_when_already_installed():
