@@ -3,7 +3,7 @@
 // and a searchable list to switch to another one. It deliberately has no delete
 // and no add: those live on the host's Projects page. Router-neutral: the host
 // navigates in `onSelect` / `onViewAll`, so this file imports nothing but React.
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 
 export interface BreadcrumbProject {
   slug: string;
@@ -25,6 +25,9 @@ export function ProjectBreadcrumb({
   const [q, setQ] = useState('');
   const [sel, setSel] = useState(0);
   const root = useRef<HTMLDivElement>(null);
+  const uid = useId();
+  const listId = `${uid}-list`;
+  const optId = (slug: string) => `${uid}-opt-${slug}`;
   const current = projects.find((p) => p.slug === currentSlug);
 
   const matches = useMemo(() => {
@@ -94,22 +97,27 @@ export function ProjectBreadcrumb({
             onKeyDown={onKey}
             placeholder="Search projects…"
             aria-label="Search projects"
+            role="combobox"
+            aria-expanded
+            aria-controls={listId}
+            aria-activedescendant={matches[sel] ? optId(matches[sel].slug) : undefined}
             autoComplete="off"
             spellCheck={false}
             className="w-full border-b border-border bg-transparent px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground"
           />
-          <ul role="listbox" aria-label="Projects" className="max-h-64 overflow-y-auto p-1">
+          <ul id={listId} role="listbox" aria-label="Projects" className="max-h-64 overflow-y-auto p-1">
             {matches.length === 0 && (
               <li className="px-2 py-3 text-center text-sm text-muted-foreground">No matching projects</li>
             )}
             {matches.map((p, i) => (
               <li
                 key={p.slug}
+                id={optId(p.slug)}
                 role="option"
-                aria-selected={p.slug === currentSlug}
+                aria-selected={i === sel}
+                aria-current={p.slug === currentSlug ? 'true' : undefined}
                 onMouseMove={() => { setSel(i); }}
                 onClick={() => { pick(p.slug); }}
-                onKeyDown={onKey}
                 className={`flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm ${
                   i === sel ? 'bg-muted text-foreground' : 'text-foreground/90'
                 }`}

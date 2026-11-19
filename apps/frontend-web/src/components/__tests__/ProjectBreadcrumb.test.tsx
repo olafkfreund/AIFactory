@@ -32,11 +32,25 @@ describe('ProjectBreadcrumb', () => {
     const onViewAll = vi.fn();
     render(<ProjectBreadcrumb projects={projects} currentSlug="beta" onSelect={vi.fn()} onViewAll={onViewAll} />);
     fireEvent.click(screen.getByRole('button', { name: /beta/i }));
-    expect(screen.getByRole('option', { name: /beta/i })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole("option", { name: /beta/i })).toHaveAttribute("aria-current", "true");
     fireEvent.click(screen.getByText('All projects…'));
     expect(onViewAll).toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: /beta/i }));
     fireEvent.keyDown(screen.getByLabelText('Search projects'), { key: 'Escape' });
     expect(screen.queryByRole('listbox')).toBeNull();
+  });
+});
+
+describe('ProjectBreadcrumb a11y', () => {
+  it('exposes the highlighted option through aria-activedescendant', () => {
+    render(<ProjectBreadcrumb projects={projects} currentSlug="alpha" onSelect={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /alpha/i }));
+    const input = screen.getByLabelText('Search projects');
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    const active = input.getAttribute('aria-activedescendant');
+    expect(active).toBeTruthy();
+    const opt = document.getElementById(active ?? '');
+    expect(opt).toHaveTextContent('Beta');
+    expect(opt).toHaveAttribute('aria-selected', 'true');
   });
 });

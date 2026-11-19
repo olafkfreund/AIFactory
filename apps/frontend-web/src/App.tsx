@@ -294,7 +294,7 @@ function AuthenticatedApp() {
   }, [settings.onboardingCompleted]);
 
   // Sync i18n language with settings
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
   useEffect(() => {
     if (settings.language && settings.language !== i18n.language) {
       i18n.changeLanguage(settings.language);
@@ -469,8 +469,8 @@ function AuthenticatedApp() {
               )}
               {route.kind === 'project' && !urlProject && projectsLoaded && (
                 <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
-                  <p>Project not found: <code className="text-xs">{route.ref}</code></p>
-                  <Link to="/" className="text-sm underline">Back to my projects</Link>
+                  <p>{t('welcome:projectsPage.notFound', { ref: route.ref })}</p>
+                  <Link to="/" className="text-sm underline">{t('welcome:projectsPage.backHome')}</Link>
                 </div>
               )}
               {selectedProject && (

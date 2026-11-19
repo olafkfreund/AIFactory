@@ -54,6 +54,7 @@ vi.mock('../stores/auth-store', async () => {
   return { useAuthStore };
 });
 
+import '../shared/i18n';
 import App from '../App';
 import { useProjectStore } from '../stores/project-store';
 import { useTaskStore } from '../stores/task-store';

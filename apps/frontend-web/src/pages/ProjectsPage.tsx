@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Button } from '../components/ui/button';
 import {
   Dialog,
@@ -23,18 +24,19 @@ export function ProjectsPage({
   onAdd: () => void;
   onOpen: (p: Project) => void;
 }) {
+  const { t } = useTranslation('welcome');
   const [deleting, setDeleting] = useState<Project | null>(null);
   const [typedName, setTypedName] = useState('');
 
   return (
-    <main className="mx-auto max-w-5xl space-y-6 p-6 text-foreground">
+    <main className="h-full overflow-y-auto"><div className="mx-auto max-w-5xl space-y-6 p-6 text-foreground">
       <div className="flex items-center justify-between gap-4">
-        <h1 className="text-2xl font-semibold">Projects</h1>
-        <Button onClick={onAdd}>Add project</Button>
+        <h1 className="text-2xl font-semibold">{t('projectsPage.title')}</h1>
+        <Button onClick={onAdd}>{t('projectsPage.add')}</Button>
       </div>
 
       {projects.length === 0 ? (
-        <p className="text-muted-foreground">No projects yet.</p>
+        <p className="text-muted-foreground">{t('projectsPage.empty')}</p>
       ) : (
         <div className="divide-y divide-border rounded-lg border border-border bg-card">
           {projects.map((project) => (
@@ -48,9 +50,9 @@ export function ProjectsPage({
                   {slugs.get(project.id)}
                 </div>
               </div>
-              <Button variant="outline" onClick={() => onOpen(project)}>Open</Button>
+              <Button variant="outline" onClick={() => onOpen(project)}>{t('projectsPage.open')}</Button>
               <Button variant="ghost" className="text-destructive" onClick={() => setDeleting(project)}>
-                Delete
+                {t('projectsPage.delete')}
               </Button>
             </div>
           ))}
@@ -65,21 +67,20 @@ export function ProjectsPage({
       }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Unregister project</DialogTitle>
+            <DialogTitle>{t('projectsPage.unregisterTitle')}</DialogTitle>
             <DialogDescription>
-              This only unregisters the project from AIFactory. Its files stay untouched.
-              Type <strong>{deleting?.name}</strong> to confirm.
+              {t('projectsPage.unregisterBody', { name: deleting?.name ?? '' })}
             </DialogDescription>
           </DialogHeader>
           <label className="space-y-2 text-sm">
-            <span>Project name</span>
+            <span>{t('projectsPage.nameLabel')}</span>
             <Input value={typedName} onChange={(event) => setTypedName(event.target.value)} />
           </label>
           <DialogFooter>
             <Button variant="outline" onClick={() => {
               setDeleting(null);
               setTypedName('');
-            }}>Cancel</Button>
+            }}>{t('projectsPage.cancel')}</Button>
             <Button
               variant="destructive"
               disabled={typedName !== deleting?.name}
@@ -90,11 +91,11 @@ export function ProjectsPage({
                 setTypedName('');
               }}
             >
-              Unregister project
+              {t('projectsPage.confirm')}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </main>
+    </div></main>
   );
 }

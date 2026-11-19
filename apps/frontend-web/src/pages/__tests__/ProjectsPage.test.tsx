@@ -2,6 +2,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import type { Project } from '../../shared/types';
+import '../../shared/i18n';
 import { ProjectsPage } from '../ProjectsPage';
 
 const { removeProject } = vi.hoisted(() => ({ removeProject: vi.fn(async () => true) }));
