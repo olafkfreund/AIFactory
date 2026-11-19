@@ -50,6 +50,9 @@ Codex's plan review found two gaps the spec left open. Approving the plan approv
 
    Until step 13 merges, the network check (step 4) refuses every dispatch on the live cluster, because the live build policy lacks the term. The design fails closed.
 
+3. **The export's fetch uses `project_github_env`** (`WS/utils/subprocess_env.py:215`), the existing per-project credential context, instead of `runner_github_env` (step 3, Codex). It is stricter than the plan: the token never enters the child environment.
+4. **The scrubber's base64 rule** requires a digit, an uppercase and a lowercase letter, and no `/` (step 2, lead). Without that, long paths such as Java packages were redacted, and findings lost their `path:line` references.
+
 ## Decisions carried over (approved intent and spec)
 
 ### Separation of duties
