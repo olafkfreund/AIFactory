@@ -23,9 +23,9 @@ import json
 import subprocess
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 from fastapi.responses import JSONResponse
+from server.project_registry import save_projects
 from server.routes import worktree_merge
 from server.services.http_verdict import REFUSED_STATUS
 
@@ -53,7 +53,7 @@ def _init_repo(path: Path) -> None:
     _git(["commit", "-m", "seed"], path)
 
 
-def _stage(tmp_path: Path) -> tuple[str, Path, Path]:
+def _stage(tmp_path: Path) -> tuple[str, Path]:
     """A project + task worktree in the shape the endpoint expects."""
     project_id, spec_id = "proj-1", "041-feat"
     project_path = tmp_path / "repo"
@@ -70,16 +70,12 @@ def _stage(tmp_path: Path) -> tuple[str, Path, Path]:
         project_path,
     )
 
-    projects_file = tmp_path / "projects.json"
-    projects_file.write_text(json.dumps({project_id: {"path": str(project_path)}}))
-    return f"{project_id}:{spec_id}", project_path, projects_file
+    save_projects({project_id: {"path": str(project_path), "name": project_id}})
+    return f"{project_id}:{spec_id}", project_path
 
 
-def _run(task_id: str, projects_file: Path) -> dict[str, Any]:
-    with patch.object(worktree_merge, "get_projects_file", return_value=projects_file):
-        result = asyncio.run(
-            worktree_merge.resolve_worktree_conflicts(task_id, _access={})
-        )
+def _run(task_id: str) -> dict[str, Any]:
+    result = asyncio.run(worktree_merge.resolve_worktree_conflicts(task_id, _access={}))
     # Factory#460: a refusal leaves as a 409 JSONResponse rather than a
     # 200-wrapped dict. Unwrap so the assertions below read the same body.
     if isinstance(result, JSONResponse):
@@ -92,7 +88,7 @@ def _run(task_id: str, projects_file: Path) -> dict[str, Any]:
 
 def test_a_failing_commit_is_not_reported_as_success(tmp_path: Path) -> None:
     """A commit that is refused must not produce `success: true`."""
-    task_id, project_path, projects_file = _stage(tmp_path)
+    task_id, project_path = _stage(tmp_path)
 
     # A hook that always refuses is the cleanest stand-in for the real causes
     # (hook rejection, index.lock, unwritable objects): it makes `git commit`
@@ -106,7 +102,7 @@ def test_a_failing_commit_is_not_reported_as_success(tmp_path: Path) -> None:
     (project_path / "new.txt").write_text("x\n")
     _git(["add", "new.txt"], project_path)
 
-    result = _run(task_id, projects_file)
+    result = _run(task_id)
 
     assert result.get("success") is False, (
         "a refused commit was reported as a successful merge — the exact defect "
@@ -122,9 +118,9 @@ def test_nothing_to_commit_stays_a_success(tmp_path: Path) -> None:
     nothing to commit. That is the ordinary state of this path and has to stay
     green, or the fix is just the same bug pointing the other way.
     """
-    task_id, _project_path, projects_file = _stage(tmp_path)
+    task_id, _project_path = _stage(tmp_path)
 
-    result = _run(task_id, projects_file)
+    result = _run(task_id)
 
     assert result.get("success") is True, (
         f"an empty commit was reported as a failure — over-correction; got {result}"

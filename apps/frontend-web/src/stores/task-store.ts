@@ -473,16 +473,22 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   }
 }));
 
+let latestTasksRequest = 0;
+
 /**
  * Load tasks for a project
  */
+
 export async function loadTasks(projectId: string): Promise<void> {
   const store = useTaskStore.getState();
+  const request = ++latestTasksRequest;
   store.setLoading(true);
   store.setError(null);
 
   try {
     const result = await window.API.getTasks(projectId);
+    // A newer project switch superseded this request: never overwrite its tasks.
+    if (request !== latestTasksRequest) return;
     if (result.success && result.data) {
       store.setTasks(result.data);
     } else {
@@ -491,7 +497,7 @@ export async function loadTasks(projectId: string): Promise<void> {
   } catch (error) {
     store.setError(error instanceof Error ? error.message : 'Unknown error');
   } finally {
-    store.setLoading(false);
+    if (request === latestTasksRequest) store.setLoading(false);
     // Clear project switching state
     useProjectStore.getState().clearSwitchingState();
   }

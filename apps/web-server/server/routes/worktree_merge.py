@@ -16,10 +16,8 @@ unchanged:
     GET  /{task_id}/worktree/diff
     POST /{task_id}/worktree/discard
 
-The handlers depend only on already-extractable collaborators -- ``get_data_dir``
-from ``..paths``, ``require_task_access`` from ``routes/project_authz``, and
-``get_projects_file`` from ``routes/projects`` (none of which import this module,
-so lifting the cluster out cannot create a circular import). The
+The handlers depend only on ``load_projects`` from ``server.project_registry``
+and ``require_task_access`` from ``routes/project_authz``. The
 ``conflict_service`` collaborator is imported lazily inside the handlers, exactly
 as it was in ``tasks.py``.
 
@@ -30,7 +28,6 @@ handlers ``merge_worktree`` / ``get_worktree_diff`` historically lived in
 """
 
 import asyncio
-import json
 import logging
 import shutil
 import subprocess
@@ -42,7 +39,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from server.error_ref import client_error
-from server.project_registry import get_projects_file
+from server.project_registry import load_projects
 from server.services.approval import approved, merge_pull_request
 from server.services.audit_service import ACTION_TASK_MERGE, audit_task_route
 from server.services.http_verdict import honest_status
@@ -55,7 +52,6 @@ from server.services.task_branch import (
 from server.specpath import safe_spec_component
 from server.utils.subprocess_env import child_env, merge_driver_pins
 
-from ..paths import get_data_dir
 from .project_authz import require_task_access
 
 logger = logging.getLogger(__name__)
@@ -95,13 +91,9 @@ async def get_worktree_merge_preview(  # noqa: PLR0911 - #1832 pins guard
         return {"success": False, "error": "Invalid task ID format"}
 
     # Find the task's spec directory and worktree
-    projects_data_dir = get_data_dir()
-    projects_file = projects_data_dir / "projects.json"
-
-    if not projects_file.exists():
+    projects_data = load_projects()
+    if not projects_data:
         return {"success": False, "error": "No projects configured"}
-
-    projects_data = json.loads(projects_file.read_text())
 
     # Find the task across all projects
     project_path = None
@@ -580,11 +572,9 @@ async def resolve_worktree_conflicts(
         except ValueError:
             return {"success": False, "error": "Invalid task ID format"}
         # Look up project path
-        projects_file = get_projects_file()
-        if not projects_file.exists():
+        projects_data = load_projects()
+        if not projects_data:
             return {"success": False, "error": "Projects file not found"}
-
-        projects_data = json.loads(projects_file.read_text())
 
         # Handle dict format where keys are project IDs
         if isinstance(projects_data, dict):
@@ -1016,13 +1006,9 @@ async def resolve_uncommitted_conflicts(
     logger.info(f"Resolving uncommitted conflicts for task {sanitize_log(task_id)}")
 
     # Find the task's project
-    projects_data_dir = get_data_dir()
-    projects_file = projects_data_dir / "projects.json"
-
-    if not projects_file.exists():
+    projects_data = load_projects()
+    if not projects_data:
         return {"success": False, "error": "No projects configured"}
-
-    projects_data = json.loads(projects_file.read_text())
 
     # Find the task across all projects
     project_path = None
@@ -1373,13 +1359,9 @@ async def resolve_git_merge_conflicts(  # noqa: PLR0911 - #1832 pins guard
         return {"success": False, "error": "Invalid task ID format"}
 
     # Find the task's project
-    projects_data_dir = get_data_dir()
-    projects_file = projects_data_dir / "projects.json"
-
-    if not projects_file.exists():
+    projects_data = load_projects()
+    if not projects_data:
         return {"success": False, "error": "No projects configured"}
-
-    projects_data = json.loads(projects_file.read_text())
 
     # Find the task across all projects
     project_path = None
@@ -1709,11 +1691,9 @@ async def abort_worktree_merge(
         except ValueError:
             return {"success": False, "error": "Invalid task ID format"}
         # Look up project path
-        projects_file = get_projects_file()
-        if not projects_file.exists():
+        projects_data = load_projects()
+        if not projects_data:
             return {"success": False, "error": "Projects file not found"}
-
-        projects_data = json.loads(projects_file.read_text())
 
         # Handle dict format where keys are project IDs
         if isinstance(projects_data, dict):
@@ -1863,11 +1843,9 @@ async def merge_worktree(
         except ValueError:
             return {"success": False, "error": "Invalid task ID format"}
         # Look up project path
-        projects_file = get_projects_file()
-        if not projects_file.exists():
+        projects_data = load_projects()
+        if not projects_data:
             return {"success": False, "error": "Projects file not found"}
-
-        projects_data = json.loads(projects_file.read_text())
 
         # Handle dict format where keys are project IDs
         if isinstance(projects_data, dict):
@@ -2082,18 +2060,14 @@ async def get_worktree_status(
         return {"success": True, "data": {"exists": False}}
 
     # Find project path
-    projects_data_dir = get_data_dir()
-    projects_file = projects_data_dir / "projects.json"
-
-    if not projects_file.exists():
+    projects_data = load_projects()
+    if not projects_data:
         return {
             "success": True,
             "data": {
                 "exists": False,
             },
         }
-
-    projects_data = json.loads(projects_file.read_text())
 
     # Handle both dict format (id -> project) and list format
     project_path = None
@@ -2278,13 +2252,9 @@ async def get_worktree_diff(
         return {"success": False, "error": "Invalid task ID format"}
 
     # Find project path
-    projects_data_dir = get_data_dir()
-    projects_file = projects_data_dir / "projects.json"
-
-    if not projects_file.exists():
+    projects_data = load_projects()
+    if not projects_data:
         return {"success": False, "error": "No projects configured"}
-
-    projects_data = json.loads(projects_file.read_text())
 
     # Handle both dict format (id -> project) and list format
     project_path = None
@@ -2564,11 +2534,9 @@ async def discard_worktree(
         except ValueError:
             return {"success": False, "error": "Invalid task ID format"}
         # Look up project path
-        projects_file = get_projects_file()
-        if not projects_file.exists():
+        projects_data = load_projects()
+        if not projects_data:
             return {"success": False, "error": "Projects file not found"}
-
-        projects_data = json.loads(projects_file.read_text())
 
         # Handle dict format where keys are project IDs
         if isinstance(projects_data, dict):

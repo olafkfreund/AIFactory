@@ -73,11 +73,11 @@ async def _chain(factory) -> list[dict]:
 
 def test_denial_row_survives_request_rollback(session_local, monkeypatch) -> None:
     monkeypatch.setattr(project_authz, "_auth_disabled", lambda: False)
-    monkeypatch.setattr(
-        projects_mod,
-        "load_projects",
-        lambda: {"proj-1": {"id": "proj-1", "org_id": "org-x"}},
-    )
+
+    async def _projects() -> dict:
+        return {"proj-1": {"id": "proj-1", "org_id": "org-x"}}
+
+    monkeypatch.setattr(projects_mod, "aload_projects", _projects)
 
     async def _go() -> list[dict]:
         async with session_local() as s:

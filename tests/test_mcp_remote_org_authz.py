@@ -77,7 +77,12 @@ async def call(tmp_path, monkeypatch):
         "pb": {"org_id": "org-b"},
         "pa:x": {"org_id": "org-b"},
     }
+
+    async def aload_projects():
+        return projects
+
     monkeypatch.setattr("server.project_registry.load_projects", lambda: projects)
+    monkeypatch.setattr("server.project_registry.aload_projects", aload_projects)
     monkeypatch.setattr(tools, "load_projects", lambda: projects)
     proxied = AsyncMock(return_value=[{"id": "pa"}, {"id": "pb"}])
     monkeypatch.setattr(tools, "_call_internal", proxied)

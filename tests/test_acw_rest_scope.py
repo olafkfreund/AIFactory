@@ -82,10 +82,11 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr("server.routes.project_authz._auth_disabled", lambda: False)
     monkeypatch.setattr("server.auth._try_decode_jwt", lambda token: None)
     monkeypatch.setattr("server.auth._is_legacy_api_token", lambda token: False)
-    monkeypatch.setattr(
-        "server.project_registry.load_projects",
-        lambda: {"p2": {"org_id": "org-2"}},
-    )
+
+    async def projects_for_authz():
+        return {"p2": {"org_id": "org-2"}}
+
+    monkeypatch.setattr("server.project_registry.aload_projects", projects_for_authz)
 
     app = FastAPI()
     app.add_middleware(TokenAuthMiddleware)

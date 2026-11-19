@@ -21,7 +21,6 @@ import asyncio
 import json
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 from fastapi.responses import JSONResponse
 from server import project_registry
@@ -29,19 +28,9 @@ from server.routes import projects
 from server.services.http_verdict import REFUSED_STATUS
 
 
-def _projects_file(tmp_path: Path, project_path: Path) -> Path:
-    f = tmp_path / "projects.json"
-    f.write_text(json.dumps({"p1": {"path": str(project_path), "name": "p1"}}))
-    return f
-
-
-def _run(projects_file: Path) -> Any:
-    # `get_projects_file` lives in `server.project_registry` since #1317; the
-    # loader resolves it there, so that is the module the patch has to land on.
-    with patch.object(
-        project_registry, "get_projects_file", return_value=projects_file
-    ):
-        return asyncio.run(projects.initialize_project("p1", _access={}))
+def _run(project_path: Path) -> Any:
+    project_registry.save_projects({"p1": {"path": str(project_path), "name": "p1"}})
+    return asyncio.run(projects.initialize_project("p1", _access={}))
 
 
 def test_a_failed_initialise_answers_409_not_200(tmp_path: Path) -> None:
@@ -51,7 +40,7 @@ def test_a_failed_initialise_answers_409_not_200(tmp_path: Path) -> None:
     project_path = tmp_path / "not-a-dir"
     project_path.write_text("i am a file\n")
 
-    result = _run(_projects_file(tmp_path, project_path))
+    result = _run(project_path)
 
     assert isinstance(result, JSONResponse), (
         f"a failed initialise still left as a plain dict (HTTP 200); got {result!r}"
@@ -68,7 +57,7 @@ def test_a_successful_initialise_is_untouched(tmp_path: Path) -> None:
     project_path = tmp_path / "real-project"
     project_path.mkdir()
 
-    result = _run(_projects_file(tmp_path, project_path))
+    result = _run(project_path)
 
     assert not isinstance(result, JSONResponse), (
         f"the success path was translated too — that is a different bug; got {result!r}"

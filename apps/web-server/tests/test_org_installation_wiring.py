@@ -62,8 +62,15 @@ def test_project_clone_uses_owner_org(
     monkeypatch.setattr(
         github_app, "_tokens", {"12": ("ghs_acme_1700", time.time() + 3600)}
     )
-    monkeypatch.setattr(projects, "load_projects", lambda: {})
-    monkeypatch.setattr(projects, "save_projects", lambda _items: None)
+
+    async def empty_projects() -> dict[str, dict[str, Any]]:
+        return {}
+
+    async def no_save(_items: dict[str, dict[str, Any]]) -> None:
+        return None
+
+    monkeypatch.setattr(projects, "aload_projects", empty_projects)
+    monkeypatch.setattr(projects, "asave_projects", no_save)
     monkeypatch.setattr(projects, "project_to_response", lambda _id, data: data)
     monkeypatch.setattr(projects, "multi_tenant_enabled", lambda: False)
     monkeypatch.setattr(project_workspace_service, "workspace_root", lambda: tmp_path)
@@ -138,9 +145,9 @@ def test_terminal_endgame_uses_project_org(
     project.mkdir()
     spec = tmp_path / "spec"
     spec.mkdir()
-    registry = tmp_path / "projects.json"
-    registry.write_text(json.dumps({"p": {"path": str(project), "org_id": org}}))
-    monkeypatch.setattr(project_registry, "get_projects_file", lambda: registry)
+    project_registry.save_projects(
+        {"p": {"path": str(project), "name": "p", "org_id": org}}
+    )
     monkeypatch.setenv("GITHUB_TOKEN", "ambient-1700")
     monkeypatch.setattr(github_app, "_org_installations", {"acme": "12"})
     monkeypatch.setattr(
@@ -264,16 +271,12 @@ def _two_orgs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Pa
     other = tmp_path / "other"
     acme.mkdir()
     other.mkdir()
-    registry = tmp_path / "projects.json"
-    registry.write_text(
-        json.dumps(
-            {
-                "a": {"path": str(acme), "org_id": "acme"},
-                "o": {"path": str(other), "org_id": "other"},
-            }
-        )
+    project_registry.save_projects(
+        {
+            "a": {"path": str(acme), "name": "a", "org_id": "acme"},
+            "o": {"path": str(other), "name": "o", "org_id": "other"},
+        }
     )
-    monkeypatch.setattr(project_registry, "get_projects_file", lambda: registry)
     monkeypatch.setenv("GITHUB_TOKEN", "ambient-1700")
     monkeypatch.setattr(github_app, "_org_installations", {"acme": "12", "other": "13"})
     monkeypatch.setattr(
@@ -562,9 +565,9 @@ def test_warm_up_waits_for_auto_pr(
     project.mkdir()
     spec = tmp_path / "spec"
     spec.mkdir()
-    registry = tmp_path / "projects.json"
-    registry.write_text(json.dumps({"p": {"path": str(project), "org_id": "acme"}}))
-    monkeypatch.setattr(project_registry, "get_projects_file", lambda: registry)
+    project_registry.save_projects(
+        {"p": {"path": str(project), "name": "p", "org_id": "acme"}}
+    )
     monkeypatch.setattr(github_app, "_org_installations", {"acme": "12"})
     monkeypatch.setattr(completion, "_build_wrote_nothing", lambda *_args: False)
     monkeypatch.setattr(completion, "sync_spec_file_from_worktree", lambda *_a: None)

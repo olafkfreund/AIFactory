@@ -11,7 +11,6 @@ of truth for which servers run.
 
 from __future__ import annotations
 
-import json
 import logging
 import sys
 from pathlib import Path
@@ -20,6 +19,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, status
 
 from server.error_ref import client_error, error_reference
+from server.project_registry import load_projects
 
 logger = logging.getLogger(__name__)
 
@@ -34,19 +34,8 @@ router = APIRouter(prefix="/api/projects", tags=["MCP"])
 
 
 def _load_projects() -> dict[str, dict]:
-    """Read the same projects.json the rest of the routes use.
-
-    Importing the loader from projects.py risks a circular import (this
-    module is mounted by main.py alongside projects.py), so we re-resolve
-    the path the same way the projects router does.
-    """
-    from ..config import get_settings
-
-    settings = get_settings()
-    projects_file = Path(settings.PROJECTS_DATA_DIR) / "projects.json"
-    if not projects_file.exists():
-        return {}
-    return json.loads(projects_file.read_text())
+    """Read the shared project registry."""
+    return load_projects()
 
 
 def _describe_creds_status(provider: str) -> dict[str, Any]:

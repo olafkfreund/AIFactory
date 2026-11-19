@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import importlib
 import logging
 import os
 import sys
@@ -188,7 +189,8 @@ def agent_github_token() -> str:
 
 
 def runner_github_env(project_path: str | Path | None = None) -> dict[str, str]:
-    from server import project_registry  # noqa: PLC0415 - avoid github_app import cycle
+    # By name: a static import closes the project_registry -> project_store cycle.
+    project_registry = importlib.import_module("server.project_registry")
     from server.services import github_app  # noqa: PLC0415
 
     if github_app.multi_installation():

@@ -101,30 +101,6 @@ def mock_api_profiles(mock_settings_dir: Path) -> Path:
 
 
 @pytest.fixture
-def mock_projects(mock_settings_dir: Path, temp_dir: Path) -> Path:
-    """Create mock projects.json."""
-    projects_file = mock_settings_dir.parent / "projects.json"
-    project_path = temp_dir / "test-project"
-    project_path.mkdir(parents=True)
-    (project_path / ".aifactory").mkdir(parents=True)
-
-    projects_data = {
-        "projects": [
-            {
-                "id": "project-1",
-                "name": "Test Project",
-                "path": str(project_path),
-                "createdAt": 1704067200000,
-                "updatedAt": 1704067200000,
-                "settings": {},
-            }
-        ]
-    }
-    projects_file.write_text(json.dumps(projects_data, indent=2))
-    return projects_file
-
-
-@pytest.fixture
 def mock_ideation(mock_settings_dir: Path, temp_dir: Path) -> Path:
     """Create mock ideation.json for a project."""
     project_path = temp_dir / "test-project"
@@ -229,11 +205,12 @@ class TestPhase2CriticalPrioritySettings:
         assert "activeProfileId" in data
         assert len(data["profiles"]) == 2
 
-    def test_update_project_settings_env_mapping(self, mock_projects, temp_dir):
+    def test_update_project_settings_env_mapping(self, temp_dir):
         """Test 2.5: update_project_settings maps fields to env vars correctly."""
         # Test environment variable mapping
         # model -> AI_FACTORY_MODEL, etc.
         project_path = temp_dir / "test-project"
+        (project_path / ".aifactory").mkdir(parents=True)
         env_file = project_path / ".aifactory" / ".env"
         assert not env_file.exists()  # Initially doesn't exist
         # Would test actual endpoint creating/updating .env

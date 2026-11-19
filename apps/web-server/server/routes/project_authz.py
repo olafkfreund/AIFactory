@@ -143,10 +143,10 @@ async def authorize_project_for_user(
         return None
 
     from server.project_registry import (
-        load_projects,  # lazy: avoid projects↔authz cycle
+        aload_projects,  # lazy: avoid projects↔authz cycle
     )
 
-    project = load_projects().get(project_id) if project_id else None
+    project = (await aload_projects()).get(project_id) if project_id else None
     org_id = project.get("org_id") if project else None
     membership = None
     if isinstance(user, dict) and user.get("id") and org_id:
