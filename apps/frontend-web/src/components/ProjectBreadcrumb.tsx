@@ -25,6 +25,7 @@ export function ProjectBreadcrumb({
   const [q, setQ] = useState('');
   const [sel, setSel] = useState(0);
   const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
   const uid = useId();
   const listId = `${uid}-list`;
   const optId = (slug: string) => `${uid}-opt-${slug}`;
@@ -48,6 +49,12 @@ export function ProjectBreadcrumb({
     setSel((s) => Math.max(0, Math.min(s, matches.length - 1)));
   }, [matches.length]);
 
+  // Keep the highlighted row visible when arrow keys move past the list viewport.
+  useEffect(() => {
+    if (open && matches[sel]) document.getElementById(optId(matches[sel].slug))?.scrollIntoView?.({ block: 'nearest' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- optId is derived from uid
+  }, [open, sel, matches]);
+
   const toggle = () => {
     setOpen((o) => !o);
     setQ('');
@@ -62,6 +69,7 @@ export function ProjectBreadcrumb({
     if (e.key === 'Escape') {
       e.preventDefault();
       setOpen(false);
+      trigger.current?.focus();
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
       setSel((s) => (matches.length ? (s + 1) % matches.length : 0));
@@ -77,6 +85,7 @@ export function ProjectBreadcrumb({
   return (
     <div ref={root} className="relative">
       <button
+        ref={trigger}
         type="button"
         aria-haspopup="listbox"
         aria-expanded={open}

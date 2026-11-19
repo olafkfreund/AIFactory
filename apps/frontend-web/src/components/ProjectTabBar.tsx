@@ -135,10 +135,10 @@ export function ProjectTabBar({
   return (
     <div className={cn(
       'flex items-center border-b border-border bg-background',
-      'overflow-x-auto scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent',
       className
     )}>
-      <div className="flex items-center flex-1 min-w-0">
+      {/* Only the tab strip scrolls: an overflow container would clip the breadcrumb dropdown. */}
+      <div className="flex items-center flex-1 min-w-0 overflow-x-auto scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent">
         {projects.map((project, index) => {
           const isActiveTab = activeProjectId === project.id;
           return (

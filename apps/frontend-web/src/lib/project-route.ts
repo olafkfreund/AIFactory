@@ -58,7 +58,13 @@ export function findProjectByRef(projects: Project[], ref: string): Project | un
   return (
     projects.find((p) => slugs.get(p.id)?.toLowerCase() === r) ??
     projects.find((p) => p.id.toLowerCase() === r) ??
-    projects.find((p) => p.slug?.toLowerCase() === r || slugify(p.name, p.id) === r)
+    // aliases: backend slug, plain derived slug, and a previously issued collision-suffixed one
+    projects.find(
+      (p) =>
+        p.slug?.toLowerCase() === r ||
+        slugify(p.name, p.id) === r ||
+        `${slugify(p.name, p.id)}-${p.id.slice(0, 8)}`.toLowerCase() === r,
+    )
   );
 }
 

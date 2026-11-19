@@ -49,6 +49,15 @@ describe('findProjectByRef', () => {
   });
 });
 
+describe('findProjectByRef collision aliases', () => {
+  it('a suffixed slug keeps resolving after the older twin is removed', () => {
+    const a = proj('aaaaaaaa-1', 'Demo', '2026-01-01');
+    const b = proj('bbbbbbbb-2', 'Demo', '2026-02-01');
+    expect(findProjectByRef([a, b], 'demo-bbbbbbbb')?.id).toBe(b.id);
+    expect(findProjectByRef([b], 'demo-bbbbbbbb')?.id).toBe(b.id); // now canonical 'demo'
+  });
+});
+
 describe('parseRoute', () => {
   it('parses project routes and defaults the view', () => {
     expect(parseRoute('/p/alpha')).toEqual({ kind: 'project', ref: 'alpha', view: 'kanban' });
