@@ -100,7 +100,8 @@ def test_slug_only_put_renames_and_keeps_the_id(api):
     assert (
         client.put(f"/api/projects/{pid}", json={"slug": "Bad_Slug"}).status_code == 400
     )
-    assert client.put(f"/api/projects/{pid}", json={}).status_code == 422
+    empty = client.put(f"/api/projects/{pid}", json={})
+    assert empty.status_code == 422
 
 
 def test_by_slug_found_missing_and_ambiguous(api):
@@ -158,10 +159,12 @@ def test_delete_archives_and_blocks_while_running(api, monkeypatch):
     running = [f"{pid}:001-x"]
     fake = SimpleNamespace(get_running_task_ids=lambda: running)
     monkeypatch.setattr("server.services.agent_service.get_agent_service", lambda: fake)
-    assert client.delete(f"/api/projects/{pid}").status_code == 409
+    blocked = client.delete(f"/api/projects/{pid}")
+    assert blocked.status_code == 409
     assert pid in reg.load_projects()
     running.clear()
-    assert client.delete(f"/api/projects/{pid}").status_code == 204
+    archived = client.delete(f"/api/projects/{pid}")
+    assert archived.status_code == 204
     assert pid not in reg.load_projects()
     assert client.get("/api/projects").json() == []
     assert client.get(f"/api/projects/{pid}").status_code == 404
