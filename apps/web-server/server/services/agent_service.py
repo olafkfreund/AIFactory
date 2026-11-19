@@ -1737,6 +1737,14 @@ class AgentService(
         """Get list of running task IDs."""
         return list(self.running_tasks.keys())
 
+    def get_running_task_ids(self) -> list[str]:
+        """Running task IDs on either build backend (#2144).
+
+        ``get_running_tasks`` holds only in-pod subprocess builds; a kubejob
+        build lives in ``_active_kubejob_task_ids`` (the set ``is_running`` reads).
+        """
+        return sorted(set(self.running_tasks) | self._active_kubejob_task_ids)
+
     def is_queued(self, task_id: str) -> bool:
         """Check if a task is parked in the admission queue (RFC-0016 #668)."""
         return any(q.task_id == task_id for q in self._task_queue)

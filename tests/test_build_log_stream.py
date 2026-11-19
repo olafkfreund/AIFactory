@@ -12,6 +12,8 @@ from __future__ import annotations
 import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -21,9 +23,61 @@ _WS = _REPO / "apps" / "web-server"
 if str(_WS) not in sys.path:
     sys.path.append(str(_WS))
 
-from server.services.build_log_stream import KubeJobLogStreamer  # noqa: E402
+from server.services.build_log_stream import (
+    KubeJobLogStreamer,  # noqa: E402
+    tail_job_logs,  # noqa: E402
+)
 
 pytestmark = pytest.mark.asyncio
+
+
+@pytest.fixture
+def core():
+    return SimpleNamespace(
+        list_namespaced_pod=AsyncMock(
+            return_value=SimpleNamespace(
+                items=[
+                    SimpleNamespace(metadata=SimpleNamespace(name=name))
+                    for name in ("pod-first", "pod-second")
+                ]
+            )
+        ),
+        read_namespaced_pod_log=AsyncMock(return_value="building...\r\n\ndone\n"),
+    )
+
+
+async def test_tail_job_logs_first_pod(core) -> None:
+    assert await tail_job_logs("factory", "job-x", 20, core=core) == [
+        "building...",
+        "",
+        "done",
+    ]
+    core.list_namespaced_pod.assert_awaited_once_with(
+        "factory", label_selector="job-name=job-x"
+    )
+    core.read_namespaced_pod_log.assert_awaited_once_with(
+        "pod-first", "factory", tail_lines=20
+    )
+
+
+async def test_tail_job_logs_no_pod(core) -> None:
+    core.list_namespaced_pod.return_value.items = []
+    assert await tail_job_logs("factory", "job-x", 20, core=core) == []
+    core.read_namespaced_pod_log.assert_not_awaited()
+
+
+@pytest.mark.parametrize("method", ["list_namespaced_pod", "read_namespaced_pod_log"])
+async def test_tail_job_logs_error(core, method) -> None:
+    getattr(core, method).side_effect = RuntimeError("API unavailable")
+    assert await tail_job_logs("factory", "job-x", 20, core=core) == []
+
+
+@pytest.mark.parametrize("tail, expected", [(501, 500), (500, 500), (0, 1), (-1, 1)])
+async def test_tail_job_logs_limits(core, tail, expected) -> None:
+    await tail_job_logs("factory", "job-x", tail, core=core)
+    core.read_namespaced_pod_log.assert_awaited_once_with(
+        "pod-first", "factory", tail_lines=expected
+    )
 
 
 def _source_from(lines: list[bytes]):

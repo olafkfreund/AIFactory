@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from factory_common.logsafe import sanitize_log
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from server.project_registry import load_projects
 from server.specpath import safe_spec_component
@@ -28,9 +28,50 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+_DEFAULT_JOB_TAIL = 200
+
+
+async def _job_log_entries(task_id: str, tail: int | None) -> list[dict[str, str]]:
+    """Tail of the build Job's pod log for a kubejob task (#2144).
+
+    Dispatch creates an empty ``task_logs.json`` and the packed path never ships
+    the Job's own, so file logs are empty for the whole build. The pod is the
+    source then. Best-effort: any failure returns ``[]``. The marker nonce is
+    redacted exactly as the cockpit stream does (#1929).
+    """
+    from server.services.agent_service import get_agent_service  # noqa: PLC0415
+    from server.services.build_log_stream import tail_job_logs  # noqa: PLC0415
+
+    n = tail if isinstance(tail, int) and tail > 0 else _DEFAULT_JOB_TAIL
+    try:
+        svc = get_agent_service()
+        if not getattr(svc, "_store_enabled", False):
+            return []
+        state = await svc._store().get_state(task_id)
+        ref = (state or {}).get("worker_ref") or {}
+        if ref.get("kind") != "k8s-job" or not ref.get("job_name"):
+            return []
+        lines = await tail_job_logs(ref["namespace"], ref["job_name"], n)
+        stamp = datetime.now(UTC).isoformat()
+        return [
+            {
+                "type": "job_log",
+                "source": "job",
+                "content": svc._redact_nonce(task_id, line),
+                "timestamp": stamp,
+            }
+            for line in lines
+        ]
+    except Exception:  # noqa: BLE001 - logs are observability, never an error
+        logger.debug("[GetTaskLogs] job log tail failed", exc_info=True)
+        return []
+
+
 @router.get("/{task_id}/logs")
 async def get_task_logs(
-    task_id: str, _access: dict = Depends(require_task_access("viewer"))
+    task_id: str,
+    _access: dict = Depends(require_task_access("viewer")),
+    tail: int | None = Query(default=None, ge=1, le=500),
 ):
     """Get logs for a task.
 
@@ -122,6 +163,11 @@ async def get_task_logs(
                     result["buildProgress"] = build_progress.read_text()
                     break
 
+            if not any((p or {}).get("entries") for p in result["phases"].values()):
+                job_logs = await _job_log_entries(task_id, tail)
+                if job_logs:
+                    result["logs"] = job_logs
+                    result["total"] = len(job_logs)
             logger.info(
                 f"[GetTaskLogs] Returning phase-based logs with {len(result.get('phases', {}))} phases"
             )
@@ -161,6 +207,9 @@ async def get_task_logs(
                 ).isoformat(),
             }
         )
+
+    if not logs:
+        logs = await _job_log_entries(task_id, tail)
 
     result = {"logs": logs, "total": len(logs)}
 
