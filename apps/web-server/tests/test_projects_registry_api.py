@@ -1,4 +1,7 @@
 """Registry API on the projects routes: slug, rename, by-slug, archive (#2157)."""
+# mypy: ignore-errors
+
+# ruff: noqa: S106, PLC0415 - fake /tmp paths, inline SQL and lazy imports in test setup
 
 from __future__ import annotations
 

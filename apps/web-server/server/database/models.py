@@ -29,11 +29,12 @@ from sqlalchemy.orm import (
     validates,
 )
 
+from server.utils.roles import ROLE_LEVELS
+
 # Re-export under a private alias so the model definitions read cleanly
 # while making it obvious this is the encrypted-at-rest column type
 # (Epic #26 P2). See apps/web-server/server/crypto/.
 from ..crypto.encrypted_string import EncryptedString as _EncryptedString
-from ..utils.roles import ROLE_LEVELS
 
 
 def _generate_uuid() -> str:

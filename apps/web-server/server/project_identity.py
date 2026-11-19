@@ -45,7 +45,7 @@ def normalize_repo_identity(url: str | None) -> str | None:
             parsed = urlsplit(url)
             if parsed.scheme not in {"http", "https", "ssh", "git"}:
                 return None
-            host, path = parsed.hostname, parsed.path
+            host, path = parsed.hostname or "", parsed.path
         except ValueError:
             return None
 

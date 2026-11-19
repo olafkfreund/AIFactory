@@ -17,9 +17,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
-from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 from fastapi.responses import JSONResponse
 from server.routes import pr, worktree_merge

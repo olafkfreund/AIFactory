@@ -31,7 +31,7 @@ from server.project_registry import (
     overlaps_other_org,
     save_projects,
 )
-from server.project_store import SlugConflict, aarchive_project
+from server.project_store import SlugConflictError, aarchive_project
 from server.services import github_app, project_settings_store
 from server.services.audit_service import ACTION_TASK_CREATE, audit_task_action
 from server.services.http_verdict import honest_status
@@ -78,8 +78,8 @@ async def get_project_by_slug(
     slug: str,
     request: Request,
     org_id: str | None = None,
-    db: AsyncSession = Depends(get_db),
-):
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> dict[str, Any]:
     """Resolve a slug among the projects the caller can see, then authorize it."""
     items = await _visible_projects(request, db)
     hits = [(pid, p) for pid, p in items if p.get("slug") == slug]
@@ -244,7 +244,7 @@ class ProjectUpdate(BaseModel):
     slug: str | None = None
 
     @model_validator(mode="after")
-    def _require_a_change(self):
+    def _require_a_change(self) -> "ProjectUpdate":
         if not (self.path or self.name or self.slug):
             raise ValueError("Provide at least one of 'path', 'name' or 'slug'")
         return self
@@ -435,7 +435,7 @@ async def _resolve_git_credential(cred_id: str) -> tuple[str, str] | None:
 
 async def _visible_projects(
     request: Request, db: AsyncSession
-) -> list[tuple[str, dict]]:
+) -> list[tuple[str, dict[str, Any]]]:
     """Active projects the caller may see (org filter, then tenant filter)."""
     projects = await aload_projects()
     allowed = await accessible_org_ids(request, db)
@@ -656,17 +656,20 @@ async def scan_for_projects(request: ScanProjectsRequest):
         )
 
 
-def _slug_error(exc: SlugConflict) -> HTTPException:
+def _slug_error(exc: SlugConflictError) -> HTTPException:
+    if exc.invalid:
+        return HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid slug: use lowercase letters, digits and '-' (max 64)",
+        )
     return HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST
-        if exc.invalid
-        else status.HTTP_409_CONFLICT,
-        detail=str(exc),
+        status_code=status.HTTP_409_CONFLICT,
+        detail="Slug is already used in this organization",
     )
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def add_project(
+async def add_project(  # noqa: PLR0912, PLR0915 - one flow: clone or local, then register
     project: ProjectCreate,
     request: Request = None,  # noqa: RUF013 — FastAPI injects; None lets direct callers omit
     db: AsyncSession = Depends(get_db),
@@ -799,7 +802,7 @@ async def add_project(
     projects[project_id] = project_data
     try:
         await asave_projects(projects)
-    except SlugConflict as e:
+    except SlugConflictError as e:
         raise _slug_error(e) from e
 
     response = project_to_response(project_id, project_data)
@@ -866,7 +869,7 @@ async def update_project(
     projects[project_id] = project_data
     try:
         save_projects(projects)
-    except SlugConflict as e:
+    except SlugConflictError as e:
         raise _slug_error(e) from e
 
     return project_to_response(project_id, project_data)

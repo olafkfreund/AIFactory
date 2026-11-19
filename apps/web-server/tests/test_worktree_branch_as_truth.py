@@ -128,7 +128,8 @@ class _StubConflictService:
         return {"success": True, "content": "merged\n"}
 
 
-def test_diff_shows_the_pushed_work(kubejob_shape: dict[str, Path]) -> None:
+@pytest.mark.usefixtures("kubejob_shape")
+def test_diff_shows_the_pushed_work() -> None:
     """THE reviewer surface: /worktree/diff must show the pushed branch's diff."""
     result = asyncio.run(
         worktree_merge.get_worktree_diff(f"{PROJECT_ID}:{SPEC_ID}", _access={})
@@ -145,7 +146,8 @@ def test_diff_shows_the_pushed_work(kubejob_shape: dict[str, Path]) -> None:
     assert "+print('v2')" in app_diff["diff"]
 
 
-def test_status_reports_the_pushed_work(kubejob_shape: dict[str, Path]) -> None:
+@pytest.mark.usefixtures("kubejob_shape")
+def test_status_reports_the_pushed_work() -> None:
     result = asyncio.run(
         worktree_merge.get_worktree_status(f"{PROJECT_ID}:{SPEC_ID}", _access={})
     )
@@ -161,7 +163,8 @@ def test_status_reports_the_pushed_work(kubejob_shape: dict[str, Path]) -> None:
     assert data["filesChanged"] >= 2
 
 
-def test_merge_preview_shows_the_pushed_work(kubejob_shape: dict[str, Path]) -> None:
+@pytest.mark.usefixtures("kubejob_shape")
+def test_merge_preview_shows_the_pushed_work() -> None:
     with (
         patch.object(
             conflict_service,

@@ -1,5 +1,7 @@
 """The project-identity revision on a populated database (#2157)."""
 
+# ruff: noqa: E501 - fake /tmp paths, inline SQL and lazy imports in test setup
+
 from __future__ import annotations
 
 import sqlite3

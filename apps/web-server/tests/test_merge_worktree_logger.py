@@ -11,7 +11,6 @@ import asyncio
 import json
 import subprocess
 from pathlib import Path
-from unittest.mock import patch
 
 from fastapi.responses import JSONResponse
 from server.project_registry import save_projects

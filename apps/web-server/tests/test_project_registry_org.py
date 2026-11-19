@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -51,7 +52,7 @@ def test_malformed_registry_entries_are_skipped(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     acme = tmp_path / "acme"
-    entries = {
+    entries: dict[str, Any] = {
         "x": "not-an-object",
         "y": {"path": 7},
         "a": {"path": str(acme), "org_id": "acme"},

@@ -358,7 +358,7 @@ async def seed_tenant_defaults(disable_auth: bool) -> None:
 
         # One-off id-preserving import of a legacy projects.json (#2157), before
         # serving; orgs exist by now so the project FK holds.
-        from server.project_store import aimport_pending
+        from server.project_store import aimport_pending  # noqa: PLC0415
 
         await aimport_pending()
         _backfill_project_orgs()

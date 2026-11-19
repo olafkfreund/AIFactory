@@ -101,7 +101,8 @@ def _body(result: Any) -> dict[str, Any]:
     return result
 
 
-def test_merge_resolves_a_branch_only_on_origin(repos: dict[str, Path]) -> None:
+@pytest.mark.usefixtures("repos")
+def test_merge_resolves_a_branch_only_on_origin() -> None:
     gh = FakeGh()
     with (
         patch("server.services.approval.run_gh_command", gh),
@@ -111,7 +112,8 @@ def test_merge_resolves_a_branch_only_on_origin(repos: dict[str, Path]) -> None:
     assert ["pr", "merge", "7", "--squash"] in gh.calls
 
 
-def test_create_pr_resolves_a_branch_only_on_origin(repos: dict[str, Path]) -> None:
+@pytest.mark.usefixtures("repos")
+def test_create_pr_resolves_a_branch_only_on_origin() -> None:
     gh = FakeGh()
     with (
         patch.object(pr, "task_repo_dir", return_value=None),

@@ -23,6 +23,7 @@ explicit :func:`archive_project`.
 rollback / roll-forward commands for a stopped service.
 """
 
+# ruff: noqa: T201 - the rollback CLI prints its result
 from __future__ import annotations
 
 import argparse
@@ -64,9 +65,10 @@ T = TypeVar("T")
 _IDENTITY_KEYS = ("slug", "team_id", "repo_identity", "org_id")
 _CALL_TIMEOUT = 10  # seconds a sync caller waits for the registry thread
 _IMPORTED_SUFFIX = ".imported"
+_ATTEMPTS = 3  # commit retries when a concurrent create takes a derived slug
 
 
-class SlugConflict(ValueError):
+class SlugConflictError(ValueError):
     """The requested slug is taken in the org, or is not a valid slug."""
 
     def __init__(self, message: str, *, invalid: bool = False) -> None:
@@ -128,7 +130,7 @@ _sessions: async_sessionmaker[AsyncSession] | None = None
 
 
 def _ensure_loop() -> asyncio.AbstractEventLoop:
-    global _loop
+    global _loop  # noqa: PLW0603
     with _lock:
         if _loop is None:
             loop = asyncio.new_event_loop()
@@ -151,7 +153,8 @@ def _run(coro: Awaitable[T], timeout: float = _CALL_TIMEOUT) -> T:
     """
     fut = _submit(coro)
     try:
-        return fut.result(timeout=timeout)
+        result: T = fut.result(timeout=timeout)
+        return result
     except TimeoutError:
         fut.cancel()
         raise
@@ -179,7 +182,9 @@ async def _get_sessions() -> async_sessionmaker[AsyncSession]:
     if _create_schema():
         tables = [t.__table__ for t in (Organization, User, Team, Project)]
         async with eng.begin() as conn:
-            await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=tables))
+            await conn.run_sync(
+                lambda c: Base.metadata.create_all(c, tables=tables)  # type: ignore[arg-type]
+            )
     _engine, _sessions = eng, async_sessionmaker(eng, expire_on_commit=False)
     return _sessions
 
@@ -220,7 +225,7 @@ def _to_dict(row: Project) -> dict[str, Any]:
     return entry
 
 
-class _Projects(dict):
+class _Projects(dict[str, dict[str, Any]]):
     """``load_projects()`` result: remembers what it loaded so saves can diff."""
 
     _snap: dict[str, str]
@@ -250,7 +255,7 @@ async def _ensure_org(s: AsyncSession, org_id: str) -> None:
                 id=_db_engine.DEFAULT_USER_ID,
                 email="default@localhost",
                 name="Default User",
-                password_hash="disabled",
+                password_hash="disabled",  # noqa: S106 - not a credential, login disabled
                 role="user",
                 is_active=False,
             )
@@ -288,7 +293,7 @@ async def _default_team(s: AsyncSession, org_id: str) -> str:
 
 
 def _git_remote_identity(path: str) -> str | None:
-    if not path or not os.path.isdir(path):
+    if not path or not Path(path).is_dir():
         return None
     try:
         out = subprocess.run(  # noqa: S603 - fixed argv, no shell
@@ -315,14 +320,16 @@ async def _upsert(
     wanted = entry.get("slug")
     if wanted is not None and (row is None or wanted != row.slug):
         if not validate_slug(wanted):
-            raise SlugConflict(f"Invalid slug {wanted!r}", invalid=True)
+            raise SlugConflictError(f"Invalid slug {wanted!r}", invalid=True)
         taken = await s.execute(
             select(Project.id).where(
                 Project.org_id == org_id, Project.slug == wanted, Project.id != pid
             )
         )
         if taken.first():
-            raise SlugConflict(f"Slug {wanted!r} is already used in this organization")
+            raise SlugConflictError(
+                f"Slug {wanted!r} is already used in this organization"
+            )
         slug = wanted
     elif row is not None and row.slug:
         slug = row.slug
@@ -372,7 +379,7 @@ async def _save(projects: dict[str, dict[str, Any]]) -> None:
         for pid, e in projects.items()
         if isinstance(e, dict)
     }
-    for attempt in range(3):
+    for attempt in range(_ATTEMPTS):
         try:
             async with sessions() as s, s.begin():
                 for pid, entry in projects.items():
@@ -389,7 +396,7 @@ async def _save(projects: dict[str, dict[str, Any]]) -> None:
             return
         except IntegrityError:
             # a concurrent create took the derived slug: re-derive and retry
-            if attempt == 2:
+            if attempt == _ATTEMPTS - 1:
                 raise
             for pid, keys in original.items():
                 entry = projects[pid]
@@ -442,7 +449,7 @@ async def _import_file(file: Path, *, overwrite: bool = False) -> int:
                 if row.id not in data:
                     row.archived_at = _now()
     with contextlib.suppress(OSError):
-        os.replace(file, file.with_name(file.name + _IMPORTED_SUFFIX))
+        file.replace(file.with_name(file.name + _IMPORTED_SUFFIX))
     if count:
         logger.info("Imported %d project(s) from %s into the registry DB", count, file)
     return count
@@ -534,7 +541,9 @@ def get_project(
     return None
 
 
-def find_by_slug(slug: str, org_ids: set[str] | None = None) -> list[tuple[str, dict]]:
+def find_by_slug(
+    slug: str, org_ids: set[str] | None = None
+) -> list[tuple[str, dict[str, Any]]]:
     """Active projects with ``slug`` (in ``org_ids`` when given; ``None`` = all orgs)."""
     return [
         (pid, p)
@@ -557,7 +566,7 @@ def _main() -> None:
         if not file.exists():
             alt = file.with_name(file.name + _IMPORTED_SUFFIX)
             if args.overwrite and alt.exists():
-                os.replace(alt, file)
+                alt.replace(file)
         print(f"imported {import_projects_json(overwrite=args.overwrite)} project(s)")
 
 
