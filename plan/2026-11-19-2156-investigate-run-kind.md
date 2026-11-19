@@ -19,6 +19,19 @@ reviewers:
 
 Paths: **WS** = `apps/web-server/server/`, **BE** = `apps/backend/`. Branch: `feat/2156-investigate-run-kind`, cut from `dev`; the PR targets `dev`, as in AIFactory's flow.
 
+## Deviations from the approved spec (approved with this plan)
+
+Codex's plan review found two gaps the spec left open. Approving the plan approves these:
+
+1. **Creation order for the Secret.** An `ownerReference` needs the Job's UID, so the Secret cannot exist before the Job. The new order is:
+   1. record the names;
+   2. create the Job (the pod waits in `CreateContainerConfigError` until its Secret exists; kubelet retries);
+   3. read the Job's UID;
+   4. create the Secret owned by it.
+
+   A crash between steps 2 and 4 is repaired by reconcile: a Job with no Secret gets one while the lease is valid, otherwise it is terminated.
+2. **Kubernetes creates happen under the row lock.** Each Job create (agent and test) is made **while holding** the run's `SELECT … FOR UPDATE` lock, with a 10 s client timeout. `_terminate` and the pod-gone check take the same lock, so they cannot run between "name recorded" and "create returned". A process crash ends both the lock and the request, and reconcile then checks by name and label.
+
 ## Decisions carried over (approved intent and spec)
 
 ### Separation of duties
@@ -96,15 +109,27 @@ They **never** carry `app.kubernetes.io/instance` (the release policy selects th
 **Order:**
 1. Insert `queued`, with `lease_expires_at = now + 60 s`, a 32-byte run token, and its sha256 stored.
 2. Export.
-3. Create the Secret.
-4. Write the deterministic Job name `aif-inv-<id8>-agent` to the row.
-5. Create the Job.
-6. Set `running`.
+3. **Under the row lock:**
+   1. write the deterministic name `aif-inv-<id8>-agent`;
+   2. create the Job;
+   3. read its UID;
+   4. create the Secret `aif-inv-<id8>` with an `ownerReference` to the Job;
+   5. set `running`;
+   6. commit.
 
 ### Export
 
-- **Archive:** `git -C <repo> archive --format=tar <sha>` into `/data/investigations/<id>/src`.
-- **Secret paths:** delete the paths on the approved list, plus the project's add-only `investigate_secret_paths`. The approved list:
+- **Storage:** the export goes on the **data PVC builds already share**:
+  - **Name:** `os.environ[_ENV_REPO_PVC]` (`build_backend.py`, `_DEFAULT_REPO_PVC`).
+  - **Control plane:** mounted at `AIFACTORY_DATA_ROOT` (default `/home/nonroot/.aifactory`, `build_backend.py:169, 211`).
+  - **Export root:** `$AIFACTORY_DATA_ROOT/investigations/<id>/src`.
+  - **Pods:** mount it as `subPath: investigations/<id>/src` of that PVC.
+  - **When it is unavailable:** dispatch is refused (`shared storage unavailable`) if the PVC name is unset or the data root is not a mount point.
+- **Fetch:** `git -C <project path> fetch --no-tags origin <sha>`, with the control plane's GitHub credential env from `runner_github_env` (`WS/utils/subprocess_env.py:190-211`). A fetch touches only objects and refs, never the project's working tree; `clone_or_update` is **not** used, because it updates the checkout.
+- **Archive:** `git -C <project path> archive --format=tar <sha>`, extracted into the export root.
+- **Secret paths:** delete the paths on the approved list, plus the project's add-only `INVESTIGATE_SECRET_PATHS`:
+  - **The setting:** a newline-separated list of globs in the project settings store, accepted by adding it to `is_store_key` (`WS/services/project_settings_store.py:56`) and read through the store's existing getter.
+  - **Add-only:** entries can only add exclusions; a `!` negation is refused at write. The approved list:
   - `.env*` and `.envrc`;
   - `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks` and `*.keystore`;
   - `id_*` and `.ssh/`;
@@ -142,7 +167,8 @@ They **never** carry `app.kubernetes.io/instance` (the release policy selects th
   - env: only `HTTPS_PROXY`, `HTTP_PROXY`, `CI=1` and `TEST_COMMAND` (a literal from the row);
   - the builds' runner image;
   - an init container copies `/src` to an emptyDir `/work`;
-  - it runs `timeout <min(15m, time left)> sh -c "$TEST_COMMAND"`.
+  - it runs `timeout <min(15m, time left)> sh -c "$TEST_COMMAND"`;
+  - the Job's `activeDeadlineSeconds` has the same bound plus 30 s, its grace is 10 s and `backoffLimit` is 0, so Kubernetes ends it even if `timeout` does not.
 - **Collection:**
   - the exit code, and the log up to 5 MiB (beyond that, `truncated`);
   - counts parsed by the new `WS/services/investigation_tests.py`: pytest, jest/vitest, go test, cargo, surefire; otherwise `parsed:false`;
@@ -175,6 +201,8 @@ It runs on **its own** supervised asyncio task, every 10 s, non-blocking, at mos
 - **`queued` with a Job name but no Job:**
   - while the lease is valid, create it (idempotent, by name);
   - otherwise set `pods_gone = true` and `failed (dispatch)`.
+- **A Job with no Secret:** create the Secret while the lease is valid, otherwise `_terminate(failed)`.
+- **Once an hour, at the tick:** `purge_logs(older_than = 7 days after ended_at)`.
 
 ### Report
 
@@ -195,7 +223,7 @@ A run with no report gets `findings: null`.
 **`logs(after, limit ≤ 500)`** returns `{entries:[{seq,at,line}], cursor}`. With nothing new, the cursor is `after`.
 
 **Scrubbing,** applied before every insert (logs, test tails, findings):
-- **Base:** the existing redactor used by the redacting feed (`agent_kubejob.py:679-684`).
+- **Base:** none is reused. The redacting feed (`agent_kubejob.py:679-684`) only replaces a marker nonce (`agent_emit.py:357-360`), so it is no secret scrubber. The new `investigation_scrub.py` does all of it.
 - **Added patterns:** AWS keys, JWTs, GitHub/Anthropic/OpenAI token shapes, and base64 or hex runs of 40 characters or more.
 - **The run's Claude token:** matched literally.
 - **PEM blocks:** a `-----BEGIN … PRIVATE KEY-----` line drops every line up to its `END`. The open state is kept across batches in `scrub_open`.
@@ -218,7 +246,10 @@ A run with no report gets `findings: null`.
 
 **The middleware exemption** in `WS/auth.py:334-354` matches only `^/api/investigations/[0-9a-f-]{36}/pod/(log|run-tests|report|lease|config)$`, with the matching methods.
 
-**MCP tools** in `WS/mcp_stdio/router.py`: `investigation_create|get|logs|lease|stop`, each a proxy to a caller route, listed only when the switch is on.
+**MCP tools:**
+- **Definitions:** `investigation_create|get|logs|lease|stop`, defined beside `create_task_control_tools` in `BE/agents/tools_pkg/tools/task_control.py` (new `create_investigation_tools()`), each calling a caller route.
+- **Registration:** in `BE/mcp_server/aifactory_server.py` (next to line 136), only when the switch is on.
+- **HTTP proxy endpoints:** in `WS/mcp_stdio/router.py`, in the same pattern as `proxy_create_and_run_task`.
 
 ### Agent runtime (`BE/agents/investigate.py`, new `create_investigate_client` beside `create_client`)
 
@@ -320,14 +351,14 @@ A run with no report gets `findings: null`.
      - `limit` is capped at 500;
      - the purge removes only rows of runs that ended more than 7 days ago;
      - downgrade drops both tables.
-   - **Verify:** `apps/backend/.venv/bin/pytest tests/postgres/test_investigations_store.py -v`.
+   - **Verify:** `TEST_POSTGRES_URL=<local test db> apps/backend/.venv/bin/pytest tests/postgres/test_investigations_store.py -v -rs`, with **0 skipped** (the fixtures in `tests/postgres/conftest.py` skip without the URL). The new migration's `down_revision` is the current head, `7a1f3c9e2b50`, or the head at implementation time if it has moved.
    - **Traps:** follow the revision-chain convention of the newest migration in `versions/`; do not touch `job_states`.
 2. **Scrubber and count parsers.**
    - **Files:**
-     - new `WS/services/investigation_scrub.py`, with `scrub_lines(lines, *, claude_token, pem_open) -> (lines, pem_open)` and `scrub_text`;
+     - new `WS/services/investigation_scrub.py` (self-contained; it reuses no existing redactor), with `scrub_lines(lines, *, claude_token, pem_open) -> (lines, pem_open)` and `scrub_text`;
      - new `WS/services/investigation_tests.py`, with `parse(log_text, truncated) -> {passed, failed, skipped} | {parsed: False}`;
      - tests in `tests/test_investigation_scrub.py` and `tests/test_investigation_tests.py`.
-   - **Scrubber:** the existing redactor (`agent_kubejob.py:679-684`) plus the added patterns and the PEM state.
+   - **Scrubber:** the patterns in Decisions and the PEM state.
    - **Tests:**
      - an AWS key, a JWT, a `ghp_` token, an `sk-ant-` token, a 48-character base64 run, and the literal Claude token are removed;
      - a PEM block split across two calls is removed;
@@ -337,7 +368,7 @@ A run with no report gets `findings: null`.
      - an agent-style line "all 50 tests passed" is not parsed.
    - **Verify:** `apps/backend/.venv/bin/pytest tests/test_investigation_scrub.py tests/test_investigation_tests.py -v`.
 3. **Source export.**
-   - **Files:** new `WS/services/investigation_export.py`, with `export(repo_path, sha, dest, extra_patterns) -> {bytes}` raising `ExportError`; tests in `tests/test_investigation_export.py`.
+   - **Files:** `WS/services/project_settings_store.py` (`is_store_key` accepts `INVESTIGATE_SECRET_PATHS`); new `WS/services/investigation_export.py`, with `export(repo_path, sha, dest, extra_patterns) -> {bytes}` raising `ExportError`; tests in `tests/test_investigation_export.py`.
    - **Behaviour:** as in Decisions, including the fetch through the existing project-repo helper and the 2 GiB cap.
    - **Tests** (a fixture git repository containing `.env`, `id_rsa`, `a/.npmrc`, `terraform.tfstate`, a symlink to `/etc/passwd`, a symlink to `../../x`, and a safe relative symlink):
      - no `.git` in the export;
@@ -346,7 +377,9 @@ A run with no report gets `findings: null`.
      - the marker is present;
      - an unknown `sha` → `ExportError`;
      - over the cap (patched to 1 KiB) → `ExportError`;
-     - extra patterns can only add.
+     - extra patterns can only add, a `!` entry is refused, and `INVESTIGATE_SECRET_PATHS` survives a write and a read through the settings store;
+     - the fetch leaves the project's working tree and `HEAD` unchanged;
+     - with the PVC name unset or the data root not mounted → refused.
    - **Verify:** `apps/backend/.venv/bin/pytest tests/test_investigation_export.py -v`.
 4. **Manifests, guard, network check** (after step 8).
    - **Files:** new `WS/services/investigation_manifest.py`, with `agent_manifest(run)`, `test_manifest(run, n)`, `secret_manifest(run, job_uid)`, `assert_investigation_manifest(m)` and `network_check(policies, agent_labels, test_labels) -> None | reason`; tests in `tests/test_investigation_manifest.py`.
@@ -363,7 +396,7 @@ A run with no report gets `findings: null`.
        - evaluates In, NotIn, Exists and DoesNotExist.
    - **Verify:** `apps/backend/.venv/bin/pytest tests/test_investigation_manifest.py -v`.
 5. **Backend lifecycle** (after steps 1 to 4).
-   - **Files:** new `WS/services/investigation_backend.py`, holding `dispatch`, `renew_lease`, `stop`, `get`, `logs`, `run_tests`, `append_log`, `put_report`, `lease_status`, `config`, `_terminate`, `reconcile_tick`, and `start_loop()` (a supervised task with backoff on errors); tests in `tests/test_investigation_backend.py`, using a fake Kubernetes client and a clock, with the store on Postgres.
+   - **Files:** new `WS/services/investigation_backend.py`, plus `tests/postgres/test_investigation_backend.py` (under `tests/postgres/` so it gets the Postgres fixtures). The module holds `dispatch`, `renew_lease`, `stop`, `get`, `logs`, `run_tests`, `append_log`, `put_report`, `lease_status`, `config`, `_terminate`, `reconcile_tick`, and `start_loop()` (a supervised task with backoff on errors). The tests use a fake Kubernetes client and a clock, with the store on Postgres.
    - **Behaviour:** everything in Decisions, under Dispatch, `run_tests`, Lease and termination, Reconcile and Report.
    - **Tests:**
      - each refusal reason, including limits of 0 or −1 and over the maximum;
@@ -377,19 +410,27 @@ A run with no report gets `findings: null`.
      - expiry for a run that was never renewed → `expired` at 60 s;
      - the report's counts come only from `tests`;
      - a restart with `stopping` and `uncertain` rows → resumed;
+     - **the barrier race:** pause the fake Kubernetes `create` immediately before it sends; run `stop` and a reconcile tick meanwhile → both wait on the lock and the slot is not freed; resume → the created Job is deleted and the slot is freed only after its pods are gone;
+     - **a crash between Job and Secret:** reconcile creates the Secret while the lease is valid, otherwise terminates;
+     - **the test Job's `activeDeadlineSeconds`:** the remaining time plus 30 s, set independently of `timeout`;
+     - **retention:** a tick with the clock moved forward an hour purges logs of runs ended more than 7 days ago;
+     - **scrubbing is persisted:** after `append_log` (including a PEM split across two batches), the `run_tests` tail and `put_report`, the **database rows** contain no planted secret;
+     - **log caps:** the 201st line in one call is refused; at 20 000 lines per run exactly one "log truncated" line is stored, then nothing more;
      - **the build loop keeps its timing:** a stuck investigation does not delay `agent_kubejob`'s 15 s tick (assert that the build loop is never awaited from here).
-   - **Verify:** `apps/backend/.venv/bin/pytest tests/test_investigation_backend.py -v`.
+   - **Verify:** `TEST_POSTGRES_URL=<local test db> apps/backend/.venv/bin/pytest tests/postgres/test_investigation_backend.py -v -rs`, with 0 skipped.
 6. **Routes, middleware, MCP, switch** (after step 5).
    - **Files:**
      - new `WS/routes/investigations.py`;
      - `WS/auth.py`: the exemption only;
      - the app router mount plus `start_loop` at startup, each only when on;
-     - `WS/mcp_stdio/router.py`: the five proxies;
+     - `WS/mcp_stdio/router.py`: the five HTTP proxies;
+     - `BE/agents/tools_pkg/tools/task_control.py`: `create_investigation_tools()`;
+     - `BE/mcp_server/aifactory_server.py`: register them when on;
      - the switch parser in `WS/services/investigation_backend.py`;
-     - `WS/.env.example`: document `AIFACTORY_INVESTIGATIONS`;
-     - tests in `tests/test_investigations_routes.py` and `WS/tests/test_investigations_switch.py`.
+     - `apps/web-server/.env.example`: document `AIFACTORY_INVESTIGATIONS`;
+     - tests in `tests/test_investigations_routes.py`, `tests/test_investigation_mcp_tools.py` and `apps/web-server/tests/test_investigations_switch.py`.
    - **Tests, through the full app middleware stack:**
-     - with the switch off, every route → 404 and the MCP tools are absent;
+     - with the switch off, every route → 404, and the **stdio MCP server's tool listing** has none of the five; with it on, all five are listed and `investigation_get` invokes the route;
      - an invalid switch value raises;
      - a pod route with no token → 401; with another run's token → 403; on an ended run → 403;
      - a caller route with only a run token → 401;
@@ -398,7 +439,7 @@ A run with no report gets `findings: null`.
      - the cursor and its limit;
      - `pod/config` returns exactly the dispatched values;
      - `stop` returns within 20 s.
-   - **Verify:** `apps/backend/.venv/bin/pytest tests/test_investigations_routes.py apps/web-server/server/tests/test_investigations_switch.py -v`.
+   - **Verify:** `apps/backend/.venv/bin/pytest tests/test_investigations_routes.py tests/test_investigation_mcp_tools.py apps/web-server/tests/test_investigations_switch.py -v`.
 7. **Agent runtime** (after step 8; uses a fake API).
    - **Files:**
      - new `BE/agents/investigate.py` (the entry point `python -m agents.investigate`);
@@ -425,7 +466,8 @@ A run with no report gets `findings: null`.
      - `values.yaml`: `investigations.enabled: false`, `claudeApiCidrs`, `proxy.image`, `proxy.extraDomains`;
      - tests in `tests/helm/test_p4_helm.py`.
    - **Tests:**
-     - off → `helm template` output byte-identical to `dev` (stored golden file);
+     - off → `helm template` output byte-identical to the golden file `tests/helm/golden/aifactory-default.yaml`. The file is generated once from `dev` at the commit this branch is cut from (recorded in its header), with `helm template aifactory charts/aifactory --namespace factory` and the chart's default values;
+     - on → the agent and test pods' `subPath` comes from the data PVC named by the deployment's `_ENV_REPO_PVC` value;
      - on → the build policy has the term with the rest unchanged;
      - the four policies have exactly the stated rules;
      - the proxy pods have no `instance` label;
@@ -473,5 +515,20 @@ apps/backend/.venv/bin/pytest tests/helm/test_p4_helm.py
 
 ## Rollback
 
-- **Turn it off:** set `AIFACTORY_INVESTIGATIONS=off` and `investigations.enabled: false` in factory-gitops, and Argo syncs. The routes, the loop, the policies and the proxy go away; build runs never depended on them.
-- **Revert:** the commits are additive. The migration's downgrade drops both tables. The only shared-file edits are the build policy term (rendered only when on), the auth exemption (pod-route pattern only), and the RBAC rules (only when on).
+**Turn it off**, in this order:
+1. Set `AIFACTORY_INVESTIGATIONS=off` in factory-gitops **while keeping** `investigations.enabled: true`. New dispatches are refused.
+2. **Drain:** `POST /api/investigations/{id}/stop` for every run with `pods_gone = false` (the list comes from `GET`), until all of them show `pods_gone = true`.
+   - The reconcile loop and the policies stay in place during the drain, so nothing loses its isolation and nothing goes unwatched.
+   - An `uncertain` run is deleted by hand (`kubectl delete job -l factory.io/investigation=<id>`, after the owner's OK) and confirmed gone.
+3. **Only then** set `investigations.enabled: false`. Argo removes the policies, the proxy and the RBAC rules.
+
+The tables are **kept**; their data is discarded only by a deliberate downgrade.
+
+**Revert:**
+- The commits are additive. The migration's downgrade drops both tables, and runs only after step 2.
+- The only shared-file edits are:
+  - the build policy term (rendered only when on);
+  - the auth exemption (pod-route pattern only);
+  - the RBAC rules (only when on);
+  - `is_store_key` (one accepted key);
+  - the MCP registration (only when on).
