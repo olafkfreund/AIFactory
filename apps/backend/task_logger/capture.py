@@ -4,6 +4,7 @@ Streaming log capture for agent sessions.
 
 from .logger import TaskLogger
 from .models import LogPhase
+from .tool_input import describe_tool_input
 
 
 class StreamingLogCapture:
@@ -83,25 +84,7 @@ class StreamingLogCapture:
                     # Text is already logged by the agent session
                     pass
                 elif block_type == "ToolUseBlock" and hasattr(block, "name"):
-                    tool_input = None
-                    if hasattr(block, "input") and block.input:
-                        inp = block.input
-                        if isinstance(inp, dict):
-                            # Extract meaningful input description
-                            if "pattern" in inp:
-                                tool_input = f"pattern: {inp['pattern']}"
-                            elif "file_path" in inp:
-                                fp = inp["file_path"]
-                                if len(fp) > 50:
-                                    fp = "..." + fp[-47:]
-                                tool_input = fp
-                            elif "command" in inp:
-                                cmd = inp["command"]
-                                if len(cmd) > 50:
-                                    cmd = cmd[:47] + "..."
-                                tool_input = cmd
-                            elif "path" in inp:
-                                tool_input = inp["path"]
+                    tool_input = describe_tool_input(getattr(block, "input", None))
                     self.process_tool_start(block.name, tool_input)
 
         elif msg_type == "UserMessage" and hasattr(msg, "content"):

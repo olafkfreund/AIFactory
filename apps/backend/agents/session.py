@@ -33,6 +33,7 @@ from security.tool_input_validator import get_safe_tool_input
 from task_logger import (
     LogEntryType,
     LogPhase,
+    describe_tool_input,
     get_task_logger,
 )
 from ui import (
@@ -534,34 +535,18 @@ async def run_agent_session(
                             )
                     elif block_type == "ToolUseBlock" and hasattr(block, "name"):
                         tool_name = block.name
-                        tool_input_display = None
                         tool_count += 1
 
                         # Safely extract tool input (handles None, non-dict, etc.)
                         inp = get_safe_tool_input(block)
 
-                        # Extract meaningful tool input for display
-                        if inp:
-                            if "pattern" in inp:
-                                tool_input_display = f"pattern: {inp['pattern']}"
-                            elif "file_path" in inp:
-                                fp = inp["file_path"]
-                                if len(fp) > 50:
-                                    fp = "..." + fp[-47:]
-                                tool_input_display = fp
-                            elif "command" in inp:
-                                cmd = inp["command"]
-                                if len(cmd) > 50:
-                                    cmd = cmd[:47] + "..."
-                                tool_input_display = cmd
-                            elif "path" in inp:
-                                tool_input_display = inp["path"]
+                        tool_input_display = describe_tool_input(inp)
 
                         debug(
                             "session",
                             f"Tool call #{tool_count}: {tool_name}",
                             tool_input=tool_input_display,
-                            full_input=str(inp)[:500] if inp else None,
+                            full_input=tool_input_display,
                         )
 
                         if task_logger:
@@ -584,7 +569,7 @@ async def run_agent_session(
                             print(f"\n[Tool: {tool_name}]", flush=True)
 
                         if verbose and hasattr(block, "input"):
-                            input_str = str(block.input)
+                            input_str = tool_input_display or ""
                             if len(input_str) > 300:
                                 print(f"   Input: {input_str[:300]}...", flush=True)
                             else:
