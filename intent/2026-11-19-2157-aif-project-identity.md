@@ -21,7 +21,7 @@ Project authz reads `projects.json` (`routes/project_authz.py:149`, `project_reg
 
 ## Affected users and systems
 
-AIFactory web-server (`project_registry.py`, `routes/projects.py`, `routes/project_authz.py`, about 40 `load_projects` callers, alembic). Existing frontends keep working unchanged. PFactory, TFactory, CFactory are untouched (phases 2/3); service-principal bypass is untouched.
+AIFactory web-server (`project_registry.py`, `routes/projects.py`, `routes/project_authz.py`, about 40 `load_projects` callers, alembic). Direct `projects.json` readers outside `load_projects` are in scope too: `routes/worktree_merge.py:98,1020,1377,2086,2282` and `routes/mcp.py:36-46`, plus `get_projects_file()` users (`routes/terminal.py`). Existing frontends keep working unchanged. PFactory, TFactory, CFactory are untouched (phases 2/3); service-principal bypass is untouched.
 
 ## Constraints
 
@@ -29,7 +29,10 @@ AIFactory web-server (`project_registry.py`, `routes/projects.py`, `routes/proje
 - No name-based merging of projects; repo identity is only recorded, never used to merge here.
 - Deletion is archive by default; files and history are untouched.
 - Local/single-user mode and `DISABLE_AUTH` keep working with no team setup.
-- No change to service-principal behaviour, no secrets handled.
+- Registry entries carry credentials (`gitToken`, `githubToken` mirrored by `routes/context.py:788-823`). Import, rollback export and DB storage keep them exactly as `projects.json` does today (same trust level); the new registry API responses never return them.
+- Import and rollback are lossless for every existing field: `org_id`, `tenant_id`, `clonedFrom`, `clonedBranch`, `settings`, auto-fix queue, timestamps. Unknown keys are kept, not dropped.
+- Archive is refused (409) while a task is running for the project; archived projects leave every list and lookup exactly as a deleted one does today, but stay in the DB and are readable by id for admins.
+- No change to service-principal behaviour.
 - Migration is additive (new columns/tables); the schema revert leaves old code working.
 
 ## Open questions
