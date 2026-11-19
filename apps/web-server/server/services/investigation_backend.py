@@ -51,7 +51,9 @@ def investigations_enabled() -> bool:
         return False
     if value == "on":
         return True
-    raise ValueError("Invalid AIFACTORY_INVESTIGATIONS; valid values: off, on")
+    if value == "drain":
+        return True
+    raise ValueError("Invalid AIFACTORY_INVESTIGATIONS; valid values: off, on, drain")
 
 
 def _field(value: Any, name: str, default: Any = None) -> Any:
@@ -145,7 +147,7 @@ class InvestigationBackend:
         if reason:
             raise InvestigationRefused(f"network policy: {reason}")
 
-    async def dispatch(  # noqa: PLR0913, PLR0915 - dispatch coordinates and lifecycle stay together
+    async def dispatch(  # noqa: PLR0913, PLR0915, PLR0912 - dispatch coordinates and lifecycle stay together
         self,
         *,
         project_id: str,
@@ -159,6 +161,8 @@ class InvestigationBackend:
         extra_patterns: str = "",
     ) -> dict[str, str]:
         """Reserve a slot, export source, then create Job and owned Secret."""
+        if os.environ.get("AIFACTORY_INVESTIGATIONS", "off") == "drain":
+            raise InvestigationRefused("investigations are draining")
         if len(request) > _MAX_REQUEST or not re.fullmatch(r"[0-9a-fA-F]{40}", sha):
             raise InvestigationRefused("invalid request or sha")
         if not claude_token:

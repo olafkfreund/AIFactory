@@ -223,6 +223,18 @@ def _args(**overrides: Any) -> dict[str, Any]:
     }
 
 
+async def test_drain_refuses_dispatch_before_store(
+    service: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AIFACTORY_INVESTIGATIONS", "drain")
+    service.store.insert = AsyncMock()
+    with pytest.raises(
+        investigation_backend.InvestigationRefused, match="investigations are draining"
+    ):
+        await service.backend.dispatch(**_args())
+    service.store.insert.assert_not_awaited()
+
+
 async def test_dispatch_limits_slot_and_job_secret_order(
     service: SimpleNamespace,
 ) -> None:

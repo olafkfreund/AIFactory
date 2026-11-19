@@ -77,6 +77,13 @@ Codex's plan review found two gaps the spec left open. Approving the plan approv
 10. **The running lease starts at Job creation** (review C8). The queued lease still starts at insert; dispatch renews it when it commits `running`, after the export and resource creation.
 11. **AWS-style base64 secrets are scrubbed** (review C17). Deviation 4's existing path-safe rule remains; an additional exact 40-character rule catches mixed-case, digit-bearing values containing `/` or `+`. Its left boundary permits `=` so `aws_secret=<value>` is covered.
 
+12. **The switch gains `drain`** (review C15; owner, 2026-11-19: "Approve, the drain").
+    - **Why:** the old rollback could not work. `off` unmounts the stop routes and stops the reconcile loop, so live runs could not be drained.
+    - **What `drain` does:**
+      - refuses new dispatches: create returns 503, `dispatch` refuses, and `investigation_create` is not registered;
+      - keeps get, logs, lease, stop, every pod route, the auth exemption and the reconcile loop.
+    - **The rollback** is now `on` → `drain` → all runs `pods_gone` → `off`.
+
 ## Decisions carried over (approved intent and spec)
 
 ### Separation of duties
@@ -95,9 +102,10 @@ The inert build deadline branch (`agent_kubejob.py:971` passes no deadline) is a
 
 ### Switch
 
-- **The variable:** `AIFACTORY_INVESTIGATIONS`, strict `off|on`, parsed like `_kubejob_flag` (`WS/services/agent_job_backend.py:41-49`); anything else raises.
+- **The variable:** `AIFACTORY_INVESTIGATIONS`, strict `off|on|drain` (deviation 12), parsed like `_kubejob_flag` (`WS/services/agent_job_backend.py:41-49`); anything else raises.
 - **"On" requires:** the kubejob build backend, `DATABASE_URL`, and chart `investigations.enabled`.
 - **Off:** the investigation routes and MCP tools are absent (404), and no loop runs.
+- **Drain:** as on, except that new dispatches are refused (create returns 503, and `investigation_create` is not registered). Stop, lease, get, logs, the pod routes and the reconcile loop keep working until every run's pods are gone.
 
 ### Labels (the approved deviation from the intent)
 
@@ -561,11 +569,11 @@ apps/backend/.venv/bin/pytest tests/helm/test_p4_helm.py
 ## Rollback
 
 **Turn it off**, in this order:
-1. Set `AIFACTORY_INVESTIGATIONS=off` in factory-gitops **while keeping** `investigations.enabled: true`. New dispatches are refused.
+1. Set `AIFACTORY_INVESTIGATIONS=drain` in factory-gitops **while keeping** `investigations.enabled: true`. New dispatches are refused (503). Stop, lease, status, the pod routes and the reconcile loop keep working.
 2. **Drain:** `POST /api/investigations/{id}/stop` for every run with `pods_gone = false` (the list comes from `GET`), until all of them show `pods_gone = true`.
    - The reconcile loop and the policies stay in place during the drain, so nothing loses its isolation and nothing goes unwatched.
    - An `uncertain` run is deleted by hand (`kubectl delete job -l factory.io/investigation=<id>`, after the owner's OK) and confirmed gone.
-3. **Only then** set `investigations.enabled: false`. Argo removes the policies, the proxy and the RBAC rules.
+3. **Only then** set `AIFACTORY_INVESTIGATIONS=off` and `investigations.enabled: false`. Argo removes the routes, the loop, the policies, the proxy and the RBAC rules.
 
 The tables are **kept**; their data is discarded only by a deliberate downgrade.
 

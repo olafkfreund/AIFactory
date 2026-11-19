@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 from pathlib import Path
 from typing import Annotated, Any
 from uuid import uuid4
@@ -78,6 +79,8 @@ def _refused(exc: InvestigationRefused) -> HTTPException:
 async def create(
     body: CreateInput, request: Request, db: Annotated[AsyncSession, Depends(get_db)]
 ) -> dict[str, str]:
+    if os.environ.get("AIFACTORY_INVESTIGATIONS", "off") == "drain":
+        raise HTTPException(503, "investigations are draining")
     project = await _project(request, db, body.project_id, "member")
     project_path = Path(project["path"])
     settings = await project_settings_store.get_settings(project_path)

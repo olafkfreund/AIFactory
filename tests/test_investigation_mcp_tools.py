@@ -43,6 +43,13 @@ async def test_stdio_tool_listing_follows_switch(
         "investigation_lease",
         "investigation_stop",
     }
+    monkeypatch.setenv("AIFACTORY_INVESTIGATIONS", "drain")
+    assert {name for name in await names() if name.startswith("investigation_")} == {
+        "investigation_get",
+        "investigation_logs",
+        "investigation_lease",
+        "investigation_stop",
+    }
 
 
 @pytest.mark.asyncio

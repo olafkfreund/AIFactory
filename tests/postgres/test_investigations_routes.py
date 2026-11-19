@@ -155,6 +155,52 @@ def bearer(value: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {value}"}
 
 
+def test_drain_keeps_existing_routes_and_refuses_create(
+    env: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AIFACTORY_INVESTIGATIONS", "drain")
+    app = create_app()
+    app.dependency_overrides.update(env.client.app.dependency_overrides)
+    app.state.investigation_backend = env.backend
+    client = TestClient(app)
+    base = f"/api/investigations/{env.run_id}"
+    body = {"project_id": env.project_id, "sha": "a" * 40, "request": "find issue"}
+    for path in ("/api/investigations", "/api/mcp-stdio/investigations"):
+        response = client.post(
+            path, json=body, headers=bearer("test-token" if "mcp" in path else "editor")
+        )
+        assert response.status_code == 503
+        assert response.json()["detail"] == "investigations are draining"
+
+    assert client.get(base, headers=bearer("viewer")).status_code == 200
+    assert client.get(f"{base}/logs", headers=bearer("viewer")).status_code == 200
+    assert client.post(f"{base}/lease", headers=bearer("editor")).status_code == 200
+    assert client.post(f"{base}/stop", headers=bearer("editor")).status_code == 200
+
+    monkeypatch.setattr(env.backend, "append_log", AsyncMock())
+    monkeypatch.setattr(env.backend, "run_tests", AsyncMock(return_value={"ok": True}))
+    monkeypatch.setattr(env.backend, "put_report", AsyncMock())
+    monkeypatch.setattr(
+        env.backend, "lease_status", AsyncMock(return_value={"ok": True})
+    )
+    headers = {"X-Run-Token": "run-token"}
+    assert (
+        client.post(
+            f"{base}/pod/log", json={"lines": ["hello"]}, headers=headers
+        ).status_code
+        == 200
+    )
+    assert client.post(f"{base}/pod/run-tests", headers=headers).status_code == 200
+    assert (
+        client.post(
+            f"{base}/pod/report", json={"findings": "ok"}, headers=headers
+        ).status_code
+        == 200
+    )
+    assert client.get(f"{base}/pod/lease", headers=headers).status_code == 200
+    assert client.get(f"{base}/pod/config", headers=headers).status_code == 200
+
+
 def test_pod_token_scope_and_caller_separation(env: SimpleNamespace) -> None:
     base = f"/api/investigations/{env.run_id}"
     assert env.client.get(f"{base}/pod/config").status_code == 401

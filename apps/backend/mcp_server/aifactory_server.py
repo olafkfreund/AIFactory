@@ -103,8 +103,16 @@ def _control_tools() -> list[Any]:
     value = os.environ.get("AIFACTORY_INVESTIGATIONS", "off")
     if value == "on":
         result += create_investigation_tools()
+    elif value == "drain":
+        result += [
+            tool
+            for tool in create_investigation_tools()
+            if tool.name != "investigation_create"
+        ]
     elif value != "off":
-        raise ValueError("Invalid AIFACTORY_INVESTIGATIONS; valid values: off, on")
+        raise ValueError(
+            "Invalid AIFACTORY_INVESTIGATIONS; valid values: off, on, drain"
+        )
     return result
 
 
