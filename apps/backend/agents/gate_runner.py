@@ -158,6 +158,23 @@ def detect_gates(project_dir: Path) -> list[Gate]:
         gates.append(Gate("go-test", ["go", "test", "./..."]))
 
     gates.extend(_descriptor_gates(p, already={g.name for g in gates}))
+    for module_dir, build_system in _java_module_dirs(p):
+        if build_system == "gradle" and any(
+            gate.command
+            and gate.command[0] == "gradle"
+            and (gate.cwd or p).resolve() == module_dir.resolve()
+            for gate in gates
+        ):
+            continue
+        name = f"{build_system}-test"
+        if module_dir != p:
+            name += f":{module_dir.relative_to(p).as_posix()}"
+        command = (
+            ["mvn", "-B", "-q", "test"]
+            if build_system == "maven"
+            else ["gradle", "test", "--no-daemon", "--console=plain"]
+        )
+        gates.append(Gate(name, command, cwd=module_dir))
 
     return gates
 
@@ -211,6 +228,33 @@ _MODULE_MAX_DEPTH = 4
 _MODULE_SKIP_DIRS = frozenset(
     {"node_modules", "vendor", "build", "dist", "target", "out", ".git", ".gradle"}
 )
+
+
+def _java_module_dirs(project_dir: Path) -> list[tuple[Path, str]]:
+    """Find top-most Maven and Gradle modules independently."""
+    modules = []
+    for build_system, markers in (
+        ("maven", {"pom.xml"}),
+        ("gradle", {"build.gradle", "build.gradle.kts", "gradlew"}),
+    ):
+        for directory, dirs, files in os.walk(project_dir):
+            module_dir = Path(directory)
+            depth = len(module_dir.relative_to(project_dir).parts)
+            dirs[:] = (
+                []
+                if depth >= _MODULE_MAX_DEPTH
+                else sorted(
+                    name
+                    for name in dirs
+                    # dot dirs: .git, .gradle and managed task worktrees
+                    # (.aifactory/, .worktrees/) hold other checkouts
+                    if name not in _MODULE_SKIP_DIRS and not name.startswith(".")
+                )
+            )
+            if markers.intersection(files):
+                modules.append((module_dir, build_system))
+                dirs.clear()
+    return modules
 
 
 def _module_dir_for(project_dir: Path, language: str) -> Path | None:
