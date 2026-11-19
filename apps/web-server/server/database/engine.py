@@ -8,6 +8,7 @@ listener is only registered when the SQLite dialect is in use.
 """
 
 import asyncio
+import importlib
 import logging
 import os
 from collections.abc import AsyncGenerator
@@ -369,9 +370,12 @@ async def seed_tenant_defaults(disable_auth: bool) -> None:
 def _backfill_project_orgs() -> None:
     """Assign ``org_id=default`` to any registered project that lacks one."""
     try:
-        from server.project_registry import load_projects, save_projects
+        # By name, not `import`: project_registry imports project_store, which
+        # imports this module, and a static import closes that cycle.
+        registry = importlib.import_module("server.project_registry")
     except Exception:
         return
+    load_projects, save_projects = registry.load_projects, registry.save_projects
     projects = load_projects()
     changed = 0
     for proj in projects.values():

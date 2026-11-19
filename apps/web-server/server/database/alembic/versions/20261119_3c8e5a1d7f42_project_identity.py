@@ -23,6 +23,8 @@ down_revision: str | Sequence[str] | None = "7a1f3c9e2b50"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+__all__ = ["branch_labels", "depends_on", "down_revision", "revision"]
+
 
 def upgrade() -> None:
     op.create_table(
