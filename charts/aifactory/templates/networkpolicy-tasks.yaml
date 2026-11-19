@@ -14,6 +14,12 @@ spec:
   podSelector:
     matchLabels:
       factory.io/kind: task
+    {{- if .Values.investigations.enabled }}
+    # Investigation pods keep kind=task but are governed by the
+    # networkpolicy-investigate-* policies, never by this one (#2156).
+    matchExpressions:
+      - {key: factory.io/run-kind, operator: DoesNotExist}
+    {{- end }}
   policyTypes:
     - Ingress
     - Egress
