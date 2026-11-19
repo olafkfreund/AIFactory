@@ -91,6 +91,48 @@ _REATTACH_INTERVAL_SECONDS = 3.0
 _MAX_EMPTY_REATTACHES = 20
 
 
+async def tail_job_logs(
+    namespace: str, job_name: str, tail: int, *, core: Any = None
+) -> list[str]:
+    """Return a bounded log tail for the Job's first pod, best-effort."""
+    try:
+        api = None
+        try:
+            if core is None:
+                from kubernetes_asyncio import client, config  # noqa: PLC0415
+
+                try:
+                    config.load_incluster_config()  # type: ignore[no-untyped-call]
+                except Exception:  # noqa: BLE001 - dev/test fallback to kubeconfig
+                    await config.load_kube_config()
+                api = client.ApiClient()
+                core = client.CoreV1Api(api)
+
+            pods = await core.list_namespaced_pod(
+                namespace, label_selector=f"job-name={job_name}"
+            )
+            if not pods.items:
+                return []
+            logs = await core.read_namespaced_pod_log(
+                pods.items[0].metadata.name,
+                namespace,
+                tail_lines=max(1, min(tail, 500)),
+            )
+            lines: list[str] = logs.splitlines()
+            return lines
+        finally:
+            if api is not None:
+                await api.close()
+    except Exception:  # noqa: BLE001 - log tails are best-effort
+        _log.debug(
+            "[build_log_stream] log tail for Job %s/%s failed",
+            namespace,
+            job_name,
+            exc_info=True,
+        )
+        return []
+
+
 async def _default_line_source(namespace: str, job_name: str) -> AsyncIterator[bytes]:
     """Follow the build Job pod's logs via the k8s API, yielding line bytes.
 

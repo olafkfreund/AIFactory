@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -120,6 +121,96 @@ def _with_language_from_project(
     return {**env, "language": "javascript"}
 
 
+_MAX_MODULE_DEPTH = 4
+_MAX_FLAKE_JDK = 21  # the vendored provisioner's java table ships jdk21
+_SKIP_DIRS = frozenset(
+    {"node_modules", "vendor", "build", "dist", "target", "out", ".git", ".gradle"}
+)
+_GRADLE_FILES = frozenset({"build.gradle", "build.gradle.kts", "gradlew"})
+_JDK_PROP = re.compile(
+    r"<(?:maven\.compiler\.release|maven\.compiler\.source|java\.version)>"
+    r"\s*(?:1\.)?(\d+)"
+)
+# java is found by _scan_java markers only: StackDetector globs **/*.java into
+# nested task worktrees.
+_DESCRIPTORLESS = {"rust": "rust", "go": "go"}
+_VERIFY = {
+    "rust": ["cargo test --quiet"],
+    "go": ["go test ./..."],
+    "node": ["npm test --if-present"],
+}
+
+
+def _scan_java(project_dir: Path) -> tuple[list[Path], bool]:
+    """(pom.xml paths, any Gradle build file) at the root or nested modules."""
+    poms: list[Path] = []
+    gradle = False
+    for directory, dirs, files in os.walk(project_dir):
+        depth = len(Path(directory).relative_to(project_dir).parts)
+        dirs[:] = (
+            []
+            if depth >= _MAX_MODULE_DEPTH
+            else [d for d in dirs if d not in _SKIP_DIRS and not d.startswith(".")]
+        )
+        if "pom.xml" in files:
+            poms.append(Path(directory) / "pom.xml")
+        gradle = gradle or bool(_GRADLE_FILES & set(files))
+    return poms, gradle
+
+
+def _warn_if_pom_needs_newer_jdk(poms: list[Path]) -> None:
+    # Regex, not an XML parser: the pom is untrusted repo content.
+    for pom in poms:
+        try:
+            text = pom.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for match in _JDK_PROP.finditer(text):
+            if int(match.group(1)) > _MAX_FLAKE_JDK:
+                logger.warning(
+                    "nix_env: %s asks for Java %s but the generated flake ships jdk21",
+                    pom,
+                    match.group(1),
+                )
+
+
+def _builtin_languages(
+    languages: list[str], project_dir: Path, poms: list[Path], gradle: bool
+) -> list[str]:
+    """Descriptor-less languages present, in detection order, node folded in."""
+    found: list[str] = []
+    for language in languages:
+        name = (
+            "node"
+            if language in ("javascript", "typescript")
+            else _DESCRIPTORLESS.get(language)
+        )
+        if name and name not in found:
+            found.append(name)
+    for marker, name in (("Cargo.toml", "rust"), ("go.mod", "go")):
+        if (project_dir / marker).is_file() and name not in found:
+            found.append(name)
+    if (poms or gradle) and "java" not in found:
+        found.append("java")
+    return found
+
+
+def _verify_commands(descriptor: Any, primary: str, has_pom: bool) -> list[str]:
+    if descriptor is not None:
+        unit = descriptor.lane("unit")
+        # A lane the descriptor itself marks unavailable is not a verify
+        # command; the descriptor states why, and inventing one would be worse
+        # than leaving it out.
+        if unit is not None and unit.available and unit.command:
+            return [unit.command]
+        return []
+    if primary == "java":
+        return [
+            "mvn -B -q test" if has_pom else "gradle test --no-daemon --console=plain"
+        ]
+    return list(_VERIFY.get(primary, []))
+
+
 def infer_environment(project_dir: Path) -> dict[str, object] | None:
     """An environment manifest derived from what the project actually is.
 
@@ -134,15 +225,8 @@ def infer_environment(project_dir: Path) -> dict[str, object] | None:
     gate at all (`build_report.json` had `gates: null`), and was still returned
     as APPROVED on inspection (#1491, #1496).
 
-    Nothing here is invented: the language comes from the same StackDetector the
-    command allowlist is built from, and its toolchain and verify command come
-    from that language's own descriptor (`contracts/languages/<name>.yaml`) —
-    the file that already declares, for Kotlin, `nix.packages: [kotlin, gradle,
-    jdk21]` and a unit lane of `gradle test --no-daemon --console=plain`.
-
-    Returns None when no detected language has a descriptor, so a project this
-    cannot speak for keeps today's behaviour rather than getting a guessed
-    toolchain.
+    Descriptors supply Kotlin and Swift; builtin language markers supply the
+    other toolchains. Python alone keeps its existing default harness.
     """
     try:
         # Lazy: the descriptors are a vendored drop that a consumer may not
@@ -171,34 +255,53 @@ def infer_environment(project_dir: Path) -> dict[str, object] | None:
         )
         return None
 
-    for language in getattr(stack, "languages", []) or []:
-        descriptor = resolve_language(str(language))
-        if descriptor is None:
-            continue
-        unit = descriptor.lane("unit")
-        # A lane the descriptor itself marks unavailable is not a verify
-        # command; the descriptor states why, and inventing one would be worse
-        # than leaving it out.
-        verify = (
-            [unit.command]
-            if unit is not None and unit.available and unit.command
-            else []
-        )
-        logger.info(
-            "nix_env: inferred %s environment from the detected stack (%s)",
-            descriptor.name,
-            ", ".join(descriptor.nix_packages),
-        )
-        return {
-            "language": descriptor.name,
-            "provisioning": {"method": "nix", "generated": True},
-            "verify_commands": verify,
-            "network": descriptor.network,
-            "inferred": True,
-        }
-
-    logger.info(
-        "nix_env: no detected language has a descriptor (%s); not inferring",
-        ", ".join(getattr(stack, "languages", []) or []) or "none detected",
+    languages = [str(x) for x in (getattr(stack, "languages", []) or [])]
+    project_dir = Path(project_dir)
+    descriptor = next(
+        (d for d in map(resolve_language, languages) if d is not None), None
     )
-    return None
+    poms, gradle = _scan_java(project_dir)
+    builtins = _builtin_languages(languages, project_dir, poms, gradle)
+
+    if descriptor is not None:
+        primary = descriptor.name
+    elif "python" in languages and builtins:
+        primary = "python"  # keep the pytest harness; builtins ride as packages
+    elif builtins:
+        primary = builtins[0]
+    else:
+        logger.info(
+            "nix_env: no supported language detected (%s)",
+            ", ".join(languages) or "none",
+        )
+        return None
+
+    verify = _verify_commands(descriptor, primary, bool(poms))
+
+    _warn_if_pom_needs_newer_jdk(poms)
+    # Every other detected toolchain rides in as system_packages so gates for all
+    # of them run in one flake. A Gradle-only "java" beside a descriptor language
+    # is that same build (the descriptor ships jdk21 + gradle): skip maven.
+    packages = [
+        name
+        for name in builtins
+        if name != primary and not (name == "java" and descriptor and not poms)
+    ]
+    if "rust" in builtins:
+        packages.append("clippy")
+    if gradle:
+        packages.append("gradle")
+    env: dict[str, object] = {
+        "language": "javascript" if primary == "node" else primary,
+        "provisioning": {
+            "method": "nix",
+            "generated": not (project_dir / _FLAKE).exists(),
+        },
+        "verify_commands": verify,
+        "network": descriptor.network if descriptor is not None else None,
+        "inferred": True,
+    }
+    if packages:
+        env["system_packages"] = packages
+    logger.info("nix_env: inferred %s environment (%s)", primary, ", ".join(packages))
+    return env

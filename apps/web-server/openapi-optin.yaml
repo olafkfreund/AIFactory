@@ -4953,6 +4953,20 @@ components:
           - type: string
           - type: 'null'
           title: Message
+        queued:
+          type: boolean
+          title: Queued
+          default: false
+        overall_progress:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Overall Progress
+        current_subtask:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Current Subtask
       type: object
       required:
       - task_id

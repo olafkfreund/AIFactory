@@ -164,7 +164,7 @@ async def proxy_get_running_tasks(
 ):
     from ..routes.execution import get_running_tasks
 
-    result = await get_running_tasks()
+    result = await get_running_tasks()  # includes kubejob builds (#2144)
     allowed = await accessible_org_ids(request, db)
     if allowed is not None:
         projects = load_projects()
@@ -203,12 +203,9 @@ async def proxy_get_task_logs(
 ):
     from ..routes.tasks import get_task_logs
 
-    # get_task_logs returns the full phase-based log set and has no `tail`
-    # parameter — forwarding tail= raised TypeError → HTTP 500. `tail` is kept
-    # in the proxy signature for client compatibility but intentionally not
-    # forwarded.
-    _ = tail
-    return await get_task_logs(task_id)
+    # `tail` bounds the Job-pod fallback (#2144); the file-based logs are always
+    # returned whole. Clamp here: a direct call skips FastAPI's Query validation.
+    return await get_task_logs(task_id, tail=max(1, min(tail, 500)))
 
 
 @router.get("/tasks/{task_id}/worktree/diff")
