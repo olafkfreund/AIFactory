@@ -70,14 +70,14 @@ def test_running_ids_include_kubejob_builds() -> None:
 
 
 async def test_running_route_lists_kubejob_task(monkeypatch) -> None:
-    monkeypatch.setattr(execution, "get_agent_service", lambda: _service())
+    monkeypatch.setattr(execution, "get_agent_service", _service)
     res = await execution.get_running_tasks()
     assert res.tasks == [TASK]
     assert res.count == 1
 
 
 async def test_status_reports_phase_and_progress(monkeypatch) -> None:
-    monkeypatch.setattr(execution, "get_agent_service", lambda: _service())
+    monkeypatch.setattr(execution, "get_agent_service", _service)
     _progress(
         monkeypatch,
         {
@@ -97,7 +97,7 @@ async def test_status_reports_phase_and_progress(monkeypatch) -> None:
 
 
 async def test_status_running_without_progress_is_starting(monkeypatch) -> None:
-    monkeypatch.setattr(execution, "get_agent_service", lambda: _service())
+    monkeypatch.setattr(execution, "get_agent_service", _service)
     _progress(monkeypatch, None)
     res = await execution.get_task_status(TASK, _access={})
     assert res.phase == "starting"
@@ -129,7 +129,7 @@ async def test_job_log_tail_redacts_and_tails(monkeypatch) -> None:
 
     monkeypatch.setattr(build_log_stream, "tail_job_logs", fake_tail)
     monkeypatch.setattr(
-        "server.services.agent_service.get_agent_service", lambda: _service()
+        "server.services.agent_service.get_agent_service", _service
     )
     entries = await tasks_logs._job_log_entries(TASK, 50)
     assert calls == [("factory", "factory-aifactory-demo", 50)]
@@ -160,7 +160,7 @@ async def test_logs_route_falls_back_to_job_pod(monkeypatch, tmp_path: Path) -> 
 
     monkeypatch.setattr(build_log_stream, "tail_job_logs", fake_tail)
     monkeypatch.setattr(
-        "server.services.agent_service.get_agent_service", lambda: _service()
+        "server.services.agent_service.get_agent_service", _service
     )
     res = await tasks_logs.get_task_logs(TASK, _access={}, tail=10)
     assert res["total"] == 1
