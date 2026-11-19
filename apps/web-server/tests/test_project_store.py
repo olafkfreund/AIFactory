@@ -259,3 +259,17 @@ def test_team_membership_validates_role_and_provenance():
         TeamMembership(team_id="t", user_id="u", role="root", provenance="sso")
     with pytest.raises(ValueError):
         TeamMembership(team_id="t", user_id="u", role="member", provenance="ldap")
+
+
+def test_import_with_an_unknown_team_id_falls_back_to_the_default_team(tmp_path):
+    out = tmp_path / "old.json"
+    out.write_text(json.dumps({"a": _entry("/tmp/a", "alpha", team_id="gone-team")}))
+    assert project_store.import_projects_json(out) == 1
+    team = project_registry.load_projects()["a"]["team_id"]
+    assert team and team != "gone-team"
+
+
+def test_cli_import_refuses_a_missing_file(monkeypatch):
+    monkeypatch.setattr("sys.argv", ["project_store", "import", "--overwrite"])
+    with pytest.raises(SystemExit):
+        project_store._main()

@@ -352,7 +352,9 @@ async def _upsert(
             await asyncio.to_thread(_git_remote_identity, path)
         )
     team_id = entry.get("team_id") or (row.team_id if row else None)
-    team_id = team_id or await _default_team(s, org_id)
+    # an exported id may name a team that no longer exists (schema rollback)
+    if not team_id or await s.get(Team, team_id) is None:
+        team_id = await _default_team(s, org_id)
 
     entry.update(org_id=org_id, slug=slug, repo_identity=repo, team_id=team_id)
     blob = _dump({k: v for k, v in entry.items() if k not in _IDENTITY_KEYS})
@@ -564,9 +566,8 @@ def _main() -> None:
     else:
         file = _projects_file()
         if not file.exists():
-            alt = file.with_name(file.name + _IMPORTED_SUFFIX)
-            if args.overwrite and alt.exists():
-                alt.replace(file)
+            # never guess a snapshot: a stale backup would archive newer projects
+            raise SystemExit(f"{file} not found; nothing imported")
         print(f"imported {import_projects_json(overwrite=args.overwrite)} project(s)")
 
 

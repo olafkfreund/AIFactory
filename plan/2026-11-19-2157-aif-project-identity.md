@@ -55,3 +55,4 @@ Code: revert the PR. Data: with the service stopped, `python -m server.project_s
 - Step 5: `GET /projects/by-slug/{slug}` strips `gitToken`/`githubToken` from `settings`. The existing routes return saved settings as before (pre-existing behaviour, unchanged). Spec wording about "responses never include tokens" narrowed to the new fields and endpoint.
 - Step 2: `tests/test_api_key_autonomy_ceiling.py` asserted one hard-coded head; it now asserts a single head with the old revision in its ancestry.
 - Known and unchanged: concurrent `POST /projects` of the same directory can still pass the duplicate-path pre-check in two requests (it could with the JSON file too); a registry-level unique path constraint is a follow-up.
+- Round-2 review: an imported `team_id` naming a missing team falls back to the default team (schema rollback cycle); `import --overwrite` refuses a missing `projects.json` instead of guessing the `.imported` backup.
