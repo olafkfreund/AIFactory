@@ -1,8 +1,20 @@
 ## [Unreleased]
 
+## 3.18.0 - 2026-11-19
+
+Merged to `dev` since 3.17.2.
+
+### Added
+
+- Every project view lives under `/p/:slug`, with a Projects page and a breadcrumb in place of the project selector; old `/console/:projectId` links redirect. (#2159)
+
 ### Changed
 
-- Projects live in the database only: stable `id`, renamable unique `slug`, normalized repo identity, default team per org, `GET /api/projects/by-slug/{slug}`; `DELETE /api/projects/{id}` archives. `projects.json` is imported once and can be exported for rollback. (#2157, Factory#3857)
+- Projects live in the database only: stable `id`, renamable unique `slug`, normalized repo identity, default team per org, `GET /api/projects/by-slug/{slug}`; `DELETE /api/projects/{id}` archives. `projects.json` is imported once and can be exported for rollback. (#2157, Factory#3857, #2163)
+
+### Fixed
+
+- CLI Update/Install goes into a writable prefix and shows real errors; detection prefers the updated copy. (#2161, #2162)
 
 ## 3.17.2 - 2026-11-19
 
