@@ -59,6 +59,17 @@ Codex's plan review found two gaps the spec left open. Approving the plan approv
    - Logs record assistant activity, not its text, so file contents never reach the log.
 6. **`assert_investigation_manifest` raises `ManifestRefused`** (step 4, lead). The module refuses to import under `python -O`, because its checks are asserts.
 
+7. **CI's code-quality ratchet applies to every new file** (`.github/workflows/cq-ratchet.yml`): strict ruff (`standards/ruff.toml`) and `mypy --strict` (`standards/mypy.ini`) on `apps/backend/*.py`, `apps/web-server/*.py` and `scripts/*.py`. A new file must have 0 findings. The pre-commit hook gates only `apps/backend`, so the web-server files from steps 1 to 4 (68 ruff findings) passed the hook, but CI would fail them.
+   - **Step 9 gains** an explicit pass over every new and changed file:
+
+     ```bash
+     PATH=apps/backend/.venv/bin:$PATH apps/backend/.venv/bin/python scripts/cq_ratchet.py --base origin/dev --ruff apps/backend/.venv/bin/ruff --config standards/ruff.toml --paths 'apps/backend/*.py' 'apps/web-server/*.py' 'scripts/*.py'
+     PATH=apps/backend/.venv/bin:$PATH apps/backend/.venv/bin/python scripts/cq_ratchet.py --tool mypy --base origin/dev --mypy apps/backend/.venv/bin/mypy --config standards/mypy.ini --paths 'apps/backend/*.py' 'apps/web-server/*.py' 'scripts/*.py'
+     ```
+
+     Both must report 0 regressed.
+   - **Steps 5 and 6** run the same ratchet on their own files before they hand back.
+
 ## Decisions carried over (approved intent and spec)
 
 ### Separation of duties
