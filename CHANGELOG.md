@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+## 3.17.2 - 2026-11-19
+
+Merged to `dev` since 3.17.1.
+
+### Fixed
+
+- The task log viewer shows every tool call's input (redacted) instead of `null`. (#2151, #2152)
+
 ## 3.17.1 - 2026-11-19
 
 Merged to `dev` since 3.17.0.
