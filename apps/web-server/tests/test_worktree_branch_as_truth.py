@@ -36,6 +36,7 @@ _WEB_SERVER = Path(__file__).resolve().parents[1]
 if str(_WEB_SERVER) not in sys.path:
     sys.path.insert(0, str(_WEB_SERVER))
 
+from server.project_registry import save_projects  # noqa: E402
 from server.routes import worktree_merge  # noqa: E402
 from server.services import conflict_service, pr_endgame, task_branch  # noqa: E402
 
@@ -115,12 +116,8 @@ def kubejob_shape(tmp_path: Path) -> dict[str, Path]:
     _git(["commit", "-qm", "the work"], job)
     _git(["push", "-q", "origin", TASK_BRANCH], job)
 
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
-    (data_dir / "projects.json").write_text(
-        json.dumps({PROJECT_ID: {"path": str(project)}})
-    )
-    return {"project": project, "worktree": worktree, "data_dir": data_dir}
+    save_projects({PROJECT_ID: {"path": str(project), "name": PROJECT_ID}})
+    return {"project": project, "worktree": worktree}
 
 
 class _StubConflictService:
@@ -131,14 +128,12 @@ class _StubConflictService:
         return {"success": True, "content": "merged\n"}
 
 
-def test_diff_shows_the_pushed_work(kubejob_shape: dict[str, Path]) -> None:
+@pytest.mark.usefixtures("kubejob_shape")
+def test_diff_shows_the_pushed_work() -> None:
     """THE reviewer surface: /worktree/diff must show the pushed branch's diff."""
-    with patch.object(
-        worktree_merge, "get_data_dir", return_value=kubejob_shape["data_dir"]
-    ):
-        result = asyncio.run(
-            worktree_merge.get_worktree_diff(f"{PROJECT_ID}:{SPEC_ID}", _access={})
-        )
+    result = asyncio.run(
+        worktree_merge.get_worktree_diff(f"{PROJECT_ID}:{SPEC_ID}", _access={})
+    )
 
     assert result["success"], result
     paths = {f["path"] for f in result["data"]["files"]}
@@ -151,13 +146,11 @@ def test_diff_shows_the_pushed_work(kubejob_shape: dict[str, Path]) -> None:
     assert "+print('v2')" in app_diff["diff"]
 
 
-def test_status_reports_the_pushed_work(kubejob_shape: dict[str, Path]) -> None:
-    with patch.object(
-        worktree_merge, "get_data_dir", return_value=kubejob_shape["data_dir"]
-    ):
-        result = asyncio.run(
-            worktree_merge.get_worktree_status(f"{PROJECT_ID}:{SPEC_ID}", _access={})
-        )
+@pytest.mark.usefixtures("kubejob_shape")
+def test_status_reports_the_pushed_work() -> None:
+    result = asyncio.run(
+        worktree_merge.get_worktree_status(f"{PROJECT_ID}:{SPEC_ID}", _access={})
+    )
 
     assert result["success"], result
     data = result["data"]
@@ -170,11 +163,9 @@ def test_status_reports_the_pushed_work(kubejob_shape: dict[str, Path]) -> None:
     assert data["filesChanged"] >= 2
 
 
-def test_merge_preview_shows_the_pushed_work(kubejob_shape: dict[str, Path]) -> None:
+@pytest.mark.usefixtures("kubejob_shape")
+def test_merge_preview_shows_the_pushed_work() -> None:
     with (
-        patch.object(
-            worktree_merge, "get_data_dir", return_value=kubejob_shape["data_dir"]
-        ),
         patch.object(
             conflict_service,
             "get_conflict_service",
@@ -203,14 +194,9 @@ def test_resolve_conflicts_merges_the_pushed_work(
 ) -> None:
     """Pre-fix this merged base into base and reported a clean merge of nothing."""
     project = kubejob_shape["project"]
-    projects_file = kubejob_shape["data_dir"] / "projects.json"
-
-    with patch.object(worktree_merge, "get_projects_file", return_value=projects_file):
-        result = asyncio.run(
-            worktree_merge.resolve_worktree_conflicts(
-                f"{PROJECT_ID}:{SPEC_ID}", _access={}
-            )
-        )
+    result = asyncio.run(
+        worktree_merge.resolve_worktree_conflicts(f"{PROJECT_ID}:{SPEC_ID}", _access={})
+    )
 
     assert result["success"], result
     assert (project / "feature.py").exists(), (
@@ -228,9 +214,6 @@ def test_resolve_uncommitted_sees_the_task_files(
     (project / "app.py").write_text("print('local uncommitted')\n")
 
     with (
-        patch.object(
-            worktree_merge, "get_data_dir", return_value=kubejob_shape["data_dir"]
-        ),
         patch.object(
             conflict_service,
             "get_conflict_service",

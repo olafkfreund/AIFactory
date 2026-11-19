@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from server.error_ref import client_error
-from server.project_registry import get_projects_file, load_projects
+from server.project_registry import load_projects
 from server.pty.access import (
     may_use,
     path_in_project,
@@ -384,10 +384,9 @@ async def clear_terminal_sessions(http_request: Request, project: str | None = N
             dirs_to_clear.append(default_sessions_dir)
 
         # Also try to find project sessions
-        projects_file = get_projects_file()
-        if projects_file.exists():
+        projects_data = load_projects()
+        if projects_data:
             try:
-                projects_data = json.loads(projects_file.read_text())
                 # Handle both dict and list formats
                 if isinstance(projects_data, dict):
                     projects_list = list(projects_data.values())
@@ -401,7 +400,7 @@ async def clear_terminal_sessions(http_request: Request, project: str | None = N
                     sessions_dir = proj_path / ".aifactory" / "terminal-sessions"
                     if sessions_dir.exists():
                         dirs_to_clear.append(sessions_dir)
-            except (json.JSONDecodeError, KeyError):
+            except KeyError:
                 logger.warning(
                     "failed to parse projects data for session cleanup", exc_info=True
                 )
@@ -644,7 +643,7 @@ async def save_terminal_buffer(terminal_id: str, request: dict, http_request: Re
 
         # Determine save directory
         if project_id:
-            # Try to get project path from projects.json
+            # Try to get the registered project path
             projects = load_projects()
             if project_id in projects:
                 project_path = Path(projects[project_id]["path"])

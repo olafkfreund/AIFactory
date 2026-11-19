@@ -7,8 +7,8 @@ so the public path and request/response shapes are unchanged:
 
     POST /{task_id}/worktree/create-pr
 
-The handler depends only on already-extractable collaborators -- ``get_projects_file``
-from ``routes/projects`` (whose ``tasks`` import is lazy, so no module-level cycle),
+The handler depends only on already-extractable collaborators -- ``load_projects``
+from ``server.project_registry``,
 ``require_task_access`` from ``routes/project_authz``, and the ``_get_project_provider``
 / ``_use_provider_api`` / ``run_gh_command`` helpers from ``routes/github`` (imported
 lazily inside the handler). None of those modules import this one, so lifting the
@@ -30,7 +30,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from server.error_ref import client_error
-from server.project_registry import get_projects_file, org_id_for_path
+from server.project_registry import load_projects, org_id_for_path
 from server.services import github_app
 from server.services.approval import find_pr
 from server.services.audit_service import ACTION_TASK_CREATE_PR, audit_task_route
@@ -128,11 +128,9 @@ async def create_pr_from_task(
                 "error": "Task ID must include project ID (format: project_id:spec_id)",
             }
         # Look up project path
-        projects_file = get_projects_file()
-        if not projects_file.exists():
+        projects_data = load_projects()
+        if not projects_data:
             return {"success": False, "error": "Projects file not found"}
-
-        projects_data = json.loads(projects_file.read_text())
 
         # Handle dict format where keys are project IDs
         if isinstance(projects_data, dict):

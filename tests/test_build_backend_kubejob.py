@@ -386,18 +386,14 @@ def test_build_job_env_uses_only_bound_org(
     from server import project_registry
     from server.services import github_app
 
-    registry = tmp_path / "projects.json"
     project = tmp_path / "acme"
     other = tmp_path / "other"
-    registry.write_text(
-        json.dumps(
-            {
-                "a": {"path": str(project), "org_id": "acme"},
-                "b": {"path": str(other), "org_id": "other"},
-            }
-        )
+    project_registry.save_projects(
+        {
+            "a": {"path": str(project), "name": "a", "org_id": "acme"},
+            "b": {"path": str(other), "name": "b", "org_id": "other"},
+        }
     )
-    monkeypatch.setattr(project_registry, "get_projects_file", lambda: registry)
     monkeypatch.setattr(github_app, "multi_installation", lambda: True)
     seen: list[tuple[str | None, int]] = []
 

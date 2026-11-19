@@ -413,9 +413,11 @@ async def test_a_successful_handler_still_answers_200(tmp_path: Path) -> None:
     key at all -- which also covers the third branch of the decorator: a body
     with no verdict in it must be left alone rather than treated as a refusal.
     """
-    (tmp_path / "a.txt").write_text("x")
+    listing = tmp_path / "listing"
+    listing.mkdir()
+    (listing / "a.txt").write_text("x")
     with patch.object(files, "browse_roots", return_value=[tmp_path]):
-        result = await files.list_directory_direct(path=str(tmp_path))
+        result = await files.list_directory_direct(path=str(listing))
     status, payload = verdict(result)
     assert status == 200
     assert [e["name"] for e in payload["entries"]] == ["a.txt"]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -22,8 +23,8 @@ async def test_allowed_project_check_releases_session(
 ) -> None:
     monkeypatch.setattr(project_authz, "_auth_disabled", lambda: False)
     monkeypatch.setattr(
-        "server.project_registry.load_projects",
-        lambda: {"p1": {"org_id": "org-1"}},
+        "server.project_registry.aload_projects",
+        AsyncMock(return_value={"p1": {"org_id": "org-1"}}),
     )
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     try:

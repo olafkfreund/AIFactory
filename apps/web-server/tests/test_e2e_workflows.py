@@ -82,25 +82,6 @@ def mock_project_dir(temp_dir: Path) -> Path:
     return project_dir
 
 
-@pytest.fixture
-def mock_projects_json(temp_dir: Path, mock_project_dir: Path) -> Path:
-    """Create mock projects.json."""
-    projects_file = temp_dir / "projects.json"
-    projects_data = {
-        "projects": [
-            {
-                "id": "test-project-1",
-                "name": "Test Project",
-                "path": str(mock_project_dir),
-                "createdAt": 1704067200000,
-                "updatedAt": 1704067200000,
-            }
-        ]
-    }
-    projects_file.write_text(json.dumps(projects_data, indent=2))
-    return projects_file
-
-
 # ============================================================================
 # WORKFLOW 1: Profile Management
 # ============================================================================
@@ -325,7 +306,7 @@ class TestProjectSetupWorkflow:
         3. Reject registering the same path twice (409)
         4. Update project settings (stored outside the clone, #1795)
         5. Read the project back with merged settings
-        6. Remove the project (unregister only, files stay)
+        6. Archive the project (files stay)
 
         This simulates a new user adding and configuring their first project.
         """

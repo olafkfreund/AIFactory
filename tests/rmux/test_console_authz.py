@@ -106,9 +106,12 @@ def db_factory():
 @pytest.fixture
 def patch_projects(monkeypatch):
     # Project p1 is owned by org-1 (alice's org).
+    async def projects_for_authz():
+        return {"p1": {"org_id": "org-1", "name": "p1"}}
+
     monkeypatch.setattr(
-        "server.project_registry.load_projects",
-        lambda: {"p1": {"org_id": "org-1", "name": "p1"}},
+        "server.project_registry.aload_projects",
+        projects_for_authz,
     )
 
 

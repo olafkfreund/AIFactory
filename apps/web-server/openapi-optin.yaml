@@ -3499,6 +3499,12 @@ components:
           - type: 'null'
           title: Git Url
           description: Git URL to clone (HTTPS or SSH). Triggers the portal-managed clone path.
+        slug:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Slug
+          description: URL slug (lowercase a-z0-9 and '-'); derived from the name when omitted
         branch:
           anyOf:
           - type: string
@@ -3716,6 +3722,26 @@ components:
         BUG-1.2-005: Added notifications field to allow updating notification preferences.
 
         BUG-1.2-003: Added memoryBackend validation.'
+    ProjectUpdate:
+      properties:
+        path:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Path
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
+        slug:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Slug
+      type: object
+      title: ProjectUpdate
+      description: 'Body of ``PUT /projects/{id}``: any of path, name, slug (rename keeps the id).'
     PullModelRequest:
       properties:
         modelName:

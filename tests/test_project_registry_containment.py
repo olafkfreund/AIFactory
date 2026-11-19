@@ -27,7 +27,6 @@ The two halves, and why both are here:
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -39,6 +38,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT / "apps" / "web-server"))
 sys.path.insert(0, str(_ROOT / "apps" / "backend"))
 
+from server.project_registry import load_projects, save_projects  # noqa: E402
 from server.routes.git import (  # noqa: E402
     InitGitRequest,
     check_git_status,
@@ -70,7 +70,7 @@ from server.specpath import browse_roots, registered_project_roots  # noqa: E402
 
 @pytest.fixture
 def registry(tmp_path, monkeypatch):
-    """A realistic pre-change ``projects.json`` on disk, parsed for real.
+    """Two registered projects on distinct paths outside ``$HOME``.
 
     TWO entries, not one, and both **outside** ``$HOME`` — that is the whole
     point of the fixture. The code under test iterates the registry to build
@@ -78,8 +78,7 @@ def registry(tmp_path, monkeypatch):
     apart from "uses the first entry". Two entries on different parents also
     catch a root list that accidentally collapses to a common prefix.
 
-    ``get_projects_file`` is redirected rather than ``load_projects`` mocked,
-    so the JSON is really read and really written back.
+    The DB is seeded through the real registry facade.
     """
     legacy_a = tmp_path / "mnt" / "data" / "code" / "alpha"
     legacy_b = tmp_path / "srv" / "repos" / "beta"
@@ -87,35 +86,28 @@ def registry(tmp_path, monkeypatch):
         (p / "src").mkdir(parents=True)
         (p / "src" / "main.py").write_text("print('hi')\n")
 
-    projects_file = tmp_path / "projects.json"
-    projects_file.write_text(
-        json.dumps(
-            {
-                "proj-alpha": {
-                    "path": str(legacy_a),
-                    "name": "alpha",
-                    "org_id": "default",
-                    "created_at": "2026-01-02T03:04:05",
-                    "updated_at": "2026-01-02T03:04:05",
-                },
-                "proj-beta": {
-                    "path": str(legacy_b),
-                    "name": "beta",
-                    "org_id": "default",
-                    "created_at": "2026-02-03T04:05:06",
-                    "updated_at": "2026-02-03T04:05:06",
-                },
+    save_projects(
+        {
+            "proj-alpha": {
+                "path": str(legacy_a),
+                "name": "alpha",
+                "org_id": "default",
+                "created_at": "2026-01-02T03:04:05",
+                "updated_at": "2026-01-02T03:04:05",
             },
-            indent=2,
-        )
-    )
-    monkeypatch.setattr(
-        "server.project_registry.get_projects_file", lambda: projects_file
+            "proj-beta": {
+                "path": str(legacy_b),
+                "name": "beta",
+                "org_id": "default",
+                "created_at": "2026-02-03T04:05:06",
+                "updated_at": "2026-02-03T04:05:06",
+            },
+        }
     )
     return type(
         "Registry",
         (),
-        {"file": projects_file, "alpha": legacy_a, "beta": legacy_b},
+        {"alpha": legacy_a, "beta": legacy_b},
     )
 
 
@@ -189,7 +181,7 @@ async def test_browse_roots_env_is_the_operator_escape_hatch(
     res = await add_project(ProjectCreate(path=str(sibling)), None, None)
 
     assert res["path"] == str(sibling.resolve())
-    saved = json.loads(registry.file.read_text())
+    saved = load_projects()
     assert len(saved) == 3, "the two pre-existing entries must survive the write"
     assert {e["path"] for e in saved.values()} == {
         str(registry.alpha),
@@ -213,7 +205,7 @@ async def test_add_project_rejects_path_outside_browse_roots(registry, outside):
         await add_project(ProjectCreate(path=str(outside)), None, None)
 
     assert exc.value.status_code == 403
-    assert json.loads(registry.file.read_text()).keys() == {"proj-alpha", "proj-beta"}
+    assert load_projects().keys() == {"proj-alpha", "proj-beta"}
 
 
 async def test_add_project_rejects_traversal_out_of_a_registered_project(
@@ -318,7 +310,7 @@ async def test_add_project_clone_mode_registers_a_normal_repo(registry, workspac
     )
 
     assert res["path"] == str(workspace / "acme-widget")
-    saved = json.loads(registry.file.read_text())
+    saved = load_projects()
     assert str(workspace / "acme-widget") in {e["path"] for e in saved.values()}
 
 
@@ -334,7 +326,7 @@ async def test_add_project_clone_mode_refuses_a_traversal_git_url(registry, work
         await add_project(ProjectCreate(gitUrl="https://example.test/.."), None, None)
 
     assert exc.value.status_code == 400
-    saved = json.loads(registry.file.read_text())
+    saved = load_projects()
     assert saved.keys() == {"proj-alpha", "proj-beta"}
     assert str(workspace.parent) not in {e["path"] for e in saved.values()}
     assert not (workspace.parent / ".git").exists(), "nothing was cloned over it"
@@ -367,7 +359,7 @@ async def test_add_project_clone_mode_confines_whatever_the_clone_returns(
         )
 
     assert exc.value.status_code == 403
-    saved = json.loads(registry.file.read_text())
+    saved = load_projects()
     assert saved.keys() == {"proj-alpha", "proj-beta"}
     assert str(outside) not in {e["path"] for e in saved.values()}
 
@@ -378,7 +370,7 @@ async def test_update_project_cannot_repoint_outside(registry, outside):
         await update_project("proj-alpha", ProjectCreate(path=str(outside)))
 
     assert exc.value.status_code == 403
-    saved = json.loads(registry.file.read_text())
+    saved = load_projects()
     assert saved["proj-alpha"]["path"] == str(registry.alpha)
 
 

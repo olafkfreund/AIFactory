@@ -11,7 +11,6 @@ these tests just verify the FastAPI layer:
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -22,10 +21,12 @@ _WEB_SERVER_DIR = Path(__file__).parent.parent / "apps" / "web-server"
 if str(_WEB_SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(_WEB_SERVER_DIR))
 
+from server.project_registry import save_projects  # noqa: E402
+
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    """A FastAPI TestClient with isolated projects.json + no real creds."""
+    """A FastAPI TestClient with an isolated registry and no real creds."""
     # Isolate projects data dir
     projects_dir = tmp_path / "projects-data"
     projects_dir.mkdir()
@@ -70,12 +71,8 @@ def client(tmp_path, monkeypatch):
     return TestClient(app), projects_dir
 
 
-def _seed_project(projects_dir: Path, project_id: str, project_path: Path) -> None:
-    """Write the projects.json the loader expects."""
-    projects_file = projects_dir / "projects.json"
-    projects_file.write_text(
-        json.dumps({project_id: {"path": str(project_path), "name": "test-project"}})
-    )
+def _seed_project(project_id: str, project_path: Path) -> None:
+    save_projects({project_id: {"path": str(project_path), "name": "test-project"}})
 
 
 def test_404_for_unknown_project(client):
@@ -88,7 +85,7 @@ def test_200_with_full_catalog_for_known_project(client, tmp_path):
     test_client, projects_dir = client
     project_path = tmp_path / "my-project"
     project_path.mkdir()
-    _seed_project(projects_dir, "p1", project_path)
+    _seed_project("p1", project_path)
 
     resp = test_client.get("/api/projects/p1/mcp-status")
     assert resp.status_code == 200
@@ -109,7 +106,7 @@ def test_markers_reflect_filesystem(client, tmp_path):
     project_path = tmp_path / "k8s-project"
     project_path.mkdir()
     (project_path / "charts").mkdir()  # has_kubernetes signal
-    _seed_project(projects_dir, "p2", project_path)
+    _seed_project("p2", project_path)
 
     resp = test_client.get("/api/projects/p2/mcp-status")
     body = resp.json()
@@ -124,7 +121,7 @@ def test_would_enable_requires_creds_AND_markers(client, tmp_path, monkeypatch):
     project_path = tmp_path / "k8s-project"
     project_path.mkdir()
     (project_path / "charts").mkdir()
-    _seed_project(projects_dir, "p3", project_path)
+    _seed_project("p3", project_path)
 
     # No creds set up → kubernetes would_enable should be False
     resp = test_client.get("/api/projects/p3/mcp-status")
@@ -140,7 +137,7 @@ def test_github_is_always_on_marker_wise(client, tmp_path):
     test_client, projects_dir = client
     project_path = tmp_path / "any-project"
     project_path.mkdir()
-    _seed_project(projects_dir, "p4", project_path)
+    _seed_project("p4", project_path)
 
     resp = test_client.get("/api/projects/p4/mcp-status")
     body = resp.json()
