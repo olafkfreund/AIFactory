@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { Routes, Route, Navigate } from 'react-router';
+import { Routes, Route, Navigate, Link, useLocation, useNavigate, useParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { TooltipProvider } from './components/ui/tooltip';
 import { Toaster } from './components/ui/toaster';
@@ -7,6 +7,9 @@ import { Sidebar, type SidebarView } from './components/Sidebar';
 import { CommandPalette, type PaletteCommand, type PaletteTask } from './components/CommandPalette';
 import { apiRequest } from './lib/api-client';
 import { ProjectTabBar } from './components/ProjectTabBar';
+import { ProjectsPage } from './pages/ProjectsPage';
+import { useEnsureProjects } from './hooks/useEnsureProjects';
+import { findProjectByRef, parseRoute, projectPath, projectSlugs } from './lib/project-route';
 import { PipelineBoard } from './components/pipeline/PipelineBoard';
 import { TerminalGrid } from './components/TerminalGrid';
 import { Worktrees } from './components/Worktrees';
@@ -37,7 +40,37 @@ import { useIpcListeners } from './hooks/useIpc';
 import { UI_SCALE_MIN, UI_SCALE_MAX, UI_SCALE_DEFAULT } from './shared/constants';
 import type { Task, Project } from './shared/types';
 
+const RETURN_TO_KEY = 'aif-return-to';
+
+/** Unauthenticated visitor: remember the deep link so login returns to it. */
+function RedirectToLogin() {
+  const { pathname, search } = useLocation();
+  try {
+    if (pathname !== '/' && pathname !== '/login') {
+      sessionStorage.setItem(RETURN_TO_KEY, pathname + search);
+    }
+  } catch {
+    // sessionStorage may be unavailable
+  }
+  return <Navigate to="/login" replace />;
+}
+
+/** Legacy /console/:projectId[/:specId] -> /p/:slug/console[/:specId]. */
+function LegacyConsoleRedirect() {
+  const { projectId, specId } = useParams<{ projectId: string; specId?: string }>();
+  const ready = useEnsureProjects();
+  const projects = useProjectStore((s) => s.projects);
+  if (!ready) return null;
+  const project = projectId ? findProjectByRef(projects, projectId) : undefined;
+  const slug = project ? (projectSlugs(projects).get(project.id) ?? project.id) : projectId;
+  return <Navigate to={`/p/${encodeURIComponent(slug ?? '')}/console${specId ? `/${specId}` : ''}`} replace />;
+}
+
 function AuthenticatedApp() {
+  const navigate = useNavigate();
+  const { pathname, search } = useLocation();
+  const route = useMemo(() => parseRoute(pathname), [pathname]);
+  const [projectsLoaded, setProjectsLoaded] = useState(false);
   // Loading screen state - show for 5 seconds on every page load
   // Stores
   const projects = useProjectStore((state) => state.projects);
@@ -45,9 +78,7 @@ function AuthenticatedApp() {
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
   const openProjectIds = useProjectStore((state) => state.openProjectIds);
   const tabOrder = useProjectStore((state) => state.tabOrder);
-  const openProjectTab = useProjectStore((state) => state.openProjectTab);
   const closeProjectTab = useProjectStore((state) => state.closeProjectTab);
-  const setActiveProject = useProjectStore((state) => state.setActiveProject);
   const isSwitchingProject = useProjectStore((state) => state.isSwitchingProject);
   const tasks = useTaskStore((state) => state.tasks);
   const settings = useSettingsStore((state) => state.settings);
@@ -99,12 +130,57 @@ function AuthenticatedApp() {
     },
     [missionControlId, tasks]
   );
-  const [activeView, setActiveView] = useState<SidebarView>('kanban');
   const [isNewTaskDialogOpen, setIsNewTaskDialogOpen] = useState(false);
   const [isSettingsDialogOpen, setIsSettingsDialogOpen] = useState(false);
   const [isAddProjectModalOpen, setIsAddProjectModalOpen] = useState(false);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+
+  // The URL decides the project (/p/:slug/:view); the saved tab state and
+  // last-selected project only populate tabs, they never override it.
+  const slugs = useMemo(() => projectSlugs(projects), [projects]);
+  const urlProject = route.kind === 'project' ? findProjectByRef(projects, route.ref) : undefined;
+  const urlSlug = urlProject ? slugs.get(urlProject.id) : undefined;
+  const activeView: SidebarView = route.kind === 'project' ? route.view : 'kanban';
+  const navProject = urlProject ?? projects.find((p) => p.id === (activeProjectId || selectedProjectId));
+  const goProject = useCallback((id: string, view?: string) => {
+    const slug = slugs.get(id) ?? id;
+    void navigate(projectPath(slug, view));
+  }, [navigate, slugs]);
+  const setActiveView = useCallback((view: SidebarView) => {
+    if (navProject) goProject(navProject.id, view);
+  }, [navProject, goProject]);
+  const urlProjectId = urlProject?.id;
+  const inSync = !!urlProjectId && activeProjectId === urlProjectId && selectedProjectId === urlProjectId;
+  const selectedProject = inSync ? urlProject : undefined;
+
+  useEffect(() => {
+    if (!projectsLoaded || !urlProjectId) return;
+    const s = useProjectStore.getState();
+    if (s.activeProjectId === urlProjectId && s.selectedProjectId === urlProjectId) return;
+    useTaskStore.getState().clearTasks();
+    s.openProjectTab(urlProjectId);
+    if (useProjectStore.getState().selectedProjectId !== urlProjectId) s.selectProject(urlProjectId);
+  }, [projectsLoaded, urlProjectId, activeProjectId, selectedProjectId]);
+
+  // An id or alias in the URL is rewritten to the canonical slug.
+  useEffect(() => {
+    if (route.kind === 'project' && urlSlug && route.ref !== urlSlug) {
+      void navigate(projectPath(urlSlug, route.view) + search, { replace: true });
+    }
+  }, [route, urlSlug, search, navigate]);
+
+  // Back at "/" after a login that interrupted a deep link: go there once.
+  useEffect(() => {
+    if (route.kind !== 'home' || pathname !== '/') return;
+    try {
+      const to = sessionStorage.getItem(RETURN_TO_KEY);
+      sessionStorage.removeItem(RETURN_TO_KEY);
+      if (to?.startsWith('/') && !to.startsWith('//')) void navigate(to, { replace: true });
+    } catch {
+      // sessionStorage may be unavailable
+    }
+  }, [route.kind, pathname, navigate]);
 
   // Command palette (⌘K / Ctrl-K): jump to any view or task, run actions.
   useEffect(() => {
@@ -137,12 +213,19 @@ function AuthenticatedApp() {
       keywords: v.id,
       run: () => { setActiveView(v.id); },
     }));
+    const switchProject: PaletteCommand[] = projects.map((p) => ({
+      id: `project-${p.id}`,
+      group: 'Go to',
+      label: `Switch project: ${p.name}`,
+      keywords: `project switch ${slugs.get(p.id) ?? ''}`,
+      run: () => { goProject(p.id); },
+    }));
     const actions: PaletteCommand[] = [
       { id: 'act-new-task', group: 'Actions', label: 'New task', keywords: 'create add build', run: () => { setIsNewTaskDialogOpen(true); } },
       { id: 'act-settings', group: 'Actions', label: 'Open settings', keywords: 'preferences config theme', run: () => { setIsSettingsDialogOpen(true); } },
     ];
-    return [...nav, ...actions];
-  }, []);
+    return [...nav, ...switchProject, ...actions];
+  }, [projects, slugs, goProject, setActiveView]);
 
   // Federated fleet search (#149): the cockpit aggregates every portal's work
   // and exposes a ranked /api/search; this portal proxies it same-origin
@@ -166,8 +249,6 @@ function AuthenticatedApp() {
     }));
   }, []);
 
-  const selectedProject = projects.find((p) => p.id === (activeProjectId || selectedProjectId));
-
   // Compute project name for loading modal
   const switchingProjectName = useMemo(() => {
     if (!isSwitchingProject || !activeProjectId) return undefined;
@@ -176,7 +257,7 @@ function AuthenticatedApp() {
 
   // Initial load
   useEffect(() => {
-    loadProjects();
+    void loadProjects().finally(() => { setProjectsLoaded(true); });
     loadSettings();
   }, []);
 
@@ -320,7 +401,7 @@ function AuthenticatedApp() {
 
   const handleProjectAdded = (project: Project, needsInit: boolean) => {
     console.log('[Web] Project added:', project.name, 'needs init:', needsInit);
-    // Optionally navigate to the project or show init dialog
+    goProject(project.id);
   };
 
   // Handler for opening inbuilt terminal with specific working directory
@@ -334,7 +415,7 @@ function AuthenticatedApp() {
     });
     // Switch to terminals view to show the new terminal
     setActiveView('terminals');
-  }, []);
+  }, [setActiveView]);
 
   return (
     <TooltipProvider>
@@ -358,45 +439,58 @@ function AuthenticatedApp() {
             <ProjectTabBar
               projects={openProjects}
               activeProjectId={activeProjectId}
-              onProjectSelect={(projectId) => {
-                setActiveProject(projectId);
-                // Also update selectedProjectId so components use the correct project context
-                useProjectStore.getState().selectProject(projectId);
+              // Tab clicks navigate; the URL effect makes the store follow.
+              onProjectSelect={(projectId) => { goProject(projectId, route.kind === 'project' ? route.view : undefined); }}
+              onProjectClose={(projectId) => {
+                // Closing the project the URL shows must move the URL, or the
+                // URL effect would reopen the tab.
+                if (urlProjectId === projectId) {
+                  const next = openProjects.find((p) => p.id !== projectId);
+                  void navigate(next ? projectPath(slugs.get(next.id) ?? next.id) : '/');
+                }
+                closeProjectTab(projectId);
               }}
-              onProjectClose={(projectId) => { closeProjectTab(projectId); }}
-              onAddProject={handleAddProject}
-              onProjectAdded={handleProjectAdded}
+              currentSlug={urlSlug}
+              onViewAllProjects={() => { void navigate('/projects'); }}
               onSettingsClick={() => { setIsSettingsDialogOpen(true); }}
               onOpenOnboarding={() => { setIsOnboardingOpen(true); }}
             />
 
             <main className="flex-1 overflow-hidden">
-              {selectedProject ? (
+              {route.kind === 'project' && urlProject && (
+                /* TerminalGrid stays mounted across project switches to preserve xterm instances and PTY connections */
+                <div className={activeView === 'terminals' ? 'h-full' : 'hidden'}>
+                  <TerminalGrid
+                    projectPath={urlProject.path}
+                    onNewTaskClick={() => { setIsNewTaskDialogOpen(true); }}
+                    isActive={activeView === 'terminals'}
+                  />
+                </div>
+              )}
+              {route.kind === 'project' && !urlProject && projectsLoaded && (
+                <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
+                  <p>Project not found: <code className="text-xs">{route.ref}</code></p>
+                  <Link to="/" className="text-sm underline">Back to my projects</Link>
+                </div>
+              )}
+              {selectedProject && (
                 <>
                   {activeView === 'kanban' && (
                     <PipelineBoard
                       tasks={tasks}
                       onTaskClick={handleTaskClick}
                       onNewTaskClick={() => { setIsNewTaskDialogOpen(true); }}
-                      isInitialized={!!selectedProject?.autoBuildPath}
+                      isInitialized={!!selectedProject.autoBuildPath}
                     />
                   )}
-                  {/* TerminalGrid stays mounted but hidden to preserve xterm instances and PTY connections */}
-                  <div className={activeView === 'terminals' ? 'h-full' : 'hidden'}>
-                    <TerminalGrid
-                      projectPath={selectedProject?.path}
-                      onNewTaskClick={() => { setIsNewTaskDialogOpen(true); }}
-                      isActive={activeView === 'terminals'}
-                    />
-                  </div>
                   {activeView === 'editor' && (
-                    <EditorPage projectPath={selectedProject?.path} />
+                    <EditorPage projectPath={selectedProject.path} />
                   )}
                   {activeView === 'worktrees' && (
-                    <Worktrees projectId={selectedProject?.id || ''} />
+                    <Worktrees projectId={selectedProject.id} />
                   )}
                   {activeView === 'context' && (
-                    <Context projectId={selectedProject?.id || ''} />
+                    <Context projectId={selectedProject.id} />
                   )}
                   {activeView === 'github-issues' && (
                     <GitHubIssues
@@ -415,19 +509,26 @@ function AuthenticatedApp() {
                   )}
                   {activeView === 'changelog' && <Changelog />}
                   {activeView === 'insights' && (
-                    <Insights projectId={selectedProject?.id || ''} onNavigate={setActiveView} />
+                    <Insights projectId={selectedProject.id} onNavigate={setActiveView} />
                   )}
                   {activeView === 'agent-tools' && <AgentTools />}
                   {activeView === 'skills' && <SkillsPage />}
                 </>
-              ) : (
+              )}
+              {route.kind === 'projects' && (
+                <ProjectsPage
+                  projects={projects}
+                  slugs={slugs}
+                  onAdd={handleAddProject}
+                  onOpen={(p) => { goProject(p.id); }}
+                />
+              )}
+              {route.kind === 'home' && (
                 <WelcomeScreen
                   projects={projects}
                   onNewProject={handleAddProject}
                   onOpenProject={handleAddProject}
-                  onSelectProject={(projectId) => {
-                    openProjectTab(projectId);
-                  }}
+                  onSelectProject={(projectId) => { goProject(projectId); }}
                 />
               )}
             </main>
@@ -553,18 +654,27 @@ export default function App() {
       {/* Standalone Live Agent Console — shareable deep link.  Bypasses
           the portal's sidebar + tab bar so the URL can be copied,
           opened on a phone, sent to a teammate over a VPN, etc. */}
+      {/* Standalone Live Agent Console under the project URL. */}
+      <Route
+        path="/p/:slug/console/:specId"
+        element={isAuthenticated ? <ConsolePage /> : <RedirectToLogin />}
+      />
+      <Route
+        path="/p/:slug/console"
+        element={isAuthenticated ? <ConsoleGridPage /> : <RedirectToLogin />}
+      />
+      {/* Legacy console links redirect to the /p/:slug form. */}
       <Route
         path="/console/:projectId/:specId"
-        element={isAuthenticated ? <ConsolePage /> : <Navigate to="/login" replace />}
+        element={isAuthenticated ? <LegacyConsoleRedirect /> : <RedirectToLogin />}
       />
-      {/* Multi-agent grid: every active console for a project at once. */}
       <Route
         path="/console/:projectId"
-        element={isAuthenticated ? <ConsoleGridPage /> : <Navigate to="/login" replace />}
+        element={isAuthenticated ? <LegacyConsoleRedirect /> : <RedirectToLogin />}
       />
       <Route
         path="/*"
-        element={isAuthenticated ? <AuthenticatedApp /> : <Navigate to="/login" replace />}
+        element={isAuthenticated ? <AuthenticatedApp /> : <RedirectToLogin />}
       />
     </Routes>
   );

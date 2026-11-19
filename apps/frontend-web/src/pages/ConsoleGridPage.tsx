@@ -4,13 +4,15 @@ import { ArrowLeft, Maximize2, MonitorPlay } from 'lucide-react';
 import { AgentConsole } from '../components/task-detail/AgentConsole';
 import { useProjectStore } from '../stores/project-store';
 import { useTaskStore, loadTasks } from '../stores/task-store';
+import { useEnsureProjects } from '../hooks/useEnsureProjects';
+import { findProjectByRef, projectSlug } from '../lib/project-route';
 
 /**
  * Standalone deep-link page showing EVERY active agent's Live Console for a
  * project at once, in a responsive grid — the multi-agent counterpart to the
  * single-task ``/console/:projectId/:specId`` page.
  *
- * URL pattern: ``/console/:projectId``
+ * URL pattern: ``/p/:slug/console`` (legacy ``/console/:projectId`` redirects here)
  *
  *   https://aifactory.example.com/console/ac62db91-...
  *
@@ -20,8 +22,11 @@ import { useTaskStore, loadTasks } from '../stores/task-store';
  * the whole fleet build.
  */
 export function ConsoleGridPage(): ReactNode {
-  const { projectId } = useParams<{ projectId: string }>();
-  const project = useProjectStore((s) => s.projects.find((p) => p.id === projectId));
+  const { slug } = useParams<{ slug: string }>();
+  useEnsureProjects();
+  const projects = useProjectStore((s) => s.projects);
+  const project = slug ? findProjectByRef(projects, slug) : undefined;
+  const projectId = project?.id ?? slug;
   const tasks = useTaskStore((s) => s.tasks);
 
   useEffect(() => {
@@ -44,7 +49,7 @@ export function ConsoleGridPage(): ReactNode {
       <div className="flex h-screen items-center justify-center text-muted-foreground">
         <p>
           Invalid console URL. Expected{' '}
-          <code className="text-xs bg-muted px-1 rounded">/console/&lt;projectId&gt;</code>.
+          <code className="text-xs bg-muted px-1 rounded">/p/&lt;project&gt;/console</code>.
         </p>
       </div>
     );
@@ -100,7 +105,7 @@ export function ConsoleGridPage(): ReactNode {
                     {task.specId}
                   </code>
                   <Link
-                    to={`/console/${task.projectId}/${task.specId}`}
+                    to={`/p/${project ? projectSlug(projects, project) : task.projectId}/console/${task.specId}`}
                     className="ml-auto shrink-0 text-muted-foreground hover:text-foreground"
                     title="Open this console fullscreen"
                   >
