@@ -106,7 +106,9 @@ def test_import_preserves_ids_is_idempotent_and_renames_the_file():
     assert {loaded["id-1"]["slug"], loaded["id-2"]["slug"]} == {"one", "one-2"}
     assert not f.exists() and f.with_name("projects.json.imported").exists()
     # a second file with an old and a new id: only the new one is added
-    f.write_text(json.dumps({"id-1": _entry("/tmp/CHANGED"), "id-3": _entry("/tmp/three")}))
+    f.write_text(
+        json.dumps({"id-1": _entry("/tmp/CHANGED"), "id-3": _entry("/tmp/three")})
+    )
     reg.load_projects()
     after = reg.load_projects()
     assert set(after) == {"id-1", "id-2", "id-3"}

@@ -93,13 +93,17 @@ def configure(
 
 def _url() -> str:
     return (
-        _cfg["url"] or os.environ.get("AIFACTORY_REGISTRY_URL") or _db_engine.DATABASE_URL
+        _cfg["url"]
+        or os.environ.get("AIFACTORY_REGISTRY_URL")
+        or _db_engine.DATABASE_URL
     )
 
 
 def _create_schema() -> bool:
     # Tests only: production schema comes from alembic.
-    return bool(_cfg["create_schema"] or os.environ.get("AIFACTORY_REGISTRY_CREATE_SCHEMA"))
+    return bool(
+        _cfg["create_schema"] or os.environ.get("AIFACTORY_REGISTRY_CREATE_SCHEMA")
+    )
 
 
 def _projects_file() -> Path:

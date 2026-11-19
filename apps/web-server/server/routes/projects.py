@@ -25,10 +25,13 @@ from server.error_ref import InputRejectedError, client_error
 # call sites unchanged -- and so `patch("server.routes.projects.load_projects")`
 # still works for tests that drive THIS module's handlers.
 from server.project_registry import (
+    aload_projects,
+    asave_projects,
     load_projects,
     overlaps_other_org,
     save_projects,
 )
+from server.project_store import SlugConflict, aarchive_project
 from server.services import github_app, project_settings_store
 from server.services.audit_service import ACTION_TASK_CREATE, audit_task_action
 from server.services.http_verdict import honest_status
@@ -57,11 +60,45 @@ from ..tenancy import (
     stamp_spec_tenant,
 )
 from . import changelog, context, files, git, github
-from .project_authz import require_project_access
+from .project_authz import (
+    accessible_org_ids,
+    authorize_project_for_user,
+    require_project_access,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+# Registered before the ``/{projectId}/...`` sub-routers so a project whose slug
+# equals one of their path segments (``github``, ``files``) cannot be shadowed.
+@router.get("/by-slug/{slug}")
+async def get_project_by_slug(
+    slug: str,
+    request: Request,
+    org_id: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Resolve a slug among the projects the caller can see, then authorize it."""
+    items = await _visible_projects(request, db)
+    hits = [(pid, p) for pid, p in items if p.get("slug") == slug]
+    if org_id:
+        hits = [(pid, p) for pid, p in hits if p.get("org_id") == org_id]
+    if not hits:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
+        )
+    if len(hits) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Slug exists in several organizations; pass org_id",
+        )
+    pid, data = hits[0]
+    user = getattr(request.state, "user", None)
+    await authorize_project_for_user(user, pid, db, "viewer")
+    return project_to_response(pid, data)
+
 
 # Include project-specific sub-routers
 # These will be available under /api/projects/{projectId}/...
@@ -124,6 +161,10 @@ class ProjectCreate(BaseModel):
         alias="git_url",
         description="Git URL to clone (HTTPS or SSH). Triggers the portal-managed clone path.",
     )
+    slug: str | None = Field(
+        None,
+        description="URL slug (lowercase a-z0-9 and '-'); derived from the name when omitted",
+    )
     branch: str | None = Field(
         None,
         description="Branch to checkout after clone. Defaults to the remote's HEAD.",
@@ -185,6 +226,20 @@ class ProjectCreate(BaseModel):
             raise ValueError(
                 "'path' and 'gitUrl' are mutually exclusive — provide one or the other"
             )
+        return self
+
+
+class ProjectUpdate(BaseModel):
+    """Body of ``PUT /projects/{id}``: any of path, name, slug (rename keeps the id)."""
+
+    path: str | None = None
+    name: str | None = None
+    slug: str | None = None
+
+    @model_validator(mode="after")
+    def _require_a_change(self):
+        if not (self.path or self.name or self.slug):
+            raise ValueError("Provide at least one of 'path', 'name' or 'slug'")
         return self
 
 
@@ -333,6 +388,9 @@ def project_to_response(project_id: str, project_data: dict) -> dict:
         "updatedAt": project_data.get("updated_at", datetime.now(UTC).isoformat()),
         "autoBuildPath": auto_build_path,
         "settings": default_settings,
+        "slug": project_data.get("slug"),
+        "teamId": project_data.get("team_id"),
+        "repoIdentity": project_data.get("repo_identity"),
     }
 
 
@@ -368,22 +426,13 @@ async def _resolve_git_credential(cred_id: str) -> tuple[str, str] | None:
     return None
 
 
-@router.get("")
-async def list_projects(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-):
-    """List registered projects visible to the caller (#319).
-
-    Service principal (local UI / M2M) sees all; a human user sees only
-    projects owned by an org they belong to. Returns the array directly
-    (the frontend api-client.ts adds the {success, data} wrapper).
-    """
-    from .project_authz import accessible_org_ids
-
-    projects = load_projects()
+async def _visible_projects(
+    request: Request, db: AsyncSession
+) -> list[tuple[str, dict]]:
+    """Active projects the caller may see (org filter, then tenant filter)."""
+    projects = await aload_projects()
     allowed = await accessible_org_ids(request, db)
-    items = projects.items()
+    items = list(projects.items())
     if allowed is not None:
         items = [(pid, p) for pid, p in items if p.get("org_id") in allowed]
     # Multi-tenancy (#925): scope to the caller's tenant when the flag is on;
@@ -395,6 +444,21 @@ async def list_projects(
             for pid, p in items
             if (p.get("tenant_id") or DEFAULT_TENANT) == tenant
         ]
+    return items
+
+
+@router.get("")
+async def list_projects(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """List registered projects visible to the caller (#319).
+
+    Service principal (local UI / M2M) sees all; a human user sees only
+    projects owned by an org they belong to. Returns the array directly
+    (the frontend api-client.ts adds the {success, data} wrapper).
+    """
+    items = await _visible_projects(request, db)
     return [project_to_response(pid, pdata) for pid, pdata in items]
 
 
@@ -585,6 +649,15 @@ async def scan_for_projects(request: ScanProjectsRequest):
         )
 
 
+def _slug_error(exc: SlugConflict) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST
+        if exc.invalid
+        else status.HTTP_409_CONFLICT,
+        detail=str(exc),
+    )
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def add_project(
     project: ProjectCreate,
@@ -689,7 +762,7 @@ async def add_project(
             )
 
     # Check if already registered
-    projects = load_projects()
+    projects = await aload_projects()
     _refuse_registered(projects, project_path)
 
     # Create project entry
@@ -713,9 +786,14 @@ async def add_project(
         project_data["clonedFrom"] = project.gitUrl
         if project.branch:
             project_data["clonedBranch"] = project.branch
+    if project.slug:
+        project_data["slug"] = project.slug
 
     projects[project_id] = project_data
-    save_projects(projects)
+    try:
+        await asave_projects(projects)
+    except SlugConflict as e:
+        raise _slug_error(e) from e
 
     response = project_to_response(project_id, project_data)
     if created_directory:
@@ -742,7 +820,7 @@ async def get_project(
 @router.put("/{project_id}")
 async def update_project(
     project_id: str,
-    project: ProjectCreate,
+    project: ProjectUpdate,
     _access: dict = Depends(require_project_access("member")),
 ):
     """Update a project's metadata."""
@@ -773,11 +851,16 @@ async def update_project(
 
     if project.name:
         project_data["name"] = project.name
+    if project.slug:
+        project_data["slug"] = project.slug
 
     project_data["updated_at"] = datetime.now(UTC).isoformat()
 
     projects[project_id] = project_data
-    save_projects(projects)
+    try:
+        save_projects(projects)
+    except SlugConflict as e:
+        raise _slug_error(e) from e
 
     return project_to_response(project_id, project_data)
 
@@ -787,16 +870,27 @@ async def remove_project(
     project_id: str,
     _access: dict = Depends(require_project_access("admin")),
 ):
-    """Remove a project (unregister, does not delete files)."""
-    projects = load_projects()
+    """Archive a project: it leaves every list and lookup, files and history stay."""
+    projects = await aload_projects()
     if project_id not in projects:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Project not found",
         )
 
-    del projects[project_id]
-    save_projects(projects)
+    from server.services.agent_service import get_agent_service  # noqa: PLC0415
+
+    running = [
+        t
+        for t in get_agent_service().get_running_task_ids()
+        if t.startswith(f"{project_id}:")
+    ]
+    if running:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Project has {len(running)} running task(s); stop them first",
+        )
+    await aarchive_project(project_id)
 
 
 @router.post("/{project_id}/initialize")
