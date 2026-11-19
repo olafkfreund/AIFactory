@@ -14,10 +14,13 @@ from typing import Any
 from sqlalchemy import delete, select, update as sa_update
 from sqlalchemy.exc import IntegrityError
 
+from server.database.engine import async_session_factory
+from server.database.models import Investigation, InvestigationLog
+
 MAX_LOG_LIMIT = 500
 
 
-class SlotTaken(Exception):
+class SlotTaken(Exception):  # noqa: N818 - Public exception name used by callers.
     """The project already has a run whose pods are not confirmed gone."""
 
 
@@ -28,15 +31,11 @@ def _now() -> datetime:
 class InvestigationStore:
     def __init__(self, session_factory: Any = None) -> None:
         if session_factory is None:
-            from ..database.engine import async_session_factory
-
             session_factory = async_session_factory
         self._session_factory = session_factory
 
     async def insert(self, **fields: Any) -> Any:
         """Insert a run; raises ``SlotTaken`` when the project's slot is held."""
-        from ..database.models import Investigation
-
         async with self._session_factory() as session:
             session.add(Investigation(**fields))
             try:
@@ -49,8 +48,6 @@ class InvestigationStore:
             return await session.get(Investigation, fields["id"])
 
     async def get(self, run_id: str) -> Any | None:
-        from ..database.models import Investigation
-
         async with self._session_factory() as session:
             return await session.get(Investigation, run_id)
 
@@ -62,8 +59,6 @@ class InvestigationStore:
         None when the id does not exist. ``update(..., session=session)``
         writes inside the same transaction.
         """
-        from ..database.models import Investigation
-
         async with self._session_factory() as session:
             stmt = select(Investigation).where(Investigation.id == run_id)
             if session.bind.dialect.name != "sqlite":
@@ -77,8 +72,6 @@ class InvestigationStore:
             await session.commit()
 
     async def update(self, run_id: str, *, session: Any = None, **fields: Any) -> None:
-        from ..database.models import Investigation
-
         stmt = (
             sa_update(Investigation).where(Investigation.id == run_id).values(**fields)
         )
@@ -90,8 +83,6 @@ class InvestigationStore:
             await own.commit()
 
     async def append_logs(self, run_id: str, lines: list[str]) -> None:
-        from ..database.models import InvestigationLog
-
         if not lines:
             return
         now = _now()
@@ -105,8 +96,6 @@ class InvestigationStore:
         self, run_id: str, after: int = 0, limit: int = 100
     ) -> dict[str, Any]:
         """``{entries:[{seq,at,line}], cursor}``; cursor is ``after`` when idle."""
-        from ..database.models import InvestigationLog
-
         limit = max(1, min(limit, MAX_LOG_LIMIT))
         async with self._session_factory() as session:
             rows = (
@@ -130,8 +119,6 @@ class InvestigationStore:
 
     async def live_runs(self, limit: int = 50) -> list[Any]:
         """Runs whose pods are not confirmed gone, oldest first."""
-        from ..database.models import Investigation
-
         async with self._session_factory() as session:
             return list(
                 (
@@ -146,8 +133,6 @@ class InvestigationStore:
 
     async def purge_logs(self, older_than: datetime) -> int:
         """Delete log rows of runs that ended before ``older_than``."""
-        from ..database.models import Investigation, InvestigationLog
-
         async with self._session_factory() as session:
             res = await session.execute(
                 delete(InvestigationLog).where(

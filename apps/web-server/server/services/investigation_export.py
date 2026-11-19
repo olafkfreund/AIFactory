@@ -65,7 +65,7 @@ def _excluded(path: PurePosixPath, patterns: tuple[str, ...]) -> bool:
     return False
 
 
-def export(
+def export(  # noqa: PLR0912, PLR0915 - Keep archive safety checks in one guarded cleanup scope.
     repo_path: str | Path,
     sha: str,
     dest: str | Path,
@@ -98,7 +98,7 @@ def export(
         repo_path, child_env(extra={"GIT_TERMINAL_PROMPT": "0"})
     ) as env:
         try:
-            fetched = subprocess.run(
+            fetched = subprocess.run(  # noqa: S603 - Fixed git argv with validated SHA.
                 [*git, "fetch", "--no-tags", "origin", sha],
                 env=env,
                 capture_output=True,
@@ -116,13 +116,14 @@ def export(
     size = 0
     symlinks: list[tuple[Path, str]] = []
     try:
-        process = subprocess.Popen(
+        process = subprocess.Popen(  # noqa: S603 - Fixed git argv with validated SHA.
             [*git, "archive", "--format=tar", sha],
             env=child_env(extra={"GIT_TERMINAL_PROMPT": "0"}),
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
         )
-        assert process.stdout is not None
+        if process.stdout is None:
+            raise ExportError("archive stdout unavailable")
         with tarfile.open(fileobj=process.stdout, mode="r|") as archive:
             for member in archive:
                 path = PurePosixPath(member.name)
@@ -152,7 +153,7 @@ def export(
         if process.wait(timeout=300):
             raise ExportError("archive failed")
         for target, link in symlinks:
-            if not link or os.path.isabs(link):
+            if not link or Path(link).is_absolute():
                 continue
             resolved = (target.parent / link).resolve()
             if not resolved.is_relative_to(temporary):

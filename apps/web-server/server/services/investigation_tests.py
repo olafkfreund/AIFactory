@@ -19,7 +19,7 @@ _SUREFIRE = re.compile(
 )
 
 
-def parse(log_text: str, truncated: bool) -> dict[str, int] | dict[str, bool]:
+def parse(log_text: str, truncated: bool) -> dict[str, int] | dict[str, bool]:  # noqa: PLR0912 - Runner formats need distinct checks.
     """Return passed/failed/skipped counts, or mark unrecognized output."""
     lines = log_text.splitlines()
     for line in reversed(lines):

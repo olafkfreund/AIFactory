@@ -25,13 +25,11 @@ def scrub_lines(
 ) -> tuple[list[str], bool]:
     """Scrub a batch, carrying an unfinished private key into the next batch."""
     clean = []
-    for line in lines:
-        if pem_open or _PEM_BEGIN.search(line):
-            if _PEM_END.search(line):
-                pem_open = False
-            else:
-                pem_open = True
+    for original in lines:
+        if pem_open or _PEM_BEGIN.search(original):
+            pem_open = not bool(_PEM_END.search(original))
             continue
+        line = original
         if claude_token:
             line = line.replace(claude_token, _REDACTED)
         clean.append(_SECRET.sub(_REDACTED, line))
