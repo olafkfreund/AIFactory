@@ -23,6 +23,7 @@ from task_logger import (
     LogEntryType,
     LogPhase,
     TaskLogger,
+    describe_tool_input,
 )
 
 
@@ -325,25 +326,7 @@ class AgentRunner:
         Returns:
             A formatted string for display, or None
         """
-        if not isinstance(inp, dict):
-            return None
-
-        if "pattern" in inp:
-            return f"pattern: {inp['pattern']}"
-        elif "file_path" in inp:
-            fp = inp["file_path"]
-            if len(fp) > 50:
-                fp = "..." + fp[-47:]
-            return fp
-        elif "command" in inp:
-            cmd = inp["command"]
-            if len(cmd) > 50:
-                cmd = cmd[:47] + "..."
-            return cmd
-        elif "path" in inp:
-            return inp["path"]
-
-        return None
+        return describe_tool_input(inp)
 
     @staticmethod
     def _get_tool_detail_content(tool_name: str, result_content: str) -> str | None:
