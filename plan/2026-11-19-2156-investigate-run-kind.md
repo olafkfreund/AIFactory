@@ -53,6 +53,12 @@ Codex's plan review found two gaps the spec left open. Approving the plan approv
 3. **The export's fetch uses `project_github_env`** (`WS/utils/subprocess_env.py:215`), the existing per-project credential context, instead of `runner_github_env` (step 3, Codex). It is stricter than the plan: the token never enters the child environment.
 4. **The scrubber's base64 rule** requires a digit, an uppercase and a lowercase letter, and no `/` (step 2, lead). Without that, long paths such as Java packages were redacted, and findings lost their `path:line` references.
 
+5. **The step 7 test lives in `tests/test_investigate_agent.py`,** not `apps/backend/tests/`, which is gitignored (`apps/backend/.gitignore:63`). It imports the real SDK past `tests/conftest.py`'s mock and then restores the mock. Lead fixes to step 7:
+   - Grep's `pattern` is a regex and is no longer path-checked; only Glob's `pattern` and Grep's `glob` are.
+   - `setting_sources=[]`, so a repository's own `.claude/` settings, hooks or MCP never load.
+   - Logs record assistant activity, not its text, so file contents never reach the log.
+6. **`assert_investigation_manifest` raises `ManifestRefused`** (step 4, lead). The module refuses to import under `python -O`, because its checks are asserts.
+
 ## Decisions carried over (approved intent and spec)
 
 ### Separation of duties
