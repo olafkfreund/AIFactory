@@ -1,0 +1,49 @@
+---
+status: draft
+issue: 2157
+spec: spec/2026-11-19-2157-aif-project-identity.md
+coders:
+  1: codex   # small tricky pure logic (slug, repo normalization) with table tests
+  2: lead    # schema and migration, kept by the lead
+  3: lead    # store, runner thread, import/export, registry facade
+  4: codex   # contained mechanical edit: nine+ direct projects.json readers -> load_projects()
+  5: lead    # routes and authz wiring
+  6: codex   # contained: port existing tests that wrote projects.json to the DB fixture
+  7: lead    # docs
+reviewers:
+  - codex    # independent read-only review of each draft and the final diff
+---
+
+# Plan: AIFactory project identity registry on the DB (#2157)
+
+Approved decisions (spec): the DB is the only project store, behind the unchanged dict API `load_projects()/save_projects()` in `server/project_registry.py`, implemented by a new `server/project_store.py` (dedicated loop thread plus own async engine, awaitable twins for hot async paths). Rows keep legacy keys losslessly in `projects.settings_json`; columns add `slug`, `repo_identity`, `team_id`, `archived_at`. `save_projects` is upsert-only and writes only entries changed vs the loaded snapshot; removal is `archive_project`. Slug `^[a-z0-9]+(-[a-z0-9]+)*$`, max 64, unique per org, archived slugs reserved, derived base truncated to 56. Repo identity `host/ns/repo`, recorded only. Team/TeamMembership tables, default team per org, no enforcement change. One-off id-preserving import (rename to `.imported`), `export` for rollback, `import --overwrite` to roll forward. Routes keep working and gain `slug`/`teamId`/`repoIdentity`; `GET /projects/by-slug/{slug}`; `DELETE` archives and is 409 while tasks run (`get_running_task_ids()`). Service-principal bypass and the other portals are untouched.
+
+Repo root for all paths: `apps/web-server/`. Traps for every step: use plain names in parenthesised imports (ruff alias-sort disagreement); absolute `server.*` imports, not `..` relative (TID252 ratchet); the pre-commit hook may fail on unrelated collection errors, so run ruff and the ratchet scripts yourself and commit with `--no-verify`; never print tokens.
+
+## Steps
+
+1. New `server/project_identity.py` and `tests/test_project_identity.py`: `derive_slug(name)`, `validate_slug(s)`, `unique_slug(base, taken)` (suffix `-2`, `-3`, keeps total <= 64), `normalize_repo_identity(url)` (https, ssh://, scp-like, credentials/port stripped, `.git` and trailing `/` stripped, lowercase host, nested namespaces kept, None for empty/local paths). Pure, no imports from the package. → `pytest tests/test_project_identity.py`
+   Traps: none beyond the common ones.
+2. `server/database/models.py:295-328` and a new alembic revision `server/database/alembic/versions/20261119_<rev>_project_identity.py` (`down_revision` = current head, re-check after fetch): add `Project.slug` (String 64, nullable), `repo_identity` (String 512, nullable), `team_id` (FK teams.id, nullable), `archived_at` (DateTime, nullable), `UniqueConstraint(org_id, slug)`; new `Team` and `TeamMembership` models and tables per spec; export from `database/__init__.py`. Use `op.batch_alter_table` for SQLite. Add `tests/test_project_identity_migration.py` (upgrade then downgrade on temp SQLite). → `pytest` that file, `alembic heads` single head.
+   Traps: other teams add revisions in parallel; rebase and re-point `down_revision` before the PR. Models file also feeds `Base.metadata` used by env.py.
+3. New `server/project_store.py` and rewire `server/project_registry.py:41-62,149-161`: loop-thread runner, `load_projects` (snapshot-carrying dict subclass, active rows only), `save_projects` (upsert-only, changed-vs-snapshot, org/default-user/default-team ensure, slug/repo_identity derivation, SlugConflict), `archive_project`, `get_project(id, include_archived)`, `aload_projects`/`asave_projects`, `import_projects_json(path, overwrite=False)`, `export_projects_json()`, `__main__` with `export` and `import [--overwrite]`; `seed_tenant_defaults` (`database/engine.py:~330`) runs the import before `_backfill_project_orgs`; `get_projects_file()` stays for the importer only. Add `tests/conftest.py` autouse fixture: per-test temp SQLite URL via `project_store.configure(url, create_schema=True)` (creates only organizations, users, teams, projects), reset on teardown. Add `tests/test_project_store.py` covering the Verification list: round trip with unknown keys, id-preserving idempotent import, export, overwrite, upsert-only, stale-snapshot interleaved save, archive hides, default team, slug rules, no event-loop stall. → `pytest tests/test_project_store.py tests/test_project_registry_org.py`
+   Traps: `project_registry.py` must stay below the routes layer (import only config, tenancy, project_store, project_identity). Do not import `database.engine` in a way that creates a cycle: `engine._backfill_project_orgs` imports the registry lazily.
+4. Switch direct file readers to `load_projects()`: `routes/worktree_merge.py:98,583,1020,1377,1712,1866,2086,2282,2567`, `routes/mcp.py:36-46` (`_load_projects`), `routes/terminal.py:387`, `routes/pr.py:131`. Keep each site's existing dict-vs-list tolerance and error returns. Then `grep -rn "projects.json\|get_projects_file" server --include=*.py` shows only `project_registry.py`/`project_store.py` and comments. → `pytest tests/test_worktree_branch_as_truth.py tests/test_merge_worktree_logger.py tests/test_pr*.py`
+   Traps: `tests/test_route_order_and_project_lookup.py` greps source for forbidden patterns; keep it passing.
+5. `server/routes/projects.py`: `ProjectCreate` gains optional `slug`; `project_to_response` (`:299`) adds `slug`, `teamId`, `repoIdentity`; `GET /by-slug/{slug}` before `/{project_id}` (optional `org_id`, 409 ambiguous, 404, then `require_project_access("viewer")` logic on the resolved id); `PUT` rename with validation (400 invalid, 409 clash); `DELETE` (`:785`) becomes `archive_project` with 409 when `get_agent_service().get_running_task_ids()` has an id prefixed `<project_id>:`; `list_projects` and `add_project` use `aload_projects`/`asave_projects`; `server/routes/project_authz.py:149` uses `aload_projects`. Add `tests/test_projects_registry_api.py` (create writes no projects.json, slug in responses, by-slug 404/403/409, rename 400/409, archive hides and 409 while running on both backends, response has no token keys). Update `openapi.yaml` only if the repo's drift check requires it. → `pytest tests/test_projects_registry_api.py tests/test_authz_releases_session_1963.py`
+   Traps: `patch("server.routes.projects.load_projects")` is used by existing tests; keep `load_projects` imported in that module. Service-principal path in `project_authz.py` unchanged.
+6. Port the tests that wrote `projects.json` or read it back (`tests/test_file_based_endpoints.py`, `test_e2e_workflows.py`, `test_worktree_branch_as_truth.py`, `test_org_installation_wiring.py`, `test_context_memory_status_enabled.py`, `test_refused_merge_is_not_http_200.py`, `test_merge_worktree_logger.py`, `test_approve_fetches_branch.py`, `test_approve_existing_pr.py`, `test_projects_initialize_honest_status.py`, `test_resolve_conflicts_reads_the_commit.py`, `test_project_registry_org.py` and any the full run shows failing) to seed through the DB fixture (a `seed_projects(dict)` helper in `tests/conftest.py`) or by writing the file BEFORE first registry use (the importer picks it up). Behaviour asserted stays the same. → full `pytest apps/web-server/tests`
+   Traps: do not weaken assertions; if a test reads the file back after save, assert via `load_projects()` instead.
+7. `docs/` page `docs/project-registry.md` (what changed, import, rollback with the export/import commands and the stopped-service rule, slug rules) and a `CHANGELOG.md` line. → `mkdocs`/link check only if the repo's CI runs one.
+   Traps: docs lint in CI.
+
+## Tests
+
+- `cd apps/web-server && python -m pytest tests -x -q` all green; new tests fail on `origin/dev` (they need the store).
+- `ruff check` and `ruff format --check` on touched files, the repo ratchet scripts listed in `.github/workflows` and `Justfile`.
+- `alembic heads` is a single head; migration upgrade/downgrade test passes.
+- `codex review --base origin/dev`, then my read against this plan.
+
+## Rollback
+
+Code: revert the PR. Data: with the service stopped, `python -m server.project_store export`, deploy the previous release (it reads `projects.json`); the new columns and tables are additive and ignored by old code; the alembic downgrade drops them. Roll forward again with `python -m server.project_store import --overwrite`.
