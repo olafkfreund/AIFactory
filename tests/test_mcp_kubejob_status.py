@@ -128,9 +128,7 @@ async def test_job_log_tail_redacts_and_tails(monkeypatch) -> None:
         return ["planning started", "token NONCE leaked"]
 
     monkeypatch.setattr(build_log_stream, "tail_job_logs", fake_tail)
-    monkeypatch.setattr(
-        "server.services.agent_service.get_agent_service", _service
-    )
+    monkeypatch.setattr("server.services.agent_service.get_agent_service", _service)
     entries = await tasks_logs._job_log_entries(TASK, 50)
     assert calls == [("factory", "factory-aifactory-demo", 50)]
     assert [e["content"] for e in entries] == ["planning started", "token *** leaked"]
@@ -159,9 +157,7 @@ async def test_logs_route_falls_back_to_job_pod(monkeypatch, tmp_path: Path) -> 
         return ["building"]
 
     monkeypatch.setattr(build_log_stream, "tail_job_logs", fake_tail)
-    monkeypatch.setattr(
-        "server.services.agent_service.get_agent_service", _service
-    )
+    monkeypatch.setattr("server.services.agent_service.get_agent_service", _service)
     res = await tasks_logs.get_task_logs(TASK, _access={}, tail=10)
     assert res["total"] == 1
     assert res["logs"][0]["content"] == "building"
