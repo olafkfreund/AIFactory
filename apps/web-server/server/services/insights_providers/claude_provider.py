@@ -33,7 +33,7 @@ def _cli_model(value: str) -> str:
         from phase_config import resolve_model_id  # noqa: PLC0415
     except ImportError:  # backend not on the path: pass the value through
         return value
-    return resolve_model_id(value)
+    return str(resolve_model_id(value))
 
 
 # Claude models (static — app shorthands, expanded by _cli_model)
