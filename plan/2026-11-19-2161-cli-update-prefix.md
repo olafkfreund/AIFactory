@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2161
 spec: spec/2026-11-19-2161-cli-update-prefix.md
 reviewers:
