@@ -167,3 +167,15 @@ def test_delete_archives_and_blocks_while_running(api, monkeypatch):
     assert project_store.get_project(pid, include_archived=True)["slug"] == "doomed"
     # the slug stays reserved
     assert _make(client, tmp, "doomed").json()["slug"] == "doomed-2"
+
+
+def test_by_slug_never_returns_stored_credentials(api):
+    client, tmp = api
+    pid = _make(client, tmp, "secretive").json()["id"]
+    data = reg.load_projects()
+    data[pid]["settings"] = {"githubToken": "ghp_x", "gitToken": "t", "model": "m"}
+    reg.save_projects(data)
+    body = client.get("/api/projects/by-slug/secretive").json()
+    assert "githubToken" not in body["settings"] and "gitToken" not in body["settings"]
+    assert body["settings"]["model"] == "m"
+    assert "ghp_x" not in client.get("/api/projects/by-slug/secretive").text

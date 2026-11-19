@@ -152,10 +152,10 @@ async def test_add_project_persists_cloned_from(tmp_path, monkeypatch):
 
     captured: dict = {}
 
-    def fake_load_projects():
+    async def fake_load_projects():
         return {}
 
-    def fake_save_projects(data):
+    async def fake_save_projects(data):
         captured["projects"] = data
 
     async def fake_clone(**kwargs):
@@ -172,8 +172,8 @@ async def test_add_project_persists_cloned_from(tmp_path, monkeypatch):
     # `add_project` lives in `routes.projects`, which binds these names in its
     # OWN namespace at import time, so that is where the patch has to land --
     # not on `server.project_registry`, which only the call-time importers read.
-    monkeypatch.setattr("server.routes.projects.load_projects", fake_load_projects)
-    monkeypatch.setattr("server.routes.projects.save_projects", fake_save_projects)
+    monkeypatch.setattr("server.routes.projects.aload_projects", fake_load_projects)
+    monkeypatch.setattr("server.routes.projects.asave_projects", fake_save_projects)
     monkeypatch.setattr(
         "server.services.project_workspace_service.clone_or_update", fake_clone
     )

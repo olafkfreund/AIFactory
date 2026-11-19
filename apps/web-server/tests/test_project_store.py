@@ -171,3 +171,79 @@ def test_aload_does_not_stall_the_event_loop(monkeypatch):
 
     ticks, took = asyncio.run(main())
     assert took >= 0.4 and ticks > 10
+
+
+def test_slug_collision_on_commit_is_rederived_not_treated_as_requested(monkeypatch):
+    from sqlalchemy.exc import IntegrityError
+
+    real = store._upsert
+    calls = {"n": 0}
+
+    async def racing(s, pid, entry, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            await real(s, pid, entry, **kw)
+            # the commit loses: a concurrent create took the slug we derived
+            raise IntegrityError("stmt", {}, Exception("unique"))
+        if calls["n"] == 2:
+            # attempt 2 still sees the old snapshot and loses too; attempt 3 sees it
+            sessions = await store._get_sessions()
+            async with sessions() as other, other.begin():
+                await store._ensure_org(other, "default")
+                other.add(
+                    store.Project(
+                        id="rival",
+                        org_id="default",
+                        name="x",
+                        path="/tmp/x",
+                        slug="alpha",
+                    )
+                )
+        await real(s, pid, entry, **kw)
+
+    monkeypatch.setattr(store, "_upsert", racing)
+    entry = _entry("/tmp/a", "alpha")
+    reg.save_projects({"a": entry})
+    assert entry["slug"] == "alpha-2"
+    assert reg.load_projects()["a"]["slug"] == "alpha-2"
+
+
+def test_overwrite_import_reactivates_an_archived_project(tmp_path):
+    reg.save_projects({"a": _entry("/tmp/a", "alpha")})
+    store.archive_project("a")
+    out = tmp_path / "snap.json"
+    out.write_text(json.dumps({"a": _entry("/tmp/a", "alpha")}))
+    assert store.import_projects_json(out, overwrite=True) == 1
+    assert "a" in reg.load_projects()
+
+
+def test_export_replaces_a_world_readable_file_atomically(tmp_path):
+    reg.save_projects({"a": _entry("/tmp/a", "alpha")})
+    out = tmp_path / "projects.json"
+    out.write_text("{}")
+    out.chmod(0o644)
+    store.export_projects_json(out)
+    assert oct(os.stat(out).st_mode & 0o777) == "0o600"
+    assert set(json.loads(out.read_text())) == {"a"}
+
+
+def test_a_timed_out_write_does_not_land_afterwards():
+    async def slow_write():
+        await asyncio.sleep(0.3)
+        await store._save({"late": _entry("/tmp/late", "late")})
+
+    with pytest.raises(TimeoutError):
+        store._run(slow_write(), timeout=0.05)
+    time.sleep(0.5)
+    assert "late" not in reg.load_projects()
+
+
+def test_team_membership_validates_role_and_provenance():
+    from server.database.models import TeamMembership
+
+    ok = TeamMembership(team_id="t", user_id="u", role="admin", provenance="sso")
+    assert ok.role == "admin"
+    with pytest.raises(ValueError):
+        TeamMembership(team_id="t", user_id="u", role="root", provenance="sso")
+    with pytest.raises(ValueError):
+        TeamMembership(team_id="t", user_id="u", role="member", provenance="ldap")

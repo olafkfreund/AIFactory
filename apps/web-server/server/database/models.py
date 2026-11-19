@@ -21,12 +21,19 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import (
+    DeclarativeBase,
+    Mapped,
+    mapped_column,
+    relationship,
+    validates,
+)
 
 # Re-export under a private alias so the model definitions read cleanly
 # while making it obvious this is the encrypted-at-rest column type
 # (Epic #26 P2). See apps/web-server/server/crypto/.
 from ..crypto.encrypted_string import EncryptedString as _EncryptedString
+from ..utils.roles import ROLE_LEVELS
 
 
 def _generate_uuid() -> str:
@@ -391,6 +398,18 @@ class TeamMembership(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now()
     )
+
+    @validates("role")
+    def _check_role(self, _key: str, role: str) -> str:
+        if role not in ROLE_LEVELS:
+            raise ValueError(f"Unknown team role {role!r}")
+        return role
+
+    @validates("provenance")
+    def _check_provenance(self, _key: str, provenance: str) -> str:
+        if provenance not in ("sso", "manual"):
+            raise ValueError(f"Unknown membership provenance {provenance!r}")
+        return provenance
 
 
 # ---------------------------------------------------------------------------

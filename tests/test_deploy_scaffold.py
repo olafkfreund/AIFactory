@@ -11,10 +11,12 @@ from agents.deploy_scaffold import scaffold_deploy  # noqa: E402
 
 
 def test_no_block_writes_nothing(tmp_path: Path) -> None:
-    assert scaffold_deploy(None, tmp_path) == []
-    assert scaffold_deploy({"deploy_system": "helm"}, tmp_path) == []
-    assert scaffold_deploy({"deploy_system": "none"}, tmp_path) == []
-    assert list(tmp_path.iterdir()) == []
+    output = tmp_path / "output"
+    output.mkdir()
+    assert scaffold_deploy(None, output) == []
+    assert scaffold_deploy({"deploy_system": "helm"}, output) == []
+    assert scaffold_deploy({"deploy_system": "none"}, output) == []
+    assert list(output.iterdir()) == []
 
 
 def test_gcp_scaffold_writes_proven_artifacts(tmp_path: Path) -> None:

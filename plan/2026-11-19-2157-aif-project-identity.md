@@ -47,3 +47,11 @@ Repo root for all paths: `apps/web-server/`. Traps for every step: use plain nam
 ## Rollback
 
 Code: revert the PR. Data: with the service stopped, `python -m server.project_store export`, deploy the previous release (it reads `projects.json`); the new columns and tables are additive and ignored by old code; the alembic downgrade drops them. Roll forward again with `python -m server.project_store import --overwrite`.
+
+## Deviations (recorded during implementation)
+
+- Step 3/6: the test fixture is an autouse `_isolated_project_registry` in both conftests driven by `AIFACTORY_REGISTRY_URL`, `AIFACTORY_REGISTRY_DATA_DIR` and `AIFACTORY_REGISTRY_CREATE_SCHEMA` (read by `project_store`), in a dir outside the test's `tmp_path`; `use_temp_registry` and the `seed_projects` helper were not needed (tests seed through `save_projects`).
+- Step 3: Codex review of the diff: a timed-out sync call now cancels its work; the CLI import has a 600 s deadline; a commit retry re-derives slug/team instead of reusing rolled-back values; `import --overwrite` reactivates archived rows present in the file; export uses `atomic_write_secret_json` (0600, atomic); `TeamMembership` validates role and provenance.
+- Step 5: `GET /projects/by-slug/{slug}` strips `gitToken`/`githubToken` from `settings`. The existing routes return saved settings as before (pre-existing behaviour, unchanged). Spec wording about "responses never include tokens" narrowed to the new fields and endpoint.
+- Step 2: `tests/test_api_key_autonomy_ceiling.py` asserted one hard-coded head; it now asserts a single head with the old revision in its ancestry.
+- Known and unchanged: concurrent `POST /projects` of the same directory can still pass the duplicate-path pre-check in two requests (it could with the JSON file too); a registry-level unique path constraint is a follow-up.

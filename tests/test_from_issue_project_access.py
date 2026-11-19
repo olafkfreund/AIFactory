@@ -86,17 +86,20 @@ def client(tmp_path, monkeypatch):
 
     # CI runs with DISABLE_AUTH=true; these tests are about enforcement.
     monkeypatch.setattr("server.routes.project_authz._auth_disabled", lambda: False)
-    monkeypatch.setattr(
-        "server.project_registry.load_projects",
-        # clonedFrom: the poller declares o/r, which #1900 binds to the project.
-        lambda: {
-            "p1": {
-                "org_id": "org-1",
-                "name": "p1",
-                "clonedFrom": "https://github.com/o/r.git",
-            }
-        },
-    )
+    # clonedFrom: the poller declares o/r, which #1900 binds to the project.
+    projects = {
+        "p1": {
+            "org_id": "org-1",
+            "name": "p1",
+            "clonedFrom": "https://github.com/o/r.git",
+        }
+    }
+
+    async def aload_projects():
+        return projects
+
+    monkeypatch.setattr("server.project_registry.load_projects", lambda: projects)
+    monkeypatch.setattr("server.project_registry.aload_projects", aload_projects)
     monkeypatch.setattr(from_issue, "_resolve_project_path", lambda _pid: tmp_path)
 
     async def _fetch(_pid, number, *, repo_ref=None):

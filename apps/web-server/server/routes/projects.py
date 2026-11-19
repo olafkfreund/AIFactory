@@ -97,7 +97,14 @@ async def get_project_by_slug(
     pid, data = hits[0]
     user = getattr(request.state, "user", None)
     await authorize_project_for_user(user, pid, db, "viewer")
-    return project_to_response(pid, data)
+    body = project_to_response(pid, data)
+    # a new endpoint: never hand stored credentials to a viewer
+    body["settings"] = {
+        k: v
+        for k, v in body["settings"].items()
+        if k not in ("gitToken", "githubToken")
+    }
+    return body
 
 
 # Include project-specific sub-routers

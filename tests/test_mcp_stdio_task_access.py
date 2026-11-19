@@ -60,6 +60,11 @@ async def test_task_write_requires_project_membership(
     monkeypatch.setattr(
         project_registry, "load_projects", lambda: {"p1": {"org_id": "org-a"}}
     )
+
+    async def aload_projects():
+        return {"p1": {"org_id": "org-a"}}
+
+    monkeypatch.setattr(project_registry, "aload_projects", aload_projects)
     monkeypatch.setattr(config.get_settings(), "API_TOKEN", "legacy-test-token")
 
     async def authenticate(header):
@@ -146,6 +151,11 @@ def read_app(monkeypatch):
         "p2": {"org_id": "org-b", "path": "/unused"},
     }
     monkeypatch.setattr(project_registry, "load_projects", lambda: projects)
+
+    async def aload_projects():
+        return projects
+
+    monkeypatch.setattr(project_registry, "aload_projects", aload_projects)
     monkeypatch.setattr(config.get_settings(), "API_TOKEN", "legacy-test-token")
 
     async def authenticate(header):
@@ -302,6 +312,11 @@ async def test_key_bound_to_its_org_even_if_owner_is_member_of_both(monkeypatch)
     monkeypatch.setattr(project_authz, "_auth_disabled", lambda: False)
     projects = {"p1": {"org_id": "org-a"}, "p2": {"org_id": "org-b"}}
     monkeypatch.setattr(project_registry, "load_projects", lambda: projects)
+
+    async def aload_projects():
+        return projects
+
+    monkeypatch.setattr(project_registry, "aload_projects", aload_projects)
     monkeypatch.setattr(stdio_router, "load_projects", lambda: projects)
     monkeypatch.setattr(
         projects_route, "project_to_response", lambda pid, _pdata: {"id": pid}

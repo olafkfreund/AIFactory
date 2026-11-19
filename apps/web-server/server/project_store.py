@@ -47,6 +47,7 @@ from server.config import get_settings
 from server.database import engine as _db_engine
 from server.database.models import Base, Organization, Project, Team, User
 from server.db_pool import pool_kwargs
+from server.paths import atomic_write_secret_json
 from server.project_identity import (
     derive_slug,
     normalize_repo_identity,
@@ -54,6 +55,7 @@ from server.project_identity import (
     validate_slug,
 )
 from server.tenancy import DEFAULT_ORG_ID
+from server.utils.subprocess_env import child_env
 
 logger = logging.getLogger(__name__)
 
@@ -141,9 +143,18 @@ def _submit(coro: Awaitable[T]) -> Any:
     return asyncio.run_coroutine_threadsafe(coro, _ensure_loop())  # type: ignore[arg-type]
 
 
-def _run(coro: Awaitable[T]) -> T:
-    """Run ``coro`` on the registry loop and wait (sync callers)."""
-    return _submit(coro).result(timeout=_CALL_TIMEOUT)
+def _run(coro: Awaitable[T], timeout: float = _CALL_TIMEOUT) -> T:
+    """Run ``coro`` on the registry loop and wait (sync callers).
+
+    On timeout the work is cancelled (its transaction rolls back), so a caller
+    that was told "failed" never has the write land afterwards.
+    """
+    fut = _submit(coro)
+    try:
+        return fut.result(timeout=timeout)
+    except TimeoutError:
+        fut.cancel()
+        raise
 
 
 async def _arun(coro: Awaitable[T]) -> T:
@@ -286,13 +297,16 @@ def _git_remote_identity(path: str) -> str | None:
             text=True,
             timeout=3,
             check=False,
+            env=child_env(),
         )
     except (OSError, subprocess.SubprocessError):
         return None
     return normalize_repo_identity(out.stdout.strip()) if out.returncode == 0 else None
 
 
-async def _upsert(s: AsyncSession, pid: str, entry: dict[str, Any]) -> None:
+async def _upsert(
+    s: AsyncSession, pid: str, entry: dict[str, Any], *, reactivate: bool = False
+) -> None:
     """Insert or update one project; writes identity values back into ``entry``."""
     row = await s.get(Project, pid)
     org_id = entry.get("org_id") or (row.org_id if row else None) or DEFAULT_ORG_ID
@@ -342,6 +356,8 @@ async def _upsert(s: AsyncSession, pid: str, entry: dict[str, Any]) -> None:
     row.org_id, row.name, row.path = org_id, name[:255], path[:1024]
     row.slug, row.repo_identity, row.team_id = slug, repo, team_id
     row.settings_json = blob
+    if reactivate:
+        row.archived_at = None
     await s.flush()
 
 
@@ -349,6 +365,13 @@ async def _save(projects: dict[str, dict[str, Any]]) -> None:
     await _import_pending()
     sessions = await _get_sessions()
     snap = getattr(projects, "_snap", None)
+    # identity values are written back into the entries; a retry must derive them
+    # again (the rolled-back team row, a taken slug), not treat them as requested
+    original = {
+        pid: {k: e[k] for k in _IDENTITY_KEYS if k in e}
+        for pid, e in projects.items()
+        if isinstance(e, dict)
+    }
     for attempt in range(3):
         try:
             async with sessions() as s, s.begin():
@@ -368,6 +391,11 @@ async def _save(projects: dict[str, dict[str, Any]]) -> None:
             # a concurrent create took the derived slug: re-derive and retry
             if attempt == 2:
                 raise
+            for pid, keys in original.items():
+                entry = projects[pid]
+                for k in _IDENTITY_KEYS:
+                    entry.pop(k, None)
+                entry.update(keys)
 
 
 async def _load(include_archived: bool = False) -> list[Project]:
@@ -402,7 +430,7 @@ async def _import_file(file: Path, *, overwrite: bool = False) -> int:
                 continue
             if await s.get(Project, pid) is not None and not overwrite:
                 continue
-            await _upsert(s, pid, dict(entry))
+            await _upsert(s, pid, dict(entry), reactivate=overwrite)
             count += 1
         if overwrite:
             stale = (
@@ -434,8 +462,10 @@ def import_projects_json(
     path: str | Path | None = None, overwrite: bool = False
 ) -> int:
     """Import ``projects.json``: new ids only, unless ``overwrite`` (roll forward)."""
+    # bulk command: every new project may probe its git remote
     return _run(
-        _import_file(Path(path) if path else _projects_file(), overwrite=overwrite)
+        _import_file(Path(path) if path else _projects_file(), overwrite=overwrite),
+        timeout=600,
     )
 
 
@@ -449,9 +479,7 @@ def export_projects_json(path: str | Path | None = None) -> int:
     target = Path(path) if path else _projects_file()
     projects = {pid: dict(p) for pid, p in load_projects().items()}
     target.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as fh:
-        json.dump(projects, fh, indent=2)
+    atomic_write_secret_json(target, projects)
     return len(projects)
 
 
