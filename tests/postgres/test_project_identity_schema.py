@@ -29,8 +29,8 @@ def test_identity_schema_and_slug_unique_per_org(test_postgres_url: str) -> None
             )
         }
         assert {"slug", "repo_identity", "team_id", "archived_at"} <= cols
-        for t in ("teams", "team_memberships"):
-            assert conn.execute(text(f"SELECT count(*) FROM {t}")).scalar() == 0
+        assert conn.execute(text("SELECT count(*) FROM teams")).scalar() == 0
+        assert conn.execute(text("SELECT count(*) FROM team_memberships")).scalar() == 0
         conn.execute(text("DELETE FROM projects WHERE id IN ('pg-i1','pg-i2')"))
         conn.execute(
             text(
