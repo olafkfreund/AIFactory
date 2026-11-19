@@ -1,5 +1,15 @@
 ## [Unreleased]
 
+## 3.17.1 - 2026-11-19
+
+Merged to `dev` since 3.17.0.
+
+### Fixed
+
+- The MCP server reports real status, the running list and logs for builds that run as Kubernetes Jobs. (#2144, #2146)
+- Rust and Java toolchains are inferred, and Maven and Gradle gates run. (#2142, #2143, #2147)
+- A build is no longer reaped while its dispatch is still in flight. (#2141, #2145)
+
 ## 3.17.0 - 2026-11-18
 
 Merged to `dev` since 3.16.0.
