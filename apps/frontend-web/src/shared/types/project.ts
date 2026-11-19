@@ -5,6 +5,8 @@
 export interface Project {
   id: string;
   name: string;
+  /** Shared project slug (backend phase 1); absent on older backends */
+  slug?: string;
   path: string;
   autoBuildPath: string;
   settings: ProjectSettings;
