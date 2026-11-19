@@ -17,7 +17,6 @@ field hardcoded to ``False``, which is the same bug mirrored.
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 from pathlib import Path
 from typing import Any
@@ -42,24 +41,14 @@ def _project(tmp_path: Path, *, graphiti: str | None) -> Path:
     return root
 
 
-def _memory_status(tmp_path: Path, project_path: Path) -> dict[str, Any]:
-    projects_file = tmp_path / "projects.json"
-    projects_file.write_text(
-        json.dumps({"p1": {"path": str(project_path), "name": "p1"}})
-    )
+def _memory_status(project_path: Path) -> dict[str, Any]:
+    project_registry.save_projects({"p1": {"path": str(project_path), "name": "p1"}})
 
     async def _seeded_settings(p: str | Path) -> dict[str, str]:
         return dict(project_settings_store._SNAPSHOT.get(project_key(p), {}))
 
-    # The handler imports `load_projects` at call time, so the patch has to land
-    # on the SOURCE module — `server.project_registry` since #1317 — and pointing
-    # at the real projects file rather than stubbing the loader keeps the
-    # production read path.
-    with (
-        patch.object(project_registry, "get_projects_file", return_value=projects_file),
-        patch.object(
-            project_settings_store, "get_settings", side_effect=_seeded_settings
-        ),
+    with patch.object(
+        project_settings_store, "get_settings", side_effect=_seeded_settings
     ):
         result = asyncio.run(context.get_project_context("p1"))
     status: dict[str, Any] = result["data"]["memoryStatus"]
@@ -68,12 +57,12 @@ def _memory_status(tmp_path: Path, project_path: Path) -> dict[str, Any]:
 
 def test_a_project_with_graphiti_off_reports_enabled_false(tmp_path: Path) -> None:
     # The defect: this returned True for every project.
-    status = _memory_status(tmp_path, _project(tmp_path, graphiti="false"))
+    status = _memory_status(_project(tmp_path, graphiti="false"))
     assert status["enabled"] is False, status
 
 
 def test_a_project_with_graphiti_on_reports_enabled_true(tmp_path: Path) -> None:
-    status = _memory_status(tmp_path, _project(tmp_path, graphiti="true"))
+    status = _memory_status(_project(tmp_path, graphiti="true"))
     assert status["enabled"] is True, status
 
 
@@ -87,10 +76,10 @@ def test_a_project_that_says_nothing_falls_back_to_the_deployment(
     """
     monkeypatch.delenv("GRAPHITI_ENABLED", raising=False)
     project = _project(tmp_path, graphiti=None)
-    assert _memory_status(tmp_path, project)["enabled"] is False
+    assert _memory_status(project)["enabled"] is False
 
     monkeypatch.setenv("GRAPHITI_ENABLED", "true")
-    assert _memory_status(tmp_path, project)["enabled"] is True
+    assert _memory_status(project)["enabled"] is True
 
 
 def test_the_project_setting_beats_the_deployment(
@@ -98,7 +87,7 @@ def test_the_project_setting_beats_the_deployment(
 ) -> None:
     """Per-project wins, or the Settings UI is decorative."""
     monkeypatch.setenv("GRAPHITI_ENABLED", "true")
-    status = _memory_status(tmp_path, _project(tmp_path, graphiti="false"))
+    status = _memory_status(_project(tmp_path, graphiti="false"))
     assert status["enabled"] is False, status
 
 
@@ -108,7 +97,7 @@ def test_the_other_memory_fields_are_untouched(tmp_path: Path) -> None:
     A project can have Graphiti switched off and still have session insights on
     disk; collapsing the two would lose that.
     """
-    status = _memory_status(tmp_path, _project(tmp_path, graphiti="false"))
+    status = _memory_status(_project(tmp_path, graphiti="false"))
     assert "available" in status
     assert "graphitiAvailable" in status
     assert status["sessionInsightsCount"] == 0

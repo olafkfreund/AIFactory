@@ -17,14 +17,7 @@ from server import project_registry as projects_mod  # noqa: E402
 from server.database.engine import DEFAULT_ORG_ID  # noqa: E402
 
 
-def _point_registry_at(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(
-        projects_mod, "get_projects_file", lambda: tmp_path / "projects.json"
-    )
-
-
-def test_unowned_project_gets_default_org(tmp_path, monkeypatch):
-    _point_registry_at(tmp_path, monkeypatch)
+def test_unowned_project_gets_default_org():
     projects_mod.save_projects(
         {"hello": {"id": "hello", "name": "hello", "path": "/x"}}
     )
@@ -32,8 +25,7 @@ def test_unowned_project_gets_default_org(tmp_path, monkeypatch):
     assert loaded["hello"]["org_id"] == DEFAULT_ORG_ID
 
 
-def test_explicit_org_id_is_preserved(tmp_path, monkeypatch):
-    _point_registry_at(tmp_path, monkeypatch)
+def test_explicit_org_id_is_preserved():
     projects_mod.save_projects(
         {"hello": {"id": "hello", "name": "hello", "path": "/x", "org_id": "acme"}}
     )

@@ -38,6 +38,8 @@ _BACKEND = _WS.parent / "backend"
 if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
 
+from server.project_registry import save_projects  # noqa: E402
+
 SPEC_ID = "039-roman-numeral-conversion-utili"
 PROJECT_ID = "502baac8-4816-42bb-bf2d-c54a38087302"
 BASE_BRANCH = "dev"
@@ -105,15 +107,11 @@ def packed_path_repos(tmp_path: Path) -> dict[str, Path]:
         json.dumps({"title": "Roman numerals", "description": "convert ints"})
     )
 
-    projects_file = tmp_path / "projects.json"
-    projects_file.write_text(
-        json.dumps({PROJECT_ID: {"path": str(project), "name": "proj"}})
-    )
+    save_projects({PROJECT_ID: {"path": str(project), "name": "proj"}})
     return {
         "origin": origin,
         "project": project,
         "worktree": worktree,
-        "projects_file": projects_file,
     }
 
 
@@ -140,12 +138,10 @@ def fake_gh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return gh
 
 
-def _patch_route(monkeypatch: pytest.MonkeyPatch, projects_file: Path) -> None:
-    """Point the route at the temp projects file and off the provider API."""
+def _patch_route(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Disable the provider API for this route."""
     from server.routes import github as github_routes
-    from server.routes import pr as pr_routes
 
-    monkeypatch.setattr(pr_routes, "get_projects_file", lambda: projects_file)
     monkeypatch.setattr(github_routes, "_use_provider_api", lambda _pid: False)
 
 
@@ -177,7 +173,7 @@ async def test_create_pr_pushes_a_branch_the_worktree_never_had(
     Without the `git fetch origin <branch>:<branch>` guard this returns 409
     with git's "src refspec ... does not match any".
     """
-    _patch_route(monkeypatch, packed_path_repos["projects_file"])
+    _patch_route(monkeypatch)
 
     status, body = await _call_create_pr()
 
@@ -206,7 +202,7 @@ async def test_fetch_guard_is_a_no_op_when_the_branch_is_already_checked_out(
     _git(worktree, "fetch", "origin", TASK_BRANCH)
     _git(worktree, "checkout", "-B", TASK_BRANCH, "FETCH_HEAD")
 
-    _patch_route(monkeypatch, packed_path_repos["projects_file"])
+    _patch_route(monkeypatch)
 
     status, body = await _call_create_pr()
 
@@ -271,7 +267,7 @@ async def test_lfs_upload_failure_warns_and_creates_pr(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    _patch_route(monkeypatch, packed_path_repos["projects_file"])
+    _patch_route(monkeypatch)
     _lfs_present(monkeypatch)
     calls = _record_git(
         monkeypatch,
@@ -294,7 +290,7 @@ async def test_lfs_customtransfer_warns_and_creates_pr(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    _patch_route(monkeypatch, packed_path_repos["projects_file"])
+    _patch_route(monkeypatch)
     _lfs_present(monkeypatch)
     calls = _record_git(
         monkeypatch,
@@ -318,7 +314,7 @@ async def test_lfs_runs_before_push(
     fake_gh: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _patch_route(monkeypatch, packed_path_repos["projects_file"])
+    _patch_route(monkeypatch)
     _lfs_present(monkeypatch)
     calls = _record_git(
         monkeypatch,
@@ -340,7 +336,7 @@ async def test_lfs_timeout_warns_and_creates_pr(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    _patch_route(monkeypatch, packed_path_repos["projects_file"])
+    _patch_route(monkeypatch)
     _lfs_present(monkeypatch)
 
     def _timeout() -> subprocess.CompletedProcess[str]:
@@ -374,7 +370,7 @@ async def test_lfs_url_rewrite_warns_and_creates_pr(
         f"url.ssh://evil.invalid/.{key}",
         "https://github.com/acme/proj.git/",
     )
-    _patch_route(monkeypatch, packed_path_repos["projects_file"])
+    _patch_route(monkeypatch)
     _lfs_present(monkeypatch)
     calls = _record_git(
         monkeypatch,

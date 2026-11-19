@@ -13,6 +13,7 @@ import secrets
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
@@ -105,8 +106,8 @@ def _req(user):
 # project p1 belongs to org-1 (alice's org).
 def _patch_projects(monkeypatch):
     monkeypatch.setattr(
-        "server.project_registry.load_projects",
-        lambda: {"p1": {"org_id": "org-1", "name": "p1"}},
+        "server.project_registry.aload_projects",
+        AsyncMock(return_value={"p1": {"org_id": "org-1", "name": "p1"}}),
     )
 
 

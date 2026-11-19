@@ -70,11 +70,11 @@ def test_attach_and_detach_rows_survive_request_rollback(
     session_local, monkeypatch
 ) -> None:
     monkeypatch.setattr(project_authz, "_auth_disabled", lambda: False)
-    monkeypatch.setattr(
-        projects_mod,
-        "load_projects",
-        lambda: {"proj-1": {"id": "proj-1", "org_id": "org-x"}},
-    )
+
+    async def _projects() -> dict:
+        return {"proj-1": {"id": "proj-1", "org_id": "org-x"}}
+
+    monkeypatch.setattr(projects_mod, "aload_projects", _projects)
     state = SessionState(
         spec_id="spec-1",
         session_name="aifactory-task-spec-1",

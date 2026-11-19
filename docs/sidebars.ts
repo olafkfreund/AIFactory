@@ -17,6 +17,7 @@ const sidebars: SidebarsConfig = {
     'environment-reference',
     'task-lifecycle',
     'task-contract',
+    'project-registry',
     'nix-reproducible-build',
     'demo',
     {

@@ -800,18 +800,14 @@ def test_runner_github_env_uses_bound_org_only(
     from server import project_registry
     from server.services import github_app
 
-    registry = tmp_path / "projects.json"
     project = tmp_path / "acme"
     unbound = tmp_path / "other"
-    registry.write_text(
-        json.dumps(
-            {
-                "a": {"path": str(project), "org_id": "acme"},
-                "b": {"path": str(unbound), "org_id": "other"},
-            }
-        )
+    project_registry.save_projects(
+        {
+            "a": {"path": str(project), "name": "a", "org_id": "acme"},
+            "b": {"path": str(unbound), "name": "b", "org_id": "other"},
+        }
     )
-    monkeypatch.setattr(project_registry, "get_projects_file", lambda: registry)
     monkeypatch.setattr(github_app, "multi_installation", lambda: True)
     calls: list[tuple[str | None, int]] = []
 

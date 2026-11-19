@@ -159,9 +159,9 @@ def _list_projects(data, headers):
     from server.routes import projects as projects_mod
 
     with (
-        patch.object(projects_mod, "load_projects", return_value=data),
+        patch.object(projects_mod, "aload_projects", new=AsyncMock(return_value=data)),
         patch(
-            "server.routes.project_authz.accessible_org_ids",
+            "server.routes.projects.accessible_org_ids",
             new=AsyncMock(return_value=None),
         ),
     ):

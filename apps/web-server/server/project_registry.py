@@ -1,4 +1,7 @@
-"""The project registry: read/write access to ``projects.json``.
+"""The project registry: read/write access to the projects DB (#2157).
+
+The rows live in ``project_store``; ``projects.json`` is only a one-off import
+source and a rollback export. What follows is the original (#1317) rationale.
 
 Extracted from ``server.routes.projects`` (#1317). These five helpers are the
 single most widely-shared piece of state in the server -- routes, services,
@@ -28,15 +31,14 @@ to a route module. Only the registry itself moved.
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path, PurePath
 from typing import Any
 
 from fastapi import HTTPException
 
+from . import project_store
 from .config import get_settings
-from .tenancy import DEFAULT_ORG_ID
 
 
 def get_projects_file() -> Path:
@@ -46,12 +48,13 @@ def get_projects_file() -> Path:
 
 
 def load_projects() -> dict[str, dict[str, Any]]:
-    """Load projects from disk."""
-    projects_file = get_projects_file()
-    if projects_file.exists():
-        loaded: dict[str, dict[str, Any]] = json.loads(projects_file.read_text())
-        return loaded
-    return {}
+    """Active projects from the registry DB, in the legacy ``projects.json`` shape."""
+    return project_store.load_projects()
+
+
+async def aload_projects() -> dict[str, dict[str, Any]]:
+    """:func:`load_projects` without blocking the caller's event loop."""
+    return await project_store.aload_projects()
 
 
 def org_id_for_path(project_path: str | Path | None) -> str | None:
@@ -141,21 +144,17 @@ def resolve_project_id(project_id: str) -> str | None:
 
 
 def save_projects(projects: dict[str, dict[str, Any]]) -> None:
-    """Save projects to disk.
+    """Upsert the entries changed since :func:`load_projects` returned them.
 
     Stamps ``org_id=DEFAULT_ORG_ID`` on any entry that lacks one so that
     programmatically-registered projects (cross-factory handoff, build
     dispatch, the agent ``project_create`` tool) are immediately visible in
-    the org-scoped portal — not just after the next startup backfill
-    (``database.engine._backfill_project_orgs``). The portal create path sets
-    ``org_id`` explicitly before saving, so this never overrides a real value;
-    it only defaults the unowned case (single-tenant deployments own the
-    "default" org). An unowned project would otherwise be admin-only / hidden
-    (see ``project_authz`` — ``org_id is None`` → 403).
+    the org-scoped portal -- an unowned project would otherwise be admin-only
+    (see ``project_authz``: ``org_id is None`` -> 403). Never removes a
+    project: use ``project_store.archive_project``.
     """
-    for proj in projects.values():
-        if isinstance(proj, dict) and not proj.get("org_id"):
-            proj["org_id"] = DEFAULT_ORG_ID
-    projects_file = get_projects_file()
-    projects_file.parent.mkdir(parents=True, exist_ok=True)
-    projects_file.write_text(json.dumps(projects, indent=2))
+    project_store.save_projects(projects)
+
+
+async def asave_projects(projects: dict[str, dict[str, Any]]) -> None:
+    await project_store.asave_projects(projects)

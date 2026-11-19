@@ -17,9 +17,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
-from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 from fastapi.responses import JSONResponse
 from server.routes import pr, worktree_merge
@@ -29,12 +27,6 @@ from server.services.http_verdict import REFUSED_STATUS, honest_status
 def _body(response: JSONResponse) -> dict[str, Any]:
     parsed: dict[str, Any] = json.loads(bytes(response.body))
     return parsed
-
-
-def _empty_projects_file(tmp_path: Path) -> Path:
-    projects_file = tmp_path / "projects.json"
-    projects_file.write_text(json.dumps({}))
-    return projects_file
 
 
 # --- the decorator itself -------------------------------------------------
@@ -87,21 +79,17 @@ def test_signature_is_preserved_for_fastapi_dependency_injection() -> None:
 # --- the real handlers ----------------------------------------------------
 
 
-def test_merge_worktree_refusal_is_not_a_200(tmp_path: Path) -> None:
+def test_merge_worktree_refusal_is_not_a_200() -> None:
     # An unknown project: one of the early returns the ticket names.
-    projects_file = _empty_projects_file(tmp_path)
-    with patch.object(worktree_merge, "get_projects_file", return_value=projects_file):
-        result = asyncio.run(worktree_merge.merge_worktree("nope:spec", _access={}))
+    result = asyncio.run(worktree_merge.merge_worktree("nope:spec", _access={}))
 
     assert isinstance(result, JSONResponse)
     assert result.status_code == REFUSED_STATUS
     assert _body(result)["success"] is False
 
 
-def test_create_pr_refusal_is_not_a_200(tmp_path: Path) -> None:
-    projects_file = _empty_projects_file(tmp_path)
-    with patch.object(pr, "get_projects_file", return_value=projects_file):
-        result = asyncio.run(pr.create_pr_from_task("nope:spec", _access={}))
+def test_create_pr_refusal_is_not_a_200() -> None:
+    result = asyncio.run(pr.create_pr_from_task("nope:spec", _access={}))
 
     assert isinstance(result, JSONResponse)
     assert result.status_code == REFUSED_STATUS
