@@ -39,6 +39,7 @@ import os
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Spec / project resolution
@@ -92,6 +93,21 @@ def _build_project_dir_resolver() -> Callable[[], Path]:
 # ---------------------------------------------------------------------------
 
 
+def _control_tools() -> list[Any]:
+    from agents.tools_pkg.tools.task_control import (  # noqa: PLC0415
+        create_investigation_tools,
+        create_task_control_tools,
+    )
+
+    result: list[Any] = list(create_task_control_tools())
+    value = os.environ.get("AIFACTORY_INVESTIGATIONS", "off")
+    if value == "on":
+        result += create_investigation_tools()
+    elif value != "off":
+        raise ValueError("Invalid AIFACTORY_INVESTIGATIONS; valid values: off, on")
+    return result
+
+
 async def _run(spec_dir_factory: Callable[[], Path]) -> None:
     """Build the SDK-backed MCP server and serve it over stdio."""
 
@@ -104,7 +120,6 @@ async def _run(spec_dir_factory: Callable[[], Path]) -> None:
         create_all_tools,
         create_magestic_ai_mcp_server,
     )
-    from agents.tools_pkg.tools.task_control import create_task_control_tools
     from claude_agent_sdk import create_sdk_mcp_server
     from mcp.server.models import InitializationOptions
     from mcp.server.stdio import stdio_server
@@ -133,7 +148,7 @@ async def _run(spec_dir_factory: Callable[[], Path]) -> None:
         )
         sys.exit(2)
 
-    task_control_tools = create_task_control_tools()
+    task_control_tools = _control_tools()
     sdk_cfg = create_sdk_mcp_server(
         name="aifactory",
         version="1.0.0",
