@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2157
 intent: intent/2026-11-19-2157-aif-project-identity.md
 ---
