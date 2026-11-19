@@ -35,3 +35,8 @@ All paths below are under `apps/frontend-web/`.
 ## Rollback
 
 Revert the PR; the backend and stored `projects.json`/tab state are untouched, so old routes and the dropdown return.
+
+## Deviations (recorded with the code)
+
+- Step 4: `ProjectsPage` text and the project-not-found message use i18n keys `welcome:projectsPage.*` (en, fr, pt-BR) per AGENTS.md; the page is wrapped in a scrolling container (final-review findings). The breadcrumb copy was re-vendored after hub combobox/aria-activedescendant fixes.
+- Step 3: `/p/:slug/console` pages and the legacy redirect are in `App.tsx`; the "Copy console link" in `TaskMetadata.tsx` still emits the legacy URL, which redirects (left out to keep the diff narrow).
