@@ -105,7 +105,9 @@ import logging
 import os
 import shutil
 import subprocess
+import time
 from collections.abc import Iterable
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -176,6 +178,9 @@ _DEFAULT_JOB_TTL_SECONDS = 300
 JOB_TTL_MAX_SECONDS = 3600
 _DEFAULT_JOB_RETAIN_MAX = 20
 _SWEEP_GRACE_SECONDS = 600
+# #2141: an admitted row has no Job until dispatch has populated and packed the
+# worktree; the reaper must not read that window as "no worker ever claimed it".
+_DISPATCH_GRACE_SECONDS = 300
 _SWEEP_SELECTOR = "app=aifactory,factory.io/kind=task"
 
 
@@ -1773,7 +1778,7 @@ class KubeJobBuildBackend:
         )
 
     async def _resolve_row_ref(
-        self, batch: Any, row: dict[str, Any]
+        self, batch: Any, row: dict[str, Any], *, now: float | None = None
     ) -> tuple[str, str, str, bool] | None:
         """``(job_name, namespace, outcome, reconstructed)`` for one active row.
 
@@ -1803,6 +1808,14 @@ class KubeJobBuildBackend:
         )
 
         outcome = await self._job_outcome(batch, namespace, job_name)
+        if reconstructed and outcome == "gone":
+            # #2141: no Job under a reconstructed ref is also what a dispatch
+            # still populating/packing looks like. Only a row older than the
+            # grace is a crashed dispatch (#1606).
+            ts = _to_epoch(row.get("updated_at"))
+            clock = now if now is not None else time.time()
+            if ts is not None and (clock - ts) < _DISPATCH_GRACE_SECONDS:
+                return None
         if reconstructed and outcome != "gone":
             job_id = row["job_id"]
             if not await self._reconstructed_job_is_ours(
@@ -1845,7 +1858,7 @@ class KubeJobBuildBackend:
         try:
             for row in rows:
                 job_id = row["job_id"]
-                resolved = await self._resolve_row_ref(batch, row)
+                resolved = await self._resolve_row_ref(batch, row, now=now)
                 if resolved is None:
                     continue
                 job_name, namespace, outcome, reconstructed = resolved
@@ -2122,6 +2135,11 @@ def _to_epoch(value: Any) -> float | None:
     ts = getattr(value, "timestamp", None)
     if callable(ts):
         try:
+            # job_states timestamps are naive UTC (func.now()); .timestamp()
+            # would read them as local time.
+            if getattr(value, "tzinfo", 1) is None:
+                value = value.replace(tzinfo=UTC)
+                ts = value.timestamp
             return float(ts())
         except Exception:  # noqa: BLE001
             return None
