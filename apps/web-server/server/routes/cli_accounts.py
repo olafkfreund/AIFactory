@@ -39,6 +39,33 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
+
+def user_cli_prefix() -> Path:
+    """Writable npm prefix for user-installed CLIs.
+
+    The image's ``~/.npm-global`` is in the read-only root filesystem, so
+    ``npm install -g`` there fails with EROFS. ``~/.local`` is a mounted
+    volume; it is ephemeral, so a restart falls back to the image-pinned copy.
+    """
+    return Path.home() / ".local" / "cli-npm"
+
+
+def prefer_user_cli_path() -> None:
+    """Put the user prefix ``bin`` first on this process's PATH (idempotent).
+
+    Detection and every agent subprocess spawned from this server then find an
+    updated CLI before the image copy (which otherwise shadows it).
+    """
+    bin_dir = str(user_cli_prefix() / "bin")
+    parts = os.environ.get("PATH", "").split(os.pathsep)
+    if parts[0] != bin_dir:
+        os.environ["PATH"] = os.pathsep.join(
+            [bin_dir, *(p for p in parts if p != bin_dir)]
+        )
+
+
+prefer_user_cli_path()
+
 # Canonical CLI ids.  "antigravity" is the Google CLI (formerly "gemini").
 SUPPORTED_CLIS = {"codex", "antigravity"}
 
@@ -898,7 +925,7 @@ def _create_antigravity_symlink() -> None:
     the bundled binary is named ``gemini`` and we expose it as ``antigravity``.
     """
     try:
-        bin_dir = ANTIGRAVITY_INSTALL_DIR / "bin"
+        bin_dir = user_cli_prefix() / "bin"
         bin_dir.mkdir(parents=True, exist_ok=True)
         symlink_path = bin_dir / "antigravity"
         target_path = bin_dir / "gemini"
@@ -912,24 +939,19 @@ def _create_antigravity_symlink() -> None:
 
 
 def _npm_install_cli(cli: str, package: str) -> subprocess.CompletedProcess:
-    """Run ``npm install -g`` for a CLI, scoped to its install dir if any.
+    """Run ``npm install -g`` for a CLI into the writable user prefix.
 
-    For Antigravity, installs ``@google/gemini-cli`` into
-    ``~/.gemini/antigravity-cli`` (matching ``scripts/install-backend.js``) and
-    creates the ``antigravity`` symlink afterwards.  For other CLIs, installs
-    globally.  Re-running performs an update to the latest published version.
+    For Antigravity (``@google/gemini-cli``) the ``antigravity`` symlink is
+    created afterwards. Re-running performs an update to the latest version.
     """
-    install_dir = CLI_CONFIG[cli].get("install_dir")
-    if install_dir is not None:
-        Path(install_dir).parent.mkdir(parents=True, exist_ok=True)
-        result = _run_login_shell(
-            ["npm", "install", "-g", "--prefix", str(install_dir), package],
-            timeout=120,
-        )
-        if result.returncode == 0:
-            _create_antigravity_symlink()
-        return result
-    return _run_login_shell(["npm", "install", "-g", package], timeout=120)
+    prefix = user_cli_prefix()
+    prefix.mkdir(parents=True, exist_ok=True)
+    result = _run_login_shell(
+        ["npm", "install", "-g", "--prefix", str(prefix), package], timeout=120
+    )
+    if result.returncode == 0 and cli == "antigravity":
+        _create_antigravity_symlink()
+    return result
 
 
 @router.post("/cli-accounts/{cli}/install")
@@ -988,7 +1010,7 @@ def install_or_update_cli(cli: str):
             error_msg = install_result.stderr.strip() or install_result.stdout.strip()
             return {
                 "success": False,
-                "error": f"npm install failed: {error_msg}",
+                "error": f"npm install failed: {error_msg[-1500:]}",
             }
     except subprocess.TimeoutExpired:
         return {
