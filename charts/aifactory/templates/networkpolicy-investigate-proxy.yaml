@@ -1,0 +1,47 @@
+{{- if .Values.investigations.enabled -}}
+# Registry proxy: ingress from test pods on 3128; egress to public 443 and DNS.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "aifactory.fullname" . }}-investigate-proxy
+  labels:
+    {{- include "aifactory.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      factory.io/run-kind: investigate-proxy
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              factory.io/run-kind: investigate-test
+      ports:
+        - protocol: TCP
+          port: 3128
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+{{- end }}

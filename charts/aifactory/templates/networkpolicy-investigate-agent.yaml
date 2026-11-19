@@ -1,0 +1,46 @@
+{{- if .Values.investigations.enabled -}}
+# Investigation agent pod: no ingress; DNS, the Claude API, and this chart's API.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "aifactory.fullname" . }}-investigate-agent
+  labels:
+    {{- include "aifactory.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      factory.io/run-kind: investigate-agent
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- with .Values.investigations.claudeApiCidrs }}
+    - to:
+        {{- range . }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: 443
+    {{- end }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "aifactory.selectorLabels" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.service.targetPort }}
+{{- end }}
