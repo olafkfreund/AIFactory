@@ -23,6 +23,7 @@ from security.tool_input_validator import get_safe_tool_input
 from task_logger import (
     LogEntryType,
     LogPhase,
+    describe_tool_input,
     get_task_logger,
 )
 
@@ -218,21 +219,12 @@ This is attempt {previous_error.get("consecutive_errors", 1) + 1}. If you fail t
                             )
                     elif block_type == "ToolUseBlock" and hasattr(block, "name"):
                         tool_name = block.name
-                        tool_input_display = None
                         tool_count += 1
 
                         # Safely extract tool input (handles None, non-dict, etc.)
                         inp = get_safe_tool_input(block)
 
-                        # Extract tool input for display
-                        if inp:
-                            if "file_path" in inp:
-                                fp = inp["file_path"]
-                                if len(fp) > 50:
-                                    fp = "..." + fp[-47:]
-                                tool_input_display = fp
-                            elif "pattern" in inp:
-                                tool_input_display = f"pattern: {inp['pattern']}"
+                        tool_input_display = describe_tool_input(inp)
 
                         debug(
                             "qa_reviewer",
@@ -260,7 +252,7 @@ This is attempt {previous_error.get("consecutive_errors", 1) + 1}. If you fail t
                             print(f"\n[QA Tool: {tool_name}]", flush=True)
 
                         if verbose and hasattr(block, "input"):
-                            input_str = str(block.input)
+                            input_str = tool_input_display or ""
                             if len(input_str) > 300:
                                 print(f"   Input: {input_str[:300]}...", flush=True)
                             else:

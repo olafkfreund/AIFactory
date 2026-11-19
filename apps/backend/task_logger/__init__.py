@@ -22,6 +22,7 @@ from .models import LogEntry, LogEntryType, LogPhase, PhaseLog
 
 # Export storage utilities
 from .storage import get_active_phase, load_task_logs
+from .tool_input import describe_tool_input, scrub
 
 # Export utility functions
 from .utils import clear_task_logger, get_task_logger, update_task_logger_path
@@ -43,4 +44,6 @@ __all__ = [
     "update_task_logger_path",
     # Streaming capture
     "StreamingLogCapture",
+    "describe_tool_input",
+    "scrub",
 ]

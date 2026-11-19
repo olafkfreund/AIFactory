@@ -19,6 +19,7 @@ from security.tool_input_validator import get_safe_tool_input
 from task_logger import (
     LogEntryType,
     LogPhase,
+    describe_tool_input,
     get_task_logger,
 )
 
@@ -156,23 +157,12 @@ async def run_qa_fixer_session(
                             )
                     elif block_type == "ToolUseBlock" and hasattr(block, "name"):
                         tool_name = block.name
-                        tool_input_display = None
                         tool_count += 1
 
                         # Safely extract tool input (handles None, non-dict, etc.)
                         inp = get_safe_tool_input(block)
 
-                        if inp:
-                            if "file_path" in inp:
-                                fp = inp["file_path"]
-                                if len(fp) > 50:
-                                    fp = "..." + fp[-47:]
-                                tool_input_display = fp
-                            elif "command" in inp:
-                                cmd = inp["command"]
-                                if len(cmd) > 50:
-                                    cmd = cmd[:47] + "..."
-                                tool_input_display = cmd
+                        tool_input_display = describe_tool_input(inp)
 
                         debug(
                             "qa_fixer",
@@ -200,7 +190,7 @@ async def run_qa_fixer_session(
                             print(f"\n[Fixer Tool: {tool_name}]", flush=True)
 
                         if verbose and hasattr(block, "input"):
-                            input_str = str(block.input)
+                            input_str = tool_input_display or ""
                             if len(input_str) > 300:
                                 print(f"   Input: {input_str[:300]}...", flush=True)
                             else:

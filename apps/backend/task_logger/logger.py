@@ -11,6 +11,7 @@ from . import transcript
 from .models import LogEntry, LogEntryType, LogPhase
 from .storage import LogStorage
 from .streaming import emit_marker
+from .tool_input import scrub
 
 
 class TaskLogger:
@@ -408,7 +409,7 @@ class TaskLogger:
         phase_key = (phase or self.current_phase or LogPhase.CODING).value
 
         # Truncate long inputs for display
-        display_input = tool_input
+        display_input = scrub(tool_input)
         if display_input and len(display_input) > 100:
             display_input = display_input[:97] + "..."
 
