@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import threading
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from pathlib import Path
@@ -64,7 +65,14 @@ class FakeKube:
         status = (
             {"succeeded": 1} if self.auto_test_complete and "-test-" in name else {}
         )
-        self.jobs[name] = {"metadata": {"name": name, "uid": "uid-1"}, "status": status}
+        self.jobs[name] = {
+            "metadata": {
+                "name": name,
+                "uid": "uid-1",
+                "labels": manifest["metadata"]["labels"],
+            },
+            "status": status,
+        }
         return self.jobs[name]
 
     async def read_namespaced_job(self, name: str, _namespace: str) -> Any:
@@ -73,12 +81,12 @@ class FakeKube:
         return self.jobs[name]
 
     async def list_namespaced_job(self, _namespace: str, label_selector: str) -> Any:
-        run_id = label_selector.split("=", 1)[1]
+        key, value = label_selector.split("=", 1)
         return {
             "items": [
                 job
-                for name, job in self.jobs.items()
-                if run_id.replace("-", "")[:8] in name
+                for job in self.jobs.values()
+                if job["metadata"].get("labels", {}).get(key) == value
             ]
         }
 
@@ -104,15 +112,60 @@ class FakeKube:
         self.secrets.pop(name, None)
 
     async def list_namespaced_pod(self, _namespace: str, label_selector: str) -> Any:
-        if label_selector.startswith("job-name="):
-            return {"items": self.pods}
-        return {"items": self.pods}
+        key, value = label_selector.split("=", 1)
+        return {
+            "items": [
+                pod
+                for pod in self.pods
+                if pod["metadata"].get("labels", {}).get(key) == value
+            ]
+        }
 
-    async def read_namespaced_pod_log(self, _name: str, _namespace: str) -> Any:
+    async def read_namespaced_pod_log(
+        self, _name: str, _namespace: str, **kwargs: Any
+    ) -> Any:
+        self.log_kwargs = kwargs
         return self.log_text
 
     async def list_namespaced_network_policy(self, _namespace: str) -> Any:
         return {"items": []}
+
+
+async def test_fake_kube_selects_jobs_and_pods_by_label() -> None:
+    kube = FakeKube()
+    kube.jobs = {
+        "aif-inv-12345678-wrong": {
+            "metadata": {
+                "name": "wrong",
+                "labels": {"factory.io/investigation": "other"},
+            }
+        },
+        "unrelated-name": {
+            "metadata": {
+                "name": "right",
+                "labels": {"factory.io/investigation": "12345678"},
+            }
+        },
+    }
+    kube.pods = [
+        {
+            "metadata": {
+                "name": "wrong",
+                "labels": {"factory.io/investigation": "other"},
+            }
+        },
+        {
+            "metadata": {
+                "name": "right",
+                "labels": {"factory.io/investigation": "12345678"},
+            }
+        },
+    ]
+    selector = "factory.io/investigation=12345678"
+    jobs = await kube.list_namespaced_job("factory", selector)
+    pods = await kube.list_namespaced_pod("factory", selector)
+    assert [job["metadata"]["name"] for job in jobs["items"]] == ["right"]
+    assert [pod["metadata"]["name"] for pod in pods["items"]] == ["right"]
 
 
 @pytest.fixture
@@ -188,7 +241,14 @@ async def test_stop_keeps_slot_until_pods_gone_and_releases_credential(
 ) -> None:
     backend, kube = service.backend, service.kube
     run_id = (await backend.dispatch(**_args()))["id"]
-    kube.pods.append({"metadata": {"name": "still-here"}})
+    kube.pods.append(
+        {
+            "metadata": {
+                "name": "still-here",
+                "labels": {"factory.io/investigation": run_id},
+            }
+        }
+    )
     await backend._terminate(run_id, "stopped", "caller")
     await backend._pods_gone(run_id)
     row = await service.store.get(run_id)
@@ -267,17 +327,19 @@ async def test_ten_test_calls_then_refused_and_scrubbed_tail(
 ) -> None:
     backend, kube = service.backend, service.kube
     kube.auto_test_complete = True
+    run_id = (await backend.dispatch(**_args(test_command="pytest")))["id"]
+    base = investigation_manifest._names({"id": run_id})[0]
     kube.pods = [
         {
-            "metadata": {"name": "test-pod"},
+            "metadata": {"name": "test-pod", "labels": {}},
             "status": {
                 "container_statuses": [{"state": {"terminated": {"exit_code": 0}}}]
             },
         }
     ]
     kube.log_text = "=== 1 passed in 0.1s ===\nsecret-token"
-    run_id = (await backend.dispatch(**_args(test_command="pytest")))["id"]
-    for _ in range(10):
+    for n in range(1, 11):
+        kube.pods[0]["metadata"]["labels"]["job-name"] = f"{base}-test-{n}"
         result = await backend.run_tests(run_id)
         assert result["counts"] == {"passed": 1, "failed": 0, "skipped": 0}
         assert "secret-token" not in result["tail"]
@@ -315,9 +377,161 @@ async def test_reconcile_queued_without_recorded_name(service: SimpleNamespace) 
     backend._tokens[run_id] = (token, "secret-token")
     await backend.reconcile_tick()
     row = await service.store.get(run_id)
+    assert row.state == "queued"
+    assert row.agent_job is None
+    assert not kube.jobs
+
+
+async def test_export_barrier_reconcile_does_not_preempt_dispatch(
+    service: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend, kube = service.backend, service.kube
+    entered, release = threading.Event(), threading.Event()
+
+    def blocked_export(*_args: Any) -> dict[str, int]:
+        entered.set()
+        assert release.wait(5)
+        return {"bytes": 0}
+
+    monkeypatch.setattr(investigation_export, "export", blocked_export)
+    dispatch = asyncio.create_task(backend.dispatch(**_args()))
+    assert await asyncio.to_thread(entered.wait, 5)
+    try:
+        service.now[0] += timedelta(seconds=120)
+        await backend.reconcile_tick()
+        assert not kube.jobs
+    finally:
+        release.set()
+    run_id = (await dispatch)["id"]
+    row = await service.store.get(run_id)
     assert row.state == "running"
-    assert row.agent_job in kube.jobs
-    assert row.agent_job.removesuffix("-agent") in kube.secrets
+    assert row.lease_expires_at == service.now[0] + timedelta(seconds=60)
+    assert len(kube.jobs) == 1
+
+
+async def test_real_network_preflight_and_created_at(
+    service: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend, kube = service.backend, service.kube
+    monkeypatch.setattr(
+        backend,
+        "_network",
+        investigation_backend.InvestigationBackend._network.__get__(backend),
+    )
+
+    async def policies(_namespace: str) -> Any:
+        return {
+            "items": [
+                {
+                    "metadata": {"name": f"factory-investigate-{kind}"},
+                    "spec": {
+                        "podSelector": {
+                            "matchLabels": {
+                                "factory.io/run-kind": f"investigate-{kind}"
+                            }
+                        }
+                    },
+                }
+                for kind in ("agent", "test")
+            ]
+            + [
+                {
+                    "metadata": {"name": "factory-investigate-api"},
+                    "spec": {"podSelector": {"matchLabels": {"app": "api"}}},
+                }
+            ]
+        }
+
+    monkeypatch.setattr(kube, "list_namespaced_network_policy", policies)
+    run_id = (await backend.dispatch(**_args()))["id"]
+    assert (await service.store.get(run_id)).created_at == service.now[0]
+
+
+async def test_terminate_rechecks_renewed_lease(service: SimpleNamespace) -> None:
+    backend = service.backend
+    run_id = (await backend.dispatch(**_args()))["id"]
+    await backend._terminate(run_id, "expired", "lease expired")
+    assert (await service.store.get(run_id)).state == "running"
+
+
+async def test_reconcile_initializes_clients_after_restart(
+    service: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend, kube = service.backend, service.kube
+    run_id = (await backend.dispatch(**_args()))["id"]
+    kube.jobs[next(iter(kube.jobs))]["status"] = {"succeeded": 1}
+    fresh = investigation_backend.InvestigationBackend(
+        service.store, clock=backend.clock
+    )
+
+    async def clients() -> None:
+        fresh.batch = fresh.core = fresh.networking = kube
+
+    monkeypatch.setattr(fresh, "_clients", clients)
+    await fresh.reconcile_tick()
+    assert (await service.store.get(run_id)).state in {"stopping", "completed"}
+
+
+async def test_late_job_is_deleted_on_next_tick(service: SimpleNamespace) -> None:
+    backend, kube = service.backend, service.kube
+    run_id = (await backend.dispatch(**_args()))["id"]
+    await backend._terminate(run_id, "stopped", "test")
+    name = f"aif-inv-{run_id.replace('-', '')[:8]}-late"
+    kube.jobs[name] = {
+        "metadata": {
+            "name": name,
+            "uid": "late",
+            "labels": {"factory.io/investigation": run_id},
+        },
+        "status": {},
+    }
+    await backend.reconcile_tick()
+    assert name not in kube.jobs
+    await backend.reconcile_tick()
+    assert (await service.store.get(run_id)).pods_gone
+
+
+async def test_delete_error_preserves_stopping_state(
+    service: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend, kube = service.backend, service.kube
+    run_id = (await backend.dispatch(**_args()))["id"]
+
+    async def fail_once(*_args: Any, **_kwargs: Any) -> None:
+        raise KubeError(500)
+
+    async def no_op(*_args: Any) -> None:
+        return None
+
+    monkeypatch.setattr(kube, "delete_namespaced_job", fail_once)
+    monkeypatch.setattr(backend, "_pods_gone", no_op)
+    monkeypatch.setattr(investigation_backend.asyncio, "sleep", no_op)
+    await backend.stop(run_id)
+    assert (await service.store.get(run_id)).state == "stopping"
+
+
+async def test_test_tail_scrubs_pem_before_window_and_bounds_log(
+    service: SimpleNamespace,
+) -> None:
+    backend, kube = service.backend, service.kube
+    kube.auto_test_complete = True
+    run_id = (await backend.dispatch(**_args(test_command="pytest")))["id"]
+    base = investigation_manifest._names({"id": run_id})[0]
+    kube.pods = [
+        {
+            "metadata": {"name": "test-pod", "labels": {"job-name": f"{base}-test-1"}},
+            "status": {},
+        }
+    ]
+    kube.log_text = (
+        "-----BEGIN PRIVATE KEY-----\n"
+        + "body\n" * 201
+        + "-----END PRIVATE KEY-----\nclean\n"
+    )
+    result = await backend.run_tests(run_id)
+    assert "body" not in result["tail"]
+    assert result["tail"] == "clean\n"
+    assert kube.log_kwargs["limit_bytes"] == 5 * 1024 * 1024 + 1
 
 
 async def test_export_failure_releases_slot(
@@ -447,7 +661,11 @@ async def test_orphan_test_job_blocks_new_test_admission(
     run_id = (await backend.dispatch(**_args(test_command="pytest")))["id"]
     base = investigation_manifest._names({"id": run_id})[0]
     kube.jobs[f"{base}-test-1"] = {
-        "metadata": {"name": f"{base}-test-1", "uid": "orphan"},
+        "metadata": {
+            "name": f"{base}-test-1",
+            "uid": "orphan",
+            "labels": {"factory.io/investigation": run_id},
+        },
         "status": {},
     }
     with pytest.raises(

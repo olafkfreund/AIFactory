@@ -6,6 +6,7 @@ import hashlib
 import hmac
 from pathlib import Path
 from typing import Annotated, Any
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel
@@ -81,7 +82,7 @@ async def create(
     project_path = Path(project["path"])
     settings = await project_settings_store.get_settings(project_path)
     service = get_agent_service()
-    credential_key = f"investigation:{body.project_id}"
+    credential_key = f"investigation:{uuid4()}"
     token, _, _ = service._resolve_claude_token_pooled(credential_key)
     try:
         result = await _backend(request).dispatch(

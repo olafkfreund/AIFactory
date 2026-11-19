@@ -8,6 +8,7 @@ Timestamps use server-side defaults via ``func.now()``.
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import (
     JSON,
@@ -1332,7 +1333,7 @@ class Investigation(Base):
     sha: Mapped[str] = mapped_column(String(40), nullable=False)
     request: Mapped[str] = mapped_column(String(2000), nullable=False)
     test_command: Mapped[str | None] = mapped_column(Text, nullable=True)
-    limits: Mapped[dict] = mapped_column(JSON, nullable=False)
+    limits: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     state: Mapped[str] = mapped_column(String(16), nullable=False)
     pending_state: Mapped[str | None] = mapped_column(String(16), nullable=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -1342,7 +1343,7 @@ class Investigation(Base):
     )
     stopping_since: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     agent_job: Mapped[str | None] = mapped_column(String(253), nullable=True)
-    test_jobs: Mapped[list] = mapped_column(
+    test_jobs: Mapped[list[str]] = mapped_column(
         JSON, nullable=False, default=list, server_default="[]"
     )
     run_tests_used: Mapped[int] = mapped_column(
@@ -1354,8 +1355,8 @@ class Investigation(Base):
     turns_used: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )
-    tests: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    report: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    tests: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    report: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     scrub_open: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=false()
     )

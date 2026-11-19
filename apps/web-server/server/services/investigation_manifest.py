@@ -6,7 +6,7 @@ import os
 from datetime import UTC, datetime
 from typing import Any
 
-from core.job_dispatch import (  # type: ignore[import-not-found]  # Backend module is outside the web server's typed package.
+from core.job_dispatch import (
     DEFAULT_NIX_IMAGE,
     NONROOT_UID,
     assert_job_policy,
@@ -50,6 +50,7 @@ def _pod(run: Any, containers: list[dict[str, Any]]) -> dict[str, Any]:
     spec = {
         "restartPolicy": "Never",
         "automountServiceAccountToken": False,
+        "terminationGracePeriodSeconds": 10,
         "securityContext": {
             "runAsNonRoot": True,
             "runAsUser": NONROOT_UID,
@@ -119,8 +120,8 @@ def agent_manifest(run: Any) -> dict[str, Any]:
     container: dict[str, Any] = {
         "name": "agent",
         "image": _resolve_build_image(DEFAULT_NIX_IMAGE),
-        "command": ["python", "-m", "agents.investigate"],
-        "workingDir": "/src",
+        "command": ["python", "-P", "-m", "agents.investigate"],
+        "workingDir": "/tmp",  # noqa: S108 - Isolated pod scratch volume.
         "env": env,
         "securityContext": _hardened(),
     }
@@ -242,6 +243,8 @@ def _check_investigation_manifest(m: dict[str, Any]) -> None:  # noqa: PLR0912, 
     spec = pod["spec"]
     if spec.get("automountServiceAccountToken") is not False:
         raise ManifestRefused("investigation manifest refused")
+    if spec.get("terminationGracePeriodSeconds") != 10:  # noqa: PLR2004 - Required pod grace.
+        raise ManifestRefused("investigation manifest refused")
     if spec.get("serviceAccountName"):
         raise ManifestRefused("investigation manifest refused")
     if not (
@@ -249,6 +252,7 @@ def _check_investigation_manifest(m: dict[str, Any]) -> None:  # noqa: PLR0912, 
         <= {
             "restartPolicy",
             "automountServiceAccountToken",
+            "terminationGracePeriodSeconds",
             "securityContext",
             "volumes",
             "containers",
@@ -366,6 +370,10 @@ def _check_investigation_manifest(m: dict[str, Any]) -> None:  # noqa: PLR0912, 
         if not ({e["name"] for e in container.get("env", [])} == expected_env):
             raise ManifestRefused("investigation manifest refused")
         for entry in container.get("env", []):
+            if kind == "investigate-agent" and (
+                entry["name"] in {"CLAUDE_CODE_OAUTH_TOKEN", "AIFACTORY_RUN_TOKEN"}
+            ) != ("valueFrom" in entry):
+                raise ManifestRefused("investigation manifest refused")
             if not (
                 set(entry)
                 == (

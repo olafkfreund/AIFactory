@@ -73,6 +73,10 @@ Codex's plan review found two gaps the spec left open. Approving the plan approv
 
 8. **A missing Secret after a full crash fails closed** (step 5, Codex). Only the run token's hash is stored, so the Secret cannot be rebuilt after a restart. Instead of creating it, reconcile deletes the Job (`_terminate(failed, "secret lost")`), and the slot stays held until the pods are gone. This replaces deviation 1's "reconcile creates the Secret while the lease is valid" for the restart case; within one process lifetime the Secret is still created.
 
+9. **Reconcile waits for dispatch export** (review C1). An in-process dispatch is skipped, and a queued row without a committed Job name is left for lease expiry. Reconcile no longer invents a Job name before export finishes.
+10. **The running lease starts at Job creation** (review C8). The queued lease still starts at insert; dispatch renews it when it commits `running`, after the export and resource creation.
+11. **AWS-style base64 secrets are scrubbed** (review C17). Deviation 4's existing path-safe rule remains; an additional exact 40-character rule catches mixed-case, digit-bearing values containing `/` or `+`. Its left boundary permits `=` so `aws_secret=<value>` is covered.
+
 ## Decisions carried over (approved intent and spec)
 
 ### Separation of duties

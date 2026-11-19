@@ -112,9 +112,11 @@ class FakeAPI:
             "limits": {"tokens": tokens, "turns": 3},
         }
         self.calls = []
+        self.request_kwargs = {}
 
-    async def request(self, method, path, data=None):
+    async def request(self, method, path, data=None, **kwargs):
         self.calls.append((method, path, data))
+        self.request_kwargs[path] = kwargs
         return self.config if path == "config" else {}
 
     def lease(self):
@@ -170,6 +172,67 @@ def test_budget_interrupts_before_end_and_log_has_no_file_contents():
     assert "find a bug" in client.prompt
     assert not any(path == "report" for _, path, _ in api.calls)
     assert "secret file content" not in str(api.calls)
+
+
+def test_run_tests_uses_server_collection_timeout():
+    api = FakeAPI()
+
+    class TestClient(FakeClient):
+        async def query(self, prompt):
+            await super().query(prompt)
+            await self.run_tests()
+
+    client = TestClient([])
+
+    def factory(_turns, run_tests):
+        client.run_tests = run_tests
+        return client
+
+    asyncio.run(investigate.run(api, factory))
+    assert api.request_kwargs["run-tests"]["timeout"].read >= 900
+
+
+def test_pod_api_passes_timeout_to_httpx(monkeypatch):
+    seen = []
+
+    class Recorder:
+        def __init__(self, timeout):
+            seen.append(timeout)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            pass
+
+        async def request(self, *_args, **_kwargs):
+            class Response:
+                def raise_for_status(self):
+                    pass
+
+                def json(self):
+                    return {}
+
+            return Response()
+
+    monkeypatch.setattr(investigate.httpx, "AsyncClient", Recorder)
+    timeout = investigate.httpx.Timeout(10, read=960)
+    asyncio.run(
+        investigate.PodAPI("http://api", "id", "token").request(
+            "POST", "run-tests", {}, timeout=timeout
+        )
+    )
+    assert seen == [timeout]
+
+
+def test_report_is_capped_and_turns_are_logged():
+    api = FakeAPI()
+    message = AssistantMessage([TextBlock("x" * 25000)], "model")
+    asyncio.run(investigate.run(api, lambda _turns, _tests: FakeClient([message])))
+    report = next(data for _, path, data in api.calls if path == "report")
+    log = next(data for _, path, data in api.calls if path == "log")
+    assert len(report["findings"]) == 20000
+    assert log["turns_used"] > 0
 
 
 def test_watchdog_stops_after_three_failures():

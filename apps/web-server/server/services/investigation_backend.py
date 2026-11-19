@@ -94,6 +94,7 @@ class InvestigationBackend:
         self.clock = clock or (lambda: datetime.now(UTC).replace(tzinfo=None))
         self.release_credential = release_credential or (lambda _id: None)
         self._tokens: dict[str, tuple[str, str]] = {}
+        self._dispatching: set[str] = set()
         self._loop: asyncio.Task[None] | None = None
         self._last_purge: datetime | None = None
 
@@ -143,7 +144,7 @@ class InvestigationBackend:
         if reason:
             raise InvestigationRefused(f"network policy: {reason}")
 
-    async def dispatch(  # noqa: PLR0913 - dispatch coordinates are explicit
+    async def dispatch(  # noqa: PLR0913, PLR0915 - dispatch coordinates and lifecycle stay together
         self,
         *,
         project_id: str,
@@ -172,6 +173,7 @@ class InvestigationBackend:
         now = self.clock()
         fields: dict[str, Any] = {
             "id": run_id,
+            "created_at": now,
             "project_id": project_id,
             "repo": repo,
             "sha": sha,
@@ -191,52 +193,63 @@ class InvestigationBackend:
         except SlotTaken as exc:
             raise InvestigationRefused("project investigation slot taken") from exc
         self._tokens[run_id] = (run_token, claude_token)
+        self._dispatching.add(run_id)
         try:
-            await asyncio.to_thread(
-                investigation_export.export,
-                repo_path,
-                sha,
-                self._root(run_id) / "src",
-                extra_patterns,
-            )
-        except Exception as exc:
-            if self._root(run_id).exists():
-                await asyncio.to_thread(shutil.rmtree, self._root(run_id))
-            await self.store.update(
-                run_id,
-                state="failed",
-                reason="export",
-                pods_gone=True,
-                ended_at=self.clock(),
-            )
-            self._tokens.pop(run_id, None)
-            self.release_credential(run_id)
-            raise InvestigationRefused("export failed") from exc
-        try:
-            async with self.store.lock(run_id) as (session, row):
-                if row.state != "queued":
-                    raise InvestigationRefused("run no longer queued")
-                name = investigation_manifest.agent_manifest(row)["metadata"]["name"]
-                await self.store.update(run_id, session=session, agent_job=name)
-                row.agent_job = name
-                job = await asyncio.wait_for(
-                    self.batch.create_namespaced_job(
-                        self.namespace, investigation_manifest.agent_manifest(row)
-                    ),
-                    timeout=10,
+            try:
+                await asyncio.to_thread(
+                    investigation_export.export,
+                    repo_path,
+                    sha,
+                    self._root(run_id) / "src",
+                    extra_patterns,
                 )
-                uid = _field(_field(job, "metadata"), "uid")
-                if not uid:
-                    job = await self.batch.read_namespaced_job(name, self.namespace)
+            except Exception as exc:
+                if self._root(run_id).exists():
+                    await asyncio.to_thread(shutil.rmtree, self._root(run_id))
+                await self.store.update(
+                    run_id,
+                    state="failed",
+                    reason="export",
+                    pods_gone=True,
+                    ended_at=self.clock(),
+                )
+                self._tokens.pop(run_id, None)
+                self.release_credential(run_id)
+                raise InvestigationRefused("export failed") from exc
+            try:
+                async with self.store.lock(run_id) as (session, row):
+                    if row.state != "queued":
+                        raise InvestigationRefused("run no longer queued")
+                    name = investigation_manifest.agent_manifest(row)["metadata"][
+                        "name"
+                    ]
+                    await self.store.update(run_id, session=session, agent_job=name)
+                    row.agent_job = name
+                    job = await asyncio.wait_for(
+                        self.batch.create_namespaced_job(
+                            self.namespace, investigation_manifest.agent_manifest(row)
+                        ),
+                        timeout=10,
+                    )
                     uid = _field(_field(job, "metadata"), "uid")
-                if not uid:
-                    raise InvestigationRefused("Job UID unavailable")
-                await self._create_secret(row, str(uid))
-                await self.store.update(run_id, session=session, state="running")
-        except Exception as exc:
-            await self._terminate(run_id, "failed", "dispatch")
-            raise InvestigationRefused("dispatch failed") from exc
-        return {"id": run_id, "state": "running"}
+                    if not uid:
+                        job = await self.batch.read_namespaced_job(name, self.namespace)
+                        uid = _field(_field(job, "metadata"), "uid")
+                    if not uid:
+                        raise InvestigationRefused("Job UID unavailable")
+                    await self._create_secret(row, str(uid))
+                    await self.store.update(
+                        run_id,
+                        session=session,
+                        state="running",
+                        lease_expires_at=self.clock() + timedelta(seconds=60),
+                    )
+            except Exception as exc:
+                await self._terminate(run_id, "failed", "dispatch")
+                raise InvestigationRefused("dispatch failed") from exc
+            return {"id": run_id, "state": "running"}
+        finally:
+            self._dispatching.discard(run_id)
 
     async def _create_secret(self, row: Any, uid: str) -> None:
         tokens = self._tokens.get(row.id)
@@ -420,6 +433,8 @@ class InvestigationBackend:
         async with self.store.lock(run_id) as (session, row):
             if row is None or row.pods_gone:
                 return
+            if reason == "lease expired" and row.lease_expires_at > self.clock():
+                return
             if row.state not in {"stopping", "uncertain"}:
                 await self.store.update(
                     run_id,
@@ -429,7 +444,10 @@ class InvestigationBackend:
                     reason=reason,
                     stopping_since=self.clock(),
                 )
-            await self._delete_jobs(run_id, row)
+            try:
+                await self._delete_jobs(run_id, row)
+            except Exception:  # noqa: BLE001 - next reconcile tick retries deletion
+                _log.exception("investigation Job deletion failed for %s", run_id)
 
     async def stop(self, run_id: str) -> dict[str, Any]:
         await self._terminate(run_id, "stopped", "stopped by caller")
@@ -464,6 +482,10 @@ class InvestigationBackend:
                 self.namespace, label_selector=selector
             )
             if _items(jobs) or _items(pods):
+                try:
+                    await self._delete_jobs(run_id, row)
+                except Exception:  # noqa: BLE001 - keep slot held and retry next tick
+                    _log.exception("investigation Job deletion failed for %s", run_id)
                 if (
                     row.stopping_since
                     and self.clock() - row.stopping_since >= timedelta(seconds=120)
@@ -552,7 +574,12 @@ class InvestigationBackend:
         raw = ""
         exit_code = 0 if _field(status, "succeeded", 0) else 1
         if pod_name:
-            raw = await self.core.read_namespaced_pod_log(pod_name, self.namespace)
+            raw = await self.core.read_namespaced_pod_log(
+                pod_name,
+                self.namespace,
+                container="test",
+                limit_bytes=5 * 1024 * 1024 + 1,
+            )
             for container in _field(_field(pod, "status"), "container_statuses", []):
                 terminated = _field(_field(container, "state"), "terminated")
                 if terminated is not None:
@@ -561,10 +588,12 @@ class InvestigationBackend:
         truncated = len(raw.encode()) > 5 * 1024 * 1024
         raw = raw.encode()[: 5 * 1024 * 1024].decode(errors="replace")
         parsed = investigation_tests.parse(raw, truncated)
-        tail = investigation_scrub.scrub_text(
-            "\n".join(raw.splitlines()[-200:]),
+        clean, _ = investigation_scrub.scrub_lines(
+            raw.splitlines(keepends=True),
             claude_token=await self._claude_token(run_id),
+            pem_open=False,
         )
+        tail = "".join(clean[-200:])
         result = {
             "ran": True,
             "exit_code": exit_code,
@@ -580,6 +609,7 @@ class InvestigationBackend:
         return result
 
     async def reconcile_tick(self) -> None:
+        await self._clients()
         now = self.clock()
         if self._last_purge is None or now - self._last_purge >= timedelta(hours=1):
             await self.store.purge_logs(now - timedelta(days=7))
@@ -594,6 +624,8 @@ class InvestigationBackend:
         row = await self.store.get(run_id)
         if row is None or row.pods_gone:
             return
+        if run_id in self._dispatching:
+            return
         if row.state in {"stopping", "uncertain"}:
             await self._pods_gone(run_id)
             return
@@ -607,12 +639,7 @@ class InvestigationBackend:
             if row.state not in {"queued", "running", "completing"}:
                 return
             if not row.agent_job:
-                if row.state != "queued":
-                    return
-                row.agent_job = f"{investigation_manifest._names(row)[0]}-agent"
-                await self.store.update(
-                    run_id, session=session, agent_job=row.agent_job
-                )
+                return
             try:
                 job = await self.batch.read_namespaced_job(
                     row.agent_job, self.namespace

@@ -29,9 +29,13 @@ class PodAPI:
         self.headers = {"X-Run-Token": token}
 
     async def request(
-        self, method: str, path: str, data: dict[str, Any] | None = None
+        self,
+        method: str,
+        path: str,
+        data: dict[str, Any] | None = None,
+        timeout: float | httpx.Timeout = 10,  # noqa: ASYNC109 - HTTP client timeout config.
     ) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.request(
                 method, f"{self.url}/{path}", headers=self.headers, json=data
             )
@@ -118,9 +122,12 @@ async def run(  # noqa: PLR0915 - one receive loop, kept linear
     logs: list[str] = []
     final = ""
     reason = None
+    turns_used = 0
 
     async def run_tests() -> dict[str, Any]:
-        return await api.request("POST", "run-tests", {})
+        return await api.request(
+            "POST", "run-tests", {}, timeout=httpx.Timeout(10, read=15 * 60 + 60)
+        )
 
     client = client_factory(limits["turns"], run_tests)
     loop = asyncio.get_running_loop()
@@ -141,6 +148,7 @@ async def run(  # noqa: PLR0915 - one receive loop, kept linear
                 {
                     "lines": logs[:],
                     "tokens_used": sum(sum(x) for x in responses.values()),
+                    "turns_used": turns_used,
                 },
             )
             logs.clear()
@@ -166,6 +174,7 @@ async def run(  # noqa: PLR0915 - one receive loop, kept linear
                         await client.interrupt()
                         break
                 elif isinstance(message, AssistantMessage):
+                    turns_used += 1
                     text = "".join(
                         block.text
                         for block in message.content
@@ -194,7 +203,7 @@ async def run(  # noqa: PLR0915 - one receive loop, kept linear
         await flush()
     if reason:
         return reason
-    await api.request("POST", "report", {"findings": final})
+    await api.request("POST", "report", {"findings": final[:20000]})
     return None
 
 

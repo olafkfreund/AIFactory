@@ -525,7 +525,9 @@ def test_sa_token_is_mounted_because_the_build_lane_needs_it(helm_template) -> N
 # --- Read-only investigations (#2156, step 8) ---------------------------------
 
 
-def _render(chart_dir, *sets: str, namespace: str = "factory") -> "subprocess.CompletedProcess":
+def _render(
+    chart_dir, *sets: str, namespace: str = "factory"
+) -> "subprocess.CompletedProcess":
     import subprocess
 
     cmd = ["helm", "template", "aifactory", str(chart_dir), "--namespace", namespace]
@@ -602,20 +604,36 @@ def test_investigation_policies_rules(helm_available, chart_dir) -> None:
     assert agent["egress"][2]["ports"] == [{"protocol": "TCP", "port": port}]
 
     test = _by_name(docs, "NetworkPolicy", "-investigate-test")["spec"]
-    assert test["podSelector"]["matchLabels"] == {"factory.io/run-kind": "investigate-test"}
+    assert test["podSelector"]["matchLabels"] == {
+        "factory.io/run-kind": "investigate-test"
+    }
     assert not test.get("ingress")
     assert test["egress"][1] == {
-        "to": [{"podSelector": {"matchLabels": {"factory.io/run-kind": "investigate-proxy"}}}],
+        "to": [
+            {
+                "podSelector": {
+                    "matchLabels": {"factory.io/run-kind": "investigate-proxy"}
+                }
+            }
+        ],
         "ports": [{"protocol": "TCP", "port": 3128}],
     }
     assert len(test["egress"]) == 2
 
     api = _by_name(docs, "NetworkPolicy", "-investigate-api")["spec"]
     assert api["policyTypes"] == ["Ingress"]
-    assert api["podSelector"]["matchLabels"]["app.kubernetes.io/instance"] == "aifactory"
+    assert (
+        api["podSelector"]["matchLabels"]["app.kubernetes.io/instance"] == "aifactory"
+    )
     assert api["ingress"] == [
         {
-            "from": [{"podSelector": {"matchLabels": {"factory.io/run-kind": "investigate-agent"}}}],
+            "from": [
+                {
+                    "podSelector": {
+                        "matchLabels": {"factory.io/run-kind": "investigate-agent"}
+                    }
+                }
+            ],
             "ports": [{"protocol": "TCP", "port": port}],
         }
     ]
@@ -633,7 +651,11 @@ def test_investigation_policies_rules(helm_available, chart_dir) -> None:
 def test_investigation_rbac(helm_available, chart_dir) -> None:
     docs = _investigations_on(chart_dir)
     rules = _by_name(docs, "Role", "-sandbox")["rules"]
-    assert {"apiGroups": [""], "resources": ["secrets"], "verbs": ["create", "get", "delete"]} in rules
+    assert {
+        "apiGroups": [""],
+        "resources": ["secrets"],
+        "verbs": ["create", "get", "delete"],
+    } in rules
     assert {
         "apiGroups": ["networking.k8s.io"],
         "resources": ["networkpolicies"],
@@ -643,7 +665,9 @@ def test_investigation_rbac(helm_available, chart_dir) -> None:
 
 @pytest.mark.helm
 def test_investigation_proxy_pods_and_squid(helm_available, chart_dir) -> None:
-    docs = _investigations_on(chart_dir, "investigations.proxy.extraDomains={foo.example.com}")
+    docs = _investigations_on(
+        chart_dir, "investigations.proxy.extraDomains={foo.example.com}"
+    )
     dep = _by_name(docs, "Deployment", "-investigate-proxy")
     labels = dep["spec"]["template"]["metadata"]["labels"]
     assert "app.kubernetes.io/instance" not in labels
@@ -656,19 +680,39 @@ def test_investigation_proxy_pods_and_squid(helm_available, chart_dir) -> None:
     for line in (
         "acl SSL_ports port 443",
         "acl CONNECT method CONNECT",
-        "acl registries dstdomain registry.npmjs.org",
-        "acl registries dstdomain pypi.org files.pythonhosted.org",
-        "acl registries dstdomain crates.io static.crates.io index.crates.io",
-        "acl registries dstdomain proxy.golang.org sum.golang.org",
-        "acl registries dstdomain repo.maven.apache.org repo1.maven.org",
-        "acl registries dstdomain foo.example.com",
+        "acl registries dstdomain -n registry.npmjs.org",
+        "acl registries dstdomain -n pypi.org files.pythonhosted.org",
+        "acl registries dstdomain -n crates.io static.crates.io index.crates.io",
+        "acl registries dstdomain -n proxy.golang.org sum.golang.org",
+        "acl registries dstdomain -n repo.maven.apache.org repo1.maven.org",
+        "acl registries dstdomain -n foo.example.com",
         "http_access deny !CONNECT",
         "http_access deny CONNECT !SSL_ports",
         "http_access allow CONNECT registries",
         "http_access deny all",
     ):
         assert line in lines, line
-    assert lines.index("http_access allow CONNECT registries") < lines.index("http_access deny all")
+    assert lines.index("http_access allow CONNECT registries") < lines.index(
+        "http_access deny all"
+    )
+
+
+@pytest.mark.helm
+def test_investigation_proxy_dstdomain_disables_reverse_dns(
+    helm_available, chart_dir
+) -> None:
+    assert helm_available
+    docs = _investigations_on(
+        chart_dir, "investigations.proxy.extraDomains={foo.example.com}"
+    )
+    conf = _by_name(docs, "ConfigMap", "-investigate-proxy")["data"]["squid.conf"]
+    lines = [
+        line
+        for line in conf.splitlines()
+        if line.startswith("acl registries dstdomain")
+    ]
+    assert lines and all(" -n " in line for line in lines)
+    assert any("foo.example.com" in line for line in lines)
 
 
 @pytest.mark.helm

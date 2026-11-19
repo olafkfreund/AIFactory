@@ -32,6 +32,8 @@ from server.routes import investigations  # noqa: E402
 from server.services.investigation_backend import InvestigationBackend  # noqa: E402
 from server.services.investigation_store import InvestigationStore  # noqa: E402
 
+from tests.postgres.test_investigation_backend import FakeKube  # noqa: E402
+
 pytestmark = [pytest.mark.postgres, pytest.mark.slow]
 
 
@@ -203,6 +205,49 @@ def test_roles_cursor_and_stop(env: SimpleNamespace) -> None:
     assert time.monotonic() - start < 20
 
 
+def test_route_stop_with_real_backend_waits_for_pods_gone(env: SimpleNamespace) -> None:
+    class DisappearingPods(FakeKube):
+        polls = 0
+
+        async def list_namespaced_pod(self, namespace: str, label_selector: str):
+            self.polls += 1
+            if self.polls == 2:
+                self.pods.clear()
+            return await super().list_namespaced_pod(namespace, label_selector)
+
+    kube = DisappearingPods()
+    kube.pods = [
+        {
+            "metadata": {
+                "name": "agent-pod",
+                "labels": {"factory.io/investigation": env.run_id},
+            }
+        }
+    ]
+    kube.jobs["late-unprefixed"] = {
+        "metadata": {
+            "name": "late-unprefixed",
+            "uid": "late",
+            "labels": {"factory.io/investigation": env.run_id},
+        },
+        "status": {},
+    }
+    backend = InvestigationBackend(
+        env.backend.store, batch=kube, core=kube, networking=kube
+    )
+    env.client.app.state.investigation_backend = backend
+    start = time.monotonic()
+    response = env.client.post(
+        f"/api/investigations/{env.run_id}/stop", headers=bearer("editor")
+    )
+    assert response.status_code == 200
+    assert response.json() == {"state": "stopped", "pods_gone": True}
+    assert time.monotonic() - start < 20
+    assert kube.polls == 2
+    assert not kube.jobs
+    assert asyncio.run(backend.store.get(env.run_id)).pods_gone
+
+
 def test_create_and_stdio_proxy(
     env: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -241,3 +286,46 @@ def test_create_and_stdio_proxy(
     )
     assert proxy.status_code == 200
     assert proxy.json()["state"] == "running"
+
+
+def test_refused_second_create_keeps_first_credential(
+    env: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checked_out: set[str] = set()
+
+    def checkout(key: str) -> tuple[str, None, None]:
+        checked_out.add(key)
+        return ("claude-token", None, None)
+
+    service = SimpleNamespace(
+        _resolve_claude_token_pooled=checkout,
+        _release_task_credential=checked_out.discard,
+    )
+    monkeypatch.setattr(investigations, "get_agent_service", lambda: service)
+    monkeypatch.setattr(
+        investigations.project_settings_store,
+        "get_settings",
+        AsyncMock(return_value={}),
+    )
+    first_id = str(uuid4())
+    env.backend.dispatch = AsyncMock(
+        side_effect=[
+            {"id": first_id, "state": "running"},
+            investigations.InvestigationRefused("project investigation slot taken"),
+        ]
+    )
+    body = {"project_id": env.project_id, "sha": "a" * 40, "request": "find issue"}
+    assert (
+        env.client.post(
+            "/api/investigations", json=body, headers=bearer("editor")
+        ).status_code
+        == 200
+    )
+    first_key = env.client.app.state.investigation_credential_keys[first_id]
+    assert (
+        env.client.post(
+            "/api/investigations", json=body, headers=bearer("editor")
+        ).status_code
+        == 409
+    )
+    assert first_key in checked_out

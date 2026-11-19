@@ -77,8 +77,8 @@ _INV_WRITE = Depends(require_acw_scope(TASK_WRITE_SCOPE))
 async def proxy_create_investigation(
     request: FastAPIRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
-    key=_INV_WRITE,
-):
+    key: AuthenticatedKey | _LegacyAdminKey = _INV_WRITE,
+) -> dict[str, str]:
     request.state.user = acw_principal(key)
     result = await investigations.create(
         investigations.CreateInput(**await _read_json_body(request)), request, db
@@ -94,8 +94,8 @@ async def proxy_get_investigation(
     run_id: str,
     request: FastAPIRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
-    key=_INV_READ,
-):
+    key: AuthenticatedKey | _LegacyAdminKey = _INV_READ,
+) -> dict[str, Any]:
     request.state.user = acw_principal(key)
     return await investigations.get(run_id, request, db)
 
@@ -107,8 +107,8 @@ async def proxy_investigation_logs(  # noqa: PLR0913 - FastAPI path and query ar
     db: Annotated[AsyncSession, Depends(get_db)],
     after: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
-    key=_INV_READ,
-):
+    key: AuthenticatedKey | _LegacyAdminKey = _INV_READ,
+) -> dict[str, Any]:
     request.state.user = acw_principal(key)
     return await investigations.logs(run_id, request, db, after, limit)
 
@@ -118,8 +118,8 @@ async def proxy_investigation_lease(
     run_id: str,
     request: FastAPIRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
-    key=_INV_WRITE,
-):
+    key: AuthenticatedKey | _LegacyAdminKey = _INV_WRITE,
+) -> dict[str, bool]:
     request.state.user = acw_principal(key)
     result = await investigations.lease(run_id, request, db)
     await _audit_mcp_write(
@@ -133,8 +133,8 @@ async def proxy_investigation_stop(
     run_id: str,
     request: FastAPIRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
-    key=_INV_WRITE,
-):
+    key: AuthenticatedKey | _LegacyAdminKey = _INV_WRITE,
+) -> dict[str, Any]:
     request.state.user = acw_principal(key)
     result = await investigations.stop(run_id, request, db)
     await _audit_mcp_write(

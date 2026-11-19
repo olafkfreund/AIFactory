@@ -62,6 +62,7 @@ def test_manifests_are_hardened_and_have_exact_env(run, monkeypatch):
         assert "app.kubernetes.io/instance" not in pod["metadata"]["labels"]
         assert pod["metadata"]["labels"]["factory.io/investigation"] == str(run["id"])
         assert spec["automountServiceAccountToken"] is False
+        assert spec["terminationGracePeriodSeconds"] == 10
         assert all(
             c["securityContext"]["readOnlyRootFilesystem"]
             for c in [*spec["containers"], *spec.get("initContainers", [])]
@@ -75,6 +76,9 @@ def test_manifests_are_hardened_and_have_exact_env(run, monkeypatch):
             spec["containers"][0]["volumeMounts"][0]["subPath"]
             == f"investigations/{run['id']}/src"
         )
+    agent = manifests.agent_manifest(run)["spec"]["template"]["spec"]["containers"][0]
+    assert agent["workingDir"] != "/src"
+    assert "-P" in agent["command"]
 
 
 def test_guard_rejects_extra_inputs(run):
@@ -106,6 +110,16 @@ def test_guard_rejects_extra_inputs(run):
         change(unsafe)
         with pytest.raises(manifests.ManifestRefused):
             manifests.assert_investigation_manifest(unsafe)
+
+
+def test_guard_rejects_literal_credential(run):
+    agent = manifests.agent_manifest(run)
+    entries = agent["spec"]["template"]["spec"]["containers"][0]["env"]
+    entry = next(e for e in entries if e["name"] == "CLAUDE_CODE_OAUTH_TOKEN")
+    entry.pop("valueFrom")
+    entry["value"] = "literal"
+    with pytest.raises(manifests.ManifestRefused):
+        manifests.assert_investigation_manifest(agent)
 
 
 def test_secret_owned_by_agent_job(run):

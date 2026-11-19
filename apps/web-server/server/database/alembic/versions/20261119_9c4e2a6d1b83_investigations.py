@@ -41,9 +41,7 @@ def upgrade() -> None:
         sa.Column("pending_state", sa.String(length=16), nullable=True),
         sa.Column("reason", sa.Text, nullable=True),
         sa.Column("lease_expires_at", sa.DateTime, nullable=False),
-        sa.Column(
-            "pods_gone", sa.Boolean, nullable=False, server_default=sa.false()
-        ),
+        sa.Column("pods_gone", sa.Boolean, nullable=False, server_default=sa.false()),
         sa.Column("stopping_since", sa.DateTime, nullable=True),
         sa.Column("agent_job", sa.String(length=253), nullable=True),
         sa.Column("test_jobs", sa.JSON, nullable=False, server_default="[]"),
@@ -52,9 +50,7 @@ def upgrade() -> None:
         sa.Column("turns_used", sa.Integer, nullable=False, server_default="0"),
         sa.Column("tests", sa.JSON, nullable=True),
         sa.Column("report", sa.JSON, nullable=True),
-        sa.Column(
-            "scrub_open", sa.Boolean, nullable=False, server_default=sa.false()
-        ),
+        sa.Column("scrub_open", sa.Boolean, nullable=False, server_default=sa.false()),
         sa.Column("token_hash", sa.String(length=64), nullable=False),
         sa.Column(
             "created_at", sa.DateTime, nullable=False, server_default=sa.func.now()

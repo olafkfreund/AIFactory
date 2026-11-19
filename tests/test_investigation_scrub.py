@@ -55,3 +55,8 @@ def test_long_paths_survive_and_mixed_runs_are_removed():
     lines, _ = scrub_lines([path, f"key={secret}"], claude_token="", pem_open=False)
     assert lines[0] == path
     assert secret not in lines[1]
+
+
+def test_aws_secret_with_slash_is_removed():
+    sample = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+    assert sample not in scrub_text(f"aws_secret={sample}", claude_token="")

@@ -83,6 +83,33 @@ def test_export_filters_and_does_not_change_checkout(repo, storage):
     assert (path / "safe.txt").read_text() == "local change"
 
 
+def test_chained_symlink_escape_is_removed(repo, storage):
+    path, _ = repo
+    nested = path / "a/b/c/d"
+    nested.mkdir(parents=True)
+    (nested / "A").symlink_to("L/../../../..")
+    (nested / "L").symlink_to("../../../..")
+    git(path, "add", ".")
+    git(path, "commit", "-qm", "links")
+    sha = git(path, "rev-parse", "HEAD")
+    dest = storage / "investigations" / "chain" / "src"
+    exports.export(path, sha, dest)
+    assert not (dest / "a/b/c/d/A").is_symlink()
+
+
+def test_nested_directory_exclusion(repo, storage):
+    path, _ = repo
+    key = path / "private/keys/x"
+    key.parent.mkdir(parents=True)
+    key.write_text("secret")
+    git(path, "add", ".")
+    git(path, "commit", "-qm", "private key")
+    sha = git(path, "rev-parse", "HEAD")
+    dest = storage / "investigations" / "nested" / "src"
+    exports.export(path, sha, dest, "private/keys/")
+    assert not (dest / "private/keys/x").exists()
+
+
 def test_unknown_sha_and_size_cap(repo, storage, monkeypatch):
     path, sha = repo
     dest = storage / "investigations" / "run" / "src"

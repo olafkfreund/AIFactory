@@ -52,7 +52,11 @@ def _excluded(path: PurePosixPath, patterns: tuple[str, ...]) -> bool:
         return True
     for pattern in patterns:
         if pattern.endswith("/"):
-            if any(fnmatch.fnmatchcase(part, pattern[:-1]) for part in parts):
+            if any(
+                fnmatch.fnmatchcase("/".join(parts[i:j]), pattern[:-1])
+                for i in range(len(parts))
+                for j in range(i + 1, len(parts) + 1)
+            ):
                 return True
         elif "/" in pattern:
             if any(
@@ -156,10 +160,23 @@ def export(  # noqa: PLR0912, PLR0915 - Keep archive safety checks in one guarde
             if not link or Path(link).is_absolute():
                 continue
             resolved = (target.parent / link).resolve()
-            if not resolved.is_relative_to(temporary):
+            if not resolved.is_relative_to(temporary.resolve()):
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
             target.symlink_to(link)
+        while True:
+            unsafe = [
+                target
+                for target, _ in symlinks
+                if target.is_symlink()
+                and not Path(os.path.realpath(target)).is_relative_to(
+                    temporary.resolve()
+                )
+            ]
+            if not unsafe:
+                break
+            for target in unsafe:
+                target.unlink()
         (temporary / ".aifactory-export-ok").touch(exist_ok=False)
         temporary.rename(dest)
         return {"bytes": size}
