@@ -11,24 +11,50 @@ import { apiRequest } from '../../lib/api-client';
 // ============================================
 
 export const AVAILABLE_MODELS = [
+  { value: 'fable', label: 'Claude Fable 5.2' },
   { value: 'opus', label: 'Claude Opus 5.5' },
-  { value: 'sonnet', label: 'Claude Sonnet 5' },
-  { value: 'haiku', label: 'Claude Haiku 4.5' }
+  { value: 'sonnet', label: 'Claude Sonnet 5.5' },
+  { value: 'haiku', label: 'Claude Haiku 5.5' },
+  { value: 'opus-4.8', label: 'Claude Opus 4.8 (legacy)' },
+  { value: 'sonnet-5', label: 'Claude Sonnet 5 (legacy)' },
+  { value: 'sonnet-4.6', label: 'Claude Sonnet 4.6 (legacy)' },
+  { value: 'haiku-4.5', label: 'Claude Haiku 4.5 (legacy)' }
 ] as const;
 
 // Models available for all phases (Claude + alternative providers)
 // The provider is inferred from the model ID on the backend, so no separate
 // provider setting is needed per phase.
 export const ALL_AVAILABLE_MODELS = [
+  { value: 'fable', label: 'Claude Fable 5.2' },
   { value: 'opus', label: 'Claude Opus 5.5' },
-  { value: 'sonnet', label: 'Claude Sonnet 5' },
-  { value: 'haiku', label: 'Claude Haiku 4.5' },
+  { value: 'sonnet', label: 'Claude Sonnet 5.5' },
+  { value: 'haiku', label: 'Claude Haiku 5.5' },
+  { value: 'opus-4.8', label: 'Claude Opus 4.8 (legacy)' },
+  { value: 'sonnet-5', label: 'Claude Sonnet 5 (legacy)' },
+  { value: 'sonnet-4.6', label: 'Claude Sonnet 4.6 (legacy)' },
+  { value: 'haiku-4.5', label: 'Claude Haiku 4.5 (legacy)' },
+  { value: 'gpt-6.2-sol', label: 'GPT-6.2 Sol' },
+  { value: 'gpt-6.2-astra', label: 'GPT-6.2 Astra' },
+  { value: 'gpt-6.1-terra', label: 'GPT-6.1 Terra' },
+  { value: 'gpt-6.1-sol', label: 'GPT-6.1 Sol' },
+  { value: 'gpt-6-astra', label: 'GPT-6 Astra' },
+  { value: 'gpt-6-sol', label: 'GPT-6 Sol' },
+  { value: 'gpt-6-luna', label: 'GPT-6 Luna' },
+  { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
+  { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
+  { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
   { value: 'gpt-5.6', label: 'GPT-5.6' },
   { value: 'gpt-5.5', label: 'GPT-5.5' },
   { value: 'gpt-5.4', label: 'GPT-5.4' },
   { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
   { value: 'gpt-5.4-nano', label: 'GPT-5.4 Nano' },
   { value: 'gpt-5.3-codex', label: 'Codex — GPT-5.3' },
+  { value: 'gemini-4-carbon-medium', label: 'Gemini 4 Carbon (Medium)' },
+  { value: 'gemini-4-argon-medium', label: 'Gemini 4 Argon (Medium)' },
+  { value: 'gemini-4-neon-medium', label: 'Gemini 4 Neon (Medium)' },
+  { value: 'gemini-3.8-flash-high', label: 'Gemini 3.8 Flash (High)' },
+  { value: 'gemini-3.8-flash-medium', label: 'Gemini 3.8 Flash (Medium)' },
+  { value: 'gemini-3.8-flash-low', label: 'Gemini 3.8 Flash (Low)' },
   { value: 'gemini-3.7-flash-medium', label: 'Gemini 3.7 Flash (Medium)' },
   { value: 'gemini-3.7-flash-high', label: 'Gemini 3.7 Flash (High)' },
   { value: 'gemini-3.7-flash-low', label: 'Gemini 3.7 Flash (Low)' },
@@ -147,9 +173,14 @@ export async function fetchOpenAICompatibleModels(baseUrl?: string): Promise<{ v
 
 // Maps model shorthand to actual Claude model IDs
 export const MODEL_ID_MAP: Record<string, string> = {
-  opus: 'claude-opus-4-8',
-  sonnet: 'claude-sonnet-4-6',
-  haiku: 'claude-haiku-4-5-20251001'
+  fable: 'claude-fable-5-2',
+  opus: 'claude-opus-5-5',
+  sonnet: 'claude-sonnet-5-5',
+  haiku: 'claude-haiku-5-5',
+  'opus-4.8': 'claude-opus-4-8',
+  'sonnet-5': 'claude-sonnet-5',
+  'sonnet-4.6': 'claude-sonnet-4-6',
+  'haiku-4.5': 'claude-haiku-4-5-20251001'
 } as const;
 
 // Maps thinking levels to budget tokens (null = no extended thinking)
@@ -289,11 +320,26 @@ import type { InsightsProvider } from '../types/insights';
 
 export const PROVIDER_MODELS: Record<string, { id: string; label: string }[]> = {
   claude: [
+    { id: 'fable', label: 'Claude Fable 5.2' },
     { id: 'opus', label: 'Claude Opus 5.5' },
-    { id: 'sonnet', label: 'Claude Sonnet 5' },
-    { id: 'haiku', label: 'Claude Haiku 4.5' },
+    { id: 'sonnet', label: 'Claude Sonnet 5.5' },
+    { id: 'haiku', label: 'Claude Haiku 5.5' },
+    { id: 'opus-4.8', label: 'Claude Opus 4.8 (legacy)' },
+    { id: 'sonnet-5', label: 'Claude Sonnet 5 (legacy)' },
+    { id: 'sonnet-4.6', label: 'Claude Sonnet 4.6 (legacy)' },
+    { id: 'haiku-4.5', label: 'Claude Haiku 4.5 (legacy)' },
   ],
   codex: [
+    { id: 'gpt-6.2-sol', label: 'GPT-6.2 Sol' },
+    { id: 'gpt-6.2-astra', label: 'GPT-6.2 Astra' },
+    { id: 'gpt-6.1-terra', label: 'GPT-6.1 Terra' },
+    { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol' },
+    { id: 'gpt-6-astra', label: 'GPT-6 Astra' },
+    { id: 'gpt-6-sol', label: 'GPT-6 Sol' },
+    { id: 'gpt-6-luna', label: 'GPT-6 Luna' },
+    { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
+    { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
+    { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
     { id: 'gpt-5.6', label: 'GPT-5.6' },
     { id: 'gpt-5.5', label: 'GPT-5.5' },
     { id: 'gpt-5.4', label: 'GPT-5.4' },
@@ -302,6 +348,12 @@ export const PROVIDER_MODELS: Record<string, { id: string; label: string }[]> = 
     { id: 'gpt-5.3-codex', label: 'GPT-5.3 Codex' },
   ],
   gemini: [
+    { id: 'gemini-4-carbon-medium', label: 'Gemini 4 Carbon (Medium)' },
+    { id: 'gemini-4-argon-medium', label: 'Gemini 4 Argon (Medium)' },
+    { id: 'gemini-4-neon-medium', label: 'Gemini 4 Neon (Medium)' },
+    { id: 'gemini-3.8-flash-high', label: 'Gemini 3.8 Flash (High)' },
+    { id: 'gemini-3.8-flash-medium', label: 'Gemini 3.8 Flash (Medium)' },
+    { id: 'gemini-3.8-flash-low', label: 'Gemini 3.8 Flash (Low)' },
     { id: 'gemini-3.7-flash-medium', label: 'Gemini 3.7 Flash (Medium)' },
     { id: 'gemini-3.7-flash-high', label: 'Gemini 3.7 Flash (High)' },
     { id: 'gemini-3.7-flash-low', label: 'Gemini 3.7 Flash (Low)' },
