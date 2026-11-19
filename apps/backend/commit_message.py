@@ -230,7 +230,7 @@ async def _call_claude(prompt: str) -> str:
     """Call Claude for commit message generation.
 
     Reads model/thinking settings from environment variables:
-    - UTILITY_MODEL_ID: Full model ID (e.g., "claude-haiku-4-5-20251001")
+    - UTILITY_MODEL_ID: Full model ID (e.g., "claude-haiku-5-5")
     - UTILITY_THINKING_BUDGET: Thinking budget tokens (e.g., "1024")
     """
     from core.auth import ensure_claude_code_oauth_token, get_auth_token

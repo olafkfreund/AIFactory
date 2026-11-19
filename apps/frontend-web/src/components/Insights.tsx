@@ -55,7 +55,7 @@ import {
   PROVIDER_MODELS
 } from '../shared/constants';
 
-/** Build a model suffix like "(Claude Sonnet 4.6)" or "(Ollama: qwen3-30b)" */
+/** Build a model suffix like "(Claude Sonnet 5.5)" or "(Ollama: qwen3-30b)" */
 function getModelLabel(provider?: InsightsProvider, model?: string): string | null {
   if (!provider && !model) return null;
   const providerName = provider ? (PROVIDER_INFO[provider]?.displayName || provider) : '';
