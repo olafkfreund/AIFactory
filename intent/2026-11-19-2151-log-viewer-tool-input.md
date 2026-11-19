@@ -20,7 +20,8 @@ Every tool-call entry in the log shows a short description of its input (command
 
 ## Constraints
 
-Tool inputs can hold secrets: the displayed input must go through `factory_common.secrets.redact`. No schema change. Existing logs stay as they are.
+Tool inputs can hold secrets: the displayed input must be redacted with `factory_common.secrets.redact` BEFORE it is shortened (shortening can cut a token below the pattern length), and values of secret-named JSON keys (password, token, secret, key, authorization) are masked in the compact-JSON fallback because `redact` only knows token shapes. No schema change. Existing logs stay as they are.
+Scope (Codex review): task-log paths that emit tool_start from SDK-style `ToolUseBlock`s, which includes the Ollama and OpenAI-compatible agentic providers. Out of scope: the Codex/Antigravity/Copilot/OpenCode adapters (they emit text, no tool-use block), the QA fallback transcript-only path, `insights_runner.py` (Insights, not task logs), and live k8s stdout ingestion in the web-server. Note the stored `tool_input` field is simply absent when empty; `"input": null` is the emitted TOOL_START marker.
 
 ## Open questions
 
