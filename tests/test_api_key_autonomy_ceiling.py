@@ -43,7 +43,7 @@ def test_migration_chains_onto_a_single_head():
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory(str(_VERSIONS.parent))
-    assert script.get_heads() == ["7a1f3c9e2b50"]
+    assert script.get_heads() == ["9c4e2a6d1b83"]  # investigations (#2156) stacks on 7a1f3c9e2b50
     assert script.get_revision("7a1f3c9e2b50").down_revision == "5e2d9c1a7b40"
 
 

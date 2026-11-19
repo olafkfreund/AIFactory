@@ -11,15 +11,19 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     LargeBinary,
     String,
     Text,
     UniqueConstraint,
+    false,
     func,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -1302,3 +1306,79 @@ class ProjectSettings(Base):
 
     def __repr__(self) -> str:
         return f"<ProjectSettings project_key={self.project_key!r}>"
+
+
+class Investigation(Base):
+    """A read-only investigation run (#2156); see ``services/investigation_store.py``.
+
+    The partial unique index on ``project_id WHERE pods_gone = false`` is the
+    per-project slot.
+    """
+
+    __tablename__ = "investigations"
+    __table_args__ = (
+        Index(
+            "uq_investigations_project_slot",
+            "project_id",
+            unique=True,
+            postgresql_where=text("pods_gone = false"),
+            sqlite_where=text("pods_gone = 0"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    repo: Mapped[str] = mapped_column(String(1024), nullable=False)
+    sha: Mapped[str] = mapped_column(String(40), nullable=False)
+    request: Mapped[str] = mapped_column(String(2000), nullable=False)
+    test_command: Mapped[str | None] = mapped_column(Text, nullable=True)
+    limits: Mapped[dict] = mapped_column(JSON, nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    pending_state: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lease_expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    pods_gone: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    stopping_since: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    agent_job: Mapped[str | None] = mapped_column(String(253), nullable=True)
+    test_jobs: Mapped[list] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]"
+    )
+    run_tests_used: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    tokens_used: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    turns_used: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    tests: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    report: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    scrub_open: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class InvestigationLog(Base):
+    """One scrubbed log line of an investigation run (#2156)."""
+
+    __tablename__ = "investigation_logs"
+    __table_args__ = (Index("ix_investigation_logs_run_seq", "run_id", "seq"),)
+
+    seq: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    run_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+    line: Mapped[str] = mapped_column(String(2000), nullable=False)
