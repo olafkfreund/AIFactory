@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+## 3.19.0 - 2026-11-19
+
+Merged to `dev` since 3.18.0.
+
+### Added
+
+- The new models are enabled: `opus`, `sonnet` and `haiku` resolve to Claude Opus 5.5, Sonnet 5.5 and Haiku 5.5, `fable` to Claude Fable 5.2, with GPT-6 and Gemini 4 in the Codex and agy pickers. Older ids stay pinnable. (#2160, #2164)
+
 ## 3.18.0 - 2026-11-19
 
 Merged to `dev` since 3.17.2.

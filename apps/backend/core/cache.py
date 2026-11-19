@@ -62,6 +62,11 @@ _PREFIX_HASHES: dict[str, str] = {}
 #
 # Reference: https://platform.claude.com/docs/en/build-with-claude/prompt-caching
 _MIN_CACHE_TOKENS: dict[str, int] = {
+    # 5.x generation: 512-token minimum (claude-api prompt-caching reference).
+    "claude-fable-5": 512,
+    "claude-opus-5": 512,
+    "claude-sonnet-5": 512,
+    "claude-haiku-5": 512,
     "claude-haiku-4-5": 4096,
     "claude-sonnet-4-6": 1024,
     "claude-opus-4-6": 4096,

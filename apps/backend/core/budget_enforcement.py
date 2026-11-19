@@ -137,11 +137,20 @@ def _phase_models(execution: Execution | None) -> dict[str, str]:
 # already-full id (or a local ``ollama:<model>`` form) still resolves.
 _SHORTHAND_TO_CATALOG: dict[str, str] = {
     "opus": "claude-opus-5-5",
-    # Was pinned to sonnet-4-6 while phase_config's `sonnet` meant sonnet-5, so
-    # a `sonnet` run was budgeted against the wrong catalog row. It matters now
-    # that Sonnet is the default coding model.
-    "sonnet": "claude-sonnet-5",
-    "haiku": "claude-haiku-4-5-20251001",
+    # Keep in step with phase_config.MODEL_ID_MAP: a `sonnet` run must be
+    # budgeted against the row of the model it actually runs.
+    "sonnet": "claude-sonnet-5-5",
+    "haiku": "claude-haiku-5-5",
+    "fable": "claude-fable-5-2",
+    # Pinned legacy aliases (phase_config.MODEL_ID_MAP): without these a pinned
+    # run would look unpriced and slip past the ceiling.
+    "opus-4.8": "claude-opus-4-8",
+    "opus-4.7": "claude-opus-4-7",
+    "opus-1m": "claude-opus-4-6",
+    "opus-4.5": "claude-opus-4-5-20251101",
+    "sonnet-5": "claude-sonnet-5",
+    "sonnet-4.6": "claude-sonnet-4-6",
+    "haiku-4.5": "claude-haiku-4-5-20251001",
 }
 
 

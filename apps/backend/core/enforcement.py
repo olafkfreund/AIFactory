@@ -50,19 +50,20 @@ _NO_KEY_WARNED: set[str] = set()
 # ---------------------------------------------------------------------------
 
 _CLAUDE_PRICING: dict[str, dict[str, float]] = {
-    # Opus 5.5 — current flagship.
-    #
-    # PROVISIONAL: these rates mirror Opus 4.8 because the published per-token
-    # price for 5.5 has not been confirmed here. Every $ figure this module
-    # reports for opus-5.5 is therefore an assumption, not a quote — replace
-    # from the Anthropic price list before anyone bills against it. Mirroring
-    # the previous flagship beats omitting the entry, which would make the cost
-    # silently read as zero.
+    # Fable 5.2 — most capable. $8 / $40 per MTok, cache read $0.20 (claude-api
+    # reference, 2026-11-03); cache creation uses the 1.25x convention.
+    "claude-fable-5-2": {
+        "input": 8.0,
+        "output": 40.0,
+        "cache_read": 0.20,
+        "cache_creation": 10.0,
+    },
+    # Opus 5.5 — current Opus. $4 / $20 per MTok, cache read $0.20.
     "claude-opus-5-5": {
-        "input": 5.0,
-        "output": 25.0,
-        "cache_read": 0.50,  # 0.1x input rate
-        "cache_creation": 6.25,  # 1.25x input rate
+        "input": 4.0,
+        "output": 20.0,
+        "cache_read": 0.20,
+        "cache_creation": 5.0,
     },
     # Opus 4.8 — previous flagship. $5 / $25 per MTok (Anthropic price list).
     "claude-opus-4-8": {
@@ -92,13 +93,20 @@ _CLAUDE_PRICING: dict[str, dict[str, float]] = {
         "cache_read": 1.50,
         "cache_creation": 18.75,
     },
-    # Sonnet 5 — current Sonnet (near-Opus coding). $3 / $15 per MTok
-    # (introductory $2 / $10 through Aug 31 2026; list rate used here).
+    # Sonnet 5.5 — current Sonnet. $2 / $10 per MTok, cache read $0.10.
+    "claude-sonnet-5-5": {
+        "input": 2.0,
+        "output": 10.0,
+        "cache_read": 0.10,
+        "cache_creation": 2.5,
+    },
+    # Sonnet 5 — previous Sonnet; $2 / $10 per MTok, kept for pinned runs.
+    # Cache read is DERIVED (0.1x input); the reference publishes it for 5.5 only.
     "claude-sonnet-5": {
-        "input": 3.0,
-        "output": 15.0,
-        "cache_read": 0.30,
-        "cache_creation": 3.75,
+        "input": 2.0,
+        "output": 10.0,
+        "cache_read": 0.20,
+        "cache_creation": 2.5,
     },
     # Sonnet 4.6 — previous Sonnet; kept for operators who pinned it.
     "claude-sonnet-4-6": {
@@ -114,12 +122,22 @@ _CLAUDE_PRICING: dict[str, dict[str, float]] = {
         "cache_read": 0.30,
         "cache_creation": 3.75,
     },
-    # Haiku 4.5 — utility model for fast/cheap single-turn ops.
+    # Haiku 5.5 — current Haiku. $0.10 / $0.50 per MTok for prompts up to 100K
+    # tokens. Above that it is $0.50 / $2.50, which is NOT modelled here, so
+    # prompts over 100K are under-counted 5x. Cache rates are DERIVED (0.1x
+    # read, 1.25x write): the claude-api reference does not publish them.
+    "claude-haiku-5-5": {
+        "input": 0.10,
+        "output": 0.50,
+        "cache_read": 0.01,
+        "cache_creation": 0.125,
+    },
+    # Haiku 4.5 — previous Haiku; $1 / $5 per MTok.
     "claude-haiku-4-5-20251001": {
-        "input": 0.80,
-        "output": 4.0,
-        "cache_read": 0.08,
-        "cache_creation": 1.0,
+        "input": 1.0,
+        "output": 5.0,
+        "cache_read": 0.10,
+        "cache_creation": 1.25,
     },
 }
 
