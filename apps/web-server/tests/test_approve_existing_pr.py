@@ -23,6 +23,7 @@ from typing import Any
 from unittest.mock import patch
 
 from fastapi.responses import JSONResponse
+from server.project_registry import save_projects
 from server.routes import pr, worktree_merge
 
 PROJECT_ID = "proj"
@@ -83,16 +84,15 @@ class FakeGit:
         return any(c[:2] == ["git", "push"] for c in self.calls)
 
 
-def _project(tmp_path: Path, *, worktree: bool) -> tuple[Path, Path]:
+def _project(tmp_path: Path, *, worktree: bool) -> Path:
     project_path = tmp_path / "repo"
     (project_path / ".aifactory" / "specs" / SPEC_ID).mkdir(parents=True)
     if worktree:
         (project_path / ".aifactory" / "worktrees" / "tasks" / SPEC_ID).mkdir(
             parents=True
         )
-    projects_file = tmp_path / "projects.json"
-    projects_file.write_text(json.dumps({PROJECT_ID: {"path": str(project_path)}}))
-    return project_path, projects_file
+    save_projects({PROJECT_ID: {"path": str(project_path), "name": PROJECT_ID}})
+    return project_path
 
 
 def _body(result: Any) -> dict[str, Any]:
@@ -104,14 +104,13 @@ def _body(result: Any) -> dict[str, Any]:
 
 
 def _create_pr(tmp_path: Path, gh: FakeGh, git: FakeGit, *, worktree: bool) -> Any:
-    project_path, projects_file = _project(tmp_path, worktree=worktree)
+    project_path = _project(tmp_path, worktree=worktree)
     repo_dir = (
         (project_path / ".aifactory" / "worktrees" / "tasks" / SPEC_ID)
         if worktree
         else None
     )
     with (
-        patch.object(pr, "get_projects_file", return_value=projects_file),
         patch.object(pr, "task_repo_dir", return_value=repo_dir),
         patch.object(pr, "resolve_task_branch_fetching", return_value=(BRANCH, None)),
         patch("server.routes.github.run_gh_command", gh),
@@ -123,9 +122,8 @@ def _create_pr(tmp_path: Path, gh: FakeGh, git: FakeGit, *, worktree: bool) -> A
 
 
 def _merge(tmp_path: Path, gh: FakeGh, git: FakeGit, *, worktree: bool) -> Any:
-    _, projects_file = _project(tmp_path, worktree=worktree)
+    _project(tmp_path, worktree=worktree)
     with (
-        patch.object(worktree_merge, "get_projects_file", return_value=projects_file),
         patch.object(
             worktree_merge,
             "resolve_task_branch_fetching",

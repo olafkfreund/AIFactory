@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.responses import JSONResponse
+from server.project_registry import save_projects
 from server.services.http_verdict import REFUSED_STATUS
 
 
@@ -51,13 +52,10 @@ def test_merge_worktree_does_not_nameerror_on_blocker(tmp_path: Path) -> None:
     # A merge-blocking file → the logger.info path executes (the bug site).
     (project_path / ".aifactory-status").write_text("x")
 
-    projects_file = tmp_path / "projects.json"
-    projects_file.write_text(json.dumps({project_id: {"path": str(project_path)}}))
-
-    with patch.object(worktree_merge, "get_projects_file", return_value=projects_file):
-        result = asyncio.run(
-            worktree_merge.merge_worktree(f"{project_id}:{spec_id}", _access={})
-        )
+    save_projects({project_id: {"path": str(project_path), "name": project_id}})
+    result = asyncio.run(
+        worktree_merge.merge_worktree(f"{project_id}:{spec_id}", _access={})
+    )
 
     # The point: it returns a normal result (no NameError → no 500), and the
     # blocker was cleared on the way through.
