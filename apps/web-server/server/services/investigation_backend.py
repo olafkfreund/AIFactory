@@ -13,6 +13,7 @@ import shutil
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from time import monotonic
 from typing import Any
 from uuid import uuid4
 
@@ -219,6 +220,9 @@ class InvestigationBackend:
             try:
                 async with self.store.lock(run_id) as (session, row):
                     if row.state != "queued":
+                        await asyncio.to_thread(
+                            shutil.rmtree, self._root(run_id), ignore_errors=True
+                        )
                         raise InvestigationRefused("run no longer queued")
                     name = investigation_manifest.agent_manifest(row)["metadata"][
                         "name"
@@ -532,7 +536,9 @@ class InvestigationBackend:
             await asyncio.wait_for(
                 self.batch.create_namespaced_job(self.namespace, manifest), timeout=10
             )
-        return await self._collect_test(run_id, name)
+        return await self._collect_test(
+            run_id, name, manifest["spec"]["activeDeadlineSeconds"]
+        )
 
     async def _live_test(self, row: Any) -> bool:
         await self._clients()
@@ -557,36 +563,59 @@ class InvestigationBackend:
                 return True
         return False
 
-    async def _collect_test(self, run_id: str, name: str) -> dict[str, Any]:
-        for _ in range(900):
-            job = await self.batch.read_namespaced_job(name, self.namespace)
+    async def _collect_test(  # noqa: PLR0912 - polling and cleanup need distinct failure paths
+        self, run_id: str, name: str, deadline: int
+    ) -> dict[str, Any]:
+        stop_at = monotonic() + deadline + 15
+        completed = False
+        while (remaining := stop_at - monotonic()) > 0:
+            try:
+                job = await asyncio.wait_for(
+                    self.batch.read_namespaced_job(name, self.namespace),
+                    timeout=remaining,
+                )
+            except TimeoutError:
+                break
+            except Exception as exc:
+                if _code(exc) == _NOT_FOUND:
+                    raise InvestigationRefused("test job deleted") from exc
+                raise
             status = _field(job, "status")
             if _field(status, "succeeded", 0) or _field(status, "failed", 0):
+                completed = True
                 break
-            await asyncio.sleep(1)
-        else:
+            await asyncio.sleep(min(1, max(0, stop_at - monotonic())))
+        if not completed:
+            try:
+                await self.batch.delete_namespaced_job(
+                    name, self.namespace, propagation_policy="Foreground"
+                )
+            except Exception as exc:
+                if _code(exc) != _NOT_FOUND:
+                    raise
             raise InvestigationRefused("test collection timed out")
         pods = await self.core.list_namespaced_pod(
             self.namespace, label_selector=f"job-name={name}"
         )
         pod = next(iter(_items(pods)), None)
         pod_name = _field(_field(pod, "metadata"), "name") if pod else None
-        raw = ""
+        data = b""
         exit_code = 0 if _field(status, "succeeded", 0) else 1
         if pod_name:
-            raw = await self.core.read_namespaced_pod_log(
+            resp = await self.core.read_namespaced_pod_log(
                 pod_name,
                 self.namespace,
                 container="test",
                 limit_bytes=5 * 1024 * 1024 + 1,
+                _preload_content=False,
             )
+            data = await resp.read()
             for container in _field(_field(pod, "status"), "container_statuses", []):
                 terminated = _field(_field(container, "state"), "terminated")
                 if terminated is not None:
                     exit_code = _field(terminated, "exit_code", exit_code)
-        raw = str(raw)
-        truncated = len(raw.encode()) > 5 * 1024 * 1024
-        raw = raw.encode()[: 5 * 1024 * 1024].decode(errors="replace")
+        truncated = len(data) > 5 * 1024 * 1024
+        raw = data[: 5 * 1024 * 1024].decode(errors="replace")
         parsed = investigation_tests.parse(raw, truncated)
         clean, _ = investigation_scrub.scrub_lines(
             raw.splitlines(keepends=True),
@@ -601,11 +630,23 @@ class InvestigationBackend:
             "counts": parsed,
             "tail": tail,
         }
-        async with self.store.lock(run_id) as (session, _row):
-            await self.store.update(run_id, session=session, tests=result)
-        await self.batch.delete_namespaced_job(
-            name, self.namespace, propagation_policy="Foreground"
-        )
+        async with self.store.lock(run_id) as (session, row):
+            previous = row.tests or []
+            await self.store.update(
+                run_id,
+                session=session,
+                tests=[
+                    *(previous if isinstance(previous, list) else [previous]),
+                    result,
+                ],
+            )
+        try:
+            await self.batch.delete_namespaced_job(
+                name, self.namespace, propagation_policy="Foreground"
+            )
+        except Exception as exc:
+            if _code(exc) != _NOT_FOUND:
+                raise
         return result
 
     async def reconcile_tick(self) -> None:

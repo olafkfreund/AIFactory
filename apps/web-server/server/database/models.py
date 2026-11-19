@@ -1440,7 +1440,7 @@ class Investigation(Base):
     turns_used: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )
-    tests: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    tests: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     report: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     scrub_open: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=false()

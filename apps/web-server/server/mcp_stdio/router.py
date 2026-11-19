@@ -80,9 +80,11 @@ async def proxy_create_investigation(
     key: AuthenticatedKey | _LegacyAdminKey = _INV_WRITE,
 ) -> dict[str, str]:
     request.state.user = acw_principal(key)
-    result = await investigations.create(
-        investigations.CreateInput(**await _read_json_body(request)), request, db
-    )
+    try:
+        body = investigations.CreateInput(**await _read_json_body(request))
+    except ValidationError as exc:  # a bad body is a 422, not a 500
+        raise RequestValidationError(exc.errors()) from exc
+    result = await investigations.create(body, request, db)
     await _audit_mcp_write(
         key, "mcp.investigation.create", "investigation", result["id"], request
     )

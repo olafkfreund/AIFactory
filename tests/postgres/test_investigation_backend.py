@@ -46,7 +46,7 @@ class FakeKube:
         self.events: list[str] = []
         self.manifests: list[dict[str, Any]] = []
         self.auto_test_complete = False
-        self.log_text = "=== 1 passed in 0.1s ==="
+        self.log_bytes = b"=== 1 passed in 0.1s ==="
         self.before_create: asyncio.Event | None = None
         self.resume_create: asyncio.Event | None = None
 
@@ -125,7 +125,13 @@ class FakeKube:
         self, _name: str, _namespace: str, **kwargs: Any
     ) -> Any:
         self.log_kwargs = kwargs
-        return self.log_text
+        if kwargs.get("_preload_content", True):
+            return self.log_bytes.decode("utf-8")
+
+        async def read() -> bytes:
+            return self.log_bytes
+
+        return SimpleNamespace(read=read)
 
     async def list_namespaced_network_policy(self, _namespace: str) -> Any:
         return {"items": []}
@@ -337,15 +343,148 @@ async def test_ten_test_calls_then_refused_and_scrubbed_tail(
             },
         }
     ]
-    kube.log_text = "=== 1 passed in 0.1s ===\nsecret-token"
+    kube.log_bytes = b"=== 1 passed in 0.1s ===\nsecret-token"
     for n in range(1, 11):
         kube.pods[0]["metadata"]["labels"]["job-name"] = f"{base}-test-{n}"
         result = await backend.run_tests(run_id)
         assert result["counts"] == {"passed": 1, "failed": 0, "skipped": 0}
         assert "secret-token" not in result["tail"]
     assert (await service.store.get(run_id)).run_tests_used == 10
+    assert len((await service.store.get(run_id)).tests) == 10
     with pytest.raises(investigation_backend.InvestigationRefused, match="limit"):
         await backend.run_tests(run_id)
+
+
+async def test_test_log_cut_mid_utf8_is_replaced(service: SimpleNamespace) -> None:
+    backend, kube = service.backend, service.kube
+    kube.auto_test_complete = True
+    run_id = (await backend.dispatch(**_args(test_command="pytest")))["id"]
+    base = investigation_manifest._names({"id": run_id})[0]
+    kube.pods = [
+        {
+            "metadata": {"name": "test-pod", "labels": {"job-name": f"{base}-test-1"}},
+            "status": {},
+        }
+    ]
+    kube.log_bytes = b"=== 1 passed in 0.1s ===\n" + b"\xe2\x82"
+    result = await backend.run_tests(run_id)
+    assert result["counts"]["passed"] == 1
+    assert "�" in result["tail"]
+
+
+async def test_collect_waits_for_job_deadline(
+    service: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend, kube = service.backend, service.kube
+    run_id = (await backend.dispatch(**_args(test_command="pytest")))["id"]
+    original_read = kube.read_namespaced_job
+    reads = 0
+    elapsed = [0.0]
+
+    async def finish_on_920th_read(name: str, namespace: str) -> Any:
+        nonlocal reads
+        job = await original_read(name, namespace)
+        if "-test-" in name:
+            reads += 1
+            elapsed[0] += 1
+            if reads == 920:
+                job["status"] = {"succeeded": 1}
+        return job
+
+    monkeypatch.setattr(kube, "read_namespaced_job", finish_on_920th_read)
+    monkeypatch.setattr(
+        investigation_backend, "monotonic", lambda: elapsed[0], raising=False
+    )
+    monkeypatch.setattr(asyncio, "sleep", AsyncMock())
+    assert (await backend.run_tests(run_id))["ran"] is True
+    assert reads == 920
+
+
+async def test_collect_job_deleted_by_stop_is_refused(
+    service: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend, kube = service.backend, service.kube
+    run_id = (await backend.dispatch(**_args(test_command="pytest")))["id"]
+
+    async def delete_job(_seconds: int) -> None:
+        for name in list(kube.jobs):
+            if "-test-" in name:
+                kube.jobs.pop(name)
+
+    monkeypatch.setattr(asyncio, "sleep", delete_job)
+    with pytest.raises(investigation_backend.InvestigationRefused, match="deleted"):
+        await backend.run_tests(run_id)
+
+
+async def test_collect_timeout_deletes_job(
+    service: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend, kube = service.backend, service.kube
+    run_id = (await backend.dispatch(**_args(test_command="pytest")))["id"]
+    elapsed = [0.0]
+
+    async def advance(_seconds: float) -> None:
+        elapsed[0] += 1
+
+    monkeypatch.setattr(
+        investigation_backend, "monotonic", lambda: elapsed[0], raising=False
+    )
+    monkeypatch.setattr(asyncio, "sleep", advance)
+    with pytest.raises(investigation_backend.InvestigationRefused, match="timed out"):
+        await backend.run_tests(run_id)
+    assert not any("-test-" in name for name in kube.jobs)
+
+
+async def test_collect_slow_reads_respect_wall_clock(
+    service: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend, kube = service.backend, service.kube
+    run_id = (await backend.dispatch(**_args(test_command="pytest")))["id"]
+    elapsed = [0.0]
+    reads = 0
+    original_read = kube.read_namespaced_job
+
+    async def slow_read(name: str, namespace: str) -> Any:
+        nonlocal reads
+        job = await original_read(name, namespace)
+        if "-test-" in name:
+            reads += 1
+            elapsed[0] += 20
+        return job
+
+    monkeypatch.setattr(kube, "read_namespaced_job", slow_read)
+    monkeypatch.setattr(
+        investigation_backend, "monotonic", lambda: elapsed[0], raising=False
+    )
+    monkeypatch.setattr(asyncio, "sleep", AsyncMock())
+    with pytest.raises(investigation_backend.InvestigationRefused, match="timed out"):
+        await backend.run_tests(run_id)
+    assert reads < 50
+
+
+async def test_collect_appends_to_legacy_dict_tests(service: SimpleNamespace) -> None:
+    backend, kube = service.backend, service.kube
+    kube.auto_test_complete = True
+    run_id = (await backend.dispatch(**_args(test_command="pytest")))["id"]
+    previous = {"counts": {"passed": 2, "failed": 1}}
+    await service.store.update(run_id, tests=previous)
+    result = await backend.run_tests(run_id)
+    tests = (await service.store.get(run_id)).tests
+    assert tests == [previous, result]
+
+
+async def test_collect_ignores_job_deleted_before_final_cleanup(
+    service: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend, kube = service.backend, service.kube
+    kube.auto_test_complete = True
+    run_id = (await backend.dispatch(**_args(test_command="pytest")))["id"]
+
+    async def already_deleted(_name: str, _namespace: str, **_kwargs: Any) -> None:
+        raise KubeError(404)
+
+    monkeypatch.setattr(kube, "delete_namespaced_job", already_deleted)
+    assert (await backend.run_tests(run_id))["ran"] is True
 
 
 async def test_missing_secret_after_restart_fails_closed(
@@ -407,6 +546,34 @@ async def test_export_barrier_reconcile_does_not_preempt_dispatch(
     assert row.state == "running"
     assert row.lease_expires_at == service.now[0] + timedelta(seconds=60)
     assert len(kube.jobs) == 1
+
+
+async def test_stop_during_export_removes_tree(
+    service: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend = service.backend
+    entered, release = threading.Event(), threading.Event()
+
+    def blocked_export(
+        _repo: Any, _sha: Any, dest: Path, *_args: Any
+    ) -> dict[str, int]:
+        entered.set()
+        assert release.wait(5)
+        dest.mkdir(parents=True)
+        (dest / "file.py").write_text("x")
+        return {"bytes": 1}
+
+    monkeypatch.setattr(investigation_export, "export", blocked_export)
+    dispatch = asyncio.create_task(backend.dispatch(**_args()))
+    assert await asyncio.to_thread(entered.wait, 5)
+    run_id = (await service.store.live_runs())[0].id
+    try:
+        await backend.stop(run_id)
+    finally:
+        release.set()
+    with pytest.raises(investigation_backend.InvestigationRefused):
+        await dispatch
+    assert not backend._root(run_id).exists()
 
 
 async def test_real_network_preflight_and_created_at(
@@ -523,11 +690,11 @@ async def test_test_tail_scrubs_pem_before_window_and_bounds_log(
             "status": {},
         }
     ]
-    kube.log_text = (
+    kube.log_bytes = (
         "-----BEGIN PRIVATE KEY-----\n"
         + "body\n" * 201
         + "-----END PRIVATE KEY-----\nclean\n"
-    )
+    ).encode()
     result = await backend.run_tests(run_id)
     assert "body" not in result["tail"]
     assert result["tail"] == "clean\n"
@@ -599,10 +766,10 @@ async def test_concurrent_test_admission_one_wins(service: SimpleNamespace) -> N
 async def test_report_uses_only_stored_test_counts(service: SimpleNamespace) -> None:
     backend = service.backend
     run_id = (await backend.dispatch(**_args()))["id"]
-    await backend.store.update(run_id, tests={"counts": {"passed": 2, "failed": 1}})
+    await backend.store.update(run_id, tests=[{"counts": {"passed": 2, "failed": 1}}])
     await backend.put_report(run_id, "all 50 tests passed")
     report = (await backend.store.get(run_id)).report
-    assert report["tests"] == {"counts": {"passed": 2, "failed": 1}}
+    assert report["tests"] == [{"counts": {"passed": 2, "failed": 1}}]
 
 
 async def test_retention_tick_removes_old_logs(service: SimpleNamespace) -> None:

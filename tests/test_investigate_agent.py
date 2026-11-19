@@ -2,6 +2,8 @@ import asyncio
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps" / "backend"))
 
 # tests/conftest.py replaces claude_agent_sdk with a mock. These tests need the real
@@ -52,6 +54,13 @@ def test_hook_blocks_tools_and_escaped_paths(tmp_path, monkeypatch):
     )
     assert not investigate_guard.permitted("Grep", {"pattern": "x", "glob": "/etc/*"})
     assert not investigate_guard.permitted("Grep", {"pattern": "x", "glob": "../*"})
+
+
+@pytest.mark.parametrize("pattern", ["{..,x}/*", "{/etc/*,x}", "~/x", "a/{..}/b"])
+def test_hook_blocks_escaped_globs(pattern: str) -> None:
+    assert not investigate_guard.permitted("Glob", {"pattern": pattern})
+    assert not investigate_guard.permitted("Grep", {"pattern": "x", "glob": pattern})
+    assert investigate_guard.permitted("Glob", {"pattern": "src/**/*.{py,ts}"})
 
 
 def test_options():

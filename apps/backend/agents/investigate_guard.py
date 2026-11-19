@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -22,8 +23,8 @@ def permitted(name: str, arguments: dict[str, Any]) -> bool:
         value = arguments.get(key)
         if value is not None and (
             not isinstance(value, str)
-            or Path(value).is_absolute()
-            or ".." in value.split("/")
+            or ".." in value
+            or re.search(r"(^|[{,])\s*[/~]", value)
         ):
             return False
     key = "file_path" if name == "Read" else "path"

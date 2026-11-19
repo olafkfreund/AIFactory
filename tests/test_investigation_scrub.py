@@ -60,3 +60,17 @@ def test_long_paths_survive_and_mixed_runs_are_removed():
 def test_aws_secret_with_slash_is_removed():
     sample = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
     assert sample not in scrub_text(f"aws_secret={sample}", claude_token="")
+
+
+@pytest.mark.parametrize(
+    "text, secret",
+    [
+        ("https://h/AKIAIOSFODNN7EXAMPLE/path", "AKIAIOSFODNN7EXAMPLE"),
+        ("x sk-ant-abcdefghijklmnop/foo", "sk-ant-abcdefghijklmnop"),
+        ("ghp_" + "a" * 30 + "/x", "ghp_" + "a" * 30),
+    ],
+)
+def test_structured_token_before_slash_is_removed(text: str, secret: str) -> None:
+    clean = scrub_text(text, claude_token="")
+    assert secret not in clean
+    assert "[REDACTED]/" in clean

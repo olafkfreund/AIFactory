@@ -12,8 +12,8 @@ _SECRET = re.compile(
     r"|sk-[A-Za-z0-9_-]{20,}"
     # Base64-ish runs need a digit and both cases and no "/", so long paths survive.
     r"|(?=[A-Za-z0-9+_-]*[0-9])(?=[A-Za-z0-9+_-]*[A-Z])(?=[A-Za-z0-9+_-]*[a-z])"
-    r"[A-Za-z0-9+_-]{40,}={0,2}"
-    r")(?![A-Za-z0-9_+/-])"
+    r"[A-Za-z0-9+_-]{40,}={0,2}(?![A-Za-z0-9_+/-])"
+    r")(?![A-Za-z0-9_+-])"
     r"|(?<![A-Za-z0-9/+])(?=[A-Za-z0-9/+]*[0-9])(?=[A-Za-z0-9/+]*[A-Z])(?=[A-Za-z0-9/+]*[a-z])(?=[A-Za-z0-9/+]*[/+])[A-Za-z0-9/+]{40}(?![A-Za-z0-9/+=])"
     r"|(?<![A-Fa-f0-9])[A-Fa-f0-9]{40,}(?![A-Fa-f0-9])"
 )

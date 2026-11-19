@@ -294,6 +294,15 @@ def test_create_and_stdio_proxy(
     assert proxy.json()["state"] == "running"
 
 
+def test_stdio_create_invalid_body_returns_422(env: SimpleNamespace) -> None:
+    assert (
+        env.client.post(
+            "/api/mcp-stdio/investigations", json={}, headers=bearer("test-token")
+        ).status_code
+        == 422
+    )
+
+
 def test_refused_second_create_keeps_first_credential(
     env: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
