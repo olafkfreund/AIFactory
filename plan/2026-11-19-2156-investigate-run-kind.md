@@ -13,6 +13,7 @@ coders:
   8: coder   # Helm chart: policies, squid, RBAC, values, helm tests; mechanical (agy out of use, #2748)
 reviewers:
   - codex    # independent review of the full diff against this plan
+  - agy      # added by the owner, 2026-11-19 ("agy is back ... make sure agy is reviewing this as well")
 ---
 
 # Plan: a read-only `investigate` run kind (#2156)
@@ -524,7 +525,7 @@ A run with no report gets `findings: null`.
    ```
 
    Every suite must show 0 failures, and the `git diff` must be empty.
-10. **Reviews (lead):** a fresh Opus agent and Codex, each given this plan and `git diff dev`, read-only. Findings are fixed with tests that fail on the old code; step 9 is rerun afterwards.
+10. **Reviews (lead):** a fresh Opus agent, Codex and agy, each given this plan and `git diff dev`, read-only. Findings are fixed with tests that fail on the old code; step 9 is rerun afterwards.
 11. **PR to `dev`** (lead), linking intent, spec and plan, and saying which steps Codex and the coder did. The switch is off by default, so merging changes no behaviour. The release lead is told on the bus before it merges.
 12. **Live verification (owner's OK; after a release, with the switch on in factory-gitops):**
     - **The pod:** env shows only the allowlist; `/src` is read-only with no `.git`; `touch /src/x` fails; `/var/run/secrets` is absent.
