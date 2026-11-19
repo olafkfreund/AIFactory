@@ -356,6 +356,11 @@ async def seed_tenant_defaults(disable_auth: bool) -> None:
 
             await session.commit()
 
+        # One-off id-preserving import of a legacy projects.json (#2157), before
+        # serving; orgs exist by now so the project FK holds.
+        from server.project_store import aimport_pending
+
+        await aimport_pending()
         _backfill_project_orgs()
     except Exception:
         logger.exception("seed_tenant_defaults failed (non-fatal)")

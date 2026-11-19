@@ -1350,3 +1350,22 @@ def _reset_memory_trust_window():
     trust._state.clear()
     yield
     trust._state.clear()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_project_registry(tmp_path, monkeypatch):
+    """Every test gets its own empty project registry DB and projects.json dir (#2157)."""
+    data_dir = tmp_path / "registry-data"
+    data_dir.mkdir()
+    monkeypatch.setenv(
+        "AIFACTORY_REGISTRY_URL", f"sqlite+aiosqlite:///{tmp_path / 'registry.db'}"
+    )
+    monkeypatch.setenv("AIFACTORY_REGISTRY_CREATE_SCHEMA", "1")
+    monkeypatch.setenv("AIFACTORY_REGISTRY_DATA_DIR", str(data_dir))
+    store = sys.modules.get("server.project_store")
+    if store is not None:
+        store.configure()
+    yield
+    store = sys.modules.get("server.project_store")
+    if store is not None:
+        store.configure()
