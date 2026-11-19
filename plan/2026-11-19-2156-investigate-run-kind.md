@@ -57,7 +57,7 @@ Codex's plan review found two gaps the spec left open. Approving the plan approv
    - Grep's `pattern` is a regex and is no longer path-checked; only Glob's `pattern` and Grep's `glob` are.
    - `setting_sources=[]`, so a repository's own `.claude/` settings, hooks or MCP never load.
    - Logs record assistant activity, not its text, so file contents never reach the log.
-6. **`assert_investigation_manifest` raises `ManifestRefused`** (step 4, lead). The module refuses to import under `python -O`, because its checks are asserts.
+6. **`assert_investigation_manifest` raises `ManifestRefused`** (step 4, lead). The step 9 lint pass replaced its asserts with explicit checks, so it holds under `python -O` and no import refusal is needed.
 
 7. **CI's code-quality ratchet applies to every new file** (`.github/workflows/cq-ratchet.yml`): strict ruff (`standards/ruff.toml`) and `mypy --strict` (`standards/mypy.ini`) on `apps/backend/*.py`, `apps/web-server/*.py` and `scripts/*.py`. A new file must have 0 findings. The pre-commit hook gates only `apps/backend`, so the web-server files from steps 1 to 4 (68 ruff findings) passed the hook, but CI would fail them.
    - **Step 9 gains** an explicit pass over every new and changed file:
