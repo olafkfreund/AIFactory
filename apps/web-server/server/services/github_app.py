@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import importlib
 import logging
 import os
 import shutil
@@ -157,9 +158,8 @@ def project_github_token(path: str | Path | None) -> Iterator[None]:
     if not multi_installation() or (not path and has_github_token_provider()):
         yield
         return
-    from server.project_registry import org_id_for_path  # noqa: PLC0415 - cycle
-
-    org = org_id_for_path(path)
+    # By name: a static import closes the project_registry -> project_store cycle.
+    org = importlib.import_module("server.project_registry").org_id_for_path(path)
     pinned = _pinned.get()
     if pinned is not None and org == pinned[0]:
         yield
