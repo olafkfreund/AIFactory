@@ -44,6 +44,15 @@ _MAX_LOGS = 20_000
 _REF = re.compile(r"(?<![\w/])([\w./-]+):(\d+)(?!\d)")
 
 
+def investigations_enabled() -> bool:
+    value = os.environ.get("AIFACTORY_INVESTIGATIONS", "off")
+    if value == "off":
+        return False
+    if value == "on":
+        return True
+    raise ValueError("Invalid AIFACTORY_INVESTIGATIONS; valid values: off, on")
+
+
 def _field(value: Any, name: str, default: Any = None) -> Any:
     return (
         value.get(name, default)
