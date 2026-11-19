@@ -74,7 +74,7 @@ def test_reviewer_session_logs_bash_command(tmp_path, monkeypatch):
 
     monkeypatch.setattr(reviewer, "get_graphiti_context", no_context)
     monkeypatch.setattr(reviewer, "get_qa_reviewer_prompt", lambda *_a: "p")
-    monkeypatch.setattr(reviewer, "get_task_logger", lambda d: TaskLogger(d))
+    monkeypatch.setattr(reviewer, "get_task_logger", TaskLogger)
     asyncio.run(reviewer.run_qa_agent_session(FakeClient(), tmp_path, tmp_path, 1, 1))
     logs = json.loads((tmp_path / "task_logs.json").read_text())
     starts = [
