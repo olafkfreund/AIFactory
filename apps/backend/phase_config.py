@@ -24,9 +24,12 @@ MODEL_ID_MAP: dict[str, str] = {
     "opus-4.7": "claude-opus-4-7",  # kept for pinning
     "opus-1m": "claude-opus-4-6",  # legacy alias — kept for users who pinned 4.6 + 1M beta
     "opus-4.5": "claude-opus-4-5-20251101",
-    "sonnet": "claude-sonnet-5",  # current Sonnet (near-Opus coding, 1M ctx)
-    "sonnet-4.6": "claude-sonnet-4-6",  # previous Sonnet — kept for pinning
-    "haiku": "claude-haiku-4-5-20251001",
+    "fable": "claude-fable-5-2",  # most capable; opt-in, not a default
+    "sonnet": "claude-sonnet-5-5",  # current Sonnet (1M ctx)
+    "sonnet-5": "claude-sonnet-5",  # previous Sonnet — kept for pinning
+    "sonnet-4.6": "claude-sonnet-4-6",  # kept for pinning
+    "haiku": "claude-haiku-5-5",  # current Haiku (1M ctx)
+    "haiku-4.5": "claude-haiku-4-5-20251001",  # previous Haiku — kept for pinning
 }
 
 # Model shorthand to required SDK beta headers
@@ -55,10 +58,13 @@ EFFORT_LEVEL_MAP: dict[str, str] = {
 # Models that support adaptive thinking via effort level (env var)
 # These models get both max_thinking_tokens AND effort_level
 ADAPTIVE_THINKING_MODELS: set[str] = {
+    "claude-fable-5-2",
     "claude-opus-5-5",
     "claude-opus-4-8",
     "claude-opus-4-7",
     "claude-opus-4-6",
+    "claude-sonnet-5-5",
+    "claude-haiku-5-5",
     "claude-sonnet-5",
     "claude-sonnet-4-6",
 }
@@ -821,10 +827,10 @@ def infer_provider_from_model(model: str) -> str:
     openai:* or openai-compatible:* prefix -> 'openai-compatible'
     bedrock/* prefix -> 'openai-compatible' (LiteLLM-routed; see note below)
     vertex_ai/* prefix -> 'openai-compatible' (LiteLLM-routed; see note below)
-    Claude shorthands (opus, sonnet, haiku) or claude-* IDs -> 'claude'
-    gpt-* or *codex* IDs (incl. bare 'codex' / 'codex:default' = account
+    Claude shorthands (opus, sonnet, haiku, fable) or claude-* IDs -> 'claude'
+    gpt-* (incl. gpt-6.*) or *codex* IDs (incl. bare 'codex' / 'codex:default' = account
         default, no explicit model) or bare 'default' -> 'codex'
-    antigravity / antigravity-* / gemini-* IDs -> 'antigravity'
+    antigravity / antigravity-* / gemini-* IDs (incl. gemini-4-*) -> 'antigravity'
         (gemini-* is kept for back-compat — the Antigravity CLI still serves
         Google's gemini-* model strings)
     Otherwise -> check QA_LLM_PROVIDER env var, then default 'claude'
