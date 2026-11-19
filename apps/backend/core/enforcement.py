@@ -101,6 +101,7 @@ _CLAUDE_PRICING: dict[str, dict[str, float]] = {
         "cache_creation": 2.5,
     },
     # Sonnet 5 — previous Sonnet; $2 / $10 per MTok, kept for pinned runs.
+    # Cache read is DERIVED (0.1x input); the reference publishes it for 5.5 only.
     "claude-sonnet-5": {
         "input": 2.0,
         "output": 10.0,
