@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import shlex
+import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -61,7 +62,7 @@ def _record_runs(
 def test_install_targets_the_writable_user_prefix(home: Path, cli: str) -> None:
     calls, fake_run = _record_runs()
     with (
-        patch.object(ca.subprocess, "run", fake_run),
+        patch.object(subprocess, "run", fake_run),
         patch.object(ca, "_detect_cli_version", return_value="9.9.9"),
     ):
         out = ca.install_or_update_cli(cli)
@@ -76,7 +77,7 @@ def test_install_failure_shows_the_real_npm_error() -> None:
     _, fake_run = _record_runs(
         stderr="npm error EROFS: read-only file system, rename", returncode=1
     )
-    with patch.object(ca.subprocess, "run", fake_run):
+    with patch.object(subprocess, "run", fake_run):
         out = ca.install_or_update_cli("codex")
     body = json.loads(out.body)
     assert body["success"] is False
