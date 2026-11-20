@@ -169,6 +169,7 @@ def maybe_push_workspace_branch(  # noqa: PLR0911 - one early return per refusal
                 return p.returncode, p.stdout, p.stderr
 
             # Best-effort upload; only the safety-net refusal skips the push.
+            sha = ""
             err = lfs_upload(run, "HEAD")
             if err:
                 err = f"LFS upload: {err}"
