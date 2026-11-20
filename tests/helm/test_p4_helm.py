@@ -716,7 +716,7 @@ def test_investigation_proxy_dstdomain_disables_reverse_dns(
         if line.startswith("acl registries dstdomain")
     ]
     assert lines and all(" -n " in line for line in lines)
-    assert any("foo.example.com" in line.split() for line in lines)
+    assert any(tok == "foo.example.com" for line in lines for tok in line.split())
 
 
 @pytest.mark.helm
