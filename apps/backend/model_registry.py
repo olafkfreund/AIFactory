@@ -51,6 +51,11 @@ class ModelNotApprovedError(RuntimeError):
 # what it is and pin the exact release the eval-gate signed off on. Kept in sync
 # with the shorthands in ``phase_config.MODEL_ID_MAP``.
 DEFAULT_REGISTRY: dict[str, dict[str, Any]] = {
+    "claude-fable-5-2": {
+        "provenance": "Anthropic",
+        "version": "fable-5.2",
+        "stages": sorted(ALL_STAGES),
+    },
     "claude-opus-5-5": {
         "provenance": "Anthropic",
         "version": "opus-5.5",
@@ -76,6 +81,11 @@ DEFAULT_REGISTRY: dict[str, dict[str, Any]] = {
         "version": "opus-4.5",
         "stages": sorted(ALL_STAGES),
     },
+    "claude-sonnet-5-5": {
+        "provenance": "Anthropic",
+        "version": "sonnet-5.5",
+        "stages": sorted(ALL_STAGES),
+    },
     "claude-sonnet-5": {
         "provenance": "Anthropic",
         "version": "sonnet-5",
@@ -85,6 +95,12 @@ DEFAULT_REGISTRY: dict[str, dict[str, Any]] = {
         "provenance": "Anthropic",
         "version": "sonnet-4.6",
         "stages": sorted(ALL_STAGES),
+    },
+    "claude-haiku-5-5": {
+        "provenance": "Anthropic",
+        "version": "haiku-5.5",
+        # Haiku is a cheap reviewer/fixer, not approved to author specs/code.
+        "stages": ["qa"],
     },
     "claude-haiku-4-5-20251001": {
         "provenance": "Anthropic",

@@ -1,8 +1,28 @@
 ## [Unreleased]
 
+## 3.19.0 - 2026-11-19
+
+Merged to `dev` since 3.18.0.
+
+### Added
+
+- The new models are enabled: `opus`, `sonnet` and `haiku` resolve to Claude Opus 5.5, Sonnet 5.5 and Haiku 5.5, `fable` to Claude Fable 5.2, with GPT-6 and Gemini 4 in the Codex and agy pickers. Older ids stay pinnable. (#2160, #2164)
+
+## 3.18.0 - 2026-11-19
+
+Merged to `dev` since 3.17.2.
+
+### Added
+
+- Every project view lives under `/p/:slug`, with a Projects page and a breadcrumb in place of the project selector; old `/console/:projectId` links redirect. (#2159)
+
 ### Changed
 
-- Projects live in the database only: stable `id`, renamable unique `slug`, normalized repo identity, default team per org, `GET /api/projects/by-slug/{slug}`; `DELETE /api/projects/{id}` archives. `projects.json` is imported once and can be exported for rollback. (#2157, Factory#3857)
+- Projects live in the database only: stable `id`, renamable unique `slug`, normalized repo identity, default team per org, `GET /api/projects/by-slug/{slug}`; `DELETE /api/projects/{id}` archives. `projects.json` is imported once and can be exported for rollback. (#2157, Factory#3857, #2163)
+
+### Fixed
+
+- CLI Update/Install goes into a writable prefix and shows real errors; detection prefers the updated copy. (#2161, #2162)
 
 ## 3.17.2 - 2026-11-19
 

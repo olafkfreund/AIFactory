@@ -78,7 +78,7 @@ def test_absent_policy_is_noop_for_every_phase(tmp_path: Path) -> None:
 
 def test_absent_policy_preserves_metadata_and_cli_paths(tmp_path: Path) -> None:
     spec = _spec_dir(tmp_path, {"model": "haiku"})
-    assert get_phase_model(spec, "coding") == "claude-haiku-4-5-20251001"
+    assert get_phase_model(spec, "coding") == "claude-haiku-5-5"
     assert get_phase_model(spec, "coding", cli_model="opus") == "claude-opus-5-5"
     assert load_policy() is None
     assert policy_route("coding") is None
@@ -96,8 +96,8 @@ def test_policy_routes_stage_to_tier_model(
     monkeypatch.setenv(ENV_VAR, json.dumps(_POLICY))
     spec = _spec_dir(tmp_path)
     assert get_phase_model(spec, "planning") == "claude-opus-5-5"
-    assert get_phase_model(spec, "coding") == "claude-sonnet-5"
-    assert get_phase_model(spec, "qa") == "claude-haiku-4-5-20251001"
+    assert get_phase_model(spec, "coding") == "claude-sonnet-5-5"
+    assert get_phase_model(spec, "qa") == "claude-haiku-5-5"
 
 
 def test_policy_loads_from_file_path(
@@ -107,7 +107,7 @@ def test_policy_loads_from_file_path(
     policy_file.write_text(json.dumps(_POLICY))
     monkeypatch.setenv(ENV_VAR, str(policy_file))
     spec = _spec_dir(tmp_path)
-    assert get_phase_model(spec, "qa") == "claude-haiku-4-5-20251001"
+    assert get_phase_model(spec, "qa") == "claude-haiku-5-5"
 
 
 def test_pinned_model_outranks_everything(
@@ -134,12 +134,10 @@ def test_explicit_choices_outrank_policy(
     spec = _spec_dir(
         tmp_path, {"isAutoProfile": True, "phaseModels": {"coding": "haiku"}}
     )
-    assert get_phase_model(spec, "coding") == "claude-haiku-4-5-20251001"
+    assert get_phase_model(spec, "coding") == "claude-haiku-5-5"
     # CLI model beats the policy tier.
     plain = _spec_dir(tmp_path / "b")
-    assert get_phase_model(plain, "coding", cli_model="haiku") == (
-        "claude-haiku-4-5-20251001"
-    )
+    assert get_phase_model(plain, "coding", cli_model="haiku") == ("claude-haiku-5-5")
 
 
 def test_policy_overrides_tier_static_metadata_model(
@@ -152,7 +150,7 @@ def test_policy_overrides_tier_static_metadata_model(
     meta = _spec_dir(tmp_path, {"model": "opus"})
     # Policy ON: coding routes to the mid tier (sonnet), beating metadata.model.
     monkeypatch.setenv(ENV_VAR, json.dumps(_POLICY))
-    assert get_phase_model(meta, "coding") == "claude-sonnet-5"
+    assert get_phase_model(meta, "coding") == "claude-sonnet-5-5"
     # Policy OFF: metadata.model (the tier default) drives unchanged.
     monkeypatch.delenv(ENV_VAR, raising=False)
     assert get_phase_model(meta, "coding") == resolve_model_id("opus")
@@ -219,7 +217,7 @@ def _record_one_turn(
         spec,
         PromptSegments(user_prompt="do the thing"),
         TurnUsage(input_tokens=100, output_tokens=50, cost_usd=0.01),
-        model="claude-sonnet-5",
+        model="claude-sonnet-5-5",
         provider="claude",
         duration_ms=900,
         routing_metadata=routing_metadata,
@@ -233,7 +231,7 @@ def test_worker_record_stamps_routing_tier_with_policy(
 ) -> None:
     monkeypatch.setenv(ENV_VAR, json.dumps(_POLICY))
     rec = _record_one_turn(_spec_dir(tmp_path))
-    assert rec["model"] == "claude-sonnet-5"
+    assert rec["model"] == "claude-sonnet-5-5"
     assert rec["routing_tier"] == "mid"
 
 
@@ -248,7 +246,7 @@ def test_worker_record_uses_caller_routing_metadata_not_spec_file(
     metadata = {"routingRequested": {"coding": "mid"}}
     spec = _spec_dir(tmp_path, metadata)
 
-    assert tier_for_model("claude-sonnet-5", metadata) == "mid"
+    assert tier_for_model("claude-sonnet-5-5", metadata) == "mid"
     assert "routing_tier" not in _record_one_turn(spec)
     assert _record_one_turn(spec, routing_metadata=metadata)["routing_tier"] == "mid"
 
@@ -258,7 +256,7 @@ def test_tier_for_model_matches_shorthand_and_full_id(
 ) -> None:
     monkeypatch.setenv(ENV_VAR, json.dumps(_POLICY))
     assert tier_for_model("sonnet") == "mid"
-    assert tier_for_model("claude-sonnet-5") == "mid"
+    assert tier_for_model("claude-sonnet-5-5") == "mid"
     assert tier_for_model("claude-opus-5-5") == "frontier"
     # A superseded flagship is no longer any tier's model, so it stamps
     # nothing — this is a reverse lookup of the tier map, not a capability
@@ -344,7 +342,7 @@ def test_contract_unknown_tier_is_ignored() -> None:
 def test_get_phase_model_consumes_contract_requested(tmp_path: Path) -> None:
     # End to end through phase_config, no env policy: contract requested drives it.
     spec = _spec_dir(tmp_path, {"routingRequested": {"coding": "mid"}})
-    assert get_phase_model(spec, "coding") == "claude-sonnet-5"
+    assert get_phase_model(spec, "coding") == "claude-sonnet-5-5"
     # A stage the contract does not route falls back to the default.
     assert get_phase_model(spec, "planning") == resolve_model_id(
         DEFAULT_PHASE_MODELS["planning"]
@@ -363,7 +361,7 @@ def test_contract_pinned_still_beats_requested(tmp_path: Path) -> None:
 def test_tier_for_model_stamps_from_contract_without_env_policy() -> None:
     # A contract routing block makes the tier stampable even with no env policy.
     meta = {"routingRequested": {"coding": "mid"}}
-    assert tier_for_model("claude-sonnet-5", meta) == "mid"
+    assert tier_for_model("claude-sonnet-5-5", meta) == "mid"
     assert tier_for_model("claude-opus-5-5", meta) == "frontier"
     # Still None when neither a policy nor a contract block is present.
     assert tier_for_model("claude-sonnet-5", None) is None
@@ -495,7 +493,7 @@ class TestPhaseModelsApplyWithoutACompanionFlag:
         )
 
         assert get_phase_model(spec, "coding", cli_model="haiku") == (
-            "claude-haiku-4-5-20251001"
+            "claude-haiku-5-5"
         )
 
     def test_each_phase_gets_its_own_model(self, tmp_path: Path) -> None:
@@ -505,8 +503,8 @@ class TestPhaseModelsApplyWithoutACompanionFlag:
             {"phaseModels": {"planning": "sonnet", "coding": "haiku", "qa": "opus"}},
         )
 
-        assert get_phase_model(spec, "planning") == "claude-sonnet-5"
-        assert get_phase_model(spec, "coding") == "claude-haiku-4-5-20251001"
+        assert get_phase_model(spec, "planning") == "claude-sonnet-5-5"
+        assert get_phase_model(spec, "coding") == "claude-haiku-5-5"
         assert get_phase_model(spec, "qa") == "claude-opus-5-5"
 
     def test_an_empty_phase_models_map_is_not_a_selection(self, tmp_path: Path) -> None:
@@ -514,7 +512,7 @@ class TestPhaseModelsApplyWithoutACompanionFlag:
         spec = self._spec(tmp_path, {"phaseModels": {}})
 
         assert get_phase_model(spec, "coding", cli_model="haiku") == (
-            "claude-haiku-4-5-20251001"
+            "claude-haiku-5-5"
         )
 
 
