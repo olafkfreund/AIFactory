@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2181
 spec: spec/2026-11-20-2181-aif-project-authz.md
 coders:
