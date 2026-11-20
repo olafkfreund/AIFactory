@@ -1685,6 +1685,52 @@ def test_populate_builds_self_contained_repo(monkeypatch, tmp_path):
     assert (wtp / ".aifactory" / "specs" / "042-go" / "spec.md").exists()
 
 
+def test_populate_fetches_approved_source_branch(monkeypatch, tmp_path):
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
+    proj = _git_init_project(tmp_path)
+    remote = tmp_path / "remote.git"
+    _sp.run(["git", "init", "--bare", "-q", str(remote)], check=True)
+
+    def g(*args: str) -> str:
+        return _sp.run(
+            ["git", "-C", str(proj), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    g("remote", "set-url", "origin", str(remote))
+    g("push", "origin", "main")
+    g("checkout", "-q", "-b", "factory/2172-approved")
+    (proj / "plan").mkdir()
+    (proj / "plan" / "approved.md").write_text("approved\n")
+    g("add", "-A")
+    g("commit", "-qm", "approved")
+    approved = g("rev-parse", "HEAD")
+    g("push", "origin", "factory/2172-approved")
+    g("checkout", "-q", "main")
+    spec_dir = proj / ".aifactory" / "specs" / "042-go"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "task_metadata.json").write_text(
+        json.dumps(
+            {
+                "base_branch": "main",
+                "source_branch": "factory/2172-approved",
+                "approved_head_sha": approved,
+            }
+        )
+    )
+
+    wt = Path(bb.populate_build_worktree(proj, "042-go"))
+    assert (
+        bb._git_out(["-C", str(wt), "rev-parse", "origin/factory/2172-approved"])
+        == approved
+    )
+    assert (spec_dir / ".task_branch").read_text().strip() == "factory/2172-approved"
+    assert bb._git_out(["-C", str(wt), "rev-parse", "--abbrev-ref", "HEAD"]) == "main"
+
+
 def test_populate_skips_when_outside_data_pvc(monkeypatch, tmp_path):
     # Outside the data PVC (laptop/dev) → no /work co-mount → nothing to populate.
     monkeypatch.setenv("AIFACTORY_DATA_ROOT", str(tmp_path / "elsewhere"))

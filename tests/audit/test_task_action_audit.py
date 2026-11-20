@@ -250,7 +250,7 @@ def test_handoff_audits_only_a_sent_handoff(
 @pytest.mark.parametrize(
     ("result", "expected"),
     [
-        ({"success": True, "confirm": True}, 1),
+        ({"success": True, "confirm": True, "started": True}, 1),
         ({"success": True, "confirm": False}, 0),  # preview: nothing written
         ({"success": False, "confirm": True}, 0),  # rejected triage
     ],

@@ -7,6 +7,8 @@ Synchronous, no database I/O. The caller looks the record up (see
 from __future__ import annotations
 
 import json
+import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -29,7 +31,6 @@ _ISOLATED_STAMPS = ("kubejob", "sandbox-pidns")
 
 def host_isolated() -> bool:
     """True when THIS web server's environment isolates the agent (D4-i)."""
-    from server.services.build_backend import selected_backend  # noqa: PLC0415
     from server.services.job_state_store import store_enabled  # noqa: PLC0415
 
     # Decided policy (#1760, #1724): kubejob with the durable store is the
@@ -37,7 +38,10 @@ def host_isolated() -> bool:
     # builds. Elsewhere, PID-namespaced sandbox included, the agent shares the
     # uid and can read the per-call GitHub token in hosts.yml via /proc/<child>.
     # A separate-uid design would need its own spec.
-    return selected_backend() == "kubejob" and store_enabled()
+    return (
+        os.environ.get("AIFACTORY_BUILD_BACKEND", "").strip().lower() == "kubejob"
+        and store_enabled()
+    )
 
 
 def _record_verified(spec_dir: Path, record: TrustedRecord) -> bool:
@@ -60,6 +64,96 @@ def handoff_contract(spec_dir: Path, trusted: Any) -> dict[str, Any] | None:
     if state == "verified":
         return contract
     return {} if state == "hold" else None
+
+
+def adopted_handoff(spec_dir: Path, trusted: Any) -> dict[str, Any] | None:
+    """Return the verified adopted identity, holding if either disk copy differs."""
+    state, contract = resolve_contract(spec_dir, trusted)
+    if state == "hold":
+        try:
+            metadata = json.loads((spec_dir / "task_metadata.json").read_text())
+        except (OSError, ValueError):
+            metadata = {}
+        try:
+            requirements = json.loads((spec_dir / "requirements.json").read_text())
+        except (OSError, ValueError):
+            requirements = {}
+        request_provenance = (
+            requirements.get("provenance") if isinstance(requirements, dict) else None
+        )
+        from pfactory.tfactory_client import load_task_contract  # noqa: PLC0415
+
+        plan_provenance = load_task_contract(spec_dir).get("provenance")
+        if (
+            (
+                isinstance(metadata, dict)
+                and (metadata.get("approved_head_sha") or metadata.get("pr_number"))
+            )
+            or (
+                isinstance(request_provenance, dict)
+                and (
+                    request_provenance.get("source_branch")
+                    or request_provenance.get("pr_number")
+                )
+            )
+            or (
+                isinstance(plan_provenance, dict)
+                and (
+                    plan_provenance.get("source_branch")
+                    or plan_provenance.get("pr_number")
+                )
+            )
+        ):
+            raise ValueError("trusted contract unavailable")
+        return None
+    provenance = contract.get("provenance") if state == "verified" else None
+    if not isinstance(provenance, dict) or not provenance.get("source_branch"):
+        if isinstance(provenance, dict) and provenance.get("pr_number"):
+            raise ValueError("incomplete adopted handoff in trusted contract")
+        try:
+            metadata = json.loads((spec_dir / "task_metadata.json").read_text())
+        except (OSError, ValueError):
+            metadata = {}
+        if isinstance(metadata, dict) and (
+            metadata.get("source_branch") or metadata.get("pr_number")
+        ):
+            raise ValueError("adopted handoff has no verified contract")
+        return None
+    from trusted_plan import _safe_branch  # noqa: PLC0415
+
+    if (
+        not _safe_branch(provenance["source_branch"])
+        or re.fullmatch(r"[0-9a-fA-F]{40}", provenance.get("approved_head_sha") or "")
+        is None
+        or not isinstance(provenance.get("repo"), str)
+        or not provenance["repo"]
+        or type(provenance.get("pr_number")) is not int
+        or provenance["pr_number"] <= 0
+    ):
+        raise ValueError("incomplete adopted handoff in trusted contract")
+    fields = {
+        "source_branch": "source_branch",
+        "approved_head_sha": "approved_head_sha",
+        "pr_number": "pr_number",
+        "repo": "github_repo",
+        "base_ref": "base_branch",
+    }
+    try:
+        metadata = json.loads((spec_dir / "task_metadata.json").read_text())
+        requirements = json.loads((spec_dir / "requirements.json").read_text())
+        request_provenance = requirements["provenance"]
+        if not isinstance(metadata, dict) or not isinstance(request_provenance, dict):
+            raise ValueError
+        if any(
+            metadata.get(target) != provenance.get(source)
+            or request_provenance.get(source) != provenance.get(source)
+            for source, target in fields.items()
+            if source in provenance
+        ):
+            raise ValueError
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise ValueError("adopted handoff differs from trusted contract") from exc
+    return provenance
 
 
 async def spawn_env(spec_dir: Path) -> dict[str, str]:

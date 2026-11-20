@@ -270,6 +270,8 @@ def test_route_hard_posts_the_pfactory_ingest_contract(monkeypatch):
     # Trailing slash stripped, so the configured URL is used verbatim.
     assert seen["url"] == "https://pfactory.example/api/plan/sessions/from-issue"
     assert seen["payload"] == {
+        "project_id": "aifactory",
+        "base_branch": None,
         "repo": "olafkfreund/AIFactory",
         "provider": "github",
         "issue_number": 874,

@@ -71,6 +71,13 @@ def repo(tmp_path):
     (project / UNRELATED_FILE).write_text("# docs v1\n")
 
     _git(project, "init", "-q", "-b", "main")
+    _git(
+        project,
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/olafkfreund/PFactory.git",
+    )
     _git(project, "add", "-A")
     _git(project, "commit", "-q", "-m", "commit A")
     return project

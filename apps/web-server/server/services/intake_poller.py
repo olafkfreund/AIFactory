@@ -349,6 +349,8 @@ def _route_hard(cfg: RepoConfig, issue: IntakeIssue, tier: Tier) -> None:
     _post_json(
         url,
         {
+            "project_id": cfg.project_id,
+            "base_branch": cfg.base_branch,
             "repo": cfg.repo,
             "provider": cfg.provider,
             "issue_number": issue.number,

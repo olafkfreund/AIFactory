@@ -87,3 +87,50 @@ def test_missing_task_metadata_still_falls_back(
 
     payload = tc.build_ingest_payload(spec_dir, "spec-6", contract=None)
     assert payload["source_branch"] == "aifactory/spec-6"
+
+
+def test_adopted_branch_and_handoff_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec_dir = _spec_dir(
+        tmp_path,
+        {
+            "source_branch": "factory/27-x",
+            "approved_head_sha": "a" * 40,
+            "base_branch": "dev",
+            "pr_number": 27,
+            "github_repo": "o/r",
+        },
+    )
+    (spec_dir / ".task_branch").write_text("factory/27-x\n")
+    provenance = {
+        "source_branch": "factory/27-x",
+        "approved_head_sha": "a" * 40,
+        "pr_number": 27,
+        "repo": "o/r",
+        "base_ref": "dev",
+    }
+    (spec_dir / "requirements.json").write_text(
+        json.dumps({"title": "Feat", "provenance": provenance})
+    )
+    monkeypatch.setattr(
+        tc, "_git_info_and_push", lambda *_: ("git@x:o/r.git", "factory/27-x")
+    )
+    monkeypatch.setattr(tc, "_locate_build_commit", lambda *_: (tmp_path, "a" * 40))
+    monkeypatch.setattr(tc, "_remote_tip", lambda *_a, **_k: "a" * 40)
+    monkeypatch.setattr(tc, "_aifactory_project_name", lambda *_: "demo")
+
+    payload = tc.build_ingest_payload(
+        spec_dir, "spec-27", contract={"provenance": provenance, "approval": {}}
+    )
+    assert tc._build_branch("spec-27", spec_dir) == "factory/27-x"
+    assert {
+        key: payload[key]
+        for key in ("source_branch", "source_sha", "base_ref", "pr_number", "repo")
+    } == {
+        "source_branch": "factory/27-x",
+        "source_sha": "a" * 40,
+        "base_ref": "dev",
+        "pr_number": 27,
+        "repo": "o/r",
+    }

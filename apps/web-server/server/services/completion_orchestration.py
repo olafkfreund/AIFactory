@@ -296,7 +296,11 @@ async def run_terminal_completion(
 
                 _org = org_id_for_path(project_path)
                 with github_app.org_github_token(_org):
-                    if is_auto_pr_enabled(project_path):
+                    verified = handoff_contract(spec_dir, trusted)
+                    adopted = bool(
+                        verified and verified.get("provenance", {}).get("pr_number")
+                    )
+                    if is_auto_pr_enabled(project_path) or adopted:
                         await github_app.warm_org_token(_org)
                         # Sync git/gh reads: off the loop, so a mint waits in a thread.
                         ctx = await asyncio.to_thread(
@@ -570,6 +574,7 @@ async def run_terminal_completion(
                                 on_pr_opened=_on_pr_opened,
                                 re_test=_re_test_sync,
                                 project_id=_proj_id or None,
+                                adopted_pr=ctx.get("adopted_pr"),
                             )
                             logger.info(
                                 f"[AgentService] PR endgame for {sanitize_log(spec_id)} "

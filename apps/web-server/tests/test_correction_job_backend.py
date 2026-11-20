@@ -66,6 +66,29 @@ def test_invalid_flag_refuses(monkeypatch) -> None:
         ajb.correction_kubejob_enabled()
 
 
+@pytest.mark.asyncio
+async def test_failed_job_releases_unpublished_handback_reservation(
+    tmp_path, monkeypatch
+):
+    spec = tmp_path / "proj/.aifactory/specs/001"
+    receipts = spec / "handback_receipts"
+    receipts.mkdir(parents=True)
+    (spec / "handback_received.json").write_text(json.dumps({"receipt_key": "key"}))
+    (receipts / "key").touch()
+
+    class FailedProcess:
+        job_name = "failed-fixer"
+
+        async def wait(self):
+            return 1
+
+    monkeypatch.setattr(
+        "qa.correction.check_fix_cycle_assertions", lambda *_a: {"ok": True}
+    )
+    await ajb._await_correction(FailedProcess(), spec)
+    assert not (receipts / "key").exists()
+
+
 def _scoped(monkeypatch, *, works: bool) -> None:
     def scope(env, ids):
         if works:
@@ -170,6 +193,34 @@ def test_workspace_has_clone_and_top_level_spec_files(monkeypatch, tmp_path) -> 
     assert not (proj / ".aifactory/worktrees/corrections/job1").exists()
 
 
+def test_handoff_workspace_checks_out_task_branch(monkeypatch, tmp_path) -> None:
+    proj = _project(tmp_path)
+    spec = proj / ".aifactory/specs/001-x"
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
+    subprocess.run(
+        ["git", "-C", str(proj), "remote", "add", "origin", str(remote)], check=True
+    )
+    branch = "factory/001-x"
+    subprocess.run(["git", "-C", str(proj), "branch", branch], check=True)
+    subprocess.run(["git", "-C", str(proj), "push", "origin", branch], check=True)
+    (spec / ".task_branch").write_text(branch + "\n")
+    (spec / "handback_received.json").write_text('{"tfactory_task_id":"tf-1"}')
+    _capture_pack(monkeypatch)
+
+    ajb._prepare_correction_workspace(spec, "job1")
+    clone = proj / ".aifactory/worktrees/corrections/job1"
+    assert (
+        subprocess.run(
+            ["git", "-C", str(clone), "symbolic-ref", "--short", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        == branch
+    )
+
+
 def test_workspace_does_not_follow_a_cloned_symlink(monkeypatch, tmp_path) -> None:
     proj = _project(tmp_path)
     spec = proj / ".aifactory/specs/001-x"
@@ -266,7 +317,8 @@ async def test_dispatch_creates_job_applies_result_and_runs_guard(
     batch, spec, fetches = job
     guarded: list[Path] = []
     monkeypatch.setattr(
-        "qa.correction.check_fix_cycle_assertions", lambda d: guarded.append(Path(d))
+        "qa.correction.check_fix_cycle_assertions",
+        lambda d, workspace=None: guarded.append(Path(d)),
     )
     monkeypatch.setenv("AIFACTORY_FORBID_INPOD_AGENTS", "1")  # the Job stays allowed
     res = await ajb.dispatch_correction_fixer(spec)
@@ -291,7 +343,9 @@ async def test_dispatch_creates_job_applies_result_and_runs_guard(
 async def test_failed_fetch_is_recorded_as_failed(monkeypatch, job) -> None:
     _batch, spec, _fetches = job
     monkeypatch.setattr("core.workspace_fetch.fetch_correction", lambda *a, **k: False)
-    monkeypatch.setattr("qa.correction.check_fix_cycle_assertions", lambda d: None)
+    monkeypatch.setattr(
+        "qa.correction.check_fix_cycle_assertions", lambda d, workspace=None: None
+    )
     await ajb.dispatch_correction_fixer(spec)
     await asyncio.gather(*ajb._CORRECTION_WAITERS)
     assert (
@@ -370,6 +424,15 @@ async def test_route_flag_off_and_no_forbid_keeps_in_pod_fixer(
 ) -> None:
     await execution.apply_task_correction("p:s", _req(), _access={})
     assert route[0]["fixer_fn"] is None
+
+
+async def test_route_carries_task_id_but_ignores_callback_url(route) -> None:
+    request = _req()
+    request.tfactory_task_id = "tf-1"
+    request.tfactory_callback_url = "https://caller.example/steal"
+    await execution.apply_task_correction("p:s", request, _access={})
+    assert route[0]["tfactory_task_id"] == "tf-1"
+    assert "tfactory_callback_url" not in route[0]
 
 
 async def test_route_preview_is_not_refused(monkeypatch, route) -> None:
