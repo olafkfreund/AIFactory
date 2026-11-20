@@ -593,6 +593,48 @@ def test_run_pr_endgame_aifactory_reviewer_uses_engine_verdict():
     assert not r.saw("requested_reviewers")  # Copilot NOT requested
 
 
+def test_adopted_pr_ready_after_exact_head_verdict(tmp_path, monkeypatch):
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    (spec / "task_metadata.json").write_text(json.dumps({"pr_number": 27}))
+    calls = []
+    runner = FakeRunner({".head.sha": CmdResult(0, "a" * 40, "")})
+
+    async def attach(*_args):
+        calls.append("attach")
+        return {"sent": True}
+
+    async def label(*_args):
+        return None
+
+    monkeypatch.setattr("pfactory.tfactory_client.send_pr_attach", attach)
+    monkeypatch.setattr(pe, "_adopted_issue_label", label)
+    monkeypatch.setattr(
+        pe, "_build_merge_gate", lambda *_a, **_k: lambda head: head == "a" * 40
+    )
+    monkeypatch.setattr(pe, "create_pr", lambda **_k: pytest.fail("must reuse PR"))
+    monkeypatch.setattr(pe, "merge_pr", lambda *_a, **_k: pytest.fail("must not merge"))
+
+    result = asyncio.run(
+        pe.run_pr_endgame(
+            spec_dir=spec,
+            spec_id="001-x",
+            worktree=spec,
+            branch="factory/27-x",
+            base="dev",
+            repo="o/r",
+            auto_merge=True,
+            background=False,
+            trusted=None,
+            runner=runner,
+        )
+    )
+    assert result["ready"] is True and result["merged"] is False
+    assert calls == ["attach"]
+    assert runner.saw("pr ready 27")
+    assert not runner.saw("pr create") and not runner.saw("pr merge")
+
+
 def test_run_pr_endgame_no_repo():
     res = asyncio.run(
         pe.run_pr_endgame(

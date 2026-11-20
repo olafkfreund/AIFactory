@@ -36,6 +36,7 @@ from core import auth_preflight
 from core.child_env import child_env, lfs_upload
 from core.git_credentials import authed_push_url
 from factory_common.logsafe import sanitize_log
+from trusted_plan import _safe_branch
 
 _log = logging.getLogger(__name__)
 
@@ -261,13 +262,21 @@ def _task_base_branch(spec_dir: Path) -> str:
     return str(meta.get("base_branch") or meta.get("baseBranch") or "")
 
 
-def _build_branch(spec_id: str) -> str:
+def _build_branch(spec_id: str, spec_dir: Path | None = None) -> str:
     """The branch a build creates/pushes for a spec.
 
-    Fixed convention, matching ``core.worktree.WorktreeManager.get_branch_name``:
-    ``aifactory/<spec_id>``. Reliable even when the local worktree is gone — the
-    build already pushed this branch to origin.
+    Adopt the recorded branch when present, else use the build convention.
     """
+    if spec_dir is not None:
+        marker = Path(spec_dir) / ".task_branch"
+        with contextlib.suppress(OSError):
+            branch = marker.read_text().strip()
+            if _safe_branch(branch):
+                return branch
+        with contextlib.suppress(OSError, ValueError):
+            meta = json.loads((Path(spec_dir) / "task_metadata.json").read_text())
+            if isinstance(meta, dict) and _safe_branch(meta.get("source_branch")):
+                return meta["source_branch"]
     return f"aifactory/{spec_id}"
 
 
@@ -330,7 +339,7 @@ def _locate_build_commit(spec_dir: Path, spec_id: str) -> tuple[Path, str] | Non
     clone (the non-packed path, where the clone genuinely sits on the build
     branch). Return the repo + sha of whichever holds it.
     """
-    build_branch = _build_branch(spec_id)
+    build_branch = _build_branch(spec_id, spec_dir)
     for cand in (_project_dir(spec_dir), _build_worktree(spec_dir, spec_id)):
         if cand.is_dir():
             sha = _build_branch_commit(cand, build_branch)
@@ -351,9 +360,8 @@ def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | 
     pre-flight then rejects the missing symbols and the run reads as an ordinary
     failure (#1007, the "verify the wrong tree" class, cf. TFactory #729).
 
-    The push is ``--force``: the per-spec ``aifactory/<spec>`` branch is
-    build-owned, the local commit is its truth, and it cannot clobber anyone
-    else's work -- this also repairs a diverged remote tip (only-base-pushed). We
+    The build-owned ``aifactory/<spec>`` branch uses ``--force``; an adopted
+    branch uses ``--force-with-lease`` so a concurrent update is preserved. We
     then VERIFY origin carries the built commit; if it still does not, return the
     branch as unusable (``(url, None)``) and log, rather than claim a stale tree
     is verifiable.
@@ -365,7 +373,7 @@ def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | 
     if located is None:
         return None, None
     repo, sha = located
-    build_branch = _build_branch(spec_id)
+    build_branch = _build_branch(spec_id, spec_dir)
     try:
         url = _git_stdout(repo, ["remote", "get-url", "origin"])
         if not url:
@@ -401,7 +409,9 @@ def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | 
                 [
                     "git",
                     "push",
-                    "--force",
+                    "--force-with-lease"
+                    if build_branch != f"aifactory/{spec_id}"
+                    else "--force",
                     push_url,
                     f"{sha}:refs/heads/{build_branch}",
                 ],
@@ -453,7 +463,7 @@ def _remote_commit_count(spec_dir: Path, spec_id: str) -> int | None:
     repo = _project_dir(spec_dir)
     if not (repo / ".git").exists():
         return None
-    branch = _build_branch(spec_id)
+    branch = _build_branch(spec_id, spec_dir)
     base = _task_base_branch(spec_dir) or "main"
     # Fetch into the remote-tracking ref explicitly; a bare `git fetch origin
     # <branch>` leaves the result only in FETCH_HEAD, which the range below
@@ -551,7 +561,9 @@ def _git_commit_count(spec_dir: Path, spec_id: str) -> int | None:
     wt = _build_worktree(spec_dir, spec_id)
     if not wt.is_dir():
         return None
-    if _git_stdout(wt, ["rev-parse", "--abbrev-ref", "HEAD"]) != _build_branch(spec_id):
+    if _git_stdout(wt, ["rev-parse", "--abbrev-ref", "HEAD"]) != _build_branch(
+        spec_id, spec_dir
+    ):
         return None
     base = _task_base_branch(spec_dir) or "main"
     for ref in (f"origin/{base}", base):
@@ -774,13 +786,19 @@ def build_ingest_payload(
         or source_branch in _BASE_BRANCHES
         or source_branch == _task_base_branch(spec_dir)
     ):
-        source_branch = _build_branch(spec_id)
+        source_branch = _build_branch(spec_id, spec_dir)
     if not git_url:
         git_url = _project_git_url(spec_dir)
     if git_url:
         payload["git_url"] = git_url
     if source_branch:
         payload["source_branch"] = source_branch
+    located = _locate_build_commit(spec_dir, spec_id)
+    if located:
+        payload["source_sha"] = located[1]
+    base_ref = _task_base_branch(spec_dir)
+    if base_ref:
+        payload["base_ref"] = base_ref
     # Multi-tenancy (#925): carry the build's tenant so TFactory can scope its
     # side too. OPTIONAL additive metadata — absent when the spec was never
     # stamped (single-tenant deployments), never required by the ingest.
@@ -788,8 +806,24 @@ def build_ingest_payload(
     # file just means no tenant_id gets attached.
     with contextlib.suppress(OSError, ValueError):
         tm = json.loads((spec_dir / "task_metadata.json").read_text())
-        if tm.get("tenant_id"):
-            payload["tenant_id"] = str(tm["tenant_id"])
+        if isinstance(tm, dict):
+            if tm.get("tenant_id"):
+                payload["tenant_id"] = str(tm["tenant_id"])
+            if tm.get("pr_number"):
+                payload["pr_number"] = tm["pr_number"]
+            if tm.get("github_repo"):
+                payload["repo"] = tm["github_repo"]
+    if "repo" not in payload:
+        prov = req.get("provenance")
+        gh = req.get("githubIssue")
+        repo = (
+            (prov.get("repo") if isinstance(prov, dict) else None)
+            or req.get("github_repo")
+            or req.get("repo")
+            or (gh.get("repo") if isinstance(gh, dict) else None)
+        )
+        if repo:
+            payload["repo"] = repo
     return payload
 
 

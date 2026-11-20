@@ -863,6 +863,31 @@ def create_pr(
     return pr
 
 
+def mark_pr_ready(
+    owner: str, repo: str, pr: int, *, runner: Runner = _default_runner
+) -> bool:
+    """Mark an adopted draft PR ready for human review."""
+    slug = f"{owner}/{repo}"
+    if runner(["gh", "pr", "ready", str(pr), "--repo", slug], None).ok:
+        return True
+    view = runner(
+        [
+            "gh",
+            "pr",
+            "view",
+            str(pr),
+            "--repo",
+            slug,
+            "--json",
+            "isDraft",
+            "--jq",
+            ".isDraft",
+        ],
+        None,
+    )
+    return view.ok and view.out.strip() == "false"
+
+
 def _parse_pr_number(text: str) -> int | None:
     """Pull a PR number out of a gh URL like .../pull/123 (create or 'already exists')."""
     import re
@@ -1897,6 +1922,9 @@ def gather_pr_context(
     base = meta.get("base_branch") or meta.get("baseBranch") or "main"
     # RFC-0011 tier, out of the SAME read (#1158) — see review_tier_of.
     review_tier = review_tier_of(meta)
+    adopted_pr = meta.get("pr_number")
+    if adopted_pr and meta.get("source_branch"):
+        branch = meta["source_branch"]
 
     # On the kubejob path the build runs inside the k8s Job and pushes
     # aifactory/<spec_id>, while THIS control-plane worktree stays on the base
@@ -1930,6 +1958,9 @@ def gather_pr_context(
     try:
         req = json.loads((spec_dir / "requirements.json").read_text())
         gh = req.get("githubIssue") if isinstance(req, dict) else None
+        prov = req.get("provenance") if isinstance(req, dict) else None
+        if adopted_pr is None and isinstance(prov, dict):
+            adopted_pr = prov.get("pr_number")
         if isinstance(gh, dict):
             repo = gh.get("repo") or gh.get("repository") or ""
         repo = repo or req.get("github_repo") or req.get("repo") or ""
@@ -1972,6 +2003,9 @@ def gather_pr_context(
         "provider": provider,
         "review_tier": review_tier,
         "review_tier_floor": review_tier_floor,
+        "adopted_pr": adopted_pr
+        if type(adopted_pr) is int and adopted_pr > 0
+        else None,
     }
 
 
@@ -2020,6 +2054,7 @@ def _build_merge_gate(  # noqa: PLR0913 - one-shot builder for run_pr_endgame
     base: str,
     *,
     pr: int | None = None,
+    verdict_only: bool = False,
 ) -> Callable[[str], bool]:
     """The merge-time gate for every auto-merge task.
 
@@ -2042,7 +2077,11 @@ def _build_merge_gate(  # noqa: PLR0913 - one-shot builder for run_pr_endgame
                 verdict = tfactory_verdict(spec_dir, spec_id, head=head, vote=vote)
             except ImportError:
                 verdict = None
-            ci = host_ci_green(owner, name, head, runner=runner)
+            ci = (
+                None
+                if verdict_only
+                else host_ci_green(owner, name, head, runner=runner)
+            )
             if ci is True:
                 ci = required_checks_green(owner, name, base, head, runner=runner)
             fetched: dict[str, object] = {
@@ -2052,7 +2091,9 @@ def _build_merge_gate(  # noqa: PLR0913 - one-shot builder for run_pr_endgame
             state.update(fetched=fetched, vote=vote)
             return fetched
 
-        if human_approval_required:
+        if verdict_only:
+            ok = fetch()["tfactory_verdict"] == "pass"
+        elif human_approval_required:
             ok = _clears_with_human_approval(
                 spec_dir,
                 review_tier,
@@ -2115,6 +2156,73 @@ def _after_merge(  # noqa: PLR0913 - one call site, every field is the record
         re_test()
 
 
+async def _adopted_issue_label(
+    spec_dir: Path, project_id: str | None, repo: str, label: str
+) -> None:
+    if not project_id:
+        return
+    try:
+        req = json.loads((spec_dir / "requirements.json").read_text())
+        prov = req.get("provenance") if isinstance(req, dict) else None
+        issue = prov.get("issue_number") if isinstance(prov, dict) else None
+        if type(issue) is not int or issue <= 0:
+            return
+        from server.routes.github import _get_project_provider  # noqa: PLC0415
+
+        provider = _get_project_provider(project_id, repo_ref=repo)
+        await provider.remove_labels(
+            issue,
+            [
+                "factory:building",
+                "factory:verifying",
+                "factory:done",
+                "factory:needs-human",
+            ],
+        )
+        await provider.apply_labels(issue, [label])
+    except Exception:  # noqa: BLE001 - label bookkeeping must not break the PR
+        logger.debug("[pr-endgame] adopted issue label skipped", exc_info=True)
+
+
+async def _finish_adopted_pr(  # noqa: PLR0913 - one bounded watcher
+    spec_dir: Path,
+    spec_id: str,
+    project_id: str | None,
+    owner: str,
+    repo: str,
+    pr: int,
+    gate: Callable[[str], bool],
+    runner: Runner,
+) -> dict:
+    await _adopted_issue_label(
+        spec_dir, project_id, f"{owner}/{repo}", "factory:verifying"
+    )
+    for _ in range(max(1, (_MAX_POLL_MINUTES * 60) // _POLL_INTERVAL_SECONDS)):
+        head = await asyncio.to_thread(_pr_head, owner, repo, pr, runner)
+        if head and await asyncio.to_thread(gate, head):
+            if head != await asyncio.to_thread(_pr_head, owner, repo, pr, runner):
+                continue
+            ready = await asyncio.to_thread(
+                mark_pr_ready, owner, repo, pr, runner=runner
+            )
+            if ready:
+                await _adopted_issue_label(
+                    spec_dir, project_id, f"{owner}/{repo}", "factory:done"
+                )
+                return {"pr": pr, "ready": True, "merged": False}
+            break
+        await asyncio.sleep(_POLL_INTERVAL_SECONDS)
+    await _adopted_issue_label(
+        spec_dir, project_id, f"{owner}/{repo}", "factory:needs-human"
+    )
+    return {
+        "pr": pr,
+        "ready": False,
+        "merged": False,
+        "reason": "verification_or_ready_failed",
+    }
+
+
 async def run_pr_endgame(
     *,
     spec_dir: Path,
@@ -2137,6 +2245,7 @@ async def run_pr_endgame(
     project_id: str | None = None,
     runner: Runner = _default_runner,
     background: bool = True,
+    adopted_pr: int | None = None,
 ) -> dict:
     """Drive the endgame: open a PR, request a Copilot review, then (in the
     background) wait for Copilot's verdict and merge+re-test only on a clean
@@ -2184,7 +2293,19 @@ async def run_pr_endgame(
     # `gather_pr_context` (which already parses task_metadata.json for the base
     # branch) and passed in, so this feature adds no second filesystem path
     # built from a request-supplied spec id.
-    auto_merge = auto_merge and not await _handback_on_record(spec_dir, spec_id)
+    if adopted_pr is None:
+        try:
+            meta = json.loads((spec_dir / "task_metadata.json").read_text())
+            adopted_pr = meta.get("pr_number") if isinstance(meta, dict) else None
+        except (OSError, ValueError):
+            pass
+    if type(adopted_pr) is not int or adopted_pr <= 0:
+        adopted_pr = None
+    auto_merge = (
+        False
+        if adopted_pr
+        else auto_merge and not await _handback_on_record(spec_dir, spec_id)
+    )
     human_approval_required = False
     if auto_merge:
         # PR-open policy needs prospective green; the merge gate checks real evidence.
@@ -2230,6 +2351,44 @@ async def run_pr_endgame(
     if parts is None:
         return {"ok": False, "reason": "no_repo", "repo": repo}
     owner, name = parts
+
+    if adopted_pr:
+        # The build handoff already pushed the adopted branch; refresh only with a lease.
+        await asyncio.to_thread(
+            push_with_lfs,
+            ["git", "push", "--force-with-lease", "origin", branch],
+            branch,
+            str(worktree),
+            runner,
+        )
+        try:
+            from pfactory.tfactory_client import send_pr_attach  # noqa: PLC0415
+
+            await send_pr_attach(spec_dir, spec_id, adopted_pr, repo)
+        except Exception:  # noqa: BLE001 - attach is best-effort
+            logger.debug("[pr-endgame] adopted PR attach skipped", exc_info=True)
+        gate = _build_merge_gate(
+            spec_dir,
+            spec_id,
+            (owner, name),
+            trusted,
+            review_tier,
+            review_tier_floor,
+            False,
+            runner,
+            base,
+            pr=adopted_pr,
+            verdict_only=True,
+        )
+        coro = _finish_adopted_pr(
+            spec_dir, spec_id, project_id, owner, name, adopted_pr, gate, runner
+        )
+        if background:
+            task = asyncio.create_task(coro)
+            _BACKGROUND_TASKS.add(task)
+            task.add_done_callback(_BACKGROUND_TASKS.discard)
+            return {"ok": True, "pr": adopted_pr, "watching": True}
+        return {"ok": True, "watching": False, **(await coro)}
 
     title, body = _pr_title_body(spec_dir, spec_id)
     body = f"{body}\n\n{review_tier_note(spec_dir, review_tier, trusted=trusted)}"

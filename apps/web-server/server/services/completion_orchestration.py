@@ -570,6 +570,7 @@ async def run_terminal_completion(
                                 on_pr_opened=_on_pr_opened,
                                 re_test=_re_test_sync,
                                 project_id=_proj_id or None,
+                                adopted_pr=ctx.get("adopted_pr"),
                             )
                             logger.info(
                                 f"[AgentService] PR endgame for {sanitize_log(spec_id)} "
