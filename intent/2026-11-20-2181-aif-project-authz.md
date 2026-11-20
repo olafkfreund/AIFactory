@@ -41,3 +41,8 @@ Phase 1 (#2157, epic `olafkfreund/Factory#3857`) introduced the DB-backed projec
 
 1. **Cross-team grants in Phase 2**: Should `team_grant_role` resolve strictly from `TeamMembership` on `Project.team_id` (plus org default-team backfill for existing `OrgMember` rows), or also introduce a `project_team_grants(project_id, team_id, role)` table now for multi-team access to a single project?
 2. **Legacy `api`-only user keys**: For existing user-owned `acw_` keys created with `scopes=["api"]` (`mcp_remote/auth.py:37`), should `"api"` map to a `member` scope ceiling or require explicit `*:read` / `*:write` / `task:merge` scopes?
+
+## Decisions (coordinator, 2026-11-20, under the owner's standing delegation)
+
+1. Phase 2 resolves `team_grant_role` strictly from `TeamMembership` on `Project.team_id`, plus the org default-team backfill. No `project_team_grants` table yet: cross-team grants belong to phase 5 (team management UX).
+2. A user-owned `acw_` key with only the legacy `api` scope caps at `member`.
