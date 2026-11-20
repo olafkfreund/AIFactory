@@ -2363,7 +2363,7 @@ async def run_pr_endgame(  # noqa: PLR0911, PLR0912, PLR0915 - existing state ma
             meta = json.loads((spec_dir / "task_metadata.json").read_text())
             adopted_pr = meta.get("pr_number") if isinstance(meta, dict) else None
         except (OSError, ValueError):
-            pass
+            logger.debug("[pr-endgame] could not read task PR metadata", exc_info=True)
     if type(adopted_pr) is not int or adopted_pr <= 0:
         adopted_pr = None
     auto_merge = (

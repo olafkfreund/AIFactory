@@ -183,13 +183,17 @@ def maybe_push_workspace_branch(  # noqa: PLR0911 - one early return per refusal
                     check=False,
                 )
                 err = res.stderr if res.returncode != 0 else None
+                sha = (
+                    run(["git", "rev-parse", "HEAD"], 120)[1].strip()
+                    if err is None
+                    else ""
+                )
         if err is not None:
             _log.warning("[workspace_fetch] branch push failed: %s", err[:200])
             return False
         _log.info(
             "[workspace_fetch] pushed build branch %s to origin (packed path)", branch
         )
-        sha = _git("rev-parse", "HEAD")
         if re.fullmatch(r"[0-9a-fA-F]{40}", sha):
             try:
                 from core.artifact_store import ArtifactStore  # noqa: PLC0415

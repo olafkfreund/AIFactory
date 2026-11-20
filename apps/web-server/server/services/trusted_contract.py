@@ -7,6 +7,7 @@ Synchronous, no database I/O. The caller looks the record up (see
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -30,7 +31,6 @@ _ISOLATED_STAMPS = ("kubejob", "sandbox-pidns")
 
 def host_isolated() -> bool:
     """True when THIS web server's environment isolates the agent (D4-i)."""
-    from server.services.build_backend import selected_backend  # noqa: PLC0415
     from server.services.job_state_store import store_enabled  # noqa: PLC0415
 
     # Decided policy (#1760, #1724): kubejob with the durable store is the
@@ -38,7 +38,10 @@ def host_isolated() -> bool:
     # builds. Elsewhere, PID-namespaced sandbox included, the agent shares the
     # uid and can read the per-call GitHub token in hosts.yml via /proc/<child>.
     # A separate-uid design would need its own spec.
-    return selected_backend() == "kubejob" and store_enabled()
+    return (
+        os.environ.get("AIFACTORY_BUILD_BACKEND", "").strip().lower() == "kubejob"
+        and store_enabled()
+    )
 
 
 def _record_verified(spec_dir: Path, record: TrustedRecord) -> bool:

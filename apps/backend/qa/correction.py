@@ -558,7 +558,9 @@ async def apply_correction(  # noqa: PLR0912, PLR0915 - receipt reservation and 
                         ):
                             current.unlink(missing_ok=True)
                 except (OSError, ValueError, KeyError):
-                    pass
+                    _log.debug(
+                        "could not replay pending handback receipt", exc_info=True
+                    )
             return {
                 "success": True,
                 "confirm": True,

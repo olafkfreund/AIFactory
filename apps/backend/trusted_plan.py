@@ -55,6 +55,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 import shutil
@@ -63,6 +64,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 # Bump when the signed-payload construction or required envelope fields change,
 # so an old signer and a new verifier don't silently disagree.
@@ -807,7 +810,7 @@ def check_baseline_drift(  # noqa: PLR0911 - distinct drift states
                     and bool(ledger["commits"])
                 )
             except (OSError, ValueError):
-                pass
+                _log.debug("could not read build commit ledger", exc_info=True)
         if (
             not remote_head
             or not approved_head

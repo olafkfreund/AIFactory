@@ -477,7 +477,7 @@ def _git_info_and_push(  # noqa: PLR0911 - explicit push failure outcomes
                     if build_branch == f"aifactory/{spec_id}"
                     else "--force-with-lease",
                     "--",
-                    "origin",
+                    push_url,
                     f"{sha}:refs/heads/{build_branch}",
                 ],
                 cwd=str(repo),

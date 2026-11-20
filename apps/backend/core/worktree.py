@@ -704,6 +704,8 @@ class WorktreeManager:
             metadata = {}
         from core.contract_trust import ENV, trusted_contract  # noqa: PLC0415
 
+        state = "legacy"
+        provenance: dict[str, Any] = {}
         if ENV in os.environ:
             state, contract, _ = trusted_contract(path.parent)
             provenance = (contract or {}).get("provenance", {})
