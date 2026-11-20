@@ -21,11 +21,17 @@ apps running), not in unit tests.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
+import os
+import subprocess
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
+
+from core.child_env import child_env
+from core.git_credentials import authed_push_url
 
 __all__ = [
     "apply_correction",
@@ -44,6 +50,62 @@ _GUARD_REPORT = "handback_assertion_guard.json"
 _log = logging.getLogger(__name__)
 
 
+async def publish_correction(
+    spec_dir: Path, project_dir: Path, branch: str, paths: list[str] | None = None
+) -> bool:
+    """Commit a fixed task branch, push it, then report its new head."""
+    from pfactory.tfactory_client import send_fix_completed
+    from trusted_plan import _safe_branch
+
+    if not _safe_branch(branch):
+        return False
+
+    def git(
+        *args: str, env: dict[str, str] | None = None, check: bool = True
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(  # noqa: S603
+            ["git", *args],  # noqa: S607
+            cwd=project_dir,
+            env=env if env is not None else child_env(),
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=check,
+        )
+
+    try:
+        if git("symbolic-ref", "--short", "HEAD").stdout.strip() != branch:
+            return False
+        git("add", "-A", "--", *(paths if paths is not None else ["."]))
+        diff = git("diff", "--cached", "--quiet", check=False).returncode
+        if diff == 0:
+            return False
+        if diff != 1:
+            return False
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        _log.warning("correction commit preparation failed")
+        return False
+    try:
+        git(
+            "-c",
+            "user.name=AIFactory",
+            "-c",
+            "user.email=aifactory@localhost",
+            "commit",
+            "-m",
+            "fix: apply TFactory correction",
+        )
+        url = git("remote", "get-url", "origin").stdout.strip()
+        with authed_push_url(url) as (push_url, env):
+            git("push", push_url, f"HEAD:refs/heads/{branch}", env=env)
+        head = git("rev-parse", "HEAD").stdout.strip()
+        result = await send_fix_completed(spec_dir, spec_dir.name, head_sha=head)
+        return bool(result.get("sent"))
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        _log.warning("correction push or callback failed")
+        return False
+
+
 def write_fix_request(spec_dir: Path | str, fix_request_md: str) -> Path:
     """Write the fix-request markdown into the spec dir; return its path."""
     target = Path(spec_dir) / _FIX_REQUEST_NAME
@@ -57,6 +119,8 @@ def _now_iso() -> str:
 
 def _project_dir_for(spec_dir: Path) -> Path:
     """The project root for a ``.aifactory/specs/<id>/`` spec dir."""
+    if spec_dir.parent.name != "specs" or spec_dir.parent.parent.name != ".aifactory":
+        return spec_dir
     return spec_dir.parent.parent.parent
 
 
@@ -68,6 +132,8 @@ def record_handback(
     manifest_hash: str | None,
     failing_test_count: int,
     triage_present: bool,
+    tfactory_task_id: str | None = None,
+    pre_fix_sha: str | None = None,
 ) -> dict:
     """Persist the handback audit record + assertion baseline against the spec.
 
@@ -90,6 +156,8 @@ def record_handback(
         "manifest_hash": manifest_hash,
         "failing_test_count": failing_test_count,
         "triage_present": triage_present,
+        "tfactory_task_id": tfactory_task_id,
+        "pre_fix_sha": pre_fix_sha,
         "assertion_baseline": baseline,
     }
     try:
@@ -170,6 +238,18 @@ async def _run_fixer_bg(spec_dir: Path) -> bool:
         from .fixer import run_qa_fixer_session
 
         project_dir = spec_dir.parent.parent.parent
+        handback = False
+        with contextlib.suppress(OSError, ValueError):
+            handback = bool(
+                json.loads((spec_dir / _HANDBACK_RECORD).read_text()).get(
+                    "tfactory_task_id"
+                )
+            )
+        job_fixer = bool(os.environ.get("AIFACTORY_CORRECTION_FETCH_ID"))
+        if handback and not job_fixer:
+            project_dir = project_dir / ".aifactory/worktrees/tasks" / spec_dir.name
+            if not project_dir.is_dir():
+                return False
         qa_model = get_phase_model(spec_dir, "qa_fixer", None)
         budget = get_phase_thinking_budget(spec_dir, "qa_fixer")
         provider = infer_provider_from_model(qa_model)
@@ -191,8 +271,16 @@ async def _run_fixer_bg(spec_dir: Path) -> bool:
                 **get_provider_extra_kwargs(provider, qa_model),
             )
         async with client:
-            status, _ = await run_qa_fixer_session(client, spec_dir, 0, False)
+            status, _ = await run_qa_fixer_session(
+                client, spec_dir, 0, False, project_dir=project_dir
+            )
         fixed = status == "fixed"
+        if fixed and handback and not job_fixer:
+            from pfactory.tfactory_client import _build_branch
+
+            fixed = await publish_correction(
+                spec_dir, project_dir, _build_branch(spec_dir.name, spec_dir)
+            )
     except Exception:  # noqa: BLE001 — background best-effort
         _log.exception("background QA fixer failed for %s", spec_dir)
     finally:
@@ -232,6 +320,7 @@ async def apply_correction(
     triage: dict | None = None,
     manifest_hash: str | None = None,
     correlation_key: str | None = None,
+    tfactory_task_id: str | None = None,
 ) -> dict:
     """Write a fix-request onto a spec and (on confirm) run the QA Fixer.
 
@@ -302,6 +391,28 @@ async def apply_correction(
             ),
         }
 
+    from pfactory.tfactory_client import _locate_build_commit
+
+    located = _locate_build_commit(spec, spec.name) if tfactory_task_id else None
+    pre_fix_sha = located[1] if located else None
+    receipt = spec / _HANDBACK_RECORD
+    if tfactory_task_id and manifest_hash and receipt.exists():
+        try:
+            previous = json.loads(receipt.read_text())
+        except (OSError, ValueError):
+            previous = {}
+        if (
+            previous.get("tfactory_task_id") == tfactory_task_id
+            and previous.get("manifest_hash") == manifest_hash
+            and previous.get("pre_fix_sha") == pre_fix_sha
+        ):
+            return {
+                "success": True,
+                "confirm": True,
+                "started": False,
+                "duplicate": True,
+            }
+
     # Record the handback (manifest hash for audit + assertion baseline) before
     # anything writes to the tree, so the end-of-cycle guard has a clean before.
     await asyncio.to_thread(
@@ -312,6 +423,8 @@ async def apply_correction(
         manifest_hash=manifest_hash,
         failing_test_count=failing_count,
         triage_present=triage is not None,
+        tfactory_task_id=tfactory_task_id,
+        pre_fix_sha=pre_fix_sha,
     )
 
     await asyncio.to_thread(write_fix_request, spec, fix_request_md)

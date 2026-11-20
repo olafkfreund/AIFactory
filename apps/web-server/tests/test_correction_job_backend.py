@@ -170,6 +170,34 @@ def test_workspace_has_clone_and_top_level_spec_files(monkeypatch, tmp_path) -> 
     assert not (proj / ".aifactory/worktrees/corrections/job1").exists()
 
 
+def test_handoff_workspace_checks_out_task_branch(monkeypatch, tmp_path) -> None:
+    proj = _project(tmp_path)
+    spec = proj / ".aifactory/specs/001-x"
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
+    subprocess.run(
+        ["git", "-C", str(proj), "remote", "add", "origin", str(remote)], check=True
+    )
+    branch = "factory/001-x"
+    subprocess.run(["git", "-C", str(proj), "branch", branch], check=True)
+    subprocess.run(["git", "-C", str(proj), "push", "origin", branch], check=True)
+    (spec / ".task_branch").write_text(branch + "\n")
+    (spec / "handback_received.json").write_text('{"tfactory_task_id":"tf-1"}')
+    _capture_pack(monkeypatch)
+
+    ajb._prepare_correction_workspace(spec, "job1")
+    clone = proj / ".aifactory/worktrees/corrections/job1"
+    assert (
+        subprocess.run(
+            ["git", "-C", str(clone), "symbolic-ref", "--short", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        == branch
+    )
+
+
 def test_workspace_does_not_follow_a_cloned_symlink(monkeypatch, tmp_path) -> None:
     proj = _project(tmp_path)
     spec = proj / ".aifactory/specs/001-x"
@@ -370,6 +398,15 @@ async def test_route_flag_off_and_no_forbid_keeps_in_pod_fixer(
 ) -> None:
     await execution.apply_task_correction("p:s", _req(), _access={})
     assert route[0]["fixer_fn"] is None
+
+
+async def test_route_carries_task_id_but_ignores_callback_url(route) -> None:
+    request = _req()
+    request.tfactory_task_id = "tf-1"
+    request.tfactory_callback_url = "https://caller.example/steal"
+    await execution.apply_task_correction("p:s", request, _access={})
+    assert route[0]["tfactory_task_id"] == "tf-1"
+    assert "tfactory_callback_url" not in route[0]
 
 
 async def test_route_preview_is_not_refused(monkeypatch, route) -> None:

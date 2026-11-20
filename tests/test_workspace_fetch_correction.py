@@ -68,7 +68,11 @@ def test_fetch_applies_create_modify_delete(
         {"new/sub": _file(b"new"), "old": _file(b"after", b"before")},
         {"gone": _hash(b"gone")},
     )
-    assert workspace_fetch.fetch_correction(tmp_path, "fid") is True
+    applied: list[str] = []
+    assert (
+        workspace_fetch.fetch_correction(tmp_path, "fid", applied_paths=applied) is True
+    )
+    assert set(applied) == {"new/sub", "old", "gone"}
     assert (tmp_path / "new/sub").read_bytes() == b"new"
     assert (tmp_path / "old").read_bytes() == b"after"
     assert not (tmp_path / "gone").exists()

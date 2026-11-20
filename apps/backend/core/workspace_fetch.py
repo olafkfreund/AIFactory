@@ -1227,6 +1227,7 @@ def fetch_correction(  # noqa: PLR0912, PLR0915 - validate everything, then appl
     project_path: str | os.PathLike[str],
     fetch_id: str,
     cancel: threading.Event | None = None,
+    applied_paths: list[str] | None = None,
 ) -> bool:
     """Validate and apply one correction result with rollback on failure."""
     from core.artifact_store import ArtifactStore  # noqa: PLC0415
@@ -1351,6 +1352,8 @@ def fetch_correction(  # noqa: PLR0912, PLR0915 - validate everything, then appl
                 elif target.exists():
                     target.unlink()
                 applied.append(name)
+            if applied_paths is not None:
+                applied_paths.extend(names)
             return True
         except Exception as exc:  # noqa: BLE001 - restore every applied path
             for name in reversed(applied):

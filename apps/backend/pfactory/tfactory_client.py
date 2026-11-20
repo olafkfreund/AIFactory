@@ -45,6 +45,7 @@ __all__ = [
     "load_task_contract",
     "maybe_auto_handoff_tfactory",
     "send_handoff",
+    "send_fix_completed",
     "tfactory_config",
     "tfactory_verdict",
     "wants_auto_handoff",
@@ -961,6 +962,83 @@ async def send_pr_attach(
         "reason": None if ok else "http_error",
         "status": result.get("status"),
     }
+
+
+async def send_fix_completed(
+    spec_dir: Path,
+    spec_id: str,
+    *,
+    status: str = "complete",
+    poster: Poster | None = None,
+    head_sha: str | None = None,
+) -> dict:
+    """Report a new correction commit to the configured TFactory origin."""
+    spec_dir = Path(spec_dir)
+    config = tfactory_config()
+    if not config["base_url"]:
+        return {"sent": False, "reason": "not_configured"}
+    try:
+        receipt = json.loads((spec_dir / "handback_received.json").read_text())
+        metadata = json.loads((spec_dir / "task_metadata.json").read_text())
+        sent_path = spec_dir / "handback_sent.json"
+        sent = json.loads(sent_path.read_text()) if sent_path.exists() else {}
+    except (OSError, ValueError):
+        return {"sent": False, "reason": "missing_handoff"}
+    if (
+        not isinstance(receipt, dict)
+        or not isinstance(metadata, dict)
+        or not isinstance(sent, dict)
+    ):
+        return {"sent": False, "reason": "invalid_handoff"}
+    task_id = receipt.get("tfactory_task_id")
+    branch = _build_branch(spec_id, spec_dir)
+    located = _locate_build_commit(spec_dir, spec_id) if head_sha is None else None
+    head = head_sha or (located[1] if located else "")
+    if (
+        not task_id
+        or not isinstance(head, str)
+        or re.fullmatch(r"[0-9a-fA-F]{40}", head) is None
+        or not _safe_branch(branch)
+    ):
+        return {"sent": False, "reason": "missing_handoff"}
+    sent_shas = sent.get("sent_shas", [])
+    if not isinstance(sent_shas, list):
+        return {"sent": False, "reason": "invalid_handoff"}
+    if head == receipt.get("pre_fix_sha") or head in sent_shas:
+        return {"sent": False, "reason": "unchanged"}
+    signed_provenance = load_task_contract(spec_dir).get("provenance") or {}
+    if not isinstance(signed_provenance, dict):
+        return {"sent": False, "reason": "invalid_handoff"}
+    payload = {
+        "tfactory_task_id": task_id,
+        "project_id": signed_provenance.get("project_id")
+        or metadata.get("project_id")
+        or _aifactory_project_name(spec_dir),
+        "spec_id": spec_id,
+        "correlation_key": receipt.get("correlation_key"),
+        "source_branch": branch,
+        "head_sha": head,
+        "pr_number": metadata.get("pr_number"),
+        "status": status,
+    }
+    token = (
+        os.environ.get("TFACTORY_HANDBACK_SECRET")
+        or os.environ.get("APP_INBOUND_HANDBACK_SECRET")
+        or config["token"]
+    )
+    if not token:
+        return {"sent": False, "reason": "missing_token"}
+    headers = {"Content-Type": "application/json", "X-TFactory-Handback-Token": token}
+    try:
+        result = await (poster or _httpx_poster)(
+            f"{config['base_url']}/api/handback/aifactory-complete", payload, headers
+        )
+    except Exception:  # noqa: BLE001 - callback failure is retried on the next attempt
+        return {"sent": False, "reason": "error"}
+    if not result.get("ok"):
+        return {"sent": False, "reason": "http_error", "status": result.get("status")}
+    sent_path.write_text(json.dumps({"sent_shas": [*sent_shas, head]}))
+    return {"sent": True, "status": result.get("status"), "head_sha": head}
 
 
 _HTTP_OK, _HTTP_REDIRECT = 200, 300

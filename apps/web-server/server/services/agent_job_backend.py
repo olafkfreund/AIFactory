@@ -380,12 +380,39 @@ def _prepare_correction_workspace(spec_dir: Path, job_id: str) -> str:
     if any(f.stat().st_size > _CORRECTION_SPEC_FILE_MAX_BYTES for f in sources):
         raise build_backend.BuildBackendUnavailableError("A spec file is too large")
     clone = project / ".aifactory/worktrees/corrections" / job_id
+    handback = False
+    packed = False
     try:
         clone.parent.mkdir(parents=True, exist_ok=True)
         build_backend._git(
             ["clone", "--local", "--no-hardlinks", str(project), str(clone)]
         )
         _restore_origin(project, clone)
+        with contextlib.suppress(OSError, ValueError):
+            receipt = json.loads((spec_dir / "handback_received.json").read_text())
+            handback = bool(receipt.get("tfactory_task_id"))
+        if handback:
+            from trusted_plan import _safe_branch  # noqa: PLC0415
+
+            from server.services.task_branch import (  # noqa: PLC0415
+                current_branch,
+                resolve_task_branch_fetching,
+            )
+
+            branch, reason = resolve_task_branch_fetching(
+                worktree_path=project / ".aifactory/worktrees/tasks" / spec_dir.name,
+                project_path=project,
+                spec_id=spec_dir.name,
+                base_branch=current_branch(project),
+            )
+            if branch is None or not _safe_branch(branch):
+                raise build_backend.BuildBackendUnavailableError(
+                    reason or "Task branch missing"
+                )
+            build_backend._git(["-C", str(clone), "fetch", "origin", branch])
+            build_backend._git(
+                ["-C", str(clone), "checkout", "-B", branch, "FETCH_HEAD"]
+            )
         if _has_symlink(clone, spec_rel):
             raise build_backend.BuildBackendUnavailableError(
                 "Spec directory in the clone contains a symlink"
@@ -397,15 +424,17 @@ def _prepare_correction_workspace(spec_dir: Path, job_id: str) -> str:
                 missing_ok=True
             )  # a cloned symlink, not its target
             shutil.copyfile(src, dest / src.name)
-        return str(
+        uri = str(
             pack_workspace(
                 ArtifactStore(),
                 ArtifactRef(service="aifactory", job_id=job_id, role="workspace"),
                 clone,
             )
         )
+        packed = True
+        return uri
     finally:
-        if clone.exists():
+        if clone.exists() and (not handback or not packed):
             shutil.rmtree(clone)
 
 
@@ -434,7 +463,9 @@ def _correction_env(
     return env
 
 
-async def _await_correction(proc: SpecJobProcess, spec_dir: Path) -> None:
+async def _await_correction(
+    proc: SpecJobProcess, spec_dir: Path, clone: Path | None = None
+) -> None:
     """Record the Job's outcome, then run the assertion guard on the applied tree."""
     from datetime import UTC, datetime  # noqa: PLC0415
 
@@ -458,6 +489,8 @@ async def _await_correction(proc: SpecJobProcess, spec_dir: Path) -> None:
         result["status"],
     )
     await asyncio.to_thread(check_fix_cycle_assertions, spec_dir)
+    if clone is not None and clone.exists():
+        shutil.rmtree(clone)
 
 
 async def dispatch_correction_fixer(spec_dir: Path | str) -> dict[str, Any]:
@@ -477,6 +510,8 @@ async def dispatch_correction_fixer(spec_dir: Path | str) -> dict[str, Any]:
     _require_prerequisites(_ENV_CORRECTION_BACKEND)
     fetch_id = uuid4().hex
     job_id = f"correction-{fetch_id[:8]}"
+    clone = project / ".aifactory/worktrees/corrections" / job_id
+    applied_paths: list[str] = []
     try:
         env = await asyncio.to_thread(
             _correction_env,
@@ -503,13 +538,27 @@ async def dispatch_correction_fixer(spec_dir: Path | str) -> dict[str, Any]:
         )
         batch, namespace, job_name = await _create_job(manifest, None)
     except Exception as exc:  # noqa: BLE001 - an API error is a refusal, not a 500
+        if clone.exists():
+            shutil.rmtree(clone)
         raise build_backend.BuildBackendUnavailableError(
             f"could not create the correction Job ({type(exc).__name__})"
         ) from None
     cancel = threading.Event()
 
     async def finish() -> int:
-        ok = await asyncio.to_thread(fetch_correction, project, fetch_id, cancel)
+        if clone.exists():
+            ok = await asyncio.to_thread(
+                fetch_correction, clone, fetch_id, cancel, applied_paths
+            )
+            if ok:
+                from qa.correction import publish_correction  # noqa: PLC0415
+
+                branch = build_backend._git(
+                    ["-C", str(clone), "symbolic-ref", "--short", "HEAD"]
+                ).stdout.strip()
+                ok = await publish_correction(spec, clone, branch, applied_paths)
+        else:
+            ok = await asyncio.to_thread(fetch_correction, project, fetch_id, cancel)
         return 0 if ok else 1
 
     async def existing_batch() -> object:
@@ -524,7 +573,9 @@ async def dispatch_correction_fixer(spec_dir: Path | str) -> dict[str, Any]:
         deadline=_LOCAL_DEADLINE,
     )
     # A strong reference: the loop keeps only a weak one (#1484).
-    task = asyncio.create_task(_await_correction(proc, spec))
+    task = asyncio.create_task(
+        _await_correction(proc, spec, clone if clone.exists() else None)
+    )
     _CORRECTION_WAITERS.add(task)
     task.add_done_callback(_CORRECTION_WAITERS.discard)
     return {"status": "qa_fixing", "scheduled": True, "job": job_name}

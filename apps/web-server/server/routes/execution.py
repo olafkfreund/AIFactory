@@ -1802,9 +1802,10 @@ async def apply_task_correction(
         triage=request.triage,
         manifest_hash=request.manifest_hash,
         correlation_key=request.correlation_key,
+        tfactory_task_id=request.tfactory_task_id,
     )
     # A confirm=False preview and a rejected triage write nothing: not an action.
-    if result.get("success") and result.get("confirm"):
+    if result.get("success") and result.get("confirm") and result.get("started"):
         # The QA Fixer can delete the spec-dir receipt; this copy holds the merge.
         await record_handback_receipt(spec_dir)
         await audit_task_action(
