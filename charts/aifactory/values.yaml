@@ -241,6 +241,19 @@ networkPolicy:
       allowExternalHttps: true
       extraRules: []
 
+# Read-only investigation runs (#2156). Off renders byte-identical to a chart
+# without this block. The data PVC and its env are wired outside the chart
+# (factory-gitops); this block only adds network policies, the registry proxy
+# and RBAC.
+investigations:
+  enabled: false
+  # CIDRs the agent pod may reach on 443 (the Claude API). Required when enabled.
+  claudeApiCidrs: []
+  proxy:
+    image: ubuntu/squid:6.6-24.04_beta
+    # Exact host names only (no leading dot, no regex characters).
+    extraDomains: []
+
 migrations:
   # Production: false runs a pre-install/pre-upgrade hook Job that executes
   # alembic upgrade head before pods roll; no init container is used.

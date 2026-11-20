@@ -1,0 +1,495 @@
+# Golden: helm template aifactory charts/aifactory --namespace factory, default values, at commit e74651dfc7a86851690af45fd67b607ed7840c05
+---
+# Source: aifactory/templates/networkpolicy-tasks.yaml
+# Per-task Job pods (build/gate Jobs dispatched by core/job_dispatch.py and
+# core/kube_sandbox.py) carry only app/factory.io labels, so the selectorLabels
+# policy in networkpolicy.yaml never matches them — without this policy the
+# untrusted per-task workload has unrestricted network access (#812, the
+# Factory#274 sandbox-evaluation compensating-controls checklist).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: aifactory-tasks
+  labels:
+    helm.sh/chart: aifactory-1.0.0
+    app.kubernetes.io/name: aifactory
+    app.kubernetes.io/instance: aifactory
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: aifactory
+spec:
+  podSelector:
+    matchLabels:
+      factory.io/kind: task
+  policyTypes:
+    - Ingress
+    - Egress
+  # No ingress rules: default-deny — nothing needs to reach into a task pod.
+  egress:
+    # DNS lookup — task pods resolve caches, registries and git remotes.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # 443/tcp to public addresses: nix binary caches, git remotes, package
+    # registries, LLM provider APIs. Private RFC1918 ranges stay blocked —
+    # in-cluster endpoints must be opted in explicitly (below / extraRules).
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+    # This chart's own pods: the control-plane API (result reporting) and the
+    # bundled Postgres (the Job writes its own job-state row) both carry the
+    # chart selectorLabels.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: aifactory
+              app.kubernetes.io/instance: aifactory
+      ports:
+        - protocol: TCP
+          port: 3101
+        - protocol: TCP
+          port: 5432
+
+---
+# Source: aifactory/templates/networkpolicy.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: aifactory
+  labels:
+    helm.sh/chart: aifactory-1.0.0
+    app.kubernetes.io/name: aifactory
+    app.kubernetes.io/instance: aifactory
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: aifactory
+spec:
+  # RELEASE-scoped, not selectorLabels-scoped, and deliberately so.
+  #
+  # The Job/CronJob pod templates in this chart used to carry selectorLabels,
+  # which is what put them inside this policy — and also what made them join the
+  # `aifactory` Service and answer real API traffic with connection refused
+  # (AIFactory#1107). Fixing that by giving them a distinct
+  # `app.kubernetes.io/name` would have dropped them out of every NetworkPolicy,
+  # and a pod selected by NO policy is UNRESTRICTED — so the audit-anchor and
+  # teardown pods, which hold DB and KMS credentials, would have quietly gained
+  # unrestricted egress. Trading a traffic bug for a weaker egress posture is the
+  # same defect in a new place.
+  #
+  # Selecting on `instance` alone covers every pod of this release — the web pods
+  # (which also carry it) and the job pods (which keep it) — so the change is
+  # monotonic: nothing that was covered becomes uncovered, at any point during the
+  # upgrade. The narrowing lives on the Service selector, where it belongs.
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: aifactory
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Default: only the ingress controller may reach us. Operators
+    # extend via .Values.networkPolicy.ingress.extraRules.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: "ingress-nginx"
+      ports:
+        - protocol: TCP
+          port: 3101
+  egress:
+    # DNS lookup — pods need to resolve external hostnames.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # 443/tcp to anywhere: Anthropic API, IdP discovery + token + userinfo,
+    # cloud KMS endpoints, external Postgres if hosted off-cluster on 443.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              # Private RFC1918 ranges blocked by default — egress
+              # to internal services must be opted in via extraRules.
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+
+---
+# Source: aifactory/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aifactory
+  labels:
+    helm.sh/chart: aifactory-1.0.0
+    app.kubernetes.io/name: aifactory
+    app.kubernetes.io/instance: aifactory
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: aifactory
+automountServiceAccountToken: true
+
+---
+# Source: aifactory/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aifactory-config
+  labels:
+    helm.sh/chart: aifactory-1.0.0
+    app.kubernetes.io/name: aifactory
+    app.kubernetes.io/instance: aifactory
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: aifactory
+data:
+  # Non-secret runtime configuration. Secrets live in K8s Secret
+  # objects (created by ExternalSecret templates or out-of-band).
+  APP_KMS_BACKEND: "fernet"
+  APP_OIDC_ENABLED: "false"
+  APP_MIGRATIONS_AUTO_APPLY: "false"
+
+---
+# Source: aifactory/templates/rbac/job-sandbox-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aifactory-sandbox
+  namespace: factory
+  labels:
+    helm.sh/chart: aifactory-1.0.0
+    app.kubernetes.io/name: aifactory
+    app.kubernetes.io/instance: aifactory
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: aifactory
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+
+---
+# Source: aifactory/templates/rbac/job-sandbox-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aifactory-sandbox
+  namespace: factory
+  labels:
+    helm.sh/chart: aifactory-1.0.0
+    app.kubernetes.io/name: aifactory
+    app.kubernetes.io/instance: aifactory
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: aifactory
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aifactory-sandbox
+subjects:
+  - kind: ServiceAccount
+    name: aifactory
+    namespace: factory
+
+---
+# Source: aifactory/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: aifactory
+  labels:
+    helm.sh/chart: aifactory-1.0.0
+    app.kubernetes.io/name: aifactory
+    app.kubernetes.io/instance: aifactory
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: aifactory
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: 3101
+      protocol: TCP
+  # `component: server` narrows this to the SERVING pods, and is load-bearing.
+  #
+  # Without it the selector is just {name, instance}, which every pod of the
+  # release satisfies — a Service selector is a SUBSET match, so extra labels on a
+  # pod never exclude it. That silently made the bundled Postgres StatefulSet
+  # (postgres.bundled=true) an endpoint of THIS Service: it carries
+  # {name, instance, component: postgres}, and while `component: postgres`
+  # correctly narrows the aifactory-postgres Service, nothing narrowed this one.
+  # Postgres listens on 5432, this Service targets 3101,
+  # so kube-proxy handed it a share of real API traffic and it answered with
+  # connection refused — and being long-lived, PERMANENTLY, not for a window.
+  #
+  # The Job/CronJob pod templates had the same problem and are fixed at the pod
+  # end too (AIFactory#1107). Both ends are worth having: narrowing here is what
+  # stops the NEXT non-serving pod rediscovering this, and something already has,
+  # three times across this fleet.
+  #
+  # The Deployment's own `spec.selector` is deliberately NOT narrowed — it is
+  # immutable, and narrowing it would make `helm upgrade` fail on every existing
+  # install. This selector is mutable, and the chart's maxSurge=0 strategy already
+  # replaces the pod on every upgrade, so no new endpoint gap is introduced.
+  selector:
+    app.kubernetes.io/name: aifactory
+    app.kubernetes.io/instance: aifactory
+    app.kubernetes.io/component: server
+
+---
+# Source: aifactory/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aifactory
+  labels:
+    helm.sh/chart: aifactory-1.0.0
+    app.kubernetes.io/name: aifactory
+    app.kubernetes.io/instance: aifactory
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: aifactory
+spec:
+  # Epic #44 R3 — multi-replica rmux is out of scope for v1 (cross-pod
+  # session visibility needs Redis pub/sub, planned for v1.1).  Pin
+  # to 1 when ``rmux.enabled=true`` regardless of what replicaCount or
+  # HPA say.  When rmux is off, honour the operator-set replicaCount.
+  replicas: 1
+  strategy:
+    # Rolling update with maxSurge=0 — v1.0 has one replica, so we
+    # tear down before bringing up to avoid double-DB-writes during
+    # the version switch. v1.1 (multi-replica + Redis pub/sub) will
+    # bump this to maxSurge=1.
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aifactory
+      app.kubernetes.io/instance: aifactory
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: aifactory
+        app.kubernetes.io/instance: aifactory
+        # What the Service now selects on. These are the pods that actually serve
+        # port 3101; nothing else in the chart may carry it.
+        app.kubernetes.io/component: server
+      annotations:
+        # Roll pods on ConfigMap change.
+        checksum/config: fd50e7dd0251f8efb10b05e87debd83dbdfdd3ac8eef7d24b3b77fe10006a7c8
+    spec:
+      serviceAccountName: aifactory
+      securityContext:
+        fsGroup: 65532
+        runAsGroup: 65532
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: aifactory
+          image: ghcr.io/dataseeek/aifactory:1.0.0
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          ports:
+            - name: http
+              containerPort: 3101
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: aifactory-config
+          env:
+            # FACTORY_SERVICE_NAME: this service's identity for the shared
+            # factory-github VCS-client layer (canonical in the Factory hub,
+            # Factory#157). The GitLab Duo-Workflow "goal" string reads this so
+            # the canonical file stays byte-identical across the fleet while each
+            # service still names itself. AIFactory is the canonical source, so
+            # this restores its original wording ("AIFactory") at runtime.
+            - name: FACTORY_SERVICE_NAME
+              value: "AIFactory"
+            # AIFACTORY_IMAGE: this Deployment's own resolved image ref. The pod
+            # cannot read its own container image from the downward API, so the
+            # chart injects it here. The RFC-0016 #671 build Job (run.py as a
+            # k8s Job, AIFACTORY_BUILD_BACKEND=kubejob) defaults its Job image to
+            # this value so the build runs on a python-capable image — NOT the
+            # thin nix gate substrate (AIFACTORY_SANDBOX_IMAGE), which has no
+            # bash/python outside `nix develop` and StartErrors the build pod.
+            # Override per-deployment with AIFACTORY_BUILD_IMAGE if the build
+            # should use a different image than the control plane.
+            - name: AIFACTORY_IMAGE
+              value: "ghcr.io/dataseeek/aifactory:1.0.0"
+            # DATABASE_URL: produced by ExternalSecret OR by an
+            # out-of-band Secret named values.postgres.externalSecretName.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: aifactory-db
+                  key: database-url
+            - name: KMS_FERNET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aifactory-kms
+                  key: fernet-key
+            # Agent OS sandbox (#363 AC1): bubblewrap around each agent bash
+            # command — RW only the worktree, everything else RO. Runs
+            # unprivileged in-pod; PID isolation is opt-in (needs privilege).
+            - name: AIFACTORY_AGENT_SANDBOX
+              value: "fs"
+            # #2059: the replica count this chart can reach; the server warns above 1
+            # (revert idempotency is per process). An HPA renders even with rmux.
+            - name: AIFACTORY_REPLICAS
+              value: "1"
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 60
+          resources:
+            limits:
+              cpu: 2000m
+              memory: 4Gi
+            requests:
+              cpu: 500m
+              memory: 1Gi
+          volumeMounts:
+            # readOnlyRootFilesystem=true demands every writable path
+            # be a tmpfs/emptyDir mount.
+            - name: tmp
+              mountPath: /tmp
+            - name: aifactory-data
+              mountPath: /home/nonroot/.aifactory
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: aifactory-data
+          emptyDir: {}
+---
+# Source: aifactory/templates/job-migrations.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: aifactory-migrations
+  labels:
+    helm.sh/chart: aifactory-1.0.0
+    app.kubernetes.io/name: aifactory
+    app.kubernetes.io/instance: aifactory
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: aifactory
+    app.kubernetes.io/component: migrations
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  activeDeadlineSeconds: 300
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: aifactory-migrations
+        app.kubernetes.io/instance: aifactory
+        app.kubernetes.io/component: migrations
+        app.kubernetes.io/part-of: aifactory
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 65532
+        runAsGroup: 65532
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      restartPolicy: Never
+      containers:
+        - name: migrations
+          image: ghcr.io/dataseeek/aifactory:1.0.0
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          command: ["/home/projects/MagesticAI/.venv/bin/python", "-m", "alembic", "upgrade", "head"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: aifactory-db
+                  key: database-url
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+          resources:
+            limits:
+              cpu: 2000m
+              memory: 4Gi
+            requests:
+              cpu: 500m
+              memory: 1Gi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+

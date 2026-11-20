@@ -520,3 +520,212 @@ def test_sa_token_is_mounted_because_the_build_lane_needs_it(helm_template) -> N
     pod_spec = dep["spec"]["template"]["spec"]
     # If a pod-level override is ever added it must not contradict the SA.
     assert pod_spec.get("automountServiceAccountToken", True) is True
+
+
+# --- Read-only investigations (#2156, step 8) ---------------------------------
+
+
+def _render(
+    chart_dir, *sets: str, namespace: str = "factory"
+) -> subprocess.CompletedProcess:
+    import subprocess
+
+    cmd = ["helm", "template", "aifactory", str(chart_dir), "--namespace", namespace]
+    for s in sets:
+        cmd += ["--set", s]
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+
+
+def _investigations_on(chart_dir, *extra: str) -> list[dict]:
+    import yaml
+
+    r = _render(
+        chart_dir,
+        "investigations.enabled=true",
+        "investigations.claudeApiCidrs={160.79.104.0/23}",
+        *extra,
+    )
+    assert r.returncode == 0, r.stderr
+    return [d for d in yaml.safe_load_all(r.stdout) if d]
+
+
+def _by_name(docs, kind, suffix):
+    return next(
+        d for d in docs if d["kind"] == kind and d["metadata"]["name"].endswith(suffix)
+    )
+
+
+@pytest.mark.helm
+def test_investigations_off_matches_golden(helm_available, chart_dir) -> None:
+    """Off renders the same objects as the render recorded before the feature."""
+    from pathlib import Path
+
+    import yaml
+
+    golden = Path(__file__).parent / "golden" / "aifactory-default.yaml"
+    r = _render(chart_dir)
+    assert r.returncode == 0, r.stderr
+    # Parsed, not byte-compared: helm 3 and 4 differ only in blank lines.
+    assert list(yaml.safe_load_all(r.stdout)) == list(
+        yaml.safe_load_all(golden.read_text())
+    )
+
+
+@pytest.mark.helm
+def test_investigations_build_policy_term(helm_available, chart_dir) -> None:
+    docs = _investigations_on(chart_dir)
+    tasks = _by_name(docs, "NetworkPolicy", "-tasks")
+    spec = tasks["spec"]
+    assert spec["podSelector"]["matchLabels"] == {"factory.io/kind": "task"}
+    assert spec["podSelector"]["matchExpressions"] == [
+        {"key": "factory.io/run-kind", "operator": "DoesNotExist"}
+    ]
+    off = _render(chart_dir)
+    import yaml
+
+    off_tasks = _by_name(
+        [d for d in yaml.safe_load_all(off.stdout) if d], "NetworkPolicy", "-tasks"
+    )
+    assert off_tasks["spec"]["egress"] == spec["egress"]
+    assert off_tasks["spec"]["policyTypes"] == spec["policyTypes"]
+
+
+@pytest.mark.helm
+def test_investigation_policies_rules(helm_available, chart_dir) -> None:
+    docs = _investigations_on(chart_dir)
+    port = 3101
+
+    agent = _by_name(docs, "NetworkPolicy", "-investigate-agent")["spec"]
+    assert agent["podSelector"]["matchLabels"] == {
+        "factory.io/run-kind": "investigate-agent"
+    }
+    assert not agent.get("ingress")
+    assert len(agent["egress"]) == 3
+    assert agent["egress"][1] == {
+        "to": [{"ipBlock": {"cidr": "160.79.104.0/23"}}],
+        "ports": [{"protocol": "TCP", "port": 443}],
+    }
+    assert agent["egress"][2]["ports"] == [{"protocol": "TCP", "port": port}]
+
+    test = _by_name(docs, "NetworkPolicy", "-investigate-test")["spec"]
+    assert test["podSelector"]["matchLabels"] == {
+        "factory.io/run-kind": "investigate-test"
+    }
+    assert not test.get("ingress")
+    assert test["egress"][1] == {
+        "to": [
+            {
+                "podSelector": {
+                    "matchLabels": {"factory.io/run-kind": "investigate-proxy"}
+                }
+            }
+        ],
+        "ports": [{"protocol": "TCP", "port": 3128}],
+    }
+    assert len(test["egress"]) == 2
+
+    api = _by_name(docs, "NetworkPolicy", "-investigate-api")["spec"]
+    assert api["policyTypes"] == ["Ingress"]
+    assert (
+        api["podSelector"]["matchLabels"]["app.kubernetes.io/instance"] == "aifactory"
+    )
+    assert api["ingress"] == [
+        {
+            "from": [
+                {
+                    "podSelector": {
+                        "matchLabels": {"factory.io/run-kind": "investigate-agent"}
+                    }
+                }
+            ],
+            "ports": [{"protocol": "TCP", "port": port}],
+        }
+    ]
+
+    proxy = _by_name(docs, "NetworkPolicy", "-investigate-proxy")["spec"]
+    assert proxy["ingress"][0]["ports"] == [{"protocol": "TCP", "port": 3128}]
+    assert proxy["ingress"][0]["from"][0]["podSelector"]["matchLabels"] == {
+        "factory.io/run-kind": "investigate-test"
+    }
+    assert proxy["egress"][1]["ports"] == [{"protocol": "TCP", "port": 443}]
+    assert "10.0.0.0/8" in proxy["egress"][1]["to"][0]["ipBlock"]["except"]
+
+
+@pytest.mark.helm
+def test_investigation_rbac(helm_available, chart_dir) -> None:
+    docs = _investigations_on(chart_dir)
+    rules = _by_name(docs, "Role", "-sandbox")["rules"]
+    assert {
+        "apiGroups": [""],
+        "resources": ["secrets"],
+        "verbs": ["create", "get", "delete"],
+    } in rules
+    assert {
+        "apiGroups": ["networking.k8s.io"],
+        "resources": ["networkpolicies"],
+        "verbs": ["list"],
+    } in rules
+
+
+@pytest.mark.helm
+def test_investigation_proxy_pods_and_squid(helm_available, chart_dir) -> None:
+    docs = _investigations_on(
+        chart_dir, "investigations.proxy.extraDomains={foo.example.com}"
+    )
+    dep = _by_name(docs, "Deployment", "-investigate-proxy")
+    labels = dep["spec"]["template"]["metadata"]["labels"]
+    assert "app.kubernetes.io/instance" not in labels
+    assert labels["factory.io/run-kind"] == "investigate-proxy"
+    assert dep["spec"]["selector"]["matchLabels"].items() <= labels.items()
+    svc = _by_name(docs, "Service", "-investigate-proxy")
+    assert "app.kubernetes.io/instance" not in svc["spec"]["selector"]
+    conf = _by_name(docs, "ConfigMap", "-investigate-proxy")["data"]["squid.conf"]
+    lines = conf.splitlines()
+    for line in (
+        "acl SSL_ports port 443",
+        "acl CONNECT method CONNECT",
+        "acl registries dstdomain -n registry.npmjs.org",
+        "acl registries dstdomain -n pypi.org files.pythonhosted.org",
+        "acl registries dstdomain -n crates.io static.crates.io index.crates.io",
+        "acl registries dstdomain -n proxy.golang.org sum.golang.org",
+        "acl registries dstdomain -n repo.maven.apache.org repo1.maven.org",
+        "acl registries dstdomain -n foo.example.com",
+        "http_access deny !CONNECT",
+        "http_access deny CONNECT !SSL_ports",
+        "http_access allow CONNECT registries",
+        "http_access deny all",
+    ):
+        assert line in lines, line
+    assert lines.index("http_access allow CONNECT registries") < lines.index(
+        "http_access deny all"
+    )
+
+
+@pytest.mark.helm
+def test_investigation_proxy_dstdomain_disables_reverse_dns(
+    helm_available, chart_dir
+) -> None:
+    assert helm_available
+    docs = _investigations_on(
+        chart_dir, "investigations.proxy.extraDomains={foo.example.com}"
+    )
+    conf = _by_name(docs, "ConfigMap", "-investigate-proxy")["data"]["squid.conf"]
+    lines = [
+        line
+        for line in conf.splitlines()
+        if line.startswith("acl registries dstdomain")
+    ]
+    assert lines and all(" -n " in line for line in lines)
+    assert any(tok == "foo.example.com" for line in lines for tok in line.split())
+
+
+@pytest.mark.helm
+@pytest.mark.parametrize("bad", [".foo.com", "a.*.com", "foo", "Foo.com", "a+b.com"])
+def test_investigation_extra_domains_refused(helm_available, chart_dir, bad) -> None:
+    r = _render(
+        chart_dir,
+        "investigations.enabled=true",
+        f"investigations.proxy.extraDomains={{{bad}}}".replace("\\", "\\\\"),
+    )
+    assert r.returncode != 0
+    assert "extraDomains" in r.stderr

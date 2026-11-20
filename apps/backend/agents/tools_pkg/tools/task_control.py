@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from uuid import UUID
 
 try:
     from claude_agent_sdk import tool
@@ -90,6 +91,115 @@ def _format_json(data: Any) -> dict[str, Any]:
     return {
         "content": [{"type": "text", "text": json.dumps(data, indent=2, default=str)}]
     }
+
+
+def create_investigation_tools() -> list[Any]:
+    """Caller-authorized investigation operations for the standalone MCP server."""
+    if not SDK_TOOLS_AVAILABLE:
+        return []
+
+    def path(args: dict[str, Any]) -> str:
+        return f"/api/investigations/{UUID(args['id'])}"
+
+    async def call(method: str, route: str, **kwargs: Any) -> dict[str, Any]:
+        try:
+            return _format_json(await request(method, route, **kwargs))
+        except (MCPHTTPError, ValueError, KeyError) as exc:
+            return _format_error(exc)
+
+    @tool(
+        "investigation_create",
+        "Start a read-only investigation at a repository commit.",
+        {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string"},
+                "sha": {"type": "string"},
+                "request": {"type": "string"},
+                "test_command": {"type": "string"},
+                "limits": {"type": "object"},
+            },
+            "required": ["project_id", "sha", "request"],
+        },
+    )
+    async def investigation_create(args: dict[str, Any]) -> dict[str, Any]:
+        return await call("POST", "/api/investigations", json=args)
+
+    @tool(
+        "investigation_get",
+        "Get investigation state and report.",
+        {
+            "type": "object",
+            "properties": {"id": {"type": "string"}},
+            "required": ["id"],
+        },
+    )
+    async def investigation_get(args: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await call("GET", path(args))
+        except (ValueError, KeyError) as exc:
+            return _format_error(exc)
+
+    @tool(
+        "investigation_logs",
+        "Read investigation logs by cursor.",
+        {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string"},
+                "after": {"type": "integer"},
+                "limit": {"type": "integer"},
+            },
+            "required": ["id"],
+        },
+    )
+    async def investigation_logs(args: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await call(
+                "GET",
+                f"{path(args)}/logs",
+                params={"after": args.get("after", 0), "limit": args.get("limit", 100)},
+            )
+        except (ValueError, KeyError) as exc:
+            return _format_error(exc)
+
+    @tool(
+        "investigation_lease",
+        "Renew the caller's investigation lease.",
+        {
+            "type": "object",
+            "properties": {"id": {"type": "string"}},
+            "required": ["id"],
+        },
+    )
+    async def investigation_lease(args: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await call("POST", f"{path(args)}/lease")
+        except (ValueError, KeyError) as exc:
+            return _format_error(exc)
+
+    @tool(
+        "investigation_stop",
+        "Stop an investigation and await pod cleanup.",
+        {
+            "type": "object",
+            "properties": {"id": {"type": "string"}},
+            "required": ["id"],
+        },
+    )
+    async def investigation_stop(args: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await call("POST", f"{path(args)}/stop")
+        except (ValueError, KeyError) as exc:
+            return _format_error(exc)
+
+    return [
+        investigation_create,
+        investigation_get,
+        investigation_logs,
+        investigation_lease,
+        investigation_stop,
+    ]
 
 
 # Heavy fields stripped from task_get so the LLM context doesn't bloat.

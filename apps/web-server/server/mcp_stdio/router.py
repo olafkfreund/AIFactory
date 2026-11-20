@@ -39,6 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.database.engine import get_db
 from server.project_registry import load_projects
+from server.routes import investigations
 from server.routes.project_authz import accessible_org_ids
 from server.services.audit_service import ACTION_MCP_TASK_APPLY_CORRECTION
 
@@ -67,6 +68,82 @@ from .auth import (
 )
 
 router = APIRouter(prefix="/api/mcp-stdio", tags=["MCP (stdio)"])
+investigation_router = APIRouter(prefix="/api/mcp-stdio", tags=["MCP (stdio)"])
+_INV_READ = Depends(require_acw_scope(MCP_READ_SCOPE))
+_INV_WRITE = Depends(require_acw_scope(TASK_WRITE_SCOPE))
+
+
+@investigation_router.post("/investigations")
+async def proxy_create_investigation(
+    request: FastAPIRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    key: AuthenticatedKey | _LegacyAdminKey = _INV_WRITE,
+) -> dict[str, str]:
+    request.state.user = acw_principal(key)
+    try:
+        body = investigations.CreateInput(**await _read_json_body(request))
+    except ValidationError as exc:  # a bad body is a 422, not a 500
+        raise RequestValidationError(exc.errors()) from exc
+    result = await investigations.create(body, request, db)
+    await _audit_mcp_write(
+        key, "mcp.investigation.create", "investigation", result["id"], request
+    )
+    return result
+
+
+@investigation_router.get("/investigations/{run_id}")
+async def proxy_get_investigation(
+    run_id: str,
+    request: FastAPIRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    key: AuthenticatedKey | _LegacyAdminKey = _INV_READ,
+) -> dict[str, Any]:
+    request.state.user = acw_principal(key)
+    return await investigations.get(run_id, request, db)
+
+
+@investigation_router.get("/investigations/{run_id}/logs")
+async def proxy_investigation_logs(  # noqa: PLR0913 - FastAPI path and query arguments
+    run_id: str,
+    request: FastAPIRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    after: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    key: AuthenticatedKey | _LegacyAdminKey = _INV_READ,
+) -> dict[str, Any]:
+    request.state.user = acw_principal(key)
+    return await investigations.logs(run_id, request, db, after, limit)
+
+
+@investigation_router.post("/investigations/{run_id}/lease")
+async def proxy_investigation_lease(
+    run_id: str,
+    request: FastAPIRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    key: AuthenticatedKey | _LegacyAdminKey = _INV_WRITE,
+) -> dict[str, bool]:
+    request.state.user = acw_principal(key)
+    result = await investigations.lease(run_id, request, db)
+    await _audit_mcp_write(
+        key, "mcp.investigation.lease", "investigation", run_id, request
+    )
+    return result
+
+
+@investigation_router.post("/investigations/{run_id}/stop")
+async def proxy_investigation_stop(
+    run_id: str,
+    request: FastAPIRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    key: AuthenticatedKey | _LegacyAdminKey = _INV_WRITE,
+) -> dict[str, Any]:
+    request.state.user = acw_principal(key)
+    result = await investigations.stop(run_id, request, db)
+    await _audit_mcp_write(
+        key, "mcp.investigation.stop", "investigation", run_id, request
+    )
+    return result
+
 
 # Module-level so the route default is not a call (B008).
 _TASK_WRITE = Depends(require_acw_access(TASK_WRITE_SCOPE))
