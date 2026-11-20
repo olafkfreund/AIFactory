@@ -11,8 +11,8 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
+import sqlalchemy as sa
 from sqlalchemy import delete, select
-from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError
 
 from server.database import engine
@@ -74,7 +74,7 @@ class InvestigationStore:
 
     async def update(self, run_id: str, *, session: Any = None, **fields: Any) -> None:
         stmt = (
-            sa_update(Investigation).where(Investigation.id == run_id).values(**fields)
+            sa.update(Investigation).where(Investigation.id == run_id).values(**fields)
         )
         if session is not None:
             await session.execute(stmt)
