@@ -469,7 +469,17 @@ async def _await_correction(
     """Record the Job's outcome, then run the assertion guard on the applied tree."""
     from datetime import UTC, datetime  # noqa: PLC0415
 
-    from qa.correction import check_fix_cycle_assertions  # noqa: PLC0415
+    from qa.correction import (  # noqa: PLC0415
+        check_fix_cycle_assertions,
+        release_handback_reservation,
+    )
+
+    try:
+        receipt_key = json.loads((spec_dir / "handback_received.json").read_text()).get(
+            "receipt_key"
+        )
+    except (OSError, ValueError):
+        receipt_key = None
 
     try:
         code = await proc.wait()
@@ -481,6 +491,8 @@ async def _await_correction(
         "job": proc.job_name,
         "finished_at": datetime.now(UTC).isoformat(),
     }
+    if code != 0:
+        release_handback_reservation(spec_dir, receipt_key)
     with contextlib.suppress(OSError):
         (spec_dir / _CORRECTION_RESULT_FILE).write_text(json.dumps(result))
     _log.info(

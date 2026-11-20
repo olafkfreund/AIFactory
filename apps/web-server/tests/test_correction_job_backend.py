@@ -66,6 +66,29 @@ def test_invalid_flag_refuses(monkeypatch) -> None:
         ajb.correction_kubejob_enabled()
 
 
+@pytest.mark.asyncio
+async def test_failed_job_releases_unpublished_handback_reservation(
+    tmp_path, monkeypatch
+):
+    spec = tmp_path / "proj/.aifactory/specs/001"
+    receipts = spec / "handback_receipts"
+    receipts.mkdir(parents=True)
+    (spec / "handback_received.json").write_text(json.dumps({"receipt_key": "key"}))
+    (receipts / "key").touch()
+
+    class FailedProcess:
+        job_name = "failed-fixer"
+
+        async def wait(self):
+            return 1
+
+    monkeypatch.setattr(
+        "qa.correction.check_fix_cycle_assertions", lambda *_a: {"ok": True}
+    )
+    await ajb._await_correction(FailedProcess(), spec)
+    assert not (receipts / "key").exists()
+
+
 def _scoped(monkeypatch, *, works: bool) -> None:
     def scope(env, ids):
         if works:

@@ -57,6 +57,105 @@ def test_git_info_graceful_when_no_worktree(tmp_path):
     ) == (None, None)
 
 
+def test_packed_adopted_ingest_uses_recorded_sha_not_stale_local_branch(
+    tmp_path, monkeypatch
+):
+    import subprocess
+
+    from pfactory import tfactory_client as tc
+
+    def git(cwd, *args):
+        return subprocess.run(
+            ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    origin = tmp_path / "origin.git"
+    git(tmp_path, "init", "-q", "--bare", str(origin))
+    project = tmp_path / "project"
+    git(tmp_path, "init", "-q", "-b", "factory/17", str(project))
+    git(project, "config", "user.name", "Test")
+    git(project, "config", "user.email", "test@example.com")
+    git(project, "remote", "add", "origin", str(origin))
+    (project / "file").write_text("approved")
+    git(project, "add", "file")
+    git(project, "commit", "-qm", "approved")
+    approved = git(project, "rev-parse", "HEAD")
+    git(project, "push", "-q", "origin", "HEAD:refs/heads/factory/17")
+    job = tmp_path / "job"
+    git(tmp_path, "clone", "-q", "-b", "factory/17", str(origin), str(job))
+    git(job, "config", "user.name", "Test")
+    git(job, "config", "user.email", "test@example.com")
+    (job / "file").write_text("built")
+    git(job, "commit", "-qam", "built")
+    built = git(job, "rev-parse", "HEAD")
+    git(job, "push", "-q", "origin", "HEAD:refs/heads/factory/17")
+    spec = project / ".aifactory/specs/017"
+    spec.mkdir(parents=True)
+    identity = {
+        "source_branch": "factory/17",
+        "approved_head_sha": approved,
+        "pr_number": 17,
+        "repo": "o/r",
+        "base_ref": "dev",
+    }
+    (spec / "spec.md").write_text("## Acceptance Criteria\n- works\n")
+    (spec / "requirements.json").write_text(json.dumps({"provenance": identity}))
+    (spec / "task_metadata.json").write_text(
+        json.dumps(
+            {
+                "source_branch": "factory/17",
+                "approved_head_sha": approved,
+                "pr_number": 17,
+                "github_repo": "o/r",
+            }
+        )
+    )
+    monkeypatch.setattr(tc, "_recorded_build_sha", lambda _id: built)
+    payload = build_ingest_payload(spec, "017", contract={"provenance": identity})
+    assert payload["source_sha"] == built
+    assert payload["source_branch"] == "factory/17"
+    assert git(project, "rev-parse", "HEAD") == approved
+
+
+def test_nonadopted_custom_branch_keeps_lease(tmp_path):
+    import subprocess
+
+    def git(cwd, *args):
+        return subprocess.run(
+            ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    origin = tmp_path / "origin.git"
+    git(tmp_path, "init", "-q", "--bare", str(origin))
+    project = tmp_path / "project"
+    git(tmp_path, "init", "-q", "-b", "custom", str(project))
+    git(project, "config", "user.name", "Test")
+    git(project, "config", "user.email", "test@example.com")
+    git(project, "remote", "add", "origin", str(origin))
+    (project / "file").write_text("base")
+    git(project, "add", "file")
+    git(project, "commit", "-qm", "base")
+    git(project, "push", "-qu", "origin", "custom")
+    other = tmp_path / "other"
+    git(tmp_path, "clone", "-q", "-b", "custom", str(origin), str(other))
+    git(other, "config", "user.name", "Test")
+    git(other, "config", "user.email", "test@example.com")
+    (other / "file").write_text("newer remote")
+    git(other, "commit", "-qam", "newer")
+    remote_sha = git(other, "rev-parse", "HEAD")
+    git(other, "push", "-q", "origin", "custom")
+    (project / "file").write_text("stale local")
+    git(project, "commit", "-qam", "stale")
+    spec = project / ".aifactory/specs/017"
+    spec.mkdir(parents=True)
+    (spec / ".task_branch").write_text("custom")
+    assert _git_info_and_push(spec, "017") == (str(origin), None)
+    assert (
+        git(project, "ls-remote", "origin", "refs/heads/custom").split()[0]
+        == remote_sha
+    )
+
+
 def test_adopted_branch_push_uses_approved_tip_as_lease(tmp_path):
     import subprocess
 

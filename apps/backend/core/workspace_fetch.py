@@ -189,10 +189,30 @@ def maybe_push_workspace_branch(  # noqa: PLR0911 - one early return per refusal
         _log.info(
             "[workspace_fetch] pushed build branch %s to origin (packed path)", branch
         )
+        sha = _git("rev-parse", "HEAD")
+        if re.fullmatch(r"[0-9a-fA-F]{40}", sha):
+            try:
+                from core.artifact_store import ArtifactStore  # noqa: PLC0415
+
+                ArtifactStore().put_bytes(
+                    _build_sha_key(spec_id), sha.encode(), "text/plain", role="build"
+                )
+            except Exception:  # noqa: BLE001 - a record failure must not fail the build
+                _log.warning("[workspace_fetch] could not record packed build SHA")
         return True
     except (OSError, subprocess.SubprocessError) as exc:  # never break a green build
         _log.warning("[workspace_fetch] branch push errored: %s", exc)
         return False
+
+
+def _build_sha_key(spec_id: str) -> str:
+    from core.artifact_store import ArtifactRef  # noqa: PLC0415
+
+    return str(
+        ArtifactRef(
+            service="aifactory", job_id=spec_id, role="build", path="build_sha"
+        ).key()
+    )
 
 
 _USAGE_FILE = "token_usage.json"

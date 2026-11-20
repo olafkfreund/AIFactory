@@ -331,6 +331,18 @@ def _build_branch_commit(repo: Path, build_branch: str) -> str:
     )
 
 
+def _recorded_build_sha(spec_id: str) -> str:
+    """SHA pushed by the ephemeral packed build Job, if available."""
+    try:
+        from core.artifact_store import ArtifactStore  # noqa: PLC0415
+        from core.workspace_fetch import _build_sha_key  # noqa: PLC0415
+
+        sha = ArtifactStore().get_bytes(_build_sha_key(spec_id)).decode().strip()
+    except Exception:  # noqa: BLE001 - co-mounted builds have no record
+        return ""
+    return sha if re.fullmatch(r"[0-9a-fA-F]{40}", sha) else ""
+
+
 def _locate_build_commit(spec_dir: Path, spec_id: str) -> tuple[Path, str] | None:
     """Find the repo that HOLDS the built commit and that commit's sha, or None.
 
@@ -375,6 +387,21 @@ def _git_info_and_push(  # noqa: PLR0911 - explicit push failure outcomes
     Best-effort and never raises: returns ``(None, None)`` when nothing local holds
     the build branch (the caller then falls back to the branch convention).
     """
+    if adopted and (recorded := _recorded_build_sha(spec_id)):
+        url = _project_git_url(spec_dir)
+        if url:
+            with authed_push_url(url) as (push_url, git_env):
+                if (
+                    _remote_tip(
+                        _project_dir(spec_dir),
+                        push_url,
+                        adopted["source_branch"],
+                        env=git_env,
+                    )
+                    == recorded
+                ):
+                    return url, adopted["source_branch"]
+        return url, None
     located = _locate_build_commit(spec_dir, spec_id)
     if adopted:
         located = next(
@@ -446,7 +473,9 @@ def _git_info_and_push(  # noqa: PLR0911 - explicit push failure outcomes
                     "push",
                     f"--force-with-lease=refs/heads/{build_branch}:{expected}"
                     if adopted
-                    else "--force",
+                    else "--force"
+                    if build_branch == f"aifactory/{spec_id}"
+                    else "--force-with-lease",
                     "--",
                     "origin",
                     f"{sha}:refs/heads/{build_branch}",
@@ -778,7 +807,12 @@ def build_ingest_payload(  # noqa: PLR0912, PLR0915 - existing payload matrix
     if held:
         from core.contract_trust import has_trusted_trace  # noqa: PLC0415
 
-        if has_trusted_trace(spec_dir):
+        provenance = load_task_contract(spec_dir).get("provenance") or {}
+        if (
+            has_trusted_trace(spec_dir)
+            and isinstance(provenance, dict)
+            and provenance.get("source_branch")
+        ):
             raise ValueError("trusted contract unavailable for TFactory handoff")
     contract = load_task_contract(spec_dir) if contract is None else dict(contract)
     signed = _signed_snapshot(contract, held)
@@ -829,7 +863,9 @@ def build_ingest_payload(  # noqa: PLR0912, PLR0915 - existing payload matrix
             metadata = json.loads((spec_dir / "task_metadata.json").read_text())
         except (OSError, ValueError):
             metadata = {}
-        if isinstance(metadata, dict) and metadata.get("source_branch"):
+        if isinstance(metadata, dict) and (
+            metadata.get("pr_number") or metadata.get("approved_head_sha")
+        ):
             raise ValueError("adopted branch has no verified contract")
     if isinstance(provenance, dict) and provenance.get("source_branch"):
         adopted = provenance
@@ -885,6 +921,9 @@ def build_ingest_payload(  # noqa: PLR0912, PLR0915 - existing payload matrix
     if located:
         payload["source_sha"] = located[1]
     if adopted:
+        recorded = _recorded_build_sha(spec_id)
+        if recorded:
+            payload["source_sha"] = recorded
         with authed_push_url(git_url) as (push_url, git_env):
             confirmed = _remote_tip(
                 _project_dir(spec_dir), push_url, adopted["source_branch"], env=git_env
@@ -1062,13 +1101,14 @@ async def send_pr_attach(
     }
 
 
-async def send_fix_completed(  # noqa: PLR0911, PLR0912, PLR0915 - delivery states
+async def send_fix_completed(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915 - delivery states
     spec_dir: Path,
     spec_id: str,
     *,
     status: str = "complete",
     poster: Poster | None = None,
     head_sha: str | None = None,
+    receipt: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Report a new correction commit to the configured TFactory origin."""
     spec_dir = Path(spec_dir)
@@ -1076,7 +1116,11 @@ async def send_fix_completed(  # noqa: PLR0911, PLR0912, PLR0915 - delivery stat
     if not config["base_url"]:
         return {"sent": False, "reason": "not_configured"}
     try:
-        receipt = json.loads((spec_dir / "handback_received.json").read_text())
+        receipt = (
+            receipt
+            if receipt is not None
+            else json.loads((spec_dir / "handback_received.json").read_text())
+        )
         metadata = json.loads((spec_dir / "task_metadata.json").read_text())
         sent_path = spec_dir / "handback_sent.json"
     except (OSError, ValueError):

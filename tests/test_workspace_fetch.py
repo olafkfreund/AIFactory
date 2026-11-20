@@ -149,6 +149,13 @@ def test_push_branch_pushes_to_origin(monkeypatch, tmp_path) -> None:
 
     envs = []
     hosts = []
+    recorded = []
+
+    class Store:
+        def put_bytes(self, *args, **kwargs):
+            recorded.append((args, kwargs))
+
+    monkeypatch.setattr(a_s, "ArtifactStore", Store)
 
     def fake_run(args, **kwargs):
         calls.append(args)
@@ -161,7 +168,7 @@ def test_push_branch_pushes_to_origin(monkeypatch, tmp_path) -> None:
             else ""
         )
         if args[:2] == ["git", "rev-parse"]:
-            return _R(stdout="aifactory/042-x")
+            return _R(stdout="aifactory/042-x" if "--abbrev-ref" in args else "a" * 40)
         if args[:3] == ["git", "remote", "get-url"]:
             return _R(stdout="https://github.com/o/r.git")
         if args[:2] == ["git", "grep"]:
@@ -176,6 +183,7 @@ def test_push_branch_pushes_to_origin(monkeypatch, tmp_path) -> None:
     # GH_CONFIG_DIR, never in argv, where /proc/<pid>/cmdline publishes it.
     assert push[2] == "https://github.com/o/r.git"
     assert push[3] == "HEAD:aifactory/042-x"
+    assert recorded[0][0][1] == b"a" * 40
     assert "ghs_faketoken" in hosts[idx]  # vacuity guard
     assert "GIT_PASS" not in push_env
 

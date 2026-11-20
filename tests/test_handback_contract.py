@@ -259,6 +259,66 @@ async def test_non_adopted_handback_fixer_uses_project_without_linked_worktree(
     assert selected == [tmp_path]
 
 
+@pytest.mark.asyncio
+async def test_nonadopted_fixer_checks_out_task_branch_before_editing(
+    tmp_path, monkeypatch
+):
+    import phase_config
+    from core import client as client_module
+    from core import contract_trust
+    from qa import correction, fixer
+
+    spec = tmp_path / ".aifactory/specs/001"
+    spec.mkdir(parents=True)
+    (spec / "handback_received.json").write_text('{"tfactory_task_id":"t1"}')
+    worktree = tmp_path / ".aifactory/worktrees/tasks/001"
+    worktree.mkdir(parents=True)
+    calls = []
+
+    def run(args, **_kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(
+            args, 0, stdout="dev\n" if "symbolic-ref" in args else ""
+        )
+
+    class Client:
+        async def __aenter__(self):
+            assert any(args[1] == "checkout" for args in calls)
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+    monkeypatch.setattr(correction.subprocess, "run", run)
+    monkeypatch.setattr(
+        contract_trust, "trusted_contract", lambda *_a: ("legacy", None, "")
+    )
+    monkeypatch.setattr(
+        client_module,
+        "create_client",
+        lambda project, *_a, **_k: Client()
+        if project == worktree
+        else pytest.fail("wrong checkout"),
+    )
+    monkeypatch.setattr(phase_config, "get_phase_model", lambda *_a: "claude")
+    monkeypatch.setattr(phase_config, "get_phase_thinking_budget", lambda *_a: None)
+    monkeypatch.setattr(phase_config, "infer_provider_from_model", lambda *_a: "claude")
+
+    async def fixed(*_a, **_k):
+        return "fixed", None
+
+    async def publish(*_a):
+        return True
+
+    monkeypatch.setattr(fixer, "run_qa_fixer_session", fixed)
+    monkeypatch.setattr(correction, "publish_correction", publish)
+    assert await correction._run_fixer_bg(spec)
+    assert [args[1] for args in calls if args[1] in ("fetch", "checkout")] == [
+        "fetch",
+        "checkout",
+    ]
+
+
 def test_check_fix_cycle_flags_weakened_assertions(tmp_path: Path):
     """End-to-end guard: baseline recorded, then a test loses an assertion."""
     proj = tmp_path / "proj"
@@ -390,10 +450,20 @@ async def test_tested_sha_reservation_dedups_concurrent_without_manifest(
         json.loads((spec / "handback_received.json").read_text())["pre_fix_sha"]
         == "a" * 40
     )
-    (spec / "handback_pushed.json").write_text(json.dumps({"head_sha": "b" * 40}))
+    receipt_key = next((spec / "handback_receipts").iterdir()).name
+    pending = {
+        "head_sha": "b" * 40,
+        "receipt_key": receipt_key,
+        "tfactory_task_id": "tf-1",
+        "pre_fix_sha": "a" * 40,
+    }
+    (spec / "handback_pushed.json").write_text(json.dumps(pending))
+    (spec / "handback_receipts" / f"{receipt_key}.pushed").write_text(
+        json.dumps(pending)
+    )
     delivered = []
 
-    async def callback(_spec: Path, _id: str, *, head_sha: str) -> dict:
+    async def callback(_spec: Path, _id: str, *, head_sha: str, receipt: dict) -> dict:
         delivered.append(head_sha)
         return {"sent": True}
 
@@ -476,6 +546,101 @@ async def test_fix_completed_posts_configured_url_once(monkeypatch, tmp_path: Pa
     assert calls[0][2]["Idempotency-Key"]
 
 
+async def test_retry_uses_pushed_receipt_after_new_handback_arrives(
+    monkeypatch, tmp_path: Path
+):
+    spec = tmp_path / "proj/.aifactory/specs/001"
+    spec.mkdir(parents=True)
+    (spec / "task_metadata.json").write_text(
+        json.dumps({"source_branch": "factory/test"})
+    )
+    (spec / "handback_received.json").write_text(
+        json.dumps(
+            {
+                "tfactory_task_id": "task-b",
+                "correlation_key": "b",
+                "pre_fix_sha": "b" * 40,
+            }
+        )
+    )
+    monkeypatch.setenv("TFACTORY_BASE_URL", "https://configured.example")
+    monkeypatch.setenv("TFACTORY_HANDBACK_SECRET", "test-token")
+    sent = []
+
+    async def poster(_url: str, payload: dict, _headers: dict) -> dict:
+        sent.append(payload)
+        return {"ok": True}
+
+    pushed_a = {
+        "receipt_key": "a",
+        "tfactory_task_id": "task-a",
+        "correlation_key": "a",
+        "pre_fix_sha": "a" * 40,
+    }
+    assert (
+        await tfactory_client.send_fix_completed(
+            spec, "001", head_sha="c" * 40, receipt=pushed_a, poster=poster
+        )
+    )["sent"]
+    assert sent[0]["tfactory_task_id"] == "task-a"
+    assert sent[0]["correlation_key"] == "a"
+
+
+async def test_new_handback_clears_old_pending_and_duplicate_retries_own_receipt(
+    monkeypatch, tmp_path: Path
+):
+    spec = tmp_path / "proj/.aifactory/specs/001"
+    spec.mkdir(parents=True)
+
+    async def fixer(_spec: Path) -> dict:
+        return {"scheduled": True}
+
+    await apply_correction(
+        spec,
+        FIX_MD,
+        confirm=True,
+        fixer_fn=fixer,
+        tfactory_task_id="a",
+        tested_sha="a" * 40,
+    )
+    key_a = json.loads((spec / "handback_received.json").read_text())["receipt_key"]
+    pending = {
+        "receipt_key": key_a,
+        "head_sha": "c" * 40,
+        "tfactory_task_id": "a",
+        "correlation_key": "a",
+        "pre_fix_sha": "a" * 40,
+    }
+    (spec / "handback_pushed.json").write_text(json.dumps(pending))
+    (spec / "handback_receipts" / f"{key_a}.pushed").write_text(json.dumps(pending))
+    await apply_correction(
+        spec,
+        FIX_MD,
+        confirm=True,
+        fixer_fn=fixer,
+        tfactory_task_id="b",
+        tested_sha="b" * 40,
+    )
+    assert not (spec / "handback_pushed.json").exists()
+    delivered = []
+
+    async def callback(_spec: Path, _id: str, *, head_sha: str, receipt: dict) -> dict:
+        delivered.append((head_sha, receipt["tfactory_task_id"]))
+        return {"sent": True}
+
+    monkeypatch.setattr(tfactory_client, "send_fix_completed", callback)
+    result = await apply_correction(
+        spec,
+        FIX_MD,
+        confirm=True,
+        fixer_fn=fixer,
+        tfactory_task_id="a",
+        tested_sha="a" * 40,
+    )
+    assert result["duplicate"] is True
+    assert delivered == [("c" * 40, "a")]
+
+
 async def test_publish_correction_pushes_task_branch(monkeypatch, tmp_path: Path):
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     monkeypatch.delenv("GH_TOKEN", raising=False)
@@ -522,7 +687,7 @@ async def test_publish_correction_pushes_task_branch(monkeypatch, tmp_path: Path
     (project / "app.py").write_text("after\n")
     sent: list[str] = []
 
-    async def callback(_spec: Path, _id: str, *, head_sha: str) -> dict:
+    async def callback(_spec: Path, _id: str, *, head_sha: str, receipt: dict) -> dict:
         sent.append(head_sha)
         return {"sent": True}
 
@@ -634,7 +799,7 @@ async def test_publish_retries_callback_without_a_second_commit(
     (project / "app.py").write_text("after\n")
     sent = []
 
-    async def callback(_spec: Path, _id: str, *, head_sha: str) -> dict:
+    async def callback(_spec: Path, _id: str, *, head_sha: str, receipt: dict) -> dict:
         sent.append(head_sha)
         return {"sent": len(sent) == 2}
 

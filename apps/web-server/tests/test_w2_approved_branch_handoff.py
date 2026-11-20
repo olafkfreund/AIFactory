@@ -47,6 +47,7 @@ from server.routes import execution, github  # noqa: E402
 from server.services import intake_poller as ip  # noqa: E402
 from server.services import pr_endgame as pe  # noqa: E402
 from server.services import project_settings_store as pss  # noqa: E402
+from server.services import trusted_contract as trust  # noqa: E402
 from server.services.pr_endgame import CmdResult  # noqa: E402
 from server.services.task_branch import recorded_branch  # noqa: E402
 from test_from_plan_route import (  # noqa: E402
@@ -63,6 +64,25 @@ __all__ = ["handoff_project"]
 
 BRANCH = "factory/2172-slug"
 REAL_BUILD_MERGE_GATE = pe._build_merge_gate
+
+
+def test_hold_allows_ordinary_handoff_but_refuses_adopted(tmp_path, monkeypatch):
+    spec = tmp_path / ".aifactory/specs/001"
+    spec.mkdir(parents=True)
+    (spec / "spec.md").write_text("## Acceptance Criteria\n- works\n")
+    monkeypatch.setattr(trust, "resolve_contract", lambda *_a: ("hold", {}))
+    assert trust.adopted_handoff(spec, None) is None
+    monkeypatch.setattr(tfactory_client, "_git_info_and_push", lambda *_a: (None, None))
+    monkeypatch.setattr("core.contract_trust.has_trusted_trace", lambda *_a: True)
+    assert (
+        tfactory_client.build_ingest_payload(spec, "001", contract={})["spec_id"]
+        == "001"
+    )
+    (spec / "task_metadata.json").write_text(
+        json.dumps({"pr_number": 7, "source_branch": "factory/7"})
+    )
+    with pytest.raises(ValueError, match="unavailable"):
+        trust.adopted_handoff(spec, None)
 
 
 def test_w2_route_hard_includes_project_id_and_base_branch(

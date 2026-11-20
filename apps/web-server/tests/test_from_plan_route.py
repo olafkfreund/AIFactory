@@ -353,6 +353,34 @@ def test_unsigned_base_fallback_is_validated(handoff_project, base_ref):
     assert error.value.status_code == 422
 
 
+def test_adopted_plan_rejects_unsigned_valid_base(handoff_project):
+    project_id, project_path, base_sha, approved_sha = handoff_project
+    plan = _signed_plan(base_sha, approved_sha)
+    plan["provenance"].pop("base_ref")
+    plan.pop(APPROVAL_KEY)
+    plan[APPROVAL_KEY] = sign_plan(
+        plan, key=KEY, approved_by="pfactory", approval_timestamp="2026-11-20T12:00:00Z"
+    )
+    request = execution.FromPlanRequest(plan=plan, base_ref="dev")
+    with pytest.raises(execution.HTTPException, match="signed plan provenance"):
+        execution._extract_plan_handoff(request, project_id, project_path)
+
+
+def test_nonadopted_plan_keeps_request_base_fallback(handoff_project):
+    project_id, project_path, base_sha, approved_sha = handoff_project
+    plan = _signed_plan(base_sha, approved_sha)
+    for key in ("base_ref", "source_branch", "approved_head_sha", "pr_number"):
+        plan["provenance"].pop(key)
+    plan.pop(APPROVAL_KEY)
+    plan[APPROVAL_KEY] = sign_plan(
+        plan, key=KEY, approved_by="pfactory", approval_timestamp="2026-11-20T12:00:00Z"
+    )
+    request = execution.FromPlanRequest(plan=plan, base_ref="dev")
+    handoff = execution._extract_plan_handoff(request, project_id, project_path)
+    assert handoff["base_ref"] == "dev"
+    assert handoff["source_branch"] is None
+
+
 def test_apply_correction_request_callback_url_docstring_notes_ignored():
     field_info = execution.ApplyCorrectionRequest.model_fields["tfactory_callback_url"]
     assert "TFACTORY_BASE_URL" in (field_info.description or "")

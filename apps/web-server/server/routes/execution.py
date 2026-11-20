@@ -1464,6 +1464,11 @@ def _extract_plan_handoff(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="handoff fields must be inside the signed plan provenance",
             )
+    if signed.get("source_branch") and not signed.get("base_ref"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="adopted base_ref must be inside the signed plan provenance",
+        )
     mismatches: list[str] = []
     for key, req_val in (
         ("base_ref", request.base_ref or request.baseBranch),

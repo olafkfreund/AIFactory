@@ -67,7 +67,42 @@ def adopted_handoff(spec_dir: Path, trusted: Any) -> dict[str, Any] | None:
     """Return the verified adopted identity, holding if either disk copy differs."""
     state, contract = resolve_contract(spec_dir, trusted)
     if state == "hold":
-        raise ValueError("trusted contract unavailable")
+        try:
+            metadata = json.loads((spec_dir / "task_metadata.json").read_text())
+        except (OSError, ValueError):
+            metadata = {}
+        try:
+            requirements = json.loads((spec_dir / "requirements.json").read_text())
+        except (OSError, ValueError):
+            requirements = {}
+        request_provenance = (
+            requirements.get("provenance") if isinstance(requirements, dict) else None
+        )
+        from pfactory.tfactory_client import load_task_contract  # noqa: PLC0415
+
+        plan_provenance = load_task_contract(spec_dir).get("provenance")
+        if (
+            (
+                isinstance(metadata, dict)
+                and (metadata.get("approved_head_sha") or metadata.get("pr_number"))
+            )
+            or (
+                isinstance(request_provenance, dict)
+                and (
+                    request_provenance.get("source_branch")
+                    or request_provenance.get("pr_number")
+                )
+            )
+            or (
+                isinstance(plan_provenance, dict)
+                and (
+                    plan_provenance.get("source_branch")
+                    or plan_provenance.get("pr_number")
+                )
+            )
+        ):
+            raise ValueError("trusted contract unavailable")
+        return None
     provenance = contract.get("provenance") if state == "verified" else None
     if not isinstance(provenance, dict) or not provenance.get("source_branch"):
         if isinstance(provenance, dict) and provenance.get("pr_number"):
