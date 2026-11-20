@@ -10,3 +10,5 @@
 
 # #2151: synthetic placeholder password in an early commit of the log-input test (now built at runtime)
 778f23349f3702154387c3bb6758c2c5c5bdc0a9:apps/backend/task_logger/test_tool_input.py:generic-api-key:25
+# #2156: a fake PEM header string in a scrubber test, not a key
+76e7bba81018e142c2d2836785d3776f507f9d66:tests/postgres/test_investigation_backend.py:private-key:221

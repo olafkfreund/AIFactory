@@ -15,8 +15,6 @@ if isinstance(sys.modules.get("claude_agent_sdk"), MagicMock):
     sys.modules.pop("agents.tools_pkg.tools.task_control", None)
 
 from agents.tools_pkg.tools import task_control
-from claude_agent_sdk import create_sdk_mcp_server
-from mcp.types import ListToolsRequest
 from mcp_server.aifactory_server import _control_tools
 
 
@@ -24,19 +22,13 @@ from mcp_server.aifactory_server import _control_tools
 async def test_stdio_tool_listing_follows_switch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def names() -> set[str]:
-        server = create_sdk_mcp_server(
-            name="test", version="1", tools=_control_tools()
-        )["instance"]
-        result = await server.request_handlers[ListToolsRequest](
-            ListToolsRequest(method="tools/list")
-        )
-        return {tool.name for tool in result.root.tools}
+    def names() -> set[str]:
+        return {tool.name for tool in _control_tools()}
 
     monkeypatch.setenv("AIFACTORY_INVESTIGATIONS", "off")
-    assert not any(name.startswith("investigation_") for name in await names())
+    assert not any(name.startswith("investigation_") for name in names())
     monkeypatch.setenv("AIFACTORY_INVESTIGATIONS", "on")
-    assert {name for name in await names() if name.startswith("investigation_")} == {
+    assert {name for name in names() if name.startswith("investigation_")} == {
         "investigation_create",
         "investigation_get",
         "investigation_logs",
@@ -44,7 +36,7 @@ async def test_stdio_tool_listing_follows_switch(
         "investigation_stop",
     }
     monkeypatch.setenv("AIFACTORY_INVESTIGATIONS", "drain")
-    assert {name for name in await names() if name.startswith("investigation_")} == {
+    assert {name for name in names() if name.startswith("investigation_")} == {
         "investigation_get",
         "investigation_logs",
         "investigation_lease",

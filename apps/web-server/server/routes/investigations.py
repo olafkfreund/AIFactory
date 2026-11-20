@@ -72,7 +72,7 @@ async def _run_project(
 
 
 def _refused(exc: InvestigationRefused) -> HTTPException:
-    return HTTPException(404 if "not found" in str(exc) else 409, str(exc))
+    return HTTPException(404 if "not found" in exc.detail else 409, exc.detail)
 
 
 @router.post("")

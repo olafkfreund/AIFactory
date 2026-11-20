@@ -74,7 +74,14 @@ def _code(exc: Exception) -> int | None:
 
 
 class InvestigationRefused(RuntimeError):  # noqa: N818 - refusal is public API terminology
-    """A requested operation cannot be safely admitted."""
+    """A requested operation cannot be safely admitted.
+
+    ``detail`` is always fixed text written in this module, so routes may return it.
+    """
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
 
 
 class InvestigationBackend:
@@ -192,7 +199,8 @@ class InvestigationBackend:
         try:
             await self._network(fields)
         except ValueError as exc:
-            raise InvestigationRefused(str(exc)) from exc
+            _log.warning("investigation manifest refused: %s", exc)
+            raise InvestigationRefused("manifest refused") from exc
         try:
             await self.store.insert(**fields)
         except SlotTaken as exc:

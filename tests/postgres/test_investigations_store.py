@@ -80,10 +80,14 @@ async def test_lock_updates_in_transaction(store) -> None:
     async with store.lock(run.id) as (session, row):
         await store.update(row.id, session=session, state="running")
     assert (await store.get(run.id)).state == "running"
-    with pytest.raises(RuntimeError):
+
+    async def fail_inside_lock() -> None:
         async with store.lock(run.id) as (session, row):
             await store.update(row.id, session=session, state="failed")
             raise RuntimeError
+
+    with pytest.raises(RuntimeError):
+        await fail_inside_lock()
     assert (await store.get(run.id)).state == "running"
 
 

@@ -527,7 +527,7 @@ def test_sa_token_is_mounted_because_the_build_lane_needs_it(helm_template) -> N
 
 def _render(
     chart_dir, *sets: str, namespace: str = "factory"
-) -> "subprocess.CompletedProcess":
+) -> subprocess.CompletedProcess:
     import subprocess
 
     cmd = ["helm", "template", "aifactory", str(chart_dir), "--namespace", namespace]
@@ -557,14 +557,18 @@ def _by_name(docs, kind, suffix):
 
 @pytest.mark.helm
 def test_investigations_off_matches_golden(helm_available, chart_dir) -> None:
-    """Off renders byte-identical to the render recorded before the feature."""
+    """Off renders the same objects as the render recorded before the feature."""
     from pathlib import Path
 
+    import yaml
+
     golden = Path(__file__).parent / "golden" / "aifactory-default.yaml"
-    expected = golden.read_text().split("\n", 1)[1]  # drop the header comment
     r = _render(chart_dir)
     assert r.returncode == 0, r.stderr
-    assert r.stdout == expected
+    # Parsed, not byte-compared: helm 3 and 4 differ only in blank lines.
+    assert list(yaml.safe_load_all(r.stdout)) == list(
+        yaml.safe_load_all(golden.read_text())
+    )
 
 
 @pytest.mark.helm
@@ -712,7 +716,7 @@ def test_investigation_proxy_dstdomain_disables_reverse_dns(
         if line.startswith("acl registries dstdomain")
     ]
     assert lines and all(" -n " in line for line in lines)
-    assert any("foo.example.com" in line for line in lines)
+    assert any("foo.example.com" in line.split() for line in lines)
 
 
 @pytest.mark.helm

@@ -11,10 +11,11 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import delete, select, update as sa_update
+from sqlalchemy import delete, select
+from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError
 
-from server.database.engine import async_session_factory
+from server.database import engine
 from server.database.models import Investigation, InvestigationLog
 
 MAX_LOG_LIMIT = 500
@@ -31,7 +32,7 @@ def _now() -> datetime:
 class InvestigationStore:
     def __init__(self, session_factory: Any = None) -> None:
         if session_factory is None:
-            session_factory = async_session_factory
+            session_factory = engine.async_session_factory
         self._session_factory = session_factory
 
     async def insert(self, **fields: Any) -> Any:
