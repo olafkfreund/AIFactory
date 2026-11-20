@@ -84,6 +84,11 @@ Codex's plan review found two gaps the spec left open. Approving the plan approv
       - keeps get, logs, lease, stop, every pod route, the auth exemption and the reconcile loop.
     - **The rollback** is now `on` → `drain` → all runs `pods_gone` → `off`.
 
+13. **The network check no longer requires `…-investigate-api`** (step 13; owner, 2026-11-20: "Drop the check").
+    - **Why:** the spec assumed the chart's base policy, which isolates the server's ingress. On the live cluster no policy selects the server pods. An `…-investigate-api` ingress policy there would isolate them and cut off every other client of the server.
+    - **What changes:** `network_check` still requires exactly one agent policy and one test policy, each selecting its pods alone, and still refuses any other policy that selects them. It no longer requires an API policy. That policy only proves the agent can reach the server; without it, a run fails and nothing is less isolated.
+    - **The chart** keeps `networkpolicy-investigate-api.yaml`, because its base policy does isolate the server. factory-gitops does not add it.
+
 ## Decisions carried over (approved intent and spec)
 
 ### Separation of duties

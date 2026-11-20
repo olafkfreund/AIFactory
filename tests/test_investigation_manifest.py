@@ -169,6 +169,8 @@ def test_network_check_accepts_chart_and_rejects_broad_policies(run):
         "spec": {"podSelector": {"matchLabels": {"factory.io/kind": "task"}}},
     }
     assert manifests.network_check([*policies, broad], agent, test) == "unsafe-build"
+    # Server ingress is reachability, not isolation: a cluster that does not
+    # isolate the server needs no investigate-api policy (deviation 13).
     assert (
         manifests.network_check(
             [
@@ -179,7 +181,7 @@ def test_network_check_accepts_chart_and_rejects_broad_policies(run):
             agent,
             test,
         )
-        == "missing investigate-api policy"
+        is None
     )
     build = next(p for p in policies if p["metadata"]["name"].endswith("-tasks"))
     old = copy.deepcopy(build)

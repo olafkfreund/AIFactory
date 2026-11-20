@@ -448,6 +448,4 @@ def network_check(
             return sorted(extra)[0]
         if selected[role] != expected:
             return sorted(expected)[0]
-    if not any(name.endswith("-investigate-api") for name in names):
-        return "missing investigate-api policy"
     return None
