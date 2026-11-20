@@ -131,6 +131,75 @@ def test_adopted_worktree_preserves_approved_branch_and_rejects_drift(origin_and
     )
 
 
+def test_null_source_branch_uses_normal_task_branch(origin_and_clone):
+    _, clone = origin_and_clone
+    spec = clone / ".aifactory" / "specs" / "001-normal"
+    spec.mkdir(parents=True)
+    (spec / "task_metadata.json").write_text('{"source_branch": null}')
+    manager = WorktreeManager(clone)
+    assert manager.get_branch_name("001-normal") == "aifactory/001-normal"
+
+
+def test_adopted_checkout_uses_verified_sha(origin_and_clone, monkeypatch):
+    origin, clone = origin_and_clone
+    branch = "factory/approved"
+    _git(["checkout", "-q", "-b", branch], origin)
+    approved = _git(["rev-parse", "HEAD"], origin)
+    spec = clone / ".aifactory" / "specs" / "002-approved"
+    spec.mkdir(parents=True)
+    (spec / "task_metadata.json").write_text(
+        json.dumps({"source_branch": branch, "approved_head_sha": approved})
+    )
+    manager = WorktreeManager(clone)
+    original = manager._run_git
+    commands = []
+
+    def capture(args, *a, **kw):
+        commands.append(args)
+        return original(args, *a, **kw)
+
+    monkeypatch.setattr(manager, "_run_git", capture)
+    manager.create_worktree("002-approved")
+    assert any(
+        args[:2] == ["worktree", "add"] and args[-1] == approved for args in commands
+    )
+    assert any(
+        args[:3] == ["fetch", "--", "origin"]
+        and f"refs/heads/{branch}:refs/remotes/origin/{branch}" in args[-1]
+        for args in commands
+    )
+
+
+def test_verified_adopted_branch_cannot_be_removed_from_metadata(
+    origin_and_clone, monkeypatch
+):
+    from core import contract_trust
+
+    _, clone = origin_and_clone
+    spec = clone / ".aifactory/specs/003-approved"
+    spec.mkdir(parents=True)
+    (spec / "task_metadata.json").write_text("{}")
+    monkeypatch.setenv(contract_trust.ENV, "verified-digest")
+    monkeypatch.setattr(
+        contract_trust,
+        "trusted_contract",
+        lambda *_a: (
+            "verified",
+            {"provenance": {"source_branch": "factory/approved"}},
+            "",
+        ),
+    )
+    with pytest.raises(WorktreeError, match="metadata missing"):
+        WorktreeManager(clone).get_branch_name("003-approved")
+
+
+@pytest.mark.parametrize("branch", ["HEAD", "-upload-pack=evil"])
+def test_metadata_base_branch_rejects_unsafe_names(origin_and_clone, branch):
+    _, clone = origin_and_clone
+    with pytest.raises(WorktreeError, match="Invalid base branch"):
+        WorktreeManager(clone, base_branch=branch)
+
+
 def test_pr_diff_carries_no_factory_bookkeeping(origin_and_clone):
     """The diff Approve turns into a PR must contain code only."""
     origin, clone = origin_and_clone
@@ -254,7 +323,7 @@ def test_base_fetch_gets_the_token_per_call_and_never_runs_setup_git(
 
     def recorder(argv, **kw):
         argvs.append(list(argv))
-        if argv[-3:-1] == ["fetch", "origin"]:
+        if argv[-4:-2] == ["fetch", "--"] and argv[-2] == "origin":
             env = kw["env"]
             # the per-call dir is removed on exit: read hosts.yml now
             fetches.append((env, Path(env["GH_CONFIG_DIR"], "hosts.yml").read_text()))

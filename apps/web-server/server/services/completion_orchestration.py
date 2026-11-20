@@ -296,7 +296,11 @@ async def run_terminal_completion(
 
                 _org = org_id_for_path(project_path)
                 with github_app.org_github_token(_org):
-                    if is_auto_pr_enabled(project_path):
+                    verified = handoff_contract(spec_dir, trusted)
+                    adopted = bool(
+                        verified and verified.get("provenance", {}).get("pr_number")
+                    )
+                    if is_auto_pr_enabled(project_path) or adopted:
                         await github_app.warm_org_token(_org)
                         # Sync git/gh reads: off the loop, so a mint waits in a thread.
                         ctx = await asyncio.to_thread(

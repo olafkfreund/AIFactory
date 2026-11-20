@@ -812,6 +812,10 @@ def create_pr(
     Idempotent-ish: if a PR for the branch already exists, gh reports it and we
     parse the number out.
     """
+    from trusted_plan import _safe_branch  # noqa: PLC0415
+
+    if not _safe_branch(branch) or not _safe_branch(base) or branch == base:
+        return None
     # #959: on the kubejob/packed path the build ran in a k8s Job on an ephemeral
     # /work emptyDir and pushed its branch to origin from there
     # (core.workspace_fetch.maybe_push_workspace_branch, #751). THIS control-plane
@@ -824,7 +828,10 @@ def create_pr(
     # fall through to the existing behaviour. `branch:branch` (non-force) creates
     # the local ref on the packed path where none exists; a divergent local ref
     # just declines the fast-forward, which is fine.
-    fetch = runner(["git", "fetch", "origin", f"{branch}:{branch}"], str(worktree))
+    fetch = runner(
+        ["git", "fetch", "--", "origin", f"refs/heads/{branch}:refs/heads/{branch}"],
+        str(worktree),
+    )
     if not fetch.ok:
         logger.info(
             "[pr-endgame] fetch of %s from origin skipped (%s) — branch may be "
@@ -834,7 +841,17 @@ def create_pr(
         )
 
     push = push_with_lfs(
-        ["git", "push", "-u", "origin", branch], branch, str(worktree), runner
+        [
+            "git",
+            "push",
+            "-u",
+            "--",
+            "origin",
+            f"refs/heads/{branch}:refs/heads/{branch}",
+        ],
+        branch,
+        str(worktree),
+        runner,
     )
     if not push.ok and "up-to-date" not in (push.err + push.out).lower():
         logger.warning("[pr-endgame] git push failed: %s", push.err[:300])
@@ -1457,7 +1474,20 @@ def _resolve_pr_conflicts(  # noqa: PLR0911
     those (push the resolved branch, re-review, cap attempts). Pure + injectable
     (``runner``/``fixer``) so it is unit-testable without real git or an LLM.
     """
-    fetch = runner(["git", "fetch", "origin", base_branch], worktree)
+    from trusted_plan import _safe_branch  # noqa: PLC0415
+
+    if not _safe_branch(base_branch):
+        return ConflictResolution(False, [], "invalid base branch")
+    fetch = runner(
+        [
+            "git",
+            "fetch",
+            "--",
+            "origin",
+            f"+refs/heads/{base_branch}:refs/remotes/origin/{base_branch}",
+        ],
+        worktree,
+    )
     if not fetch.ok:
         return ConflictResolution(False, [], f"fetch failed: {fetch.err[:200]}")
 
@@ -1904,6 +1934,12 @@ def gather_pr_context(
     worktree = task_repo_dir(project_path, spec_id)
     if worktree is None:
         return None
+    from server.services.trusted_contract import adopted_handoff  # noqa: PLC0415
+
+    try:
+        adopted = adopted_handoff(spec_dir, trusted)
+    except ValueError:
+        return None
     head = runner(["git", "rev-parse", "--abbrev-ref", "HEAD"], str(worktree))
     branch = head.out.strip() if head.ok else ""
 
@@ -1925,6 +1961,10 @@ def gather_pr_context(
     adopted_pr = meta.get("pr_number")
     if adopted_pr and meta.get("source_branch"):
         branch = meta["source_branch"]
+    if adopted:
+        branch = adopted["source_branch"]
+        adopted_pr = adopted["pr_number"]
+        base = adopted.get("base_ref") or base
 
     # On the kubejob path the build runs inside the k8s Job and pushes
     # aifactory/<spec_id>, while THIS control-plane worktree stays on the base
@@ -1972,6 +2012,8 @@ def gather_pr_context(
         )
     if not repo:
         repo = meta.get("github_repo") or meta.get("githubRepo") or ""
+    if adopted:
+        repo = adopted["repo"]
     if not repo:
         # Last resort: derive owner/name from the worktree's origin remote.
         url = runner(["git", "remote", "get-url", "origin"], str(worktree))
@@ -2202,6 +2244,7 @@ async def _finish_adopted_pr(  # noqa: PLR0913 - one bounded watcher
         if head and await asyncio.to_thread(gate, head):
             if head != await asyncio.to_thread(_pr_head, owner, repo, pr, runner):
                 continue
+            # shortcut: race window between last head read and ready; upgrade if GitHub adds a conditional API.
             ready = await asyncio.to_thread(
                 mark_pr_ready, owner, repo, pr, runner=runner
             )
@@ -2293,7 +2336,29 @@ async def run_pr_endgame(
     # `gather_pr_context` (which already parses task_metadata.json for the base
     # branch) and passed in, so this feature adds no second filesystem path
     # built from a request-supplied spec id.
-    if adopted_pr is None:
+    from server.services.trusted_contract import adopted_handoff  # noqa: PLC0415
+
+    try:
+        adopted = adopted_handoff(spec_dir, trusted)
+    except ValueError:
+        return {"ok": False, "reason": "untrusted_adopted_handoff"}
+    if adopted:
+        from trusted_plan import _safe_branch  # noqa: PLC0415
+
+        signed_provider, signed_repo = _parse_repo_ref(adopted["repo"])
+        if (
+            not _safe_branch(base)
+            or base == adopted["source_branch"]
+            or branch != adopted["source_branch"]
+            or repo != signed_repo
+            or provider != signed_provider
+            or (adopted.get("base_ref") and base != adopted["base_ref"])
+            or (adopted_pr is not None and adopted_pr != adopted["pr_number"])
+        ):
+            return {"ok": False, "reason": "adopted_handoff_mismatch"}
+        adopted_pr = adopted["pr_number"]
+        auto_merge = False
+    elif adopted_pr is None:
         try:
             meta = json.loads((spec_dir / "task_metadata.json").read_text())
             adopted_pr = meta.get("pr_number") if isinstance(meta, dict) else None
@@ -2353,14 +2418,7 @@ async def run_pr_endgame(
     owner, name = parts
 
     if adopted_pr:
-        # The build handoff already pushed the adopted branch; refresh only with a lease.
-        await asyncio.to_thread(
-            push_with_lfs,
-            ["git", "push", "--force-with-lease", "origin", branch],
-            branch,
-            str(worktree),
-            runner,
-        )
+        # The build handoff owns the leased push; PR endgame only observes origin.
         try:
             from pfactory.tfactory_client import send_pr_attach  # noqa: PLC0415
 

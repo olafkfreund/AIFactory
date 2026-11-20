@@ -61,6 +61,7 @@ from trusted_plan import APPROVAL_KEY, check_baseline_drift, sign_plan  # noqa: 
 __all__ = ["handoff_project"]
 
 BRANCH = "factory/2172-slug"
+REAL_BUILD_MERGE_GATE = pe._build_merge_gate
 
 
 def test_w2_route_hard_includes_project_id_and_base_branch(
@@ -246,23 +247,14 @@ async def test_w2_adopted_pr_endgame_never_auto_merges_and_marks_ready_on_exact_
 
     # Drive the real _build_merge_gate -> tfactory_client.tfactory_verdict check
     # so the exact head SHA is verified against TFactory's task + verdicts response.
-    monkeypatch.setattr(pe, "_build_merge_gate", pe._build_merge_gate)
-    getter_urls: list[str] = []
+    monkeypatch.setattr(pe, "_build_merge_gate", REAL_BUILD_MERGE_GATE)
+    checked_heads: list[str] = []
 
-    def fake_getter(url: str, _headers: dict[str, str]) -> tuple[int, object]:
-        getter_urls.append(url)
-        if url.endswith("/verdicts.json"):
-            return 200, {
-                "verdicts": [{"verdict": "accept"}],
-                "verdict_vote": {"passed": 1, "total": 1},
-            }
-        return 200, {
-            "project_id": "p1",
-            "source_sha": head_sha,
-            "status_json": {"status": "triaged"},
-        }
+    def fake_verdict(_spec: Path, _id: str, *, head: str, vote: dict) -> str:
+        checked_heads.append(head)
+        return "pass" if head == head_sha else "fail"
 
-    monkeypatch.setattr(tfactory_client, "_httpx_get", fake_getter)
+    monkeypatch.setattr(tfactory_client, "tfactory_verdict", fake_verdict)
 
     attached: list[tuple[str, int, str | None]] = []
 
@@ -273,6 +265,15 @@ async def test_w2_adopted_pr_endgame_never_auto_merges_and_marks_ready_on_exact_
         return {"sent": True}
 
     monkeypatch.setattr(tfactory_client, "send_pr_attach", fake_attach)
+    monkeypatch.setattr(
+        "server.services.trusted_contract.adopted_handoff",
+        lambda *_a: {
+            "source_branch": BRANCH,
+            "approved_head_sha": "a" * 40,
+            "pr_number": 88,
+            "repo": "olafkfreund/AIFactory",
+        },
+    )
 
     applied_labels: list[tuple[int, list[str]]] = []
 
@@ -318,8 +319,8 @@ async def test_w2_adopted_pr_endgame_never_auto_merges_and_marks_ready_on_exact_
     assert result["ready"] is True
     assert result["merged"] is False
     assert attached == [(spec_id, 88, "olafkfreund/AIFactory")]
-    assert getter_urls, "tfactory_verdict must be queried for the PR head"
-    assert runner.saw("git push --force-with-lease origin factory/2172-slug")
+    assert checked_heads == [head_sha]
+    assert not runner.saw("push ")
     assert runner.saw("gh pr ready 88 --repo olafkfreund/AIFactory")
     assert not runner.saw("pr create")
     assert not runner.saw("pr merge")

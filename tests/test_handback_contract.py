@@ -15,6 +15,7 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
 from pfactory import tfactory_client
 from qa.assertion_guard import (
     count_assertions,
@@ -210,6 +211,50 @@ async def test_legacy_markdown_only_still_runs(tmp_path: Path):
     assert res["success"] is True and res["started"] is True
     assert calls == [tmp_path]
     assert (tmp_path / "QA_FIX_REQUEST.md").read_text() == FIX_MD
+
+
+@pytest.mark.asyncio
+async def test_non_adopted_handback_fixer_uses_project_without_linked_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    import phase_config
+    from core import client as client_module
+    from core import contract_trust
+    from qa import correction, fixer
+
+    spec = tmp_path / ".aifactory/specs/001"
+    spec.mkdir(parents=True)
+    (spec / "handback_received.json").write_text('{"tfactory_task_id":"t1"}')
+    selected = []
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+    def create(project_dir, *_args, **_kwargs):
+        selected.append(project_dir)
+        return Client()
+
+    async def run(*_args, **_kwargs):
+        return "fixed", None
+
+    async def publish(*_args):
+        return True
+
+    monkeypatch.setattr(
+        contract_trust, "trusted_contract", lambda *_a: ("legacy", None, "")
+    )
+    monkeypatch.setattr(client_module, "create_client", create)
+    monkeypatch.setattr(phase_config, "get_phase_model", lambda *_a: "claude")
+    monkeypatch.setattr(phase_config, "get_phase_thinking_budget", lambda *_a: None)
+    monkeypatch.setattr(phase_config, "infer_provider_from_model", lambda *_a: "claude")
+    monkeypatch.setattr(fixer, "run_qa_fixer_session", run)
+    monkeypatch.setattr(correction, "publish_correction", publish)
+    assert await correction._run_fixer_bg(spec)
+    assert selected == [tmp_path]
 
 
 def test_check_fix_cycle_flags_weakened_assertions(tmp_path: Path):

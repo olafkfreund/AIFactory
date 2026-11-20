@@ -177,7 +177,7 @@ def test_create_pr_fetches_branch_from_origin_before_push():
     r = FakeRunner(
         {
             "git grep": CmdResult(1, "", ""),  # no filter=lfs: no LFS step (#1721)
-            "fetch origin": CmdResult(0, "", ""),
+            "fetch -- origin": CmdResult(0, "", ""),
             "git push": CmdResult(0, "", ""),
             "pr create": CmdResult(0, "https://github.com/o/r/pull/9", ""),
         }
@@ -191,8 +191,10 @@ def test_create_pr_fetches_branch_from_origin_before_push():
         runner=r,
     )
     assert pr == 9
-    # The fetch must target origin with the branch:branch refspec, before the push.
-    assert r.saw("fetch origin aifactory/045-x:aifactory/045-x")
+    # The fetch names the branch ref explicitly before the push.
+    assert r.saw(
+        "fetch -- origin refs/heads/aifactory/045-x:refs/heads/aifactory/045-x"
+    )
     fetch_i = next(
         i
         for i, c in enumerate(r.calls)
@@ -207,7 +209,7 @@ def test_create_pr_survives_fetch_failure():
     # the endgame — create_pr still attempts the push + gh pr create.
     r = FakeRunner(
         {
-            "fetch origin": CmdResult(1, "", "couldn't find remote ref"),
+            "fetch -- origin": CmdResult(1, "", "couldn't find remote ref"),
             "git push": CmdResult(0, "", ""),
             "pr create": CmdResult(0, "https://github.com/o/r/pull/10", ""),
         }
@@ -597,6 +599,10 @@ def test_adopted_pr_ready_after_exact_head_verdict(tmp_path, monkeypatch):
     spec = tmp_path / "spec"
     spec.mkdir()
     (spec / "task_metadata.json").write_text(json.dumps({"pr_number": 27}))
+    monkeypatch.setattr(
+        "server.services.trusted_contract.adopted_handoff",
+        lambda *_a: {"source_branch": "factory/27-x", "pr_number": 27, "repo": "o/r"},
+    )
     calls = []
     runner = FakeRunner({".head.sha": CmdResult(0, "a" * 40, "")})
 
@@ -633,6 +639,32 @@ def test_adopted_pr_ready_after_exact_head_verdict(tmp_path, monkeypatch):
     assert calls == ["attach"]
     assert runner.saw("pr ready 27")
     assert not runner.saw("pr create") and not runner.saw("pr merge")
+
+
+def test_adopted_identity_requires_both_local_copies_to_match(tmp_path, monkeypatch):
+    from server.services import trusted_contract
+
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    identity = {
+        "source_branch": "factory/27-x",
+        "approved_head_sha": "a" * 40,
+        "pr_number": 27,
+        "repo": "o/r",
+    }
+    (spec / "task_metadata.json").write_text(
+        json.dumps({**identity, "github_repo": identity["repo"]})
+    )
+    (spec / "requirements.json").write_text(json.dumps({"provenance": identity}))
+    monkeypatch.setattr(
+        trusted_contract,
+        "resolve_contract",
+        lambda *_a: ("verified", {"provenance": identity}),
+    )
+    assert trusted_contract.adopted_handoff(spec, None) == identity
+    (spec / "requirements.json").write_text(json.dumps({"provenance": {}}))
+    with pytest.raises(ValueError, match="differs"):
+        trusted_contract.adopted_handoff(spec, None)
 
 
 def test_run_pr_endgame_no_repo():

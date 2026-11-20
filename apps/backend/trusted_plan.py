@@ -529,7 +529,7 @@ _DEFAULT_DRIFT_POLICY = "blast-radius"
 def _safe_branch(value: object) -> bool:
     if not isinstance(value, str) or not value or value.startswith("-"):
         return False
-    if value == "@" or "@{" in value or ".." in value or "//" in value:
+    if value in {"@", "HEAD"} or "@{" in value or ".." in value or "//" in value:
         return False
     if value.endswith(("/", ".")) or re.search(r"[\x00-\x20\x7f~^:?*\[\\]", value):
         return False
@@ -548,7 +548,7 @@ def validate_handoff_identity(plan: dict) -> list[str]:
         return ["provenance must be an object"]
     errors = []
     for key in ("source_branch", "base_ref"):
-        if key in provenance and not _safe_branch(provenance[key]):
+        if provenance.get(key) is not None and not _safe_branch(provenance[key]):
             errors.append(f"provenance.{key} must be a safe git branch name")
     if (
         provenance.get("source_branch")
@@ -567,6 +567,12 @@ def validate_handoff_identity(plan: dict) -> list[str]:
         errors.append("provenance.pr_number must be a positive integer")
     if provenance.get("source_branch") and not provenance.get("approved_head_sha"):
         errors.append("provenance.approved_head_sha is required with source_branch")
+    if provenance.get("pr_number") and not provenance.get("source_branch"):
+        errors.append("provenance.source_branch is required with pr_number")
+    if provenance.get("source_branch"):
+        for key in ("repo", "pr_number"):
+            if not provenance.get(key):
+                errors.append(f"provenance.{key} is required with source_branch")
     return errors
 
 
@@ -721,6 +727,8 @@ def _git(repo: Path, *args: str) -> str | None:
 
 def _fetch_origin_branch(repo: Path, branch: str) -> bool:
     """Refresh one validated branch with the worktree manager's GitHub credentials."""
+    if not _safe_branch(branch):
+        return False
     git_bin = shutil.which("git")
     env = _git_subprocess_env()
     if not git_bin or env is None:
@@ -738,6 +746,7 @@ def _fetch_origin_branch(repo: Path, branch: str) -> bool:
                     str(repo),
                     "fetch",
                     "--no-tags",
+                    "--",
                     "origin",
                     f"+refs/heads/{branch}:refs/remotes/origin/{branch}",
                 ],

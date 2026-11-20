@@ -314,7 +314,7 @@ def _remote_tip(
     repo: Path, push_url: str, branch: str, env: dict[str, str] | None = None
 ) -> str:
     """The commit ``origin`` currently has for ``branch`` (``ls-remote``), or ""."""
-    line = _git_stdout(repo, ["ls-remote", push_url, branch], env=env)
+    line = _git_stdout(repo, ["ls-remote", push_url, f"refs/heads/{branch}"], env=env)
     return line.split()[0] if line else ""
 
 
@@ -349,7 +349,9 @@ def _locate_build_commit(spec_dir: Path, spec_id: str) -> tuple[Path, str] | Non
     return None
 
 
-def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | None]:
+def _git_info_and_push(
+    spec_dir: Path, spec_id: str, adopted: dict | None = None
+) -> tuple[str | None, str | None]:
     """Return ``(git_url, source_branch)`` for the build, pushing the BUILD BRANCH
     to origin so TFactory (separate PVC) can fetch the built code.
 
@@ -371,10 +373,21 @@ def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | 
     the build branch (the caller then falls back to the branch convention).
     """
     located = _locate_build_commit(spec_dir, spec_id)
+    if adopted:
+        located = next(
+            (
+                (repo, sha)
+                for repo in (_project_dir(spec_dir), _build_worktree(spec_dir, spec_id))
+                if (sha := _build_branch_commit(repo, adopted["source_branch"]))
+            ),
+            None,
+        )
     if located is None:
         return None, None
     repo, sha = located
-    build_branch = _build_branch(spec_id, spec_dir)
+    build_branch = (
+        adopted["source_branch"] if adopted else _build_branch(spec_id, spec_dir)
+    )
     try:
         url = _git_stdout(repo, ["remote", "get-url", "origin"])
         if not url:
@@ -406,14 +419,33 @@ def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | 
                     err[:200],
                 )
                 return url, None
+            expected = adopted["approved_head_sha"] if adopted else ""
+            if adopted:
+                remote_before = _remote_tip(repo, push_url, build_branch, env=git_env)
+                if remote_before != expected:
+                    if (
+                        not remote_before
+                        or subprocess.run(
+                            ["git", "merge-base", "--is-ancestor", remote_before, sha],
+                            cwd=str(repo),
+                            env=git_env,
+                            capture_output=True,
+                            timeout=60,
+                            check=False,
+                        ).returncode
+                        != 0
+                    ):
+                        return url, None
+                    expected = remote_before
             subprocess.run(
                 [
                     "git",
                     "push",
-                    "--force-with-lease"
-                    if build_branch != f"aifactory/{spec_id}"
+                    f"--force-with-lease=refs/heads/{build_branch}:{expected}"
+                    if adopted
                     else "--force",
-                    push_url,
+                    "--",
+                    "origin",
                     f"{sha}:refs/heads/{build_branch}",
                 ],
                 cwd=str(repo),
@@ -738,7 +770,13 @@ def build_ingest_payload(
     # from spec_text. Present only for trusted plans; absent → TFactory infers.
     # `contract` given (#1667): the web server decided it; `{}` means held, so
     # TFactory infers instead of trusting the agent-writable spec copy.
+    verified = bool(contract)
     held = contract is not None and not contract
+    if held:
+        from core.contract_trust import has_trusted_trace  # noqa: PLC0415
+
+        if has_trusted_trace(spec_dir):
+            raise ValueError("trusted contract unavailable for TFactory handoff")
     contract = load_task_contract(spec_dir) if contract is None else dict(contract)
     signed = _signed_snapshot(contract, held)
     # Propagate the build's per-phase model choice to TFactory's verify lanes so a
@@ -769,7 +807,53 @@ def build_ingest_payload(
     # PARR seam: hand TFactory the repo + the build branch so it can fetch the
     # ACTUAL built code (separate PVC). Pushes the branch (best-effort) and lets
     # TFactory self-register the project from git_url when it isn't pre-registered.
-    git_url, source_branch = _git_info_and_push(spec_dir, spec_id)
+    adopted = None
+    provenance = contract.get("provenance") if isinstance(contract, dict) else None
+    if (
+        isinstance(provenance, dict)
+        and provenance.get("pr_number")
+        and not provenance.get("source_branch")
+    ):
+        raise ValueError("incomplete adopted handoff in trusted contract")
+    if (
+        not verified
+        and isinstance(provenance, dict)
+        and provenance.get("source_branch")
+    ):
+        raise ValueError("adopted branch has no verified contract")
+    if not isinstance(provenance, dict) or not provenance.get("source_branch"):
+        try:
+            metadata = json.loads((spec_dir / "task_metadata.json").read_text())
+        except (OSError, ValueError):
+            metadata = {}
+        if isinstance(metadata, dict) and metadata.get("source_branch"):
+            raise ValueError("adopted branch has no verified contract")
+    if isinstance(provenance, dict) and provenance.get("source_branch"):
+        adopted = provenance
+        meta = json.loads((spec_dir / "task_metadata.json").read_text())
+        local = req.get("provenance")
+        if (
+            not isinstance(meta, dict)
+            or not isinstance(local, dict)
+            or any(
+                meta.get(target) != adopted.get(source)
+                or local.get(source) != adopted.get(source)
+                for source, target in (
+                    ("source_branch", "source_branch"),
+                    ("approved_head_sha", "approved_head_sha"),
+                    ("pr_number", "pr_number"),
+                    ("repo", "github_repo"),
+                )
+            )
+        ):
+            raise ValueError("adopted handoff differs from trusted contract")
+    git_url, source_branch = (
+        _git_info_and_push(spec_dir, spec_id, adopted)
+        if adopted
+        else _git_info_and_push(spec_dir, spec_id)
+    )
+    if adopted and not source_branch:
+        raise ValueError("adopted build commit was not confirmed on origin")
     # Fall back to the known branch convention + project repo when the local build
     # worktree is absent or not a valid git checkout (RFC-0017 packed build repacks
     # outputs via MinIO, leaving no git-valid worktree on the control plane). The
@@ -797,7 +881,18 @@ def build_ingest_payload(
     located = _locate_build_commit(spec_dir, spec_id)
     if located:
         payload["source_sha"] = located[1]
-    base_ref = _task_base_branch(spec_dir)
+    if adopted:
+        with authed_push_url(git_url) as (push_url, git_env):
+            confirmed = _remote_tip(
+                _project_dir(spec_dir), push_url, adopted["source_branch"], env=git_env
+            )
+        if not confirmed or confirmed != payload.get("source_sha"):
+            raise ValueError("adopted source SHA is not confirmed on origin")
+        payload["source_sha"] = confirmed
+        payload["source_branch"] = adopted["source_branch"]
+        payload["pr_number"] = adopted["pr_number"]
+        payload["repo"] = adopted["repo"]
+    base_ref = adopted.get("base_ref") if adopted else _task_base_branch(spec_dir)
     if base_ref:
         payload["base_ref"] = base_ref
     # Multi-tenancy (#925): carry the build's tenant so TFactory can scope its
@@ -810,9 +905,9 @@ def build_ingest_payload(
         if isinstance(tm, dict):
             if tm.get("tenant_id"):
                 payload["tenant_id"] = str(tm["tenant_id"])
-            if tm.get("pr_number"):
+            if not adopted and tm.get("pr_number"):
                 payload["pr_number"] = tm["pr_number"]
-            if tm.get("github_repo"):
+            if not adopted and tm.get("github_repo"):
                 payload["repo"] = tm["github_repo"]
     if "repo" not in payload:
         prov = req.get("provenance")

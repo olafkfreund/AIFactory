@@ -79,6 +79,7 @@ from trusted_plan import (  # noqa: E402 — needs sys.path above (#390)
     DRIFT_ABSENT,
     DRIFT_UNKNOWN,
     BaselineDrift,
+    _safe_branch,
     baseline_drift_rejects,
     check_baseline_drift,
     ingest_trusted_plan,
@@ -1506,12 +1507,23 @@ def _extract_plan_handoff(
     checked_repo = (
         _check_declared_repo(project_id, project_path, raw_repo) if raw_repo else ""
     )
-    return {
-        "repo": checked_repo,
-        "base_ref": signed.get("base_ref")
+    base_ref = (
+        signed.get("base_ref")
         or request.base_ref
         or req_prov.get("base_ref")
-        or request.baseBranch,
+        or request.baseBranch
+    )
+    if (base_ref is not None and not _safe_branch(base_ref)) or (
+        signed.get("source_branch")
+        and (not _safe_branch(base_ref) or base_ref == signed["source_branch"])
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="base_ref must be a safe branch different from source_branch",
+        )
+    return {
+        "repo": checked_repo,
+        "base_ref": base_ref,
         "source_branch": signed.get("source_branch"),
         "approved_head_sha": signed.get("approved_head_sha"),
         "pr_number": signed.get("pr_number"),

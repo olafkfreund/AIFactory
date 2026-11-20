@@ -288,10 +288,13 @@ def test_from_plan_rejects_unsigned_handoff_fields(
     )
 
     assert resp.status_code == 422, resp.text
-    assert (
-        resp.json()["detail"]
-        == "handoff fields must be inside the signed plan provenance"
-    )
+    if field_name == "pr_number":
+        assert "provenance.pr_number is required" in resp.json()["detail"]["reasons"][0]
+    else:
+        assert (
+            resp.json()["detail"]
+            == "handoff fields must be inside the signed plan provenance"
+        )
     fake_service.start_task_execution.assert_not_awaited()
     assert list((project_path / ".aifactory" / "specs").iterdir()) == []
 
@@ -332,6 +335,26 @@ def test_from_plan_rejects_foreign_declared_repo(handoff_project):
     assert resp.status_code == 400, resp.text
     assert "not this project's repository" in resp.json()["detail"]
     fake_service.start_task_execution.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "base_ref", ["HEAD", "-bad", "factory/2172-approved-branch-handoff"]
+)
+def test_unsigned_base_fallback_is_validated(handoff_project, base_ref):
+    project_id, project_path, base_sha, approved_sha = handoff_project
+    plan = _signed_plan(base_sha, approved_sha)
+    plan["provenance"].pop("base_ref")
+    plan.pop(APPROVAL_KEY)
+    plan[APPROVAL_KEY] = sign_plan(
+        plan,
+        key=KEY,
+        approved_by="pfactory",
+        approval_timestamp="2026-11-20T12:00:00Z",
+    )
+    request = execution.FromPlanRequest(plan=plan, base_ref=base_ref)
+    with pytest.raises(Exception) as error:
+        execution._extract_plan_handoff(request, project_id, project_path)
+    assert error.value.status_code == 422
 
 
 def test_apply_correction_request_callback_url_docstring_notes_ignored():

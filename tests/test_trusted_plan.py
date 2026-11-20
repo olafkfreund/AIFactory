@@ -295,10 +295,12 @@ class TestVerifyAndIngest:
         ("field", "value"),
         [
             ("source_branch", "../unsafe"),
+            ("source_branch", "HEAD"),
             ("base_ref", "main.lock"),
             ("approved_head_sha", "1234"),
             ("pr_number", True),
             ("pr_number", 0),
+            ("pr_number", 2),
         ],
     )
     def test_invalid_signed_handoff_rejected(self, field, value):
@@ -337,6 +339,11 @@ class TestVerifyAndIngest:
         assert result.approved_by == "cfactory"
         assert result.approval_timestamp == TS
         assert bool(result) is True
+
+    def test_null_source_branch_is_non_adopted(self):
+        plan = _complete_plan()
+        plan["provenance"] = {"source_branch": None}
+        assert verify_trusted_plan(_signed(plan), keyring=KEYRING).ok
 
     def test_signed_but_incomplete_rejected(self):
         # A genuinely incomplete plan (subtask missing its description) is

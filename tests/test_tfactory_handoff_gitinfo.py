@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "apps" / "backend"))
 
@@ -12,6 +15,33 @@ from pfactory.tfactory_client import (
     _git_info_and_push,
     build_ingest_payload,
 )  # noqa: E402
+
+
+def test_tfactory_rejects_tampered_adopted_branch_before_remote_write(
+    tmp_path, monkeypatch
+):
+    from pfactory import tfactory_client
+
+    spec = tmp_path / ".aifactory/specs/017"
+    spec.mkdir(parents=True)
+    identity = {
+        "source_branch": "factory/17",
+        "approved_head_sha": "a" * 40,
+        "pr_number": 17,
+        "repo": "o/r",
+    }
+    (spec / "spec.md").write_text("## Acceptance Criteria\n- works\n")
+    (spec / "requirements.json").write_text(json.dumps({"provenance": identity}))
+    (spec / "task_metadata.json").write_text(
+        json.dumps({"source_branch": "other", "approved_head_sha": "a" * 40})
+    )
+    monkeypatch.setattr(
+        tfactory_client,
+        "_git_info_and_push",
+        lambda *_a: pytest.fail("remote write reached with tampered branch"),
+    )
+    with pytest.raises(ValueError, match="differs"):
+        build_ingest_payload(spec, "017", contract={"provenance": identity})
 
 
 def test_worktree_path_derivation():
@@ -25,6 +55,52 @@ def test_git_info_graceful_when_no_worktree(tmp_path):
     assert _git_info_and_push(
         tmp_path / "nope" / ".aifactory" / "specs" / "1", "1"
     ) == (None, None)
+
+
+def test_adopted_branch_push_uses_approved_tip_as_lease(tmp_path):
+    import subprocess
+
+    def git(cwd, *args):
+        return subprocess.run(
+            ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    origin = tmp_path / "origin.git"
+    origin.mkdir()
+    git(origin, "init", "-q", "--bare")
+    project = tmp_path / "project"
+    project.mkdir()
+    git(project, "init", "-q", "-b", "factory/17")
+    git(project, "config", "user.name", "Test")
+    git(project, "config", "user.email", "test@example.com")
+    git(project, "remote", "add", "origin", str(origin))
+    (project / "file").write_text("approved")
+    git(project, "add", "file")
+    git(project, "commit", "-qm", "approved")
+    approved = git(project, "rev-parse", "HEAD")
+    git(project, "push", "-q", "origin", "HEAD:refs/heads/factory/17")
+    (project / "file").write_text("built")
+    git(project, "add", "file")
+    git(project, "commit", "-qm", "built")
+    built = git(project, "rev-parse", "HEAD")
+    spec = project / ".aifactory/specs/017"
+    spec.mkdir(parents=True)
+    adopted = {"source_branch": "factory/17", "approved_head_sha": approved}
+    assert _git_info_and_push(spec, "017", adopted)[1] == "factory/17"
+    assert (
+        git(project, "ls-remote", "origin", "refs/heads/factory/17").split()[0] == built
+    )
+    assert _git_info_and_push(spec, "017", adopted)[1] == "factory/17"
+    other = tmp_path / "other"
+    git(tmp_path, "clone", "-q", str(origin), str(other))
+    git(other, "checkout", "-q", "factory/17")
+    git(other, "config", "user.name", "Other")
+    git(other, "config", "user.email", "other@example.com")
+    (other / "file").write_text("newer")
+    git(other, "add", "file")
+    git(other, "commit", "-qm", "newer")
+    git(other, "push", "-q", "origin", "HEAD:refs/heads/factory/17")
+    assert _git_info_and_push(spec, "017", adopted)[1] is None
 
 
 def test_payload_still_sets_branch_without_git(tmp_path):

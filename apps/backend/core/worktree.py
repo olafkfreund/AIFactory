@@ -323,6 +323,10 @@ class WorktreeManager:
         (DEFAULT_BRANCH → main/master → current) instead of blowing up the build.
         """
         if requested:
+            from trusted_plan import _safe_branch  # noqa: PLC0415
+
+            if not _safe_branch(requested):
+                raise WorktreeError("Invalid base branch")
             result = self._run_git(["rev-parse", "--verify", "--quiet", requested])
             if result.returncode == 0:
                 return requested  # exists → honour it
@@ -391,7 +395,7 @@ class WorktreeManager:
 
         with github_env(_git_env()) as env:
             fetch = self._run_git(
-                ["fetch", "origin", self.base_branch],
+                ["fetch", "--", "origin", f"refs/heads/{self.base_branch}"],
                 timeout=_FETCH_TIMEOUT_SECONDS,
                 env=env,
             )
@@ -697,13 +701,41 @@ class WorktreeManager:
         try:
             metadata = json.loads(path.read_text())
         except (OSError, ValueError):
+            metadata = {}
+        from core.contract_trust import ENV, trusted_contract  # noqa: PLC0415
+
+        if ENV in os.environ:
+            state, contract, _ = trusted_contract(path.parent)
+            provenance = (contract or {}).get("provenance", {})
+            if state == "hold":
+                raise WorktreeError("Unverified approved branch handoff")
+            if (
+                state == "verified"
+                and provenance.get("source_branch")
+                and (
+                    not isinstance(metadata, dict) or not metadata.get("source_branch")
+                )
+            ):
+                raise WorktreeError("Approved branch handoff metadata missing")
+        if not isinstance(metadata, dict) or metadata.get("source_branch") is None:
             return {}
-        if not isinstance(metadata, dict) or "source_branch" not in metadata:
-            return {}
+        if ENV in os.environ:
+            if state != "verified" or any(
+                metadata.get(target) != provenance.get(source)
+                for source, target in (
+                    ("source_branch", "source_branch"),
+                    ("approved_head_sha", "approved_head_sha"),
+                    ("pr_number", "pr_number"),
+                    ("repo", "github_repo"),
+                )
+            ):
+                raise WorktreeError("Unverified approved branch handoff")
         branch = metadata["source_branch"]
         head = metadata.get("approved_head_sha")
+        from trusted_plan import _safe_branch  # noqa: PLC0415
+
         if (
-            not isinstance(branch, str)
+            not _safe_branch(branch)
             or self._run_git(["check-ref-format", "--branch", branch]).returncode != 0
             or not isinstance(head, str)
             or re.fullmatch(r"[0-9a-fA-F]{40}", head) is None
@@ -859,7 +891,7 @@ class WorktreeManager:
         # Cut the branch from the CURRENT remote tip, not the checkout's stale
         # local base ref (#1106). Raises WorktreeError when the base cannot be
         # verified as current — see _resolve_start_point.
-        start_point = self._resolve_start_point() if not handoff else "FETCH_HEAD"
+        start_point = self._resolve_start_point() if not handoff else ""
 
         # Serialize the shared-.git mutations below across CONCURRENT BUILDS:
         # `worktree remove`, `branch -D`, and `worktree add` all take git's
@@ -870,16 +902,24 @@ class WorktreeManager:
             if handoff:
                 with github_env(_git_env()) as env:
                     fetch = self._run_git(
-                        ["fetch", "origin", branch_name],
+                        [
+                            "fetch",
+                            "--",
+                            "origin",
+                            f"+refs/heads/{branch_name}:refs/remotes/origin/{branch_name}",
+                        ],
                         timeout=_FETCH_TIMEOUT_SECONDS,
                         env=env,
                     )
                 if fetch.returncode != 0:
                     raise WorktreeError("Could not fetch approved source branch")
-                remote_head = self._run_git(["rev-parse", "FETCH_HEAD^{commit}"])
+                remote_head = self._run_git(
+                    ["rev-parse", f"refs/remotes/origin/{branch_name}^{{commit}}"]
+                )
                 approved_head = handoff["approved_head_sha"]
                 if remote_head.returncode != 0:
                     raise WorktreeError("Could not resolve approved source branch")
+                start_point = remote_head.stdout.strip()
                 if remote_head.stdout.strip().lower() != approved_head.lower():
                     ledger = (
                         self.project_dir
@@ -896,7 +936,7 @@ class WorktreeManager:
                     if (
                         not commits
                         or self._run_git(
-                            ["merge-base", "--is-ancestor", approved_head, "FETCH_HEAD"]
+                            ["merge-base", "--is-ancestor", approved_head, start_point]
                         ).returncode
                         != 0
                     ):

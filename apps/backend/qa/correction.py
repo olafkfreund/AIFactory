@@ -246,7 +246,15 @@ async def _run_fixer_bg(spec_dir: Path) -> bool:
                 )
             )
         job_fixer = bool(os.environ.get("AIFACTORY_CORRECTION_FETCH_ID"))
-        if handback and not job_fixer:
+        adopted = False
+        if handback:
+            from core.contract_trust import trusted_contract
+
+            state, contract, _ = trusted_contract(spec_dir)
+            adopted = state == "verified" and bool(
+                (contract or {}).get("provenance", {}).get("source_branch")
+            )
+        if adopted and not job_fixer:
             project_dir = project_dir / ".aifactory/worktrees/tasks" / spec_dir.name
             if not project_dir.is_dir():
                 return False
