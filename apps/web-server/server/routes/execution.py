@@ -42,6 +42,7 @@ from server.services.build_backend import (
 from server.services.github_app import project_github_token
 from server.services.handback_receipt_store import record as record_handback_receipt
 from server.services.originator import principal_attribution
+from server.services.task_branch import record_branch
 from server.services.trusted_contract import handoff_contract, resolve_contract
 from server.services.trusted_contract_store import (
     TrustedContractStore,
@@ -54,7 +55,11 @@ from ..services import task_control
 from ..services.agent_service import get_agent_service
 from ..tenancy import resolve_tenant, stamp_spec_tenant
 from ..websockets.events import emit_task_status
-from .from_issue import _intake_auto_handoff_enabled, _set_task_metadata_flag
+from .from_issue import (
+    _check_declared_repo,
+    _intake_auto_handoff_enabled,
+    _set_task_metadata_flag,
+)
 from .project_authz import require_project_access, require_task_access
 from .tasks import _resolve_task, get_next_spec_id, sync_worktree_to_main_spec
 
@@ -144,7 +149,8 @@ class ApplyCorrectionRequest(BaseModel):
     # Echoed by TFactory for the auto-loop callback (accepted, not yet acted on).
     tfactory_task_id: str | None = Field(None, description="TFactory workspace id")
     tfactory_callback_url: str | None = Field(
-        None, description="URL AIFactory calls back when the fix completes"
+        None,
+        description="Deprecated/ignored in favor of TFACTORY_BASE_URL (#2172)",
     )
 
 
@@ -161,6 +167,18 @@ class TaskProvenance(BaseModel):
     )
     repo: str | None = Field(None, description="Originating repo, e.g. 'owner/name'")
     source: str | None = Field(None, description="Origin system, e.g. 'pfactory'")
+    base_ref: str | None = Field(
+        None, description="Target integration branch, e.g. 'main' or 'dev'"
+    )
+    source_branch: str | None = Field(
+        None, description="Adopted PFactory branch, e.g. 'factory/<n>-<slug>'"
+    )
+    approved_head_sha: str | None = Field(
+        None, description="40-hex commit SHA on source_branch where /approve plan bound"
+    )
+    pr_number: int | None = Field(
+        None, description="Adopted draft PR/MR number opened by PFactory"
+    )
     # Trusted Plan Handoff (#390): a verifiable approval over a handed-off
     # implementation_plan.json. When present and verified, the build skips the
     # spec pipeline. A plain label is spoofable; the signature is tamper-evident.
@@ -202,6 +220,22 @@ class FromPlanRequest(StartTaskRequest):
     )
     provenance: TaskProvenance | None = Field(
         None, description="Upstream provenance to persist alongside the approval"
+    )
+    base_ref: str | None = Field(
+        None,
+        description="Optional base branch; must match plan provenance when present",
+    )
+    source_branch: str | None = Field(
+        None,
+        description="Optional adopted branch; must match plan provenance when present",
+    )
+    approved_head_sha: str | None = Field(
+        None,
+        description="Optional 40-hex approved SHA; must match plan provenance when present",
+    )
+    pr_number: int | None = Field(
+        None,
+        description="Optional adopted PR number; must match plan provenance when present",
     )
 
 
@@ -1399,6 +1433,118 @@ def _stamp_baseline_drift(requirements: dict[str, Any], drift: BaselineDrift) ->
     requirements["provenance"] = prov
 
 
+_STAGE_LABELS = (
+    "factory:intent",
+    "factory:spec",
+    "factory:plan",
+    "factory:queued",
+)
+
+
+def _extract_plan_handoff(
+    request: FromPlanRequest, project_id: str, project_path: Path
+) -> dict[str, Any]:
+    """Validate request-level handoff overrides against signed plan provenance (#2172)."""
+    raw_prov = (
+        request.plan.get("provenance") if isinstance(request.plan, dict) else None
+    )
+    signed = raw_prov if isinstance(raw_prov, dict) else {}
+    req_prov = (
+        request.provenance.model_dump(exclude_none=True, exclude_defaults=True)
+        if request.provenance is not None
+        else {}
+    )
+    mismatches: list[str] = []
+    for key, req_val in (
+        ("base_ref", request.base_ref or request.baseBranch),
+        ("source_branch", request.source_branch),
+        ("approved_head_sha", request.approved_head_sha),
+        ("pr_number", request.pr_number),
+    ):
+        signed_val = signed.get(key)
+        if signed_val is not None:
+            for candidate in (req_val, req_prov.get(key)):
+                if candidate is not None and candidate != signed_val:
+                    mismatches.append(
+                        f"request {key} ({candidate!r}) does not match "
+                        f"signed provenance.{key} ({signed_val!r})"
+                    )
+        elif req_val is not None and req_prov.get(key) not in (None, req_val):
+            mismatches.append(
+                f"request.{key} ({req_val!r}) does not match "
+                f"request.provenance.{key} ({req_prov.get(key)!r})"
+            )
+    if (
+        signed.get("repo")
+        and req_prov.get("repo")
+        and req_prov["repo"] != signed["repo"]
+    ):
+        mismatches.append(
+            f"request provenance.repo ({req_prov['repo']!r}) does not match "
+            f"signed provenance.repo ({signed['repo']!r})"
+        )
+    if mismatches:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Plan rejected — request handoff fields disagree with signed provenance",
+                "reasons": mismatches,
+            },
+        )
+    raw_repo = str(signed.get("repo") or req_prov.get("repo") or "").strip()
+    provider_hint = str(signed.get("provider") or "").strip().lower()
+    if raw_repo and ":" not in raw_repo and provider_hint and provider_hint != "github":
+        raw_repo = f"{provider_hint}:{raw_repo}"
+    checked_repo = (
+        _check_declared_repo(project_id, project_path, raw_repo) if raw_repo else ""
+    )
+    return {
+        "repo": checked_repo,
+        "base_ref": signed.get("base_ref")
+        or request.base_ref
+        or req_prov.get("base_ref")
+        or request.baseBranch,
+        "source_branch": signed.get("source_branch")
+        or request.source_branch
+        or req_prov.get("source_branch"),
+        "approved_head_sha": signed.get("approved_head_sha")
+        or request.approved_head_sha
+        or req_prov.get("approved_head_sha"),
+        "pr_number": signed.get("pr_number")
+        or request.pr_number
+        or req_prov.get("pr_number"),
+    }
+
+
+async def _adopt_plan_handoff(
+    project_id: str,
+    project_path: Path,
+    spec_id: str,
+    spec_dir: Path,
+    handoff: dict[str, Any],
+) -> None:
+    """Record adopted branch and best-effort transition issue label to factory:building."""
+    if not handoff.get("source_branch"):
+        return
+    record_branch(project_path, spec_id, handoff["source_branch"])
+    try:
+        reqs = json.loads((spec_dir / "requirements.json").read_text())
+        prov = reqs.get("provenance") if isinstance(reqs, dict) else {}
+        issue_num = prov.get("issue_number") if isinstance(prov, dict) else None
+        if not isinstance(issue_num, int):
+            return
+        from server.routes.github import _get_project_provider  # noqa: PLC0415
+
+        provider = _get_project_provider(project_id, repo_ref=handoff["repo"] or None)
+        await provider.remove_labels(issue_num, list(_STAGE_LABELS))
+        await provider.apply_labels(issue_num, ["factory:building"])
+    except Exception as exc:  # noqa: BLE001 — cosmetic label transition is best-effort
+        logger.debug(
+            "[from-plan] label transition to factory:building skipped: %s",
+            sanitize_log(exc),
+        )
+
+
 @router.post("/from-plan")
 async def create_from_trusted_plan(
     project_id: str,
@@ -1446,6 +1592,8 @@ async def create_from_trusted_plan(
                 "reasons": verdict.reasons,
             },
         )
+
+    handoff = _extract_plan_handoff(request, project_id, project_path)
 
     # Baseline freshness (#1109). The signature answers "did anyone edit the
     # instructions"; this answers "are the instructions still about this
@@ -1576,13 +1724,14 @@ async def create_from_trusted_plan(
     )
 
     task_id = f"{project_id}:{spec_id}"
+    await _adopt_plan_handoff(project_id, project_path, spec_id, spec_dir, handoff)
     try:
         await agent_service.start_task_execution(
             task_id=task_id,
             project_path=project_path,
             spec_id=spec_id,
             auto_continue=request.auto_continue,
-            base_branch=request.baseBranch,
+            base_branch=handoff["base_ref"],
             mode=request.mode or "full",
             parallel=eff_parallel,
             workers=eff_workers,
