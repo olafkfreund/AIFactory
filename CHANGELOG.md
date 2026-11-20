@@ -1,5 +1,17 @@
 ## [Unreleased]
 
+## 3.20.0 - 2026-11-20
+
+Merged to `dev` since 3.19.0.
+
+### Added
+
+- Read-only `investigate` run kind, off by default. (#2156, #2168)
+
+### Fixed
+
+- `mcp` raised to 2.2.0 past Trivy P0 CVE-2026-115563. (#2176, #2177)
+
 ## 3.19.0 - 2026-11-19
 
 Merged to `dev` since 3.18.0.
