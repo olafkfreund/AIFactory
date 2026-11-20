@@ -1376,8 +1376,17 @@ def _populate_self_contained_worktree(
     worktree_mod: Any = importlib.import_module("core.worktree")
     workspace: Any = importlib.import_module("core.workspace")
 
-    manager: Any = worktree_mod.WorktreeManager(project_path)
-    branch = manager.get_branch_name(spec_id)
+    metadata_file = source_spec_dir / "task_metadata.json"
+    try:
+        metadata = json.loads(metadata_file.read_text())
+    except (OSError, ValueError):
+        metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    source_branch = metadata.get("source_branch")
+    base_branch = metadata.get("base_branch")
+    manager: Any = worktree_mod.WorktreeManager(project_path, base_branch=base_branch)
+    branch = source_branch or manager.get_branch_name(spec_id)
     # #1467: NOT manager.get_worktree_path(spec_id) — that is the linked task
     # worktree's path, and replacing it with this clone orphaned its registration
     # in the parent repo (see _BUILD_CLONE_TEMPLATE). The build clone gets its own
@@ -1420,6 +1429,16 @@ def _populate_self_contained_worktree(
         # against stale source. Refresh THIS build's fresh clone to the remote
         # base head so run.py cuts the task worktree from current code.
         _refresh_to_remote_base(wt_path, base_branch)
+        if source_branch:
+            _git(
+                [
+                    "-C",
+                    str(wt_path),
+                    "fetch",
+                    "origin",
+                    f"{source_branch}:refs/remotes/origin/{source_branch}",
+                ]
+            )
     # Materialize the spec into the clone working tree (gitignored/uncommitted —
     # exactly as the in-pod worktree carries it).
     workspace.copy_spec_to_worktree(source_spec_dir, wt_path, spec_id)

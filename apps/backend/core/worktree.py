@@ -15,6 +15,7 @@ This allows:
 """
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -684,7 +685,31 @@ class WorktreeManager:
 
     def get_branch_name(self, spec_name: str) -> str:
         """Get the branch name for a spec."""
+        metadata = self._handoff_metadata(spec_name)
+        if metadata.get("source_branch"):
+            return metadata["source_branch"]
         return f"aifactory/{spec_name}"
+
+    def _handoff_metadata(self, spec_name: str) -> dict:
+        path = (
+            self.project_dir / ".aifactory" / "specs" / spec_name / "task_metadata.json"
+        )
+        try:
+            metadata = json.loads(path.read_text())
+        except (OSError, ValueError):
+            return {}
+        if not isinstance(metadata, dict) or "source_branch" not in metadata:
+            return {}
+        branch = metadata["source_branch"]
+        head = metadata.get("approved_head_sha")
+        if (
+            not isinstance(branch, str)
+            or self._run_git(["check-ref-format", "--branch", branch]).returncode != 0
+            or not isinstance(head, str)
+            or re.fullmatch(r"[0-9a-fA-F]{40}", head) is None
+        ):
+            raise WorktreeError("Invalid approved branch handoff metadata")
+        return metadata
 
     def worktree_exists(self, spec_name: str) -> bool:
         """Check if a worktree exists for a spec."""
@@ -813,10 +838,13 @@ class WorktreeManager:
             WorktreeError: If a branch namespace conflict exists or worktree creation fails
         """
         worktree_path = self.get_worktree_path(spec_name)
-        branch_name = self.get_branch_name(spec_name)
+        handoff = self._handoff_metadata(spec_name)
+        branch_name = handoff.get("source_branch") or f"aifactory/{spec_name}"
 
         # Check for branch namespace conflict (e.g., 'aifactory' blocking 'aifactory/*')
-        conflicting_branch = self._check_branch_namespace_conflict()
+        conflicting_branch = (
+            None if handoff else self._check_branch_namespace_conflict()
+        )
         if conflicting_branch:
             raise WorktreeError(
                 f"Branch '{conflicting_branch}' exists and blocks creating '{branch_name}'.\n"
@@ -831,7 +859,7 @@ class WorktreeManager:
         # Cut the branch from the CURRENT remote tip, not the checkout's stale
         # local base ref (#1106). Raises WorktreeError when the base cannot be
         # verified as current — see _resolve_start_point.
-        start_point = self._resolve_start_point()
+        start_point = self._resolve_start_point() if not handoff else "FETCH_HEAD"
 
         # Serialize the shared-.git mutations below across CONCURRENT BUILDS:
         # `worktree remove`, `branch -D`, and `worktree add` all take git's
@@ -839,6 +867,42 @@ class WorktreeManager:
         # (now possible under admission control #672) hit index-lock contention
         # or corrupt refs. The lock is per-base-repo and bounded.
         with self._base_repo_git_lock():
+            if handoff:
+                with github_env(_git_env()) as env:
+                    fetch = self._run_git(
+                        ["fetch", "origin", branch_name],
+                        timeout=_FETCH_TIMEOUT_SECONDS,
+                        env=env,
+                    )
+                if fetch.returncode != 0:
+                    raise WorktreeError("Could not fetch approved source branch")
+                remote_head = self._run_git(["rev-parse", "FETCH_HEAD^{commit}"])
+                approved_head = handoff["approved_head_sha"]
+                if remote_head.returncode != 0:
+                    raise WorktreeError("Could not resolve approved source branch")
+                if remote_head.stdout.strip().lower() != approved_head.lower():
+                    ledger = (
+                        self.project_dir
+                        / ".aifactory"
+                        / "specs"
+                        / spec_name
+                        / "memory"
+                        / "build_commits.json"
+                    )
+                    try:
+                        commits = json.loads(ledger.read_text()).get("commits")
+                    except (OSError, ValueError, AttributeError):
+                        commits = None
+                    if (
+                        not commits
+                        or self._run_git(
+                            ["merge-base", "--is-ancestor", approved_head, "FETCH_HEAD"]
+                        ).returncode
+                        != 0
+                    ):
+                        raise WorktreeError(
+                            "Source branch no longer matches approved head"
+                        )
             # Remove existing if present (from crashed previous run or pre-created directory)
             if worktree_path.exists():
                 # Check if it's a real worktree (has .git file)
@@ -852,14 +916,15 @@ class WorktreeManager:
                     shutil.rmtree(worktree_path, ignore_errors=True)
 
             # Delete branch if it exists (from previous attempt)
-            self._run_git(["branch", "-D", branch_name])
+            if not handoff:
+                self._run_git(["branch", "-D", branch_name])
 
             # Create worktree with new branch from base
             result = self._run_git(
                 [
                     "worktree",
                     "add",
-                    "-b",
+                    "-B" if handoff else "-b",
                     branch_name,
                     str(worktree_path),
                     start_point,

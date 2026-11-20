@@ -23,6 +23,7 @@ plumbing exercised is the real one: a real origin repo, a real clone, a real
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -85,6 +86,49 @@ def test_worktree_is_cut_from_the_current_origin_tip(origin_and_clone):
 
     base = _git(["rev-parse", "HEAD"], info.path)
     assert base == remote_tip, "worktree was cut from the stale local base"
+
+
+def test_adopted_worktree_preserves_approved_branch_and_rejects_drift(origin_and_clone):
+    origin, clone = origin_and_clone
+    branch = "factory/2172-approved"
+    _git(["checkout", "-q", "-b", branch], origin)
+    for folder in ("intent", "spec", "plan"):
+        (origin / folder).mkdir()
+        (origin / folder / "approved.md").write_text(f"{folder}\n")
+    _git(["add", "-A"], origin)
+    _git(["commit", "-qm", "approved"], origin)
+    approved = _git(["rev-parse", "HEAD"], origin)
+
+    spec = clone / ".aifactory" / "specs" / "2172-approved"
+    spec.mkdir(parents=True)
+    (spec / "task_metadata.json").write_text(
+        json.dumps({"source_branch": branch, "approved_head_sha": approved})
+    )
+    manager = WorktreeManager(clone)
+    info = manager.create_worktree("2172-approved")
+    assert info.branch == branch
+    assert _git(["rev-parse", "HEAD"], info.path) == approved
+    assert all(
+        (info.path / folder / "approved.md").exists()
+        for folder in ("intent", "spec", "plan")
+    )
+
+    (origin / "later.md").write_text("unapproved\n")
+    _git(["add", "-A"], origin)
+    _git(["commit", "-qm", "later"], origin)
+    with pytest.raises(WorktreeError, match="no longer matches approved head"):
+        manager.create_worktree("2172-approved")
+    assert _git(["rev-parse", "HEAD"], info.path) == approved
+
+    (spec / "memory").mkdir()
+    (spec / "memory" / "build_commits.json").write_text(
+        json.dumps({"commits": [{"sha": approved}]})
+    )
+    resumed = manager.create_worktree("2172-approved")
+    assert resumed.branch == branch
+    assert _git(["rev-parse", "HEAD"], resumed.path) == _git(
+        ["rev-parse", branch], origin
+    )
 
 
 def test_pr_diff_carries_no_factory_bookkeeping(origin_and_clone):
