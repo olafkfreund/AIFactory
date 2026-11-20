@@ -56,6 +56,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -481,12 +482,14 @@ def verify_trusted_plan(
 
     complete_ok, complete_reasons = check_plan_completeness(plan)
     reasons.extend(complete_reasons)
+    handoff_reasons = validate_handoff_identity(plan)
+    reasons.extend(handoff_reasons)
 
     envelope = (
         plan.get(APPROVAL_KEY) if isinstance(plan.get(APPROVAL_KEY), dict) else {}
     )
     return TrustedPlanVerification(
-        ok=sig_ok and complete_ok,
+        ok=sig_ok and complete_ok and not handoff_reasons,
         reasons=reasons,
         approved_by=envelope.get("approved_by"),
         approval_timestamp=envelope.get("approval_timestamp"),
@@ -522,12 +525,58 @@ _DRIFT_POLICY_ENV = "AIFACTORY_BASELINE_DRIFT"
 _DRIFT_POLICIES = frozenset({"blast-radius", "reject", "warn", "off"})
 _DEFAULT_DRIFT_POLICY = "blast-radius"
 
+
+def _safe_branch(value: object) -> bool:
+    if not isinstance(value, str) or not value or value.startswith("-"):
+        return False
+    if value == "@" or "@{" in value or ".." in value or "//" in value:
+        return False
+    if value.endswith(("/", ".")) or re.search(r"[\x00-\x20\x7f~^:?*\[\\]", value):
+        return False
+    return all(
+        part and not part.startswith(".") and not part.endswith(".lock")
+        for part in value.split("/")
+    )
+
+
+def validate_handoff_identity(plan: dict) -> list[str]:
+    """Validate signed handoff fields without reading the filesystem or git."""
+    provenance = plan.get("provenance")
+    if provenance is None:
+        return []
+    if not isinstance(provenance, dict):
+        return ["provenance must be an object"]
+    errors = []
+    for key in ("source_branch", "base_ref"):
+        if key in provenance and not _safe_branch(provenance[key]):
+            errors.append(f"provenance.{key} must be a safe git branch name")
+    if (
+        provenance.get("source_branch")
+        and provenance.get("base_ref")
+        and provenance["source_branch"] == provenance["base_ref"]
+    ):
+        errors.append("provenance.source_branch must differ from provenance.base_ref")
+    if "approved_head_sha" in provenance and not (
+        isinstance(provenance["approved_head_sha"], str)
+        and re.fullmatch(r"[0-9a-fA-F]{40}", provenance["approved_head_sha"])
+    ):
+        errors.append("provenance.approved_head_sha must be a 40-hex commit SHA")
+    if "pr_number" in provenance and (
+        type(provenance["pr_number"]) is not int or provenance["pr_number"] <= 0
+    ):
+        errors.append("provenance.pr_number must be a positive integer")
+    if provenance.get("source_branch") and not provenance.get("approved_head_sha"):
+        errors.append("provenance.approved_head_sha is required with source_branch")
+    return errors
+
+
 # Verdicts. Only ``blast_radius_changed`` and ``drifted`` mean the tree moved.
 DRIFT_ABSENT = "absent"  # no baseline in the contract (greenfield / v1 plan)
 DRIFT_CURRENT = "current"  # HEAD is the approved commit
 DRIFT_UNKNOWN = "unknown"  # cannot resolve HEAD, or baseline commit not local
 DRIFT_DRIFTED = "drifted"  # tree moved, no blast-radius file touched
 DRIFT_BLAST_RADIUS = "blast_radius_changed"  # a planned file moved under us
+DRIFT_ADOPTED_HEAD_MISMATCH = "adopted_head_mismatch"
 
 # Blast-radius files named inline in a rejection reason before it says "+N more".
 _MAX_REASON_FILES = 10
@@ -558,6 +607,8 @@ class BaselineDrift:
             else "an unknown distance"
         )
         line = f"plan approved against {base}, repo HEAD is now {head} ({ahead} ahead)"
+        if self.detail:
+            line += f"; {self.detail}"
         if self.changed_blast_radius_files:
             shown = self.changed_blast_radius_files[:_MAX_REASON_FILES]
             hidden = len(self.changed_blast_radius_files) - len(shown)
@@ -669,7 +720,7 @@ def _git(repo: Path, *args: str) -> str | None:
 
 
 def check_baseline_drift(
-    plan: dict[str, Any], project_dir: Path | None
+    plan: dict[str, Any], project_dir: Path | None, spec_dir: Path | None = None
 ) -> BaselineDrift:
     """Compare the contract's approved commit with the target repo's HEAD.
 
@@ -683,6 +734,58 @@ def check_baseline_drift(
     gate exists to catch, and guessing "drifted" turns every shallow clone into
     an outage.
     """
+    provenance = plan.get("provenance")
+    provenance = provenance if isinstance(provenance, dict) else {}
+    source_branch = provenance.get("source_branch")
+    approved_head = provenance.get("approved_head_sha")
+    if source_branch:
+        remote_head = (
+            _git(
+                Path(project_dir),
+                "rev-parse",
+                f"refs/remotes/origin/{source_branch}^{{commit}}",
+            )
+            if project_dir is not None
+            else None
+        )
+        retry = False
+        if spec_dir is not None:
+            try:
+                ledger = json.loads(
+                    (Path(spec_dir) / "memory" / "build_commits.json").read_text()
+                )
+                retry = (
+                    isinstance(ledger, dict)
+                    and isinstance(ledger.get("commits"), list)
+                    and bool(ledger["commits"])
+                )
+            except (OSError, ValueError):
+                pass
+        if (
+            not remote_head
+            or not approved_head
+            or (
+                remote_head.lower() != approved_head.lower()
+                and not (
+                    retry
+                    and _git(
+                        Path(project_dir),
+                        "merge-base",
+                        "--is-ancestor",
+                        approved_head,
+                        remote_head,
+                    )
+                    is not None
+                )
+            )
+        ):
+            return BaselineDrift(
+                status=DRIFT_ADOPTED_HEAD_MISMATCH,
+                baseline_commit=approved_head,
+                head_commit=remote_head,
+                detail="origin source branch does not match the approved head",
+            )
+
     baseline_commit = _plan_baseline_commit(plan)
     if not baseline_commit:
         return BaselineDrift(status=DRIFT_ABSENT)
@@ -694,7 +797,9 @@ def check_baseline_drift(
             detail="no project directory to resolve HEAD against",
         )
 
-    head = _git(Path(project_dir), "rev-parse", "HEAD")
+    base_ref = provenance.get("base_ref")
+    target_ref = f"refs/remotes/origin/{base_ref}" if base_ref else "HEAD"
+    head = _git(Path(project_dir), "rev-parse", target_ref)
     if not head:
         return BaselineDrift(
             status=DRIFT_UNKNOWN,
@@ -727,7 +832,7 @@ def check_baseline_drift(
             commits_ahead=0,
         )
 
-    ahead = _git(Path(project_dir), "rev-list", "--count", f"{resolved}..HEAD")
+    ahead = _git(Path(project_dir), "rev-list", "--count", f"{resolved}..{target_ref}")
     changed = _git(
         Path(project_dir),
         "diff",
@@ -735,7 +840,7 @@ def check_baseline_drift(
         "--no-textconv",
         "--name-only",
         resolved,
-        "HEAD",
+        target_ref,
     )
     changed_files = set((changed or "").splitlines())
     overlap = sorted(changed_files & set(_blast_radius_files(plan)))
@@ -752,7 +857,11 @@ def check_baseline_drift(
 def baseline_drift_rejects(drift: BaselineDrift, policy: str | None = None) -> bool:
     """Does this verdict fail the gate under the configured policy?"""
     policy = policy or drift_policy()
-    if policy in ("off", "warn"):
+    if policy == "off":
+        return False
+    if drift.status == DRIFT_ADOPTED_HEAD_MISMATCH:
+        return True
+    if policy == "warn":
         return False
     if policy == "reject":
         return drift.diverged
@@ -852,13 +961,24 @@ def execution_profile_to_metadata(execution: dict) -> dict:
 def apply_execution_profile(spec_dir: Path, plan: dict) -> dict:
     """Merge the plan's ``execution`` block into the spec's task_metadata.json.
 
-    Returns the dict of fields written (empty when there is no execution block).
+    Returns the dict of fields written (empty when there is no execution or handoff data).
     Existing task_metadata keys are preserved; contract values take precedence.
     The executor then honors model/parallel/workers/complexity/skills without a
     planner session (the plan is already installed by ``ingest_trusted_plan``).
     """
     execution = plan.get("execution")
     mapped = execution_profile_to_metadata(execution) if execution else {}
+    provenance = plan.get("provenance")
+    if isinstance(provenance, dict) and not validate_handoff_identity(plan):
+        for source, target in (
+            ("base_ref", "base_branch"),
+            ("source_branch", "source_branch"),
+            ("approved_head_sha", "approved_head_sha"),
+            ("pr_number", "pr_number"),
+            ("repo", "github_repo"),
+        ):
+            if source in provenance:
+                mapped[target] = provenance[source]
     if not mapped:
         return {}
 
@@ -925,7 +1045,7 @@ def ingest_trusted_plan(
     # can't find the spec, dumps the spec list, and the build never codes (#483).
     _write_spec_md_from_plan(spec_dir, plan)
 
-    _record_approval_provenance(spec_dir, result)
+    _record_approval_provenance(spec_dir, result, plan)
     _mark_review_approved(spec_dir, result)
 
     # Apply the v2 execution profile (model/parallel/workers/complexity/skills)
@@ -992,7 +1112,7 @@ def _write_spec_md_from_plan(spec_dir: Path, plan: dict) -> None:
 
 
 def _record_approval_provenance(
-    spec_dir: Path, result: TrustedPlanVerification
+    spec_dir: Path, result: TrustedPlanVerification, plan: dict
 ) -> None:
     """Stamp the trusted-plan approval onto requirements.json provenance (#332)."""
     req_file = spec_dir / "requirements.json"
@@ -1011,6 +1131,18 @@ def _record_approval_provenance(
     provenance["approved_by"] = result.approved_by
     provenance["approval_timestamp"] = result.approval_timestamp
     provenance["trusted_plan"] = True
+    signed_provenance = plan.get("provenance")
+    if isinstance(signed_provenance, dict):
+        for key in (
+            "project_id",
+            "repo",
+            "base_ref",
+            "source_branch",
+            "approved_head_sha",
+            "pr_number",
+        ):
+            if key in signed_provenance:
+                provenance[key] = signed_provenance[key]
     data["provenance"] = provenance
 
     req_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
