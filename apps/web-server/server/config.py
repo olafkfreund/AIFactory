@@ -153,20 +153,14 @@ class Settings(BaseSettings):
     # Deployed setups: refuse to generate API_TOKEN / JWT_SECRET files (#1931).
     REQUIRE_ENV_SECRETS: bool = False
     DISABLE_AUTH: bool = False  # Set to True to disable auth (dev only)
+    LEGACY_SHARED_TOKEN_FULL_ACCESS: bool = True
     ALLOW_INSECURE_AUTH: bool = (
         False  # Explicit opt-in for unauthenticated network binding
     )
 
-    # Scoped service tokens (Factory#312, step 1 — additive, off by default).
-    # When true, a scoped ``acw_`` service key (no owning user) is recognised as
-    # a first-class M2M principal that carries its EXPLICIT scopes on
-    # ``request.state.user`` (``scopes`` + ``scoped_service`` markers), the seam
-    # for replacing the wildcard ``API_TOKEN`` blanket bypass with per-scope
-    # checks. Default false preserves today's behaviour exactly: the wildcard and
-    # acw_ paths are byte-identical to pre-flag. Enforcement of those scopes lands
-    # in a later phase (see docs/compliance/scoped-service-tokens.md); this flag
-    # only makes the scopes visible. Override: APP_SCOPED_SERVICE_TOKENS_ENABLED.
-    SCOPED_SERVICE_TOKENS_ENABLED: bool = False
+    SCOPED_SERVICE_TOKENS_ENABLED: bool = (
+        False  # Deprecated; scopes are always exposed.
+    )
 
     # JWT Configuration
     JWT_SECRET: str = Field(default="", repr=False)  # Auto-generated if not set

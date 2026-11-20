@@ -278,7 +278,13 @@ async def seed_tenant_defaults(disable_auth: bool) -> None:
     try:
         from sqlalchemy import select
 
-        from .models import Organization, OrgMember, User
+        from server.database.models import (  # noqa: PLC0415
+            Organization,
+            OrgMember,
+            Team,
+            TeamMembership,
+            User,
+        )
 
         async with async_session_factory() as session:
             # 1. Service/default user (FK target for the default org).
@@ -352,6 +358,53 @@ async def seed_tenant_defaults(disable_auth: bool) -> None:
                             org_id=default_org_id,
                             user_id=uid,
                             role="owner" if uid == DEFAULT_USER_ID else "member",
+                        )
+                    )
+
+            await session.flush()
+
+            # Preserve existing org grants on each org's default team.
+            org_members = (await session.execute(select(OrgMember))).scalars().all()
+            teams = (await session.execute(select(Team))).scalars().all()
+            default_teams = {team.org_id: team for team in teams if team.is_default}
+            org_ids = (await session.execute(select(Organization.id))).scalars().all()
+            for org_id in org_ids:
+                if org_id not in default_teams:
+                    team = next(
+                        (
+                            team
+                            for team in teams
+                            if team.org_id == org_id and team.slug == "default"
+                        ),
+                        None,
+                    ) or Team(
+                        id="team-default" if org_id == default_org_id else None,
+                        org_id=org_id,
+                        name="Default",
+                        slug="default",
+                        is_default=True,
+                    )
+                    team.is_default = True
+                    session.add(team)
+                    await session.flush()
+                    default_teams[org_id] = team
+            existing_team_members = set(
+                (
+                    await session.execute(
+                        select(TeamMembership.team_id, TeamMembership.user_id)
+                    )
+                ).all()
+            )
+            for member in org_members:
+                team_id = default_teams[member.org_id].id
+                if (team_id, member.user_id) not in existing_team_members:
+                    session.add(
+                        TeamMembership(
+                            team_id=team_id,
+                            user_id=member.user_id,
+                            role="owner"
+                            if member.user_id == DEFAULT_USER_ID
+                            else member.role,
                         )
                     )
 

@@ -10,12 +10,12 @@ Public paths (no auth required): /api/auth/*, /api/health, static assets, etc.
 
 Legacy wildcard API_TOKEN (DEPRECATED — #555)
 ---------------------------------------------
-The legacy ``API_TOKEN`` grants host-wide ``is_service=True`` and is shared
-across Factory siblings, so a compromise of any sibling yields full admin REST
-+ WebSocket access. It is RETAINED for backward compatibility — notably the
+The legacy ``API_TOKEN`` is shared across Factory siblings and grants
+host-wide access while ``LEGACY_SHARED_TOKEN_FULL_ACCESS`` is enabled.
+It is RETAINED for backward compatibility — notably the
 PFactory->AIFactory machine-to-machine path that ships ``APP_API_TOKEN`` — but
-is deprecated. Every authentication via the wildcard token emits a one-time
-loud warning (``_warn_legacy_api_token_once``). New machine-to-machine and
+is deprecated. Every authentication via the wildcard token emits a warning.
+New machine-to-machine and
 programmatic integrations should mint scoped per-org ``acw_`` keys instead,
 which carry org/project scope rather than wildcard admin.
 
@@ -76,26 +76,18 @@ def _pod_route_exempt(path: str, method: str) -> bool:
 
 logger = logging.getLogger(__name__)
 
-# One-time deprecation flags (#555). The legacy wildcard API_TOKEN and the
-# WS-terminal ``?token=`` query param are still honored for backward
-# compatibility, but each emits a single loud warning per process so the
-# signal isn't drowned out by per-request log spam.
-_LEGACY_TOKEN_DEPRECATION_LOGGED = False
+# The WS-terminal ``?token=`` query param emits a one-time warning (#555).
 
 
 def _warn_legacy_api_token_once() -> None:
-    """Emit a one-time deprecation warning for legacy wildcard API_TOKEN use.
+    """Emit a deprecation warning for legacy wildcard API_TOKEN use.
 
-    The legacy ``API_TOKEN`` grants host-wide ``is_service=True`` and is shared
+    The legacy ``API_TOKEN`` grants host-wide access while enabled and is shared
     across Factory siblings (#555). It remains a documented fallback for
     PFactory->AIFactory M2M (``APP_API_TOKEN``), but new integrations should mint
     scoped per-org ``acw_`` keys (Settings → API Keys) instead, which carry
     org/project scope rather than wildcard admin.
     """
-    global _LEGACY_TOKEN_DEPRECATION_LOGGED
-    if _LEGACY_TOKEN_DEPRECATION_LOGGED:
-        return
-    _LEGACY_TOKEN_DEPRECATION_LOGGED = True
     logger.warning(
         "DEPRECATED: request authenticated via the legacy wildcard "
         "API_TOKEN, which grants host-wide service access shared across "
@@ -219,31 +211,19 @@ def _try_decode_jwt(token: str) -> dict | None:
         return None
 
 
-def _acw_principal(key, *, scoped_service_tokens_enabled: bool) -> dict:
-    """Build the ``request.state.user`` principal for a validated ``acw_`` key.
-
-    Scoped service tokens (Factory#312, step 1 — additive, off by default). When
-    ``scoped_service_tokens_enabled`` is true, the key's EXPLICIT scopes are
-    surfaced on the principal (``scopes`` + ``scoped_service`` markers) so a later
-    phase can gate M2M access per-scope instead of the wildcard's blanket
-    ``is_service`` bypass. The flag only ADDS keys to the dict; ``is_service`` is
-    unchanged, so with the flag off (default) the result is byte-identical to the
-    pre-change behaviour and nothing that reads the principal today is affected.
-
-    See docs/compliance/scoped-service-tokens.md.
-    """
-    principal = {
+# Existing callers still pass this flag; scopes are always exposed.
+def _acw_principal(key, *, scoped_service_tokens_enabled: bool = False) -> dict:  # noqa: ARG001
+    """Build the principal for a validated ``acw_`` key."""
+    return {
         "id": key.user_id,
         "email": None,
         "role": "user",
         "org_id": key.org_id,
         "api_key_id": key.key_id,
-        "is_service": key.user_id is None,
+        "is_service": False,
+        "scopes": sorted(key.scopes),
+        "scoped_service": key.user_id is None,
     }
-    if scoped_service_tokens_enabled:
-        principal["scopes"] = sorted(key.scopes)
-        principal["scoped_service"] = key.user_id is None
-    return principal
 
 
 async def _ws_acw_principal(token: str) -> dict[str, object] | None:
@@ -255,12 +235,7 @@ async def _ws_acw_principal(token: str) -> dict[str, object] | None:
         # shortcut: ownerless keys rejected on WS; revisit with Phase 4 scope enforcement
         if key.user_id is None:
             return None
-        return _acw_principal(
-            key,
-            scoped_service_tokens_enabled=getattr(
-                get_settings(), "SCOPED_SERVICE_TOKENS_ENABLED", False
-            ),
-        )
+        return _acw_principal(key)
     except Exception as exc:  # noqa: BLE001 — any validator failure denies WS auth (4001)
         # Class only, never the token: tells a DB outage from a bad key (#312).
         logger.warning("WS key validation failed: %s", type(exc).__name__)
@@ -387,11 +362,7 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
 
         # Strategy 2: Fall back to legacy bearer token
         if _is_legacy_api_token(token):
-            # Legacy wildcard token — a machine/service principal (Factory
-            # siblings, the local UI). `is_service` lets project-level authz
-            # (epic #318/#319) grant M2M access without per-org membership,
-            # preserving the sibling + local-UI contract. Notifications still
-            # work via the id.
+            # Legacy wildcard token — marked explicitly for project authz.
             #
             # DEPRECATED (#555): this token is host-wide and shared across
             # siblings. It is kept only for backward compatibility (notably
@@ -403,7 +374,8 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
                 "id": "default",
                 "email": None,
                 "role": "user",
-                "is_service": True,
+                "is_service": False,
+                "is_legacy_shared_token": True,
             }
             return await call_next(request)
 
@@ -416,12 +388,7 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
                 from .mcp_remote.auth import authenticate_rest as _authenticate_acw
 
                 key = await _authenticate_acw(f"Bearer {token}")
-                request.state.user = _acw_principal(
-                    key,
-                    scoped_service_tokens_enabled=getattr(
-                        settings, "SCOPED_SERVICE_TOKENS_ENABLED", False
-                    ),
-                )
+                request.state.user = _acw_principal(key)
                 return await call_next(request)
             except Exception:
                 # Unknown/disabled/expired acw_ key → fall through to 401.
@@ -513,7 +480,13 @@ async def authenticate_websocket(websocket: WebSocket) -> dict | None:
     # Fall back to legacy token — no user info available (deprecated, #555)
     if _is_legacy_api_token(token):
         _warn_legacy_api_token_once()
-        return None
+        return {
+            "id": "default",
+            "email": None,
+            "role": "user",
+            "is_service": False,
+            "is_legacy_shared_token": True,
+        }
 
     if token.startswith("acw_"):
         principal = await _ws_acw_principal(token)

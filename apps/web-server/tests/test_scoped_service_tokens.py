@@ -1,16 +1,4 @@
-"""Scoped service tokens, step 1 (Factory#312, additive & flag-gated).
-
-Proves the Phase 1 contract of docs/compliance/scoped-service-tokens.md:
-
-* a scoped ``acw_`` service token authenticates and the principal carries ONLY
-  its own explicit scopes;
-* the wildcard ``API_TOKEN`` path is unchanged whether or not the flag is set;
-* with the flag off (default) the ``acw_`` principal carries no ``scopes`` /
-  ``scoped_service`` keys — the new path is off by default.
-
-These are unit tests of ``TokenAuthMiddleware.dispatch``: ``get_settings`` and
-the ``acw_`` validator are patched so no DB or real JWT secret is needed.
-"""
+"""Scoped key and legacy token principal contracts across auth surfaces."""
 
 from __future__ import annotations
 
@@ -18,8 +6,21 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from server import auth
+import pytest
+from server import auth, project_store
+from server.database import engine as database_engine
+from server.database.models import (
+    Base,
+    Organization,
+    OrgMember,
+    Team,
+    TeamMembership,
+)
 from server.mcp_remote.auth import AuthenticatedKey
+from server.mcp_stdio.auth import _LegacyAdminKey, acw_principal
+from server.oidc.provisioning import jit_provision_user
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from starlette.requests import Request
 
 WILDCARD = "wildcard-secret-token"
@@ -92,41 +93,134 @@ def test_scoped_service_token_carries_only_its_scopes():
     """Flag on: the service principal exposes exactly the key's scopes."""
     user, result = _dispatch("acw_svc", scoped_flag=True, key=_SERVICE_KEY)
     assert result == "OK"
-    assert user["is_service"] is True
+    assert user["is_service"] is False
     assert user["scoped_service"] is True
     assert user["scopes"] == ["deploy:read", "tasks:read"]  # sorted, only its own
     assert user["org_id"] == "org-pfactory"
     assert user["api_key_id"] == "key-123"
 
 
-def test_new_path_off_by_default():
-    """Flag off (default): the acw_ principal is byte-identical to pre-change."""
+def test_scopes_present_with_flag_off():
     user, result = _dispatch("acw_svc", scoped_flag=False, key=_SERVICE_KEY)
     assert result == "OK"
-    assert user["is_service"] is True
-    assert "scopes" not in user
-    assert "scoped_service" not in user
+    assert user["is_service"] is False
+    assert user["scopes"] == ["deploy:read", "tasks:read"]
+    assert user["scoped_service"] is True
 
 
-def test_wildcard_path_unchanged_with_flag_on():
-    """The wildcard token still yields the blanket service principal, no scopes,
-    even when the scoped-token flag is enabled."""
+def test_wildcard_marked_with_flag_on():
     user, result = _dispatch(WILDCARD, scoped_flag=True, key=None)
     assert result == "OK"
     assert user == {
         "id": "default",
         "email": None,
         "role": "user",
-        "is_service": True,
+        "is_service": False,
+        "is_legacy_shared_token": True,
     }
 
 
-def test_wildcard_path_unchanged_with_flag_off():
+def test_wildcard_marked_with_flag_off():
     user, result = _dispatch(WILDCARD, scoped_flag=False, key=None)
     assert result == "OK"
     assert user == {
         "id": "default",
         "email": None,
         "role": "user",
-        "is_service": True,
+        "is_service": False,
+        "is_legacy_shared_token": True,
     }
+
+
+def test_stdio_principals_match_http_contract():
+    assert acw_principal(_SERVICE_KEY) == auth._acw_principal(_SERVICE_KEY)
+    assert acw_principal(_LegacyAdminKey()) == {
+        "id": "default",
+        "role": "user",
+        "is_service": False,
+        "is_legacy_shared_token": True,
+    }
+
+
+def test_websocket_legacy_principal_and_warning(caplog):
+    socket = SimpleNamespace(
+        headers={"authorization": f"Bearer {WILDCARD}"}, query_params={}
+    )
+
+    with (
+        patch.object(auth, "get_settings", return_value=_settings(scoped_flag=False)),
+        caplog.at_level("WARNING", logger=auth.logger.name),
+    ):
+        principal = asyncio.run(auth.authenticate_websocket(socket))
+    assert principal["is_legacy_shared_token"] is True
+    assert principal["is_service"] is False
+    assert "DEPRECATED" in caplog.text
+    assert WILDCARD not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_default_team_backfill_and_oidc_membership(tmp_path, monkeypatch):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'authz.db'}")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    monkeypatch.setattr(database_engine, "async_session_factory", session_factory)
+    monkeypatch.setattr(database_engine, "_backfill_project_orgs", lambda: None)
+
+    async def no_import():
+        return None
+
+    monkeypatch.setattr(project_store, "aimport_pending", no_import)
+    try:
+        await database_engine.seed_tenant_defaults(True)
+        async with session_factory() as db:
+            team = (
+                await db.execute(select(Team).where(Team.is_default.is_(True)))
+            ).scalar_one()
+            owner = (
+                await db.execute(
+                    select(TeamMembership).where(
+                        TeamMembership.team_id == team.id,
+                        TeamMembership.user_id == "default",
+                    )
+                )
+            ).scalar_one()
+            assert owner.role == "owner"
+            user = await jit_provision_user(
+                db, {"sub": "oidc-user", "email": "user@example.test"}
+            )
+            member = (
+                await db.execute(
+                    select(TeamMembership).where(
+                        TeamMembership.team_id == team.id,
+                        TeamMembership.user_id == user.id,
+                    )
+                )
+            ).scalar_one()
+            assert member.role == "member"
+            assert member.provenance == "sso"
+            db.add(
+                Organization(
+                    id="other-org", name="Other", slug="other", owner_id=user.id
+                )
+            )
+            db.add(OrgMember(org_id="other-org", user_id=user.id, role="admin"))
+            await db.commit()
+        await database_engine.seed_tenant_defaults(True)
+        async with session_factory() as db:
+            teams = (await db.execute(select(Team))).scalars().all()
+            assert len(teams) == 2
+            assert all(team.is_default for team in teams)
+            other_team = next(team for team in teams if team.org_id == "other-org")
+            other_member = (
+                await db.execute(
+                    select(TeamMembership).where(
+                        TeamMembership.team_id == other_team.id,
+                        TeamMembership.user_id == user.id,
+                    )
+                )
+            ).scalar_one()
+            assert other_member.role == "admin"
+            assert len((await db.execute(select(TeamMembership))).scalars().all()) == 3
+    finally:
+        await engine.dispose()
