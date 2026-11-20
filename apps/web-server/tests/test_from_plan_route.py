@@ -261,6 +261,41 @@ def test_from_plan_rejects_mismatched_request_handoff_fields_with_422(
     assert [d for d in specs_dir.iterdir() if d.is_dir()] == []
 
 
+@pytest.mark.parametrize(
+    "field_name", ["source_branch", "approved_head_sha", "pr_number"]
+)
+@pytest.mark.parametrize("in_provenance", [False, True])
+def test_from_plan_rejects_unsigned_handoff_fields(
+    handoff_project, field_name: str, in_provenance: bool
+):
+    project_id, project_path, base_sha, approved_sha = handoff_project
+    plan = _signed_plan(base_sha, approved_sha)
+    value = plan["provenance"].pop(field_name)
+    if field_name == "approved_head_sha":
+        plan["provenance"].pop("source_branch")
+    plan[APPROVAL_KEY] = sign_plan(
+        plan,
+        key=KEY,
+        approved_by="pfactory",
+        approval_timestamp="2026-11-20T12:00:00Z",
+    )
+    override = (
+        {"provenance": {field_name: value}} if in_provenance else {field_name: value}
+    )
+
+    resp, fake_service = _post_from_plan(
+        project_id, project_path, {"plan": plan, **override}
+    )
+
+    assert resp.status_code == 422, resp.text
+    assert (
+        resp.json()["detail"]
+        == "handoff fields must be inside the signed plan provenance"
+    )
+    fake_service.start_task_execution.assert_not_awaited()
+    assert list((project_path / ".aifactory" / "specs").iterdir()) == []
+
+
 def test_from_plan_accepts_matching_request_handoff_fields(handoff_project):
     project_id, project_path, base_sha, approved_sha = handoff_project
     plan = _signed_plan(base_sha, approved_sha)

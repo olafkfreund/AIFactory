@@ -1444,7 +1444,7 @@ _STAGE_LABELS = (
 def _extract_plan_handoff(
     request: FromPlanRequest, project_id: str, project_path: Path
 ) -> dict[str, Any]:
-    """Validate request-level handoff overrides against signed plan provenance (#2172)."""
+    """Validate handoff fields and extract branch identity from signed provenance."""
     raw_prov = (
         request.plan.get("provenance") if isinstance(request.plan, dict) else None
     )
@@ -1454,6 +1454,14 @@ def _extract_plan_handoff(
         if request.provenance is not None
         else {}
     )
+    for key in ("source_branch", "approved_head_sha", "pr_number"):
+        if signed.get(key) is None and (
+            getattr(request, key) is not None or req_prov.get(key) is not None
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="handoff fields must be inside the signed plan provenance",
+            )
     mismatches: list[str] = []
     for key, req_val in (
         ("base_ref", request.base_ref or request.baseBranch),
@@ -1504,15 +1512,9 @@ def _extract_plan_handoff(
         or request.base_ref
         or req_prov.get("base_ref")
         or request.baseBranch,
-        "source_branch": signed.get("source_branch")
-        or request.source_branch
-        or req_prov.get("source_branch"),
-        "approved_head_sha": signed.get("approved_head_sha")
-        or request.approved_head_sha
-        or req_prov.get("approved_head_sha"),
-        "pr_number": signed.get("pr_number")
-        or request.pr_number
-        or req_prov.get("pr_number"),
+        "source_branch": signed.get("source_branch"),
+        "approved_head_sha": signed.get("approved_head_sha"),
+        "pr_number": signed.get("pr_number"),
     }
 
 
