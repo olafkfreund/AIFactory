@@ -1,0 +1,31 @@
+{{- if .Values.investigations.enabled -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "aifactory.fullname" . }}-investigate-proxy
+  labels:
+    {{- include "aifactory.labels" . | nindent 4 }}
+data:
+  squid.conf: |
+    http_port 3128
+    acl SSL_ports port 443
+    acl CONNECT method CONNECT
+    acl registries dstdomain -n registry.npmjs.org
+    acl registries dstdomain -n pypi.org files.pythonhosted.org
+    acl registries dstdomain -n crates.io static.crates.io index.crates.io
+    acl registries dstdomain -n proxy.golang.org sum.golang.org
+    acl registries dstdomain -n repo.maven.apache.org repo1.maven.org
+    {{- range .Values.investigations.proxy.extraDomains }}
+    {{- if not (regexMatch "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$" .) }}
+    {{- fail (printf "investigations.proxy.extraDomains: %q must be an exact lowercase host name (no leading dot, no regex characters)" .) }}
+    {{- end }}
+    acl registries dstdomain -n {{ . }}
+    {{- end }}
+    http_access deny !CONNECT
+    http_access deny CONNECT !SSL_ports
+    http_access allow CONNECT registries
+    http_access deny all
+    cache deny all
+    access_log stdio:/dev/stdout
+    pid_filename none
+{{- end }}

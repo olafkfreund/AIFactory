@@ -1,0 +1,53 @@
+{{- if .Values.investigations.enabled -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aifactory.fullname" . }}-investigate-proxy
+  labels:
+    {{- include "aifactory.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aifactory-investigate-proxy
+      factory.io/run-kind: investigate-proxy
+  template:
+    metadata:
+      # No app.kubernetes.io/instance: the release-wide policy must not select it.
+      labels:
+        app: aifactory-investigate-proxy
+        factory.io/run-kind: investigate-proxy
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap-investigate-proxy.yaml") . | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 13
+        runAsGroup: 13
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: squid
+          image: {{ .Values.investigations.proxy.image | quote }}
+          args: ["-f", "/etc/squid/squid.conf", "-N"]
+          ports:
+            - containerPort: 3128
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - {name: conf, mountPath: /etc/squid/squid.conf, subPath: squid.conf, readOnly: true}
+            - {name: run, mountPath: /var/run}
+            - {name: log, mountPath: /var/log/squid}
+            - {name: spool, mountPath: /var/spool/squid}
+      volumes:
+        - name: conf
+          configMap:
+            name: {{ include "aifactory.fullname" . }}-investigate-proxy
+        - {name: run, emptyDir: {}}
+        - {name: log, emptyDir: {}}
+        - {name: spool, emptyDir: {}}
+{{- end }}
