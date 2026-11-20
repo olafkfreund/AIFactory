@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2172
 intent: intent/2026-11-20-2172-aif-approved-branch-handoff.md
 ---
