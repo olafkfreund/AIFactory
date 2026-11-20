@@ -209,9 +209,11 @@ class TestCompleteness:
 
 
 class TestVerifyAndIngest:
-    def test_adopted_head_drift_and_recorded_retry(self, tmp_path):
+    def _handoff_repo(self, tmp_path):
         repo = tmp_path / "repo"
         repo.mkdir()
+        origin = tmp_path / "origin.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(origin)], check=True)
 
         def git(*args):
             return subprocess.run(
@@ -222,6 +224,7 @@ class TestVerifyAndIngest:
             ).stdout.strip()
 
         git("init", "-q", "-b", "main")
+        git("remote", "add", "origin", str(origin))
         git(
             "-c",
             "user.name=Test",
@@ -233,8 +236,11 @@ class TestVerifyAndIngest:
             "approved",
         )
         approved = git("rev-parse", "HEAD")
-        git("update-ref", "refs/remotes/origin/factory/2172-slug", approved)
-        git("update-ref", "refs/remotes/origin/dev", approved)
+        git(
+            "push", "origin", "HEAD:refs/heads/dev", "HEAD:refs/heads/factory/2172-slug"
+        )
+        git("update-ref", "-d", "refs/remotes/origin/factory/2172-slug")
+        git("update-ref", "-d", "refs/remotes/origin/dev")
         plan = _complete_plan()
         plan["baseline"] = {"commit": approved}
         plan["provenance"] = {
@@ -242,8 +248,24 @@ class TestVerifyAndIngest:
             "source_branch": "factory/2172-slug",
             "approved_head_sha": approved,
         }
-        assert check_baseline_drift(plan, repo).status == "current"
+        return repo, approved, plan, git
 
+    def test_adopted_head_fetches_origin_only_branch(self, tmp_path):
+        repo, approved, plan, git = self._handoff_repo(tmp_path)
+        assert (
+            git("for-each-ref", "--format=%(objectname)", "refs/remotes/origin") == ""
+        )
+        assert check_baseline_drift(plan, repo).status == "current"
+        assert git("rev-parse", "refs/remotes/origin/factory/2172-slug") == approved
+        assert git("rev-parse", "refs/remotes/origin/dev") == approved
+        git("remote", "remove", "origin")
+        git("update-ref", "refs/remotes/origin/factory/2172-slug", approved)
+        assert check_baseline_drift(plan, repo).status == "adopted_head_mismatch"
+
+    def test_adopted_head_rejects_changed_origin_and_allows_recorded_retry(
+        self, tmp_path
+    ):
+        repo, _, plan, git = self._handoff_repo(tmp_path)
         git(
             "-c",
             "user.name=Test",
@@ -255,9 +277,11 @@ class TestVerifyAndIngest:
             "build",
         )
         newer = git("rev-parse", "HEAD")
-        git("update-ref", "refs/remotes/origin/factory/2172-slug", newer)
+        git("push", "origin", "HEAD:refs/heads/factory/2172-slug")
+        git("update-ref", "-d", "refs/remotes/origin/factory/2172-slug")
         drift = check_baseline_drift(plan, repo)
         assert drift.status == "adopted_head_mismatch"
+        assert drift.head_commit == newer
         assert baseline_drift_rejects(drift, "warn")
         assert not baseline_drift_rejects(drift, "off")
         spec_dir = tmp_path / "spec"

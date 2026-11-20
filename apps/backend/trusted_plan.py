@@ -719,13 +719,46 @@ def _git(repo: Path, *args: str) -> str | None:
     return proc.stdout.strip()
 
 
+def _fetch_origin_branch(repo: Path, branch: str) -> bool:
+    """Refresh one validated branch with the worktree manager's GitHub credentials."""
+    git_bin = shutil.which("git")
+    env = _git_subprocess_env()
+    if not git_bin or env is None:
+        return False
+    from core.git_credentials import (
+        github_env,  # noqa: PLC0415 - core is optional above
+    )
+
+    try:
+        with github_env(env) as authed_env:
+            proc = subprocess.run(  # noqa: S603 - fixed argv, validated branch
+                [
+                    git_bin,
+                    "-C",
+                    str(repo),
+                    "fetch",
+                    "--no-tags",
+                    "origin",
+                    f"+refs/heads/{branch}:refs/remotes/origin/{branch}",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=180,
+                env=authed_env,
+                check=False,
+            )
+    except (OSError, RuntimeError, subprocess.SubprocessError):
+        return False
+    return proc.returncode == 0
+
+
 def check_baseline_drift(
     plan: dict[str, Any], project_dir: Path | None, spec_dir: Path | None = None
 ) -> BaselineDrift:
     """Compare the contract's approved commit with the target repo's HEAD.
 
-    Read-only: resolves HEAD, the distance, and the changed-file set. Never
-    fetches, never mutates the repo.
+    Fetches the signed handoff refs, then resolves the distance and changed-file
+    set. Only the corresponding remote-tracking refs are updated.
 
     Returns ``DRIFT_UNKNOWN`` (never a rejection) when the answer cannot be
     established — no project dir, not a git repo, or the approved commit is not
@@ -739,13 +772,16 @@ def check_baseline_drift(
     source_branch = provenance.get("source_branch")
     approved_head = provenance.get("approved_head_sha")
     if source_branch:
+        fetched = project_dir is not None and _fetch_origin_branch(
+            Path(project_dir), source_branch
+        )
         remote_head = (
             _git(
                 Path(project_dir),
                 "rev-parse",
                 f"refs/remotes/origin/{source_branch}^{{commit}}",
             )
-            if project_dir is not None
+            if fetched
             else None
         )
         retry = False
@@ -798,6 +834,12 @@ def check_baseline_drift(
         )
 
     base_ref = provenance.get("base_ref")
+    if base_ref and not _fetch_origin_branch(Path(project_dir), base_ref):
+        return BaselineDrift(
+            status=DRIFT_UNKNOWN,
+            baseline_commit=baseline_commit,
+            detail="could not fetch origin base branch",
+        )
     target_ref = f"refs/remotes/origin/{base_ref}" if base_ref else "HEAD"
     head = _git(Path(project_dir), "rev-parse", target_ref)
     if not head:
