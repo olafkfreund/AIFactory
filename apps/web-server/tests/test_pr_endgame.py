@@ -38,10 +38,14 @@ def _isolated_host(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _verified_green(monkeypatch: pytest.MonkeyPatch) -> None:
+def _verified_green(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> None:
     """These tests drive the review/merge flow, not the #1695 gate (its own
     tests are in test_trusted_contract_merge.py). Since #1697 every auto-merge
     task gets that gate, so stand in a green one."""
+    if request.node.path != Path(__file__):
+        return
     monkeypatch.setattr(pe, "_build_merge_gate", lambda *_a, **_k: lambda _h: True)
     real_head = pe._pr_head
     # A FakeRunner without a head route still yields a head to gate on.
@@ -642,7 +646,7 @@ def test_adopted_pr_ready_after_exact_head_verdict(tmp_path, monkeypatch):
 
 
 def test_adopted_identity_requires_both_local_copies_to_match(tmp_path, monkeypatch):
-    from server.services import trusted_contract
+    from server.services import trusted_contract  # noqa: PLC0415
 
     spec = tmp_path / "spec"
     spec.mkdir()

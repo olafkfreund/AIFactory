@@ -294,7 +294,8 @@ async def test_dispatch_creates_job_applies_result_and_runs_guard(
     batch, spec, fetches = job
     guarded: list[Path] = []
     monkeypatch.setattr(
-        "qa.correction.check_fix_cycle_assertions", lambda d: guarded.append(Path(d))
+        "qa.correction.check_fix_cycle_assertions",
+        lambda d, workspace=None: guarded.append(Path(d)),
     )
     monkeypatch.setenv("AIFACTORY_FORBID_INPOD_AGENTS", "1")  # the Job stays allowed
     res = await ajb.dispatch_correction_fixer(spec)
@@ -319,7 +320,9 @@ async def test_dispatch_creates_job_applies_result_and_runs_guard(
 async def test_failed_fetch_is_recorded_as_failed(monkeypatch, job) -> None:
     _batch, spec, _fetches = job
     monkeypatch.setattr("core.workspace_fetch.fetch_correction", lambda *a, **k: False)
-    monkeypatch.setattr("qa.correction.check_fix_cycle_assertions", lambda d: None)
+    monkeypatch.setattr(
+        "qa.correction.check_fix_cycle_assertions", lambda d, workspace=None: None
+    )
     await ajb.dispatch_correction_fixer(spec)
     await asyncio.gather(*ajb._CORRECTION_WAITERS)
     assert (

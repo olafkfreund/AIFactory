@@ -733,9 +733,7 @@ def _fetch_origin_branch(repo: Path, branch: str) -> bool:
     env = _git_subprocess_env()
     if not git_bin or env is None:
         return False
-    from core.git_credentials import (
-        github_env,  # noqa: PLC0415 - core is optional above
-    )
+    from core.git_credentials import github_env  # noqa: PLC0415
 
     try:
         with github_env(env) as authed_env:
@@ -761,7 +759,7 @@ def _fetch_origin_branch(repo: Path, branch: str) -> bool:
     return proc.returncode == 0
 
 
-def check_baseline_drift(
+def check_baseline_drift(  # noqa: PLR0911 - distinct drift states
     plan: dict[str, Any], project_dir: Path | None, spec_dir: Path | None = None
 ) -> BaselineDrift:
     """Compare the contract's approved commit with the target repo's HEAD.
@@ -780,10 +778,14 @@ def check_baseline_drift(
     provenance = provenance if isinstance(provenance, dict) else {}
     source_branch = provenance.get("source_branch")
     approved_head = provenance.get("approved_head_sha")
-    if source_branch:
-        fetched = project_dir is not None and _fetch_origin_branch(
-            Path(project_dir), source_branch
+    if source_branch and project_dir is None:
+        return BaselineDrift(
+            status=DRIFT_ADOPTED_HEAD_MISMATCH,
+            baseline_commit=approved_head,
+            detail="approved source branch cannot be verified without a project",
         )
+    if source_branch and project_dir is not None:
+        fetched = _fetch_origin_branch(Path(project_dir), source_branch)
         remote_head = (
             _git(
                 Path(project_dir),
@@ -1121,9 +1123,9 @@ def _write_spec_md_from_plan(spec_dir: Path, plan: dict) -> None:
 
     feature = str(plan.get("feature") or "Trusted plan").strip()
     workflow = str(plan.get("workflow_type") or "feature").strip()
-    envelope = (
-        plan.get(APPROVAL_KEY) if isinstance(plan.get(APPROVAL_KEY), dict) else {}
-    )
+    envelope = plan.get(APPROVAL_KEY) or {}
+    if not isinstance(envelope, dict):
+        envelope = {}
     approved_by = str(envelope.get("approved_by") or "authority").strip()
 
     lines: list[str] = [
@@ -1163,7 +1165,7 @@ def _write_spec_md_from_plan(spec_dir: Path, plan: dict) -> None:
 
 
 def _record_approval_provenance(
-    spec_dir: Path, result: TrustedPlanVerification, plan: dict
+    spec_dir: Path, result: TrustedPlanVerification, plan: dict[str, Any]
 ) -> None:
     """Stamp the trusted-plan approval onto requirements.json provenance (#332)."""
     req_file = spec_dir / "requirements.json"

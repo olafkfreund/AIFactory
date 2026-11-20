@@ -1365,7 +1365,7 @@ def _populate_self_contained_worktree(
     spec_id: str,
     source_spec_dir: Path,
     *,
-    adopted: dict | None = None,
+    adopted: dict[str, Any] | None = None,
 ) -> str:
     """Build ``/work`` as a STANDALONE git repo for the dispatched build Job (#671).
 
@@ -1752,7 +1752,7 @@ class KubeJobBuildBackend:
         if state is None:
             return None
         lifecycle = state.get("lifecycle_state")
-        if lifecycle in _TERMINAL_STATES:
+        if isinstance(lifecycle, str) and lifecycle in _TERMINAL_STATES:
             return lifecycle
         return None
 

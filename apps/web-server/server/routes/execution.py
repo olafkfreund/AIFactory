@@ -149,6 +149,7 @@ class ApplyCorrectionRequest(BaseModel):
     )
     # Echoed by TFactory for the auto-loop callback (accepted, not yet acted on).
     tfactory_task_id: str | None = Field(None, description="TFactory workspace id")
+    tested_sha: str | None = Field(None, description="Commit SHA tested by TFactory")
     tfactory_callback_url: str | None = Field(
         None,
         description="Deprecated/ignored in favor of TFACTORY_BASE_URL (#2172)",
@@ -1815,6 +1816,7 @@ async def apply_task_correction(
         manifest_hash=request.manifest_hash,
         correlation_key=request.correlation_key,
         tfactory_task_id=request.tfactory_task_id,
+        tested_sha=request.tested_sha,
     )
     # A confirm=False preview and a rejected triage write nothing: not an action.
     if result.get("success") and result.get("confirm") and result.get("started"):

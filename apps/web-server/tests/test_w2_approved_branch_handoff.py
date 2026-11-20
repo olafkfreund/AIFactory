@@ -2,7 +2,7 @@
 
 Covers the four W2 lifecycle checkpoints:
 1. ``_route_hard`` forwards ``project_id`` and ``base_branch`` to PFactory
-   (also unit-tested in ``tests/test_intake_poller_service.py::test_route_hard_posts_the_pfactory_ingest_contract``).
+   (also covered by the intake poller tests).
 2. ``POST /api/tasks/from-plan`` adopts ``factory/2172-slug`` at ``approved_head_sha``
    into the task worktree (keeping ``intent/``, ``spec/``, ``plan/``), rejects a
    tampered or drifted remote head with 422, and allows retry when the remote
@@ -12,12 +12,12 @@ Covers the four W2 lifecycle checkpoints:
 3. ``run_pr_endgame`` with ``adopted_pr`` never auto-merges even when
    ``AIFACTORY_AUTO_MERGE=true``, waits for ``tfactory_verdict == "pass"`` at the
    exact PR head SHA, marks the draft PR ready for review, and transitions issue
-   labels (see also ``apps/web-server/tests/test_pr_endgame.py::test_adopted_pr_ready_after_exact_head_verdict``).
+   labels (see also the adopted PR endgame test).
 4. ``POST /api/tasks/{task_id}/apply-correction`` -> ``send_fix_completed`` posts
    only to ``<TFACTORY_BASE_URL>/api/handback/aifactory-complete`` (ignoring
    ``tfactory_callback_url``) and drops duplicate or stale SHAs (see also
    ``tests/test_handback_contract.py::test_fix_completed_posts_configured_url_once``
-   and ``apps/web-server/tests/test_correction_job_backend.py::test_route_carries_task_id_but_ignores_callback_url``).
+   and the correction Job route tests).
 """
 
 from __future__ import annotations
@@ -40,13 +40,14 @@ _BACKEND = Path(__file__).resolve().parents[2] / "backend"
 if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
 
-from core.worktree import WorktreeError, WorktreeManager  # noqa: E402
+from core.worktree import WorktreeError, WorktreeManager  # noqa: E402, I001
 from pfactory import tfactory_client  # noqa: E402
 from pfactory.tiers import Tier  # noqa: E402
 from server.routes import execution, github  # noqa: E402
 from server.services import intake_poller as ip  # noqa: E402
 from server.services import pr_endgame as pe  # noqa: E402
 from server.services import project_settings_store as pss  # noqa: E402
+from server.services.pr_endgame import CmdResult  # noqa: E402
 from server.services.task_branch import recorded_branch  # noqa: E402
 from test_from_plan_route import (  # noqa: E402
     KEY,
@@ -55,7 +56,7 @@ from test_from_plan_route import (  # noqa: E402
     _signed_plan,
     handoff_project,
 )
-from test_pr_endgame import CmdResult, FakeRunner  # noqa: E402
+from test_pr_endgame import FakeRunner  # noqa: E402
 from trusted_plan import APPROVAL_KEY, check_baseline_drift, sign_plan  # noqa: E402
 
 __all__ = ["handoff_project"]
@@ -69,7 +70,7 @@ def test_w2_route_hard_includes_project_id_and_base_branch(
 ) -> None:
     """Scenario 1: _route_hard forwards project_id and base_branch to PFactory.
 
-    Complements tests/test_intake_poller_service.py::test_route_hard_posts_the_pfactory_ingest_contract
+    Complements the intake poller route test
     by asserting a non-None configured base_branch is preserved alongside project_id.
     """
     monkeypatch.setenv(
@@ -250,7 +251,8 @@ async def test_w2_adopted_pr_endgame_never_auto_merges_and_marks_ready_on_exact_
     monkeypatch.setattr(pe, "_build_merge_gate", REAL_BUILD_MERGE_GATE)
     checked_heads: list[str] = []
 
-    def fake_verdict(_spec: Path, _id: str, *, head: str, vote: dict) -> str:
+    def fake_verdict(_spec: Path, _id: str, *, head: str, vote: dict[str, Any]) -> str:
+        assert isinstance(vote, dict)
         checked_heads.append(head)
         return "pass" if head == head_sha else "fail"
 
@@ -330,7 +332,7 @@ async def test_w2_adopted_pr_endgame_never_auto_merges_and_marks_ready_on_exact_
     ]
 
 
-async def test_w2_apply_correction_to_send_fix_completed_ignores_caller_url_and_dedups_shas(
+async def test_w2_apply_correction_to_send_fix_completed_ignores_caller_url_and_dedups_shas(  # noqa: PLR0915
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Scenario 4: apply-correction -> send_fix_completed posts only to

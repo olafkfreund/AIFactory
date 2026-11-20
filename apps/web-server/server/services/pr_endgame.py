@@ -1910,7 +1910,7 @@ def _pr_title_body(spec_dir: Path, spec_id: str) -> tuple[str, str]:
     return title, body
 
 
-def gather_pr_context(
+def gather_pr_context(  # noqa: PLR0912, PLR0915 - adopted and ordinary PR contexts
     project_path: Path,
     spec_dir: Path,
     spec_id: str,
@@ -2228,23 +2228,23 @@ async def _adopted_issue_label(
 
 async def _finish_adopted_pr(  # noqa: PLR0913 - one bounded watcher
     spec_dir: Path,
-    spec_id: str,
     project_id: str | None,
     owner: str,
     repo: str,
     pr: int,
     gate: Callable[[str], bool],
     runner: Runner,
-) -> dict:
+) -> dict[str, Any]:
     await _adopted_issue_label(
         spec_dir, project_id, f"{owner}/{repo}", "factory:verifying"
     )
     for _ in range(max(1, (_MAX_POLL_MINUTES * 60) // _POLL_INTERVAL_SECONDS)):
         head = await asyncio.to_thread(_pr_head, owner, repo, pr, runner)
-        if head and await asyncio.to_thread(gate, head):
+        verified = await asyncio.to_thread(gate, head) if head else False
+        if head and verified:
             if head != await asyncio.to_thread(_pr_head, owner, repo, pr, runner):
                 continue
-            # shortcut: race window between last head read and ready; upgrade if GitHub adds a conditional API.
+            # shortcut: head may change after this read; use a conditional API when available.
             ready = await asyncio.to_thread(
                 mark_pr_ready, owner, repo, pr, runner=runner
             )
@@ -2266,7 +2266,7 @@ async def _finish_adopted_pr(  # noqa: PLR0913 - one bounded watcher
     }
 
 
-async def run_pr_endgame(
+async def run_pr_endgame(  # noqa: PLR0911, PLR0912, PLR0915 - existing state machine
     *,
     spec_dir: Path,
     spec_id: str,
@@ -2439,7 +2439,7 @@ async def run_pr_endgame(
             verdict_only=True,
         )
         coro = _finish_adopted_pr(
-            spec_dir, spec_id, project_id, owner, name, adopted_pr, gate, runner
+            spec_dir, project_id, owner, name, adopted_pr, gate, runner
         )
         if background:
             task = asyncio.create_task(coro)

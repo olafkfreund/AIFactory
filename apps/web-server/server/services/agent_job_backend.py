@@ -488,7 +488,7 @@ async def _await_correction(
         sanitize_log(proc.job_name),
         result["status"],
     )
-    await asyncio.to_thread(check_fix_cycle_assertions, spec_dir)
+    await asyncio.to_thread(check_fix_cycle_assertions, spec_dir, clone)
     if clone is not None and clone.exists():
         shutil.rmtree(clone)
 
@@ -521,6 +521,10 @@ async def dispatch_correction_fixer(spec_dir: Path | str) -> dict[str, Any]:
         )
         env[CORRECTION_FETCH_ID_ENV] = fetch_id
         uri = await asyncio.to_thread(_prepare_correction_workspace, spec, job_id)
+        if clone.exists():
+            from qa.correction import snapshot_correction_workspace  # noqa: PLC0415
+
+            await asyncio.to_thread(snapshot_correction_workspace, spec, clone)
     except build_backend.BuildBackendUnavailableError:
         raise
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
@@ -551,12 +555,20 @@ async def dispatch_correction_fixer(spec_dir: Path | str) -> dict[str, Any]:
                 fetch_correction, clone, fetch_id, cancel, applied_paths
             )
             if ok:
-                from qa.correction import publish_correction  # noqa: PLC0415
+                from qa.correction import (  # noqa: PLC0415
+                    check_fix_cycle_assertions,
+                    publish_correction,
+                )
 
                 branch = build_backend._git(
                     ["-C", str(clone), "symbolic-ref", "--short", "HEAD"]
                 ).stdout.strip()
-                ok = await publish_correction(spec, clone, branch, applied_paths)
+                report = await asyncio.to_thread(
+                    check_fix_cycle_assertions, spec, clone
+                )
+                ok = report["ok"] and await publish_correction(
+                    spec, clone, branch, applied_paths
+                )
         else:
             ok = await asyncio.to_thread(fetch_correction, project, fetch_id, cancel)
         return 0 if ok else 1

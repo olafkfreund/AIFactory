@@ -22,9 +22,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import os
+import re
 import subprocess
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -32,6 +34,9 @@ from pathlib import Path
 
 from core.child_env import child_env
 from core.git_credentials import authed_push_url
+from trusted_plan import _safe_branch
+
+from .assertion_guard import snapshot_test_assertions
 
 __all__ = [
     "apply_correction",
@@ -50,15 +55,24 @@ _GUARD_REPORT = "handback_assertion_guard.json"
 _log = logging.getLogger(__name__)
 
 
-async def publish_correction(
+async def publish_correction(  # noqa: PLR0911 - distinct refusal and retry outcomes
     spec_dir: Path, project_dir: Path, branch: str, paths: list[str] | None = None
 ) -> bool:
     """Commit a fixed task branch, push it, then report its new head."""
-    from pfactory.tfactory_client import send_fix_completed
-    from trusted_plan import _safe_branch
-
     if not _safe_branch(branch):
         return False
+    from pfactory.tfactory_client import send_fix_completed  # noqa: PLC0415
+
+    pushed = spec_dir / "handback_pushed.json"
+    if pushed.exists():
+        try:
+            head = json.loads(pushed.read_text())["head_sha"]
+            result = await send_fix_completed(spec_dir, spec_dir.name, head_sha=head)
+            if result.get("sent"):
+                pushed.unlink(missing_ok=True)
+            return bool(result.get("sent"))
+        except (OSError, ValueError, KeyError):
+            return False
 
     def git(
         *args: str, env: dict[str, str] | None = None, check: bool = True
@@ -77,7 +91,9 @@ async def publish_correction(
         if git("symbolic-ref", "--short", "HEAD").stdout.strip() != branch:
             return False
         git("add", "-A", "--", *(paths if paths is not None else ["."]))
-        diff = git("diff", "--cached", "--quiet", check=False).returncode
+        diff = git(
+            "diff", "--no-ext-diff", "--no-textconv", "--cached", "--quiet", check=False
+        ).returncode
         if diff == 0:
             return False
         if diff != 1:
@@ -99,7 +115,10 @@ async def publish_correction(
         with authed_push_url(url) as (push_url, env):
             git("push", push_url, f"HEAD:refs/heads/{branch}", env=env)
         head = git("rev-parse", "HEAD").stdout.strip()
+        pushed.write_text(json.dumps({"head_sha": head}))
         result = await send_fix_completed(spec_dir, spec_dir.name, head_sha=head)
+        if result.get("sent"):
+            pushed.unlink(missing_ok=True)
         return bool(result.get("sent"))
     except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         _log.warning("correction push or callback failed")
@@ -143,8 +162,6 @@ def record_handback(
     """
     baseline: dict[str, int] = {}
     try:
-        from .assertion_guard import snapshot_test_assertions
-
         baseline = snapshot_test_assertions(_project_dir_for(spec_dir))
     except Exception:  # noqa: BLE001 — snapshot is best-effort
         _log.debug("assertion baseline snapshot failed", exc_info=True)
@@ -175,7 +192,9 @@ def record_handback(
     return record
 
 
-def check_fix_cycle_assertions(spec_dir: Path | str) -> dict:
+def check_fix_cycle_assertions(
+    spec_dir: Path | str, workspace: Path | None = None
+) -> dict:
     """After a fix cycle, flag any AIFactory test that lost/dropped assertions.
 
     Diffs the current test-assertion snapshot against the baseline recorded at
@@ -186,11 +205,11 @@ def check_fix_cycle_assertions(spec_dir: Path | str) -> dict:
     """
     spec = Path(spec_dir)
     try:
-        from .assertion_guard import guard_assertion_manifest, snapshot_test_assertions
+        from .assertion_guard import guard_assertion_manifest  # noqa: PLC0415
 
         record = json.loads((spec / _HANDBACK_RECORD).read_text())
         baseline = record.get("assertion_baseline") or {}
-        after = snapshot_test_assertions(_project_dir_for(spec))
+        after = snapshot_test_assertions(workspace or _project_dir_for(spec))
         report = guard_assertion_manifest(baseline, after)
         out = {
             "ok": report.ok,
@@ -216,6 +235,14 @@ def check_fix_cycle_assertions(spec_dir: Path | str) -> dict:
         return {"ok": True, "violations": [], "skipped": "error"}
 
 
+def snapshot_correction_workspace(spec_dir: Path, workspace: Path) -> None:
+    """Replace the receipt baseline once the actual correction checkout exists."""
+    receipt = spec_dir / _HANDBACK_RECORD
+    record = json.loads(receipt.read_text())
+    record["assertion_baseline"] = snapshot_test_assertions(workspace)
+    receipt.write_text(json.dumps(record, indent=2))
+
+
 async def _run_fixer_bg(spec_dir: Path) -> bool:
     """Run a real QA-fixer session to completion (detached background task).
 
@@ -225,6 +252,8 @@ async def _run_fixer_bg(spec_dir: Path) -> bool:
     fixer session reported ``"fixed"`` (the Job entrypoint exits on it, #2116).
     """
     fixed = False
+    handback = False
+    project_dir = spec_dir.parent.parent.parent
     try:
         from core.client import create_client
         from phase_config import (
@@ -237,8 +266,6 @@ async def _run_fixer_bg(spec_dir: Path) -> bool:
 
         from .fixer import run_qa_fixer_session
 
-        project_dir = spec_dir.parent.parent.parent
-        handback = False
         with contextlib.suppress(OSError, ValueError):
             handback = bool(
                 json.loads((spec_dir / _HANDBACK_RECORD).read_text()).get(
@@ -258,6 +285,8 @@ async def _run_fixer_bg(spec_dir: Path) -> bool:
             project_dir = project_dir / ".aifactory/worktrees/tasks" / spec_dir.name
             if not project_dir.is_dir():
                 return False
+        if handback and not job_fixer:
+            snapshot_correction_workspace(spec_dir, project_dir)
         qa_model = get_phase_model(spec_dir, "qa_fixer", None)
         budget = get_phase_thinking_budget(spec_dir, "qa_fixer")
         provider = infer_provider_from_model(qa_model)
@@ -284,11 +313,13 @@ async def _run_fixer_bg(spec_dir: Path) -> bool:
             )
         fixed = status == "fixed"
         if fixed and handback and not job_fixer:
-            from pfactory.tfactory_client import _build_branch
+            from pfactory.tfactory_client import _build_branch  # noqa: PLC0415
 
-            fixed = await publish_correction(
-                spec_dir, project_dir, _build_branch(spec_dir.name, spec_dir)
-            )
+            fixed = check_fix_cycle_assertions(spec_dir, project_dir)["ok"]
+            if fixed:
+                fixed = await publish_correction(
+                    spec_dir, project_dir, _build_branch(spec_dir.name, spec_dir)
+                )
     except Exception:  # noqa: BLE001 — background best-effort
         _log.exception("background QA fixer failed for %s", spec_dir)
     finally:
@@ -296,7 +327,8 @@ async def _run_fixer_bg(spec_dir: Path) -> bool:
         # didn't weaken AIFactory's own test assertions to force a pass. Runs
         # even on fixer failure so a crashed-after-editing cycle is still
         # checked. Best-effort; only flags when a baseline was recorded.
-        await asyncio.to_thread(check_fix_cycle_assertions, spec_dir)
+        if not handback or job_fixer or not fixed:
+            await asyncio.to_thread(check_fix_cycle_assertions, spec_dir, project_dir)
     return fixed
 
 
@@ -329,6 +361,7 @@ async def apply_correction(
     manifest_hash: str | None = None,
     correlation_key: str | None = None,
     tfactory_task_id: str | None = None,
+    tested_sha: str | None = None,
 ) -> dict:
     """Write a fix-request onto a spec and (on confirm) run the QA Fixer.
 
@@ -399,21 +432,41 @@ async def apply_correction(
             ),
         }
 
-    from pfactory.tfactory_client import _locate_build_commit
+    from pfactory.tfactory_client import _locate_build_commit  # noqa: PLC0415
 
+    if tested_sha is not None and re.fullmatch(r"[0-9a-fA-F]{40}", tested_sha) is None:
+        return {
+            "success": False,
+            "rejected": True,
+            "started": False,
+            "message": "Invalid tested SHA",
+        }
     located = _locate_build_commit(spec, spec.name) if tfactory_task_id else None
-    pre_fix_sha = located[1] if located else None
-    receipt = spec / _HANDBACK_RECORD
-    if tfactory_task_id and manifest_hash and receipt.exists():
+    pre_fix_sha = tested_sha or (located[1] if located else None)
+    if pre_fix_sha is not None:
+        pre_fix_sha = pre_fix_sha.lower()
+    reservation: Path | None = None
+    if tfactory_task_id:
+        key = json.dumps([tfactory_task_id, pre_fix_sha, manifest_hash])
+        reservation = (
+            spec / "handback_receipts" / hashlib.sha256(key.encode()).hexdigest()
+        )
+        reservation.parent.mkdir(exist_ok=True)
         try:
-            previous = json.loads(receipt.read_text())
-        except (OSError, ValueError):
-            previous = {}
-        if (
-            previous.get("tfactory_task_id") == tfactory_task_id
-            and previous.get("manifest_hash") == manifest_hash
-            and previous.get("pre_fix_sha") == pre_fix_sha
-        ):
+            with reservation.open("x"):
+                pass
+        except FileExistsError:
+            from pfactory.tfactory_client import send_fix_completed  # noqa: PLC0415
+
+            pushed = spec / "handback_pushed.json"
+            if pushed.exists():
+                try:
+                    head = json.loads(pushed.read_text())["head_sha"]
+                    delivered = await send_fix_completed(spec, spec.name, head_sha=head)
+                    if delivered.get("sent") or delivered.get("reason") == "unchanged":
+                        pushed.unlink(missing_ok=True)
+                except (OSError, ValueError, KeyError):
+                    pass
             return {
                 "success": True,
                 "confirm": True,
@@ -435,8 +488,13 @@ async def apply_correction(
         pre_fix_sha=pre_fix_sha,
     )
 
-    await asyncio.to_thread(write_fix_request, spec, fix_request_md)
-    fixer_result = await (fixer_fn or _default_fixer)(spec)
+    try:
+        await asyncio.to_thread(write_fix_request, spec, fix_request_md)
+        fixer_result = await (fixer_fn or _default_fixer)(spec)
+    except Exception:
+        if reservation is not None:
+            reservation.unlink(missing_ok=True)
+        raise
     return {
         "success": True,
         "confirm": True,

@@ -27,7 +27,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Literal
+from typing import Any, Literal
 
 from core.child_env import child_env, merge_driver_pins
 from core.commit_trailers import commit_message_args, trailer_block
@@ -691,10 +691,10 @@ class WorktreeManager:
         """Get the branch name for a spec."""
         metadata = self._handoff_metadata(spec_name)
         if metadata.get("source_branch"):
-            return metadata["source_branch"]
+            return str(metadata["source_branch"])
         return f"aifactory/{spec_name}"
 
-    def _handoff_metadata(self, spec_name: str) -> dict:
+    def _handoff_metadata(self, spec_name: str) -> dict[str, Any]:
         path = (
             self.project_dir / ".aifactory" / "specs" / spec_name / "task_metadata.json"
         )
@@ -719,8 +719,9 @@ class WorktreeManager:
                 raise WorktreeError("Approved branch handoff metadata missing")
         if not isinstance(metadata, dict) or metadata.get("source_branch") is None:
             return {}
-        if ENV in os.environ:
-            if state != "verified" or any(
+        if ENV in os.environ and (
+            state != "verified"
+            or any(
                 metadata.get(target) != provenance.get(source)
                 for source, target in (
                     ("source_branch", "source_branch"),
@@ -728,8 +729,9 @@ class WorktreeManager:
                     ("pr_number", "pr_number"),
                     ("repo", "github_repo"),
                 )
-            ):
-                raise WorktreeError("Unverified approved branch handoff")
+            )
+        ):
+            raise WorktreeError("Unverified approved branch handoff")
         branch = metadata["source_branch"]
         head = metadata.get("approved_head_sha")
         from trusted_plan import _safe_branch  # noqa: PLC0415
@@ -856,7 +858,7 @@ class WorktreeManager:
 
         return stats
 
-    def create_worktree(self, spec_name: str) -> WorktreeInfo:
+    def create_worktree(self, spec_name: str) -> WorktreeInfo:  # noqa: PLR0912
         """
         Create a worktree for a spec.
 

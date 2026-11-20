@@ -22,11 +22,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import copy
+import hashlib
 import json
 import logging
 import os
 import re
 import subprocess
+import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -44,8 +46,8 @@ __all__ = [
     "build_handoff_payload",
     "load_task_contract",
     "maybe_auto_handoff_tfactory",
-    "send_handoff",
     "send_fix_completed",
+    "send_handoff",
     "tfactory_config",
     "tfactory_verdict",
     "wants_auto_handoff",
@@ -57,6 +59,7 @@ Poster = Callable[[str, dict, dict], Awaitable[dict]]
 # TFactory's self-contained intake: create a test task from a raw spec, no
 # shared workspace/branch required (POST {project_id, spec_id, spec_text}).
 _DEFAULT_PATH = "/api/specs/ingest"
+_PENDING_RETRY_SECONDS = 60
 
 
 def tfactory_config(env: dict | None = None) -> dict:
@@ -349,8 +352,8 @@ def _locate_build_commit(spec_dir: Path, spec_id: str) -> tuple[Path, str] | Non
     return None
 
 
-def _git_info_and_push(
-    spec_dir: Path, spec_id: str, adopted: dict | None = None
+def _git_info_and_push(  # noqa: PLR0911 - explicit push failure outcomes
+    spec_dir: Path, spec_id: str, adopted: dict[str, Any] | None = None
 ) -> tuple[str | None, str | None]:
     """Return ``(git_url, source_branch)`` for the build, pushing the BUILD BRANCH
     to origin so TFactory (separate PVC) can fetch the built code.
@@ -425,8 +428,8 @@ def _git_info_and_push(
                 if remote_before != expected:
                     if (
                         not remote_before
-                        or subprocess.run(
-                            ["git", "merge-base", "--is-ancestor", remote_before, sha],
+                        or subprocess.run(  # noqa: S603
+                            ["git", "merge-base", "--is-ancestor", remote_before, sha],  # noqa: S607
                             cwd=str(repo),
                             env=git_env,
                             capture_output=True,
@@ -706,7 +709,7 @@ def _signed_snapshot(
     return copy.deepcopy(contract)
 
 
-def build_ingest_payload(
+def build_ingest_payload(  # noqa: PLR0912, PLR0915 - existing payload matrix
     spec_dir: Path,
     spec_id: str,
     *,
@@ -759,7 +762,7 @@ def build_ingest_payload(
                 + "\n\n## Acceptance Criteria\n"
                 + ("\n".join(f"- {c}" for c in criteria))
             )
-    payload = {
+    payload: dict[str, Any] = {
         "project_id": project_id,
         "spec_id": spec_id,
         "spec_text": spec_text,
@@ -798,7 +801,7 @@ def build_ingest_payload(
     if contract:
         payload["contract"] = contract
     if signed:
-        payload["signed_contract"] = signed  # type: ignore[assignment]  # payload is inferred dict[str, str]
+        payload["signed_contract"] = signed
     # Factory#1960: who asked, and which agent identity built it, so TFactory's
     # completion event can carry both. Absent stays absent (never invented).
     for key in ("originator", "agent_identity"):
@@ -1059,14 +1062,14 @@ async def send_pr_attach(
     }
 
 
-async def send_fix_completed(
+async def send_fix_completed(  # noqa: PLR0911, PLR0912, PLR0915 - delivery states
     spec_dir: Path,
     spec_id: str,
     *,
     status: str = "complete",
     poster: Poster | None = None,
     head_sha: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Report a new correction commit to the configured TFactory origin."""
     spec_dir = Path(spec_dir)
     config = tfactory_config()
@@ -1076,14 +1079,9 @@ async def send_fix_completed(
         receipt = json.loads((spec_dir / "handback_received.json").read_text())
         metadata = json.loads((spec_dir / "task_metadata.json").read_text())
         sent_path = spec_dir / "handback_sent.json"
-        sent = json.loads(sent_path.read_text()) if sent_path.exists() else {}
     except (OSError, ValueError):
         return {"sent": False, "reason": "missing_handoff"}
-    if (
-        not isinstance(receipt, dict)
-        or not isinstance(metadata, dict)
-        or not isinstance(sent, dict)
-    ):
+    if not isinstance(receipt, dict) or not isinstance(metadata, dict):
         return {"sent": False, "reason": "invalid_handoff"}
     task_id = receipt.get("tfactory_task_id")
     branch = _build_branch(spec_id, spec_dir)
@@ -1096,10 +1094,8 @@ async def send_fix_completed(
         or not _safe_branch(branch)
     ):
         return {"sent": False, "reason": "missing_handoff"}
-    sent_shas = sent.get("sent_shas", [])
-    if not isinstance(sent_shas, list):
-        return {"sent": False, "reason": "invalid_handoff"}
-    if head == receipt.get("pre_fix_sha") or head in sent_shas:
+    head = head.lower()
+    if head == str(receipt.get("pre_fix_sha") or "").lower():
         return {"sent": False, "reason": "unchanged"}
     signed_provenance = load_task_contract(spec_dir).get("provenance") or {}
     if not isinstance(signed_provenance, dict):
@@ -1123,16 +1119,76 @@ async def send_fix_completed(
     )
     if not token:
         return {"sent": False, "reason": "missing_token"}
-    headers = {"Content-Type": "application/json", "X-TFactory-Handback-Token": token}
+    import fcntl  # noqa: PLC0415
+
+    lock_path = spec_dir / "handback_sent.lock"
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            sent = json.loads(sent_path.read_text()) if sent_path.exists() else {}
+        except (OSError, ValueError):
+            return {"sent": False, "reason": "invalid_handoff"}
+        sent_shas = sent.get("sent_shas", [])
+        pending = sent.get("pending", [])
+        pending_at = sent.get("pending_at", {})
+        if (
+            not isinstance(sent_shas, list)
+            or not isinstance(pending, list)
+            or not isinstance(pending_at, dict)
+        ):
+            return {"sent": False, "reason": "invalid_handoff"}
+        if head in [str(s).lower() for s in sent_shas]:
+            return {"sent": False, "reason": "unchanged"}
+        reserved_at = pending_at.get(head)
+        if (
+            head in pending
+            and isinstance(reserved_at, (int, float))
+            and time.time() - reserved_at < _PENDING_RETRY_SECONDS
+        ):
+            return {"sent": False, "reason": "in_flight"}
+        pending = [s for s in pending if s != head]
+        pending_at[head] = time.time()
+        sent_path.write_text(
+            json.dumps(
+                {
+                    "sent_shas": sent_shas,
+                    "pending": [*pending, head],
+                    "pending_at": pending_at,
+                }
+            )
+        )
+    key = hashlib.sha256(f"{task_id}:{head}".encode()).hexdigest()
+    headers = {
+        "Content-Type": "application/json",
+        "X-TFactory-Handback-Token": token,
+        "Idempotency-Key": key,
+    }
     try:
         result = await (poster or _httpx_poster)(
             f"{config['base_url']}/api/handback/aifactory-complete", payload, headers
         )
     except Exception:  # noqa: BLE001 - callback failure is retried on the next attempt
-        return {"sent": False, "reason": "error"}
+        result = {"ok": False, "reason": "error"}
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        sent = json.loads(sent_path.read_text())
+        pending = [s for s in sent.get("pending", []) if s != head]
+        pending_at = sent.get("pending_at", {})
+        pending_at.pop(head, None)
+        sent_shas = sent.get("sent_shas", [])
+        if result.get("ok"):
+            sent_shas.append(head)
+        record = {"sent_shas": sent_shas}
+        if pending:
+            record["pending"] = pending
+            record["pending_at"] = pending_at
+        sent_path.write_text(json.dumps(record))
     if not result.get("ok"):
-        return {"sent": False, "reason": "http_error", "status": result.get("status")}
-    sent_path.write_text(json.dumps({"sent_shas": [*sent_shas, head]}))
+        return {
+            "sent": False,
+            "reason": result.get("reason", "http_error"),
+            "status": result.get("status"),
+        }
     return {"sent": True, "status": result.get("status"), "head_sha": head}
 
 

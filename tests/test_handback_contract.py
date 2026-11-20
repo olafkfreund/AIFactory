@@ -11,6 +11,7 @@ Three layers:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import subprocess
 from pathlib import Path
@@ -26,6 +27,7 @@ from qa.correction import (
     apply_correction,
     check_fix_cycle_assertions,
     publish_correction,
+    snapshot_correction_workspace,
 )
 from qa.handback_contract import CONTRACT_VERSION, validate_triage_report
 
@@ -308,6 +310,29 @@ def test_check_fix_cycle_ok_when_additive(tmp_path: Path):
     assert check_fix_cycle_assertions(spec)["ok"] is True
 
 
+def test_guard_checks_correction_checkout(tmp_path: Path):
+    spec = tmp_path / "project/.aifactory/specs/001"
+    spec.mkdir(parents=True)
+    correction = tmp_path / "correction"
+    tests = correction / "tests"
+    tests.mkdir(parents=True)
+    test_file = tests / "test_example.py"
+    test_file.write_text("def test_example():\n    assert True\n")
+    from qa.correction import record_handback
+
+    record_handback(
+        spec,
+        source="triage",
+        correlation_key="x",
+        manifest_hash=None,
+        failing_test_count=1,
+        triage_present=True,
+    )
+    snapshot_correction_workspace(spec, correction)
+    test_file.write_text("def test_example():\n    pass\n")
+    assert check_fix_cycle_assertions(spec, correction)["ok"] is False
+
+
 async def test_duplicate_handoff_does_not_rerun_fixer(tmp_path: Path):
     spec = tmp_path / "proj/.aifactory/specs/001"
     spec.mkdir(parents=True)
@@ -331,6 +356,58 @@ async def test_duplicate_handoff_does_not_rerun_fixer(tmp_path: Path):
     receipt = json.loads((spec / "handback_received.json").read_text())
     assert receipt["tfactory_task_id"] == "tf-1"
     assert receipt["pre_fix_sha"] is None
+
+
+async def test_tested_sha_reservation_dedups_concurrent_without_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    spec = tmp_path / "proj/.aifactory/specs/001"
+    spec.mkdir(parents=True)
+    calls = 0
+
+    async def fixer(_path: Path) -> dict:
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0)
+        return {"scheduled": True}
+
+    results = await asyncio.gather(
+        *(
+            apply_correction(
+                spec,
+                FIX_MD,
+                confirm=True,
+                fixer_fn=fixer,
+                tfactory_task_id="tf-1",
+                tested_sha="A" * 40,
+            )
+            for _ in range(2)
+        )
+    )
+    assert calls == 1
+    assert sum(bool(result.get("duplicate")) for result in results) == 1
+    assert (
+        json.loads((spec / "handback_received.json").read_text())["pre_fix_sha"]
+        == "a" * 40
+    )
+    (spec / "handback_pushed.json").write_text(json.dumps({"head_sha": "b" * 40}))
+    delivered = []
+
+    async def callback(_spec: Path, _id: str, *, head_sha: str) -> dict:
+        delivered.append(head_sha)
+        return {"sent": True}
+
+    monkeypatch.setattr(tfactory_client, "send_fix_completed", callback)
+    await apply_correction(
+        spec,
+        FIX_MD,
+        confirm=True,
+        fixer_fn=fixer,
+        tfactory_task_id="tf-1",
+        tested_sha="a" * 40,
+    )
+    assert delivered == ["b" * 40] and calls == 1
+    assert not (spec / "handback_pushed.json").exists()
 
 
 async def test_fix_completed_posts_configured_url_once(monkeypatch, tmp_path: Path):
@@ -370,12 +447,12 @@ async def test_fix_completed_posts_configured_url_once(monkeypatch, tmp_path: Pa
 
     assert (
         await tfactory_client.send_fix_completed(
-            spec, "001", poster=poster, head_sha="a" * 40
+            spec, "001", poster=poster, head_sha="A" * 40
         )
     )["reason"] == "unchanged"
     assert (
         await tfactory_client.send_fix_completed(
-            spec, "001", poster=poster, head_sha="b" * 40
+            spec, "001", poster=poster, head_sha="B" * 40
         )
     )["sent"] is True
     assert (
@@ -396,6 +473,7 @@ async def test_fix_completed_posts_configured_url_once(monkeypatch, tmp_path: Pa
         "status": "complete",
     }
     assert calls[0][2]["X-TFactory-Handback-Token"] == "test-token"
+    assert calls[0][2]["Idempotency-Key"]
 
 
 async def test_publish_correction_pushes_task_branch(monkeypatch, tmp_path: Path):
@@ -457,3 +535,112 @@ async def test_publish_correction_pushes_task_branch(monkeypatch, tmp_path: Path
         text=True,
     ).stdout.strip()
     assert sent == [remote_head]
+
+
+async def test_failed_callback_retries_with_same_idempotency_key(
+    monkeypatch, tmp_path: Path
+):
+    spec = tmp_path / "proj/.aifactory/specs/001"
+    spec.mkdir(parents=True)
+    (spec / "handback_received.json").write_text(
+        json.dumps({"tfactory_task_id": "tf-1", "pre_fix_sha": "a" * 40})
+    )
+    (spec / "task_metadata.json").write_text(
+        json.dumps({"source_branch": "factory/test"})
+    )
+    monkeypatch.setenv("TFACTORY_BASE_URL", "https://configured.example")
+    monkeypatch.setenv("TFACTORY_HANDBACK_SECRET", "token")
+    keys = []
+
+    async def poster(_url: str, _payload: dict, headers: dict) -> dict:
+        keys.append(headers["Idempotency-Key"])
+        return {"ok": len(keys) == 2, "status": 200 if len(keys) == 2 else 503}
+
+    first = await tfactory_client.send_fix_completed(
+        spec, "001", poster=poster, head_sha="b" * 40
+    )
+    assert first["sent"] is False
+    second = await tfactory_client.send_fix_completed(
+        spec, "001", poster=poster, head_sha="B" * 40
+    )
+    assert second["sent"] is True
+    assert keys[0] == keys[1]
+
+    (spec / "handback_sent.json").write_text(
+        json.dumps(
+            {"sent_shas": [], "pending": ["c" * 40], "pending_at": {"c" * 40: 0}}
+        )
+    )
+    third = await tfactory_client.send_fix_completed(
+        spec, "001", poster=poster, head_sha="c" * 40
+    )
+    assert third["sent"] is False  # the expired reservation was retried
+    assert len(keys) == 3
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_poster(_url: str, _payload: dict, _headers: dict) -> dict:
+        started.set()
+        await release.wait()
+        return {"ok": True, "status": 200}
+
+    first_delivery = asyncio.create_task(
+        tfactory_client.send_fix_completed(
+            spec, "001", poster=slow_poster, head_sha="d" * 40
+        )
+    )
+    await started.wait()
+    duplicate = await tfactory_client.send_fix_completed(
+        spec, "001", poster=slow_poster, head_sha="d" * 40
+    )
+    assert duplicate["reason"] == "in_flight"
+    release.set()
+    assert (await first_delivery)["sent"] is True
+
+
+async def test_publish_retries_callback_without_a_second_commit(
+    monkeypatch, tmp_path: Path
+):
+    project = tmp_path / "project"
+    remote = tmp_path / "remote.git"
+    project.mkdir()
+    subprocess.run(
+        ["git", "init", "-q", "-b", "factory/test", str(project)], check=True
+    )
+    subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
+    (project / "app.py").write_text("before\n")
+    subprocess.run(["git", "-C", str(project), "add", "app.py"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(project),
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-qm",
+            "base",
+        ],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(project), "remote", "add", "origin", str(remote)], check=True
+    )
+    spec = project / ".aifactory/specs/001"
+    spec.mkdir(parents=True)
+    (project / "app.py").write_text("after\n")
+    sent = []
+
+    async def callback(_spec: Path, _id: str, *, head_sha: str) -> dict:
+        sent.append(head_sha)
+        return {"sent": len(sent) == 2}
+
+    monkeypatch.setattr(tfactory_client, "send_fix_completed", callback)
+    assert not await publish_correction(spec, project, "factory/test", ["app.py"])
+    pushed_sha = json.loads((spec / "handback_pushed.json").read_text())["head_sha"]
+    assert await publish_correction(spec, project, "factory/test", ["app.py"])
+    assert sent == [pushed_sha, pushed_sha]
+    assert not (spec / "handback_pushed.json").exists()

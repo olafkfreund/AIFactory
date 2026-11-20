@@ -7,6 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -98,8 +99,8 @@ def _signed_plan(
     repo: str = "olafkfreund/AIFactory",
     base_ref: str = "dev",
     source_branch: str = "factory/2172-approved-branch-handoff",
-) -> dict:
-    plan: dict = {
+) -> dict[str, Any]:
+    plan: dict[str, Any] = {
         "feature": "Approved branch handoff",
         "workflow_type": "feature",
         "correlation_key": "2172",
@@ -143,7 +144,7 @@ def _signed_plan(
 def _post_from_plan(
     project_id: str,
     project_path: Path,
-    body: dict,
+    body: dict[str, Any],
     *,
     fake_service: MagicMock | None = None,
 ):
@@ -245,7 +246,7 @@ def test_from_plan_adopts_provenance_records_branch_and_transitions_label(
     ],
 )
 def test_from_plan_rejects_mismatched_request_handoff_fields_with_422(
-    handoff_project, override: dict, field_name: str
+    handoff_project, override: dict[str, Any], field_name: str
 ):
     project_id, project_path, base_sha, approved_sha = handoff_project
     plan = _signed_plan(base_sha, approved_sha)
@@ -270,14 +271,10 @@ def test_from_plan_rejects_unsigned_handoff_fields(
 ):
     project_id, project_path, base_sha, approved_sha = handoff_project
     plan = _signed_plan(base_sha, approved_sha)
-    value = plan["provenance"].pop(field_name)
-    if field_name == "approved_head_sha":
-        plan["provenance"].pop("source_branch")
-    plan[APPROVAL_KEY] = sign_plan(
-        plan,
-        key=KEY,
-        approved_by="pfactory",
-        approval_timestamp="2026-11-20T12:00:00Z",
+    value = (
+        "a" * 40
+        if field_name == "approved_head_sha"
+        else (89 if field_name == "pr_number" else "factory/other")
     )
     override = (
         {"provenance": {field_name: value}} if in_provenance else {field_name: value}
@@ -288,13 +285,12 @@ def test_from_plan_rejects_unsigned_handoff_fields(
     )
 
     assert resp.status_code == 422, resp.text
-    if field_name == "pr_number":
-        assert "provenance.pr_number is required" in resp.json()["detail"]["reasons"][0]
-    else:
-        assert (
-            resp.json()["detail"]
-            == "handoff fields must be inside the signed plan provenance"
-        )
+    detail = resp.json()["detail"]
+    assert (
+        detail["message"]
+        == "Plan rejected — request handoff fields disagree with signed provenance"
+    )
+    assert field_name in detail["reasons"][0]
     fake_service.start_task_execution.assert_not_awaited()
     assert list((project_path / ".aifactory" / "specs").iterdir()) == []
 
@@ -352,7 +348,7 @@ def test_unsigned_base_fallback_is_validated(handoff_project, base_ref):
         approval_timestamp="2026-11-20T12:00:00Z",
     )
     request = execution.FromPlanRequest(plan=plan, base_ref=base_ref)
-    with pytest.raises(Exception) as error:
+    with pytest.raises(execution.HTTPException) as error:
         execution._extract_plan_handoff(request, project_id, project_path)
     assert error.value.status_code == 422
 
