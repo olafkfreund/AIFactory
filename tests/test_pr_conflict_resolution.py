@@ -155,7 +155,7 @@ def test_continue_failure_aborts_rebase():
 
 
 def test_fetch_failure_is_unresolved():
-    runner = FakeRunner({"git fetch origin main": _FAIL})
+    runner = FakeRunner({"git fetch -- origin +refs/heads/main": _FAIL})
     res = resolve_pr_conflicts("/wt", "main", fixer=lambda f, w: True, runner=runner)
     assert res.resolved is False
     assert "fetch failed" in res.reason

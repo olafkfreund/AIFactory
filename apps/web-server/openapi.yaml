@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: AIFactory Web API
   description: Web API for AIFactory — self-hosted AI task management + agent orchestration
-  version: 3.20.0
+  version: 3.20.1
 paths:
   /api/auth/register:
     post:
@@ -10622,12 +10622,18 @@ components:
           - type: 'null'
           title: Tfactory Task Id
           description: TFactory workspace id
+        tested_sha:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Tested Sha
+          description: Commit SHA tested by TFactory
         tfactory_callback_url:
           anyOf:
           - type: string
           - type: 'null'
           title: Tfactory Callback Url
-          description: URL AIFactory calls back when the fix completes
+          description: Deprecated/ignored in favor of TFACTORY_BASE_URL (#2172)
       type: object
       required:
       - fix_request_md
@@ -11959,6 +11965,30 @@ components:
           - $ref: '#/components/schemas/TaskProvenance'
           - type: 'null'
           description: Upstream provenance to persist alongside the approval
+        base_ref:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Base Ref
+          description: Optional base branch; must match plan provenance when present
+        source_branch:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source Branch
+          description: Optional adopted branch; must match plan provenance when present
+        approved_head_sha:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Approved Head Sha
+          description: Optional 40-hex approved SHA; must match plan provenance when present
+        pr_number:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Pr Number
+          description: Optional adopted PR number; must match plan provenance when present
       type: object
       required:
       - plan
@@ -14317,6 +14347,30 @@ components:
           - type: 'null'
           title: Source
           description: Origin system, e.g. 'pfactory'
+        base_ref:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Base Ref
+          description: Target integration branch, e.g. 'main' or 'dev'
+        source_branch:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source Branch
+          description: Adopted PFactory branch, e.g. 'factory/<n>-<slug>'
+        approved_head_sha:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Approved Head Sha
+          description: 40-hex commit SHA on source_branch where /approve plan bound
+        pr_number:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Pr Number
+          description: Adopted draft PR/MR number opened by PFactory
         trusted_plan:
           type: boolean
           title: Trusted Plan

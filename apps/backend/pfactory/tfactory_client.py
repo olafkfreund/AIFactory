@@ -22,11 +22,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import copy
+import hashlib
 import json
 import logging
 import os
 import re
 import subprocess
+import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -36,6 +38,7 @@ from core import auth_preflight
 from core.child_env import child_env, lfs_upload
 from core.git_credentials import authed_push_url
 from factory_common.logsafe import sanitize_log
+from trusted_plan import _safe_branch
 
 _log = logging.getLogger(__name__)
 
@@ -43,6 +46,7 @@ __all__ = [
     "build_handoff_payload",
     "load_task_contract",
     "maybe_auto_handoff_tfactory",
+    "send_fix_completed",
     "send_handoff",
     "tfactory_config",
     "tfactory_verdict",
@@ -55,6 +59,7 @@ Poster = Callable[[str, dict, dict], Awaitable[dict]]
 # TFactory's self-contained intake: create a test task from a raw spec, no
 # shared workspace/branch required (POST {project_id, spec_id, spec_text}).
 _DEFAULT_PATH = "/api/specs/ingest"
+_PENDING_RETRY_SECONDS = 60
 
 
 def tfactory_config(env: dict | None = None) -> dict:
@@ -261,13 +266,21 @@ def _task_base_branch(spec_dir: Path) -> str:
     return str(meta.get("base_branch") or meta.get("baseBranch") or "")
 
 
-def _build_branch(spec_id: str) -> str:
+def _build_branch(spec_id: str, spec_dir: Path | None = None) -> str:
     """The branch a build creates/pushes for a spec.
 
-    Fixed convention, matching ``core.worktree.WorktreeManager.get_branch_name``:
-    ``aifactory/<spec_id>``. Reliable even when the local worktree is gone — the
-    build already pushed this branch to origin.
+    Adopt the recorded branch when present, else use the build convention.
     """
+    if spec_dir is not None:
+        marker = Path(spec_dir) / ".task_branch"
+        with contextlib.suppress(OSError):
+            branch = marker.read_text().strip()
+            if _safe_branch(branch):
+                return branch
+        with contextlib.suppress(OSError, ValueError):
+            meta = json.loads((Path(spec_dir) / "task_metadata.json").read_text())
+            if isinstance(meta, dict) and _safe_branch(meta.get("source_branch")):
+                return meta["source_branch"]
     return f"aifactory/{spec_id}"
 
 
@@ -304,7 +317,7 @@ def _remote_tip(
     repo: Path, push_url: str, branch: str, env: dict[str, str] | None = None
 ) -> str:
     """The commit ``origin`` currently has for ``branch`` (``ls-remote``), or ""."""
-    line = _git_stdout(repo, ["ls-remote", push_url, branch], env=env)
+    line = _git_stdout(repo, ["ls-remote", push_url, f"refs/heads/{branch}"], env=env)
     return line.split()[0] if line else ""
 
 
@@ -316,6 +329,18 @@ def _build_branch_commit(repo: Path, build_branch: str) -> str:
     return _git_stdout(
         repo, ["rev-parse", "--verify", "--quiet", f"refs/heads/{build_branch}"]
     )
+
+
+def _recorded_build_sha(spec_id: str) -> str:
+    """SHA pushed by the ephemeral packed build Job, if available."""
+    try:
+        from core.artifact_store import ArtifactStore  # noqa: PLC0415
+        from core.workspace_fetch import _build_sha_key  # noqa: PLC0415
+
+        sha = ArtifactStore().get_bytes(_build_sha_key(spec_id)).decode().strip()
+    except Exception:  # noqa: BLE001 - co-mounted builds have no record
+        return ""
+    return sha if re.fullmatch(r"[0-9a-fA-F]{40}", sha) else ""
 
 
 def _locate_build_commit(spec_dir: Path, spec_id: str) -> tuple[Path, str] | None:
@@ -330,7 +355,7 @@ def _locate_build_commit(spec_dir: Path, spec_id: str) -> tuple[Path, str] | Non
     clone (the non-packed path, where the clone genuinely sits on the build
     branch). Return the repo + sha of whichever holds it.
     """
-    build_branch = _build_branch(spec_id)
+    build_branch = _build_branch(spec_id, spec_dir)
     for cand in (_project_dir(spec_dir), _build_worktree(spec_dir, spec_id)):
         if cand.is_dir():
             sha = _build_branch_commit(cand, build_branch)
@@ -339,7 +364,9 @@ def _locate_build_commit(spec_dir: Path, spec_id: str) -> tuple[Path, str] | Non
     return None
 
 
-def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | None]:
+def _git_info_and_push(  # noqa: PLR0911 - explicit push failure outcomes
+    spec_dir: Path, spec_id: str, adopted: dict[str, Any] | None = None
+) -> tuple[str | None, str | None]:
     """Return ``(git_url, source_branch)`` for the build, pushing the BUILD BRANCH
     to origin so TFactory (separate PVC) can fetch the built code.
 
@@ -351,9 +378,8 @@ def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | 
     pre-flight then rejects the missing symbols and the run reads as an ordinary
     failure (#1007, the "verify the wrong tree" class, cf. TFactory #729).
 
-    The push is ``--force``: the per-spec ``aifactory/<spec>`` branch is
-    build-owned, the local commit is its truth, and it cannot clobber anyone
-    else's work -- this also repairs a diverged remote tip (only-base-pushed). We
+    The build-owned ``aifactory/<spec>`` branch uses ``--force``; an adopted
+    branch uses ``--force-with-lease`` so a concurrent update is preserved. We
     then VERIFY origin carries the built commit; if it still does not, return the
     branch as unusable (``(url, None)``) and log, rather than claim a stale tree
     is verifiable.
@@ -361,11 +387,37 @@ def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | 
     Best-effort and never raises: returns ``(None, None)`` when nothing local holds
     the build branch (the caller then falls back to the branch convention).
     """
+    if adopted and (recorded := _recorded_build_sha(spec_id)):
+        url = _project_git_url(spec_dir)
+        if url:
+            with authed_push_url(url) as (push_url, git_env):
+                if (
+                    _remote_tip(
+                        _project_dir(spec_dir),
+                        push_url,
+                        adopted["source_branch"],
+                        env=git_env,
+                    )
+                    == recorded
+                ):
+                    return url, adopted["source_branch"]
+        return url, None
     located = _locate_build_commit(spec_dir, spec_id)
+    if adopted:
+        located = next(
+            (
+                (repo, sha)
+                for repo in (_project_dir(spec_dir), _build_worktree(spec_dir, spec_id))
+                if (sha := _build_branch_commit(repo, adopted["source_branch"]))
+            ),
+            None,
+        )
     if located is None:
         return None, None
     repo, sha = located
-    build_branch = _build_branch(spec_id)
+    build_branch = (
+        adopted["source_branch"] if adopted else _build_branch(spec_id, spec_dir)
+    )
     try:
         url = _git_stdout(repo, ["remote", "get-url", "origin"])
         if not url:
@@ -397,11 +449,34 @@ def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | 
                     err[:200],
                 )
                 return url, None
+            expected = adopted["approved_head_sha"] if adopted else ""
+            if adopted:
+                remote_before = _remote_tip(repo, push_url, build_branch, env=git_env)
+                if remote_before != expected:
+                    if (
+                        not remote_before
+                        or subprocess.run(  # noqa: S603
+                            ["git", "merge-base", "--is-ancestor", remote_before, sha],  # noqa: S607
+                            cwd=str(repo),
+                            env=git_env,
+                            capture_output=True,
+                            timeout=60,
+                            check=False,
+                        ).returncode
+                        != 0
+                    ):
+                        return url, None
+                    expected = remote_before
             subprocess.run(
                 [
                     "git",
                     "push",
-                    "--force",
+                    f"--force-with-lease=refs/heads/{build_branch}:{expected}"
+                    if adopted
+                    else "--force"
+                    if build_branch == f"aifactory/{spec_id}"
+                    else "--force-with-lease",
+                    "--",
                     push_url,
                     f"{sha}:refs/heads/{build_branch}",
                 ],
@@ -453,7 +528,7 @@ def _remote_commit_count(spec_dir: Path, spec_id: str) -> int | None:
     repo = _project_dir(spec_dir)
     if not (repo / ".git").exists():
         return None
-    branch = _build_branch(spec_id)
+    branch = _build_branch(spec_id, spec_dir)
     base = _task_base_branch(spec_dir) or "main"
     # Fetch into the remote-tracking ref explicitly; a bare `git fetch origin
     # <branch>` leaves the result only in FETCH_HEAD, which the range below
@@ -551,7 +626,9 @@ def _git_commit_count(spec_dir: Path, spec_id: str) -> int | None:
     wt = _build_worktree(spec_dir, spec_id)
     if not wt.is_dir():
         return None
-    if _git_stdout(wt, ["rev-parse", "--abbrev-ref", "HEAD"]) != _build_branch(spec_id):
+    if _git_stdout(wt, ["rev-parse", "--abbrev-ref", "HEAD"]) != _build_branch(
+        spec_id, spec_dir
+    ):
         return None
     base = _task_base_branch(spec_dir) or "main"
     for ref in (f"origin/{base}", base):
@@ -661,7 +738,7 @@ def _signed_snapshot(
     return copy.deepcopy(contract)
 
 
-def build_ingest_payload(
+def build_ingest_payload(  # noqa: PLR0912, PLR0915 - existing payload matrix
     spec_dir: Path,
     spec_id: str,
     *,
@@ -714,7 +791,7 @@ def build_ingest_payload(
                 + "\n\n## Acceptance Criteria\n"
                 + ("\n".join(f"- {c}" for c in criteria))
             )
-    payload = {
+    payload: dict[str, Any] = {
         "project_id": project_id,
         "spec_id": spec_id,
         "spec_text": spec_text,
@@ -725,7 +802,18 @@ def build_ingest_payload(
     # from spec_text. Present only for trusted plans; absent → TFactory infers.
     # `contract` given (#1667): the web server decided it; `{}` means held, so
     # TFactory infers instead of trusting the agent-writable spec copy.
+    verified = bool(contract)
     held = contract is not None and not contract
+    if held:
+        from core.contract_trust import has_trusted_trace  # noqa: PLC0415
+
+        provenance = load_task_contract(spec_dir).get("provenance") or {}
+        if (
+            has_trusted_trace(spec_dir)
+            and isinstance(provenance, dict)
+            and provenance.get("source_branch")
+        ):
+            raise ValueError("trusted contract unavailable for TFactory handoff")
     contract = load_task_contract(spec_dir) if contract is None else dict(contract)
     signed = _signed_snapshot(contract, held)
     # Propagate the build's per-phase model choice to TFactory's verify lanes so a
@@ -747,7 +835,7 @@ def build_ingest_payload(
     if contract:
         payload["contract"] = contract
     if signed:
-        payload["signed_contract"] = signed  # type: ignore[assignment]  # payload is inferred dict[str, str]
+        payload["signed_contract"] = signed
     # Factory#1960: who asked, and which agent identity built it, so TFactory's
     # completion event can carry both. Absent stays absent (never invented).
     for key in ("originator", "agent_identity"):
@@ -756,7 +844,55 @@ def build_ingest_payload(
     # PARR seam: hand TFactory the repo + the build branch so it can fetch the
     # ACTUAL built code (separate PVC). Pushes the branch (best-effort) and lets
     # TFactory self-register the project from git_url when it isn't pre-registered.
-    git_url, source_branch = _git_info_and_push(spec_dir, spec_id)
+    adopted = None
+    provenance = contract.get("provenance") if isinstance(contract, dict) else None
+    if (
+        isinstance(provenance, dict)
+        and provenance.get("pr_number")
+        and not provenance.get("source_branch")
+    ):
+        raise ValueError("incomplete adopted handoff in trusted contract")
+    if (
+        not verified
+        and isinstance(provenance, dict)
+        and provenance.get("source_branch")
+    ):
+        raise ValueError("adopted branch has no verified contract")
+    if not isinstance(provenance, dict) or not provenance.get("source_branch"):
+        try:
+            metadata = json.loads((spec_dir / "task_metadata.json").read_text())
+        except (OSError, ValueError):
+            metadata = {}
+        if isinstance(metadata, dict) and (
+            metadata.get("pr_number") or metadata.get("approved_head_sha")
+        ):
+            raise ValueError("adopted branch has no verified contract")
+    if isinstance(provenance, dict) and provenance.get("source_branch"):
+        adopted = provenance
+        meta = json.loads((spec_dir / "task_metadata.json").read_text())
+        local = req.get("provenance")
+        if (
+            not isinstance(meta, dict)
+            or not isinstance(local, dict)
+            or any(
+                meta.get(target) != adopted.get(source)
+                or local.get(source) != adopted.get(source)
+                for source, target in (
+                    ("source_branch", "source_branch"),
+                    ("approved_head_sha", "approved_head_sha"),
+                    ("pr_number", "pr_number"),
+                    ("repo", "github_repo"),
+                )
+            )
+        ):
+            raise ValueError("adopted handoff differs from trusted contract")
+    git_url, source_branch = (
+        _git_info_and_push(spec_dir, spec_id, adopted)
+        if adopted
+        else _git_info_and_push(spec_dir, spec_id)
+    )
+    if adopted and not source_branch:
+        raise ValueError("adopted build commit was not confirmed on origin")
     # Fall back to the known branch convention + project repo when the local build
     # worktree is absent or not a valid git checkout (RFC-0017 packed build repacks
     # outputs via MinIO, leaving no git-valid worktree on the control plane). The
@@ -774,13 +910,33 @@ def build_ingest_payload(
         or source_branch in _BASE_BRANCHES
         or source_branch == _task_base_branch(spec_dir)
     ):
-        source_branch = _build_branch(spec_id)
+        source_branch = _build_branch(spec_id, spec_dir)
     if not git_url:
         git_url = _project_git_url(spec_dir)
     if git_url:
         payload["git_url"] = git_url
     if source_branch:
         payload["source_branch"] = source_branch
+    located = _locate_build_commit(spec_dir, spec_id)
+    if located:
+        payload["source_sha"] = located[1]
+    if adopted:
+        recorded = _recorded_build_sha(spec_id)
+        if recorded:
+            payload["source_sha"] = recorded
+        with authed_push_url(git_url) as (push_url, git_env):
+            confirmed = _remote_tip(
+                _project_dir(spec_dir), push_url, adopted["source_branch"], env=git_env
+            )
+        if not confirmed or confirmed != payload.get("source_sha"):
+            raise ValueError("adopted source SHA is not confirmed on origin")
+        payload["source_sha"] = confirmed
+        payload["source_branch"] = adopted["source_branch"]
+        payload["pr_number"] = adopted["pr_number"]
+        payload["repo"] = adopted["repo"]
+    base_ref = adopted.get("base_ref") if adopted else _task_base_branch(spec_dir)
+    if base_ref:
+        payload["base_ref"] = base_ref
     # Multi-tenancy (#925): carry the build's tenant so TFactory can scope its
     # side too. OPTIONAL additive metadata — absent when the spec was never
     # stamped (single-tenant deployments), never required by the ingest.
@@ -788,8 +944,24 @@ def build_ingest_payload(
     # file just means no tenant_id gets attached.
     with contextlib.suppress(OSError, ValueError):
         tm = json.loads((spec_dir / "task_metadata.json").read_text())
-        if tm.get("tenant_id"):
-            payload["tenant_id"] = str(tm["tenant_id"])
+        if isinstance(tm, dict):
+            if tm.get("tenant_id"):
+                payload["tenant_id"] = str(tm["tenant_id"])
+            if not adopted and tm.get("pr_number"):
+                payload["pr_number"] = tm["pr_number"]
+            if not adopted and tm.get("github_repo"):
+                payload["repo"] = tm["github_repo"]
+    if "repo" not in payload:
+        prov = req.get("provenance")
+        gh = req.get("githubIssue")
+        repo = (
+            (prov.get("repo") if isinstance(prov, dict) else None)
+            or req.get("github_repo")
+            or req.get("repo")
+            or (gh.get("repo") if isinstance(gh, dict) else None)
+        )
+        if repo:
+            payload["repo"] = repo
     return payload
 
 
@@ -927,6 +1099,141 @@ async def send_pr_attach(
         "reason": None if ok else "http_error",
         "status": result.get("status"),
     }
+
+
+async def send_fix_completed(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915 - delivery states
+    spec_dir: Path,
+    spec_id: str,
+    *,
+    status: str = "complete",
+    poster: Poster | None = None,
+    head_sha: str | None = None,
+    receipt: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Report a new correction commit to the configured TFactory origin."""
+    spec_dir = Path(spec_dir)
+    config = tfactory_config()
+    if not config["base_url"]:
+        return {"sent": False, "reason": "not_configured"}
+    try:
+        receipt = (
+            receipt
+            if receipt is not None
+            else json.loads((spec_dir / "handback_received.json").read_text())
+        )
+        metadata = json.loads((spec_dir / "task_metadata.json").read_text())
+        sent_path = spec_dir / "handback_sent.json"
+    except (OSError, ValueError):
+        return {"sent": False, "reason": "missing_handoff"}
+    if not isinstance(receipt, dict) or not isinstance(metadata, dict):
+        return {"sent": False, "reason": "invalid_handoff"}
+    task_id = receipt.get("tfactory_task_id")
+    branch = _build_branch(spec_id, spec_dir)
+    located = _locate_build_commit(spec_dir, spec_id) if head_sha is None else None
+    head = head_sha or (located[1] if located else "")
+    if (
+        not task_id
+        or not isinstance(head, str)
+        or re.fullmatch(r"[0-9a-fA-F]{40}", head) is None
+        or not _safe_branch(branch)
+    ):
+        return {"sent": False, "reason": "missing_handoff"}
+    head = head.lower()
+    if head == str(receipt.get("pre_fix_sha") or "").lower():
+        return {"sent": False, "reason": "unchanged"}
+    signed_provenance = load_task_contract(spec_dir).get("provenance") or {}
+    if not isinstance(signed_provenance, dict):
+        return {"sent": False, "reason": "invalid_handoff"}
+    payload = {
+        "tfactory_task_id": task_id,
+        "project_id": signed_provenance.get("project_id")
+        or metadata.get("project_id")
+        or _aifactory_project_name(spec_dir),
+        "spec_id": spec_id,
+        "correlation_key": receipt.get("correlation_key"),
+        "source_branch": branch,
+        "head_sha": head,
+        "pr_number": metadata.get("pr_number"),
+        "status": status,
+    }
+    token = (
+        os.environ.get("TFACTORY_HANDBACK_SECRET")
+        or os.environ.get("APP_INBOUND_HANDBACK_SECRET")
+        or config["token"]
+    )
+    if not token:
+        return {"sent": False, "reason": "missing_token"}
+    import fcntl  # noqa: PLC0415
+
+    lock_path = spec_dir / "handback_sent.lock"
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            sent = json.loads(sent_path.read_text()) if sent_path.exists() else {}
+        except (OSError, ValueError):
+            return {"sent": False, "reason": "invalid_handoff"}
+        sent_shas = sent.get("sent_shas", [])
+        pending = sent.get("pending", [])
+        pending_at = sent.get("pending_at", {})
+        if (
+            not isinstance(sent_shas, list)
+            or not isinstance(pending, list)
+            or not isinstance(pending_at, dict)
+        ):
+            return {"sent": False, "reason": "invalid_handoff"}
+        if head in [str(s).lower() for s in sent_shas]:
+            return {"sent": False, "reason": "unchanged"}
+        reserved_at = pending_at.get(head)
+        if (
+            head in pending
+            and isinstance(reserved_at, (int, float))
+            and time.time() - reserved_at < _PENDING_RETRY_SECONDS
+        ):
+            return {"sent": False, "reason": "in_flight"}
+        pending = [s for s in pending if s != head]
+        pending_at[head] = time.time()
+        sent_path.write_text(
+            json.dumps(
+                {
+                    "sent_shas": sent_shas,
+                    "pending": [*pending, head],
+                    "pending_at": pending_at,
+                }
+            )
+        )
+    key = hashlib.sha256(f"{task_id}:{head}".encode()).hexdigest()
+    headers = {
+        "Content-Type": "application/json",
+        "X-TFactory-Handback-Token": token,
+        "Idempotency-Key": key,
+    }
+    try:
+        result = await (poster or _httpx_poster)(
+            f"{config['base_url']}/api/handback/aifactory-complete", payload, headers
+        )
+    except Exception:  # noqa: BLE001 - callback failure is retried on the next attempt
+        result = {"ok": False, "reason": "error"}
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        sent = json.loads(sent_path.read_text())
+        pending = [s for s in sent.get("pending", []) if s != head]
+        pending_at = sent.get("pending_at", {})
+        pending_at.pop(head, None)
+        sent_shas = sent.get("sent_shas", [])
+        if result.get("ok"):
+            sent_shas.append(head)
+        record = {"sent_shas": sent_shas}
+        if pending:
+            record["pending"] = pending
+            record["pending_at"] = pending_at
+        sent_path.write_text(json.dumps(record))
+    if not result.get("ok"):
+        return {
+            "sent": False,
+            "reason": result.get("reason", "http_error"),
+            "status": result.get("status"),
+        }
+    return {"sent": True, "status": result.get("status"), "head_sha": head}
 
 
 _HTTP_OK, _HTTP_REDIRECT = 200, 300

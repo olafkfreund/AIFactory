@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+## 3.20.1 - 2026-11-21
+
+Merged to `dev` since 3.20.0.
+
+### Added
+
+- W2 approved-branch handoff: a staged PFactory handoff adopts the approved branch/PR from the signed handoff, ready-for-review only, with a TFactory return loop. Active only for staged handoffs, which are off by default. (#2172, #2175)
+
 ## 3.20.0 - 2026-11-20
 
 Merged to `dev` since 3.19.0.

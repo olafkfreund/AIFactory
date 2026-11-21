@@ -106,6 +106,34 @@ async def test_failed_build_is_left_to_the_sweep(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_adopted_pr_watcher_runs_with_auto_pr_off(tmp_path: Path) -> None:
+    from server.services import pr_endgame
+
+    spec_dir = _make_spec(tmp_path, "017-adopted", commits=["abc1234"])
+    end = AsyncMock()
+    ctx = {
+        "worktree": tmp_path,
+        "branch": "factory/17",
+        "base": "dev",
+        "repo": "o/r",
+        "adopted_pr": 17,
+    }
+    with (
+        patch(
+            "server.services.completion_orchestration.handoff_contract",
+            return_value={"provenance": {"pr_number": 17}},
+        ),
+        patch.object(pr_endgame, "is_auto_pr_enabled", return_value=False),
+        patch.object(pr_endgame, "gather_pr_context", return_value=ctx),
+        patch.object(pr_endgame, "resolve_pr_reviewer", return_value="aifactory"),
+        patch.object(pr_endgame, "run_pr_endgame", end),
+    ):
+        await _finish(spec_dir, tmp_path, completed=True, merger=lambda *_a, **_k: {})
+    end.assert_awaited_once()
+    assert end.call_args.kwargs["adopted_pr"] == 17
+
+
+@pytest.mark.asyncio
 async def test_build_that_wrote_nothing_is_not_landed(tmp_path: Path) -> None:
     """The #1070 evidence gate downgrades it to failed before the merger runs."""
     spec_dir = _make_spec(tmp_path, "019-nothing", commits=[])

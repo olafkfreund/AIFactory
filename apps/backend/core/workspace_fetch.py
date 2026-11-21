@@ -169,6 +169,7 @@ def maybe_push_workspace_branch(  # noqa: PLR0911 - one early return per refusal
                 return p.returncode, p.stdout, p.stderr
 
             # Best-effort upload; only the safety-net refusal skips the push.
+            sha = ""
             err = lfs_upload(run, "HEAD")
             if err:
                 err = f"LFS upload: {err}"
@@ -183,16 +184,40 @@ def maybe_push_workspace_branch(  # noqa: PLR0911 - one early return per refusal
                     check=False,
                 )
                 err = res.stderr if res.returncode != 0 else None
+                sha = (
+                    run(["git", "rev-parse", "HEAD"], 120)[1].strip()
+                    if err is None
+                    else ""
+                )
         if err is not None:
             _log.warning("[workspace_fetch] branch push failed: %s", err[:200])
             return False
         _log.info(
             "[workspace_fetch] pushed build branch %s to origin (packed path)", branch
         )
+        if re.fullmatch(r"[0-9a-fA-F]{40}", sha):
+            try:
+                from core.artifact_store import ArtifactStore  # noqa: PLC0415
+
+                ArtifactStore().put_bytes(
+                    _build_sha_key(spec_id), sha.encode(), "text/plain", role="build"
+                )
+            except Exception:  # noqa: BLE001 - a record failure must not fail the build
+                _log.warning("[workspace_fetch] could not record packed build SHA")
         return True
     except (OSError, subprocess.SubprocessError) as exc:  # never break a green build
         _log.warning("[workspace_fetch] branch push errored: %s", exc)
         return False
+
+
+def _build_sha_key(spec_id: str) -> str:
+    from core.artifact_store import ArtifactRef  # noqa: PLC0415
+
+    return str(
+        ArtifactRef(
+            service="aifactory", job_id=spec_id, role="build", path="build_sha"
+        ).key()
+    )
 
 
 _USAGE_FILE = "token_usage.json"
@@ -1227,6 +1252,7 @@ def fetch_correction(  # noqa: PLR0912, PLR0915 - validate everything, then appl
     project_path: str | os.PathLike[str],
     fetch_id: str,
     cancel: threading.Event | None = None,
+    applied_paths: list[str] | None = None,
 ) -> bool:
     """Validate and apply one correction result with rollback on failure."""
     from core.artifact_store import ArtifactStore  # noqa: PLC0415
@@ -1351,6 +1377,8 @@ def fetch_correction(  # noqa: PLR0912, PLR0915 - validate everything, then appl
                 elif target.exists():
                     target.unlink()
                 applied.append(name)
+            if applied_paths is not None:
+                applied_paths.extend(names)
             return True
         except Exception as exc:  # noqa: BLE001 - restore every applied path
             for name in reversed(applied):

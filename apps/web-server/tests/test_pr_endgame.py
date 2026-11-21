@@ -38,10 +38,14 @@ def _isolated_host(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _verified_green(monkeypatch: pytest.MonkeyPatch) -> None:
+def _verified_green(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> None:
     """These tests drive the review/merge flow, not the #1695 gate (its own
     tests are in test_trusted_contract_merge.py). Since #1697 every auto-merge
     task gets that gate, so stand in a green one."""
+    if request.node.path != Path(__file__):
+        return
     monkeypatch.setattr(pe, "_build_merge_gate", lambda *_a, **_k: lambda _h: True)
     real_head = pe._pr_head
     # A FakeRunner without a head route still yields a head to gate on.
@@ -177,7 +181,7 @@ def test_create_pr_fetches_branch_from_origin_before_push():
     r = FakeRunner(
         {
             "git grep": CmdResult(1, "", ""),  # no filter=lfs: no LFS step (#1721)
-            "fetch origin": CmdResult(0, "", ""),
+            "fetch -- origin": CmdResult(0, "", ""),
             "git push": CmdResult(0, "", ""),
             "pr create": CmdResult(0, "https://github.com/o/r/pull/9", ""),
         }
@@ -191,8 +195,10 @@ def test_create_pr_fetches_branch_from_origin_before_push():
         runner=r,
     )
     assert pr == 9
-    # The fetch must target origin with the branch:branch refspec, before the push.
-    assert r.saw("fetch origin aifactory/045-x:aifactory/045-x")
+    # The fetch names the branch ref explicitly before the push.
+    assert r.saw(
+        "fetch -- origin refs/heads/aifactory/045-x:refs/heads/aifactory/045-x"
+    )
     fetch_i = next(
         i
         for i, c in enumerate(r.calls)
@@ -207,7 +213,7 @@ def test_create_pr_survives_fetch_failure():
     # the endgame — create_pr still attempts the push + gh pr create.
     r = FakeRunner(
         {
-            "fetch origin": CmdResult(1, "", "couldn't find remote ref"),
+            "fetch -- origin": CmdResult(1, "", "couldn't find remote ref"),
             "git push": CmdResult(0, "", ""),
             "pr create": CmdResult(0, "https://github.com/o/r/pull/10", ""),
         }
@@ -591,6 +597,78 @@ def test_run_pr_endgame_aifactory_reviewer_uses_engine_verdict():
     assert res["ok"] and res["merged"] is True
     assert opened.get("pr") == 12  # reviewer trigger fired with the PR number
     assert not r.saw("requested_reviewers")  # Copilot NOT requested
+
+
+def test_adopted_pr_ready_after_exact_head_verdict(tmp_path, monkeypatch):
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    (spec / "task_metadata.json").write_text(json.dumps({"pr_number": 27}))
+    monkeypatch.setattr(
+        "server.services.trusted_contract.adopted_handoff",
+        lambda *_a: {"source_branch": "factory/27-x", "pr_number": 27, "repo": "o/r"},
+    )
+    calls = []
+    runner = FakeRunner({".head.sha": CmdResult(0, "a" * 40, "")})
+
+    async def attach(*_args):
+        calls.append("attach")
+        return {"sent": True}
+
+    async def label(*_args):
+        return None
+
+    monkeypatch.setattr("pfactory.tfactory_client.send_pr_attach", attach)
+    monkeypatch.setattr(pe, "_adopted_issue_label", label)
+    monkeypatch.setattr(
+        pe, "_build_merge_gate", lambda *_a, **_k: lambda head: head == "a" * 40
+    )
+    monkeypatch.setattr(pe, "create_pr", lambda **_k: pytest.fail("must reuse PR"))
+    monkeypatch.setattr(pe, "merge_pr", lambda *_a, **_k: pytest.fail("must not merge"))
+
+    result = asyncio.run(
+        pe.run_pr_endgame(
+            spec_dir=spec,
+            spec_id="001-x",
+            worktree=spec,
+            branch="factory/27-x",
+            base="dev",
+            repo="o/r",
+            auto_merge=True,
+            background=False,
+            trusted=None,
+            runner=runner,
+        )
+    )
+    assert result["ready"] is True and result["merged"] is False
+    assert calls == ["attach"]
+    assert runner.saw("pr ready 27")
+    assert not runner.saw("pr create") and not runner.saw("pr merge")
+
+
+def test_adopted_identity_requires_both_local_copies_to_match(tmp_path, monkeypatch):
+    from server.services import trusted_contract  # noqa: PLC0415
+
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    identity = {
+        "source_branch": "factory/27-x",
+        "approved_head_sha": "a" * 40,
+        "pr_number": 27,
+        "repo": "o/r",
+    }
+    (spec / "task_metadata.json").write_text(
+        json.dumps({**identity, "github_repo": identity["repo"]})
+    )
+    (spec / "requirements.json").write_text(json.dumps({"provenance": identity}))
+    monkeypatch.setattr(
+        trusted_contract,
+        "resolve_contract",
+        lambda *_a: ("verified", {"provenance": identity}),
+    )
+    assert trusted_contract.adopted_handoff(spec, None) == identity
+    (spec / "requirements.json").write_text(json.dumps({"provenance": {}}))
+    with pytest.raises(ValueError, match="differs"):
+        trusted_contract.adopted_handoff(spec, None)
 
 
 def test_run_pr_endgame_no_repo():

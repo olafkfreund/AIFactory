@@ -9,6 +9,7 @@ incomplete plan must be rejected.
 """
 
 import json
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -16,6 +17,8 @@ import pytest
 from trusted_plan import (
     APPROVAL_KEY,
     CONTRACT_VERSION,
+    baseline_drift_rejects,
+    check_baseline_drift,
     check_plan_completeness,
     ingest_trusted_plan,
     load_expiry_from_env,
@@ -206,12 +209,141 @@ class TestCompleteness:
 
 
 class TestVerifyAndIngest:
+    def _handoff_repo(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        origin = tmp_path / "origin.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(origin)], check=True)
+
+        def git(*args):
+            return subprocess.run(
+                ["git", "-C", str(repo), *args],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+
+        git("init", "-q", "-b", "main")
+        git("remote", "add", "origin", str(origin))
+        git(
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "approved",
+        )
+        approved = git("rev-parse", "HEAD")
+        git(
+            "push", "origin", "HEAD:refs/heads/dev", "HEAD:refs/heads/factory/2172-slug"
+        )
+        git("update-ref", "-d", "refs/remotes/origin/factory/2172-slug")
+        git("update-ref", "-d", "refs/remotes/origin/dev")
+        plan = _complete_plan()
+        plan["baseline"] = {"commit": approved}
+        plan["provenance"] = {
+            "base_ref": "dev",
+            "source_branch": "factory/2172-slug",
+            "approved_head_sha": approved,
+        }
+        return repo, approved, plan, git
+
+    def test_adopted_head_fetches_origin_only_branch(self, tmp_path):
+        repo, approved, plan, git = self._handoff_repo(tmp_path)
+        assert (
+            git("for-each-ref", "--format=%(objectname)", "refs/remotes/origin") == ""
+        )
+        assert check_baseline_drift(plan, repo).status == "current"
+        assert git("rev-parse", "refs/remotes/origin/factory/2172-slug") == approved
+        assert git("rev-parse", "refs/remotes/origin/dev") == approved
+        git("remote", "remove", "origin")
+        git("update-ref", "refs/remotes/origin/factory/2172-slug", approved)
+        assert check_baseline_drift(plan, repo).status == "adopted_head_mismatch"
+
+    def test_adopted_head_rejects_changed_origin_and_allows_recorded_retry(
+        self, tmp_path
+    ):
+        repo, _, plan, git = self._handoff_repo(tmp_path)
+        git(
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "build",
+        )
+        newer = git("rev-parse", "HEAD")
+        git("push", "origin", "HEAD:refs/heads/factory/2172-slug")
+        git("update-ref", "-d", "refs/remotes/origin/factory/2172-slug")
+        drift = check_baseline_drift(plan, repo)
+        assert drift.status == "adopted_head_mismatch"
+        assert drift.head_commit == newer
+        assert baseline_drift_rejects(drift, "warn")
+        assert not baseline_drift_rejects(drift, "off")
+        spec_dir = tmp_path / "spec"
+        (spec_dir / "memory").mkdir(parents=True)
+        (spec_dir / "memory" / "build_commits.json").write_text(
+            json.dumps({"commits": [newer]})
+        )
+        assert check_baseline_drift(plan, repo, spec_dir).status == "current"
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("source_branch", "../unsafe"),
+            ("source_branch", "HEAD"),
+            ("base_ref", "main.lock"),
+            ("approved_head_sha", "1234"),
+            ("pr_number", True),
+            ("pr_number", 0),
+            ("pr_number", 2),
+        ],
+    )
+    def test_invalid_signed_handoff_rejected(self, field, value):
+        plan = _complete_plan()
+        plan["provenance"] = {field: value}
+        verdict = verify_trusted_plan(_signed(plan), keyring=KEYRING)
+        assert not verdict.ok
+        assert any(field in reason for reason in verdict.reasons)
+
+    def test_signed_handoff_is_persisted(self, tmp_path):
+        plan = _complete_plan()
+        plan["provenance"] = {
+            "project_id": "aifactory",
+            "repo": "olafkfreund/AIFactory",
+            "base_ref": "dev",
+            "source_branch": "factory/2172-slug",
+            "approved_head_sha": "a" * 40,
+            "pr_number": 42,
+            "trusted_plan": False,
+        }
+        spec_dir = tmp_path / "spec"
+        assert ingest_trusted_plan(spec_dir, _signed(plan), keyring=KEYRING).ok
+        req = json.loads((spec_dir / "requirements.json").read_text())
+        meta = json.loads((spec_dir / "task_metadata.json").read_text())
+        assert req["provenance"]["source_branch"] == "factory/2172-slug"
+        assert req["provenance"]["trusted_plan"] is True
+        assert meta["base_branch"] == "dev"
+        assert meta["source_branch"] == "factory/2172-slug"
+        assert meta["approved_head_sha"] == "a" * 40
+        assert meta["pr_number"] == 42
+        assert meta["github_repo"] == "olafkfreund/AIFactory"
+
     def test_signed_complete_plan_accepted(self):
         result = verify_trusted_plan(_signed(_complete_plan()), keyring=KEYRING)
         assert result.ok, result.reasons
         assert result.approved_by == "cfactory"
         assert result.approval_timestamp == TS
         assert bool(result) is True
+
+    def test_null_source_branch_is_non_adopted(self):
+        plan = _complete_plan()
+        plan["provenance"] = {"source_branch": None}
+        assert verify_trusted_plan(_signed(plan), keyring=KEYRING).ok
 
     def test_signed_but_incomplete_rejected(self):
         # A genuinely incomplete plan (subtask missing its description) is

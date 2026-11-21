@@ -1114,7 +1114,9 @@ def _spec_source_dir(project_path: Path, spec_id: str) -> Path:
     return spec_dir_for(project_path, spec_id)
 
 
-def populate_build_worktree(project_path: Path, spec_id: str) -> str | None:
+def populate_build_worktree(
+    project_path: Path, spec_id: str, adopted: dict | None = None
+) -> str | None:
     """Create + populate the per-task build worktree BEFORE the Job is created.
 
     THE #671 build-worktree defect fix. The kubejob dispatch co-mounts the data
@@ -1176,7 +1178,9 @@ def populate_build_worktree(project_path: Path, spec_id: str) -> str | None:
             f"dir {source_spec_dir} does not exist (nothing to materialize into "
             "the build worktree)"
         )
-    return _populate_self_contained_worktree(project_path, spec_id, source_spec_dir)
+    return _populate_self_contained_worktree(
+        project_path, spec_id, source_spec_dir, adopted=adopted
+    )
 
 
 def _pack_workspace_enabled() -> bool:
@@ -1332,7 +1336,10 @@ def _refresh_to_remote_base(wt_path: Path, base_branch: str) -> None:
     only on the disposable ``wt_path`` (never the shared workspace clone), so it
     cannot race a concurrent build.
     """
-    fetch = _git(["-C", str(wt_path), "fetch", "origin", base_branch], check=False)
+    fetch = _git(
+        ["-C", str(wt_path), "fetch", "--", "origin", f"refs/heads/{base_branch}"],
+        check=False,
+    )
     if fetch.returncode != 0:
         _log.warning(
             "[build_backend] could not fetch origin/%s to refresh build clone %s "
@@ -1354,7 +1361,11 @@ def _refresh_to_remote_base(wt_path: Path, base_branch: str) -> None:
 
 
 def _populate_self_contained_worktree(
-    project_path: Path, spec_id: str, source_spec_dir: Path
+    project_path: Path,
+    spec_id: str,
+    source_spec_dir: Path,
+    *,
+    adopted: dict[str, Any] | None = None,
 ) -> str:
     """Build ``/work`` as a STANDALONE git repo for the dispatched build Job (#671).
 
@@ -1376,8 +1387,33 @@ def _populate_self_contained_worktree(
     worktree_mod: Any = importlib.import_module("core.worktree")
     workspace: Any = importlib.import_module("core.workspace")
 
-    manager: Any = worktree_mod.WorktreeManager(project_path)
-    branch = manager.get_branch_name(spec_id)
+    metadata_file = source_spec_dir / "task_metadata.json"
+    try:
+        metadata = json.loads(metadata_file.read_text())
+    except (OSError, ValueError):
+        metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    source_branch = metadata.get("source_branch")
+    base_branch = metadata.get("base_branch")
+    if adopted:
+        if (
+            source_branch != adopted["source_branch"]
+            or metadata.get("approved_head_sha") != adopted["approved_head_sha"]
+        ):
+            raise BuildBackendUnavailableError(
+                "Adopted branch differs from trusted contract"
+            )
+        source_branch = adopted["source_branch"]
+        base_branch = adopted.get("base_ref") or base_branch
+    from trusted_plan import _safe_branch  # noqa: PLC0415
+
+    if (source_branch is not None and not _safe_branch(source_branch)) or (
+        base_branch is not None and not _safe_branch(base_branch)
+    ):
+        raise BuildBackendUnavailableError("Invalid branch handoff metadata")
+    manager: Any = worktree_mod.WorktreeManager(project_path, base_branch=base_branch)
+    branch = source_branch or manager.get_branch_name(spec_id)
     # #1467: NOT manager.get_worktree_path(spec_id) — that is the linked task
     # worktree's path, and replacing it with this clone orphaned its registration
     # in the parent repo (see _BUILD_CLONE_TEMPLATE). The build clone gets its own
@@ -1420,6 +1456,17 @@ def _populate_self_contained_worktree(
         # against stale source. Refresh THIS build's fresh clone to the remote
         # base head so run.py cuts the task worktree from current code.
         _refresh_to_remote_base(wt_path, base_branch)
+        if source_branch:
+            _git(
+                [
+                    "-C",
+                    str(wt_path),
+                    "fetch",
+                    "--",
+                    "origin",
+                    f"+refs/heads/{source_branch}:refs/remotes/origin/{source_branch}",
+                ]
+            )
     # Materialize the spec into the clone working tree (gitignored/uncommitted —
     # exactly as the in-pod worktree carries it).
     workspace.copy_spec_to_worktree(source_spec_dir, wt_path, spec_id)
@@ -1536,7 +1583,16 @@ class KubeJobBuildBackend:
         # the in-pod path does, at the subPath the manifest co-mounts at /work,
         # BEFORE the Job exists. Done first so a population failure never leaves a
         # dangling Job pointed at an unpopulated /work.
-        worktree_path = populate_build_worktree(project_path, spec_id)
+        from .trusted_contract import adopted_handoff  # noqa: PLC0415
+        from .trusted_contract_store import lookup, stamp_spawn  # noqa: PLC0415
+
+        source_spec = spec_dir_for(project_path, spec_id)
+        await stamp_spawn(source_spec, "kubejob")
+        try:
+            adopted = adopted_handoff(source_spec, await lookup(source_spec))
+        except ValueError as exc:
+            raise BuildBackendUnavailableError("Unverified adopted branch") from exc
+        worktree_path = populate_build_worktree(project_path, spec_id, adopted)
 
         # RFC-0017 #190: when the producer is ON (AIFACTORY_PACK_WORKSPACE), pack
         # the populated worktree to object storage and hand the Job its
@@ -1550,9 +1606,6 @@ class KubeJobBuildBackend:
         # pooled token + the SDK passthrough). Goes into container env, NOT argv.
         # #1667: stamp before the Job exists so the record never lags the build.
         # #1673: and before the verdict below, which reads the stamp.
-        from .trusted_contract_store import stamp_spawn  # noqa: PLC0415
-
-        await stamp_spawn(spec_dir_for(project_path, spec_id), "kubejob")
         from .completion import mark_transcript_dispatch  # noqa: PLC0415
 
         # #2059: completion links only transcripts newer than this dispatch.
@@ -1699,7 +1752,7 @@ class KubeJobBuildBackend:
         if state is None:
             return None
         lifecycle = state.get("lifecycle_state")
-        if lifecycle in _TERMINAL_STATES:
+        if isinstance(lifecycle, str) and lifecycle in _TERMINAL_STATES:
             return lifecycle
         return None
 
