@@ -17,7 +17,14 @@ _WEB_SERVER_DIR = Path(__file__).parent.parent / "apps" / "web-server"
 if str(_WEB_SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(_WEB_SERVER_DIR))
 
-from server.database.models import Base, Organization, OrgMember, User  # noqa: E402
+from server.database.models import (
+    Base,
+    Organization,
+    OrgMember,
+    Team,
+    TeamMembership,
+    User,
+)  # noqa: E402
 from server.mcp_remote import tools  # noqa: E402
 from server.mcp_remote.auth import AuthenticatedKey  # noqa: E402
 from server.routes import project_authz  # noqa: E402
@@ -39,7 +46,7 @@ TASK_TOOLS = [
 # The owner is a member of BOTH orgs; the key is bound to org-a (#1914).
 KEY_A = AuthenticatedKey(
     key_id="key-a",
-    scopes=frozenset({"mcp:read", "mcp:write"}),
+    scopes=frozenset({"mcp:read", "mcp:write", "task:merge"}),
     user_id="u",
     org_id="org-a",
 )
@@ -58,7 +65,19 @@ async def call(tmp_path, monkeypatch):
         for org in ("org-a", "org-b"):
             s.add(Organization(id=org, name=org, slug=org, owner_id="u"))
             await s.flush()
+            s.add(
+                Team(
+                    id=f"team-{org}",
+                    org_id=org,
+                    name="Default",
+                    slug="default",
+                    is_default=True,
+                )
+            )
+            await s.flush()
+            s.add(TeamMembership(team_id=f"team-{org}", user_id="u", role="admin"))
             s.add(OrgMember(org_id=org, user_id="u", role="member"))
+        s.add(TeamMembership(team_id="team-org-a", user_id="v", role="viewer"))
         s.add(OrgMember(org_id="org-a", user_id="v", role="viewer"))
         await s.commit()
 

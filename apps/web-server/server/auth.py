@@ -236,7 +236,7 @@ async def _ws_acw_principal(token: str) -> dict[str, object] | None:
         if key.user_id is None:
             return None
         return _acw_principal(key)
-    except Exception as exc:  # noqa: BLE001 — any validator failure denies WS auth (4001)
+    except Exception as exc:  # noqa: BLE001 — any validator failure denies WS auth (4401)
         # Class only, never the token: tells a DB outage from a bad key (#312).
         logger.warning("WS key validation failed: %s", type(exc).__name__)
         return None
@@ -423,7 +423,7 @@ async def verify_websocket_token(websocket: WebSocket) -> bool:
     token = _ws_extract_token(websocket)
 
     if not token:
-        await websocket.close(code=4001, reason="Unauthorized")
+        await websocket.close(code=4401, reason="Unauthorized")
         return False
 
     # Accept valid JWT access tokens
@@ -436,7 +436,7 @@ async def verify_websocket_token(websocket: WebSocket) -> bool:
         return True
 
     await _audit_auth_failure(websocket, reason="invalid_ws_token")
-    await websocket.close(code=4001, reason="Unauthorized")
+    await websocket.close(code=4401, reason="Unauthorized")
     return False
 
 
@@ -462,14 +462,14 @@ async def authenticate_websocket(websocket: WebSocket) -> dict | None:
     token = _ws_extract_token(websocket)
 
     if not token:
-        await websocket.close(code=4001, reason="Unauthorized")
+        await websocket.close(code=4401, reason="Unauthorized")
         raise WebSocketAuthError("No token provided")
 
     # Try JWT — returns user info
     jwt_payload = _try_decode_jwt(token)
     if jwt_payload is not None:
         if not jwt_payload.get("sub"):
-            await websocket.close(code=4001, reason="Unauthorized")
+            await websocket.close(code=4401, reason="Unauthorized")
             raise WebSocketAuthError("Token has no subject")
         return {
             "id": jwt_payload.get("sub"),
@@ -494,7 +494,7 @@ async def authenticate_websocket(websocket: WebSocket) -> dict | None:
             return principal
 
     await _audit_auth_failure(websocket, reason="invalid_ws_token")
-    await websocket.close(code=4001, reason="Unauthorized")
+    await websocket.close(code=4401, reason="Unauthorized")
     raise WebSocketAuthError("Invalid token")
 
 

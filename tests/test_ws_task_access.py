@@ -61,7 +61,9 @@ def sockets(monkeypatch):
     monkeypatch.setattr(
         auth,
         "get_settings",
-        lambda: SimpleNamespace(DISABLE_AUTH=False, API_TOKEN="legacy"),
+        lambda: SimpleNamespace(
+            DISABLE_AUTH=False, API_TOKEN="legacy", LEGACY_SHARED_TOKEN_FULL_ACCESS=True
+        ),
     )
     monkeypatch.setattr(
         auth,
@@ -95,12 +97,31 @@ def test_member_key_and_legacy_connect(sockets, endpoint, token):
 
 
 @pytest.mark.parametrize("endpoint", ["logs", "progress"])
+def test_legacy_token_without_full_access_needs_project_grant(
+    sockets, endpoint, monkeypatch
+):
+    client, _state, _validator, _service = sockets
+    monkeypatch.setattr(
+        task_access,
+        "get_settings",
+        lambda: SimpleNamespace(
+            DISABLE_AUTH=False, LEGACY_SHARED_TOKEN_FULL_ACCESS=False
+        ),
+    )
+    with pytest.raises(WebSocketDisconnect):
+        with connect(client, endpoint, "legacy"):
+            pass
+
+
+@pytest.mark.parametrize("endpoint", ["logs", "progress"])
 def test_auth_disabled_service_connects(sockets, endpoint, monkeypatch):
     client, _state, _validator, _service = sockets
     monkeypatch.setattr(
         auth,
         "get_settings",
-        lambda: SimpleNamespace(DISABLE_AUTH=True, API_TOKEN="legacy"),
+        lambda: SimpleNamespace(
+            DISABLE_AUTH=True, API_TOKEN="legacy", LEGACY_SHARED_TOKEN_FULL_ACCESS=True
+        ),
     )
     with connect(client, endpoint, "service", "bare") as ws:
         assert ws.receive_json()["type"] == "connected"
@@ -127,7 +148,7 @@ def test_connect_denied(sockets, endpoint, task_id, token, error, session_error)
     with pytest.raises(WebSocketDisconnect) as exc:
         with connect(client, endpoint, token, task_id):
             pass
-    assert exc.value.code == 4003
+    assert exc.value.code == 4403
 
 
 @pytest.mark.parametrize("endpoint", ["logs", "progress"])
@@ -138,7 +159,7 @@ def test_nonmember_denied(sockets, endpoint, token):
     with pytest.raises(WebSocketDisconnect) as exc:
         with connect(client, endpoint, token):
             pass
-    assert exc.value.code == 4003
+    assert exc.value.code == 4403
 
 
 @pytest.mark.parametrize("endpoint", ["logs", "progress"])
@@ -149,7 +170,7 @@ def test_other_org_key_denied(sockets, endpoint, monkeypatch):
     with pytest.raises(WebSocketDisconnect) as exc:
         with connect(client, endpoint, "acw_key"):
             pass
-    assert exc.value.code == 4003
+    assert exc.value.code == 4403
 
 
 @pytest.mark.parametrize("endpoint", ["logs", "progress"])
@@ -197,4 +218,4 @@ def test_key_recheck_closes(sockets, endpoint, failure, monkeypatch):
         assert ws.receive_json()["type"] in {"log", "progress"}
         with pytest.raises(WebSocketDisconnect) as exc:
             ws.receive_json()
-        assert exc.value.code == 4001
+        assert exc.value.code == 4401

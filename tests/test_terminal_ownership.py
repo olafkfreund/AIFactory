@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -35,7 +35,11 @@ def env(tmp_path, monkeypatch):
         "a": {"path": str(tmp_path / "a"), "org_id": "A"},
         "b": {"path": str(tmp_path / "b"), "org_id": "B"},
     }
-    state = {"members": {"alice": {"a"}, "bob": {"b"}}, "error": False}
+    state = {
+        "members": {"alice": {"a"}, "bob": {"b"}},
+        "error": False,
+        "viewers": set(),
+    }
     monkeypatch.setenv("APP_FILE_BROWSE_ROOTS", str(tmp_path))
     monkeypatch.setattr(project_registry, "load_projects", lambda: projects)
     monkeypatch.setattr(terminal, "load_projects", lambda: projects)
@@ -49,13 +53,30 @@ def env(tmp_path, monkeypatch):
         async def __aexit__(self, *_):
             pass
 
-    async def authorize(user, project_id, _db):
+    async def authorize(user, project_id, _db, role="viewer"):
         key_org = user.get("api_key_id") and user.get("org_id") != "A"
-        if project_id not in state["members"].get(user["id"], set()) or key_org:
+        if (
+            project_id not in state["members"].get(user["id"], set())
+            or key_org
+            or (role == "member" and user["id"] in state["viewers"])
+        ):
             raise PermissionError("not a member")
 
     monkeypatch.setattr(access.engine, "async_session_factory", Session)
     monkeypatch.setattr(access, "authorize_project_for_user", authorize)
+    monkeypatch.setattr(terminal.engine, "async_session_factory", Session)
+
+    async def require(user, project_id, role, db):
+        if user and user.get("is_service"):
+            return
+        if project_id is None:
+            raise HTTPException(404, "Project not found")
+        try:
+            await authorize(user, project_id, db, role)
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+
+    monkeypatch.setattr(terminal, "require_project_role", require)
 
     monkeypatch.setattr(
         PTYManager, "_resolve_claude_token", lambda self: (None, None, None)
@@ -308,7 +329,7 @@ def _first(env):
         return ws.receive_json()
 
 
-def test_ws_owner_connects_others_get_4004(sockets):
+def test_ws_owner_connects_others_get_4404(sockets):
     assert _first(sockets)["type"] == "connected"
     for user in (BOB, {"id": "alice", "api_key_id": "k", "org_id": "B"}):
         sockets.principal["user"] = user
@@ -316,26 +337,47 @@ def test_ws_owner_connects_others_get_4004(sockets):
             assert ws.receive_json()["type"] == "error"
             with pytest.raises(WebSocketDisconnect) as exc:
                 ws.receive_json()
-            assert exc.value.code == 4004
+            assert exc.value.code == 4404
 
 
 def test_ws_legacy_and_service_connect(sockets):
-    for user in (None, SERVICE):
+    for user in (SERVICE,):
         sockets.principal["user"] = user
         assert _first(sockets)["type"] == "connected"
 
 
-def test_ws_membership_loss_closes_4003(sockets):
+def test_viewer_can_read_but_cannot_mutate_or_open_shell(sockets):
+    sockets.state["viewers"].add("alice")
+    assert _as(sockets, "alice", "get", "/api/terminals/t1").status_code == 200
+    assert (
+        _as(
+            sockets,
+            "alice",
+            "post",
+            "/api/terminals/t1/resize",
+            json={"cols": 80, "rows": 24},
+        ).status_code
+        == 404
+    )
+    assert (
+        _create(sockets, "alice", id="new", cwd=str(sockets.root / "a")).status_code
+        == 403
+    )
+    with sockets.client.websocket_connect("/ws/terminal/t1") as ws:
+        assert ws.receive_json()["type"] == "error"
+
+
+def test_ws_membership_loss_closes_4403(sockets):
     with sockets.client.websocket_connect("/ws/terminal/t1") as ws:
         assert ws.receive_json()["type"] == "connected"
         sockets.state["members"]["alice"] = set()
         with pytest.raises(WebSocketDisconnect) as exc:
             ws.receive_json()
-    assert exc.value.code == 4003
+    assert exc.value.code == 4403
 
 
 @pytest.mark.parametrize("outcome", ["revoked", "raises"])
-def test_ws_revoked_key_closes_4001(sockets, monkeypatch, outcome):
+def test_ws_revoked_key_closes_4401(sockets, monkeypatch, outcome):
     sockets.principal["user"] = {"id": "alice", "api_key_id": "k", "org_id": "A"}
     sockets.principal["token"] = "acw_secret"
 
@@ -348,7 +390,7 @@ def test_ws_revoked_key_closes_4001(sockets, monkeypatch, outcome):
         assert ws.receive_json()["type"] == "connected"
         with pytest.raises(WebSocketDisconnect) as exc:
             ws.receive_json()
-    assert exc.value.code == 4001
+    assert exc.value.code == 4401
 
 
 @pytest.mark.asyncio

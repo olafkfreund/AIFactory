@@ -39,7 +39,10 @@ from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from server.database.engine import async_session_factory
 from server.error_ref import client_error
+from server.pty.access import project_id_for_path
+from server.routes.project_authz import require_project_role
 
 logger = logging.getLogger(__name__)
 
@@ -289,12 +292,27 @@ async def _tool_get_build_progress(spec_dir: Path, metadata: dict) -> str:
 
 
 async def _dispatch_tool(
-    name: str, arguments: dict, issue_number: int | None, task_id_arg: str | None
+    name: str,
+    arguments: dict,
+    issue_number: int | None,
+    task_id_arg: str | None,
+    principal: dict | None = None,
 ) -> str:
     spec_dir, metadata = await _resolve_task(issue_number, task_id_arg)
 
     if spec_dir is None:
         return f"No task found for issue_number={issue_number} task_id={task_id_arg}"
+
+    project_id = project_id_for_path(str(spec_dir.parent.parent.parent))
+    async with async_session_factory() as db:
+        await require_project_role(
+            principal,
+            project_id,
+            "member"
+            if name in {"aifactory_record_discovery", "aifactory_record_gotcha"}
+            else "viewer",
+            db,
+        )
 
     if name == "aifactory_get_spec":
         return await _tool_get_spec(spec_dir)
@@ -363,7 +381,23 @@ async def mcp_endpoint(request: Request) -> JSONResponse:
         task_id_arg = arguments.get("task_id")
 
         try:
-            text = await _dispatch_tool(tool_name, arguments, issue_number, task_id_arg)
+            text = await _dispatch_tool(
+                tool_name,
+                arguments,
+                issue_number,
+                task_id_arg,
+                getattr(request.state, "user", None)
+                or (
+                    {"id": "default", "is_legacy_shared_token": True}
+                    if os.environ.get("AIFACTORY_MCP_SECRET")
+                    else None
+                ),
+            )
+        except HTTPException as exc:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content=_error(-32000, str(exc.detail), rpc_id),
+            )
         except Exception as exc:
             logger.exception(
                 "[copilot-mcp] tool call failed tool=%s", sanitize_log(tool_name)

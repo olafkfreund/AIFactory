@@ -367,7 +367,9 @@ async def dispatch_tool_call(
             tool_name,
             arguments,
             key,
-            "viewer" if required_scope == MCP_READ_SCOPE else "member",
+            "admin"
+            if tool_name == "aifactory.merge_pr"
+            else ("viewer" if required_scope == MCP_READ_SCOPE else "member"),
         )
     except MCPAuthError as exc:
         return _format_error(str(exc))

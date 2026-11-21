@@ -10,29 +10,42 @@ from pathlib import Path, PurePath
 from typing import Any
 
 from server import project_registry
+from server.config import get_settings
 from server.database import engine
 from server.routes.project_authz import authorize_project_for_user, is_service_principal
 
 
-async def project_ok(user: dict[str, Any] | None, project_id: str | None) -> bool:
+async def project_ok(
+    user: dict[str, Any] | None, project_id: str | None, role: str = "viewer"
+) -> bool:
     """Strict project authorization; denial or lookup failure is False."""
     try:
         async with engine.async_session_factory() as db:
-            await authorize_project_for_user(user, project_id, db)
+            await authorize_project_for_user(user, project_id, db, role)
     except Exception:  # noqa: BLE001 - denial or lookup failure fails closed
         return False
     return True
 
 
-async def may_use(user: dict[str, Any] | None, session: Any) -> bool:
-    if is_service_principal(user):
+async def may_use(
+    user: dict[str, Any] | None, session: Any, role: str = "viewer"
+) -> bool:
+    if is_service_principal(user) or (
+        user
+        and user.get("is_legacy_shared_token")
+        and get_settings().LEGACY_SHARED_TOKEN_FULL_ACCESS
+    ):
         return True
     if not isinstance(user, dict) or not user.get("id"):
         return False
     if user["id"] != session.owner_id:
         return False
-    # A project-less session (the CLI login shell in the home dir) is bound to its owner alone.
-    return session.project_id is None or await project_ok(user, session.project_id)
+    # Old project-less sessions are readable by their owner, but cannot open a shell.
+    return (
+        role == "viewer"
+        if session.project_id is None
+        else await project_ok(user, session.project_id, role)
+    )
 
 
 def _roots(project: object) -> list[PurePath]:
