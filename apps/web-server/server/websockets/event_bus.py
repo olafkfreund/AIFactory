@@ -51,6 +51,8 @@ from typing import Any
 
 from fastapi import WebSocket
 
+from server.websockets.task_access import _project_authorized
+
 from ..config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -320,8 +322,6 @@ async def deliver_local(scope: Scope, event_type: str, payload: dict) -> None:
         project_id = task_id.partition(":")[0]
     for ws, client in targets:
         if project_id:
-            from server.websockets.task_access import _project_authorized  # noqa: PLC0415
-
             if not client.principal and not get_settings().DISABLE_AUTH:
                 continue
             if client.principal and not await _project_authorized(

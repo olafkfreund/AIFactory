@@ -30,13 +30,16 @@ import asyncio
 import json
 import os
 import tempfile
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Generator
+from types import SimpleNamespace
+from typing import Any, Generator
 from unittest.mock import MagicMock, patch
 
 import pytest
 from server.services import project_settings_store
 from server.services.http_verdict import REFUSED_STATUS
+from sqlalchemy.ext.asyncio import AsyncSession
 from verdict_helpers import verdict
 
 
@@ -314,6 +317,14 @@ class TestProjectSetupWorkflow:
         from server import config
         from server.routes import projects as projects_routes
 
+        caller = SimpleNamespace(state=SimpleNamespace(user={"id": "default"}))
+
+        async def call_route(
+            handler: Callable[..., Awaitable[Any]], payload: Any
+        ) -> Any:
+            async with AsyncSession() as db:
+                return await handler(payload, caller, db)
+
         monkeypatch.setattr(
             config.settings, "PROJECTS_DATA_DIR", str(tmp_path / "data")
         )
@@ -339,8 +350,11 @@ class TestProjectSetupWorkflow:
 
         # Step 1: Scan for projects
         found = asyncio.run(
-            projects_routes.scan_for_projects(
-                projects_routes.ScanProjectsRequest(basePath=str(code_root), maxDepth=1)
+            call_route(
+                projects_routes.scan_for_projects,
+                projects_routes.ScanProjectsRequest(
+                    basePath=str(code_root), maxDepth=1
+                ),
             )
         )
         assert [p["name"] for p in found] == ["my-app"]
@@ -350,8 +364,9 @@ class TestProjectSetupWorkflow:
 
         # Step 2: Register the discovered project
         created = asyncio.run(
-            projects_routes.add_project(
-                projects_routes.ProjectCreate(path=found[0]["path"], name="My App")
+            call_route(
+                projects_routes.add_project,
+                projects_routes.ProjectCreate(path=found[0]["path"], name="My App"),
             )
         )
         project_id = created["id"]
@@ -365,8 +380,9 @@ class TestProjectSetupWorkflow:
         # Step 3: Registering the same path again conflicts
         with pytest.raises(HTTPException) as exc:
             asyncio.run(
-                projects_routes.add_project(
-                    projects_routes.ProjectCreate(path=str(app_dir), name="Dup")
+                call_route(
+                    projects_routes.add_project,
+                    projects_routes.ProjectCreate(path=str(app_dir), name="Dup"),
                 )
             )
         assert exc.value.status_code == 409

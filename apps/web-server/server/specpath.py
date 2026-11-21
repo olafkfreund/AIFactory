@@ -18,6 +18,8 @@ import re
 from collections.abc import Iterable
 from pathlib import Path, PurePath
 
+from server import project_registry
+
 # Deliberately a `fullmatch` against a restrictive allow-list rather than an
 # ad-hoc `if "/" in value` check. Two reasons, and the second is not cosmetic:
 # an allow-list cannot be defeated by an encoding trick the deny-list author
@@ -242,9 +244,7 @@ def project_id_for_path(path: str | None) -> str | None:
     """Registered project id for a project id or a path inside a project."""
     if not path:
         return None
-    from server.project_registry import load_projects
-
-    projects = load_projects()
+    projects = project_registry.load_projects()
     if path in projects:
         return path
     if not PurePath(path).is_absolute():
@@ -265,9 +265,7 @@ def project_id_for_path(path: str | None) -> str | None:
 def path_in_project(path: str, project_id: str) -> bool:
     if not PurePath(path).is_absolute():
         return False
-    from server.project_registry import load_projects
-
-    roots = _roots(load_projects().get(project_id))
+    roots = _roots(project_registry.load_projects().get(project_id))
     try:
         target = contained_path(path, roots, "project directory")
     except (OSError, RuntimeError, ValueError):

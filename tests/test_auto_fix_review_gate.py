@@ -75,12 +75,11 @@ def test_start_route_requires_member_role(monkeypatch):
 
     roles: list[str] = []
 
-    async def deny(user, project_id, db, minimum_role="viewer"):
-        roles.append(minimum_role)
+    async def deny(self, project_id, request, db):
+        roles.append(self.minimum_role)
         raise HTTPException(status_code=403, detail="forbidden")
 
-    monkeypatch.setattr(project_authz, "_auth_disabled", lambda: False)
-    monkeypatch.setattr(project_authz, "authorize_project_for_user", deny)
+    monkeypatch.setattr(project_authz.ProjectAccessChecker, "_authorize", deny)
     start = AsyncMock()
     monkeypatch.setattr(auto_fix_service, "start_auto_fix", start)
 
@@ -137,14 +136,14 @@ def _config_client(monkeypatch, stored, allow=True):
 
     roles: list[str] = []
 
-    async def authz(user, project_id, db, minimum_role="viewer"):
-        roles.append(minimum_role)
+    async def authz(self, project_id, request, db):
+        roles.append(self.minimum_role)
         if not allow:
             raise HTTPException(status_code=403, detail="forbidden")
+        return {"id": "test-user"}
 
     saved: dict = {}
-    monkeypatch.setattr(project_authz, "_auth_disabled", lambda: False)
-    monkeypatch.setattr(project_authz, "authorize_project_for_user", authz)
+    monkeypatch.setattr(project_authz.ProjectAccessChecker, "_authorize", authz)
     monkeypatch.setattr(auto_fix_service, "get_config", lambda pid: dict(stored))
     monkeypatch.setattr(
         auto_fix_service, "save_config", lambda pid, cfg: saved.update(cfg) or True

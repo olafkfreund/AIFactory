@@ -11,6 +11,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+import server.websockets.terminal as terminal_ws
 from fastapi import FastAPI, WebSocketDisconnect
 from fastapi.testclient import TestClient
 from server import project_registry
@@ -32,7 +33,6 @@ from server.websockets import (
     logs,
     progress,
     task_access,
-    terminal as terminal_ws,
 )
 from server.websockets.event_bus import OrgScope
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
