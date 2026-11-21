@@ -12,7 +12,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from server import project_registry as reg
-from server.database.models import Base, Organization, OrgMember, User
+from server import project_store
+from server.database.models import Base, Organization, OrgMember, Team, User
 from server.routes import projects as projects_mod
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -20,7 +21,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 @pytest.fixture
 def api(tmp_path, monkeypatch):
     """The projects router with a caller picked by ``X-Test-User`` (``svc`` = service principal)."""
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'app.db'}")
+    db_url = f"sqlite+aiosqlite:///{tmp_path / 'app.db'}"
+    project_store.configure(db_url, create_schema=True, data_dir=tmp_path / "registry-data")
+    engine = create_async_engine(db_url)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
 
     async def _seed():
@@ -33,6 +36,24 @@ def api(tmp_path, monkeypatch):
             s.add(Organization(id="org-a", name="a", slug="a", owner_id="alice"))
             s.add(Organization(id="org-b", name="b", slug="b", owner_id="bob"))
             await s.flush()
+            s.add(
+                Team(
+                    id="team-a",
+                    org_id="org-a",
+                    name="Default",
+                    slug="default",
+                    is_default=True,
+                )
+            )
+            s.add(
+                Team(
+                    id="team-b",
+                    org_id="org-b",
+                    name="Default",
+                    slug="default",
+                    is_default=True,
+                )
+            )
             s.add(OrgMember(org_id="org-a", user_id="alice", role="admin"))
             s.add(OrgMember(org_id="org-b", user_id="bob", role="admin"))
             await s.commit()
@@ -47,7 +68,13 @@ def api(tmp_path, monkeypatch):
     async def _who(request, call_next):
         who = request.headers.get("X-Test-User", "svc")
         request.state.user = (
-            {"id": "default", "is_service": True} if who == "svc" else {"id": who}
+            {
+                "id": "default",
+                "is_service": True,
+                "is_legacy_shared_token": True,
+            }
+            if who == "svc"
+            else {"id": who}
         )
         return await call_next(request)
 

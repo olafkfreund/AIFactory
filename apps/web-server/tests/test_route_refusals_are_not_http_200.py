@@ -318,7 +318,8 @@ async def test_terminal_remove_worktree_refusal_has_a_status() -> None:
     it reads the value at runtime rather than the literal in the source.
     """
     service = patch.object(terminal, "TerminalWorktreeService")
-    with service as cls:
+    auth_path = patch.object(terminal, "_authorize_path")
+    with service as cls, auth_path:
         cls.return_value.remove_worktree.return_value = False
         result = await terminal.remove_terminal_worktree(
             name="wt",

@@ -224,3 +224,111 @@ async def test_default_team_backfill_and_oidc_membership(tmp_path, monkeypatch):
             assert len((await db.execute(select(TeamMembership))).scalars().all()) == 3
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_scoped_service_token_project_role_and_legacy_gate(tmp_path, monkeypatch):
+    from fastapi import HTTPException
+    from server import project_registry
+    from server.routes import project_authz
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'svc_authz.db'}")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    monkeypatch.setattr(project_authz, "_auth_disabled", lambda: False)
+    monkeypatch.setattr(
+        project_authz,
+        "_audit_authz_denial",
+        lambda *_a, **_kw: asyncio.sleep(0),
+    )
+
+    projects = {
+        "p-default": {"org_id": "org-pfactory", "team_id": "team-default"},
+        "p-custom": {"org_id": "org-pfactory", "team_id": "team-custom"},
+        "p-other": {"org_id": "org-other", "team_id": "team-other"},
+    }
+
+    async def _aload():
+        return projects
+
+    monkeypatch.setattr(project_registry, "aload_projects", _aload)
+
+    try:
+        async with session_factory() as db:
+            db.add_all(
+                [
+                    Team(
+                        id="team-default",
+                        org_id="org-pfactory",
+                        name="Default",
+                        slug="default",
+                        is_default=True,
+                    ),
+                    Team(
+                        id="team-custom",
+                        org_id="org-pfactory",
+                        name="Custom",
+                        slug="custom",
+                        is_default=False,
+                    ),
+                    Team(
+                        id="team-other",
+                        org_id="org-other",
+                        name="Default",
+                        slug="default",
+                        is_default=True,
+                    ),
+                ]
+            )
+            await db.commit()
+
+            read_svc = auth._acw_principal(
+                AuthenticatedKey(
+                    key_id="k-read",
+                    scopes=frozenset({"mcp:read"}),
+                    user_id=None,
+                    org_id="org-pfactory",
+                )
+            )
+            write_svc = auth._acw_principal(
+                AuthenticatedKey(
+                    key_id="k-write",
+                    scopes=frozenset({"task:write"}),
+                    user_id=None,
+                    org_id="org-pfactory",
+                )
+            )
+
+            # Read service key gets viewer on default team, 403 on member, 404 on non-default team / other org.
+            access = await project_authz.require_project_role(
+                read_svc, "p-default", "viewer", db
+            )
+            assert access.role == "viewer"
+            with pytest.raises(HTTPException) as low_scope:
+                await project_authz.require_project_role(
+                    read_svc, "p-default", "member", db
+                )
+            assert low_scope.value.status_code == 403
+
+            for hidden in ("p-custom", "p-other", "p-missing"):
+                with pytest.raises(HTTPException) as not_found:
+                    await project_authz.require_project_role(
+                        write_svc, hidden, "viewer", db
+                    )
+                assert not_found.value.status_code == 404
+
+            # Write service key gets member on default team, 403 on admin.
+            assert (
+                await project_authz.require_project_role(
+                    write_svc, "p-default", "member", db
+                )
+            ).role == "member"
+            with pytest.raises(HTTPException) as need_admin:
+                await project_authz.require_project_role(
+                    write_svc, "p-default", "admin", db
+                )
+            assert need_admin.value.status_code == 403
+    finally:
+        await engine.dispose()
