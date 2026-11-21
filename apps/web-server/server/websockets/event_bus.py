@@ -77,7 +77,7 @@ class ConnectedClient:
     user_id: str | None = None
     org_ids: set[str] = field(default_factory=set)
     key_org_id: str | None = None
-    principal: dict | None = None
+    principal: dict[str, Any] | None = None
 
 
 _clients: dict[WebSocket, ConnectedClient] = {}
@@ -319,7 +319,7 @@ async def deliver_local(scope: Scope, event_type: str, payload: dict) -> None:
         project_id = payload["taskId"].partition(":")[0]
     for ws, client in targets:
         if project_id:
-            from server.websockets.task_access import _project_authorized
+            from server.websockets.task_access import _project_authorized  # noqa: PLC0415
 
             if not client.principal and not get_settings().DISABLE_AUTH:
                 continue

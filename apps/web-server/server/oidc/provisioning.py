@@ -158,10 +158,11 @@ async def jit_provision_user(
             role,
         )
 
-    result = await db.execute(
-        select(Team).where(Team.org_id == org.id, Team.is_default.is_(True))
-    )
-    team = result.scalar_one_or_none()
+    team = (
+        await db.execute(
+            select(Team).where(Team.org_id == org.id, Team.is_default.is_(True))
+        )
+    ).scalar_one_or_none()
     if team is None:
         team = (
             await db.execute(
@@ -174,12 +175,13 @@ async def jit_provision_user(
             await db.flush()
         else:
             team.is_default = True
-    result = await db.execute(
-        select(TeamMembership).where(
-            TeamMembership.team_id == team.id, TeamMembership.user_id == user.id
+    team_member = (
+        await db.execute(
+            select(TeamMembership).where(
+                TeamMembership.team_id == team.id, TeamMembership.user_id == user.id
+            )
         )
-    )
-    team_member = result.scalar_one_or_none()
+    ).scalar_one_or_none()
     if team_member is None:
         db.add(
             TeamMembership(

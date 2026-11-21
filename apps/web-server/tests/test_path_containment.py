@@ -114,7 +114,7 @@ def authz_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     )
     sessions = async_sessionmaker(engine, expire_on_commit=False)
 
-    async def _seed():
+    async def _seed() -> None:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         async with sessions() as s:

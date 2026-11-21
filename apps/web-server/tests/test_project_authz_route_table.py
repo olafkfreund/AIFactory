@@ -30,6 +30,7 @@ from server.routes import copilot_mcp, investigations, project_authz
 from server.utils.roles import ROLE_LEVELS
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+_DUMMY_HASH = "x"
 _WEB_SERVER = Path(__file__).resolve().parents[1]
 if str(_WEB_SERVER) not in sys.path:
     sys.path.insert(0, str(_WEB_SERVER))
@@ -395,11 +396,11 @@ def authz_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         async with session_factory() as db:
             db.add_all(
                 [
-                    User(id="u-viewer", email="v@x.test", password_hash="x"),
-                    User(id="u-member", email="m@x.test", password_hash="x"),
-                    User(id="u-admin", email="a@x.test", password_hash="x"),
-                    User(id="u-owner", email="o@x.test", password_hash="x"),
-                    User(id="u-org2", email="o2@x.test", password_hash="x"),
+                    User(id="u-viewer", email="v@x.test", password_hash=_DUMMY_HASH),
+                    User(id="u-member", email="m@x.test", password_hash=_DUMMY_HASH),
+                    User(id="u-admin", email="a@x.test", password_hash=_DUMMY_HASH),
+                    User(id="u-owner", email="o@x.test", password_hash=_DUMMY_HASH),
+                    User(id="u-org2", email="o2@x.test", password_hash=_DUMMY_HASH),
                     Organization(
                         id="org-1", name="Org 1", slug="org-1", owner_id="u-owner"
                     ),

@@ -7,7 +7,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-from server import auth, project_store
+from fastapi import HTTPException
+from server import auth, project_registry, project_store
 from server.database import engine as database_engine
 from server.database.models import (
     Base,
@@ -19,6 +20,7 @@ from server.database.models import (
 from server.mcp_remote.auth import AuthenticatedKey
 from server.mcp_stdio.auth import _LegacyAdminKey, acw_principal
 from server.oidc.provisioning import jit_provision_user
+from server.routes import project_authz
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from starlette.requests import Request
@@ -228,10 +230,6 @@ async def test_default_team_backfill_and_oidc_membership(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_scoped_service_token_project_role_and_legacy_gate(tmp_path, monkeypatch):
-    from fastapi import HTTPException
-    from server import project_registry
-    from server.routes import project_authz
-
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'svc_authz.db'}")
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as connection:
@@ -301,7 +299,7 @@ async def test_scoped_service_token_project_role_and_legacy_gate(tmp_path, monke
                 )
             )
 
-            # Read service key gets viewer on default team, 403 on member, 404 on non-default team / other org.
+            # Read key: viewer on default team, 403 on member, 404 outside that team or org.
             access = await project_authz.require_project_role(
                 read_svc, "p-default", "viewer", db
             )

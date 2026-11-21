@@ -11,8 +11,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from server import project_registry as reg
-from server import project_store
+from server import project_registry as reg, project_store
 from server.database.models import Base, Organization, OrgMember, Team, User
 from server.routes import projects as projects_mod
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine

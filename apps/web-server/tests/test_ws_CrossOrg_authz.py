@@ -7,6 +7,7 @@ import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -25,11 +26,18 @@ from server.pty import access as pty_access
 from server.pty.manager import PTYManager
 from server.pty.session import PTYSession
 from server.routes import project_authz
-from server.websockets import event_bus, events, logs, progress, task_access
-from server.websockets import terminal as terminal_ws
+from server.websockets import (
+    event_bus,
+    events,
+    logs,
+    progress,
+    task_access,
+    terminal as terminal_ws,
+)
 from server.websockets.event_bus import OrgScope
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+_DUMMY_HASH = "x"
 _WEB_SERVER = Path(__file__).resolve().parents[1]
 if str(_WEB_SERVER) not in sys.path:
     sys.path.insert(0, str(_WEB_SERVER))
@@ -66,9 +74,9 @@ def seeded_ws_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         async with session_factory() as db:
             db.add_all(
                 [
-                    User(id="alice", email="a@x.test", password_hash="x"),
-                    User(id="viewer-u", email="v@x.test", password_hash="x"),
-                    User(id="bob", email="b@x.test", password_hash="x"),
+                    User(id="alice", email="a@x.test", password_hash=_DUMMY_HASH),
+                    User(id="viewer-u", email="v@x.test", password_hash=_DUMMY_HASH),
+                    User(id="bob", email="b@x.test", password_hash=_DUMMY_HASH),
                     Organization(
                         id="org-1", name="Org 1", slug="org-1", owner_id="alice"
                     ),
@@ -116,8 +124,9 @@ def seeded_ws_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("seeded_ws_env")
 async def test_ws_task_authorized_checks_team_grant_and_scope_ceiling(
-    seeded_ws_env, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Alice is member of team-1 (p1), not team-2 (p_team2), not org-2 (p2).
     assert await task_access._project_authorized({"id": "alice"}, "p1") is True
@@ -170,12 +179,12 @@ async def test_ws_task_authorized_checks_team_grant_and_scope_ceiling(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("seeded_ws_env")
 async def test_event_bus_filters_cross_team_and_cross_org_project_events(
-    seeded_ws_env,
 ) -> None:
     class FakeSocket:
         def __init__(self) -> None:
-            self.sent: list[dict] = []
+            self.sent: list[dict[str, Any]] = []
 
         async def send_text(self, text: str) -> None:
             self.sent.append(json.loads(text))
@@ -209,8 +218,9 @@ async def test_event_bus_filters_cross_team_and_cross_org_project_events(
         event_bus.unregister_client(ws_bob)
 
 
+@pytest.mark.usefixtures("seeded_ws_env")
 def test_task_ws_and_terminal_ws_enforce_project_roles(
-    seeded_ws_env, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     principals = {
         "alice": {"id": "alice", "role": "user"},
@@ -254,11 +264,11 @@ def test_task_ws_and_terminal_ws_enforce_project_roles(
     monkeypatch.setattr(task_access, "authenticate_websocket", fake_auth_ws)
     monkeypatch.setattr(terminal_ws, "authenticate_websocket", fake_auth_ws)
     monkeypatch.setattr(
-        PTYManager, "_resolve_claude_token", lambda self: (None, None, None)
+        PTYManager, "_resolve_claude_token", lambda _self: (None, None, None)
     )
-    monkeypatch.setattr(PTYSession, "start", lambda self: None)
-    monkeypatch.setattr(PTYSession, "is_alive", lambda self: True)
-    monkeypatch.setattr(PTYSession, "close", lambda self: None)
+    monkeypatch.setattr(PTYSession, "start", lambda _self: None)
+    monkeypatch.setattr(PTYSession, "is_alive", lambda _self: True)
+    monkeypatch.setattr(PTYSession, "close", lambda _self: None)
     manager = PTYManager()
     manager.create_session(session_id="t-alice", owner_id="alice", project_id="p1")
     manager.create_session(session_id="t-viewer", owner_id="viewer-u", project_id="p1")
@@ -277,12 +287,14 @@ def test_task_ws_and_terminal_ws_enforce_project_roles(
             assert ws.receive_json()["type"] == "connected"
 
         for forbidden_task in ("p_team2:002", "p2:003"):
-            with pytest.raises(WebSocketDisconnect) as exc:
-                with client.websocket_connect(
+            with (
+                pytest.raises(WebSocketDisconnect) as exc,
+                client.websocket_connect(
                     f"/ws/tasks/{forbidden_task}/logs",
                     headers={"authorization": "Bearer alice"},
-                ):
-                    pass
+                ),
+            ):
+                pass
             assert exc.value.code == 4403
 
         # Unified progress stream filters running_tasks to visible projects only.
@@ -322,9 +334,11 @@ def test_task_ws_and_terminal_ws_enforce_project_roles(
                 DISABLE_AUTH=False, LEGACY_SHARED_TOKEN_FULL_ACCESS=False
             ),
         )
-        with pytest.raises(WebSocketDisconnect) as exc:
-            with client.websocket_connect(
+        with (
+            pytest.raises(WebSocketDisconnect) as exc,
+            client.websocket_connect(
                 "/ws/tasks/p1:001/logs", headers={"authorization": "Bearer legacy"}
-            ):
-                pass
+            ),
+        ):
+            pass
         assert exc.value.code == 4403

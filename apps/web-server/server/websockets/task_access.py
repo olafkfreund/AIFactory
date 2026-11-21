@@ -41,7 +41,7 @@ class TaskSocketAccess:
         self.key_token: str | None = None
         self.last_check = time.monotonic()
 
-    async def connect(self) -> bool:
+    async def connect(self) -> bool:  # noqa: PLR0911
         try:
             self.user = await authenticate_websocket(self.websocket)
         except WebSocketAuthError:

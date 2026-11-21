@@ -296,7 +296,7 @@ async def _dispatch_tool(
     arguments: dict,
     issue_number: int | None,
     task_id_arg: str | None,
-    principal: dict | None = None,
+    principal: dict[str, Any] | None = None,
 ) -> str:
     spec_dir, metadata = await _resolve_task(issue_number, task_id_arg)
 
@@ -340,7 +340,7 @@ async def _dispatch_tool(
 
 
 @router.post("/mcp")
-async def mcp_endpoint(request: Request) -> JSONResponse:
+async def mcp_endpoint(request: Request) -> JSONResponse:  # noqa: PLR0911
     """JSON-RPC 2.0 MCP endpoint for the GitHub Copilot cloud agent.
 
     Handles: initialize, tools/list, tools/call.
