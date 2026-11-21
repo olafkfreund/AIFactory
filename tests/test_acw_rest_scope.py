@@ -137,6 +137,6 @@ def test_deleted_org_key_gets_401(env):
     assert client.get("/api/whoami", headers=HEADERS).status_code == 401
 
 
-def test_other_org_key_gets_403_on_project_route(env):
+def test_other_org_key_gets_404_on_project_route(env):
     client, _ = env
-    assert client.get("/api/projects/p2/x", headers=HEADERS).status_code == 403
+    assert client.get("/api/projects/p2/x", headers=HEADERS).status_code == 404

@@ -2,8 +2,7 @@
 
 Exercises the ``ProjectAccessChecker`` dependency + ``accessible_org_ids``
 against a real in-memory SQLite with seeded users/orgs/memberships — proving
-tenant A cannot reach tenant B's project, role levels are enforced, and the
-service principal still bypasses. Mirrors tests/audit's fresh-DB pattern.
+tenant A cannot reach tenant B's project and role levels are enforced.
 """
 
 from __future__ import annotations
@@ -47,6 +46,8 @@ def db_factory():
         Base,
         Organization,
         OrgMember,
+        Team,
+        TeamMembership,
         User,
     )
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -87,6 +88,22 @@ def db_factory():
                     ),
                     OrgMember(org_id="org-1", user_id="alice", role="member"),
                     OrgMember(org_id="org-2", user_id="bob", role="owner"),
+                    Team(
+                        id="team-1",
+                        org_id="org-1",
+                        name="Default",
+                        slug="default",
+                        is_default=True,
+                    ),
+                    Team(
+                        id="team-2",
+                        org_id="org-2",
+                        name="Default",
+                        slug="default",
+                        is_default=True,
+                    ),
+                    TeamMembership(team_id="team-1", user_id="alice", role="member"),
+                    TeamMembership(team_id="team-2", user_id="bob", role="owner"),
                 ]
             )
             await s.commit()
@@ -107,7 +124,9 @@ def _req(user):
 def _patch_projects(monkeypatch):
     monkeypatch.setattr(
         "server.project_registry.aload_projects",
-        AsyncMock(return_value={"p1": {"org_id": "org-1", "name": "p1"}}),
+        AsyncMock(
+            return_value={"p1": {"org_id": "org-1", "team_id": "team-1", "name": "p1"}}
+        ),
     )
 
 
@@ -120,7 +139,7 @@ async def test_member_of_owning_org_allowed(db_factory, monkeypatch):
     assert res["id"] == "alice"
 
 
-async def test_cross_tenant_access_is_403(db_factory, monkeypatch):
+async def test_cross_tenant_access_is_404(db_factory, monkeypatch):
     # bob (org-2) must not reach p1 (org-1).
     _patch_projects(monkeypatch)
     async with db_factory() as s:
@@ -128,7 +147,7 @@ async def test_cross_tenant_access_is_403(db_factory, monkeypatch):
             await ProjectAccessChecker("viewer")(
                 project_id="p1", request=_req({"id": "bob", "role": "user"}), db=s
             )
-    assert exc.value.status_code == 403
+    assert exc.value.status_code == 404
 
 
 async def test_insufficient_role_is_403(db_factory, monkeypatch):
@@ -142,14 +161,15 @@ async def test_insufficient_role_is_403(db_factory, monkeypatch):
     assert exc.value.status_code == 403
 
 
-async def test_service_principal_bypasses_db(db_factory):
-    # The service principal (siblings / local UI) is allowed without membership
-    # — even for a project that doesn't exist.
+async def test_unknown_project_is_404_even_for_legacy_token(db_factory):
     async with db_factory() as s:
-        res = await ProjectAccessChecker("admin")(
-            project_id="does-not-exist", request=_req({"is_service": True}), db=s
-        )
-    assert res["is_service"] is True
+        with pytest.raises(HTTPException) as exc:
+            await ProjectAccessChecker("admin")(
+                project_id="does-not-exist",
+                request=_req({"id": "default", "is_legacy_shared_token": True}),
+                db=s,
+            )
+    assert exc.value.status_code == 404
 
 
 # ── task-scoped variant (task_id = "project_id:spec_id") ───────────────────
@@ -164,25 +184,23 @@ async def test_task_access_member_allowed(db_factory, monkeypatch):
     assert res["id"] == "alice"
 
 
-async def test_task_access_cross_tenant_403(db_factory, monkeypatch):
+async def test_task_access_cross_tenant_404(db_factory, monkeypatch):
     _patch_projects(monkeypatch)
     async with db_factory() as s:
         with pytest.raises(HTTPException) as exc:
             await TaskAccessChecker("viewer")(
                 task_id="p1:001-x", request=_req({"id": "bob", "role": "user"}), db=s
             )
-    assert exc.value.status_code == 403
+    assert exc.value.status_code == 404
 
 
-async def test_task_access_service_principal_bypasses(db_factory):
-    # The sibling-contract guard: a service token (PFactory/TFactory, local UI)
-    # reaches task routes (start / create-and-run / apply-correction) regardless
-    # of org membership — proving #319 enforcement doesn't break M2M.
+async def test_task_access_rejects_bare_id(db_factory):
     async with db_factory() as s:
-        res = await TaskAccessChecker("member")(
-            task_id="anyproj:anyspec", request=_req({"is_service": True}), db=s
-        )
-    assert res["is_service"] is True
+        with pytest.raises(HTTPException) as exc:
+            await TaskAccessChecker("member")(
+                task_id="bare", request=_req({"id": "alice"}), db=s
+            )
+    assert exc.value.status_code == 400
 
 
 async def test_accessible_org_ids_scopes_humans_but_not_service(db_factory):

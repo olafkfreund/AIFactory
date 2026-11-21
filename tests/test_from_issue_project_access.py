@@ -31,7 +31,9 @@ from server.services import intake_poller  # noqa: E402
 
 
 def _acw(user_id: str, org_id: str) -> dict:
-    key = SimpleNamespace(user_id=user_id, org_id=org_id, key_id=f"k-{user_id}")
+    key = SimpleNamespace(
+        user_id=user_id, org_id=org_id, key_id=f"k-{user_id}", scopes={"api"}
+    )
     return _acw_principal(key, scoped_service_tokens_enabled=False)
 
 
@@ -43,14 +45,21 @@ PRINCIPALS = {
         "id": "default",
         "email": None,
         "role": "user",
-        "is_service": True,
+        "is_legacy_shared_token": True,
     },
 }
 
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    from server.database.models import Base, Organization, OrgMember, User
+    from server.database.models import (
+        Base,
+        Organization,
+        OrgMember,
+        Team,
+        TeamMembership,
+        User,
+    )
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     engine = create_async_engine(
@@ -78,6 +87,14 @@ def client(tmp_path, monkeypatch):
                     Organization(id="org-2", name="O2", slug="o2", owner_id="bob"),
                     OrgMember(org_id="org-1", user_id="alice", role="member"),
                     OrgMember(org_id="org-2", user_id="bob", role="owner"),
+                    Team(
+                        id="team-1",
+                        org_id="org-1",
+                        name="Default",
+                        slug="default",
+                        is_default=True,
+                    ),
+                    TeamMembership(team_id="team-1", user_id="alice", role="member"),
                 ]
             )
             await s.commit()
@@ -90,6 +107,7 @@ def client(tmp_path, monkeypatch):
     projects = {
         "p1": {
             "org_id": "org-1",
+            "team_id": "team-1",
             "name": "p1",
             "clonedFrom": "https://github.com/o/r.git",
         }
@@ -141,10 +159,10 @@ def _post(c, credential: str):
     )
 
 
-def test_foreign_acw_key_is_403(client):
+def test_foreign_acw_key_is_404(client):
     c, tmp_path = client
     res = _post(c, "foreign-key")
-    assert res.status_code == 403
+    assert res.status_code == 404
     assert _specs(tmp_path) == []
 
 
