@@ -15,9 +15,11 @@ from typing import Any
 from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.background import spawn
 from server.config import get_settings
+from server.database.engine import get_db
 from server.error_ref import client_error
 from server.project_registry import load_projects, resolve_project_id
 from server.services.agent_job_backend import (
@@ -60,7 +62,12 @@ from .from_issue import (
     _intake_auto_handoff_enabled,
     _set_task_metadata_flag,
 )
-from .project_authz import require_project_access, require_task_access
+from .project_authz import (
+    _auth_disabled,
+    accessible_project_ids,
+    require_project_access,
+    require_task_access,
+)
 from .tasks import _resolve_task, get_next_spec_id, sync_worktree_to_main_spec
 
 # Add the backend dir to sys.path so backend seams (e.g. qa.correction) resolve.
@@ -298,11 +305,20 @@ class RunningTasksResponse(BaseModel):
 # --------------------------------------------------------------------------
 
 
+_DB_DEP = Depends(get_db)
+
+
 @router.get("/running", response_model=RunningTasksResponse)
-async def get_running_tasks():
+async def get_running_tasks(
+    request: Request = None,  # type: ignore[assignment]
+    db: AsyncSession = _DB_DEP,
+):
     """Get list of all currently running tasks."""
     agent_service = get_agent_service()
     running = agent_service.get_running_task_ids()
+    if request is not None and isinstance(db, AsyncSession):
+        allowed = await accessible_project_ids(request, db)
+        running = [t for t in running if t.partition(":")[0] in allowed]
     return RunningTasksResponse(tasks=running, count=len(running))
 
 
@@ -1565,14 +1581,34 @@ async def _adopt_plan_handoff(
         )
 
 
+async def _authorize_resolved_project(
+    raw_request: Request | None,
+    project_id: str,
+    db: AsyncSession,
+    projects: dict[str, Any],
+) -> dict[str, Any] | None:
+    if raw_request is None or not isinstance(db, AsyncSession):
+        return None
+    if _auth_disabled() and project_id in projects:
+        user = getattr(raw_request.state, "user", None)
+        return (
+            user
+            if isinstance(user, dict)
+            else {"id": "default", "role": "admin", "is_service": True}
+        )
+    return await require_project_access("member")._authorize(
+        project_id, raw_request, db
+    )
+
+
 @router.post("/from-plan")
-async def create_from_trusted_plan(
+async def create_from_trusted_plan(  # noqa: PLR0913 - FastAPI route params
     project_id: str,
     title: str,
     description: str,
     request: FromPlanRequest,
-    raw_request: Request = None,  # noqa: RUF013 — FastAPI injects; None lets direct callers omit
-    _access: dict = Depends(require_project_access("member")),
+    raw_request: Request = None,  # type: ignore[assignment]
+    db: AsyncSession = _DB_DEP,
 ):
     """Trusted Plan Handoff (#390): verify a signed plan and build directly.
 
@@ -1591,6 +1627,7 @@ async def create_from_trusted_plan(
             status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
         )
     project_id = resolved
+    _access = await _authorize_resolved_project(raw_request, project_id, db, projects)
 
     project_path = Path(projects[project_id]["path"])
     agent_service = get_agent_service()

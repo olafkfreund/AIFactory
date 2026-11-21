@@ -50,7 +50,11 @@ from .inbox import (  # noqa: F401
 from .inbox import router as inbox_router
 from .pr import CreatePRFromTaskOptions, create_pr_from_task  # noqa: F401
 from .pr import router as pr_router
-from .project_authz import accessible_org_ids, require_task_access
+from .project_authz import (
+    accessible_project_ids,
+    require_project_role,
+    require_task_access,
+)
 from .worktree_tools import (
     OpenInIDERequest,
     OpenInTerminalRequest,
@@ -141,20 +145,16 @@ async def list_tasks(
                 status_code=404,  # `status` here is the query param, not the module
                 detail="Project not found",
             )
+        if request is not None and isinstance(db, AsyncSession):
+            await require_project_role(
+                getattr(request.state, "user", None), project_id, "viewer", db
+            )
         project_ids = [project_id]
+    elif request is not None and isinstance(db, AsyncSession):
+        allowed = await accessible_project_ids(request, db)
+        project_ids = [pid for pid in projects if pid in allowed]
     else:
         project_ids = list(projects.keys())
-
-    # Restrict to projects in the caller's orgs (skipped for direct callers /
-    # service principal, where accessible_org_ids returns None).
-    if request is not None and isinstance(db, AsyncSession):
-        allowed = await accessible_org_ids(request, db)
-        if allowed is not None:
-            project_ids = [
-                pid
-                for pid in project_ids
-                if projects.get(pid, {}).get("org_id") in allowed
-            ]
 
     # Collect tasks from all projects
     all_tasks = []
@@ -243,12 +243,20 @@ async def get_task(
     return task_to_dict(task)
 
 
+_DB_DEP = Depends(get_db)
+
+
 @router.post("", response_model=Task, status_code=status.HTTP_201_CREATED)
 async def create_task(
     task: TaskCreate,
     request: Request = None,  # noqa: RUF013 — FastAPI injects; None lets direct callers omit
+    db: AsyncSession = _DB_DEP,
 ):
     """Create a new task (spec) in a project."""
+    if request is not None and isinstance(db, AsyncSession):
+        await require_project_role(
+            getattr(request.state, "user", None), task.project_id, "member", db
+        )
     projects = load_projects()
 
     if task.project_id not in projects:

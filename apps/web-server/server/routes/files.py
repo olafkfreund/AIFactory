@@ -20,9 +20,12 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from server.auth import _is_legacy_api_token, _try_decode_jwt
+from server.auth import _acw_principal, _is_legacy_api_token, _try_decode_jwt
+from server.database.engine import get_db
 from server.error_ref import client_error
+from server.pty.access import project_id_for_path
 from server.services.argv_safety import (
     assert_not_option,
     assert_safe_git_ref,
@@ -33,7 +36,11 @@ from server.specpath import browse_roots, registered_project_roots, within_roots
 from server.utils.subprocess_env import child_env
 
 from ..config import get_settings
-from .project_authz import require_project_access
+from .project_authz import (
+    accessible_project_ids,
+    require_project_access,
+    require_project_role,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -256,6 +263,29 @@ class DiscoveredProject(BaseModel):
     has_claude_md: bool = False
 
 
+_DB_DEP = Depends(get_db)
+
+
+async def _invisible_project_filter(
+    request: Request | None, db: AsyncSession | None, target_path: Path
+) -> set[str]:
+    """Enforce viewer role if ``target_path`` is inside a registered project,
+    and return invisible project IDs to filter out of directory listings."""
+    if request is None or not isinstance(db, AsyncSession):
+        return set()
+    pid = project_id_for_path(str(target_path))
+    if pid:
+        await require_project_role(
+            getattr(request.state, "user", None), pid, "viewer", db
+        )
+        return set()
+    from server.project_registry import aload_projects  # noqa: PLC0415
+
+    projects = await aload_projects()
+    visible = await accessible_project_ids(request, db, "viewer")
+    return set(projects) - visible
+
+
 @router.get("/discover")
 @honest_status
 async def discover_projects(
@@ -263,6 +293,8 @@ async def discover_projects(
     max_depth: int = Query(
         1, description="How deep to scan (1 = direct children only)"
     ),
+    request: Request = None,  # type: ignore[assignment]
+    db: AsyncSession = _DB_DEP,
 ):
     """
     Discover potential project folders in a directory.
@@ -270,6 +302,7 @@ async def discover_projects(
     """
     # Containment (#320): only scan within browsable roots — no system dirs.
     base = within_roots(base_path, browse_roots(), "browsable directories")
+    invisible_ids = await _invisible_project_filter(request, db, base)
 
     if not base.exists():
         return {
@@ -294,6 +327,8 @@ async def discover_projects(
         try:
             for entry in sorted(dir_path.iterdir(), key=lambda e: e.name.lower()):
                 if not entry.is_dir():
+                    continue
+                if invisible_ids and project_id_for_path(str(entry)) in invisible_ids:
                     continue
 
                 # Skip hidden directories and common non-project dirs
@@ -351,11 +386,14 @@ async def discover_projects(
 async def list_directory_direct(
     path: str = Query(..., description="Absolute path to directory"),
     show_hidden: bool = Query(False, description="Show hidden files"),
+    request: Request = None,  # type: ignore[assignment]
+    db: AsyncSession = _DB_DEP,
 ):
     """List contents of a directory by absolute path."""
     # Containment (#320): only browsable roots (registered projects + home +
     # APP_FILE_BROWSE_ROOTS) may be listed — blocks /etc, /root, /var, etc.
     full_path = within_roots(path, browse_roots(), "browsable directories")
+    invisible_ids = await _invisible_project_filter(request, db, full_path)
 
     if not full_path.exists():
         return {"success": False, "error": "Directory not found", "data": None}
@@ -370,6 +408,8 @@ async def list_directory_direct(
         ):
             # Skip hidden files unless requested
             if entry.name.startswith(".") and not show_hidden:
+                continue
+            if invisible_ids and project_id_for_path(str(entry)) in invisible_ids:
                 continue
 
             try:
@@ -405,6 +445,8 @@ async def list_directory_direct(
 @honest_status
 async def read_file_direct(
     path: str = Query(..., description="Absolute path to file"),
+    request: Request = None,  # type: ignore[assignment]
+    db: AsyncSession = _DB_DEP,
 ):
     """Read file contents by absolute path."""
     # Containment (#320): only files inside a registered project may be read —
@@ -412,6 +454,13 @@ async def read_file_direct(
     full_path = within_roots(
         path, registered_project_roots(), "registered project directories"
     )
+    if request is not None and isinstance(db, AsyncSession):
+        await require_project_role(
+            getattr(request.state, "user", None),
+            project_id_for_path(str(full_path)),
+            "viewer",
+            db,
+        )
 
     if not full_path.exists():
         return {"success": False, "error": "File not found", "data": None}
@@ -444,12 +493,20 @@ async def read_file_direct(
     }
 
 
+def _set_serve_user(request: Request, user: dict[str, object]) -> bool:
+    state = getattr(request, "state", None)
+    if state is not None and getattr(state, "user", None) is None:
+        state.user = user
+    return True
+
+
 def _validate_serve_token(request: Request, token: str) -> bool:
     """Validate authentication for the /serve endpoint.
 
     Checks (in order):
-    1. Authorization header (standard Bearer token flow)
-    2. ``token`` query param (for rewritten HTML asset URLs)
+    1. Already-authenticated principal on ``request.state.user`` (incl. ``acw_`` keys)
+    2. Authorization header (standard Bearer token flow)
+    3. ``token`` query param (for rewritten HTML asset URLs)
 
     Returns True if the request is authenticated.
     """
@@ -458,22 +515,57 @@ def _validate_serve_token(request: Request, token: str) -> bool:
     if settings.DISABLE_AUTH:
         return True
 
-    # 1. Try Authorization header
+    state = getattr(request, "state", None)
+    if state is not None and isinstance(getattr(state, "user", None), dict):
+        return True
+
     auth_header = request.headers.get("Authorization")
-    if auth_header and auth_header.startswith("Bearer "):
-        header_token = auth_header[7:]
-        if _try_decode_jwt(header_token) is not None:
-            return True
-        if _is_legacy_api_token(header_token):
-            return True
+    header_token = (
+        auth_header[7:] if auth_header and auth_header.startswith("Bearer ") else ""
+    )
+    for candidate in (header_token, token):
+        if not candidate:
+            continue
+        jwt_payload = _try_decode_jwt(candidate)
+        if jwt_payload is not None:
+            return _set_serve_user(
+                request,
+                {
+                    "id": jwt_payload.get("sub"),
+                    "email": jwt_payload.get("email"),
+                    "role": jwt_payload.get("role", "user"),
+                },
+            )
+        if _is_legacy_api_token(candidate):
+            return _set_serve_user(
+                request,
+                {
+                    "id": "default",
+                    "email": None,
+                    "role": "user",
+                    "is_service": False,
+                    "is_legacy_shared_token": True,
+                },
+            )
 
-    # 2. Try query-param token (used by rewritten HTML asset URLs)
-    if token:
-        if _try_decode_jwt(token) is not None:
-            return True
-        if _is_legacy_api_token(token):
-            return True
+    return False
 
+
+async def _resolve_serve_acw_token(request: Request, token: str) -> bool:
+    """Authenticate an ``acw_`` token for ``/serve`` if not already authenticated."""
+    auth_header = request.headers.get("Authorization")
+    header_token = (
+        auth_header[7:] if auth_header and auth_header.startswith("Bearer ") else ""
+    )
+    for candidate in (header_token, token):
+        if candidate and candidate.startswith("acw_"):
+            try:
+                from server.mcp_remote.auth import authenticate_rest  # noqa: PLC0415
+
+                key = await authenticate_rest(f"Bearer {candidate}")
+                return _set_serve_user(request, _acw_principal(key))
+            except Exception:  # noqa: BLE001, S112
+                continue
     return False
 
 
@@ -485,6 +577,7 @@ async def serve_project_file(
         ..., description="Project root directory (for resolving relative URLs)"
     ),
     token: str = Query(default="", description="Bearer token for authentication"),
+    db: AsyncSession = _DB_DEP,
 ):
     """Serve a project file with its correct MIME type.
 
@@ -493,7 +586,9 @@ async def serve_project_file(
     (http://, https://, //, data:, #, mailto:) are left untouched.
     """
     # Authenticate: check token from query param or Authorization header
-    if not _validate_serve_token(request, token):
+    if not _validate_serve_token(request, token) and not await _resolve_serve_acw_token(
+        request, token
+    ):
         raise HTTPException(status_code=401, detail="Authentication required")
     # Containment (#320): the attacker-supplied root must itself be a registered
     # project dir, and the file must live inside it. Blocks `&root=/` traversal.
@@ -503,6 +598,14 @@ async def serve_project_file(
     if not root_path.is_dir():
         raise HTTPException(status_code=400, detail="Root is not a directory")
     file_path = within_roots(path, [root_path], "project root")
+    if isinstance(db, AsyncSession):
+        state = getattr(request, "state", None)
+        await require_project_role(
+            getattr(state, "user", None) if state is not None else None,
+            project_id_for_path(str(root_path)),
+            "viewer",
+            db,
+        )
 
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
