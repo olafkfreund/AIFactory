@@ -800,9 +800,8 @@ async def add_project(  # noqa: PLR0912, PLR0915 - one flow: clone or local, the
     else:
         # Local mode — register the existing directory.
         assert project.path is not None  # model_validator guarantees this
-        existing_id = project_id_for_path(
-            str(Path(project.path).expanduser().resolve())
-        )
+        project_path = _confine_new_path(project.path)
+        existing_id = project_id_for_path(str(project_path))
         if existing_id:
             await authorize_project_for_user(
                 getattr(request.state, "user", None), existing_id, db, "viewer"
@@ -815,7 +814,6 @@ async def add_project(  # noqa: PLR0912, PLR0915 - one flow: clone or local, the
         # can reach — /etc/cron.d, ~/.ssh, /var/lib/anything.
         # `browse_roots`, not `registered_project_roots`: the whole point of
         # adding a project is that it is not registered yet.
-        project_path = _confine_new_path(project.path)
         await _authorize_registration_overlap(request, db, project_path, org_id)
 
         if not project_path.exists():

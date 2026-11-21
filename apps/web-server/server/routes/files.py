@@ -469,15 +469,17 @@ async def read_file_direct(
     # no expanduser(), so `~`-tricks can't escape. Closes arbitrary host read.
     if request is None or not isinstance(db, AsyncSession):
         raise HTTPException(status_code=401, detail="Authentication required")
-    full_path = Path(path).resolve()
+    try:
+        full_path = within_roots(
+            path, registered_project_roots(), "registered project directories"
+        )
+    except HTTPException:
+        raise HTTPException(status_code=404, detail="Project not found") from None
     await require_project_role(
         getattr(request.state, "user", None),
         project_id_for_path(str(full_path)),
         "viewer",
         db,
-    )
-    full_path = within_roots(
-        full_path, registered_project_roots(), "registered project directories"
     )
     _reject_secret_file(full_path)
 
@@ -612,8 +614,10 @@ async def serve_project_file(
         raise HTTPException(status_code=401, detail="Authentication required")
     # Containment (#320): the attacker-supplied root must itself be a registered
     # project dir, and the file must live inside it. Blocks `&root=/` traversal.
-    root_path = Path(root).resolve()
-    file_path = Path(path).resolve()
+    root_path = within_roots(
+        root, registered_project_roots(), "registered project directories"
+    )
+    file_path = within_roots(path, [root_path], "project root")
     root_project = project_id_for_path(str(root_path))
     target_project = project_id_for_path(str(file_path))
     if not isinstance(db, AsyncSession):
@@ -623,12 +627,8 @@ async def serve_project_file(
     )
     if root_project != target_project:
         raise HTTPException(status_code=404, detail="Project not found")
-    root_path = within_roots(
-        root_path, registered_project_roots(), "registered project directories"
-    )
     if not root_path.is_dir():
         raise HTTPException(status_code=400, detail="Root is not a directory")
-    file_path = within_roots(file_path, [root_path], "project root")
     _reject_secret_file(file_path)
 
     if not file_path.exists() or not file_path.is_file():

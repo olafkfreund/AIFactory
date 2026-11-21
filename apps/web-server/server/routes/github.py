@@ -69,22 +69,36 @@ async def _authorize_github_path(request: Request, path: str, role: str) -> None
 
 
 async def _authorize_github_destination(request: Request, repo: str) -> None:
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+    if not _valid_github_repo(repo):
         raise HTTPException(status_code=400, detail="Invalid repository")
     for pid, project in load_projects().items():
         if await asyncio.to_thread(_bound_github_repo, project) == repo.casefold():
             await _authorize_github_project_id(request, pid, "member")
 
 
+def _valid_github_repo(value: str) -> bool:
+    return value.count("/") == 1 and all(
+        re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", part) for part in value.split("/")
+    )
+
+
 def _github_repo_identity(value: str) -> str:
     """Canonical GitHub owner/repo, or empty for another host or invalid input."""
-    match = re.fullmatch(
-        r"(?:(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/|github:))?"
-        r"([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?/?",
-        value.strip(),
-        re.IGNORECASE,
-    )
-    return match.group(1).casefold() if match else ""
+    repo = value.strip().removesuffix("/")
+    for prefix in (
+        "https://github.com/",
+        "git@github.com:",
+        "ssh://git@github.com/",
+        "github:",
+    ):
+        if repo.lower().startswith(prefix):
+            repo = repo[len(prefix) :]
+            break
+    if repo.lower().endswith(".git"):
+        repo = repo[:-4]
+    if not _valid_github_repo(repo):
+        return ""
+    return repo.casefold()
 
 
 def _bound_github_repo(project: dict) -> str:
@@ -109,6 +123,7 @@ def _bound_github_repo(project: dict) -> str:
             text=True,
             timeout=5,
             check=False,
+            env=child_env(),
         )
     except (OSError, subprocess.TimeoutExpired):
         return ""
@@ -959,10 +974,11 @@ async def list_github_orgs():
 @router.get("/detect-repo", dependencies=[Depends(_github_detect_repo_viewer)])
 async def detect_github_repo(path: str = Query(...)):
     """Detect GitHub remote for a local repository."""
+    project_path = within_roots(path, browse_roots(), "browsable directories")
     result = await asyncio.to_thread(
         run_gh_command,
         ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
-        cwd=str(FilePath(path).resolve()),
+        cwd=str(project_path),
     )
     if result["success"]:
         return {"success": True, "data": result["output"]}
@@ -975,7 +991,7 @@ async def get_github_branches(
     repo: str = Query(...),
 ):
     """Get branches for a GitHub repository."""
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+    if not _valid_github_repo(repo):
         raise HTTPException(status_code=400, detail="Invalid repository")
     visible = await _visible_github_repos(request)
     if repo.casefold() not in {
@@ -1000,7 +1016,9 @@ async def create_github_repo(request: CreateRepoRequest, http_request: Request):
     if not request.projectPath:
         raise HTTPException(status_code=404, detail="Project not found")
     await _authorize_github_path(http_request, request.projectPath, "member")
-    project_path = FilePath(request.projectPath).resolve()
+    project_path = within_roots(
+        request.projectPath, browse_roots(), "browsable directories"
+    )
     project = next(
         (
             item
@@ -1043,7 +1061,9 @@ async def add_git_remote(request: AddRemoteRequest, http_request: Request):
     """Add GitHub remote to local repository."""
     remote_url = f"https://github.com/{request.repoFullName}.git"
     await _authorize_github_destination(http_request, request.repoFullName)
-    project_path = FilePath(request.projectPath).resolve()
+    project_path = within_roots(
+        request.projectPath, browse_roots(), "browsable directories"
+    )
     for project in load_projects().values():
         if FilePath(project.get("path", "")).resolve() == project_path:
             bound = await asyncio.to_thread(_bound_github_repo, project)
@@ -1053,7 +1073,7 @@ async def add_git_remote(request: AddRemoteRequest, http_request: Request):
         await asyncio.to_thread(
             subprocess.run,
             ["git", "remote", "add", "origin", remote_url],
-            cwd=str(FilePath(request.projectPath).resolve()),
+            cwd=str(project_path),
             check=True,
             capture_output=True,
             env=child_env(),
@@ -1145,15 +1165,12 @@ def _get_repo_full_name(project_path: str) -> str:
             text=True,
             timeout=5,
             check=False,
+            env=child_env(),
         )
-        match = re.fullmatch(
-            r"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
-            r"([\w.-]+/[\w.-]+?)(?:\.git)?/?",
-            origin.stdout.strip(),
-        )
-        if origin.returncode == 0 and match:
-            return match.group(1)
+        if origin.returncode == 0 and (repo := _github_repo_identity(origin.stdout)):
+            return repo
     except (OSError, subprocess.TimeoutExpired):
+        # A missing git executable or a timed-out probe leaves the gh fallback usable.
         pass
     result = run_gh_command(
         ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
@@ -2626,10 +2643,11 @@ async def get_fork_info(
     project_path: str = Query(..., description="Absolute path to the project"),
 ):
     """Detect if repo is a fork and return origin + upstream info."""
+    path = within_roots(project_path, browse_roots(), "browsable directories")
     result = await asyncio.to_thread(
         run_gh_command,
         ["repo", "view", "--json", "nameWithOwner,parent,isFork,defaultBranchRef"],
-        cwd=str(FilePath(project_path).resolve()),
+        cwd=str(path),
     )
     if not result["success"]:
         return {"success": False, "error": result.get("error")}

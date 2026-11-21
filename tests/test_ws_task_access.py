@@ -115,7 +115,7 @@ def test_legacy_token_without_full_access_needs_project_grant(
 
 @pytest.mark.parametrize("endpoint", ["logs", "progress"])
 def test_auth_disabled_service_connects(sockets, endpoint, monkeypatch):
-    client, _state, _validator, _service = sockets
+    client, state, _validator, _service = sockets
     monkeypatch.setattr(
         auth,
         "get_settings",
@@ -123,7 +123,8 @@ def test_auth_disabled_service_connects(sockets, endpoint, monkeypatch):
             DISABLE_AUTH=True, API_TOKEN="legacy", LEGACY_SHARED_TOKEN_FULL_ACCESS=True
         ),
     )
-    with connect(client, endpoint, "service", "bare") as ws:
+    state["members"].add("default")
+    with connect(client, endpoint, "service", "project:spec") as ws:
         assert ws.receive_json()["type"] == "connected"
 
 

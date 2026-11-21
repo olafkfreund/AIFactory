@@ -16,7 +16,7 @@ import contextlib
 import os
 import re
 from collections.abc import Iterable
-from pathlib import Path
+from pathlib import Path, PurePath
 
 # Deliberately a `fullmatch` against a restrictive allow-list rather than an
 # ad-hoc `if "/" in value` check. Two reasons, and the second is not cosmetic:
@@ -220,3 +220,56 @@ def browse_roots() -> list[Path]:
             with contextlib.suppress(OSError):
                 roots.append(Path(extra).resolve())
     return roots
+
+
+def _roots(project: object) -> list[PurePath]:
+    """Normalised and resolved forms of a registered project's path, from trusted data."""
+    # A repo-only project stores "" (no clone); Path("") would be the CWD.
+    if not isinstance(project, dict) or not project.get("path"):
+        return []
+    raw = str(project["path"])
+    try:
+        return [Path(raw).resolve()]
+    except (OSError, RuntimeError, ValueError):
+        return []
+
+
+def _inside(target: PurePath, root: PurePath) -> bool:
+    return target == root or root in target.parents
+
+
+def project_id_for_path(path: str | None) -> str | None:
+    """Registered project id for a project id or a path inside a project."""
+    if not path:
+        return None
+    from server.project_registry import load_projects
+
+    projects = load_projects()
+    if path in projects:
+        return path
+    if not PurePath(path).is_absolute():
+        return None
+    roots = [root for project in projects.values() for root in _roots(project)]
+    try:
+        target = contained_path(path, roots, "registered project directories")
+    except (OSError, RuntimeError, ValueError):
+        return None
+    best: tuple[int, str] | None = None
+    for project_id, project in projects.items():
+        for root in _roots(project):
+            if _inside(target, root) and (best is None or len(root.parts) > best[0]):
+                best = (len(root.parts), project_id)
+    return best[1] if best else None
+
+
+def path_in_project(path: str, project_id: str) -> bool:
+    if not PurePath(path).is_absolute():
+        return False
+    from server.project_registry import load_projects
+
+    roots = _roots(load_projects().get(project_id))
+    try:
+        target = contained_path(path, roots, "project directory")
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return any(_inside(target, root) for root in roots)

@@ -455,7 +455,12 @@ async def authenticate_websocket(websocket: WebSocket) -> dict | None:
     settings = get_settings()
 
     if settings.DISABLE_AUTH:
-        return {"id": "default", "email": "default@localhost", "role": "admin", "is_service": True}
+        return {
+            "id": "default",
+            "email": "default@localhost",
+            "role": "admin",
+            "is_service": True,
+        }
 
     # Prefer the Authorization header; fall back to the legacy ?token= query
     # param (with a deprecation warning) for backward compatibility (#555).

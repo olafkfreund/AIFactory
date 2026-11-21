@@ -10,9 +10,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
 
 _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT / "apps" / "web-server"))
@@ -40,37 +42,57 @@ def project(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "server.project_registry.load_projects", lambda: {"p": {"path": str(proj)}}
     )
+
+    async def aload_projects():
+        return {"p": {"path": str(proj)}}
+
+    async def authorize(*_args):
+        return None
+
+    async def visible(*_args):
+        return {"p"}
+
+    monkeypatch.setattr("server.project_registry.aload_projects", aload_projects)
+    monkeypatch.setattr(files_mod, "require_project_role", authorize)
+    monkeypatch.setattr(files_mod, "accessible_project_ids", visible)
     return proj
+
+
+def _auth():
+    return {
+        "request": SimpleNamespace(state=SimpleNamespace(user={"id": "u"})),
+        "db": AsyncMock(spec=AsyncSession),
+    }
 
 
 # ── /read — content read confined to registered projects ───────────────────
 
 
 async def test_read_inside_project_ok(project):
-    res = await read_file_direct(path=str(project / "src" / "a.py"))
+    res = await read_file_direct(path=str(project / "src" / "a.py"), **_auth())
     assert res["content"] == "print(1)"
 
 
 async def test_read_etc_passwd_is_403(project):
     with pytest.raises(HTTPException) as exc:
-        await read_file_direct(path="/etc/passwd")
-    assert exc.value.status_code == 403
+        await read_file_direct(path="/etc/passwd", **_auth())
+    assert exc.value.status_code == 404
 
 
 async def test_read_tilde_not_expanded_is_403(project):
     # `~` must NOT expand — `~/.aws/credentials` resolves to a literal, outside
     # any project → 403 (was readable before #320).
     with pytest.raises(HTTPException) as exc:
-        await read_file_direct(path="~/.aws/credentials")
-    assert exc.value.status_code == 403
+        await read_file_direct(path="~/.aws/credentials", **_auth())
+    assert exc.value.status_code == 404
 
 
 async def test_read_traversal_out_of_project_is_403(project):
     with pytest.raises(HTTPException) as exc:
         await read_file_direct(
-            path=str(project / "src" / ".." / ".." / ".." / "etc" / "passwd")
+            path=str(project / "src" / ".." / ".." / ".." / "etc" / "passwd"), **_auth()
         )
-    assert exc.value.status_code == 403
+    assert exc.value.status_code == 404
 
 
 # ── /list + /discover — browse confined to browsable roots ─────────────────
@@ -83,7 +105,7 @@ async def test_list_system_dir_is_403(project):
 
 
 async def test_list_inside_project_ok(project):
-    res = await list_directory_direct(path=str(project / "src"))
+    res = await list_directory_direct(path=str(project / "src"), **_auth())
     assert any(e["name"] == "a.py" for e in res["entries"])
 
 

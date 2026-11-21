@@ -242,7 +242,7 @@ async def proxy_list_tasks(
 
     return await list_tasks(
         project_id=project_id,
-        status=cast("TaskStatus | None", status),
+        status=cast(TaskStatus | None, status),
         request=request,
         db=db,
     )

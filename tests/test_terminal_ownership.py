@@ -76,7 +76,7 @@ def env(tmp_path, monkeypatch):
         try:
             await authorize(user, project_id, db, role)
         except PermissionError as exc:
-            raise HTTPException(403, str(exc)) from exc
+            raise HTTPException(403, "Forbidden") from exc
 
     monkeypatch.setattr(terminal, "require_project_role", require)
 

@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -23,7 +24,7 @@ for root in (WEB_SERVER, BACKEND):
 
 from core.git_credentials import github_token  # noqa: E402
 from server import project_registry  # noqa: E402
-from server.routes import github, project_authz, projects  # noqa: E402
+from server.routes import github, projects  # noqa: E402
 from server.services import (  # noqa: E402
     completion_orchestration,
     github_app,
@@ -89,7 +90,7 @@ def test_project_clone_uses_owner_org(
         seen.append((github_token(), credential))
         return path
 
-    monkeypatch.setattr(project_authz, "resolve_owner_org_id", owner)
+    monkeypatch.setattr(projects, "resolve_owner_org_id", owner)
     monkeypatch.setattr(projects, "_resolve_git_credential", credential)
     monkeypatch.setattr(project_workspace_service, "clone_or_update", clone_or_update)
     request = projects.ProjectCreate(
@@ -99,7 +100,11 @@ def test_project_clone_uses_owner_org(
 
     async def run() -> None:
         async with AsyncSession() as db:
-            await projects.add_project(request, request=object(), db=db)
+            await projects.add_project(
+                request,
+                request=SimpleNamespace(state=SimpleNamespace(user={"id": "owner"})),
+                db=db,
+            )
 
     asyncio.run(run())
     assert seen == [(expected, ("user", "stored-token-1700") if stored else None)]
@@ -119,14 +124,16 @@ def test_project_clone_mint_error_returns_400(
     async def owner(_request: object, _db: AsyncSession) -> str:
         return "acme"
 
-    monkeypatch.setattr(project_authz, "resolve_owner_org_id", owner)
+    monkeypatch.setattr(projects, "resolve_owner_org_id", owner)
 
     async def run() -> None:
         async with AsyncSession() as db:
             with pytest.raises(HTTPException) as exc:
                 await projects.add_project(
                     projects.ProjectCreate(gitUrl="https://github.com/acme/repo.git"),
-                    request=object(),
+                    request=SimpleNamespace(
+                        state=SimpleNamespace(user={"id": "owner"})
+                    ),
                     db=db,
                 )
             assert exc.value.status_code == 400
@@ -360,7 +367,7 @@ def test_project_route_dependency_pins_the_authorised_org(
         yield object()
 
     monkeypatch.setattr(project_github, "get_db", db)
-    monkeypatch.setattr(project_authz, "require_project_access", lambda _r: Checker())
+    monkeypatch.setattr(project_github, "require_project_access", lambda _r: Checker())
     seen: list[str] = []
 
     def run(*_args: Any, env: dict[str, str], **_kw: Any) -> Any:
@@ -405,7 +412,7 @@ def test_project_route_dependency_pins_the_authorised_org(
         roles.append(role)
         return Checker()
 
-    monkeypatch.setattr(project_authz, "require_project_access", access)
+    monkeypatch.setattr(project_github, "require_project_access", access)
     client.get("/q", params={"projectId": "a"})
     router.post("/w")(by_query)
     app.include_router(router)
@@ -414,7 +421,7 @@ def test_project_route_dependency_pins_the_authorised_org(
     # A body-only route names the project in the JSON body (#2053): authorised
     # and bound like a path/query one; a denied or absent project never gets
     # another org's token.
-    monkeypatch.setattr(project_authz, "require_project_access", lambda _r: Checker())
+    monkeypatch.setattr(project_github, "require_project_access", lambda _r: Checker())
     router.post("/b")(by_query)
     app.include_router(router)
     assert client.post("/b", json={"projectId": "a"}).json() == {
@@ -544,7 +551,12 @@ def test_overlapping_project_is_refused_before_any_work(
     async def owner(_request: object, _db: AsyncSession) -> str:
         return "other"
 
-    monkeypatch.setattr(project_authz, "resolve_owner_org_id", owner)
+    monkeypatch.setattr(projects, "resolve_owner_org_id", owner)
+
+    async def deny_other_team(*_args: Any) -> None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    monkeypatch.setattr(projects, "authorize_project_for_user", deny_other_team)
 
     class Db(AsyncSession):  # isinstance check only; never used
         def __init__(self) -> None:
@@ -553,9 +565,11 @@ def test_overlapping_project_is_refused_before_any_work(
     async def run() -> None:
         with pytest.raises(HTTPException) as exc:
             await projects.add_project(
-                projects.ProjectCreate(path=str(child)), request=object(), db=Db()
+                projects.ProjectCreate(path=str(child)),
+                request=SimpleNamespace(state=SimpleNamespace(user={"id": "owner"})),
+                db=Db(),
             )
-        assert exc.value.status_code == 409
+        assert exc.value.status_code == 404
         assert "acme" not in str(exc.value.detail)
 
     asyncio.run(run())

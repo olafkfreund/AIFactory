@@ -28,7 +28,7 @@ async def test_resolved_task_requires_project_role(monkeypatch):
         AsyncMock(return_value=(Path("/project/.aifactory/specs/task"), {})),
     )
     monkeypatch.setattr(copilot_mcp, "project_id_for_path", lambda path: "project")
-    monkeypatch.setattr(copilot_mcp, "async_session_factory", Session)
+    monkeypatch.setattr(copilot_mcp.engine, "async_session_factory", Session)
     denied = AsyncMock(side_effect=HTTPException(404, "Project not found"))
     monkeypatch.setattr(copilot_mcp, "require_project_role", denied)
     with pytest.raises(HTTPException) as exc:
@@ -49,7 +49,7 @@ def test_dedicated_mcp_credential_is_project_bound(monkeypatch):
 
     monkeypatch.setenv("AIFACTORY_MCP_SECRET", "test-secret")
     monkeypatch.setenv("AIFACTORY_MCP_PROJECT_ID", "own")
-    monkeypatch.setattr(copilot_mcp, "async_session_factory", Session)
+    monkeypatch.setattr(copilot_mcp.engine, "async_session_factory", Session)
     monkeypatch.setattr(
         copilot_mcp,
         "load_projects",

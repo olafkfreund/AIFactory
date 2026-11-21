@@ -33,6 +33,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
 
 _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT / "apps" / "web-server"))
@@ -62,6 +63,34 @@ _SERVICE = SimpleNamespace(
 )
 from server.routes.worktree_tools import resolve_launch_dir  # noqa: E402
 from server.specpath import browse_roots, registered_project_roots  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _authorized_containment_caller(monkeypatch):
+    async def owner(*_args):
+        return "default"
+
+    async def grant(*_args):
+        return SimpleNamespace(org_id="default", team_id="team-default")
+
+    async def visible(*_args):
+        return set(load_projects())
+
+    monkeypatch.setattr("server.routes.projects.resolve_owner_org_id", owner)
+    monkeypatch.setattr("server.routes.projects.require_project_role", grant)
+    monkeypatch.setattr("server.routes.projects.authorize_project_for_user", owner)
+    monkeypatch.setattr("server.routes.projects.accessible_project_ids", visible)
+
+
+async def _add_project(project):
+    async with AsyncSession() as db:
+        return await add_project(project, _SERVICE, db)
+
+
+async def _scan_for_projects(request):
+    async with AsyncSession() as db:
+        return await scan_for_projects(request, _SERVICE, db)
+
 
 # --------------------------------------------------------------------------
 # Fixtures
@@ -167,7 +196,7 @@ async def test_a_sibling_of_a_legacy_project_is_still_refused(registry, tmp_path
     sibling.mkdir()
 
     with pytest.raises(HTTPException) as exc:
-        await add_project(ProjectCreate(path=str(sibling)), None, None)
+        await _add_project(ProjectCreate(path=str(sibling)))
     assert exc.value.status_code == 403
 
 
@@ -178,7 +207,7 @@ async def test_browse_roots_env_is_the_operator_escape_hatch(
     sibling = registry.beta.parent / "gamma"
     sibling.mkdir()
 
-    res = await add_project(ProjectCreate(path=str(sibling)), None, None)
+    res = await _add_project(ProjectCreate(path=str(sibling)))
 
     assert res["path"] == str(sibling.resolve())
     saved = load_projects()
@@ -202,7 +231,7 @@ async def test_add_project_rejects_path_outside_browse_roots(registry, outside):
     not merely that something raised.
     """
     with pytest.raises(HTTPException) as exc:
-        await add_project(ProjectCreate(path=str(outside)), None, None)
+        await _add_project(ProjectCreate(path=str(outside)))
 
     assert exc.value.status_code == 403
     assert load_projects().keys() == {"proj-alpha", "proj-beta"}
@@ -215,7 +244,7 @@ async def test_add_project_rejects_traversal_out_of_a_registered_project(
     escape = registry.alpha / ".." / ".." / ".." / "elsewhere" / "not-a-project"
 
     with pytest.raises(HTTPException) as exc:
-        await add_project(ProjectCreate(path=str(escape)), None, None)
+        await _add_project(ProjectCreate(path=str(escape)))
 
     assert exc.value.status_code == 403
 
@@ -230,7 +259,7 @@ async def test_add_project_does_not_create_the_rejected_directory(registry, tmp_
     victim = tmp_path / "elsewhere" / "created-by-attacker"
 
     with pytest.raises(HTTPException) as exc:
-        await add_project(ProjectCreate(path=str(victim)), None, None)
+        await _add_project(ProjectCreate(path=str(victim)))
 
     assert exc.value.status_code == 403
     assert not victim.exists(), "rejected add must not have mkdir'd the target"
@@ -244,7 +273,7 @@ async def test_add_project_under_home_still_works(registry, monkeypatch, tmp_pat
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
     new = fake_home / "projects" / "fresh"
 
-    res = await add_project(ProjectCreate(path=str(new)), None, None)
+    res = await _add_project(ProjectCreate(path=str(new)))
 
     assert res["path"] == str(new.resolve())
     assert new.is_dir(), "an accepted add still creates the directory"
@@ -264,7 +293,7 @@ async def test_add_project_still_expands_tilde(registry, monkeypatch, tmp_path):
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
     monkeypatch.setenv("HOME", str(fake_home))
 
-    res = await add_project(ProjectCreate(path="~/code/thing"), None, None)
+    res = await _add_project(ProjectCreate(path="~/code/thing"))
 
     assert res["path"] == str((fake_home / "code" / "thing").resolve())
 
@@ -305,8 +334,8 @@ def workspace(tmp_path, monkeypatch):
 
 async def test_add_project_clone_mode_registers_a_normal_repo(registry, workspace):
     """A fix that breaks legitimate cloning is worse than the bug."""
-    res = await add_project(
-        ProjectCreate(gitUrl="https://example.test/acme/widget.git"), None, None
+    res = await _add_project(
+        ProjectCreate(gitUrl="https://example.test/acme/widget.git")
     )
 
     assert res["path"] == str(workspace / "acme-widget")
@@ -323,7 +352,7 @@ async def test_add_project_clone_mode_refuses_a_traversal_git_url(registry, work
     directory must not be registered and must not have been cloned into.
     """
     with pytest.raises(HTTPException) as exc:
-        await add_project(ProjectCreate(gitUrl="https://example.test/.."), None, None)
+        await _add_project(ProjectCreate(gitUrl="https://example.test/.."))
 
     assert exc.value.status_code == 400
     saved = load_projects()
@@ -354,9 +383,7 @@ async def test_add_project_clone_mode_confines_whatever_the_clone_returns(
     )
 
     with pytest.raises(HTTPException) as exc:
-        await add_project(
-            ProjectCreate(gitUrl="https://example.test/acme/widget.git"), None, None
-        )
+        await _add_project(ProjectCreate(gitUrl="https://example.test/acme/widget.git"))
 
     assert exc.value.status_code == 403
     saved = load_projects()
@@ -376,7 +403,7 @@ async def test_update_project_cannot_repoint_outside(registry, outside):
 
 async def test_scan_refuses_to_walk_outside(registry, outside):
     with pytest.raises(HTTPException) as exc:
-        await scan_for_projects(ScanProjectsRequest(basePath=str(outside), maxDepth=3))
+        await _scan_for_projects(ScanProjectsRequest(basePath=str(outside), maxDepth=3))
 
     assert exc.value.status_code == 403
 
@@ -454,7 +481,7 @@ async def test_clear_sessions_outside_a_registered_project_is_refused(
     with pytest.raises(HTTPException) as exc:
         await clear_terminal_sessions(_SERVICE, project=str(outside))
 
-    assert exc.value.status_code == 403
+    assert exc.value.status_code == 404
     assert (victim / "terminal_a.json").exists(), "a refused clear must delete nothing"
     assert (victim / "terminal_b.json").exists()
 

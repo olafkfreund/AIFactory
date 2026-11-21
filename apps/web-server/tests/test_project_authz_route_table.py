@@ -407,7 +407,7 @@ async def test_mcp_dispatchers_call_project_guards(monkeypatch):
         async def __aexit__(self, *_args):
             pass
 
-    monkeypatch.setattr(copilot_mcp, "async_session_factory", Session)
+    monkeypatch.setattr(copilot_mcp.engine, "async_session_factory", Session)
     monkeypatch.setattr(copilot_mcp, "project_id_for_path", lambda _path: "p")
     monkeypatch.setattr(
         copilot_mcp,
@@ -666,12 +666,12 @@ async def test_cross_team_and_cross_org_service_key_denial(
             await project_authz.require_project_role(service_merge, "p1", "owner", db)
         assert owner_exc.value.status_code == 403
 
-        # An org-scoped service key also reaches non-default teams in its org.
-        assert (
+        # An org-scoped service key is limited to its default team.
+        with pytest.raises(HTTPException) as cross_team:
             await project_authz.require_project_role(
                 service_merge, "p_team2", "viewer", db
             )
-        ).org_id == "org-1"
+        assert cross_team.value.status_code == 404
 
         # Other org -> 404.
         with pytest.raises(HTTPException) as cross_org:
@@ -681,10 +681,7 @@ async def test_cross_team_and_cross_org_service_key_denial(
         assert cross_org.value.status_code == 404
 
         req = SimpleNamespace(state=SimpleNamespace(user=service_merge))
-        assert await project_authz.accessible_project_ids(req, db, "viewer") == {
-            "p1",
-            "p_team2",
-        }
+        assert await project_authz.accessible_project_ids(req, db, "viewer") == {"p1"}
 
 
 @pytest.mark.asyncio

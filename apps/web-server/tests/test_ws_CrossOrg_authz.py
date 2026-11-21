@@ -180,8 +180,7 @@ async def test_ws_task_authorized_checks_team_grant_and_scope_ceiling(
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("seeded_ws_env")
-async def test_event_bus_filters_cross_team_and_cross_org_project_events(
-) -> None:
+async def test_event_bus_filters_cross_team_and_cross_org_project_events() -> None:
     class FakeSocket:
         def __init__(self) -> None:
             self.sent: list[dict[str, Any]] = []

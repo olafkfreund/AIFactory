@@ -235,11 +235,24 @@ async def test_write_tool_blocked_with_only_read_scope(read_only_key):
 async def test_read_tools_hit_correct_endpoint(
     tool_name, args, expected_method, expected_path, read_only_key, allow_project
 ):
-    expected = [{"id": "p1"}] if tool_name == "aifactory.list_projects" else {"ok": True}
-    mock_call = AsyncMock(return_value=expected)
-    with patch("server.mcp_remote.tools._call_internal", mock_call), patch(
-        "server.mcp_remote.tools._accessible_project_ids",
-        AsyncMock(return_value={"p1"}),
+    expected = (
+        [{"id": "p1"}]
+        if tool_name == "aifactory.list_projects"
+        else (
+            [{"id": "p1:001"}] if tool_name == "aifactory.list_tasks" else {"ok": True}
+        )
+    )
+    mock_call = AsyncMock(
+        return_value={"tasks": expected}
+        if tool_name == "aifactory.list_tasks"
+        else expected
+    )
+    with (
+        patch("server.mcp_remote.tools._call_internal", mock_call),
+        patch(
+            "server.mcp_remote.tools._accessible_project_ids",
+            AsyncMock(return_value={"p1"}),
+        ),
     ):
         result = await dispatch_tool_call(tool_name, args, read_only_key)
 

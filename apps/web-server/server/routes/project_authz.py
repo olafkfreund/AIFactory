@@ -93,7 +93,11 @@ async def _team_grant(
     if default_team is None:
         return None, None
 
-    if principal.get("scoped_service") and principal.get("org_id") == org_id:
+    if (
+        principal.get("scoped_service")
+        and principal.get("org_id") == org_id
+        and default_team
+    ):
         return "admin", team_id
 
     user_id = principal.get("id")
@@ -198,7 +202,7 @@ async def authorize_host_path(
     request: Request, db: AsyncSession, path: Path, role: str = "member"
 ) -> str:
     """Authorize a checkout, including registered projects below its directory."""
-    from server.pty.access import project_id_for_path
+    from server.specpath import project_id_for_path
 
     target = path.resolve()
     principal = getattr(request.state, "user", None)

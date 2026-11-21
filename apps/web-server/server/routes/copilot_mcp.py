@@ -41,7 +41,7 @@ from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from server.database.engine import async_session_factory
+from server.database import engine
 from server.error_ref import client_error
 from server.project_registry import load_projects
 from server.pty.access import project_id_for_path
@@ -326,7 +326,7 @@ async def _dispatch_tool(
             "scoped_service": True,
             "scopes": ["project:write"],
         }
-    async with async_session_factory() as db:
+    async with engine.async_session_factory() as db:
         await require_project_role(
             principal,
             project_id,

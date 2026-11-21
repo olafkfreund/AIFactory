@@ -230,21 +230,17 @@ def test_parent_project_file_routes_hide_registered_child(authz_env, monkeypatch
     (child / "private.txt").write_text("other team data")
     project_registry.load_projects()["p2"]["path"] = str(child)
     headers = {"X-Principal": "alice-member"}
-    assert (
-        client.get(
-            "/api/files/p1/read",
-            params={"path": "package/private.txt"},
-            headers=headers,
-        ).status_code
-        == 404
+    response = client.get(
+        "/api/files/p1/read",
+        params={"path": "package/private.txt"},
+        headers=headers,
     )
+    assert response.status_code == 404
     monkeypatch.setattr("server.routes.project_authz._auth_disabled", lambda: True)
-    assert (
-        client.delete(
-            "/api/files/p1/delete", params={"path": "package"}, headers=headers
-        ).status_code
-        == 404
+    response = client.delete(
+        "/api/files/p1/delete", params={"path": "package"}, headers=headers
     )
+    assert response.status_code == 404
     listing = client.get("/api/files/p1/list", headers=headers)
     assert listing.status_code == 200
     assert "package" not in [entry["name"] for entry in listing.json()["entries"]]
@@ -472,6 +468,14 @@ def test_copilot_dispatch_rejects_other_repo_and_pins_watcher(authz_env, monkeyp
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["repo"] == "own/existing"
     assert seen == [("dispatch", "own/existing", 3), ("watch", "own/existing", 3)]
+
+
+def test_github_repo_identity_rejects_invalid_host_and_large_components():
+    assert (
+        github._github_repo_identity("HTTPS://GITHUB.COM/Own/Repo.GIT/") == "own/repo"
+    )
+    assert github._github_repo_identity("https://evil.example/Own/Repo") == ""
+    assert github._github_repo_identity("owner/" + "a" * 101) == ""
 
 
 def test_git_init_cannot_stage_hidden_registered_child(authz_env, monkeypatch):
