@@ -72,10 +72,47 @@ async def _authorize_github_destination(request: Request, repo: str) -> None:
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
         raise HTTPException(status_code=400, detail="Invalid repository")
     for pid, project in load_projects().items():
-        if (path := project.get("path")) and (
-            await asyncio.to_thread(_get_repo_full_name, str(path))
-        ).casefold() == repo.casefold():
-            await _authorize_github_project_id(request, pid, "admin")
+        if await asyncio.to_thread(_bound_github_repo, project) == repo.casefold():
+            await _authorize_github_project_id(request, pid, "member")
+
+
+def _github_repo_identity(value: str) -> str:
+    """Canonical GitHub owner/repo, or empty for another host or invalid input."""
+    match = re.fullmatch(
+        r"(?:(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/|github:))?"
+        r"([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?/?",
+        value.strip(),
+        re.IGNORECASE,
+    )
+    return match.group(1).casefold() if match else ""
+
+
+def _bound_github_repo(project: dict) -> str:
+    """Repository configured for a project, without gh's ambient repo fallback."""
+    settings = project.get("settings") or {}
+    if str(settings.get("gitProvider", "github")).lower() != "github":
+        return ""
+    for value in (
+        settings.get("gitRepo"),
+        settings.get("githubRepo"),
+        project.get("gitUrl"),
+    ):
+        if value and (repo := _github_repo_identity(str(value))):
+            return repo
+    path = project.get("path")
+    if not path:
+        return ""
+    try:
+        origin = subprocess.run(  # noqa: S603 - fixed git config read
+            ["git", "-C", str(path), "config", "--get", "remote.origin.url"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return _github_repo_identity(origin.stdout) if origin.returncode == 0 else ""
 
 
 async def _github_auto_detect_admin(request: Request) -> None:
@@ -99,7 +136,7 @@ async def _github_remote_admin(request: Request) -> None:
     with contextlib.suppress(ValueError, UnicodeDecodeError):
         body = await request.json()
         if isinstance(body, dict) and isinstance(body.get("projectPath"), str):
-            await _authorize_github_path(request, body["projectPath"], "admin")
+            await _authorize_github_path(request, body["projectPath"], "member")
 
 
 async def _github_fork_info_viewer(
@@ -857,9 +894,7 @@ async def _visible_github_repos(request: Request) -> set[str]:
     projects = load_projects()
     owned: dict[str, set[str]] = {}
     for pid, project in projects.items():
-        if (path := project.get("path")) and (
-            repo := await asyncio.to_thread(_get_repo_full_name, str(path))
-        ):
+        if repo := await asyncio.to_thread(_bound_github_repo, project):
             owned.setdefault(repo, set()).add(pid)
     return {repo for repo, ids in owned.items() if ids <= visible}
 
@@ -867,9 +902,7 @@ async def _visible_github_repos(request: Request) -> set[str]:
 async def _registered_github_repos() -> set[str]:
     repos = set()
     for project in load_projects().values():
-        if (path := project.get("path")) and (
-            repo := await asyncio.to_thread(_get_repo_full_name, str(path))
-        ):
+        if repo := await asyncio.to_thread(_bound_github_repo, project):
             repos.add(repo)
     return repos
 
@@ -964,35 +997,41 @@ async def get_github_branches(
 @honest_status
 async def create_github_repo(request: CreateRepoRequest, http_request: Request):
     """Create a new GitHub repository."""
-    if request.projectPath:
-        await _authorize_github_path(http_request, request.projectPath, "admin")
-    else:
-        async with contextlib.asynccontextmanager(get_db)() as db:
-            await resolve_owner_org_id(http_request, db)
+    if not request.projectPath:
+        raise HTTPException(status_code=404, detail="Project not found")
+    await _authorize_github_path(http_request, request.projectPath, "member")
+    project_path = FilePath(request.projectPath).resolve()
+    project = next(
+        (
+            item
+            for item in load_projects().values()
+            if FilePath(item.get("path", "")).resolve() == project_path
+        ),
+        None,
+    )
+    bound_repo = await asyncio.to_thread(_bound_github_repo, project or {})
     destination = (
         f"{request.orgName}/{request.repoName}" if request.orgName else request.repoName
     )
-    if request.orgName:
-        await _authorize_github_destination(http_request, destination)
-    elif not re.fullmatch(r"[A-Za-z0-9_.-]+", request.repoName):
-        raise HTTPException(status_code=400, detail="Invalid repository")
-    args = ["repo", "create", request.repoName, "--confirm"]
+    if "/" not in destination:
+        destination = f"{bound_repo.partition('/')[0]}/{destination}"
+    if not bound_repo or bound_repo != _github_repo_identity(destination):
+        raise HTTPException(status_code=404, detail="Project not found")
+    await _authorize_github_destination(http_request, bound_repo)
+    args = ["repo", "create", bound_repo, "--confirm"]
     if request.description:
         args.extend(["--description", request.description])
     if request.private:
         args.append("--private")
     else:
         args.append("--public")
-    if request.orgName:
-        args[2] = f"{request.orgName}/{request.repoName}"
-
     result = await asyncio.to_thread(run_gh_command, args)
     if result["success"]:
         return {
             "success": True,
             "data": {
-                "fullName": request.repoName,
-                "url": f"https://github.com/{request.repoName}",
+                "fullName": bound_repo,
+                "url": f"https://github.com/{bound_repo}",
             },
         }
     return {"success": False, "error": result.get("error", "Failed to create repo")}
@@ -1004,6 +1043,12 @@ async def add_git_remote(request: AddRemoteRequest, http_request: Request):
     """Add GitHub remote to local repository."""
     remote_url = f"https://github.com/{request.repoFullName}.git"
     await _authorize_github_destination(http_request, request.repoFullName)
+    project_path = FilePath(request.projectPath).resolve()
+    for project in load_projects().values():
+        if FilePath(project.get("path", "")).resolve() == project_path:
+            bound = await asyncio.to_thread(_bound_github_repo, project)
+            if bound and bound != _github_repo_identity(request.repoFullName):
+                raise HTTPException(status_code=404, detail="Project not found")
     try:
         await asyncio.to_thread(
             subprocess.run,

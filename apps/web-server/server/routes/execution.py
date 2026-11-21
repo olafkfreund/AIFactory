@@ -62,7 +62,7 @@ from .from_issue import (
     _intake_auto_handoff_enabled,
     _set_task_metadata_flag,
 )
-from .github import _get_repo_full_name
+from .github import _bound_github_repo, _github_repo_identity
 from .project_authz import (
     _auth_disabled,
     accessible_project_ids,
@@ -1920,16 +1920,19 @@ async def dispatch_task_to_copilot(
             detail="Copilot dispatch is not enabled on this instance",
         )
 
-    _, _, project_path, spec_dir = _resolve_task(task_id)
-    if _get_repo_full_name(str(project_path)) != request.repo_full_name:
-        raise HTTPException(status_code=403, detail="Repository does not match project")
+    project_id, _, project_path, spec_dir = _resolve_task(task_id)
+    bound_repo = await asyncio.to_thread(
+        _bound_github_repo, load_projects().get(project_id, {})
+    )
+    if not bound_repo or _github_repo_identity(request.repo_full_name) != bound_repo:
+        raise HTTPException(status_code=404, detail="Project not found")
     task_metadata_path = spec_dir / "task_metadata.json"
 
     service = CopilotDispatchService()
     try:
         with project_github_token(project_path):
             dispatch_meta = await asyncio.to_thread(
-                service.dispatch, request.repo_full_name, request.issue_number
+                service.dispatch, bound_repo, request.issue_number
             )
     except RuntimeError as exc:
         logger.warning(
@@ -1972,7 +1975,7 @@ async def dispatch_task_to_copilot(
         spawn(
             watch_for_copilot_pr(
                 task_id=task_id,
-                repo_full_name=request.repo_full_name,
+                repo_full_name=bound_repo,
                 issue_number=request.issue_number,
                 task_metadata_path=task_metadata_path,
                 on_pr_opened=_on_pr_opened,
@@ -1983,7 +1986,7 @@ async def dispatch_task_to_copilot(
         _access,
         ACTION_TASK_DISPATCH,
         task_id,
-        details={"repo": request.repo_full_name, "issue_number": request.issue_number},
+        details={"repo": bound_repo, "issue_number": request.issue_number},
     )
     return {
         "task_id": task_id,
@@ -1991,7 +1994,7 @@ async def dispatch_task_to_copilot(
         "agent_handle": dispatch_meta["agent_handle"],
         "dispatched_at": dispatch_meta["dispatched_at"],
         "issue_number": request.issue_number,
-        "repo": request.repo_full_name,
+        "repo": bound_repo,
     }
 
 

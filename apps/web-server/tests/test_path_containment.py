@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import secrets
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -35,6 +36,7 @@ from server.routes import (
     tasks,
     worktree_tools,
 )
+from server.services import copilot_dispatch_service as dispatch_service
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 _DUMMY_HASH = "test-" + "hash"
@@ -295,6 +297,8 @@ def test_ownerless_org_key_browses_only_own_org(authz_env):
 
 def test_github_pre_registration_routes_and_destination(authz_env, monkeypatch):
     client, p1, p2, workspace = authz_env
+    project_registry.load_projects()["p1"]["settings"] = {"gitRepo": "own/existing"}
+    project_registry.load_projects()["p2"]["settings"] = {"gitRepo": "other/private"}
     db_override = client.app.dependency_overrides[get_db]
     monkeypatch.setattr(github, "get_db", db_override)
     monkeypatch.setattr(project_github, "get_db", db_override)
@@ -351,6 +355,12 @@ def test_github_pre_registration_routes_and_destination(authz_env, monkeypatch):
     )
     assert (
         client.get(
+            "/api/github/branches", params={"repo": "OWN/existing"}, headers=headers
+        ).status_code
+        == 200
+    )
+    assert (
+        client.get(
             "/api/github/branches", params={"repo": "other/private"}, headers=headers
         ).status_code
         == 404
@@ -365,7 +375,7 @@ def test_github_pre_registration_routes_and_destination(authz_env, monkeypatch):
         client.post(
             "/api/github/repos", json={"repoName": "new"}, headers=headers
         ).status_code
-        == 200
+        == 404
     )
     assert (
         client.post(
@@ -381,6 +391,87 @@ def test_github_pre_registration_routes_and_destination(authz_env, monkeypatch):
         headers=headers,
     )
     assert denied.status_code == 404, denied.text
+    assert (
+        client.post(
+            "/api/github/remote",
+            json={"projectPath": str(p1), "repoFullName": "fresh/repo"},
+            headers=headers,
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            "/api/github/repos",
+            json={"projectPath": str(p1), "orgName": "other", "repoName": "private"},
+            headers=headers,
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            "/api/github/repos",
+            json={"projectPath": str(p1), "orgName": "OWN", "repoName": "existing"},
+            headers=headers,
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            "/api/github/repos",
+            json={"projectPath": str(p1), "repoName": "existing"},
+            headers=headers,
+        ).status_code
+        == 200
+    )
+
+
+def test_copilot_dispatch_rejects_other_repo_and_pins_watcher(authz_env, monkeypatch):
+    client, p1, _p2, _workspace = authz_env
+    subprocess.run(  # noqa: S603 - initialize the temporary test checkout
+        ["git", "-C", str(p1), "init", "-q"],  # noqa: S607
+        check=True,
+    )
+    (p1 / ".git" / "config").write_text(
+        '[remote "origin"]\n\turl = git@github.com:Own/Existing.git\n'
+    )
+    monkeypatch.setenv("AIFACTORY_COPILOT_DISPATCH_ENABLED", "true")
+    seen = []
+
+    def dispatch(_self, repo, issue):
+        seen.append(("dispatch", repo, issue))
+        return {"agent_handle": "copilot", "dispatched_at": "now"}
+
+    def spawn(coro):
+        seen.append(("watch", coro.cr_frame.f_locals["repo_full_name"], 3))
+        coro.close()
+
+    async def noop(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(dispatch_service.CopilotDispatchService, "dispatch", dispatch)
+    monkeypatch.setattr(execution, "spawn", spawn)
+    monkeypatch.setattr(execution, "emit_task_status", noop)
+    monkeypatch.setattr(execution, "audit_task_action", noop)
+    headers = {"X-Principal": "alice-member"}
+    url = "/api/tasks/p1:001-demo/dispatch-to-copilot"
+    denied = client.post(
+        url,
+        json={"repo_full_name": "other/private", "issue_number": 3},
+        headers=headers,
+    )
+    assert denied.status_code == 404
+    assert seen == []
+    accepted = client.post(
+        url,
+        json={
+            "repo_full_name": "https://github.com/OWN/existing.git",
+            "issue_number": 3,
+        },
+        headers=headers,
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["repo"] == "own/existing"
+    assert seen == [("dispatch", "own/existing", 3), ("watch", "own/existing", 3)]
 
 
 def test_git_init_cannot_stage_hidden_registered_child(authz_env, monkeypatch):

@@ -477,6 +477,7 @@ def test_copilot_dispatch_uses_the_task_projects_org(
     from server.services import copilot_dispatch_service as cds  # noqa: PLC0415
 
     acme, _other = _two_orgs(tmp_path, monkeypatch)
+    monkeypatch.setattr(execution, "_bound_github_repo", lambda _project: "acme/r")
     spec = tmp_path / "spec"
     spec.mkdir()
     monkeypatch.setenv("AIFACTORY_COPILOT_DISPATCH_ENABLED", "true")
