@@ -173,7 +173,7 @@ def read_only_key():
 def write_key():
     return AuthenticatedKey(
         key_id="key-w",
-        scopes=frozenset({MCP_READ_SCOPE, MCP_WRITE_SCOPE}),
+        scopes=frozenset({MCP_READ_SCOPE, MCP_WRITE_SCOPE, "task:merge"}),
         user_id="u1",
     )
 
@@ -210,33 +210,37 @@ async def test_write_tool_blocked_with_only_read_scope(read_only_key):
             "aifactory.list_projects",
             {},
             "GET",
-            "/api/projects",
+            "/api/mcp-stdio/projects",
         ),
         (
             "aifactory.list_tasks",
             {"project_id": "p1"},
             "GET",
-            "/api/projects/p1/tasks",
+            "/api/mcp-stdio/tasks",
         ),
         (
             "aifactory.get_task",
             {"task_id": "p1:001"},
             "GET",
-            "/api/tasks/p1:001",
+            "/api/mcp-stdio/tasks/p1:001",
         ),
         (
             "aifactory.get_worktree_diff",
             {"task_id": "p1:001"},
             "GET",
-            "/api/tasks/p1:001/worktree/diff",
+            "/api/mcp-stdio/tasks/p1:001/worktree/diff",
         ),
     ],
 )
 async def test_read_tools_hit_correct_endpoint(
     tool_name, args, expected_method, expected_path, read_only_key, allow_project
 ):
-    mock_call = AsyncMock(return_value={"ok": True})
-    with patch("server.mcp_remote.tools._call_internal", mock_call):
+    expected = [{"id": "p1"}] if tool_name == "aifactory.list_projects" else {"ok": True}
+    mock_call = AsyncMock(return_value=expected)
+    with patch("server.mcp_remote.tools._call_internal", mock_call), patch(
+        "server.mcp_remote.tools._accessible_project_ids",
+        AsyncMock(return_value={"p1"}),
+    ):
         result = await dispatch_tool_call(tool_name, args, read_only_key)
 
     assert mock_call.called
@@ -247,7 +251,7 @@ async def test_read_tools_hit_correct_endpoint(
     assert not result.get("isError")
     # Content is JSON-text envelope
     payload = json.loads(result["content"][0]["text"])
-    assert payload == {"ok": True}
+    assert payload == expected
 
 
 @pytest.mark.parametrize(
@@ -257,25 +261,25 @@ async def test_read_tools_hit_correct_endpoint(
             "aifactory.start_task",
             {"task_id": "p1:001"},
             "POST",
-            "/api/tasks/p1:001/start",
+            "/api/mcp-stdio/tasks/p1:001/start",
         ),
         (
             "aifactory.stop_task",
             {"task_id": "p1:001"},
             "POST",
-            "/api/tasks/p1:001/stop",
+            "/api/mcp-stdio/tasks/p1:001/stop",
         ),
         (
             "aifactory.approve_plan",
             {"task_id": "p1:001"},
             "POST",
-            "/api/tasks/p1:001/approve-plan",
+            "/api/mcp-stdio/tasks/p1:001/approve-plan",
         ),
         (
             "aifactory.merge_pr",
             {"task_id": "p1:001", "merge_method": "squash"},
             "POST",
-            "/api/tasks/p1:001/worktree/merge",
+            "/api/mcp-stdio/tasks/p1:001/worktree/merge",
         ),
     ],
 )
@@ -373,7 +377,7 @@ async def test_get_qa_report_hits_correct_endpoint(read_only_key, allow_project)
         )
     call_args = mock_call.call_args
     assert call_args.args[0] == "GET"
-    assert call_args.args[1] == "/api/tasks/p1:001/qa-report"
+    assert call_args.args[1] == "/api/mcp-stdio/tasks/p1:001/qa-report"
     assert not result.get("isError")
 
 
@@ -396,7 +400,7 @@ async def test_tail_agent_console_returns_sse_url(
     )
     payload = json.loads(result["content"][0]["text"])
     assert payload["sse_url"] == (
-        "https://aifactory.example.com/api/tasks/p1:001/agent-console/sse"
+        "https://aifactory.example.com/api/mcp-stdio/tasks/p1:001/agent-console/sse"
     )
     assert "auth_hint" in payload
 
@@ -421,7 +425,7 @@ async def test_reject_plan_hits_correct_endpoint_with_feedback(
         )
     call_args = mock_call.call_args
     assert call_args.args[0] == "POST"
-    assert call_args.args[1] == "/api/tasks/p1:001/reject-plan"
+    assert call_args.args[1] == "/api/mcp-stdio/tasks/p1:001/reject-plan"
     assert call_args.kwargs["json"] == {"feedback": "Plan is too vague"}
     assert not result.get("isError")
 
@@ -455,7 +459,7 @@ async def test_recover_task_hits_correct_endpoint(write_key, allow_project):
         )
     call_args = mock_call.call_args
     assert call_args.args[0] == "POST"
-    assert call_args.args[1] == "/api/tasks/p1:001/recover"
+    assert call_args.args[1] == "/api/mcp-stdio/tasks/p1:001/recover"
     # The REST endpoint expects camelCase ``autoRestart`` (see
     # routes/execution.py::RecoverTaskRequest); the MCP tool exposes it
     # as snake_case ``auto_restart`` because that's the Python idiom MCP

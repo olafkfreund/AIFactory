@@ -140,7 +140,9 @@ def require_acw_scope(scope: str):
                 detail=client_error(logger, "Authentication failed", exc),
             ) from exc
 
-        if not key.has_scope(scope):
+        if not key.has_scope(scope) and not (
+            scope == TASK_WRITE_SCOPE and key.has_scope("mcp:write")
+        ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=(
@@ -206,4 +208,5 @@ def require_acw_access(
         await authorize_project_for_user(principal, project_id, db, minimum_role)
         return key
 
+    _check.project_guard = True  # type: ignore[attr-defined]
     return _check

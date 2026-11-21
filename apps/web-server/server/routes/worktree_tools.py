@@ -47,10 +47,9 @@ async def _worktree_path_member(request: Request, db: AsyncSession = _DB_DEP) ->
         body = await request.json()
         if isinstance(body, dict) and isinstance(body.get("worktreePath"), str):
             pid = project_id_for_path(body["worktreePath"])
-            if pid:
-                await require_project_role(
-                    getattr(request.state, "user", None), pid, "member", db
-                )
+            await require_project_role(
+                getattr(request.state, "user", None), pid, "admin", db
+            )
 
 
 # ============================================

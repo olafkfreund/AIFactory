@@ -22,7 +22,12 @@ from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from server.auth import _acw_principal, _is_legacy_api_token, _try_decode_jwt
+from server.auth import (
+    _acw_principal,
+    _is_legacy_api_token,
+    _try_decode_jwt,
+    _warn_legacy_api_token_once,
+)
 from server.database.engine import get_db
 from server.error_ref import client_error
 from server.pty.access import project_id_for_path
@@ -40,11 +45,17 @@ from .project_authz import (
     accessible_project_ids,
     require_project_access,
     require_project_role,
+    resolve_owner_org_id,
 )
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _reject_secret_file(path: Path) -> None:
+    if path.name == ".env" or path.name.startswith(".env."):
+        raise HTTPException(status_code=404, detail="File not found")
 
 
 # --------------------------------------------------------------------------
@@ -272,13 +283,14 @@ async def _invisible_project_filter(
     """Enforce viewer role if ``target_path`` is inside a registered project,
     and return invisible project IDs to filter out of directory listings."""
     if request is None or not isinstance(db, AsyncSession):
-        return set()
+        raise HTTPException(status_code=401, detail="Authentication required")
     pid = project_id_for_path(str(target_path))
     if pid:
         await require_project_role(
             getattr(request.state, "user", None), pid, "viewer", db
         )
-        return set()
+    else:
+        await resolve_owner_org_id(request, db)
     from server.project_registry import aload_projects  # noqa: PLC0415
 
     projects = await aload_projects()
@@ -451,16 +463,19 @@ async def read_file_direct(
     """Read file contents by absolute path."""
     # Containment (#320): only files inside a registered project may be read —
     # no expanduser(), so `~`-tricks can't escape. Closes arbitrary host read.
-    full_path = within_roots(
-        path, registered_project_roots(), "registered project directories"
+    if request is None or not isinstance(db, AsyncSession):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    full_path = Path(path).resolve()
+    await require_project_role(
+        getattr(request.state, "user", None),
+        project_id_for_path(str(full_path)),
+        "viewer",
+        db,
     )
-    if request is not None and isinstance(db, AsyncSession):
-        await require_project_role(
-            getattr(request.state, "user", None),
-            project_id_for_path(str(full_path)),
-            "viewer",
-            db,
-        )
+    full_path = within_roots(
+        full_path, registered_project_roots(), "registered project directories"
+    )
+    _reject_secret_file(full_path)
 
     if not full_path.exists():
         return {"success": False, "error": "File not found", "data": None}
@@ -537,6 +552,7 @@ def _validate_serve_token(request: Request, token: str) -> bool:
                 },
             )
         if _is_legacy_api_token(candidate):
+            _warn_legacy_api_token_once()
             return _set_serve_user(
                 request,
                 {
@@ -592,20 +608,24 @@ async def serve_project_file(
         raise HTTPException(status_code=401, detail="Authentication required")
     # Containment (#320): the attacker-supplied root must itself be a registered
     # project dir, and the file must live inside it. Blocks `&root=/` traversal.
+    root_path = Path(root).resolve()
+    file_path = Path(path).resolve()
+    root_project = project_id_for_path(str(root_path))
+    target_project = project_id_for_path(str(file_path))
+    if not isinstance(db, AsyncSession):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    await require_project_role(
+        getattr(request.state, "user", None), target_project, "viewer", db
+    )
+    if root_project != target_project:
+        raise HTTPException(status_code=404, detail="Project not found")
     root_path = within_roots(
-        root, registered_project_roots(), "registered project directories"
+        root_path, registered_project_roots(), "registered project directories"
     )
     if not root_path.is_dir():
         raise HTTPException(status_code=400, detail="Root is not a directory")
-    file_path = within_roots(path, [root_path], "project root")
-    if isinstance(db, AsyncSession):
-        state = getattr(request, "state", None)
-        await require_project_role(
-            getattr(state, "user", None) if state is not None else None,
-            project_id_for_path(str(root_path)),
-            "viewer",
-            db,
-        )
+    file_path = within_roots(file_path, [root_path], "project root")
+    _reject_secret_file(file_path)
 
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
@@ -681,6 +701,7 @@ async def list_directory(
 ):
     """List contents of a directory."""
     full_path = resolve_path(project_id, path)
+    _reject_secret_file(full_path)
 
     if not full_path.exists():
         raise HTTPException(
@@ -735,6 +756,7 @@ async def read_file(
 ):
     """Read file contents."""
     full_path = resolve_path(project_id, path)
+    _reject_secret_file(full_path)
 
     if not full_path.exists():
         raise HTTPException(
@@ -786,6 +808,7 @@ async def write_file(
 ):
     """Write content to a file."""
     full_path = resolve_path(project_id, path)
+    _reject_secret_file(full_path)
 
     # Containment (#320): never let writes land in .git/ (hooks/config → RCE
     # on the next git operation).
@@ -860,6 +883,7 @@ async def search_files(
 ):
     """Search for text in files using ripgrep or fallback."""
     full_path = resolve_path(project_id, path)
+    _reject_secret_file(full_path)
 
     # Security (#323 H5): reject argument injection (a leading '-' turns the
     # positional query/glob into an rg flag, e.g. `--pre=/bin/sh`) and bound the
@@ -915,6 +939,8 @@ async def search_files(
             str(max_results),
             "--glob",
             file_pattern,
+            "--glob",
+            "!.env*",
             "--",  # no flags past here — query/path are positional (#323 H5)
             query,
             search_root,
@@ -956,7 +982,12 @@ async def search_files(
                 truncated = True
                 break
 
-            if not file_path.is_file() or is_binary_file(file_path):
+            if (
+                file_path.name == ".env"
+                or file_path.name.startswith(".env.")
+                or not file_path.is_file()
+                or is_binary_file(file_path)
+            ):
                 continue
 
             try:

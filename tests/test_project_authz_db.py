@@ -116,8 +116,10 @@ def db_factory():
     return SessionLocal
 
 
-def _req(user):
-    return SimpleNamespace(state=SimpleNamespace(user=user))
+def _req(user, project_id="p1"):
+    return SimpleNamespace(
+        state=SimpleNamespace(user=user), path_params={"project_id": project_id}
+    )
 
 
 # project p1 belongs to org-1 (alice's org).
@@ -134,7 +136,7 @@ async def test_member_of_owning_org_allowed(db_factory, monkeypatch):
     _patch_projects(monkeypatch)
     async with db_factory() as s:
         res = await ProjectAccessChecker("member")(
-            project_id="p1", request=_req({"id": "alice", "role": "user"}), db=s
+            request=_req({"id": "alice", "role": "user"}), db=s
         )
     assert res["id"] == "alice"
 
@@ -145,7 +147,7 @@ async def test_cross_tenant_access_is_404(db_factory, monkeypatch):
     async with db_factory() as s:
         with pytest.raises(HTTPException) as exc:
             await ProjectAccessChecker("viewer")(
-                project_id="p1", request=_req({"id": "bob", "role": "user"}), db=s
+                request=_req({"id": "bob", "role": "user"}), db=s
             )
     assert exc.value.status_code == 404
 
@@ -156,7 +158,7 @@ async def test_insufficient_role_is_403(db_factory, monkeypatch):
     async with db_factory() as s:
         with pytest.raises(HTTPException) as exc:
             await ProjectAccessChecker("admin")(
-                project_id="p1", request=_req({"id": "alice", "role": "user"}), db=s
+                request=_req({"id": "alice", "role": "user"}), db=s
             )
     assert exc.value.status_code == 403
 
@@ -165,8 +167,10 @@ async def test_unknown_project_is_404_even_for_legacy_token(db_factory):
     async with db_factory() as s:
         with pytest.raises(HTTPException) as exc:
             await ProjectAccessChecker("admin")(
-                project_id="does-not-exist",
-                request=_req({"id": "default", "is_legacy_shared_token": True}),
+                request=_req(
+                    {"id": "default", "is_legacy_shared_token": True},
+                    "does-not-exist",
+                ),
                 db=s,
             )
     assert exc.value.status_code == 404

@@ -301,7 +301,7 @@ async def _dispatch_tool(
     spec_dir, metadata = await _resolve_task(issue_number, task_id_arg)
 
     if spec_dir is None:
-        return f"No task found for issue_number={issue_number} task_id={task_id_arg}"
+        raise HTTPException(status_code=404, detail="Project not found")
 
     project_id = project_id_for_path(str(spec_dir.parent.parent.parent))
     async with async_session_factory() as db:

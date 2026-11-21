@@ -195,7 +195,7 @@ async def report_stale(
     project_ids = (
         await accessible_project_ids(request, db, "viewer")
         if request is not None and isinstance(db, AsyncSession)
-        else None
+        else set()
     )
     return sweep(hours=hours, dry_run=True, project_ids=project_ids)
 

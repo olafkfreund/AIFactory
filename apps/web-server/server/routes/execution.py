@@ -62,6 +62,7 @@ from .from_issue import (
     _intake_auto_handoff_enabled,
     _set_task_metadata_flag,
 )
+from .github import _get_repo_full_name
 from .project_authz import (
     _auth_disabled,
     accessible_project_ids,
@@ -1588,7 +1589,7 @@ async def _authorize_resolved_project(
     projects: dict[str, Any],
 ) -> dict[str, Any] | None:
     if raw_request is None or not isinstance(db, AsyncSession):
-        return None
+        raise HTTPException(status_code=401, detail="Authentication required")
     if _auth_disabled() and project_id in projects:
         user = getattr(raw_request.state, "user", None)
         return (
@@ -1920,6 +1921,8 @@ async def dispatch_task_to_copilot(
         )
 
     _, _, project_path, spec_dir = _resolve_task(task_id)
+    if _get_repo_full_name(str(project_path)) != request.repo_full_name:
+        raise HTTPException(status_code=403, detail="Repository does not match project")
     task_metadata_path = spec_dir / "task_metadata.json"
 
     service = CopilotDispatchService()

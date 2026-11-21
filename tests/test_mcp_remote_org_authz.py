@@ -102,7 +102,6 @@ async def call(tmp_path, monkeypatch):
 
     monkeypatch.setattr("server.project_registry.load_projects", lambda: projects)
     monkeypatch.setattr("server.project_registry.aload_projects", aload_projects)
-    monkeypatch.setattr(tools, "load_projects", lambda: projects)
     proxied = AsyncMock(return_value=[{"id": "pa"}, {"id": "pb"}])
     monkeypatch.setattr(tools, "_call_internal", proxied)
 
@@ -132,7 +131,7 @@ async def test_list_tasks_other_org_refused_own_org_works(call):
     assert proxied.await_count == 0
     result, proxied = await call("aifactory.list_tasks", {"project_id": "pa"})
     assert not result.get("isError")
-    assert proxied.await_args.args[1] == "/api/projects/pa/tasks"
+    assert proxied.await_args.args[1] == "/api/mcp-stdio/tasks"
 
 
 async def test_list_projects_hides_other_org(call):

@@ -5,14 +5,13 @@ A session is bound to its creating user and project. The service principal
 to own the session and still hold its project. Every check fails closed.
 """
 
-import os
 from pathlib import Path, PurePath
 from typing import Any
 
 from server import project_registry
 from server.config import get_settings
 from server.database import engine
-from server.routes.project_authz import authorize_project_for_user, is_service_principal
+from server.routes.project_authz import authorize_project_for_user
 
 
 async def project_ok(
@@ -30,7 +29,12 @@ async def project_ok(
 async def may_use(
     user: dict[str, Any] | None, session: Any, role: str = "viewer"
 ) -> bool:
-    if is_service_principal(user) or (
+    if (
+        user
+        and user.get("id") == "default"
+        and user.get("is_service")
+        and get_settings().DISABLE_AUTH
+    ) or (
         user
         and user.get("is_legacy_shared_token")
         and get_settings().LEGACY_SHARED_TOKEN_FULL_ACCESS
@@ -38,8 +42,10 @@ async def may_use(
         return True
     if not isinstance(user, dict) or not user.get("id"):
         return False
-    if user["id"] != session.owner_id:
+    if session.owner_id is not None and user["id"] != session.owner_id:
         return False
+    if session.owner_id is None:
+        role = "admin"
     # Old project-less sessions are readable by their owner, but cannot open a shell.
     return (
         role == "viewer"
@@ -55,9 +61,9 @@ def _roots(project: object) -> list[PurePath]:
         return []
     raw = str(project["path"])
     try:
-        return [PurePath(os.path.normpath(raw)), Path(raw).resolve()]
+        return [Path(raw).resolve()]
     except (OSError, RuntimeError, ValueError):
-        return [PurePath(os.path.normpath(raw))]
+        return []
 
 
 def _inside(target: PurePath, root: PurePath) -> bool:
@@ -73,8 +79,10 @@ def project_id_for_path(path: str | None) -> str | None:
         return path
     if not PurePath(path).is_absolute():
         return None
-    # Pure path arithmetic: the caller's string never reaches a filesystem call.
-    target = PurePath(os.path.normpath(path))
+    try:
+        target = Path(path).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
     best: tuple[int, str] | None = None
     for project_id, project in projects.items():
         for root in _roots(project):
@@ -86,7 +94,10 @@ def project_id_for_path(path: str | None) -> str | None:
 def path_in_project(path: str, project_id: str) -> bool:
     if not PurePath(path).is_absolute():
         return False
-    target = PurePath(os.path.normpath(path))
+    try:
+        target = Path(path).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False
     return any(
         _inside(target, root)
         for root in _roots(project_registry.load_projects().get(project_id))

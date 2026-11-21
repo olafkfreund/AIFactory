@@ -17,21 +17,21 @@ from pathlib import Path as FilePath
 from typing import Any
 
 from factory_common.logsafe import sanitize_log
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from server.background import spawn
 from server.database.engine import get_db
 from server.error_ref import client_error
+from server.project_registry import load_projects
 from server.pty.access import project_id_for_path
-from server.routes.project_authz import require_project_access
+from server.routes.project_authz import accessible_project_ids, require_project_access
 from server.services import github_app, project_settings_store
 from server.services.gh import run_gh_command  # re-exported: see services/gh.py
 from server.services.git_base_url import safe_git_base_url  # #1360
 from server.services.http_verdict import honest_status
 from server.services.originator import issue_originator
-from server.specpath import browse_roots, within_roots
 from server.utils.subprocess_env import child_env, github_token
 
 from .project_github import project_github_token
@@ -60,7 +60,7 @@ async def _authorize_github_project_id(
 async def _authorize_github_path(request: Request, path: str, role: str) -> None:
     pid = project_id_for_path(path)
     if not pid:
-        within_roots(path, browse_roots(), "browsable directories")
+        raise HTTPException(status_code=404, detail="Project not found")
     await _authorize_github_project_id(request, pid, role)
 
 
@@ -100,6 +100,7 @@ async def _github_fork_info_viewer(
 
 
 class CreateRepoRequest(BaseModel):
+    projectPath: str  # noqa: N815 - public request field
     repoName: str
     description: str | None = None
     private: bool = False
@@ -835,9 +836,22 @@ async def get_github_user():
     return {"success": True, "data": {"username": ""}}
 
 
+async def _visible_github_repos(request: Request) -> set[str]:
+    async with contextlib.asynccontextmanager(get_db)() as db:
+        visible = await accessible_project_ids(request, db)
+    projects = load_projects()
+    return {
+        repo
+        for pid in visible
+        if (path := projects.get(pid, {}).get("path"))
+        if (repo := _get_repo_full_name(str(path)))
+    }
+
+
 @router.get("/repos")
-async def list_github_user_repos():
+async def list_github_user_repos(request: Request):
     """List repositories for authenticated user."""
+    visible = await _visible_github_repos(request)
     result = run_gh_command(
         [
             "repo",
@@ -858,6 +872,7 @@ async def list_github_user_repos():
                     "isPrivate": r.get("isPrivate", False),
                 }
                 for r in raw_repos
+                if r.get("nameWithOwner", r.get("name")) in visible
             ]
             return {"success": True, "data": {"repos": repos}}
         except json.JSONDecodeError:
@@ -879,7 +894,8 @@ async def list_github_orgs():
 async def detect_github_repo(path: str = Query(...)):
     """Detect GitHub remote for a local repository."""
     result = run_gh_command(
-        ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], cwd=path
+        ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
+        cwd=str(FilePath(path).resolve()),
     )
     if result["success"]:
         return {"success": True, "data": result["output"]}
@@ -888,9 +904,12 @@ async def detect_github_repo(path: str = Query(...)):
 
 @router.get("/branches")
 async def get_github_branches(
+    request: Request,
     repo: str = Query(...),
 ):
     """Get branches for a GitHub repository."""
+    if repo not in await _visible_github_repos(request):
+        raise HTTPException(status_code=404, detail="Project not found")
     result = run_gh_command(["api", f"repos/{repo}/branches", "--jq", ".[].name"])
     if result["success"]:
         branches = result["output"].split("\n") if result["output"] else []
@@ -900,8 +919,9 @@ async def get_github_branches(
 
 @router.post("/repos")
 @honest_status
-async def create_github_repo(request: CreateRepoRequest):
+async def create_github_repo(request: CreateRepoRequest, http_request: Request):
     """Create a new GitHub repository."""
+    await _authorize_github_path(http_request, request.projectPath, "admin")
     args = ["repo", "create", request.repoName, "--confirm"]
     if request.description:
         args.extend(["--description", request.description])
@@ -932,7 +952,7 @@ async def add_git_remote(request: AddRemoteRequest):
     try:
         subprocess.run(
             ["git", "remote", "add", "origin", remote_url],
-            cwd=request.projectPath,
+            cwd=str(FilePath(request.projectPath).resolve()),
             check=True,
             capture_output=True,
             env=child_env(),

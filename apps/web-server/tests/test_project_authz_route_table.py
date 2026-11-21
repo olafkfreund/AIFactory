@@ -12,8 +12,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.routing import APIRoute, APIWebSocketRoute
+from fastapi.testclient import TestClient
+from server.database.engine import get_db
 from server.database.models import (
     Base,
     Organization,
@@ -26,7 +28,7 @@ from server.main import create_app
 from server.mcp_remote import tools as mcp_remote_tools
 from server.mcp_stdio.router import investigation_router
 from server.rmux import console_router
-from server.routes import copilot_mcp, investigations, project_authz
+from server.routes import context, copilot_mcp, investigations, project_authz
 from server.utils.roles import ROLE_LEVELS
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -53,6 +55,8 @@ PROJECT_AUTHZ_PRIMITIVES: frozenset[str] = frozenset(
         "authorize_project_for_user",
         "_project_authorized",
         "may_use",
+        "_owned",
+        "_authorize_path",
         "TaskSocketAccess",
         "AllTaskSocketAccess",
         "register_client",
@@ -97,7 +101,6 @@ NON_PROJECT_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("POST", "/api/github/auth/start"),
         ("GET", "/api/github/auth/status"),
         ("GET", "/api/github/branches"),
-        ("GET", "/api/github/cli"),
         ("POST", "/api/github/cli/install"),
         ("GET", "/api/github/features"),
         ("GET", "/api/github/models"),
@@ -296,6 +299,31 @@ def _route_authz_guards(route: APIRoute | APIWebSocketRoute) -> set[str]:
     return guards
 
 
+def _actual_project_checker(route: APIRoute) -> bool:
+    def walk(dependant: object) -> bool:
+        return any(
+            isinstance(getattr(dep, "call", None), project_authz.ProjectAccessChecker)
+            or getattr(getattr(dep, "call", None), "project_guard", False)
+            or getattr(getattr(dep, "call", None), "__name__", "")
+            == "project_github_token"
+            or walk(dep)
+            for dep in getattr(dependant, "dependencies", ())
+        )
+
+    return walk(route.dependant)
+
+
+def test_unguarded_route_fails_actual_checker() -> None:
+    app = FastAPI()
+
+    @app.get("/projects/{project_id}/env")
+    async def unguarded(project_id: str):
+        return {"projectId": project_id}
+
+    route = next(r for r in app.routes if isinstance(r, APIRoute))
+    assert not _actual_project_checker(route)
+
+
 def test_every_project_route_ws_and_mcp_tool_is_guarded() -> None:
     """Walk REST routes, WebSockets, and MCP tool catalogs; fail on any unguarded surface."""
     app = create_app()
@@ -315,6 +343,12 @@ def test_every_project_route_ws_and_mcp_tool_is_guarded() -> None:
             else ["WS"]
         )
         guards = _route_authz_guards(route)
+        if isinstance(route, APIRoute) and any(
+            param in route.path for param in ("{project_id}", "{projectId}", "{task_id}")
+        ):
+            assert _actual_project_checker(route), (
+                f"No executing project dependency on {route.path}"
+            )
         ep_name = f"{route.endpoint.__module__}.{route.endpoint.__name__}"
         for method in methods:
             key = (method, route.path)
@@ -361,6 +395,33 @@ def test_every_project_route_ws_and_mcp_tool_is_guarded() -> None:
     assert "project_id_for_path" in copilot_src
     for tool_def in copilot_mcp.MCP_TOOLS:
         assert tool_def["name"] in copilot_src
+
+
+def test_env_route_authorizes_path_project_before_query(monkeypatch):
+    calls = []
+
+    async def authorize(_user, project_id, _role, _db):
+        calls.append(project_id)
+        if project_id != "owned":
+            raise HTTPException(status_code=404, detail="Project not found")
+
+    async def db():
+        yield object()
+
+    monkeypatch.setattr(project_authz, "require_project_role", authorize)
+    monkeypatch.setattr(project_authz, "_auth_disabled", lambda: False)
+    app = FastAPI()
+    app.include_router(context.project_router, prefix="/api/projects/{projectId}")
+    app.dependency_overrides[get_db] = db
+
+    @app.middleware("http")
+    async def principal(request, call_next):
+        request.state.user = {"id": "caller"}
+        return await call_next(request)
+
+    response = TestClient(app).get("/api/projects/hidden/env?project_id=owned")
+    assert response.status_code == 404
+    assert calls == ["hidden"]
 
 
 @pytest.fixture

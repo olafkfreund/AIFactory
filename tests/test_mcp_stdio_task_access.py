@@ -100,7 +100,7 @@ async def test_task_write_requires_project_membership(
             if "teams.is_default" in sql:
                 return FakeResult(True)
             if "team_memberships.role" in sql or "org_members.role" in sql:
-                return FakeResult("member" if "owner" in params else None)
+                return FakeResult("admin" if "owner" in params else None)
             return FakeResult(None)
 
     async def fake_db():
@@ -317,7 +317,7 @@ async def test_read_lists_filter_foreign_projects(read_app, monkeypatch, path):
         for token, expected in [
             ("acw_foreign", []),
             ("acw_owner", ["p1"]),
-            ("acw_service", []),
+            ("acw_service", ["p1"] if path == "/projects" else []),
             ("legacy-test-token", ["p1", "p2"]),
         ]:
             result = await get(token)

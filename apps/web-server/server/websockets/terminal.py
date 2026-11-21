@@ -46,7 +46,7 @@ async def _watch(
             if user is None:
                 await websocket.close(code=4401)
                 return
-        if not await may_use(user, session, "member"):
+        if not await may_use(user, session, "admin"):
             await websocket.close(code=4403)
             return
 
@@ -74,7 +74,7 @@ async def terminal_websocket(websocket: WebSocket, terminal_id: str):
 
     manager = get_pty_manager()
     session = manager.get_session(terminal_id)
-    if session is not None and not await may_use(user, session, "member"):
+    if session is not None and not await may_use(user, session, "admin"):
         session = None  # another user's terminal reads as missing
 
     if session is None:

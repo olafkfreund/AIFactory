@@ -230,7 +230,7 @@ async def list_terminals(http_request: Request):
 
 
 @router.post("", response_model=TerminalInfo, status_code=status.HTTP_201_CREATED)
-async def create_terminal(request: CreateTerminalRequest, http_request: Request):
+async def create_terminal(request: CreateTerminalRequest, http_request: Request):  # noqa: PLR0912
     """Create a new terminal session.
 
     After creating, connect to /ws/terminal/{id} for I/O.
@@ -240,6 +240,9 @@ async def create_terminal(request: CreateTerminalRequest, http_request: Request)
 
     # Determine working directory
     cwd = request.cwd
+    user = _user(http_request)
+    if request.project_id:
+        await _authorize_project(user, request.project_id, "admin")
 
     # Try projectPath first (direct path from frontend)
     if not cwd and request.project_path:
@@ -253,6 +256,14 @@ async def create_terminal(request: CreateTerminalRequest, http_request: Request)
 
     if not cwd:
         cwd = str(Path.home())
+
+    project_id = project_id_for_path(cwd)
+    if request.project_id and project_id and project_id != request.project_id:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if project_id and not request.project_id:
+        await _authorize_project(user, project_id, "admin")
+    if request.project_id and not path_in_project(cwd, request.project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
 
     # Confine before the existence check (#1278). `cwd` here is the working
     # directory of an interactive shell, so an unconfined one is not a file
@@ -269,16 +280,15 @@ async def create_terminal(request: CreateTerminalRequest, http_request: Request)
 
     # The UI re-posts create on every remount of a live terminal: hand the
     # caller's own live session back instead of replacing or rejecting it.
-    user = _user(http_request)
     existing = manager.get_session(request.id) if request.id else None
-    if existing is not None and await may_use(user, existing, "member"):
+    if existing is not None and await may_use(user, existing, "admin"):
         if existing.is_alive():
             return TerminalInfo(**existing.to_dict())
         manager.close_session(existing.id, expected=existing)
 
     # Bind the session (#3740). Non-service callers must land inside a
     # registered project they are authorized for.
-    project_id = request.project_id or project_id_for_path(cwd)
+    project_id = request.project_id or project_id
     legacy = (
         isinstance(user, dict)
         and user.get("is_legacy_shared_token")
@@ -291,9 +301,6 @@ async def create_terminal(request: CreateTerminalRequest, http_request: Request)
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have access to this project",
         )
-    if project_id:
-        await _authorize_project(user, project_id, "member")
-
     try:
         session = manager.create_session(
             cwd=cwd,
@@ -508,7 +515,7 @@ async def create_terminal_worktree(
     Returns:
         TerminalWorktreeResult with success status and config/error
     """
-    await _authorize_path(_user(http_request), request.projectPath, "member")
+    await _authorize_path(_user(http_request), request.projectPath, "admin")
     try:
         service = TerminalWorktreeService(request.projectPath)
         config = service.create_worktree(
@@ -605,7 +612,7 @@ async def get_terminal(terminal_id: str, http_request: Request):
 @router.delete("/{terminal_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def close_terminal(terminal_id: str, http_request: Request):
     """Close a terminal session."""
-    session = await _owned(terminal_id, http_request, "member")
+    session = await _owned(terminal_id, http_request, "admin")
 
     if not get_pty_manager().close_session(terminal_id, expected=session):
         raise HTTPException(
@@ -622,7 +629,7 @@ async def resize_terminal(
 
     Note: This can also be done via WebSocket with a resize message.
     """
-    session = await _owned(terminal_id, http_request, "member")
+    session = await _owned(terminal_id, http_request, "admin")
 
     session.resize(request.cols, request.rows)
     return {"success": True, "cols": request.cols, "rows": request.rows}
@@ -649,7 +656,7 @@ async def save_terminal_buffer(terminal_id: str, request: dict, http_request: Re
         HTTPException: 404 if terminal not found, 400 for validation errors
     """
     # Validate terminal exists and belongs to the caller
-    session = await _owned(terminal_id, http_request, "member")
+    session = await _owned(terminal_id, http_request, "admin")
 
     try:
         # Validate buffer content

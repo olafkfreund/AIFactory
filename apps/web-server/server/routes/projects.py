@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.error_ref import InputRejectedError, client_error
+from server.pty.access import project_id_for_path
 
 # The registry helpers now live one layer down (#1317). Imported here rather
 # than left defined here so this module keeps its own `load_projects(...)`
@@ -61,6 +62,7 @@ from ..tenancy import (
 )
 from . import changelog, context, files, git, github
 from .project_authz import (
+    accessible_project_ids,
     accessible_org_ids,
     authorize_project_for_user,
     require_project_access,
@@ -386,6 +388,8 @@ def project_to_response(project_id: str, project_data: dict) -> dict:
                 k: v for k, v in saved_settings.items() if k != "notifications"
             }
         default_settings.update(saved_settings)
+    default_settings.pop("gitToken", None)
+    default_settings.pop("githubToken", None)
 
     return {
         "id": project_id,
@@ -438,10 +442,8 @@ async def _visible_projects(
 ) -> list[tuple[str, dict[str, Any]]]:
     """Active projects the caller may see (org filter, then tenant filter)."""
     projects = await aload_projects()
-    allowed = await accessible_org_ids(request, db)
-    items = list(projects.items())
-    if allowed is not None:
-        items = [(pid, p) for pid, p in items if p.get("org_id") in allowed]
+    allowed = await accessible_project_ids(request, db)
+    items = [(pid, p) for pid, p in projects.items() if pid in allowed]
     # Multi-tenancy (#925): scope to the caller's tenant when the flag is on;
     # a project with no stamp belongs to the default tenant.
     if multi_tenant_enabled():
@@ -498,11 +500,20 @@ def _refuse_clone_overlap(org_id: str | None, git_url: str) -> None:
     )
 
     with contextlib.suppress(InputRejectedError):  # the clone reports it as 400
-        _refuse_overlap(org_id, workspace_root() / slug_from_git_url(git_url))
+        destination = workspace_root() / slug_from_git_url(git_url)
+        _refuse_overlap(org_id, destination)
+        _refuse_registered(load_projects(), destination)
 
 
 def _refuse_registered(projects: dict[str, Any], path: Path) -> None:
-    if any(p["path"] == str(path.resolve()) for p in projects.values()):
+    resolved = path.resolve()
+    if any(
+        resolved == (root := Path(p["path"]).resolve())
+        or root in resolved.parents
+        or resolved in root.parents
+        for p in projects.values()
+        if p.get("path")
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Project already registered",
@@ -530,7 +541,11 @@ def _refuse_overlap(org_id: str | None, path: Path, skip: str | None = None) -> 
 
 
 @router.post("/scan")
-async def scan_for_projects(request: ScanProjectsRequest):
+async def scan_for_projects(
+    request: ScanProjectsRequest,
+    http_request: Request,
+    db: AsyncSession = Depends(get_db),
+):
     """
     Scan filesystem for Magestic AI projects.
 
@@ -551,6 +566,10 @@ async def scan_for_projects(request: ScanProjectsRequest):
     Raises:
         HTTPException: 400 if path doesn't exist or isn't a directory
     """
+    from .project_authz import resolve_owner_org_id
+
+    await resolve_owner_org_id(http_request, db)
+    visible = await accessible_project_ids(http_request, db)
     try:
         # Confine, then check existence (#1278). The old order asked "is it
         # there" and never asked "is it allowed", so this endpoint would happily
@@ -561,6 +580,9 @@ async def scan_for_projects(request: ScanProjectsRequest):
             "browsable directories",
             expand_user=True,
         )
+        base_project = project_id_for_path(str(base))
+        if base_project and base_project not in visible:
+            raise HTTPException(status_code=404, detail="Project not found")
 
         if not base.exists():
             raise HTTPException(
@@ -585,6 +607,9 @@ async def scan_for_projects(request: ScanProjectsRequest):
                 # Sort entries for consistent ordering
                 for entry in sorted(dir_path.iterdir(), key=lambda e: e.name.lower()):
                     if not entry.is_dir():
+                        continue
+                    entry_project = project_id_for_path(str(entry))
+                    if entry_project and entry_project not in visible:
                         continue
 
                     # Skip hidden directories and common non-project dirs
@@ -693,6 +718,8 @@ async def add_project(  # noqa: PLR0912, PLR0915 - one flow: clone or local, the
         from .project_authz import resolve_owner_org_id
 
         org_id = await resolve_owner_org_id(request, db)
+    else:
+        raise HTTPException(status_code=401, detail="Authentication required")
 
     if project.gitUrl:
         # Clone mode — defer to project_workspace_service.
@@ -700,8 +727,17 @@ async def add_project(  # noqa: PLR0912, PLR0915 - one flow: clone or local, the
         from server.services.project_workspace_service import (
             GitOperationError,
             clone_or_update,
+            slug_from_git_url,
             workspace_root,
         )
+
+        with contextlib.suppress(InputRejectedError):
+            destination = workspace_root() / slug_from_git_url(project.gitUrl)
+            existing_id = project_id_for_path(str(destination))
+            if existing_id:
+                await authorize_project_for_user(
+                    getattr(request.state, "user", None), existing_id, db, "viewer"
+                )
 
         # Stored credential lookup (#82 PR-C). When the caller passes
         # gitCredentialId, fetch the (username, token) tuple from the
@@ -745,6 +781,11 @@ async def add_project(  # noqa: PLR0912, PLR0915 - one flow: clone or local, the
     else:
         # Local mode — register the existing directory.
         assert project.path is not None  # model_validator guarantees this
+        existing_id = project_id_for_path(str(Path(project.path).expanduser().resolve()))
+        if existing_id:
+            await authorize_project_for_user(
+                getattr(request.state, "user", None), existing_id, db, "viewer"
+            )
         # Confine BEFORE the mkdir below, not after (#1278). This is the write
         # that makes projects.json a trust boundary: every downstream consumer
         # reads a path back out of the registry and uses it unchecked, so the

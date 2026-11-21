@@ -315,8 +315,9 @@ async def deliver_local(scope: Scope, event_type: str, payload: dict) -> None:
         targets = []
 
     project_id = payload.get("projectId") or payload.get("project_id")
-    if not project_id and isinstance(payload.get("taskId"), str):
-        project_id = payload["taskId"].partition(":")[0]
+    task_id = payload.get("taskId") or payload.get("task_id")
+    if not project_id and isinstance(task_id, str):
+        project_id = task_id.partition(":")[0]
     for ws, client in targets:
         if project_id:
             from server.websockets.task_access import _project_authorized  # noqa: PLC0415

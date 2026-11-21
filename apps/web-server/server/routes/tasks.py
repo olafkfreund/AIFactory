@@ -253,10 +253,11 @@ async def create_task(
     db: AsyncSession = _DB_DEP,
 ):
     """Create a new task (spec) in a project."""
-    if request is not None and isinstance(db, AsyncSession):
-        await require_project_role(
-            getattr(request.state, "user", None), task.project_id, "member", db
-        )
+    if request is None or not isinstance(db, AsyncSession):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    await require_project_role(
+        getattr(request.state, "user", None), task.project_id, "member", db
+    )
     projects = load_projects()
 
     if task.project_id not in projects:

@@ -33,10 +33,12 @@ class ProjectAccess:
     role: str
 
 
-def scope_ceiling(scopes: list[str] | set[str] | None) -> str | None:
+def scope_ceiling(scopes: object) -> str | None:
     """Highest project role permitted by a token's scopes."""
     if scopes is None:
         return "owner"
+    if not isinstance(scopes, (list, set, tuple, frozenset)):
+        return None
     scopes = set(scopes)
     if scopes & {"task:merge", "project:admin", "*:admin", "admin"}:
         return "admin"
@@ -124,9 +126,11 @@ async def _effective_role(
     ):
         team_id = project.get("team_id")
         return "owner", team_id if isinstance(team_id, str) else None
+    if principal.get("is_legacy_shared_token"):
+        return None, None
     role, team_id = await _team_grant(principal, project, db)
     scopes = principal.get("scopes")
-    ceiling = scope_ceiling(scopes if isinstance(scopes, (list, set)) else None)
+    ceiling = scope_ceiling(scopes)
     if role in ROLE_LEVELS and ceiling is not None:
         return min((role, ceiling), key=lambda r: ROLE_LEVELS[r]), team_id
     return None, team_id
@@ -204,6 +208,8 @@ async def accessible_project_ids(
         and get_settings().LEGACY_SHARED_TOKEN_FULL_ACCESS
     ):
         return set(projects)
+    if principal.get("is_legacy_shared_token"):
+        return set()
     ceiling = scope_ceiling(principal.get("scopes"))
     if ceiling is None or ROLE_LEVELS[ceiling] < ROLE_LEVELS[minimum_role]:
         return set()
@@ -274,13 +280,12 @@ class ProjectAccessChecker:
     async def __call__(
         self,
         request: Request,
-        project_id: str | None = None,
         db: AsyncSession = Depends(get_db),
     ) -> dict[str, object]:
         pid = (
-            project_id
-            or request.path_params.get("project_id")
+            request.path_params.get("project_id")
             or request.path_params.get("projectId")
+            or request.query_params.get("project_id")
             or ""
         )
         return await self._authorize(pid, request, db)
@@ -368,12 +373,24 @@ async def resolve_owner_org_id(request: Request, db: AsyncSession) -> str:
     - Fallback → ``default`` org (never fails the create path).
     """
     user = getattr(request.state, "user", None)
-    if is_service_principal(user) or not isinstance(user, dict) or not user.get("id"):
+    if _auth_disabled():
         return DEFAULT_ORG_ID
-    if user.get("api_key_id") and user.get("org_id"):
-        return str(user["org_id"])
-    result = await db.execute(
-        select(OrgMember.org_id).where(OrgMember.user_id == user["id"])
+    if not isinstance(user, dict) or not user.get("id"):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if user.get("is_legacy_shared_token"):
+        if get_settings().LEGACY_SHARED_TOKEN_FULL_ACCESS:
+            return DEFAULT_ORG_ID
+        raise HTTPException(status_code=403, detail="Forbidden")
+    ceiling = scope_ceiling(user.get("scopes"))
+    if ceiling is None or ROLE_LEVELS[ceiling] < ROLE_LEVELS["member"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    query = select(OrgMember.org_id).where(
+        OrgMember.user_id == user["id"],
+        OrgMember.role.in_(_roles_at_or_above("member")),
     )
-    org_id = result.scalars().first()
-    return org_id or DEFAULT_ORG_ID
+    if user.get("org_id"):
+        query = query.where(OrgMember.org_id == user["org_id"])
+    org_id = (await db.execute(query)).scalars().first()
+    if not org_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return str(org_id)

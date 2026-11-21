@@ -39,6 +39,7 @@ def env(tmp_path, monkeypatch):
         "members": {"alice": {"a"}, "bob": {"b"}},
         "error": False,
         "viewers": set(),
+        "members_only": set(),
     }
     monkeypatch.setenv("APP_FILE_BROWSE_ROOTS", str(tmp_path))
     monkeypatch.setattr(project_registry, "load_projects", lambda: projects)
@@ -58,7 +59,8 @@ def env(tmp_path, monkeypatch):
         if (
             project_id not in state["members"].get(user["id"], set())
             or key_org
-            or (role == "member" and user["id"] in state["viewers"])
+            or (role in {"member", "admin"} and user["id"] in state["viewers"])
+            or (role == "admin" and user["id"] in state["members_only"])
         ):
             raise PermissionError("not a member")
 
@@ -115,6 +117,18 @@ def _as(env, who, method, path, **kw):
     return env.client.request(method, path, headers={"x-user": who}, **kw)
 
 
+def test_member_cannot_open_terminal(env):
+    env.state["members_only"].add("alice")
+    assert _create(env, "alice", cwd=str(env.root / "a")).status_code == 403
+
+
+def test_terminal_symlink_uses_resolved_project(env):
+    (env.root / "a" / "link").symlink_to(env.root / "b", target_is_directory=True)
+    response = _create(env, "alice", cwd=str(env.root / "a" / "link"))
+    assert response.status_code in {403, 404}
+    assert env.manager.sessions == {}
+
+
 def test_owner_uses_own_terminal_and_the_other_user_gets_404(env):
     created = _create(env, "alice", id="t1", cwd=str(env.root / "a"))
     assert created.status_code == 201, created.text
@@ -148,7 +162,7 @@ def test_create_requires_an_authorized_project_that_contains_the_directory(env):
     assert _create(env, "alice", projectId="b").status_code == 403
     # project A's id cannot authorize project B's directory
     assert (
-        _create(env, "alice", projectId="a", cwd=str(env.root / "b")).status_code == 403
+        _create(env, "alice", projectId="a", cwd=str(env.root / "b")).status_code == 404
     )
     # projectless (home directory) terminals stay service-only
     assert _create(env, "alice", cwd=str(env.root)).status_code == 403

@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from server.database.engine import get_db
 from server.error_ref import client_error
 from server.pty.access import project_id_for_path
-from server.routes.project_authz import require_project_access
+from server.routes.project_authz import require_project_access, resolve_owner_org_id
 from server.services.http_verdict import honest_status
 from server.specpath import browse_roots, within_roots
 from server.utils.subprocess_env import child_env, merge_driver_pins, project_github_env
@@ -72,6 +72,9 @@ async def _git_body_path_member(request: Request) -> None:
         body = await request.json()
         if isinstance(body, dict) and isinstance(body.get("path"), str):
             await _authorize_git_path(request, _confined(body["path"]), "member")
+            if not project_id_for_path(body["path"]):
+                async with contextlib.asynccontextmanager(get_db)() as db:
+                    await resolve_owner_org_id(request, db)
 
 
 def run_git_command(args: list[str], cwd: str) -> dict:
