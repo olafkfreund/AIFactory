@@ -137,6 +137,8 @@ async def list_tasks(
     an org they belong to; the service principal (local UI / siblings) sees all.
     """
     projects = load_projects()
+    if request is None or not isinstance(db, AsyncSession):
+        raise HTTPException(status_code=401, detail="Authentication required")
 
     # Filter projects
     if project_id:
@@ -145,16 +147,13 @@ async def list_tasks(
                 status_code=404,  # `status` here is the query param, not the module
                 detail="Project not found",
             )
-        if request is not None and isinstance(db, AsyncSession):
-            await require_project_role(
-                getattr(request.state, "user", None), project_id, "viewer", db
-            )
+        await require_project_role(
+            getattr(request.state, "user", None), project_id, "viewer", db
+        )
         project_ids = [project_id]
-    elif request is not None and isinstance(db, AsyncSession):
+    else:
         allowed = await accessible_project_ids(request, db)
         project_ids = [pid for pid in projects if pid in allowed]
-    else:
-        project_ids = list(projects.keys())
 
     # Collect tasks from all projects
     all_tasks = []

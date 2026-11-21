@@ -380,14 +380,15 @@ async def dispatch_tool_call(
             return _format_json(listed)
         if tool_name == "aifactory.list_tasks":
             project_id = arguments["project_id"]
-            return _format_json(
-                await _call_internal(
-                    "GET", "/api/mcp-stdio/tasks", key, params={"project_id": project_id}
-                )
+            result = await _call_internal(
+                "GET", "/api/mcp-stdio/tasks", key, params={"project_id": project_id}
             )
+            return _format_json(result["tasks"])
         if tool_name == "aifactory.get_task":
             return _format_json(
-                await _call_internal("GET", f"/api/mcp-stdio/tasks/{arguments['task_id']}", key)
+                await _call_internal(
+                    "GET", f"/api/mcp-stdio/tasks/{arguments['task_id']}", key
+                )
             )
         if tool_name == "aifactory.get_worktree_diff":
             return _format_json(
@@ -400,13 +401,19 @@ async def dispatch_tool_call(
         if tool_name == "aifactory.start_task":
             return _format_json(
                 await _call_internal(
-                    "POST", f"/api/mcp-stdio/tasks/{arguments['task_id']}/start", key, json={}
+                    "POST",
+                    f"/api/mcp-stdio/tasks/{arguments['task_id']}/start",
+                    key,
+                    json={},
                 )
             )
         if tool_name == "aifactory.stop_task":
             return _format_json(
                 await _call_internal(
-                    "POST", f"/api/mcp-stdio/tasks/{arguments['task_id']}/stop", key, json={}
+                    "POST",
+                    f"/api/mcp-stdio/tasks/{arguments['task_id']}/stop",
+                    key,
+                    json={},
                 )
             )
         if tool_name == "aifactory.approve_plan":

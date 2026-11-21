@@ -214,4 +214,4 @@ async def test_accessible_org_ids_scopes_humans_but_not_service(db_factory):
         bob = await accessible_org_ids(_req({"id": "bob", "role": "user"}), s)
         assert bob == {"org-2"}
         service = await accessible_org_ids(_req({"is_service": True}), s)
-        assert service is None  # sees everything
+        assert service == set()  # an unbound service cannot see projects

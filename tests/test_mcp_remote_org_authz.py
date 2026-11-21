@@ -129,9 +129,12 @@ async def test_list_tasks_other_org_refused_own_org_works(call):
     result, proxied = await call("aifactory.list_tasks", {"project_id": "pb"})
     assert result.get("isError") is True
     assert proxied.await_count == 0
+    proxied.return_value = {"tasks": [{"id": "pa:001"}], "total": 1}
     result, proxied = await call("aifactory.list_tasks", {"project_id": "pa"})
     assert not result.get("isError")
     assert proxied.await_args.args[1] == "/api/mcp-stdio/tasks"
+    assert '"pa:001"' in result["content"][0]["text"]
+    assert '"total"' not in result["content"][0]["text"]
 
 
 async def test_list_projects_hides_other_org(call):

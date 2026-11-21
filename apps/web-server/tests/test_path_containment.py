@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
+from server import project_registry
 from server.auth import _acw_principal
 from server.database.engine import get_db
 from server.database.models import (
@@ -24,8 +25,12 @@ from server.database.models import (
 )
 from server.mcp_remote.auth import AuthenticatedKey
 from server.routes import (
+    changelog,
     execution,
     files,
+    git,
+    github,
+    project_github,
     stale,
     tasks,
     worktree_tools,
@@ -50,6 +55,7 @@ PRINCIPALS: dict[str, dict[str, object]] = {
     "alice-viewer-key": _acw("alice", "org-1", {"mcp:read"}),
     "bob-other-org": {"id": "bob", "role": "user"},
     "org1-service-read": _acw(None, "org-1", {"mcp:read"}),
+    "org1-service-write": _acw(None, "org-1", {"project:write"}),
     "org2-service-write": _acw(None, "org-2", {"project:write", "task:write"}),
 }
 
@@ -174,6 +180,9 @@ def authz_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     app.dependency_overrides[get_db] = _db
     app.include_router(files.router, prefix="/api/files")
+    app.include_router(
+        changelog.insights_router, prefix="/api/projects/{projectId}/insights"
+    )
     app.include_router(execution.router, prefix="/api/tasks")
     app.include_router(tasks.router, prefix="/api/tasks")
     app.include_router(stale.router)
@@ -203,13 +212,207 @@ def test_files_read_enforces_project_viewer_and_404s_foreign_project(authz_env):
     )
     assert r.status_code == 404
 
-    # Host file outside registered projects -> 403 containment
+    # Unknown and hidden project paths share the same 404.
     r = client.get(
         "/api/files/read",
         params={"path": "/etc/passwd"},
         headers={"X-Principal": "alice-member"},
     )
-    assert r.status_code == 403
+    assert r.status_code == 404
+
+
+def test_parent_project_file_routes_hide_registered_child(authz_env, monkeypatch):
+    client, p1, _p2, _ = authz_env
+    child = p1 / "package"
+    child.mkdir()
+    (child / "private.txt").write_text("other team data")
+    project_registry.load_projects()["p2"]["path"] = str(child)
+    headers = {"X-Principal": "alice-member"}
+    assert (
+        client.get(
+            "/api/files/p1/read",
+            params={"path": "package/private.txt"},
+            headers=headers,
+        ).status_code
+        == 404
+    )
+    monkeypatch.setattr("server.routes.project_authz._auth_disabled", lambda: True)
+    assert (
+        client.delete(
+            "/api/files/p1/delete", params={"path": "package"}, headers=headers
+        ).status_code
+        == 404
+    )
+    listing = client.get("/api/files/p1/list", headers=headers)
+    assert listing.status_code == 200
+    assert "package" not in [entry["name"] for entry in listing.json()["entries"]]
+    monkeypatch.setattr(
+        files.subprocess,
+        "run",
+        lambda *_a, **_k: SimpleNamespace(
+            returncode=0, stdout="M\tpackage/private.txt\nM\tsrc/main.py\n"
+        ),
+    )
+    diff = client.get("/api/files/p1/diff", headers=headers)
+    assert diff.status_code == 200
+    assert [entry["path"] for entry in diff.json()["diffs"]] == ["src/main.py"]
+    assert (child / "private.txt").exists()
+
+
+def test_search_fallback_does_not_follow_env_symlink(authz_env, monkeypatch):
+    client, p1, _p2, _ = authz_env
+    (p1 / ".env").write_text("secret-marker")
+    (p1 / "src" / "alias.txt").symlink_to(p1 / ".env")
+    monkeypatch.setattr(
+        files.subprocess,
+        "run",
+        lambda *_a, **_k: (_ for _ in ()).throw(FileNotFoundError()),
+    )
+    response = client.get(
+        "/api/files/p1/search",
+        params={"query": "secret-marker"},
+        headers={"X-Principal": "alice-member"},
+    )
+    assert response.status_code == 200
+    assert response.json()["results"] == []
+
+
+def test_ownerless_org_key_browses_only_own_org(authz_env):
+    client, _p1, p2, workspace = authz_env
+    own = client.get(
+        "/api/files/list",
+        params={"path": str(p2)},
+        headers={"X-Principal": "org2-service-write"},
+    )
+    foreign = client.get(
+        "/api/files/list",
+        params={"path": str(workspace / "p1")},
+        headers={"X-Principal": "org2-service-write"},
+    )
+    assert own.status_code == 200
+    assert foreign.status_code == 404
+
+
+def test_github_pre_registration_routes_and_destination(authz_env, monkeypatch):
+    client, p1, p2, workspace = authz_env
+    db_override = client.app.dependency_overrides[get_db]
+    monkeypatch.setattr(github, "get_db", db_override)
+    monkeypatch.setattr(project_github, "get_db", db_override)
+    monkeypatch.setattr(github, "load_projects", project_registry.load_projects)
+    monkeypatch.setattr(github, "browse_roots", lambda: [workspace])
+    monkeypatch.setattr(project_github, "browse_roots", lambda: [workspace])
+    monkeypatch.setattr(github.github_app, "multi_installation", lambda: False)
+    monkeypatch.setattr(
+        github,
+        "_get_repo_full_name",
+        lambda path: (
+            "other/private"
+            if path == str(p2)
+            else "own/existing"
+            if path == str(p1)
+            else ""
+        ),
+    )
+    monkeypatch.setattr(
+        github,
+        "run_gh_command",
+        lambda args, **_k: {
+            "success": True,
+            "output": (
+                '[{"nameWithOwner":"fresh/repo"},{"nameWithOwner":"other/private"}]'
+                if args[:2] == ["repo", "list"]
+                else "main"
+                if args[0] == "api"
+                else "fresh/repo"
+            ),
+        },
+    )
+    monkeypatch.setattr(github.subprocess, "run", lambda *_a, **_k: None)
+    client.app.include_router(github.router, prefix="/api/github")
+    headers = {"X-Principal": "alice-member"}
+    fresh = workspace / "fresh"
+    fresh.mkdir()
+    assert (
+        client.get(
+            "/api/github/detect-repo", params={"path": str(fresh)}, headers=headers
+        ).status_code
+        == 200
+    )
+    repos = client.get("/api/github/repos", headers=headers)
+    assert repos.status_code == 200
+    assert [item["fullName"] for item in repos.json()["data"]["repos"]] == [
+        "fresh/repo"
+    ]
+    assert (
+        client.get(
+            "/api/github/branches", params={"repo": "fresh/repo"}, headers=headers
+        ).status_code
+        == 200
+    )
+    assert (
+        client.get(
+            "/api/github/branches", params={"repo": "other/private"}, headers=headers
+        ).status_code
+        == 404
+    )
+    assert (
+        client.get(
+            "/api/github/branches", params={"repo": "Other/PRIVATE"}, headers=headers
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            "/api/github/repos", json={"repoName": "new"}, headers=headers
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            "/api/github/remote",
+            json={"projectPath": str(fresh), "repoFullName": "fresh/repo"},
+            headers=headers,
+        ).status_code
+        == 200
+    )
+    denied = client.post(
+        "/api/github/remote",
+        json={"projectPath": str(fresh), "repoFullName": "other/private"},
+        headers=headers,
+    )
+    assert denied.status_code == 404, denied.text
+
+
+def test_git_init_cannot_stage_hidden_registered_child(authz_env, monkeypatch):
+    client, _p1, p2, workspace = authz_env
+    monkeypatch.setattr(git, "get_db", client.app.dependency_overrides[get_db])
+    monkeypatch.setattr(git, "browse_roots", lambda: [workspace])
+    client.app.include_router(git.router, prefix="/api/git")
+    response = client.post(
+        "/api/git/init",
+        json={"path": str(workspace)},
+        headers={"X-Principal": "alice-member"},
+    )
+    assert response.status_code == 404
+    assert not (workspace / ".git").exists()
+    assert (p2 / ".git").exists()
+
+
+def test_ownerless_org_key_can_init_own_unregistered_checkout(authz_env, monkeypatch):
+    client, _p1, _p2, workspace = authz_env
+    monkeypatch.setattr(git, "get_db", client.app.dependency_overrides[get_db])
+    monkeypatch.setattr(git, "browse_roots", lambda: [workspace])
+    monkeypatch.setattr(git, "run_git_command", lambda *_a, **_k: {"success": True})
+    monkeypatch.setattr(git, "merge_driver_pins", lambda _path: [])
+    client.app.include_router(git.router, prefix="/api/git")
+    target = workspace / "new-package"
+    target.mkdir()
+    response = client.post(
+        "/api/git/init",
+        json={"path": str(target)},
+        headers={"X-Principal": "org1-service-write"},
+    )
+    assert response.status_code == 200
 
 
 def test_files_list_and_discover_filter_invisible_projects_and_404_direct(authz_env):
@@ -316,6 +519,17 @@ def test_tasks_create_and_list_enforce_project_role(authz_env):
     assert r.status_code == 201
 
 
+def test_insights_create_task_passes_authorized_request(authz_env):
+    client, _p1, _p2, _ = authz_env
+    response = client.post(
+        "/api/projects/p1/insights/create-task",
+        json={"title": "From insight", "description": "Details"},
+        headers={"X-Principal": "alice-member"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["success"] is True
+
+
 def test_running_tasks_and_stale_tasks_filter_by_accessible_projects(
     authz_env, monkeypatch: pytest.MonkeyPatch
 ):
@@ -400,8 +614,8 @@ def test_worktree_open_in_ide_and_terminal_enforce_member_role(
         )
         assert r.status_code == 403
 
-        # Member on visible project -> 200
+        # Opening a shell requires admin.
         r = client.post(
             endpoint, json=own_payload, headers={"X-Principal": "alice-member"}
         )
-        assert r.status_code == 200
+        assert r.status_code == 403

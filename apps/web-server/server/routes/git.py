@@ -2,6 +2,7 @@
 Git, Ollama, MCP, and utility routes.
 """
 
+import asyncio
 import contextlib
 import logging
 import shlex
@@ -20,7 +21,7 @@ from pydantic import BaseModel, Field
 from server.database.engine import get_db
 from server.error_ref import client_error
 from server.pty.access import project_id_for_path
-from server.routes.project_authz import require_project_access, resolve_owner_org_id
+from server.routes.project_authz import authorize_host_path, require_project_access
 from server.services.http_verdict import honest_status
 from server.specpath import browse_roots, within_roots
 from server.utils.subprocess_env import child_env, merge_driver_pins, project_github_env
@@ -72,9 +73,8 @@ async def _git_body_path_member(request: Request) -> None:
         body = await request.json()
         if isinstance(body, dict) and isinstance(body.get("path"), str):
             await _authorize_git_path(request, _confined(body["path"]), "member")
-            if not project_id_for_path(body["path"]):
-                async with contextlib.asynccontextmanager(get_db)() as db:
-                    await resolve_owner_org_id(request, db)
+            async with contextlib.asynccontextmanager(get_db)() as db:
+                await authorize_host_path(request, db, Path(_confined(body["path"])))
 
 
 def run_git_command(args: list[str], cwd: str) -> dict:
@@ -187,7 +187,9 @@ async def initialize_git(request: InitGitRequest):
     # Check if repo already has commits
     has_commits = False
     if is_git_repo:
-        commit_check = run_git_command(["rev-parse", "HEAD"], path)
+        commit_check = await asyncio.to_thread(
+            run_git_command, ["rev-parse", "HEAD"], path
+        )
         has_commits = commit_check["success"]
 
     # If already has commits, nothing to do
@@ -196,7 +198,7 @@ async def initialize_git(request: InitGitRequest):
 
     # Initialize git repo if not already
     if not is_git_repo:
-        result = run_git_command(["init"], path)
+        result = await asyncio.to_thread(run_git_command, ["init"], path)
         if not result["success"]:
             return {"success": False, "error": result.get("error")}
 
@@ -225,8 +227,12 @@ async def initialize_git(request: InitGitRequest):
         pins = merge_driver_pins(path)
     except RuntimeError:
         return {"success": False, "error": "Could not read merge drivers (#1761)"}
-    run_git_command([*pins, "add", "-A"], path)
-    run_git_command([*pins, "commit", "-m", "Initial commit", "--allow-empty"], path)
+    await asyncio.to_thread(run_git_command, [*pins, "add", "-A"], path)
+    await asyncio.to_thread(
+        run_git_command,
+        [*pins, "commit", "-m", "Initial commit", "--allow-empty"],
+        path,
+    )
 
     return {"success": True}
 

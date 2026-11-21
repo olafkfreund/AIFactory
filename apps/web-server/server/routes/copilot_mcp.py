@@ -9,6 +9,8 @@ of scope here.
 Enabled when ``AIFACTORY_MCP_SECRET`` is set in the environment (the bearer
 token the Copilot cloud agent sends).  If the variable is absent the server
 accepts all requests (dev convenience); set it in production.
+Tool calls with this credential also require ``AIFACTORY_MCP_PROJECT_ID`` or
+``AIFACTORY_MCP_ORG_ID`` to bind it to one project or organization.
 
 Configure in GitHub repository settings → Copilot → MCP servers:
     {
@@ -41,6 +43,7 @@ from fastapi.responses import JSONResponse
 
 from server.database.engine import async_session_factory
 from server.error_ref import client_error
+from server.project_registry import load_projects
 from server.pty.access import project_id_for_path
 from server.routes.project_authz import require_project_role
 
@@ -304,6 +307,25 @@ async def _dispatch_tool(
         raise HTTPException(status_code=404, detail="Project not found")
 
     project_id = project_id_for_path(str(spec_dir.parent.parent.parent))
+    if isinstance(principal, dict) and principal.get("copilot_credential"):
+        bound_project = os.environ.get("AIFACTORY_MCP_PROJECT_ID")
+        bound_org = os.environ.get("AIFACTORY_MCP_ORG_ID")
+        if (
+            not project_id
+            or (bound_project and project_id != bound_project)
+            or (
+                bound_org
+                and load_projects().get(project_id, {}).get("org_id") != bound_org
+            )
+            or not (bound_project or bound_org)
+        ):
+            raise HTTPException(status_code=404, detail="Project not found")
+        principal = {
+            "id": None,
+            "org_id": load_projects()[project_id].get("org_id"),
+            "scoped_service": True,
+            "scopes": ["project:write"],
+        }
     async with async_session_factory() as db:
         await require_project_role(
             principal,
@@ -386,12 +408,9 @@ async def mcp_endpoint(request: Request) -> JSONResponse:  # noqa: PLR0911
                 arguments,
                 issue_number,
                 task_id_arg,
-                getattr(request.state, "user", None)
-                or (
-                    {"id": "default", "is_legacy_shared_token": True}
-                    if os.environ.get("AIFACTORY_MCP_SECRET")
-                    else None
-                ),
+                {"copilot_credential": True}
+                if os.environ.get("AIFACTORY_MCP_SECRET")
+                else getattr(request.state, "user", None),
             )
         except HTTPException as exc:
             return JSONResponse(

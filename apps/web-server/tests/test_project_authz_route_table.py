@@ -29,6 +29,7 @@ from server.mcp_remote import tools as mcp_remote_tools
 from server.mcp_stdio.router import investigation_router
 from server.rmux import console_router
 from server.routes import context, copilot_mcp, investigations, project_authz
+from server.routes.project_github import project_github_token
 from server.utils.roles import ROLE_LEVELS
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -48,18 +49,15 @@ PROJECT_AUTHZ_PRIMITIVES: frozenset[str] = frozenset(
         "accessible_project_ids",
         "accessible_org_ids",
         "resolve_owner_org_id",
-        "project_github_token",
         "require_acw_access",
-        "require_acw_principal",
-        "require_acw_scope",
         "authorize_project_for_user",
         "_project_authorized",
+        "_org_lookup_ok",
         "may_use",
         "_owned",
         "_authorize_path",
         "TaskSocketAccess",
         "AllTaskSocketAccess",
-        "register_client",
         "_pod_auth",
         "_service_only",
     }
@@ -100,12 +98,10 @@ NON_PROJECT_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("GET", "/api/github/auth/check"),
         ("POST", "/api/github/auth/start"),
         ("GET", "/api/github/auth/status"),
-        ("GET", "/api/github/branches"),
         ("POST", "/api/github/cli/install"),
         ("GET", "/api/github/features"),
         ("GET", "/api/github/models"),
         ("GET", "/api/github/orgs"),
-        ("GET", "/api/github/repos"),
         ("GET", "/api/github/token"),
         ("GET", "/api/github/user"),
         ("GET", "/api/health"),
@@ -155,7 +151,6 @@ NON_PROJECT_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("POST", "/api/orgs/{org_id}/members/invite"),
         ("DELETE", "/api/orgs/{org_id}/members/{user_id}"),
         ("PUT", "/api/orgs/{org_id}/members/{user_id}"),
-        ("POST", "/api/projects/scan"),
         ("GET", "/api/search"),
         ("GET", "/api/settings"),
         ("PUT", "/api/settings"),
@@ -304,8 +299,7 @@ def _actual_project_checker(route: APIRoute) -> bool:
         return any(
             isinstance(getattr(dep, "call", None), project_authz.ProjectAccessChecker)
             or getattr(getattr(dep, "call", None), "project_guard", False)
-            or getattr(getattr(dep, "call", None), "__name__", "")
-            == "project_github_token"
+            or (dep.call is project_github_token and "{projectId}" in route.path)
             or walk(dep)
             for dep in getattr(dependant, "dependencies", ())
         )
@@ -325,7 +319,7 @@ def test_unguarded_route_fails_actual_checker() -> None:
 
 
 def test_every_project_route_ws_and_mcp_tool_is_guarded() -> None:
-    """Walk REST routes, WebSockets, and MCP tool catalogs; fail on any unguarded surface."""
+    """Check route dependencies and catalog coverage; pathless guards use source inspection."""
     app = create_app()
     app.include_router(investigations.router)
     app.include_router(investigation_router)
@@ -344,7 +338,8 @@ def test_every_project_route_ws_and_mcp_tool_is_guarded() -> None:
         )
         guards = _route_authz_guards(route)
         if isinstance(route, APIRoute) and any(
-            param in route.path for param in ("{project_id}", "{projectId}", "{task_id}")
+            param in route.path
+            for param in ("{project_id}", "{projectId}", "{task_id}")
         ):
             assert _actual_project_checker(route), (
                 f"No executing project dependency on {route.path}"
@@ -382,19 +377,50 @@ def test_every_project_route_ws_and_mcp_tool_is_guarded() -> None:
     for tool_def in remote_defs:
         tname = tool_def["name"]
         assert tname in mcp_remote_tools._SCOPE_FOR_TOOL, f"Unscoped MCP tool: {tname}"
-    assert "authorize_project_for_user" in _extract_ast_symbols(
-        mcp_remote_tools._authorize_call
-    )
-    assert "_authorize_call" in _extract_ast_symbols(
-        mcp_remote_tools.dispatch_tool_call
-    )
 
-    # Copilot MCP tools: every tool in MCP_TOOLS must be handled after require_project_role.
-    copilot_src = inspect.getsource(copilot_mcp._dispatch_tool)
-    assert "require_project_role" in copilot_src
-    assert "project_id_for_path" in copilot_src
-    for tool_def in copilot_mcp.MCP_TOOLS:
-        assert tool_def["name"] in copilot_src
+
+@pytest.mark.asyncio
+async def test_mcp_dispatchers_call_project_guards(monkeypatch):
+    denied = AsyncMock(side_effect=mcp_remote_tools.MCPAuthError("denied"))
+    loopback = AsyncMock()
+    monkeypatch.setattr(mcp_remote_tools, "_authorize_call", denied)
+    monkeypatch.setattr(mcp_remote_tools, "_call_internal", loopback)
+    key = mcp_remote_tools.AuthenticatedKey(
+        key_id="test",
+        user_id="u",
+        org_id="org",
+        scopes=frozenset({"mcp:read", "mcp:write", "task:merge"}),
+    )
+    for tool in mcp_remote_tools.get_tool_definitions():
+        before = denied.await_count
+        result = await mcp_remote_tools.dispatch_tool_call(
+            tool["name"], {"task_id": "p:001", "project_id": "p"}, key
+        )
+        assert result.get("isError") is True
+        assert denied.await_count == before + 1
+        assert loopback.await_count == 0
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            pass
+
+    monkeypatch.setattr(copilot_mcp, "async_session_factory", Session)
+    monkeypatch.setattr(copilot_mcp, "project_id_for_path", lambda _path: "p")
+    monkeypatch.setattr(
+        copilot_mcp,
+        "_resolve_task",
+        AsyncMock(return_value=(Path("/repo/.aifactory/specs/001"), {})),
+    )
+    project_guard = AsyncMock(side_effect=HTTPException(404, "Project not found"))
+    monkeypatch.setattr(copilot_mcp, "require_project_role", project_guard)
+    for tool in copilot_mcp.MCP_TOOLS:
+        before = project_guard.await_count
+        with pytest.raises(HTTPException):
+            await copilot_mcp._dispatch_tool(tool["name"], {}, None, "001", {"id": "u"})
+        assert project_guard.await_count == before + 1
 
 
 def test_env_route_authorizes_path_project_before_query(monkeypatch):
@@ -499,9 +525,7 @@ def authz_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
                     TeamMembership(team_id="team-1", user_id="u-admin", role="admin"),
                     TeamMembership(team_id="team-1", user_id="u-owner", role="owner"),
                     TeamMembership(team_id="team-2", user_id="u-admin", role="admin"),
-                    TeamMembership(
-                        team_id="team-org2", user_id="u-org2", role="owner"
-                    ),
+                    TeamMembership(team_id="team-org2", user_id="u-org2", role="owner"),
                 ]
             )
             await db.commit()
@@ -607,9 +631,7 @@ async def test_team_grant_intersect_scope_ceiling_matrix(
     expected = min((team_role, ceiling), key=lambda r: ROLE_LEVELS[r])
 
     async with authz_db() as db:
-        access = await project_authz.require_project_role(
-            principal, "p1", expected, db
-        )
+        access = await project_authz.require_project_role(principal, "p1", expected, db)
         assert access.role == expected
 
         higher_roles = [
@@ -644,12 +666,12 @@ async def test_cross_team_and_cross_org_service_key_denial(
             await project_authz.require_project_role(service_merge, "p1", "owner", db)
         assert owner_exc.value.status_code == 403
 
-        # Non-default team in same org -> 404.
-        with pytest.raises(HTTPException) as cross_team:
+        # An org-scoped service key also reaches non-default teams in its org.
+        assert (
             await project_authz.require_project_role(
                 service_merge, "p_team2", "viewer", db
             )
-        assert cross_team.value.status_code == 404
+        ).org_id == "org-1"
 
         # Other org -> 404.
         with pytest.raises(HTTPException) as cross_org:
@@ -659,7 +681,10 @@ async def test_cross_team_and_cross_org_service_key_denial(
         assert cross_org.value.status_code == 404
 
         req = SimpleNamespace(state=SimpleNamespace(user=service_merge))
-        assert await project_authz.accessible_project_ids(req, db, "viewer") == {"p1"}
+        assert await project_authz.accessible_project_ids(req, db, "viewer") == {
+            "p1",
+            "p_team2",
+        }
 
 
 @pytest.mark.asyncio

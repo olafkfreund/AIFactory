@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy import select
@@ -93,7 +94,7 @@ async def _team_grant(
         return None, None
 
     if principal.get("scoped_service") and principal.get("org_id") == org_id:
-        return ("admin" if default_team else None), team_id
+        return "admin", team_id
 
     user_id = principal.get("id")
     if not user_id:
@@ -191,6 +192,28 @@ async def authorize_project_for_user(
 ) -> str | None:
     """Compatibility entry point for WebSocket and MCP callers."""
     return (await require_project_role(user, project_id, minimum_role, db)).org_id
+
+
+async def authorize_host_path(
+    request: Request, db: AsyncSession, path: Path, role: str = "member"
+) -> str:
+    """Authorize a checkout, including registered projects below its directory."""
+    from server.pty.access import project_id_for_path
+
+    target = path.resolve()
+    principal = getattr(request.state, "user", None)
+    pid = project_id_for_path(str(target))
+    if pid:
+        return (await require_project_role(principal, pid, role, db)).org_id
+    org_id = await resolve_owner_org_id(request, db)
+    team_id = None
+    for child_id, project in (await project_registry.aload_projects()).items():
+        if project.get("path") and target in Path(project["path"]).resolve().parents:
+            access = await require_project_role(principal, child_id, "member", db)
+            if access.org_id != org_id or (team_id and team_id != access.team_id):
+                raise HTTPException(status_code=404, detail="Project not found")
+            team_id = access.team_id
+    return org_id
 
 
 async def accessible_project_ids(
@@ -351,8 +374,23 @@ async def accessible_org_ids(
     of one project's membership row.
     """
     user = getattr(request.state, "user", None)
-    if _auth_disabled() or is_service_principal(user):
+    if _auth_disabled() or (
+        isinstance(user, dict)
+        and user.get("is_legacy_shared_token")
+        and get_settings().LEGACY_SHARED_TOKEN_FULL_ACCESS
+    ):
         return None
+    if isinstance(user, dict) and user.get("is_legacy_shared_token"):
+        return set()
+    if isinstance(user, dict) and user.get("scoped_service"):
+        ceiling = scope_ceiling(user.get("scopes"))
+        return (
+            {str(user["org_id"])}
+            if user.get("org_id")
+            and ceiling
+            and ROLE_LEVELS[ceiling] >= ROLE_LEVELS[minimum_role]
+            else set()
+        )
     if not isinstance(user, dict) or not user.get("id"):
         return set()
     query = select(OrgMember.org_id).where(OrgMember.user_id == user["id"])
@@ -375,7 +413,7 @@ async def resolve_owner_org_id(request: Request, db: AsyncSession) -> str:
     user = getattr(request.state, "user", None)
     if _auth_disabled():
         return DEFAULT_ORG_ID
-    if not isinstance(user, dict) or not user.get("id"):
+    if not isinstance(user, dict):
         raise HTTPException(status_code=401, detail="Authentication required")
     if user.get("is_legacy_shared_token"):
         if get_settings().LEGACY_SHARED_TOKEN_FULL_ACCESS:
@@ -384,6 +422,10 @@ async def resolve_owner_org_id(request: Request, db: AsyncSession) -> str:
     ceiling = scope_ceiling(user.get("scopes"))
     if ceiling is None or ROLE_LEVELS[ceiling] < ROLE_LEVELS["member"]:
         raise HTTPException(status_code=403, detail="Forbidden")
+    if user.get("scoped_service") and user.get("org_id"):
+        return str(user["org_id"])
+    if not user.get("id"):
+        raise HTTPException(status_code=401, detail="Authentication required")
     query = select(OrgMember.org_id).where(
         OrgMember.user_id == user["id"],
         OrgMember.role.in_(_roles_at_or_above("member")),

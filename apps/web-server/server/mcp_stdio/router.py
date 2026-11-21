@@ -29,10 +29,9 @@ UI-driven actions in the audit log.
 from __future__ import annotations
 
 import json
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, Query
-from fastapi import Request as FastAPIRequest
+from fastapi import APIRouter, Depends, Query, Request as FastAPIRequest
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,7 +39,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from server.database.engine import get_db
 from server.project_registry import load_projects
 from server.routes import investigations
-from server.routes.project_authz import accessible_org_ids, accessible_project_ids
+from server.routes.plan_approval import RejectPlanRequest, reject_plan
+from server.routes.project_authz import (
+    accessible_org_ids,
+    accessible_project_ids,
+    require_project_role,
+    resolve_owner_org_id,
+)
+from server.routes.task_models import TaskStatus
+from server.routes.tasks_views import get_qa_report, stream_agent_console
 from server.services.audit_service import ACTION_MCP_TASK_APPLY_CORRECTION
 
 from ..mcp_remote.auth import AuthenticatedKey
@@ -228,8 +235,16 @@ async def proxy_list_tasks(
 ):
     from ..routes.tasks import list_tasks
 
+    if project_id:
+        await require_project_role(request.state.user, project_id, "viewer", db)
+    else:
+        await accessible_project_ids(request, db)
+
     return await list_tasks(
-        project_id=project_id, status=status, request=request, db=db
+        project_id=project_id,
+        status=cast("TaskStatus | None", status),
+        request=request,
+        db=db,
     )
 
 
@@ -296,19 +311,17 @@ async def proxy_get_worktree_diff(
 
 @router.get("/tasks/{task_id}/qa-report")
 async def proxy_get_qa_report(
-    task_id: str, _=Depends(require_acw_access(MCP_READ_SCOPE, "viewer"))
-):
-    from ..routes.tasks_views import get_qa_report
-
+    task_id: str,
+    _: Annotated[object, Depends(require_acw_access(MCP_READ_SCOPE, "viewer"))],
+) -> Any:
     return await get_qa_report(task_id)
 
 
 @router.get("/tasks/{task_id}/agent-console/sse")
 async def proxy_agent_console(
-    task_id: str, _=Depends(require_acw_access(MCP_READ_SCOPE, "viewer"))
-):
-    from ..routes.tasks_views import stream_agent_console
-
+    task_id: str,
+    _: Annotated[object, Depends(require_acw_access(MCP_READ_SCOPE, "viewer"))],
+) -> Any:
     return await stream_agent_console(task_id)
 
 
@@ -327,6 +340,7 @@ async def proxy_add_project(
 
     body = await _read_json_body(request)
     request.state.user = acw_principal(key)
+    await resolve_owner_org_id(request, db)
     result = await add_project(ProjectCreate(**body), request=request, db=db)
     # ``add_project`` returns the project dict with an ``id`` field.
     project_id = result.get("id") if isinstance(result, dict) else None
@@ -462,10 +476,8 @@ async def proxy_approve_plan(
 async def proxy_reject_plan(
     task_id: str,
     request: FastAPIRequest,
-    _=Depends(require_acw_access(TASK_WRITE_SCOPE, "member")),
-):
-    from ..routes.plan_approval import RejectPlanRequest, reject_plan
-
+    _: Annotated[object, Depends(require_acw_access(TASK_WRITE_SCOPE, "member"))],
+) -> Any:
     body = await _read_json_body(request)
     return await reject_plan(task_id, RejectPlanRequest(**body))
 
@@ -535,7 +547,7 @@ async def proxy_create_pr(
 async def proxy_merge_worktree(
     task_id: str,
     request: FastAPIRequest,
-    key=Depends(require_acw_access(TASK_MERGE_SCOPE)),
+    key=Depends(require_acw_access(TASK_MERGE_SCOPE, "admin")),
 ):
     from ..routes.tasks import WorktreeMergeOptions, merge_worktree
 

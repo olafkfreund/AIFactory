@@ -17,7 +17,6 @@ if str(_WEB_SERVER) not in sys.path:
 
 from server import config, project_registry
 from server.database.engine import get_db
-from server.database.models import OrgMember
 from server.mcp_remote.auth import AuthenticatedKey
 from server.mcp_stdio import auth as stdio_auth
 from server.routes import project_authz
@@ -70,7 +69,13 @@ async def test_task_write_requires_project_membership(
     monkeypatch.setattr(config.get_settings(), "API_TOKEN", "legacy-test-token")
 
     async def authenticate(header):
-        user_id = "owner" if header == "Bearer acw_owner" else "foreign"
+        user_id = (
+            "owner"
+            if header == "Bearer acw_owner"
+            else "member"
+            if header == "Bearer acw_member"
+            else "foreign"
+        )
         return AuthenticatedKey(
             key_id=f"key-{user_id}",
             scopes=frozenset({"task:write", "task:merge"}),
@@ -100,7 +105,13 @@ async def test_task_write_requires_project_membership(
             if "teams.is_default" in sql:
                 return FakeResult(True)
             if "team_memberships.role" in sql or "org_members.role" in sql:
-                return FakeResult("admin" if "owner" in params else None)
+                return FakeResult(
+                    "admin"
+                    if "owner" in params
+                    else "member"
+                    if "member" in params
+                    else None
+                )
             return FakeResult(None)
 
     async def fake_db():
@@ -144,6 +155,10 @@ async def test_task_write_requires_project_membership(
 
         assert (await post(client, "p1", "acw_owner")).status_code == 200
         assert len(calls) == 1
+
+        if path.endswith("/worktree/merge"):
+            assert (await post(client, "p1", "acw_member")).status_code == 403
+            assert len(calls) == 1
 
         assert (await post(client, "p9", "acw_owner")).status_code == 404
         assert len(calls) == 1
@@ -317,7 +332,7 @@ async def test_read_lists_filter_foreign_projects(read_app, monkeypatch, path):
         for token, expected in [
             ("acw_foreign", []),
             ("acw_owner", ["p1"]),
-            ("acw_service", ["p1"] if path == "/projects" else []),
+            ("acw_service", ["p1"]),
             ("legacy-test-token", ["p1", "p2"]),
         ]:
             result = await get(token)
@@ -329,6 +344,30 @@ async def test_read_lists_filter_foreign_projects(read_app, monkeypatch, path):
                 ids = result["tasks"]
                 assert result["count"] == len(ids)
             assert sorted(i.partition(":")[0] for i in ids) == expected
+
+
+async def test_legacy_token_without_compat_flag_cannot_list_running_tasks(
+    read_app, monkeypatch
+):
+    monkeypatch.setattr(config.get_settings(), "LEGACY_SHARED_TOKEN_FULL_ACCESS", False)
+    monkeypatch.setattr(
+        execution_route,
+        "get_running_tasks",
+        lambda: _running_tasks_for_test(),
+    )
+
+    async def _running_tasks_for_test():
+        return execution_route.RunningTasksResponse(tasks=["p1:001"], count=1)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=read_app), base_url="http://test"
+    ) as client:
+        response = await client.get(
+            "/api/mcp-stdio/tasks/running",
+            headers={"Authorization": "Bearer legacy-test-token"},
+        )
+    assert response.status_code == 200
+    assert response.json()["tasks"] == []
 
 
 async def test_key_bound_to_its_org_even_if_owner_is_member_of_both(monkeypatch):

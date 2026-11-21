@@ -8,6 +8,7 @@ Handles file operations for the Monaco editor:
 - Git diff viewing
 """
 
+import asyncio
 import logging
 import mimetypes
 import re
@@ -229,9 +230,12 @@ def resolve_path(project_id: str, relative_path: str) -> Path:
     # Join, resolve and confine in one step. Joining and resolving OUTSIDE the
     # containment check is what makes `../../etc/passwd` interesting: the
     # resolved-but-unchecked path is a live value for as long as it exists.
-    return within_roots(
+    target = within_roots(
         project_path / relative_path, [project_path], "project directory"
     )
+    if project_id_for_path(str(target)) != project_id:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return target
 
 
 # --------------------------------------------------------------------------
@@ -719,6 +723,8 @@ async def list_directory(
     for entry in sorted(
         full_path.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower())
     ):
+        if project_id_for_path(str(entry)) != project_id:
+            continue
         # Skip hidden files unless requested
         if entry.name.startswith(".") and not show_hidden:
             continue
@@ -842,6 +848,15 @@ async def delete_file(
 ):
     """Delete a file or directory."""
     full_path = resolve_path(project_id, path)
+    from server.project_registry import load_projects  # noqa: PLC0415
+
+    if any(
+        pid != project_id
+        and project.get("path")
+        and full_path in Path(project["path"]).resolve().parents
+        for pid, project in load_projects().items()
+    ):
+        raise HTTPException(status_code=404, detail="Project not found")
 
     # Containment (#320): never delete inside .git/ (corrupting the repo).
     if ".git" in full_path.parts:
@@ -954,7 +969,16 @@ async def search_files(
                 continue
             try:
                 data = __import__("json").loads(line)
-                if data.get("type") == "match":
+                if (
+                    data.get("type") == "match"
+                    and project_id_for_path(
+                        str(Path(data["data"]["path"]["text"]).resolve())
+                    )
+                    == project_id
+                    and not Path(data["data"]["path"]["text"])
+                    .resolve()
+                    .name.startswith(".env")
+                ):
                     match_data = data["data"]
                     results.append(
                         SearchResult(
@@ -983,8 +1007,9 @@ async def search_files(
                 break
 
             if (
-                file_path.name == ".env"
-                or file_path.name.startswith(".env.")
+                file_path.resolve().name == ".env"
+                or file_path.resolve().name.startswith(".env.")
+                or project_id_for_path(str(file_path.resolve())) != project_id
                 or not file_path.is_file()
                 or is_binary_file(file_path)
             ):
@@ -1041,6 +1066,8 @@ async def get_git_diff(
     try:
         base = assert_safe_git_ref(base, "base")
         path = assert_not_option(path, "path")
+        if path:
+            resolve_path(project_id, path)
     except ValueError as exc:
         # argv_safety raises InputRejectedError, whose developer-written text
         # client_error hands back verbatim. Any OTHER ValueError reaching here
@@ -1063,7 +1090,8 @@ async def get_git_diff(
         if path:
             cmd.append(path)
 
-        proc = subprocess.run(
+        proc = await asyncio.to_thread(
+            subprocess.run,
             cmd,
             cwd=str(project_path),
             capture_output=True,
@@ -1085,6 +1113,11 @@ async def get_git_diff(
             parts = line.split("\t")
             status_code = parts[0]
             file_path = parts[1] if len(parts) > 1 else ""
+            if (
+                project_id_for_path(str((project_path / file_path).resolve()))
+                != project_id
+            ):
+                continue
 
             status_map = {
                 "A": "added",

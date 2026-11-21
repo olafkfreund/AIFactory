@@ -25,13 +25,14 @@ destructive form has to be asked for explicitly.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Collection
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.database.engine import get_db
@@ -217,9 +218,9 @@ async def reap_stale(
     claiming it succeeded.
     """
     min_role = "viewer" if dry_run else "member"
-    project_ids = (
-        await accessible_project_ids(request, db, min_role)
-        if request is not None and isinstance(db, AsyncSession)
-        else None
+    if request is None or not isinstance(db, AsyncSession):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    project_ids = await accessible_project_ids(request, db, min_role)
+    return await asyncio.to_thread(
+        sweep, hours=hours, dry_run=dry_run, project_ids=project_ids
     )
-    return sweep(hours=hours, dry_run=dry_run, project_ids=project_ids)

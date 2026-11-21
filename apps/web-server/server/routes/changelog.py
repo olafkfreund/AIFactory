@@ -9,11 +9,14 @@ import json
 import logging
 import re
 from pathlib import Path as FilePath
+from typing import Any
 
 from factory_common.logsafe import sanitize_log
-from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi import APIRouter, Depends, HTTPException, Path, Request
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from server.database.engine import get_db
 from server.error_ref import client_error
 from server.routes.project_authz import require_project_access
 from server.services.argv_safety import (
@@ -29,6 +32,7 @@ from server.utils.subprocess_env import child_env
 from ..services.insights_service import get_insights_service
 
 logger = logging.getLogger(__name__)
+_DB_DEP = Depends(get_db)
 
 router = APIRouter()
 
@@ -1079,8 +1083,11 @@ async def clear_insights_session(projectId: str = Path(...)):
 )
 @honest_status
 async def create_task_from_insights(
-    projectId: str = Path(...), request: CreateTaskRequest = ...
-):
+    http_request: Request,
+    projectId: str = Path(...),
+    request: CreateTaskRequest = ...,
+    db: AsyncSession = _DB_DEP,
+) -> dict[str, Any]:
     """Create a task from insights conversation."""
     from .tasks import TaskCreate, create_task
 
@@ -1090,7 +1097,7 @@ async def create_task_from_insights(
             title=request.title,
             description=request.description,
         )
-        result = await create_task(task_request)
+        result = await create_task(task_request, http_request, db)
         return {"success": True, "data": result}
     except Exception as e:
         logger.error(f"create_task_from_insights failed: {e}", exc_info=True)

@@ -258,6 +258,17 @@ async def create_terminal(request: CreateTerminalRequest, http_request: Request)
         cwd = str(Path.home())
 
     project_id = project_id_for_path(cwd)
+    legacy_access = (
+        isinstance(user, dict)
+        and user.get("is_legacy_shared_token")
+        and settings.LEGACY_SHARED_TOKEN_FULL_ACCESS
+    )
+    if (
+        not project_id
+        and not request.project_id
+        and not (settings.DISABLE_AUTH or legacy_access)
+    ):
+        raise HTTPException(status_code=404, detail="Project not found")
     if request.project_id and project_id and project_id != request.project_id:
         raise HTTPException(status_code=404, detail="Project not found")
     if project_id and not request.project_id:

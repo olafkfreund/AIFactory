@@ -40,9 +40,11 @@ async def may_use(
         and get_settings().LEGACY_SHARED_TOKEN_FULL_ACCESS
     ):
         return True
-    if not isinstance(user, dict) or not user.get("id"):
+    if not isinstance(user, dict) or (
+        not user.get("id") and not user.get("scoped_service")
+    ):
         return False
-    if session.owner_id is not None and user["id"] != session.owner_id:
+    if session.owner_id is not None and user.get("id") != session.owner_id:
         return False
     if session.owner_id is None:
         role = "admin"
