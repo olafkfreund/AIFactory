@@ -197,10 +197,14 @@
         "apps/backend/pfactory/__init__.py",
         "apps/backend/prompts_pkg/__init__.py",
         "apps/backend/providers/__init__.py",
+        "apps/backend/qa/__init__.py",
+        "apps/backend/runners/__init__.py",
+        "apps/backend/runners/github/__init__.py",
         "apps/backend/spec/__init__.py",
         "apps/backend/spec/phases/__init__.py",
         "apps/backend/spec/pipeline/__init__.py",
-        "apps/web-server/server/database/__init__.py"
+        "apps/web-server/server/database/__init__.py",
+        "apps/web-server/server/services/insights_providers/__init__.py"
       ]
     }
   ],
@@ -777,8 +781,8 @@
               "`server.services.pr_endgame`",
               "model-assisted (dynamic import: core.auth:356 (+7 more))",
               "`anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
-              "yes (21): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
-              "409",
+              "yes (25): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers`",
+              "461",
               "-"
             ]
           ]
