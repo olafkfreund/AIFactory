@@ -28,7 +28,12 @@ from server.rmux.session import SessionState  # noqa: E402
 
 ALICE = {"id": "alice", "email": "a@x", "role": "user"}
 BOB = {"id": "bob", "email": "b@x", "role": "user"}
-SERVICE = {"id": "default", "role": "admin", "is_service": True}
+SERVICE = {
+    "id": "default",
+    "role": "admin",
+    "is_service": True,
+    "is_legacy_shared_token": True,
+}
 
 
 @pytest.fixture(autouse=True)
@@ -45,6 +50,8 @@ def db_factory():
         Base,
         Organization,
         OrgMember,
+        Team,
+        TeamMembership,
         User,
     )
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -91,8 +98,24 @@ def db_factory():
                         owner_id="bob",
                         plan="free",
                     ),
+                    Team(
+                        id="team-1",
+                        org_id="org-1",
+                        name="Default",
+                        slug="default",
+                        is_default=True,
+                    ),
+                    Team(
+                        id="team-2",
+                        org_id="org-2",
+                        name="Default",
+                        slug="default",
+                        is_default=True,
+                    ),
                     OrgMember(org_id="org-1", user_id="alice", role="member"),
                     OrgMember(org_id="org-2", user_id="bob", role="owner"),
+                    TeamMembership(team_id="team-1", user_id="alice", role="member"),
+                    TeamMembership(team_id="team-2", user_id="bob", role="owner"),
                 ]
             )
             await s.commit()
@@ -107,7 +130,7 @@ def db_factory():
 def patch_projects(monkeypatch):
     # Project p1 is owned by org-1 (alice's org).
     async def projects_for_authz():
-        return {"p1": {"org_id": "org-1", "name": "p1"}}
+        return {"p1": {"org_id": "org-1", "team_id": "team-1", "name": "p1"}}
 
     monkeypatch.setattr(
         "server.project_registry.aload_projects",
@@ -144,11 +167,11 @@ class TestConsoleAuthz:
         # THE e2e property: bob (org-2) cannot attach to p1 (alice's org-1).
         with pytest.raises(HTTPException) as ei:
             await _authorize(BOB, "p1", db_factory, role="viewer")
-        assert ei.value.status_code == 403
+        assert ei.value.status_code == 404
 
     @pytest.mark.asyncio
     async def test_service_principal_bypasses(self, db_factory, patch_projects):
-        assert await _authorize(SERVICE, "p1", db_factory, role="member") is None
+        assert await _authorize(SERVICE, "p1", db_factory, role="member") == "org-1"
 
     @pytest.mark.asyncio
     async def test_unowned_session_is_service_only(self, db_factory):

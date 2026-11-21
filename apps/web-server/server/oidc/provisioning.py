@@ -26,7 +26,7 @@ import re
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..database import Organization, OrgMember, User
+from server.database import Organization, OrgMember, Team, TeamMembership, User
 
 logger = logging.getLogger(__name__)
 
@@ -157,5 +157,40 @@ async def jit_provision_user(
             org.slug,
             role,
         )
+
+    team = (
+        await db.execute(
+            select(Team).where(Team.org_id == org.id, Team.is_default.is_(True))
+        )
+    ).scalar_one_or_none()
+    if team is None:
+        team = (
+            await db.execute(
+                select(Team).where(Team.org_id == org.id, Team.slug == "default")
+            )
+        ).scalar_one_or_none()
+        if team is None:
+            team = Team(org_id=org.id, name="Default", slug="default", is_default=True)
+            db.add(team)
+            await db.flush()
+        else:
+            team.is_default = True
+    team_member = (
+        await db.execute(
+            select(TeamMembership).where(
+                TeamMembership.team_id == team.id, TeamMembership.user_id == user.id
+            )
+        )
+    ).scalar_one_or_none()
+    if team_member is None:
+        db.add(
+            TeamMembership(
+                team_id=team.id, user_id=user.id, role=role, provenance="sso"
+            )
+        )
+        await db.commit()
+    elif team_member.provenance == "sso" and team_member.role != role:
+        team_member.role = role
+        await db.commit()
 
     return user

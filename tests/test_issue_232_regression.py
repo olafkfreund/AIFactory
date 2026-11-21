@@ -94,7 +94,7 @@ def test_wrong_router_order_demonstrates_the_shadowing_bug():
         resp = client.get("/api/tasks/running")
 
     assert resp.status_code == 400
-    assert "Invalid task ID format" in resp.text
+    assert resp.json()["detail"] == "Invalid task ID"
 
 
 def test_main_app_mounts_execution_before_tasks():
@@ -116,10 +116,18 @@ def test_main_app_mounts_execution_before_tasks():
 
 
 @pytest.fixture
-def project(tmp_path):
+def project(tmp_path, monkeypatch):
     """A registered project backed by a fresh temp dir (empty specs counter)."""
     project_path = tmp_path / "proj"
     (project_path / ".aifactory" / "specs").mkdir(parents=True)
+    from server.routes import project_authz
+
+    monkeypatch.setattr(project_authz, "_auth_disabled", lambda: True)
+    monkeypatch.setattr(
+        project_authz.project_registry,
+        "aload_projects",
+        AsyncMock(return_value={"p1": {"path": str(project_path)}}),
+    )
     return "p1", project_path
 
 

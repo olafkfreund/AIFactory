@@ -5,11 +5,13 @@ The ``status`` query parameter of ``list_tasks`` shadowed starlette's
 """
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 from fastapi import HTTPException
 from server.routes import tasks as tasks_mod
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 def test_unknown_project_id_is_404():
@@ -18,6 +20,11 @@ def test_unknown_project_id_is_404():
         pytest.raises(HTTPException) as exc,
     ):
         asyncio.run(
-            tasks_mod.list_tasks(project_id="bogus", status=None, request=None, db=None)
+            tasks_mod.list_tasks(
+                project_id="bogus",
+                status=None,
+                request=SimpleNamespace(state=SimpleNamespace(user={"id": "default"})),
+                db=AsyncSession(),
+            )
         )
     assert exc.value.status_code == 404

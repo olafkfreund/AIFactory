@@ -17,7 +17,6 @@ if str(_WEB_SERVER) not in sys.path:
 
 from server import config, project_registry
 from server.database.engine import get_db
-from server.database.models import OrgMember
 from server.mcp_remote.auth import AuthenticatedKey
 from server.mcp_stdio import auth as stdio_auth
 from server.routes import project_authz
@@ -37,7 +36,9 @@ def test_acw_principal_honors_scoped_service_token_flag(monkeypatch):
         org_id="org-a",
     )
     assert stdio_auth.acw_principal(key)["scopes"] == ["mcp:read"]
-    assert stdio_auth.acw_principal(stdio_auth._LegacyAdminKey())["is_service"]
+    legacy = stdio_auth.acw_principal(stdio_auth._LegacyAdminKey())
+    assert legacy["is_legacy_shared_token"] is True
+    assert legacy["is_service"] is False
 
 
 @pytest.mark.parametrize(
@@ -62,13 +63,19 @@ async def test_task_write_requires_project_membership(
     )
 
     async def aload_projects():
-        return {"p1": {"org_id": "org-a"}}
+        return {"p1": {"org_id": "org-a", "team_id": "team-a"}}
 
     monkeypatch.setattr(project_registry, "aload_projects", aload_projects)
     monkeypatch.setattr(config.get_settings(), "API_TOKEN", "legacy-test-token")
 
     async def authenticate(header):
-        user_id = "owner" if header == "Bearer acw_owner" else "foreign"
+        user_id = (
+            "owner"
+            if header == "Bearer acw_owner"
+            else "member"
+            if header == "Bearer acw_member"
+            else "foreign"
+        )
         return AuthenticatedKey(
             key_id=f"key-{user_id}",
             scopes=frozenset({"task:write", "task:merge"}),
@@ -79,20 +86,33 @@ async def test_task_write_requires_project_membership(
     monkeypatch.setattr(stdio_auth.mcp_remote_auth, "authenticate", authenticate)
 
     class FakeResult:
-        def __init__(self, membership):
-            self.membership = membership
+        def __init__(self, value):
+            self.value = value
 
         def scalar_one_or_none(self):
-            return self.membership
+            return self.value
 
     class FakeSession:
+        def in_transaction(self):
+            return False
+
+        async def rollback(self):
+            pass
+
         async def execute(self, statement):
-            membership = (
-                OrgMember(org_id="org-a", user_id="owner", role="member")
-                if "owner" in statement.compile().params.values()
-                else None
-            )
-            return FakeResult(membership)
+            sql = str(statement)
+            params = statement.compile().params.values()
+            if "teams.is_default" in sql:
+                return FakeResult(True)
+            if "team_memberships.role" in sql or "org_members.role" in sql:
+                return FakeResult(
+                    "admin"
+                    if "owner" in params
+                    else "member"
+                    if "member" in params
+                    else None
+                )
+            return FakeResult(None)
 
     async def fake_db():
         yield FakeSession()
@@ -130,11 +150,15 @@ async def test_task_write_requires_project_membership(
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        assert (await post(client, "p1", "acw_foreign")).status_code == 403
+        assert (await post(client, "p1", "acw_foreign")).status_code == 404
         assert calls == []
 
         assert (await post(client, "p1", "acw_owner")).status_code == 200
         assert len(calls) == 1
+
+        if path.endswith("/worktree/merge"):
+            assert (await post(client, "p1", "acw_member")).status_code == 403
+            assert len(calls) == 1
 
         assert (await post(client, "p9", "acw_owner")).status_code == 404
         assert len(calls) == 1
@@ -147,8 +171,8 @@ async def test_task_write_requires_project_membership(
 def read_app(monkeypatch):
     monkeypatch.setattr(project_authz, "_auth_disabled", lambda: False)
     projects = {
-        "p1": {"org_id": "org-a", "path": "/unused"},
-        "p2": {"org_id": "org-b", "path": "/unused"},
+        "p1": {"org_id": "org-a", "team_id": "team-a", "path": "/unused"},
+        "p2": {"org_id": "org-b", "team_id": "team-b", "path": "/unused"},
     }
     monkeypatch.setattr(project_registry, "load_projects", lambda: projects)
 
@@ -172,27 +196,40 @@ def read_app(monkeypatch):
     monkeypatch.setattr(stdio_auth.mcp_remote_auth, "authenticate", authenticate)
 
     class FakeResult:
-        def __init__(self, user_id):
-            self.user_id = user_id
+        def __init__(self, scalar_val, list_val):
+            self.scalar_val = scalar_val
+            self.list_val = list_val
 
         def scalar_one_or_none(self):
-            return (
-                OrgMember(org_id="org-a", user_id="owner", role="viewer")
-                if self.user_id == "owner"
-                else None
-            )
+            return self.scalar_val
 
         def scalars(self):
             return self
 
         def all(self):
-            return ["org-a"] if self.user_id == "owner" else []
+            return self.list_val
 
     class FakeSession(AsyncSession):
+        def in_transaction(self):
+            return False
+
+        async def rollback(self):
+            pass
+
         async def execute(self, statement):
+            sql = str(statement)
             params = statement.compile().params.values()
-            user_id = "owner" if "owner" in params else "foreign"
-            return FakeResult(user_id)
+            is_owner = "owner" in params or "default" in params
+            if "teams.is_default" in sql:
+                return FakeResult(True, [True])
+            if "team_memberships.role" in sql or "org_members.role" in sql:
+                return FakeResult("viewer" if is_owner else None, [])
+            orgs = (
+                ["org-a", "org-b"]
+                if "default" in params
+                else (["org-a"] if "owner" in params else [])
+            )
+            return FakeResult(None, orgs)
 
     async def fake_db():
         yield FakeSession()
@@ -239,7 +276,7 @@ async def test_task_read_requires_project_membership(
                 headers={"Authorization": f"Bearer {token}"},
             )
 
-        assert (await get("p1", "acw_foreign")).status_code == 403
+        assert (await get("p1", "acw_foreign")).status_code == 404
         assert calls == []
         assert (await get("p1", "acw_owner")).status_code == 200
         assert len(calls) == 1
@@ -251,7 +288,10 @@ async def test_task_read_requires_project_membership(
 
 @pytest.mark.parametrize("path", ["/projects", "/tasks", "/tasks/running"])
 async def test_read_lists_filter_foreign_projects(read_app, monkeypatch, path):
-    projects = {"p1": {"org_id": "org-a"}, "p2": {"org_id": "org-b"}}
+    projects = {
+        "p1": {"org_id": "org-a", "team_id": "team-a"},
+        "p2": {"org_id": "org-b", "team_id": "team-b"},
+    }
 
     monkeypatch.setattr(stdio_router, "load_projects", lambda: projects)
 
@@ -288,12 +328,11 @@ async def test_read_lists_filter_foreign_projects(read_app, monkeypatch, path):
             assert response.status_code == 200
             return response.json()
 
-        # An acw_ key with no user (user_id=None) is a service principal and
-        # sees every project, matching REST (server.auth._acw_principal).
+        # Ownerless acw_ keys are scoped_service (is_service=False); legacy token has full access.
         for token, expected in [
             ("acw_foreign", []),
             ("acw_owner", ["p1"]),
-            ("acw_service", ["p1", "p2"]),
+            ("acw_service", ["p1"]),
             ("legacy-test-token", ["p1", "p2"]),
         ]:
             result = await get(token)
@@ -307,10 +346,37 @@ async def test_read_lists_filter_foreign_projects(read_app, monkeypatch, path):
             assert sorted(i.partition(":")[0] for i in ids) == expected
 
 
+async def test_legacy_token_without_compat_flag_cannot_list_running_tasks(
+    read_app, monkeypatch
+):
+    monkeypatch.setattr(config.get_settings(), "LEGACY_SHARED_TOKEN_FULL_ACCESS", False)
+    monkeypatch.setattr(
+        execution_route,
+        "get_running_tasks",
+        lambda: _running_tasks_for_test(),
+    )
+
+    async def _running_tasks_for_test():
+        return execution_route.RunningTasksResponse(tasks=["p1:001"], count=1)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=read_app), base_url="http://test"
+    ) as client:
+        response = await client.get(
+            "/api/mcp-stdio/tasks/running",
+            headers={"Authorization": "Bearer legacy-test-token"},
+        )
+    assert response.status_code == 200
+    assert response.json()["tasks"] == []
+
+
 async def test_key_bound_to_its_org_even_if_owner_is_member_of_both(monkeypatch):
     """An org-a key whose owner is also in org-b cannot reach org-b projects (#1913)."""
     monkeypatch.setattr(project_authz, "_auth_disabled", lambda: False)
-    projects = {"p1": {"org_id": "org-a"}, "p2": {"org_id": "org-b"}}
+    projects = {
+        "p1": {"org_id": "org-a", "team_id": "team-a"},
+        "p2": {"org_id": "org-b", "team_id": "team-b"},
+    }
     monkeypatch.setattr(project_registry, "load_projects", lambda: projects)
 
     async def aload_projects():
@@ -333,8 +399,11 @@ async def test_key_bound_to_its_org_even_if_owner_is_member_of_both(monkeypatch)
     monkeypatch.setattr(stdio_auth.mcp_remote_auth, "authenticate", authenticate)
 
     class FakeResult:
+        def __init__(self, scalar_val):
+            self.scalar_val = scalar_val
+
         def scalar_one_or_none(self):
-            return OrgMember(org_id="any", user_id="u", role="owner")
+            return self.scalar_val
 
         def scalars(self):
             return self
@@ -343,8 +412,19 @@ async def test_key_bound_to_its_org_even_if_owner_is_member_of_both(monkeypatch)
             return ["org-a", "org-b"]
 
     class FakeSession(AsyncSession):
+        def in_transaction(self):
+            return False
+
+        async def rollback(self):
+            pass
+
         async def execute(self, statement):
-            return FakeResult()
+            sql = str(statement)
+            if "teams.is_default" in sql:
+                return FakeResult(True)
+            if "team_memberships.role" in sql or "org_members.role" in sql:
+                return FakeResult("owner")
+            return FakeResult(None)
 
     async def fake_db():
         yield FakeSession()
@@ -370,10 +450,10 @@ async def test_key_bound_to_its_org_even_if_owner_is_member_of_both(monkeypatch)
         base = "/api/mcp-stdio"
         assert (
             await client.post(f"{base}/tasks/p2:001/start", headers=headers, json={})
-        ).status_code == 403
+        ).status_code == 404
         assert (
             await client.get(f"{base}/tasks/p2:001", headers=headers)
-        ).status_code == 403
+        ).status_code == 404
         assert (
             await client.post(f"{base}/tasks/p1:001/start", headers=headers, json={})
         ).status_code == 200

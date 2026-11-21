@@ -28,6 +28,7 @@ if str(_WEB_SERVER_DIR) not in sys.path:
 
 
 from server.mcp_remote import is_enabled
+from server.mcp_remote import tools as remote_tools
 from server.mcp_remote.auth import (
     MCP_READ_SCOPE,
     MCP_WRITE_SCOPE,
@@ -156,6 +157,12 @@ def test_authenticated_key_has_scope():
 
 
 @pytest.fixture
+def allow_project(monkeypatch):
+    """Endpoint mapping tests exercise dispatch after project authorization."""
+    monkeypatch.setattr(remote_tools, "_authorize_call", AsyncMock())
+
+
+@pytest.fixture
 def read_only_key():
     return AuthenticatedKey(
         key_id="key-r", scopes=frozenset({MCP_READ_SCOPE}), user_id="u1"
@@ -166,7 +173,7 @@ def read_only_key():
 def write_key():
     return AuthenticatedKey(
         key_id="key-w",
-        scopes=frozenset({MCP_READ_SCOPE, MCP_WRITE_SCOPE}),
+        scopes=frozenset({MCP_READ_SCOPE, MCP_WRITE_SCOPE, "task:merge"}),
         user_id="u1",
     )
 
@@ -203,33 +210,50 @@ async def test_write_tool_blocked_with_only_read_scope(read_only_key):
             "aifactory.list_projects",
             {},
             "GET",
-            "/api/projects",
+            "/api/mcp-stdio/projects",
         ),
         (
             "aifactory.list_tasks",
             {"project_id": "p1"},
             "GET",
-            "/api/projects/p1/tasks",
+            "/api/mcp-stdio/tasks",
         ),
         (
             "aifactory.get_task",
             {"task_id": "p1:001"},
             "GET",
-            "/api/tasks/p1:001",
+            "/api/mcp-stdio/tasks/p1:001",
         ),
         (
             "aifactory.get_worktree_diff",
             {"task_id": "p1:001"},
             "GET",
-            "/api/tasks/p1:001/worktree/diff",
+            "/api/mcp-stdio/tasks/p1:001/worktree/diff",
         ),
     ],
 )
 async def test_read_tools_hit_correct_endpoint(
-    tool_name, args, expected_method, expected_path, read_only_key
+    tool_name, args, expected_method, expected_path, read_only_key, allow_project
 ):
-    mock_call = AsyncMock(return_value={"ok": True})
-    with patch("server.mcp_remote.tools._call_internal", mock_call):
+    expected = (
+        [{"id": "p1"}]
+        if tool_name == "aifactory.list_projects"
+        else (
+            [{"id": "p1:001"}] if tool_name == "aifactory.list_tasks" else {"ok": True}
+        )
+    )
+    mock_call = AsyncMock(
+        return_value={"tasks": expected}
+        if tool_name == "aifactory.list_tasks"
+        else expected
+    )
+    with (
+        patch("server.mcp_remote.tools._call_internal", mock_call),
+        patch(
+            "server.mcp_remote.tools._accessible_project_ids",
+            AsyncMock(return_value={"p1"}),
+        ),
+    ):
         result = await dispatch_tool_call(tool_name, args, read_only_key)
 
     assert mock_call.called
@@ -240,7 +264,7 @@ async def test_read_tools_hit_correct_endpoint(
     assert not result.get("isError")
     # Content is JSON-text envelope
     payload = json.loads(result["content"][0]["text"])
-    assert payload == {"ok": True}
+    assert payload == expected
 
 
 @pytest.mark.parametrize(
@@ -250,30 +274,30 @@ async def test_read_tools_hit_correct_endpoint(
             "aifactory.start_task",
             {"task_id": "p1:001"},
             "POST",
-            "/api/tasks/p1:001/start",
+            "/api/mcp-stdio/tasks/p1:001/start",
         ),
         (
             "aifactory.stop_task",
             {"task_id": "p1:001"},
             "POST",
-            "/api/tasks/p1:001/stop",
+            "/api/mcp-stdio/tasks/p1:001/stop",
         ),
         (
             "aifactory.approve_plan",
             {"task_id": "p1:001"},
             "POST",
-            "/api/tasks/p1:001/approve-plan",
+            "/api/mcp-stdio/tasks/p1:001/approve-plan",
         ),
         (
             "aifactory.merge_pr",
             {"task_id": "p1:001", "merge_method": "squash"},
             "POST",
-            "/api/tasks/p1:001/worktree/merge",
+            "/api/mcp-stdio/tasks/p1:001/worktree/merge",
         ),
     ],
 )
 async def test_write_tools_hit_correct_endpoint(
-    tool_name, args, expected_method, expected_path, write_key
+    tool_name, args, expected_method, expected_path, write_key, allow_project
 ):
     mock_call = AsyncMock(return_value={"ok": True})
     with patch("server.mcp_remote.tools._call_internal", mock_call):
@@ -286,7 +310,7 @@ async def test_write_tools_hit_correct_endpoint(
     assert not result.get("isError")
 
 
-async def test_merge_pr_passes_merge_method(write_key):
+async def test_merge_pr_passes_merge_method(write_key, allow_project):
     """merge_method should land in the JSON body, not the URL."""
     mock_call = AsyncMock(return_value={"ok": True})
     with patch("server.mcp_remote.tools._call_internal", mock_call):
@@ -298,6 +322,21 @@ async def test_merge_pr_passes_merge_method(write_key):
 
     call_args = mock_call.call_args
     assert call_args.kwargs["json"] == {"merge_method": "squash"}
+
+
+async def test_merge_pr_requires_admin_project_role(write_key):
+    from server.mcp_remote import tools
+
+    authorize = AsyncMock()
+    internal = AsyncMock(return_value={"ok": True})
+    with (
+        patch.object(tools, "_authorize_call", authorize),
+        patch.object(tools, "_call_internal", internal),
+    ):
+        await tools.dispatch_tool_call(
+            "aifactory.merge_pr", {"task_id": "p1:001"}, write_key
+        )
+    assert authorize.await_args.args[3] == "admin"
 
 
 async def test_missing_required_argument_is_actionable(write_key):
@@ -341,7 +380,7 @@ async def test_arbitrary_exception_becomes_isError(read_only_key):
 # ════════════════════════════════════════════════════════════════════
 
 
-async def test_get_qa_report_hits_correct_endpoint(read_only_key):
+async def test_get_qa_report_hits_correct_endpoint(read_only_key, allow_project):
     mock_call = AsyncMock(
         return_value={"content": "# QA report\nAll good", "exists": True}
     )
@@ -351,7 +390,7 @@ async def test_get_qa_report_hits_correct_endpoint(read_only_key):
         )
     call_args = mock_call.call_args
     assert call_args.args[0] == "GET"
-    assert call_args.args[1] == "/api/tasks/p1:001/qa-report"
+    assert call_args.args[1] == "/api/mcp-stdio/tasks/p1:001/qa-report"
     assert not result.get("isError")
 
 
@@ -363,7 +402,9 @@ async def test_qa_report_requires_read_scope(no_scope_key):
     assert "mcp:read" in result["content"][0]["text"]
 
 
-async def test_tail_agent_console_returns_sse_url(read_only_key, monkeypatch):
+async def test_tail_agent_console_returns_sse_url(
+    read_only_key, monkeypatch, allow_project
+):
     """SSE-in-MCP is awkward; we return the URL for the client to follow."""
     monkeypatch.setenv("AIFACTORY_MCP_LOOPBACK_URL", "https://aifactory.example.com")
     # No _call_internal mock needed — this tool builds a URL, not a REST call.
@@ -372,7 +413,7 @@ async def test_tail_agent_console_returns_sse_url(read_only_key, monkeypatch):
     )
     payload = json.loads(result["content"][0]["text"])
     assert payload["sse_url"] == (
-        "https://aifactory.example.com/api/tasks/p1:001/agent-console/sse"
+        "https://aifactory.example.com/api/mcp-stdio/tasks/p1:001/agent-console/sse"
     )
     assert "auth_hint" in payload
 
@@ -385,7 +426,9 @@ async def test_tail_agent_console_requires_read_scope(no_scope_key):
     assert "mcp:read" in result["content"][0]["text"]
 
 
-async def test_reject_plan_hits_correct_endpoint_with_feedback(write_key):
+async def test_reject_plan_hits_correct_endpoint_with_feedback(
+    write_key, allow_project
+):
     mock_call = AsyncMock(return_value={"success": True, "feedback_recorded": True})
     with patch("server.mcp_remote.tools._call_internal", mock_call):
         result = await dispatch_tool_call(
@@ -395,12 +438,12 @@ async def test_reject_plan_hits_correct_endpoint_with_feedback(write_key):
         )
     call_args = mock_call.call_args
     assert call_args.args[0] == "POST"
-    assert call_args.args[1] == "/api/tasks/p1:001/reject-plan"
+    assert call_args.args[1] == "/api/mcp-stdio/tasks/p1:001/reject-plan"
     assert call_args.kwargs["json"] == {"feedback": "Plan is too vague"}
     assert not result.get("isError")
 
 
-async def test_reject_plan_without_feedback(write_key):
+async def test_reject_plan_without_feedback(write_key, allow_project):
     """Feedback is optional — omitting it produces an empty JSON body."""
     mock_call = AsyncMock(return_value={"success": True, "feedback_recorded": False})
     with patch("server.mcp_remote.tools._call_internal", mock_call):
@@ -419,7 +462,7 @@ async def test_reject_plan_blocked_with_only_read_scope(read_only_key):
     assert "mcp:write" in result["content"][0]["text"]
 
 
-async def test_recover_task_hits_correct_endpoint(write_key):
+async def test_recover_task_hits_correct_endpoint(write_key, allow_project):
     mock_call = AsyncMock(return_value={"recovered": True})
     with patch("server.mcp_remote.tools._call_internal", mock_call):
         result = await dispatch_tool_call(
@@ -429,7 +472,7 @@ async def test_recover_task_hits_correct_endpoint(write_key):
         )
     call_args = mock_call.call_args
     assert call_args.args[0] == "POST"
-    assert call_args.args[1] == "/api/tasks/p1:001/recover"
+    assert call_args.args[1] == "/api/mcp-stdio/tasks/p1:001/recover"
     # The REST endpoint expects camelCase ``autoRestart`` (see
     # routes/execution.py::RecoverTaskRequest); the MCP tool exposes it
     # as snake_case ``auto_restart`` because that's the Python idiom MCP
@@ -438,7 +481,7 @@ async def test_recover_task_hits_correct_endpoint(write_key):
     assert not result.get("isError")
 
 
-async def test_recover_task_default_auto_restart_is_false(write_key):
+async def test_recover_task_default_auto_restart_is_false(write_key, allow_project):
     mock_call = AsyncMock(return_value={"recovered": True})
     with patch("server.mcp_remote.tools._call_internal", mock_call):
         await dispatch_tool_call(

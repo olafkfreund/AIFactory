@@ -17,17 +17,26 @@ from pathlib import Path as FilePath
 from typing import Any
 
 from factory_common.logsafe import sanitize_log
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from server.background import spawn
+from server.database.engine import get_db
 from server.error_ref import client_error
+from server.project_registry import load_projects
+from server.routes.project_authz import (
+    accessible_project_ids,
+    authorize_host_path,
+    require_project_access,
+    resolve_owner_org_id,
+)
 from server.services import github_app, project_settings_store
 from server.services.gh import run_gh_command  # re-exported: see services/gh.py
 from server.services.git_base_url import safe_git_base_url  # #1360
 from server.services.http_verdict import honest_status
 from server.services.originator import issue_originator
+from server.specpath import browse_roots, within_roots
 from server.utils.subprocess_env import child_env, github_token
 
 from .project_github import project_github_token
@@ -45,12 +54,119 @@ logger = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(project_github_token)])
 
 
+async def _authorize_github_project_id(
+    request: Request, project_id: str | None, role: str
+) -> None:
+    if project_id:
+        async with contextlib.asynccontextmanager(get_db)() as db:
+            await require_project_access(role)._authorize(project_id, request, db)
+
+
+async def _authorize_github_path(request: Request, path: str, role: str) -> None:
+    target = within_roots(path, browse_roots(), "browsable directories")
+    async with contextlib.asynccontextmanager(get_db)() as db:
+        await authorize_host_path(request, db, target, role)
+
+
+async def _authorize_github_destination(request: Request, repo: str) -> None:
+    if not _valid_github_repo(repo):
+        raise HTTPException(status_code=400, detail="Invalid repository")
+    for pid, project in load_projects().items():
+        if await asyncio.to_thread(_bound_github_repo, project) == repo.casefold():
+            await _authorize_github_project_id(request, pid, "member")
+
+
+def _valid_github_repo(value: str) -> bool:
+    return value.count("/") == 1 and all(
+        re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", part) for part in value.split("/")
+    )
+
+
+def _github_repo_identity(value: str) -> str:
+    """Canonical GitHub owner/repo, or empty for another host or invalid input."""
+    repo = value.strip().removesuffix("/")
+    for prefix in (
+        "https://github.com/",
+        "git@github.com:",
+        "ssh://git@github.com/",
+        "github:",
+    ):
+        if repo.lower().startswith(prefix):
+            repo = repo[len(prefix) :]
+            break
+    if repo.lower().endswith(".git"):
+        repo = repo[:-4]
+    if not _valid_github_repo(repo):
+        return ""
+    return repo.casefold()
+
+
+def _bound_github_repo(project: dict) -> str:
+    """Repository configured for a project, without gh's ambient repo fallback."""
+    settings = project.get("settings") or {}
+    if str(settings.get("gitProvider", "github")).lower() != "github":
+        return ""
+    for value in (
+        settings.get("gitRepo"),
+        settings.get("githubRepo"),
+        project.get("gitUrl"),
+    ):
+        if value and (repo := _github_repo_identity(str(value))):
+            return repo
+    path = project.get("path")
+    if not path:
+        return ""
+    try:
+        origin = subprocess.run(  # noqa: S603 - fixed git config read
+            ["git", "-C", str(path), "config", "--get", "remote.origin.url"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+            env=child_env(),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return _github_repo_identity(origin.stdout) if origin.returncode == 0 else ""
+
+
+async def _github_auto_detect_admin(request: Request) -> None:
+    await _authorize_github_project_id(
+        request, request.query_params.get("projectId"), "admin"
+    )
+
+
+async def _github_persist_token_admin(request: Request) -> None:
+    with contextlib.suppress(ValueError, UnicodeDecodeError):
+        body = await request.json()
+        if isinstance(body, dict) and isinstance(body.get("projectId"), str):
+            await _authorize_github_project_id(request, body["projectId"], "admin")
+
+
+async def _github_detect_repo_viewer(request: Request, path: str = Query(...)) -> None:
+    await _authorize_github_path(request, path, "viewer")
+
+
+async def _github_remote_admin(request: Request) -> None:
+    with contextlib.suppress(ValueError, UnicodeDecodeError):
+        body = await request.json()
+        if isinstance(body, dict) and isinstance(body.get("projectPath"), str):
+            await _authorize_github_path(request, body["projectPath"], "member")
+
+
+async def _github_fork_info_viewer(
+    request: Request, project_path: str = Query(...)
+) -> None:
+    await _authorize_github_path(request, project_path, "viewer")
+
+
 # ============================================
 # Request/Response Models
 # ============================================
 
 
 class CreateRepoRequest(BaseModel):
+    projectPath: str | None = None  # noqa: N815 - existing callers omit this
     repoName: str
     description: str | None = None
     private: bool = False
@@ -504,7 +620,7 @@ async def check_github_auth():
     }
 
 
-@router.get("/auto-detect")
+@router.get("/auto-detect", dependencies=[Depends(_github_auto_detect_admin)])
 async def auto_detect_github(projectId: str | None = Query(None)):
     """Auto-detect GitHub CLI authentication and username in one call.
 
@@ -764,7 +880,7 @@ async def get_github_token():
     return {"success": True, "data": {"hasToken": has_token}}
 
 
-@router.post("/persist-token")
+@router.post("/persist-token", dependencies=[Depends(_github_persist_token_admin)])
 @honest_status
 async def persist_github_token(request: PersistTokenRequest):
     """Persist the gh CLI token to a project's settings store.
@@ -786,10 +902,35 @@ async def get_github_user():
     return {"success": True, "data": {"username": ""}}
 
 
+async def _visible_github_repos(request: Request) -> set[str]:
+    async with contextlib.asynccontextmanager(get_db)() as db:
+        await resolve_owner_org_id(request, db)
+        visible = await accessible_project_ids(request, db)
+    projects = load_projects()
+    owned: dict[str, set[str]] = {}
+    for pid, project in projects.items():
+        if repo := await asyncio.to_thread(_bound_github_repo, project):
+            owned.setdefault(repo, set()).add(pid)
+    return {repo for repo, ids in owned.items() if ids <= visible}
+
+
+async def _registered_github_repos() -> set[str]:
+    repos = set()
+    for project in load_projects().values():
+        if repo := await asyncio.to_thread(_bound_github_repo, project):
+            repos.add(repo)
+    return repos
+
+
 @router.get("/repos")
-async def list_github_user_repos():
+async def list_github_user_repos(request: Request) -> dict[str, Any]:
     """List repositories for authenticated user."""
-    result = run_gh_command(
+    visible = await _visible_github_repos(request)
+    registered = await _registered_github_repos()
+    visible_lower = {repo.casefold() for repo in visible}
+    registered_lower = {repo.casefold() for repo in registered}
+    result = await asyncio.to_thread(
+        run_gh_command,
         [
             "repo",
             "list",
@@ -797,7 +938,7 @@ async def list_github_user_repos():
             "name,nameWithOwner,description,isPrivate,url",
             "--limit",
             "100",
-        ]
+        ],
     )
     if result["success"]:
         try:
@@ -809,6 +950,10 @@ async def list_github_user_repos():
                     "isPrivate": r.get("isPrivate", False),
                 }
                 for r in raw_repos
+                if str(r.get("nameWithOwner", r.get("name"))).casefold()
+                in visible_lower
+                or str(r.get("nameWithOwner", r.get("name"))).casefold()
+                not in registered_lower
             ]
             return {"success": True, "data": {"repos": repos}}
         except json.JSONDecodeError:
@@ -826,11 +971,14 @@ async def list_github_orgs():
     return {"success": True, "data": {"orgs": []}}
 
 
-@router.get("/detect-repo")
+@router.get("/detect-repo", dependencies=[Depends(_github_detect_repo_viewer)])
 async def detect_github_repo(path: str = Query(...)):
     """Detect GitHub remote for a local repository."""
-    result = run_gh_command(
-        ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], cwd=path
+    project_path = within_roots(path, browse_roots(), "browsable directories")
+    result = await asyncio.to_thread(
+        run_gh_command,
+        ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
+        cwd=str(project_path),
     )
     if result["success"]:
         return {"success": True, "data": result["output"]}
@@ -839,10 +987,22 @@ async def detect_github_repo(path: str = Query(...)):
 
 @router.get("/branches")
 async def get_github_branches(
+    request: Request,
     repo: str = Query(...),
 ):
     """Get branches for a GitHub repository."""
-    result = run_gh_command(["api", f"repos/{repo}/branches", "--jq", ".[].name"])
+    if not _valid_github_repo(repo):
+        raise HTTPException(status_code=400, detail="Invalid repository")
+    visible = await _visible_github_repos(request)
+    if repo.casefold() not in {
+        item.casefold() for item in visible
+    } and repo.casefold() in {
+        item.casefold() for item in await _registered_github_repos()
+    }:
+        raise HTTPException(status_code=404, detail="Project not found")
+    result = await asyncio.to_thread(
+        run_gh_command, ["api", f"repos/{repo}/branches", "--jq", ".[].name"]
+    )
     if result["success"]:
         branches = result["output"].split("\n") if result["output"] else []
         return {"success": True, "data": branches}
@@ -851,39 +1011,69 @@ async def get_github_branches(
 
 @router.post("/repos")
 @honest_status
-async def create_github_repo(request: CreateRepoRequest):
+async def create_github_repo(request: CreateRepoRequest, http_request: Request):
     """Create a new GitHub repository."""
-    args = ["repo", "create", request.repoName, "--confirm"]
+    if not request.projectPath:
+        raise HTTPException(status_code=404, detail="Project not found")
+    await _authorize_github_path(http_request, request.projectPath, "member")
+    project_path = within_roots(
+        request.projectPath, browse_roots(), "browsable directories"
+    )
+    project = next(
+        (
+            item
+            for item in load_projects().values()
+            if FilePath(item.get("path", "")).resolve() == project_path
+        ),
+        None,
+    )
+    bound_repo = await asyncio.to_thread(_bound_github_repo, project or {})
+    destination = (
+        f"{request.orgName}/{request.repoName}" if request.orgName else request.repoName
+    )
+    if "/" not in destination:
+        destination = f"{bound_repo.partition('/')[0]}/{destination}"
+    if not bound_repo or bound_repo != _github_repo_identity(destination):
+        raise HTTPException(status_code=404, detail="Project not found")
+    await _authorize_github_destination(http_request, bound_repo)
+    args = ["repo", "create", bound_repo, "--confirm"]
     if request.description:
         args.extend(["--description", request.description])
     if request.private:
         args.append("--private")
     else:
         args.append("--public")
-    if request.orgName:
-        args[2] = f"{request.orgName}/{request.repoName}"
-
-    result = run_gh_command(args)
+    result = await asyncio.to_thread(run_gh_command, args)
     if result["success"]:
         return {
             "success": True,
             "data": {
-                "fullName": request.repoName,
-                "url": f"https://github.com/{request.repoName}",
+                "fullName": bound_repo,
+                "url": f"https://github.com/{bound_repo}",
             },
         }
     return {"success": False, "error": result.get("error", "Failed to create repo")}
 
 
-@router.post("/remote")
+@router.post("/remote", dependencies=[Depends(_github_remote_admin)])
 @honest_status
-async def add_git_remote(request: AddRemoteRequest):
+async def add_git_remote(request: AddRemoteRequest, http_request: Request):
     """Add GitHub remote to local repository."""
     remote_url = f"https://github.com/{request.repoFullName}.git"
+    await _authorize_github_destination(http_request, request.repoFullName)
+    project_path = within_roots(
+        request.projectPath, browse_roots(), "browsable directories"
+    )
+    for project in load_projects().values():
+        if FilePath(project.get("path", "")).resolve() == project_path:
+            bound = await asyncio.to_thread(_bound_github_repo, project)
+            if bound and bound != _github_repo_identity(request.repoFullName):
+                raise HTTPException(status_code=404, detail="Project not found")
     try:
-        subprocess.run(
+        await asyncio.to_thread(
+            subprocess.run,
             ["git", "remote", "add", "origin", remote_url],
-            cwd=request.projectPath,
+            cwd=str(project_path),
             check=True,
             capture_output=True,
             env=child_env(),
@@ -968,6 +1158,20 @@ def _map_gh_issue(issue: dict, repo_full_name: str = "") -> dict:
 
 def _get_repo_full_name(project_path: str) -> str:
     """Get the repo full name (owner/repo) from the project path."""
+    try:
+        origin = subprocess.run(
+            ["git", "-C", project_path, "config", "--get", "remote.origin.url"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+            env=child_env(),
+        )
+        if origin.returncode == 0 and (repo := _github_repo_identity(origin.stdout)):
+            return repo
+    except (OSError, subprocess.TimeoutExpired):
+        # A missing git executable or a timed-out probe leaves the gh fallback usable.
+        pass
     result = run_gh_command(
         ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
         cwd=project_path,
@@ -2178,7 +2382,10 @@ async def approve_pr(
     return result
 
 
-@project_router.post("/prs/{prNumber}/merge")
+@project_router.post(
+    "/prs/{prNumber}/merge",
+    dependencies=[Depends(require_project_access("admin"))],
+)
 async def merge_pr(
     projectId: str,
     prNumber: int,
@@ -2341,7 +2548,10 @@ async def get_pr_review_logs(projectId: str, prNumber: int):
     return result
 
 
-@project_router.post("/releases")
+@project_router.post(
+    "/releases",
+    dependencies=[Depends(require_project_access("admin"))],
+)
 @honest_status
 async def create_github_release(projectId: str, request: CreateReleaseRequest):
     """Create a GitHub release."""
@@ -2427,15 +2637,17 @@ async def list_github_models():
         )
 
 
-@router.get("/fork-info")
+@router.get("/fork-info", dependencies=[Depends(_github_fork_info_viewer)])
 @honest_status
 async def get_fork_info(
     project_path: str = Query(..., description="Absolute path to the project"),
 ):
     """Detect if repo is a fork and return origin + upstream info."""
-    result = run_gh_command(
+    path = within_roots(project_path, browse_roots(), "browsable directories")
+    result = await asyncio.to_thread(
+        run_gh_command,
         ["repo", "view", "--json", "nameWithOwner,parent,isFork,defaultBranchRef"],
-        cwd=project_path,
+        cwd=str(path),
     )
     if not result["success"]:
         return {"success": False, "error": result.get("error")}

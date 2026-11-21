@@ -212,7 +212,7 @@ def test_refresh_drops_queued_message_and_revoked_key(
         clock.now = 10.0
         with pytest.raises(WebSocketDisconnect) as exc:
             ws.receive_json()
-        assert exc.value.code == 4001
+        assert exc.value.code == 4401
 
 
 @pytest.mark.parametrize("endpoint", ["logs", "progress"])

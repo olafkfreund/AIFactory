@@ -277,11 +277,9 @@ class TestWebSocketTokenExtraction:
 
 
 class TestLegacyTokenDeprecationWarning:
-    """#555 — legacy wildcard token use logs once, loudly."""
+    """Legacy wildcard token use logs a warning on every use."""
 
-    def test_warns_once(self, monkeypatch):
-        # Reset the module-level latch so the test is order-independent.
-        monkeypatch.setattr(auth_mod, "_LEGACY_TOKEN_DEPRECATION_LOGGED", False)
+    def test_warns_on_every_use(self, monkeypatch):
         records = []
         monkeypatch.setattr(
             auth_mod.logger,
@@ -290,4 +288,4 @@ class TestLegacyTokenDeprecationWarning:
         )
         auth_mod._warn_legacy_api_token_once()
         auth_mod._warn_legacy_api_token_once()
-        assert len(records) == 1
+        assert len(records) == 2

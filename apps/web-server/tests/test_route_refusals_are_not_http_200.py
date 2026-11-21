@@ -35,7 +35,7 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from server.routes import (
@@ -52,6 +52,7 @@ from server.routes import (
     worktree_tools,
 )
 from server.services.http_verdict import REFUSED_STATUS, honest_status
+from sqlalchemy.ext.asyncio import AsyncSession
 from verdict_helpers import verdict
 
 # The twelve modules from the #1126 inventory. `pr` is reached through
@@ -173,8 +174,15 @@ async def test_files_read_of_a_missing_path_refuses_with_a_status(
     tmp_path: Path,
 ) -> None:
     """`files.read_file_direct` -- 'File not found', inside a registered root."""
-    with patch.object(files, "registered_project_roots", return_value=[tmp_path]):
-        result = await files.read_file_direct(path=str(tmp_path / "nope.txt"))
+    with (
+        patch.object(files, "registered_project_roots", return_value=[tmp_path]),
+        patch.object(files, "require_project_role", AsyncMock()),
+    ):
+        result = await files.read_file_direct(
+            path=str(tmp_path / "nope.txt"),
+            request=SimpleNamespace(state=SimpleNamespace(user={"id": "owner"})),
+            db=AsyncSession(),
+        )
     status, payload = verdict(result)
     assert status == REFUSED_STATUS
     assert payload["error"] == "File not found"
@@ -185,7 +193,10 @@ async def test_files_list_of_a_missing_directory_refuses_with_a_status(
     tmp_path: Path,
 ) -> None:
     """`files.list_directory_direct` -- 'Directory not found'."""
-    with patch.object(files, "browse_roots", return_value=[tmp_path]):
+    with (
+        patch.object(files, "browse_roots", return_value=[tmp_path]),
+        patch.object(files, "_invisible_project_filter", AsyncMock(return_value=set())),
+    ):
         result = await files.list_directory_direct(path=str(tmp_path / "nope"))
     status, payload = verdict(result)
     assert status == REFUSED_STATUS
@@ -203,7 +214,10 @@ async def test_files_discover_of_a_missing_base_keeps_its_extra_keys(
     so this asserts the server side stays byte-identical; the callers that read
     those keys were checked and none reads them off a *failure* body.
     """
-    with patch.object(files, "browse_roots", return_value=[tmp_path]):
+    with (
+        patch.object(files, "browse_roots", return_value=[tmp_path]),
+        patch.object(files, "_invisible_project_filter", AsyncMock(return_value=set())),
+    ):
         result = await files.discover_projects(base_path=str(tmp_path / "nope"))
     status, payload = verdict(result)
     assert status == REFUSED_STATUS
@@ -286,14 +300,17 @@ async def test_worktree_tools_open_ide_refusal_has_a_status() -> None:
 
 
 @pytest.mark.asyncio
-async def test_github_fork_info_refusal_has_a_status() -> None:
+async def test_github_fork_info_refusal_has_a_status(tmp_path: Path) -> None:
     """`github.get_fork_info` -- `gh` declines, so the handler refuses."""
-    with patch.object(
-        github,
-        "run_gh_command",
-        return_value={"success": False, "error": "not a git repository"},
+    with (
+        patch.object(github, "browse_roots", return_value=[tmp_path]),
+        patch.object(
+            github,
+            "run_gh_command",
+            return_value={"success": False, "error": "not a git repository"},
+        ),
     ):
-        result = await github.get_fork_info(project_path="/nonexistent/project")
+        result = await github.get_fork_info(project_path=str(tmp_path / "project"))
     status, payload = verdict(result)
     assert status == REFUSED_STATUS
     assert payload["error"] == "not a git repository"
@@ -318,7 +335,8 @@ async def test_terminal_remove_worktree_refusal_has_a_status() -> None:
     it reads the value at runtime rather than the literal in the source.
     """
     service = patch.object(terminal, "TerminalWorktreeService")
-    with service as cls:
+    auth_path = patch.object(terminal, "_authorize_path")
+    with service as cls, auth_path:
         cls.return_value.remove_worktree.return_value = False
         result = await terminal.remove_terminal_worktree(
             name="wt",
@@ -416,7 +434,10 @@ async def test_a_successful_handler_still_answers_200(tmp_path: Path) -> None:
     listing = tmp_path / "listing"
     listing.mkdir()
     (listing / "a.txt").write_text("x")
-    with patch.object(files, "browse_roots", return_value=[tmp_path]):
+    with (
+        patch.object(files, "browse_roots", return_value=[tmp_path]),
+        patch.object(files, "_invisible_project_filter", AsyncMock(return_value=set())),
+    ):
         result = await files.list_directory_direct(path=str(listing))
     status, payload = verdict(result)
     assert status == 200

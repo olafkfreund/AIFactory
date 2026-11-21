@@ -8,6 +8,7 @@ Handles file operations for the Monaco editor:
 - Git diff viewing
 """
 
+import asyncio
 import logging
 import mimetypes
 import re
@@ -20,9 +21,17 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from server.auth import _is_legacy_api_token, _try_decode_jwt
+from server.auth import (
+    _acw_principal,
+    _is_legacy_api_token,
+    _try_decode_jwt,
+    _warn_legacy_api_token_once,
+)
+from server.database.engine import get_db
 from server.error_ref import client_error
+from server.pty.access import project_id_for_path
 from server.services.argv_safety import (
     assert_not_option,
     assert_safe_git_ref,
@@ -33,11 +42,21 @@ from server.specpath import browse_roots, registered_project_roots, within_roots
 from server.utils.subprocess_env import child_env
 
 from ..config import get_settings
-from .project_authz import require_project_access
+from .project_authz import (
+    accessible_project_ids,
+    require_project_access,
+    require_project_role,
+    resolve_owner_org_id,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _reject_secret_file(path: Path) -> None:
+    if path.name == ".env" or path.name.startswith(".env."):
+        raise HTTPException(status_code=404, detail="File not found")
 
 
 # --------------------------------------------------------------------------
@@ -211,9 +230,12 @@ def resolve_path(project_id: str, relative_path: str) -> Path:
     # Join, resolve and confine in one step. Joining and resolving OUTSIDE the
     # containment check is what makes `../../etc/passwd` interesting: the
     # resolved-but-unchecked path is a live value for as long as it exists.
-    return within_roots(
+    target = within_roots(
         project_path / relative_path, [project_path], "project directory"
     )
+    if project_id_for_path(str(target)) != project_id:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return target
 
 
 # --------------------------------------------------------------------------
@@ -256,6 +278,30 @@ class DiscoveredProject(BaseModel):
     has_claude_md: bool = False
 
 
+_DB_DEP = Depends(get_db)
+
+
+async def _invisible_project_filter(
+    request: Request | None, db: AsyncSession | None, target_path: Path
+) -> set[str]:
+    """Enforce viewer role if ``target_path`` is inside a registered project,
+    and return invisible project IDs to filter out of directory listings."""
+    if request is None or not isinstance(db, AsyncSession):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    pid = project_id_for_path(str(target_path))
+    if pid:
+        await require_project_role(
+            getattr(request.state, "user", None), pid, "viewer", db
+        )
+    else:
+        await resolve_owner_org_id(request, db)
+    from server.project_registry import aload_projects  # noqa: PLC0415
+
+    projects = await aload_projects()
+    visible = await accessible_project_ids(request, db, "viewer")
+    return set(projects) - visible
+
+
 @router.get("/discover")
 @honest_status
 async def discover_projects(
@@ -263,6 +309,8 @@ async def discover_projects(
     max_depth: int = Query(
         1, description="How deep to scan (1 = direct children only)"
     ),
+    request: Request = None,  # type: ignore[assignment]
+    db: AsyncSession = _DB_DEP,
 ):
     """
     Discover potential project folders in a directory.
@@ -270,6 +318,7 @@ async def discover_projects(
     """
     # Containment (#320): only scan within browsable roots — no system dirs.
     base = within_roots(base_path, browse_roots(), "browsable directories")
+    invisible_ids = await _invisible_project_filter(request, db, base)
 
     if not base.exists():
         return {
@@ -294,6 +343,8 @@ async def discover_projects(
         try:
             for entry in sorted(dir_path.iterdir(), key=lambda e: e.name.lower()):
                 if not entry.is_dir():
+                    continue
+                if invisible_ids and project_id_for_path(str(entry)) in invisible_ids:
                     continue
 
                 # Skip hidden directories and common non-project dirs
@@ -351,11 +402,14 @@ async def discover_projects(
 async def list_directory_direct(
     path: str = Query(..., description="Absolute path to directory"),
     show_hidden: bool = Query(False, description="Show hidden files"),
+    request: Request = None,  # type: ignore[assignment]
+    db: AsyncSession = _DB_DEP,
 ):
     """List contents of a directory by absolute path."""
     # Containment (#320): only browsable roots (registered projects + home +
     # APP_FILE_BROWSE_ROOTS) may be listed — blocks /etc, /root, /var, etc.
     full_path = within_roots(path, browse_roots(), "browsable directories")
+    invisible_ids = await _invisible_project_filter(request, db, full_path)
 
     if not full_path.exists():
         return {"success": False, "error": "Directory not found", "data": None}
@@ -370,6 +424,8 @@ async def list_directory_direct(
         ):
             # Skip hidden files unless requested
             if entry.name.startswith(".") and not show_hidden:
+                continue
+            if invisible_ids and project_id_for_path(str(entry)) in invisible_ids:
                 continue
 
             try:
@@ -405,13 +461,27 @@ async def list_directory_direct(
 @honest_status
 async def read_file_direct(
     path: str = Query(..., description="Absolute path to file"),
+    request: Request = None,  # type: ignore[assignment]
+    db: AsyncSession = _DB_DEP,
 ):
     """Read file contents by absolute path."""
     # Containment (#320): only files inside a registered project may be read —
     # no expanduser(), so `~`-tricks can't escape. Closes arbitrary host read.
-    full_path = within_roots(
-        path, registered_project_roots(), "registered project directories"
+    if request is None or not isinstance(db, AsyncSession):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    try:
+        full_path = within_roots(
+            path, registered_project_roots(), "registered project directories"
+        )
+    except HTTPException:
+        raise HTTPException(status_code=404, detail="Project not found") from None
+    await require_project_role(
+        getattr(request.state, "user", None),
+        project_id_for_path(str(full_path)),
+        "viewer",
+        db,
     )
+    _reject_secret_file(full_path)
 
     if not full_path.exists():
         return {"success": False, "error": "File not found", "data": None}
@@ -444,12 +514,20 @@ async def read_file_direct(
     }
 
 
+def _set_serve_user(request: Request, user: dict[str, object]) -> bool:
+    state = getattr(request, "state", None)
+    if state is not None and getattr(state, "user", None) is None:
+        state.user = user
+    return True
+
+
 def _validate_serve_token(request: Request, token: str) -> bool:
     """Validate authentication for the /serve endpoint.
 
     Checks (in order):
-    1. Authorization header (standard Bearer token flow)
-    2. ``token`` query param (for rewritten HTML asset URLs)
+    1. Already-authenticated principal on ``request.state.user`` (incl. ``acw_`` keys)
+    2. Authorization header (standard Bearer token flow)
+    3. ``token`` query param (for rewritten HTML asset URLs)
 
     Returns True if the request is authenticated.
     """
@@ -458,22 +536,58 @@ def _validate_serve_token(request: Request, token: str) -> bool:
     if settings.DISABLE_AUTH:
         return True
 
-    # 1. Try Authorization header
+    state = getattr(request, "state", None)
+    if state is not None and isinstance(getattr(state, "user", None), dict):
+        return True
+
     auth_header = request.headers.get("Authorization")
-    if auth_header and auth_header.startswith("Bearer "):
-        header_token = auth_header[7:]
-        if _try_decode_jwt(header_token) is not None:
-            return True
-        if _is_legacy_api_token(header_token):
-            return True
+    header_token = (
+        auth_header[7:] if auth_header and auth_header.startswith("Bearer ") else ""
+    )
+    for candidate in (header_token, token):
+        if not candidate:
+            continue
+        jwt_payload = _try_decode_jwt(candidate)
+        if jwt_payload is not None:
+            return _set_serve_user(
+                request,
+                {
+                    "id": jwt_payload.get("sub"),
+                    "email": jwt_payload.get("email"),
+                    "role": jwt_payload.get("role", "user"),
+                },
+            )
+        if _is_legacy_api_token(candidate):
+            _warn_legacy_api_token_once()
+            return _set_serve_user(
+                request,
+                {
+                    "id": "default",
+                    "email": None,
+                    "role": "user",
+                    "is_service": False,
+                    "is_legacy_shared_token": True,
+                },
+            )
 
-    # 2. Try query-param token (used by rewritten HTML asset URLs)
-    if token:
-        if _try_decode_jwt(token) is not None:
-            return True
-        if _is_legacy_api_token(token):
-            return True
+    return False
 
+
+async def _resolve_serve_acw_token(request: Request, token: str) -> bool:
+    """Authenticate an ``acw_`` token for ``/serve`` if not already authenticated."""
+    auth_header = request.headers.get("Authorization")
+    header_token = (
+        auth_header[7:] if auth_header and auth_header.startswith("Bearer ") else ""
+    )
+    for candidate in (header_token, token):
+        if candidate and candidate.startswith("acw_"):
+            try:
+                from server.mcp_remote.auth import authenticate_rest  # noqa: PLC0415
+
+                key = await authenticate_rest(f"Bearer {candidate}")
+                return _set_serve_user(request, _acw_principal(key))
+            except Exception:  # noqa: BLE001, S112
+                continue
     return False
 
 
@@ -485,6 +599,7 @@ async def serve_project_file(
         ..., description="Project root directory (for resolving relative URLs)"
     ),
     token: str = Query(default="", description="Bearer token for authentication"),
+    db: AsyncSession = _DB_DEP,
 ):
     """Serve a project file with its correct MIME type.
 
@@ -493,16 +608,28 @@ async def serve_project_file(
     (http://, https://, //, data:, #, mailto:) are left untouched.
     """
     # Authenticate: check token from query param or Authorization header
-    if not _validate_serve_token(request, token):
+    if not _validate_serve_token(request, token) and not await _resolve_serve_acw_token(
+        request, token
+    ):
         raise HTTPException(status_code=401, detail="Authentication required")
     # Containment (#320): the attacker-supplied root must itself be a registered
     # project dir, and the file must live inside it. Blocks `&root=/` traversal.
     root_path = within_roots(
         root, registered_project_roots(), "registered project directories"
     )
+    file_path = within_roots(path, [root_path], "project root")
+    root_project = project_id_for_path(str(root_path))
+    target_project = project_id_for_path(str(file_path))
+    if not isinstance(db, AsyncSession):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    await require_project_role(
+        getattr(request.state, "user", None), target_project, "viewer", db
+    )
+    if root_project != target_project:
+        raise HTTPException(status_code=404, detail="Project not found")
     if not root_path.is_dir():
         raise HTTPException(status_code=400, detail="Root is not a directory")
-    file_path = within_roots(path, [root_path], "project root")
+    _reject_secret_file(file_path)
 
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
@@ -578,6 +705,7 @@ async def list_directory(
 ):
     """List contents of a directory."""
     full_path = resolve_path(project_id, path)
+    _reject_secret_file(full_path)
 
     if not full_path.exists():
         raise HTTPException(
@@ -595,6 +723,8 @@ async def list_directory(
     for entry in sorted(
         full_path.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower())
     ):
+        if project_id_for_path(str(entry)) != project_id:
+            continue
         # Skip hidden files unless requested
         if entry.name.startswith(".") and not show_hidden:
             continue
@@ -632,6 +762,7 @@ async def read_file(
 ):
     """Read file contents."""
     full_path = resolve_path(project_id, path)
+    _reject_secret_file(full_path)
 
     if not full_path.exists():
         raise HTTPException(
@@ -683,6 +814,7 @@ async def write_file(
 ):
     """Write content to a file."""
     full_path = resolve_path(project_id, path)
+    _reject_secret_file(full_path)
 
     # Containment (#320): never let writes land in .git/ (hooks/config → RCE
     # on the next git operation).
@@ -716,6 +848,15 @@ async def delete_file(
 ):
     """Delete a file or directory."""
     full_path = resolve_path(project_id, path)
+    from server.project_registry import load_projects  # noqa: PLC0415
+
+    if any(
+        pid != project_id
+        and project.get("path")
+        and full_path in Path(project["path"]).resolve().parents
+        for pid, project in load_projects().items()
+    ):
+        raise HTTPException(status_code=404, detail="Project not found")
 
     # Containment (#320): never delete inside .git/ (corrupting the repo).
     if ".git" in full_path.parts:
@@ -757,6 +898,7 @@ async def search_files(
 ):
     """Search for text in files using ripgrep or fallback."""
     full_path = resolve_path(project_id, path)
+    _reject_secret_file(full_path)
 
     # Security (#323 H5): reject argument injection (a leading '-' turns the
     # positional query/glob into an rg flag, e.g. `--pre=/bin/sh`) and bound the
@@ -812,6 +954,8 @@ async def search_files(
             str(max_results),
             "--glob",
             file_pattern,
+            "--glob",
+            "!.env*",
             "--",  # no flags past here — query/path are positional (#323 H5)
             query,
             search_root,
@@ -825,7 +969,16 @@ async def search_files(
                 continue
             try:
                 data = __import__("json").loads(line)
-                if data.get("type") == "match":
+                if (
+                    data.get("type") == "match"
+                    and project_id_for_path(
+                        str(Path(data["data"]["path"]["text"]).resolve())
+                    )
+                    == project_id
+                    and not Path(data["data"]["path"]["text"])
+                    .resolve()
+                    .name.startswith(".env")
+                ):
                     match_data = data["data"]
                     results.append(
                         SearchResult(
@@ -853,7 +1006,13 @@ async def search_files(
                 truncated = True
                 break
 
-            if not file_path.is_file() or is_binary_file(file_path):
+            if (
+                file_path.resolve().name == ".env"
+                or file_path.resolve().name.startswith(".env.")
+                or project_id_for_path(str(file_path.resolve())) != project_id
+                or not file_path.is_file()
+                or is_binary_file(file_path)
+            ):
                 continue
 
             try:
@@ -907,6 +1066,8 @@ async def get_git_diff(
     try:
         base = assert_safe_git_ref(base, "base")
         path = assert_not_option(path, "path")
+        if path:
+            resolve_path(project_id, path)
     except ValueError as exc:
         # argv_safety raises InputRejectedError, whose developer-written text
         # client_error hands back verbatim. Any OTHER ValueError reaching here
@@ -929,7 +1090,8 @@ async def get_git_diff(
         if path:
             cmd.append(path)
 
-        proc = subprocess.run(
+        proc = await asyncio.to_thread(
+            subprocess.run,
             cmd,
             cwd=str(project_path),
             capture_output=True,
@@ -951,6 +1113,11 @@ async def get_git_diff(
             parts = line.split("\t")
             status_code = parts[0]
             file_path = parts[1] if len(parts) > 1 else ""
+            if (
+                project_id_for_path(str((project_path / file_path).resolve()))
+                != project_id
+            ):
+                continue
 
             status_map = {
                 "A": "added",
@@ -995,7 +1162,10 @@ def _get_project_path(project_id: str) -> Path:
     return resolve_project_path(project_id)
 
 
-@insights_router.delete("")
+@insights_router.delete(
+    "",
+    dependencies=[Depends(require_project_access("member"))],
+)
 async def clear_insights_session(projectId: str):
     """
     Clear current files insights session and create a new one.

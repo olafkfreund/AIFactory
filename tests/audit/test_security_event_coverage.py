@@ -73,10 +73,17 @@ def test_auth_failure_writes_chained_audit(fresh_db, monkeypatch) -> None:
 @pytest.mark.audit
 def test_authz_denial_writes_chained_audit(fresh_db, monkeypatch) -> None:
     """A human user denied access to a project (403) writes a chained
-    ``authz.denied`` row that survives the request session's rollback (#1919)."""
+    ``gate.rejected`` row that survives the request session's rollback (#1919)."""
     from fastapi import HTTPException
     from server.database import engine as db_engine
-    from server.database.models import AuditLog
+    from server.database.models import (
+        AuditLog,
+        Organization,
+        OrgMember,
+        Team,
+        TeamMembership,
+        User,
+    )
     from server.routes import project_authz
     from server.services import audit_service
     from server.services.audit_chain import GENESIS, row_as_mapping, verify_chain
@@ -90,9 +97,11 @@ def test_authz_denial_writes_chained_audit(fresh_db, monkeypatch) -> None:
     # real authz rule runs instead of the DISABLE_AUTH short-circuit.
     monkeypatch.setattr(project_authz, "_auth_disabled", lambda: False)
 
-    # A project owned by an org the user is NOT a member of → membership=None →
-    # 403 authz.denied. Stub the async loader so no real project store is needed.
-    project_authz_projects = {"proj-1": {"id": "proj-1", "org_id": "org-x"}}
+    # A project where user-9 is only a viewer -> requesting 'member' raises 403
+    # and writes a chained denial audit row (non-members get 404 without oracle).
+    project_authz_projects = {
+        "proj-1": {"id": "proj-1", "org_id": "org-x", "team_id": "team-x"}
+    }
 
     import server.project_registry as projects_mod
 
@@ -105,10 +114,27 @@ def test_authz_denial_writes_chained_audit(fresh_db, monkeypatch) -> None:
 
     async def _go():
         async with SessionLocal() as s:
+            s.add(User(id="user-9", email="u9@x.test", password_hash="x"))
+            await s.flush()
+            s.add(Organization(id="org-x", name="x", slug="x", owner_id="user-9"))
+            s.add(
+                Team(
+                    id="team-x",
+                    org_id="org-x",
+                    name="Default",
+                    slug="default",
+                    is_default=True,
+                )
+            )
+            s.add(OrgMember(org_id="org-x", user_id="user-9", role="viewer"))
+            s.add(TeamMembership(team_id="team-x", user_id="user-9", role="viewer"))
+            await s.commit()
+
+        async with SessionLocal() as s:
             raised = False
             try:
                 await project_authz.authorize_project_for_user(
-                    user, "proj-1", s, minimum_role="viewer"
+                    user, "proj-1", s, minimum_role="member"
                 )
             except HTTPException as exc:
                 raised = True
@@ -126,7 +152,7 @@ def test_authz_denial_writes_chained_audit(fresh_db, monkeypatch) -> None:
     rows = _run(_go())
     _require(len(rows) == 1, f"expected 1 audit row, got {len(rows)}")
     _require(
-        rows[0]["action"] == audit_service.ACTION_AUTHZ_DENIED,
+        rows[0]["action"] == audit_service.ACTION_GATE_REJECTED,
         f"unexpected action {rows[0]['action']!r}",
     )
     _require(rows[0]["resource_id"] == "proj-1", "resource_id should be the project id")

@@ -22,11 +22,20 @@ if str(_WEB_SERVER_DIR) not in sys.path:
 import server.project_registry as projects_mod  # noqa: E402
 from fastapi import HTTPException  # noqa: E402
 from server.database import engine as db_engine  # noqa: E402
-from server.database.models import AuditLog, Base, Organization, User  # noqa: E402
+from server.database.models import (  # noqa: E402
+    AuditLog,
+    Base,
+    Organization,
+    OrgMember,
+    Team,
+    TeamMembership,
+    User,
+)
 from server.routes import project_authz  # noqa: E402
 from server.services.audit_chain import row_as_mapping, verify_chain  # noqa: E402
 from server.services.audit_service import (  # noqa: E402
     ACTION_AUTHZ_DENIED,
+    ACTION_GATE_REJECTED,
     log_audit_event_bg,
 )
 from sqlalchemy import select, text  # noqa: E402
@@ -75,7 +84,7 @@ def test_denial_row_survives_request_rollback(session_local, monkeypatch) -> Non
     monkeypatch.setattr(project_authz, "_auth_disabled", lambda: False)
 
     async def _projects() -> dict:
-        return {"proj-1": {"id": "proj-1", "org_id": "org-x"}}
+        return {"proj-1": {"id": "proj-1", "org_id": "org-x", "team_id": "team-x"}}
 
     monkeypatch.setattr(projects_mod, "aload_projects", _projects)
 
@@ -85,13 +94,24 @@ def test_denial_row_survives_request_rollback(session_local, monkeypatch) -> Non
             s.add(User(id="user-9", email="u@x.test", password_hash="x"))
             await s.flush()
             s.add(Organization(id="org-x", name="x", slug="x", owner_id="owner"))
+            s.add(
+                Team(
+                    id="team-x",
+                    org_id="org-x",
+                    name="Default",
+                    slug="default",
+                    is_default=True,
+                )
+            )
+            s.add(OrgMember(org_id="org-x", user_id="user-9", role="viewer"))
+            s.add(TeamMembership(team_id="team-x", user_id="user-9", role="viewer"))
             await s.commit()
 
-        # The request session: user-9 is not a member of org-x -> 403.
+        # The request session: user-9 can see the project but cannot write.
         async with session_local() as s:
             with pytest.raises(HTTPException) as exc:
                 await project_authz.authorize_project_for_user(
-                    {"id": "user-9", "role": "user"}, "proj-1", s
+                    {"id": "user-9", "role": "user"}, "proj-1", s, "member"
                 )
             assert exc.value.status_code == 403
             # The membership SELECT's connection went back to the pool before
@@ -102,7 +122,7 @@ def test_denial_row_survives_request_rollback(session_local, monkeypatch) -> Non
         return await _chain(session_local)
 
     rows = asyncio.run(_go())
-    assert [r["action"] for r in rows] == [ACTION_AUTHZ_DENIED]
+    assert [r["action"] for r in rows] == [ACTION_GATE_REJECTED]
     assert rows[0]["resource_id"] == "proj-1"
     assert rows[0]["user_id"] == "user-9"
 

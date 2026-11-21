@@ -37,8 +37,11 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from server.auth import _acw_principal, _is_legacy_api_token
-from server.config import get_settings
+from server.auth import (
+    _acw_principal,
+    _is_legacy_api_token,
+    _warn_legacy_api_token_once,
+)
 from server.database.engine import get_db
 from server.error_ref import client_error
 from server.mcp_remote import auth as mcp_remote_auth
@@ -120,6 +123,7 @@ def require_acw_scope(scope: str):
         # shared helper, which also refuses to authenticate anything when
         # API_TOKEN is unset (Factory#324 M1).
         if _is_legacy_api_token(token):
+            _warn_legacy_api_token_once()
             return _LegacyAdminKey()
 
         try:
@@ -136,7 +140,9 @@ def require_acw_scope(scope: str):
                 detail=client_error(logger, "Authentication failed", exc),
             ) from exc
 
-        if not key.has_scope(scope):
+        if not key.has_scope(scope) and not (
+            scope == TASK_WRITE_SCOPE and key.has_scope("mcp:write")
+        ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=(
@@ -156,13 +162,13 @@ _AcwKey = mcp_remote_auth.AuthenticatedKey | _LegacyAdminKey
 def acw_principal(key: _AcwKey) -> dict[str, object]:
     """Build the principal used by REST authorization for this key."""
     if isinstance(key, _LegacyAdminKey):
-        return {"id": "default", "role": "user", "is_service": True}
-    return _acw_principal(
-        key,
-        scoped_service_tokens_enabled=getattr(
-            get_settings(), "SCOPED_SERVICE_TOKENS_ENABLED", False
-        ),
-    )
+        return {
+            "id": "default",
+            "role": "user",
+            "is_service": False,
+            "is_legacy_shared_token": True,
+        }
+    return _acw_principal(key)
 
 
 def require_acw_principal(scope: str) -> Callable[..., Awaitable[_AcwKey]]:
@@ -202,4 +208,5 @@ def require_acw_access(
         await authorize_project_for_user(principal, project_id, db, minimum_role)
         return key
 
+    _check.project_guard = True  # type: ignore[attr-defined]
     return _check

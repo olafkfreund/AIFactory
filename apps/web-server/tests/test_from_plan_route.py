@@ -165,6 +165,7 @@ def _post_from_plan(
             },
         ),
         patch.object(execution, "resolve_project_id", return_value=project_id),
+        patch.object(execution, "_auth_disabled", return_value=True),
         patch.object(execution, "get_agent_service", return_value=fake_service),
         patch.object(execution, "emit_task_status", AsyncMock()),
         patch.object(

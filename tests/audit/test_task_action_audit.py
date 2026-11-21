@@ -363,6 +363,14 @@ def mcp_client(monkeypatch):
         mcp_router, "log_audit_event_bg", audit_service.log_audit_event_bg
     )
     monkeypatch.setattr(settings, "API_TOKEN", "t-1874")
+    monkeypatch.setattr(settings, "LEGACY_SHARED_TOKEN_FULL_ACCESS", True)
+
+    async def projects_for_legacy_client():
+        return {"p": {"path": "/tmp", "org_id": "default"}}
+
+    monkeypatch.setattr(
+        "server.project_registry.aload_projects", projects_for_legacy_client
+    )
     app = FastAPI()
     app.include_router(mcp_router.router)
     return TestClient(app, headers={"Authorization": "Bearer t-1874"})
