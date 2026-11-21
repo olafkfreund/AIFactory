@@ -424,6 +424,10 @@ def test_project_route_dependency_pins_the_authorised_org(
     assert client.post("/b", json={"projectPath": str(acme)}).json() == {"token": ""}
     assert client.post("/b", content=b"not json").json() == {"token": ""}
     assert github_token() == "ambient-1700"  # provider reset after the requests
+    # Project access is still enforced even when multi_installation() is off (#2181).
+    monkeypatch.setattr(github_app, "_org_installations", {})
+    assert client.get("/p/a").json() == {"token": "ambient-1700"}
+    assert client.get("/p/o").status_code == 403
 
 
 def test_event_loop_thread_never_mints(

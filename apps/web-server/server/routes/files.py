@@ -995,7 +995,10 @@ def _get_project_path(project_id: str) -> Path:
     return resolve_project_path(project_id)
 
 
-@insights_router.delete("")
+@insights_router.delete(
+    "",
+    dependencies=[Depends(require_project_access("member"))],
+)
 async def clear_insights_session(projectId: str):
     """
     Clear current files insights session and create a new one.

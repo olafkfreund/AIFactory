@@ -22,12 +22,16 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from server.background import spawn
+from server.database.engine import get_db
 from server.error_ref import client_error
+from server.pty.access import project_id_for_path
+from server.routes.project_authz import require_project_access
 from server.services import github_app, project_settings_store
 from server.services.gh import run_gh_command  # re-exported: see services/gh.py
 from server.services.git_base_url import safe_git_base_url  # #1360
 from server.services.http_verdict import honest_status
 from server.services.originator import issue_originator
+from server.specpath import browse_roots, within_roots
 from server.utils.subprocess_env import child_env, github_token
 
 from .project_github import project_github_token
@@ -43,6 +47,51 @@ logger = logging.getLogger(__name__)
 
 
 router = APIRouter(dependencies=[Depends(project_github_token)])
+
+
+async def _authorize_github_project_id(
+    request: Request, project_id: str | None, role: str
+) -> None:
+    if project_id:
+        async with contextlib.asynccontextmanager(get_db)() as db:
+            await require_project_access(role)._authorize(project_id, request, db)
+
+
+async def _authorize_github_path(request: Request, path: str, role: str) -> None:
+    pid = project_id_for_path(path)
+    if not pid:
+        within_roots(path, browse_roots(), "browsable directories")
+    await _authorize_github_project_id(request, pid, role)
+
+
+async def _github_auto_detect_admin(request: Request) -> None:
+    await _authorize_github_project_id(
+        request, request.query_params.get("projectId"), "admin"
+    )
+
+
+async def _github_persist_token_admin(request: Request) -> None:
+    with contextlib.suppress(ValueError, UnicodeDecodeError):
+        body = await request.json()
+        if isinstance(body, dict) and isinstance(body.get("projectId"), str):
+            await _authorize_github_project_id(request, body["projectId"], "admin")
+
+
+async def _github_detect_repo_viewer(request: Request, path: str = Query(...)) -> None:
+    await _authorize_github_path(request, path, "viewer")
+
+
+async def _github_remote_admin(request: Request) -> None:
+    with contextlib.suppress(ValueError, UnicodeDecodeError):
+        body = await request.json()
+        if isinstance(body, dict) and isinstance(body.get("projectPath"), str):
+            await _authorize_github_path(request, body["projectPath"], "admin")
+
+
+async def _github_fork_info_viewer(
+    request: Request, project_path: str = Query(...)
+) -> None:
+    await _authorize_github_path(request, project_path, "viewer")
 
 
 # ============================================
@@ -504,7 +553,7 @@ async def check_github_auth():
     }
 
 
-@router.get("/auto-detect")
+@router.get("/auto-detect", dependencies=[Depends(_github_auto_detect_admin)])
 async def auto_detect_github(projectId: str | None = Query(None)):
     """Auto-detect GitHub CLI authentication and username in one call.
 
@@ -764,7 +813,7 @@ async def get_github_token():
     return {"success": True, "data": {"hasToken": has_token}}
 
 
-@router.post("/persist-token")
+@router.post("/persist-token", dependencies=[Depends(_github_persist_token_admin)])
 @honest_status
 async def persist_github_token(request: PersistTokenRequest):
     """Persist the gh CLI token to a project's settings store.
@@ -826,7 +875,7 @@ async def list_github_orgs():
     return {"success": True, "data": {"orgs": []}}
 
 
-@router.get("/detect-repo")
+@router.get("/detect-repo", dependencies=[Depends(_github_detect_repo_viewer)])
 async def detect_github_repo(path: str = Query(...)):
     """Detect GitHub remote for a local repository."""
     result = run_gh_command(
@@ -875,7 +924,7 @@ async def create_github_repo(request: CreateRepoRequest):
     return {"success": False, "error": result.get("error", "Failed to create repo")}
 
 
-@router.post("/remote")
+@router.post("/remote", dependencies=[Depends(_github_remote_admin)])
 @honest_status
 async def add_git_remote(request: AddRemoteRequest):
     """Add GitHub remote to local repository."""
@@ -2178,7 +2227,10 @@ async def approve_pr(
     return result
 
 
-@project_router.post("/prs/{prNumber}/merge")
+@project_router.post(
+    "/prs/{prNumber}/merge",
+    dependencies=[Depends(require_project_access("admin"))],
+)
 async def merge_pr(
     projectId: str,
     prNumber: int,
@@ -2341,7 +2393,10 @@ async def get_pr_review_logs(projectId: str, prNumber: int):
     return result
 
 
-@project_router.post("/releases")
+@project_router.post(
+    "/releases",
+    dependencies=[Depends(require_project_access("admin"))],
+)
 @honest_status
 async def create_github_release(projectId: str, request: CreateReleaseRequest):
     """Create a GitHub release."""
@@ -2427,7 +2482,7 @@ async def list_github_models():
         )
 
 
-@router.get("/fork-info")
+@router.get("/fork-info", dependencies=[Depends(_github_fork_info_viewer)])
 @honest_status
 async def get_fork_info(
     project_path: str = Query(..., description="Absolute path to the project"),

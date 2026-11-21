@@ -67,7 +67,7 @@ def is_service_principal(user: dict | None) -> bool:
 
 
 async def _team_grant(
-    principal: dict, project: dict, db: AsyncSession
+    principal: dict[str, object], project: dict[str, object], db: AsyncSession
 ) -> tuple[str | None, str | None]:
     org_id = project.get("org_id")
     if not org_id or (principal.get("org_id") and principal["org_id"] != org_id):
@@ -115,8 +115,25 @@ async def _team_grant(
     return role, team_id
 
 
+async def _effective_role(
+    principal: dict[str, object], project: dict[str, object], db: AsyncSession
+) -> tuple[str | None, str | None]:
+    if _auth_disabled() or (
+        principal.get("is_legacy_shared_token")
+        and get_settings().LEGACY_SHARED_TOKEN_FULL_ACCESS
+    ):
+        team_id = project.get("team_id")
+        return "owner", team_id if isinstance(team_id, str) else None
+    role, team_id = await _team_grant(principal, project, db)
+    scopes = principal.get("scopes")
+    ceiling = scope_ceiling(scopes if isinstance(scopes, (list, set)) else None)
+    if role in ROLE_LEVELS and ceiling is not None:
+        return min((role, ceiling), key=lambda r: ROLE_LEVELS[r]), team_id
+    return None, team_id
+
+
 async def require_project_role(
-    principal: dict | None,
+    principal: dict[str, object] | None,
     project_id: str | None,
     min_role: str = "viewer",
     db: AsyncSession | None = None,
@@ -138,20 +155,9 @@ async def require_project_role(
     )
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
-    org_id = project.get("org_id")
+    org_id = str(project.get("org_id") or "")
     try:
-        if _auth_disabled() or (
-            principal.get("is_legacy_shared_token")
-            and get_settings().LEGACY_SHARED_TOKEN_FULL_ACCESS
-        ):
-            role, team_id = "owner", project.get("team_id")
-        else:
-            role, team_id = await _team_grant(principal, project, db)
-            ceiling = scope_ceiling(principal.get("scopes"))
-            if role in ROLE_LEVELS and ceiling is not None:
-                role = min((role, ceiling), key=ROLE_LEVELS.get)
-            else:
-                role = None
+        role, team_id = await _effective_role(principal, project, db)
         if role is None or ROLE_LEVELS.get(role, -1) < ROLE_LEVELS["viewer"]:
             raise HTTPException(status_code=404, detail="Project not found")
         if ROLE_LEVELS[role] < ROLE_LEVELS[min_role]:
@@ -167,7 +173,7 @@ async def require_project_role(
                 f"This action requires at least '{min_role}' role",
             )
             raise HTTPException(status_code=403, detail="Forbidden")
-        return ProjectAccess(project_id, org_id, team_id, role)
+        return ProjectAccess(str(project_id), org_id, team_id, role)
     finally:
         if db.in_transaction():
             await db.rollback()
@@ -267,11 +273,17 @@ class ProjectAccessChecker:
 
     async def __call__(
         self,
-        project_id: str,
         request: Request,
+        project_id: str | None = None,
         db: AsyncSession = Depends(get_db),
-    ) -> dict:
-        return await self._authorize(project_id, request, db)
+    ) -> dict[str, object]:
+        pid = (
+            project_id
+            or request.path_params.get("project_id")
+            or request.path_params.get("projectId")
+            or ""
+        )
+        return await self._authorize(pid, request, db)
 
 
 class TaskAccessChecker(ProjectAccessChecker):
