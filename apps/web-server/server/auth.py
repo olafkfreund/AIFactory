@@ -43,6 +43,7 @@ request first.
 
 import hmac
 import logging
+import re
 from functools import lru_cache
 
 from fastapi import Request, WebSocket, status
@@ -53,6 +54,25 @@ from starlette.responses import JSONResponse
 
 from .config import get_settings
 from .services import audit_siem
+
+
+def _pod_route_exempt(path: str, method: str) -> bool:
+    match = re.fullmatch(
+        r"/api/investigations/[0-9a-f-]{36}/pod/(log|run-tests|report|lease|config)",
+        path,
+    )
+    return bool(
+        match
+        and method
+        == {
+            "log": "POST",
+            "run-tests": "POST",
+            "report": "POST",
+            "lease": "GET",
+            "config": "GET",
+        }[match.group(1)]
+    )
+
 
 logger = logging.getLogger(__name__)
 
@@ -320,7 +340,7 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # Skip auth for public paths
-        if path in self.PUBLIC_PATHS:
+        if path in self.PUBLIC_PATHS or _pod_route_exempt(path, request.method):
             return await call_next(request)
 
         # Skip auth for public prefixes (static files + auth routes)

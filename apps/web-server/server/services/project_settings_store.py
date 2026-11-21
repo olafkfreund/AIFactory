@@ -55,7 +55,10 @@ def project_key(path: str | Path) -> str:
 
 def is_store_key(k: str) -> bool:
     """Return True iff ``k`` is accepted in the project settings store."""
-    return k == "CUSTOM_MCP_SERVERS" or is_project_env_key(k)
+    return k in {
+        "CUSTOM_MCP_SERVERS",
+        "INVESTIGATE_SECRET_PATHS",
+    } or is_project_env_key(k)
 
 
 def _is_mcp_key(k: str) -> bool:
@@ -307,6 +310,11 @@ class ProjectSettingsStore:
             raise ValueError(
                 f"Disallowed project settings key(s): {', '.join(sorted(invalid))}"
             )
+        if any(
+            line.strip().startswith("!")
+            for line in settings.get("INVESTIGATE_SECRET_PATHS", "").splitlines()
+        ):
+            raise ValueError("INVESTIGATE_SECRET_PATHS cannot contain negation")
         clean = {str(k): str(v) for k, v in settings.items()}
         sealed = secret_field.seal(json.dumps(clean)) or "{}"
         key = project_key(project_path)

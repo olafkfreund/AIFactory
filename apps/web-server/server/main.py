@@ -102,7 +102,7 @@ logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915 - app lifecycle wiring
     """Application lifespan handler for startup/shutdown."""
     # The serving process (a reload worker included) launches the agents, so it
     # must be non-dumpable too, not only the __main__ supervisor (#1679).
@@ -144,6 +144,9 @@ async def lifespan(app: FastAPI):
 
     # Initialize database (creates tables if needed)
     await init_db()
+
+    if app.state.investigations_on:
+        app.state.investigation_backend.start_loop()
 
     # RFC-0016 #668: reconstruct durable admission state (cap/queue) from
     # Postgres so a restarted/new replica doesn't start from an empty
@@ -301,6 +304,12 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
+    if app.state.investigations_on:
+        loop = app.state.investigation_backend._loop
+        if loop is not None:
+            loop.cancel()
+            with suppress(_asyncio.CancelledError):
+                await loop
     logger.info("Shutting down Magestic AI Web Server...")
     if settings.REDIS_URL:
         await event_bus.stop_redis_subscriber()
@@ -428,7 +437,7 @@ class SPAStaticFiles(StaticFiles):
         return response
 
 
-def create_app() -> FastAPI:
+def create_app() -> FastAPI:  # noqa: PLR0915 - router and middleware wiring
     """Create and configure the FastAPI application."""
     settings = get_settings()
 
@@ -458,6 +467,27 @@ def create_app() -> FastAPI:
         docs_url="/docs" if settings.DEBUG else None,
         redoc_url="/redoc" if settings.DEBUG else None,
     )
+    from .services.build_backend import kubejob_enabled  # noqa: PLC0415
+    from .services.investigation_backend import (  # noqa: PLC0415
+        InvestigationBackend,
+        investigations_enabled,
+    )
+
+    app.state.investigations_on = investigations_enabled()
+    if app.state.investigations_on:
+        if not kubejob_enabled() or not os.environ.get("DATABASE_URL"):
+            raise ValueError(
+                "AIFACTORY_INVESTIGATIONS=on requires kubejob and DATABASE_URL"
+            )
+        from .services.agent_service import get_agent_service  # noqa: PLC0415
+
+        service = get_agent_service()
+        app.state.investigation_credential_keys = {}
+        app.state.investigation_backend = InvestigationBackend(
+            release_credential=lambda run_id: service._release_task_credential(
+                app.state.investigation_credential_keys.pop(run_id, run_id)
+            )
+        )
     app.add_exception_handler(BuildBackendUnavailableError, build_backend_unavailable)
 
     # OTel FastAPI instrumentation (Epic #35 #42 PR-1). Installs at
@@ -551,8 +581,6 @@ def create_app() -> FastAPI:
     # of the engine + SAML singletons. Gating on env vars keeps the default
     # deployment + test runs unaffected; production deployments that enable
     # SAML or SCIM via Helm get the routers mounted at pod start.
-    import os
-
     if os.environ.get("SAML_ENABLED", "").lower() == "true":
         from .saml import routes as saml_routes
 
@@ -660,6 +688,13 @@ def create_app() -> FastAPI:
 
     app.include_router(mcp_stdio_router)
     logger.info("Stdio MCP proxy mounted at /api/mcp-stdio")
+
+    if app.state.investigations_on:
+        from .mcp_stdio.router import investigation_router  # noqa: PLC0415
+        from .routes import investigations  # noqa: PLC0415
+
+        app.include_router(investigations.router)
+        app.include_router(investigation_router)
 
     # Auto-Fix routes (multi-provider polling backing useAutoFix.ts).
     # Endpoints live under /api/projects/{id}/auto-fix/* so they match
