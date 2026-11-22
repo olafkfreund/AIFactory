@@ -19,11 +19,7 @@ sys.path.insert(0, str(_ROOT / "apps" / "backend"))
 from server import auth  # noqa: E402
 from server.mcp_remote import auth as mcp_auth  # noqa: E402
 from server.services import notification_service  # noqa: E402
-from server.websockets import (  # noqa: E402
-    event_bus,
-    events,
-    task_access,  # noqa: E402
-)
+from server.websockets import event_bus, events  # noqa: E402
 from server.websockets.event_bus import BroadcastScope, OrgScope  # noqa: E402
 
 _real_ws_acw_principal = auth._ws_acw_principal
@@ -77,7 +73,7 @@ def sockets(monkeypatch):
     async def project_authorized(user, project_id):
         return project_id in {"p-a", "p-b"} or user.get("is_legacy_shared_token", False)
 
-    monkeypatch.setattr(task_access, "_project_authorized", project_authorized)
+    monkeypatch.setattr(event_bus, "_project_authorized", project_authorized)
     monkeypatch.setattr(
         events,
         "load_projects",
