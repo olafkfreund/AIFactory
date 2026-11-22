@@ -9,12 +9,16 @@ import json
 import logging
 import re
 from pathlib import Path as FilePath
+from typing import Any
 
 from factory_common.logsafe import sanitize_log
-from fastapi import APIRouter, HTTPException, Path
+from fastapi import APIRouter, Depends, HTTPException, Path, Request
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from server.database.engine import get_db
 from server.error_ref import client_error
+from server.routes.project_authz import require_project_access
 from server.services.argv_safety import (
     assert_not_option,
     assert_safe_git_ref,
@@ -28,6 +32,7 @@ from server.utils.subprocess_env import child_env
 from ..services.insights_service import get_insights_service
 
 logger = logging.getLogger(__name__)
+_DB_DEP = Depends(get_db)
 
 router = APIRouter()
 
@@ -140,7 +145,7 @@ class SaveImageRequest(BaseModel):
 # ============================================
 
 
-@router.post("/done-tasks")
+@router.post("/done-tasks", dependencies=[Depends(require_project_access("viewer"))])
 async def get_changelog_done_tasks(
     projectId: str = Path(...), request: DoneTasksRequest = ...
 ):
@@ -150,7 +155,7 @@ async def get_changelog_done_tasks(
     return {"success": True, "data": done_tasks}
 
 
-@router.post("/specs")
+@router.post("/specs", dependencies=[Depends(require_project_access("viewer"))])
 @honest_status
 async def load_task_specs(projectId: str = Path(...), request: LoadSpecsRequest = ...):
     """Load spec details for tasks."""
@@ -233,7 +238,7 @@ async def load_task_specs(projectId: str = Path(...), request: LoadSpecsRequest 
     return {"success": True, "data": specs}
 
 
-@router.post("/generate")
+@router.post("/generate", dependencies=[Depends(require_project_access("member"))])
 @honest_status
 async def generate_changelog(
     projectId: str = Path(...), request: ChangelogGenerateRequest = ...
@@ -304,7 +309,7 @@ async def generate_changelog(
     return {"success": True, "message": "Changelog generation started"}
 
 
-@router.post("/save")
+@router.post("/save", dependencies=[Depends(require_project_access("member"))])
 @honest_status
 async def save_changelog(
     projectId: str = Path(...), request: ChangelogSaveRequest = ...
@@ -416,7 +421,7 @@ async def save_changelog(
         }
 
 
-@router.get("")
+@router.get("", dependencies=[Depends(require_project_access("viewer"))])
 @honest_status
 async def read_existing_changelog(projectId: str = Path(...)):
     """Read existing CHANGELOG.md from project.
@@ -462,7 +467,10 @@ async def read_existing_changelog(projectId: str = Path(...)):
         }
 
 
-@router.post("/suggest-version")
+@router.post(
+    "/suggest-version",
+    dependencies=[Depends(require_project_access("viewer"))],
+)
 async def suggest_version(
     projectId: str = Path(...), request: SuggestVersionRequest = ...
 ):
@@ -477,7 +485,10 @@ async def suggest_version(
     }
 
 
-@router.post("/suggest-version-commits")
+@router.post(
+    "/suggest-version-commits",
+    dependencies=[Depends(require_project_access("viewer"))],
+)
 async def suggest_version_from_commits(
     projectId: str = Path(...), request: SuggestVersionCommitsRequest = ...
 ):
@@ -492,7 +503,7 @@ async def suggest_version_from_commits(
     }
 
 
-@router.get("/branches")
+@router.get("/branches", dependencies=[Depends(require_project_access("viewer"))])
 @honest_status
 async def get_changelog_branches(projectId: str = Path(...)):
     """Get git branches for changelog diff.
@@ -596,7 +607,7 @@ async def get_changelog_branches(projectId: str = Path(...)):
         }
 
 
-@router.get("/tags")
+@router.get("/tags", dependencies=[Depends(require_project_access("viewer"))])
 @honest_status
 async def get_changelog_tags(projectId: str = Path(...)):
     """Get git tags for changelog diff.
@@ -669,7 +680,10 @@ async def get_changelog_tags(projectId: str = Path(...)):
         }
 
 
-@router.post("/commits-preview")
+@router.post(
+    "/commits-preview",
+    dependencies=[Depends(require_project_access("viewer"))],
+)
 @honest_status
 async def get_commits_preview(
     projectId: str = Path(...), request: CommitsPreviewRequest = ...
@@ -784,7 +798,7 @@ async def get_commits_preview(
         }
 
 
-@router.post("/images")
+@router.post("/images", dependencies=[Depends(require_project_access("member"))])
 @honest_status
 async def save_changelog_image(
     projectId: str = Path(...), request: SaveImageRequest = ...
@@ -905,7 +919,10 @@ class InsightsMessageRequest(BaseModel):
     modelConfig: dict | None = None
 
 
-@insights_router.get("/providers")
+@insights_router.get(
+    "/providers",
+    dependencies=[Depends(require_project_access("viewer"))],
+)
 async def detect_insights_providers(projectId: str = Path(...)):
     """Detect all available LLM providers for insights chat."""
     from ..services.insights_providers import detect_all_providers
@@ -939,7 +956,7 @@ class UpdateModelConfigRequest(BaseModel):
     temperature: float | None = None
 
 
-@insights_router.get("")
+@insights_router.get("", dependencies=[Depends(require_project_access("viewer"))])
 async def get_insights_session(projectId: str = Path(...)):
     """Get current insights session."""
     project_path = _get_project_path(projectId)
@@ -970,7 +987,10 @@ async def get_insights_session(projectId: str = Path(...)):
     }
 
 
-@insights_router.post("/message")
+@insights_router.post(
+    "/message",
+    dependencies=[Depends(require_project_access("member"))],
+)
 async def send_insights_message(
     projectId: str = Path(...), request: InsightsMessageRequest = ...
 ):
@@ -989,7 +1009,7 @@ async def send_insights_message(
     return {"success": True}
 
 
-@insights_router.post("/stop")
+@insights_router.post("/stop", dependencies=[Depends(require_project_access("member"))])
 async def stop_insights_message(projectId: str = Path(...)):
     """Stop the currently running insights chat for a project."""
     service = get_insights_service()
@@ -997,7 +1017,7 @@ async def stop_insights_message(projectId: str = Path(...)):
     return {"success": True, "cancelled": cancelled}
 
 
-@insights_router.delete("")
+@insights_router.delete("", dependencies=[Depends(require_project_access("member"))])
 async def clear_insights_session(projectId: str = Path(...)):
     """
     Clear current insights session and create a new one.
@@ -1057,11 +1077,17 @@ async def clear_insights_session(projectId: str = Path(...)):
         )
 
 
-@insights_router.post("/create-task")
+@insights_router.post(
+    "/create-task",
+    dependencies=[Depends(require_project_access("member"))],
+)
 @honest_status
 async def create_task_from_insights(
-    projectId: str = Path(...), request: CreateTaskRequest = ...
-):
+    http_request: Request,
+    projectId: str = Path(...),
+    request: CreateTaskRequest = ...,
+    db: AsyncSession = _DB_DEP,
+) -> dict[str, Any]:
     """Create a task from insights conversation."""
     from .tasks import TaskCreate, create_task
 
@@ -1071,7 +1097,7 @@ async def create_task_from_insights(
             title=request.title,
             description=request.description,
         )
-        result = await create_task(task_request)
+        result = await create_task(task_request, http_request, db)
         return {"success": True, "data": result}
     except Exception as e:
         logger.error(f"create_task_from_insights failed: {e}", exc_info=True)
@@ -1081,7 +1107,10 @@ async def create_task_from_insights(
         }
 
 
-@insights_router.post("/generate-task")
+@insights_router.post(
+    "/generate-task",
+    dependencies=[Depends(require_project_access("member"))],
+)
 @honest_status
 async def generate_task_from_chat(
     projectId: str = Path(...), request: GenerateTaskRequest = ...
@@ -1107,7 +1136,10 @@ async def generate_task_from_chat(
         }
 
 
-@insights_router.get("/sessions")
+@insights_router.get(
+    "/sessions",
+    dependencies=[Depends(require_project_access("viewer"))],
+)
 async def list_insights_sessions(projectId: str = Path(...)):
     """List all insights sessions."""
     project_path = _get_project_path(projectId)
@@ -1116,7 +1148,10 @@ async def list_insights_sessions(projectId: str = Path(...)):
     return {"success": True, "data": sessions}
 
 
-@insights_router.post("/sessions")
+@insights_router.post(
+    "/sessions",
+    dependencies=[Depends(require_project_access("member"))],
+)
 async def new_insights_session(projectId: str = Path(...)):
     """Create a new insights session."""
     project_path = _get_project_path(projectId)
@@ -1136,7 +1171,10 @@ async def new_insights_session(projectId: str = Path(...)):
     }
 
 
-@insights_router.post("/sessions/{sessionId}/switch")
+@insights_router.post(
+    "/sessions/{sessionId}/switch",
+    dependencies=[Depends(require_project_access("member"))],
+)
 async def switch_insights_session(
     projectId: str = Path(...), sessionId: str = Path(...)
 ):
@@ -1172,7 +1210,10 @@ async def switch_insights_session(
     }
 
 
-@insights_router.delete("/sessions/{sessionId}")
+@insights_router.delete(
+    "/sessions/{sessionId}",
+    dependencies=[Depends(require_project_access("member"))],
+)
 async def delete_insights_session(
     projectId: str = Path(...), sessionId: str = Path(...)
 ):
@@ -1186,7 +1227,10 @@ async def delete_insights_session(
     }
 
 
-@insights_router.patch("/sessions/{sessionId}")
+@insights_router.patch(
+    "/sessions/{sessionId}",
+    dependencies=[Depends(require_project_access("member"))],
+)
 async def rename_insights_session(
     projectId: str = Path(...),
     sessionId: str = Path(...),
@@ -1199,7 +1243,10 @@ async def rename_insights_session(
     return {"success": success}
 
 
-@insights_router.patch("/sessions/{sessionId}/model")
+@insights_router.patch(
+    "/sessions/{sessionId}/model",
+    dependencies=[Depends(require_project_access("member"))],
+)
 async def update_insights_model_config(
     projectId: str = Path(...),
     sessionId: str = Path(...),

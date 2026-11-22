@@ -16,10 +16,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from server.error_ref import client_error, error_reference
 from server.project_registry import load_projects
+from server.routes.project_authz import require_project_access
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +75,10 @@ def _describe_marker_status(
     }
 
 
-@router.get("/{project_id}/mcp-status")
+@router.get(
+    "/{project_id}/mcp-status",
+    dependencies=[Depends(require_project_access("viewer"))],
+)
 async def get_mcp_status(project_id: str) -> dict[str, Any]:
     """Return the catalog × this project × credentials matrix.
 

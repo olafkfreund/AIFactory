@@ -29,7 +29,7 @@ UI-driven actions in the audit log.
 from __future__ import annotations
 
 import json
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, Query
 from fastapi import Request as FastAPIRequest
@@ -40,7 +40,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from server.database.engine import get_db
 from server.project_registry import load_projects
 from server.routes import investigations
-from server.routes.project_authz import accessible_org_ids
+from server.routes.plan_approval import RejectPlanRequest, reject_plan
+from server.routes.project_authz import (
+    accessible_org_ids,
+    accessible_project_ids,
+    require_project_role,
+    resolve_owner_org_id,
+)
+from server.routes.task_models import TaskStatus
+from server.routes.tasks_views import get_qa_report, stream_agent_console
 from server.services.audit_service import ACTION_MCP_TASK_APPLY_CORRECTION
 
 from ..mcp_remote.auth import AuthenticatedKey
@@ -210,11 +218,11 @@ async def proxy_list_projects(
     from ..routes.projects import project_to_response
 
     projects = load_projects()
-    allowed = await accessible_org_ids(request, db)
+    allowed = await accessible_project_ids(request, db)
     return [
         project_to_response(pid, pdata)
         for pid, pdata in projects.items()
-        if allowed is None or pdata.get("org_id") in allowed
+        if pid in allowed
     ]
 
 
@@ -228,8 +236,16 @@ async def proxy_list_tasks(
 ):
     from ..routes.tasks import list_tasks
 
+    if project_id:
+        await require_project_role(request.state.user, project_id, "viewer", db)
+    else:
+        await accessible_project_ids(request, db)
+
     return await list_tasks(
-        project_id=project_id, status=status, request=request, db=db
+        project_id=project_id,
+        status=cast(TaskStatus | None, status),
+        request=request,
+        db=db,
     )
 
 
@@ -294,6 +310,22 @@ async def proxy_get_worktree_diff(
     return await get_worktree_diff(task_id)
 
 
+@router.get("/tasks/{task_id}/qa-report")
+async def proxy_get_qa_report(
+    task_id: str,
+    _: Annotated[object, Depends(require_acw_access(MCP_READ_SCOPE, "viewer"))],
+) -> Any:
+    return await get_qa_report(task_id)
+
+
+@router.get("/tasks/{task_id}/agent-console/sse")
+async def proxy_agent_console(
+    task_id: str,
+    _: Annotated[object, Depends(require_acw_access(MCP_READ_SCOPE, "viewer"))],
+) -> Any:
+    return await stream_agent_console(task_id)
+
+
 # =============================================================================
 # Project mutation — project:write
 # =============================================================================
@@ -302,12 +334,15 @@ async def proxy_get_worktree_diff(
 @router.post("/projects", status_code=201)
 async def proxy_add_project(
     request: FastAPIRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
     key=Depends(require_acw_scope(PROJECT_WRITE_SCOPE)),
 ):
     from ..routes.projects import ProjectCreate, add_project
 
     body = await _read_json_body(request)
-    result = await add_project(ProjectCreate(**body))
+    request.state.user = acw_principal(key)
+    await resolve_owner_org_id(request, db)
+    result = await add_project(ProjectCreate(**body), request=request, db=db)
     # ``add_project`` returns the project dict with an ``id`` field.
     project_id = result.get("id") if isinstance(result, dict) else None
     await _audit_mcp_write(
@@ -438,6 +473,16 @@ async def proxy_approve_plan(
     return result
 
 
+@router.post("/tasks/{task_id}/reject-plan")
+async def proxy_reject_plan(
+    task_id: str,
+    request: FastAPIRequest,
+    _: Annotated[object, Depends(require_acw_access(TASK_WRITE_SCOPE, "member"))],
+) -> Any:
+    body = await _read_json_body(request)
+    return await reject_plan(task_id, RejectPlanRequest(**body))
+
+
 @router.post("/tasks/{task_id}/apply-correction")
 async def proxy_apply_correction(
     task_id: str,
@@ -481,7 +526,7 @@ async def proxy_apply_correction(
 async def proxy_create_pr(
     task_id: str,
     request: FastAPIRequest,
-    key=Depends(require_acw_access(TASK_MERGE_SCOPE)),
+    key=Depends(require_acw_access(TASK_MERGE_SCOPE, "admin")),
 ):
     from ..routes.tasks import CreatePRFromTaskOptions, create_pr_from_task
 
@@ -503,7 +548,7 @@ async def proxy_create_pr(
 async def proxy_merge_worktree(
     task_id: str,
     request: FastAPIRequest,
-    key=Depends(require_acw_access(TASK_MERGE_SCOPE)),
+    key=Depends(require_acw_access(TASK_MERGE_SCOPE, "admin")),
 ):
     from ..routes.tasks import WorktreeMergeOptions, merge_worktree
 

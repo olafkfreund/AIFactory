@@ -15,17 +15,17 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
+from server.database import engine
 from server.error_ref import client_error
 from server.project_registry import load_projects
 from server.pty.access import (
     may_use,
     path_in_project,
     project_id_for_path,
-    project_ok,
 )
 from server.pty.manager import DuplicateSessionError, get_pty_manager
 from server.pty.session import PTYSession
-from server.routes.project_authz import is_service_principal
+from server.routes.project_authz import is_service_principal, require_project_role
 from server.services.http_verdict import honest_status
 from server.specpath import browse_roots, registered_project_roots, within_roots
 
@@ -155,29 +155,49 @@ def _user(http_request: Request) -> dict[str, Any] | None:
 
 
 def _service_only(http_request: Request) -> None:
-    if not is_service_principal(_user(http_request)):
+    user = _user(http_request)
+    if not (
+        is_service_principal(user)
+        or (
+            user
+            and user.get("is_legacy_shared_token")
+            and get_settings().LEGACY_SHARED_TOKEN_FULL_ACCESS
+        )
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This operation is limited to the service principal",
         )
 
 
-async def _authorize_path(user: dict[str, Any] | None, path: str | None) -> None:
-    """Non-service callers must be authorized for the project `path` is in."""
-    if is_service_principal(user):
-        return
+async def _authorize_path(
+    user: dict[str, Any] | None, path: str | None, role: str = "viewer"
+) -> None:
+    """Authorize the project containing `path`."""
     project_id = project_id_for_path(path)
-    if project_id is None or not await project_ok(user, project_id):
+    await _authorize_project(user, project_id, role)
+
+
+async def _authorize_project(
+    user: dict[str, Any] | None, project_id: str | None, role: str
+) -> None:
+    try:
+        async with engine.async_session_factory() as db:
+            await require_project_role(user, project_id, role, db)
+    except HTTPException:
+        raise
+    except Exception as exc:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have access to this project",
-        )
+            status_code=403, detail="Project authorization unavailable"
+        ) from exc
 
 
-async def _owned(terminal_id: str, http_request: Request) -> PTYSession:
+async def _owned(
+    terminal_id: str, http_request: Request, role: str = "viewer"
+) -> PTYSession:
     """The session if the caller may use it; another user's reads as missing."""
     session = get_pty_manager().get_session(terminal_id)
-    if session is None or not await may_use(_user(http_request), session):
+    if session is None or not await may_use(_user(http_request), session, role):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Terminal not found"
         )
@@ -210,7 +230,7 @@ async def list_terminals(http_request: Request):
 
 
 @router.post("", response_model=TerminalInfo, status_code=status.HTTP_201_CREATED)
-async def create_terminal(request: CreateTerminalRequest, http_request: Request):
+async def create_terminal(request: CreateTerminalRequest, http_request: Request):  # noqa: PLR0912
     """Create a new terminal session.
 
     After creating, connect to /ws/terminal/{id} for I/O.
@@ -220,6 +240,9 @@ async def create_terminal(request: CreateTerminalRequest, http_request: Request)
 
     # Determine working directory
     cwd = request.cwd
+    user = _user(http_request)
+    if request.project_id:
+        await _authorize_project(user, request.project_id, "admin")
 
     # Try projectPath first (direct path from frontend)
     if not cwd and request.project_path:
@@ -233,6 +256,25 @@ async def create_terminal(request: CreateTerminalRequest, http_request: Request)
 
     if not cwd:
         cwd = str(Path.home())
+
+    project_id = project_id_for_path(cwd)
+    legacy_access = (
+        isinstance(user, dict)
+        and user.get("is_legacy_shared_token")
+        and settings.LEGACY_SHARED_TOKEN_FULL_ACCESS
+    )
+    if (
+        not project_id
+        and not request.project_id
+        and not (settings.DISABLE_AUTH or legacy_access)
+    ):
+        raise HTTPException(status_code=404, detail="Project not found")
+    if request.project_id and project_id and project_id != request.project_id:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if project_id and not request.project_id:
+        await _authorize_project(user, project_id, "admin")
+    if request.project_id and not path_in_project(cwd, request.project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
 
     # Confine before the existence check (#1278). `cwd` here is the working
     # directory of an interactive shell, so an unconfined one is not a file
@@ -249,26 +291,27 @@ async def create_terminal(request: CreateTerminalRequest, http_request: Request)
 
     # The UI re-posts create on every remount of a live terminal: hand the
     # caller's own live session back instead of replacing or rejecting it.
-    user = _user(http_request)
     existing = manager.get_session(request.id) if request.id else None
-    if existing is not None and await may_use(user, existing):
+    if existing is not None and await may_use(user, existing, "admin"):
         if existing.is_alive():
             return TerminalInfo(**existing.to_dict())
         manager.close_session(existing.id, expected=existing)
 
     # Bind the session (#3740). Non-service callers must land inside a
     # registered project they are authorized for.
-    project_id = request.project_id or project_id_for_path(cwd)
-    if not is_service_principal(user) and (
-        not project_id
-        or not path_in_project(cwd, project_id)
-        or not await project_ok(user, project_id)
+    project_id = request.project_id or project_id
+    legacy = (
+        isinstance(user, dict)
+        and user.get("is_legacy_shared_token")
+        and settings.LEGACY_SHARED_TOKEN_FULL_ACCESS
+    )
+    if not (is_service_principal(user) or legacy) and not path_in_project(
+        cwd, project_id or ""
     ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have access to this project",
         )
-
     try:
         session = manager.create_session(
             cwd=cwd,
@@ -353,7 +396,7 @@ async def clear_terminal_sessions(http_request: Request, project: str | None = N
     """
 
     if project:
-        await _authorize_path(_user(http_request), project)
+        await _authorize_path(_user(http_request), project, "member")
     else:
         _service_only(http_request)
 
@@ -483,7 +526,7 @@ async def create_terminal_worktree(
     Returns:
         TerminalWorktreeResult with success status and config/error
     """
-    await _authorize_path(_user(http_request), request.projectPath)
+    await _authorize_path(_user(http_request), request.projectPath, "admin")
     try:
         service = TerminalWorktreeService(request.projectPath)
         config = service.create_worktree(
@@ -535,7 +578,7 @@ async def remove_terminal_worktree(
     Returns:
         IPCResult with success status
     """
-    await _authorize_path(_user(http_request), project)
+    await _authorize_path(_user(http_request), project, "member")
     try:
         service = TerminalWorktreeService(project)
         success = service.remove_worktree(name, deleteBranch)
@@ -580,7 +623,7 @@ async def get_terminal(terminal_id: str, http_request: Request):
 @router.delete("/{terminal_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def close_terminal(terminal_id: str, http_request: Request):
     """Close a terminal session."""
-    session = await _owned(terminal_id, http_request)
+    session = await _owned(terminal_id, http_request, "admin")
 
     if not get_pty_manager().close_session(terminal_id, expected=session):
         raise HTTPException(
@@ -597,7 +640,7 @@ async def resize_terminal(
 
     Note: This can also be done via WebSocket with a resize message.
     """
-    session = await _owned(terminal_id, http_request)
+    session = await _owned(terminal_id, http_request, "admin")
 
     session.resize(request.cols, request.rows)
     return {"success": True, "cols": request.cols, "rows": request.rows}
@@ -624,7 +667,7 @@ async def save_terminal_buffer(terminal_id: str, request: dict, http_request: Re
         HTTPException: 404 if terminal not found, 400 for validation errors
     """
     # Validate terminal exists and belongs to the caller
-    session = await _owned(terminal_id, http_request)
+    session = await _owned(terminal_id, http_request, "admin")
 
     try:
         # Validate buffer content

@@ -25,15 +25,20 @@ destructive form has to be asked for explicitly.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Collection
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from server.database.engine import get_db
 from server.error_ref import client_error
 from server.project_registry import load_projects, resolve_project_path
+from server.routes.project_authz import accessible_project_ids
 from server.routes.task_service import get_spec_dirs, spec_to_task
 
 # load_projects/resolve_project_path live in projects.py; only the spec helpers
@@ -97,9 +102,11 @@ def _mark_cancelled(spec_dir: Path, reason: str) -> None:
         raise OSError(error)
 
 
-def _all_tasks() -> list[dict[str, Any]]:
+def _all_tasks(project_ids: Collection[str] | None = None) -> list[dict[str, Any]]:
     tasks: list[dict[str, Any]] = []
-    for project_id in load_projects():
+    projects = load_projects()
+    ids = projects if project_ids is None else [p for p in projects if p in project_ids]
+    for project_id in ids:
         try:
             project_path = resolve_project_path(project_id)
         except Exception:  # noqa: BLE001 - a broken project must not hide the rest
@@ -123,7 +130,12 @@ def _all_tasks() -> list[dict[str, Any]]:
     return tasks
 
 
-def sweep(*, hours: float, dry_run: bool) -> dict[str, Any]:
+def sweep(
+    *,
+    hours: float,
+    dry_run: bool,
+    project_ids: Collection[str] | None = None,
+) -> dict[str, Any]:
     """Find orphans and, unless dry_run, cancel them. Returns the report.
 
     The HTTP route and the scheduled job both call this. Neither owns the
@@ -131,7 +143,7 @@ def sweep(*, hours: float, dry_run: bool) -> dict[str, Any]:
     failure mode for anything that exists on both a manual and an automatic
     path.
     """
-    tasks = _all_tasks()
+    tasks = _all_tasks(project_ids)
     stale = find_stale(tasks, now=_now(), stale_after=timedelta(hours=hours))
     report = summarise(stale, dry_run=dry_run)
 
@@ -168,24 +180,36 @@ def sweep(*, hours: float, dry_run: bool) -> dict[str, Any]:
     return report
 
 
+_DB_DEP = Depends(get_db)
+
+
 @router.get("/api/maintenance/stale-tasks")
 async def report_stale(
+    request: Request = None,  # type: ignore[assignment]
     hours: float = Query(
         DEFAULT_STALE_AFTER.total_seconds() / 3600,
         description="idle hours before a machine-owned task counts as orphaned",
     ),
+    db: AsyncSession = _DB_DEP,
 ) -> dict[str, Any]:
     """What the reaper would act on. Changes nothing."""
-    return sweep(hours=hours, dry_run=True)
+    project_ids = (
+        await accessible_project_ids(request, db, "viewer")
+        if request is not None and isinstance(db, AsyncSession)
+        else set()
+    )
+    return sweep(hours=hours, dry_run=True, project_ids=project_ids)
 
 
 @router.post("/api/maintenance/stale-tasks/reap")
 async def reap_stale(
+    request: Request = None,  # type: ignore[assignment]
     hours: float = Query(DEFAULT_STALE_AFTER.total_seconds() / 3600),
     dry_run: bool = Query(
         True,
         description="default true: the destructive form must be asked for",
     ),
+    db: AsyncSession = _DB_DEP,
 ) -> dict[str, Any]:
     """Mark orphaned tasks cancelled, with the reason recorded on each.
 
@@ -193,4 +217,10 @@ async def reap_stale(
     worth keeping; marking is enough to drop it out of the active board without
     claiming it succeeded.
     """
-    return sweep(hours=hours, dry_run=dry_run)
+    min_role = "viewer" if dry_run else "member"
+    if request is None or not isinstance(db, AsyncSession):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    project_ids = await accessible_project_ids(request, db, min_role)
+    return await asyncio.to_thread(
+        sweep, hours=hours, dry_run=dry_run, project_ids=project_ids
+    )

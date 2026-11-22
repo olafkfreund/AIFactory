@@ -81,7 +81,10 @@ def _write_spec(project: Path, name: str, labels: list[str]) -> None:
 
 
 async def test_list_tasks_orders_p0_ahead_of_p2(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
     from server.routes import tasks as tasks_mod
+    from sqlalchemy.ext.asyncio import AsyncSession
 
     project = tmp_path / "proj"
     # p2 spec created first; p0 spec created second — priority must beat recency.
@@ -92,13 +95,27 @@ async def test_list_tasks_orders_p0_ahead_of_p2(tmp_path, monkeypatch):
         tasks_mod, "load_projects", lambda: {"p": {"path": str(project)}}
     )
 
-    result = await tasks_mod.list_tasks(project_id="p", status=None)
+    async def allow(*_args):
+        return None
+
+    monkeypatch.setattr(tasks_mod, "require_project_role", allow)
+
+    async with AsyncSession() as db:
+        result = await tasks_mod.list_tasks(
+            project_id="p",
+            status=None,
+            request=SimpleNamespace(state=SimpleNamespace(user={"id": "test"})),
+            db=db,
+        )
     ordered = [t.spec_id for t in result.tasks]
     assert ordered.index("002-crit") < ordered.index("001-low")
 
 
 async def test_list_tasks_unprioritised_sorts_after_prioritised(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
     from server.routes import tasks as tasks_mod
+    from sqlalchemy.ext.asyncio import AsyncSession
 
     project = tmp_path / "proj"
     _write_spec(project, "001-plain", ["bug"])  # no pfactory priority → rank 99
@@ -108,7 +125,18 @@ async def test_list_tasks_unprioritised_sorts_after_prioritised(tmp_path, monkey
         tasks_mod, "load_projects", lambda: {"p": {"path": str(project)}}
     )
 
-    result = await tasks_mod.list_tasks(project_id="p", status=None)
+    async def allow(*_args):
+        return None
+
+    monkeypatch.setattr(tasks_mod, "require_project_role", allow)
+
+    async with AsyncSession() as db:
+        result = await tasks_mod.list_tasks(
+            project_id="p",
+            status=None,
+            request=SimpleNamespace(state=SimpleNamespace(user={"id": "test"})),
+            db=db,
+        )
     ordered = [t.spec_id for t in result.tasks]
     assert ordered.index("002-crit") < ordered.index("001-plain")
 

@@ -69,6 +69,11 @@ def sockets(monkeypatch):
     )
     monkeypatch.setattr(events, "_ws_acw_principal", auth._ws_acw_principal)
     monkeypatch.setattr(event_bus, "_get_redis_publisher", lambda: None)
+
+    async def project_authorized(user, project_id):
+        return project_id in {"p-a", "p-b"} or user.get("is_legacy_shared_token", False)
+
+    monkeypatch.setattr(event_bus, "_project_authorized", project_authorized)
     monkeypatch.setattr(
         events,
         "load_projects",
@@ -236,7 +241,7 @@ def test_key_revocation_closes_socket(sockets, monkeypatch, validator):
     monkeypatch.setattr(events, "_KEY_RECHECK_SECONDS", 0)
     with connect(client, "acw_key") as ws:
         ws.send_text("ping")
-        assert ws.receive()["code"] == 4001
+        assert ws.receive()["code"] == 4401
     assert not event_bus._clients
 
 
@@ -470,7 +475,7 @@ def test_jwt_without_subject_closes(sockets, monkeypatch):
     with pytest.raises(WebSocketDisconnect) as exc:
         with connect(client, "jwt-empty") as ws:
             ws.receive_json()
-    assert exc.value.code == 4001
+    assert exc.value.code == 4401
 
 
 def test_payload_org_falls_back_from_empty_outer_org():

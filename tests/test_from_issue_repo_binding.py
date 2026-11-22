@@ -45,6 +45,11 @@ def registry(tmp_path, monkeypatch):
     """Project "p" at tmp_path; tests fill in its settings / clonedFrom."""
     entry: dict = {"path": str(tmp_path), "settings": {}}
     monkeypatch.setattr("server.project_registry.load_projects", lambda: {"p": entry})
+
+    async def _aload():
+        return {"p": entry}
+
+    monkeypatch.setattr("server.project_registry.aload_projects", _aload)
     return entry
 
 
@@ -75,12 +80,21 @@ def _specs(tmp_path: Path) -> list[Path]:
 # Called as over HTTP: the #1898 membership check runs first. The legacy
 # service token passes it without a DB query, so the db is a placeholder.
 _SERVICE = SimpleNamespace(
-    state=SimpleNamespace(user={"id": "default", "role": "user", "is_service": True})
+    state=SimpleNamespace(
+        user={
+            "id": "default",
+            "role": "user",
+            "is_service": False,
+            "is_legacy_shared_token": True,
+        }
+    )
 )
 
 
 async def _call(req: FromIssueRequest):
-    return await create_from_issue(req, _SERVICE, db=SimpleNamespace())
+    return await create_from_issue(
+        req, _SERVICE, db=SimpleNamespace(in_transaction=lambda: False)
+    )
 
 
 async def _create(repo: str | None):

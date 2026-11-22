@@ -14,6 +14,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT / "apps" / "web-server"))
 sys.path.insert(0, str(_ROOT / "apps" / "backend"))
 
+from server import project_registry  # noqa: E402
 from server.config import get_settings  # noqa: E402
 from server.error_ref import BUILD_BACKEND_UNAVAILABLE  # noqa: E402
 from server.routes import execution as exec_mod  # noqa: E402
@@ -54,6 +55,11 @@ def env(tmp_path, monkeypatch):
 
     projects = {"p": {"path": str(project)}}
     monkeypatch.setattr(exec_mod, "load_projects", lambda: projects)
+
+    async def aload_projects():
+        return projects
+
+    monkeypatch.setattr(project_registry, "aload_projects", aload_projects)
     monkeypatch.setattr(exec_mod, "resolve_project_id", lambda pid: pid)
     svc = _RefusingAgentService()
     monkeypatch.setattr(exec_mod, "get_agent_service", lambda: svc)

@@ -9,10 +9,11 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+import server.project_registry as reg
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from server import project_registry as reg
-from server.database.models import Base, Organization, OrgMember, User
+from server import project_store
+from server.database.models import Base, Organization, OrgMember, Team, User
 from server.routes import projects as projects_mod
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -20,7 +21,11 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 @pytest.fixture
 def api(tmp_path, monkeypatch):
     """The projects router with a caller picked by ``X-Test-User`` (``svc`` = service principal)."""
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'app.db'}")
+    db_url = f"sqlite+aiosqlite:///{tmp_path / 'app.db'}"
+    project_store.configure(
+        db_url, create_schema=True, data_dir=tmp_path / "registry-data"
+    )
+    engine = create_async_engine(db_url)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
 
     async def _seed():
@@ -33,6 +38,24 @@ def api(tmp_path, monkeypatch):
             s.add(Organization(id="org-a", name="a", slug="a", owner_id="alice"))
             s.add(Organization(id="org-b", name="b", slug="b", owner_id="bob"))
             await s.flush()
+            s.add(
+                Team(
+                    id="team-a",
+                    org_id="org-a",
+                    name="Default",
+                    slug="default",
+                    is_default=True,
+                )
+            )
+            s.add(
+                Team(
+                    id="team-b",
+                    org_id="org-b",
+                    name="Default",
+                    slug="default",
+                    is_default=True,
+                )
+            )
             s.add(OrgMember(org_id="org-a", user_id="alice", role="admin"))
             s.add(OrgMember(org_id="org-b", user_id="bob", role="admin"))
             await s.commit()
@@ -47,7 +70,22 @@ def api(tmp_path, monkeypatch):
     async def _who(request, call_next):
         who = request.headers.get("X-Test-User", "svc")
         request.state.user = (
-            {"id": "default", "is_service": True} if who == "svc" else {"id": who}
+            {
+                "id": "default",
+                "is_service": True,
+                "is_legacy_shared_token": True,
+            }
+            if who == "svc"
+            else (
+                {
+                    "id": None,
+                    "org_id": "org-a",
+                    "scoped_service": True,
+                    "scopes": ["project:write"],
+                }
+                if who == "ownerless"
+                else {"id": who}
+            )
         )
         return await call_next(request)
 
@@ -76,6 +114,57 @@ def test_create_returns_slug_and_writes_no_projects_json(api):
     assert not (tmp / "registry-data" / "projects.json").exists()
     assert body["id"] in reg.load_projects()
     assert [p["slug"] for p in client.get("/api/projects").json()] == ["my-app"]
+
+
+def test_nested_project_requires_member_of_enclosing_team(api):
+    client, tmp = api
+    parent = tmp / "parent"
+    parent.mkdir()
+    assert (
+        client.post(
+            "/api/projects",
+            json={"path": str(parent)},
+            headers={"X-Test-User": "alice"},
+        ).status_code
+        == 201
+    )
+    nested = parent / "package"
+    assert (
+        client.post(
+            "/api/projects",
+            json={"path": str(nested)},
+            headers={"X-Test-User": "bob"},
+        ).status_code
+        == 404
+    )
+    assert not nested.exists()
+    assert (
+        client.post(
+            "/api/projects",
+            json={"path": str(nested)},
+            headers={"X-Test-User": "alice"},
+        ).status_code
+        == 201
+    )
+    assert (
+        client.post(
+            "/api/projects",
+            json={"path": str(tmp)},
+            headers={"X-Test-User": "bob"},
+        ).status_code
+        == 404
+    )
+
+
+def test_ownerless_org_key_creates_in_its_org(api):
+    client, tmp = api
+    response = client.post(
+        "/api/projects",
+        json={"path": str(tmp / "service-project")},
+        headers={"X-Test-User": "ownerless"},
+    )
+    assert response.status_code == 201, response.text
+    assert reg.load_projects()[response.json()["id"]]["org_id"] == "org-a"
 
 
 def test_create_with_explicit_slug_conflict_and_invalid(api):

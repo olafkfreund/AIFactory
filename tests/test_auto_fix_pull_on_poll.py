@@ -148,7 +148,10 @@ async def test_add_project_persists_cloned_from(tmp_path, monkeypatch):
     """The add_project route, when called with gitUrl, must persist
     ``clonedFrom`` (+ optional ``clonedBranch``) on the project entry
     so the pull-on-poll hook can find it later."""
+    from types import SimpleNamespace
+
     from server.routes.projects import ProjectCreate, add_project
+    from sqlalchemy.ext.asyncio import AsyncSession
 
     captured: dict = {}
 
@@ -174,6 +177,11 @@ async def test_add_project_persists_cloned_from(tmp_path, monkeypatch):
     # not on `server.project_registry`, which only the call-time importers read.
     monkeypatch.setattr("server.routes.projects.aload_projects", fake_load_projects)
     monkeypatch.setattr("server.routes.projects.asave_projects", fake_save_projects)
+
+    async def owner(*_args):
+        return "default"
+
+    monkeypatch.setattr("server.routes.projects.resolve_owner_org_id", owner)
     monkeypatch.setattr(
         "server.services.project_workspace_service.clone_or_update", fake_clone
     )
@@ -181,7 +189,10 @@ async def test_add_project_persists_cloned_from(tmp_path, monkeypatch):
     project = ProjectCreate(
         gitUrl="https://github.com/olaf/AIFactory.git", branch="dev"
     )
-    await add_project(project)
+    async with AsyncSession() as db:
+        await add_project(
+            project, SimpleNamespace(state=SimpleNamespace(user={"id": "default"})), db
+        )
 
     # Exactly one project should have been saved with clonedFrom set.
     saved = captured["projects"]

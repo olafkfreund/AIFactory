@@ -222,11 +222,15 @@ async def test_provider_fetch_labels_author_with_fetching_provider(
         {},
     ],
 )
-async def test_payload_author_is_not_trusted(project, author):
+async def test_payload_author_is_not_trusted(project, author, monkeypatch):
     """A caller-supplied payload can name anyone: it never sets the originator."""
     tmp_path, _ = project
-    # An ownerless acw_ key: the service principal the #1898 access check
-    # passes without a DB query, so the db is a placeholder it never touches.
+
+    # Authorization is covered separately; this test checks attribution only.
+    async def authorize(*_args):
+        return "org1"
+
+    monkeypatch.setattr(from_issue, "authorize_project_for_user", authorize)
     service_key = {"api_key_id": "k1", "is_service": True}
     raw_request = SimpleNamespace(state=SimpleNamespace(user=service_key))
     res = await create_from_issue(

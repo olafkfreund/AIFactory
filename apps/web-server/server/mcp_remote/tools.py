@@ -52,9 +52,8 @@ from fastapi import HTTPException
 
 from server.database.engine import get_db
 from server.mcp_stdio.auth import acw_principal
-from server.project_registry import load_projects
 from server.routes.project_authz import (
-    accessible_org_ids,
+    accessible_project_ids,
     authorize_project_for_user,
 )
 
@@ -124,11 +123,11 @@ async def _authorize_call(
     raise MCPAuthError("Authorization is temporarily unavailable")
 
 
-async def _accessible_org_ids(key: AuthenticatedKey) -> set[str] | None:
-    """Org ids the key may list; ``None`` means all (service key)."""
+async def _accessible_project_ids(key: AuthenticatedKey) -> set[str]:
+    """Project ids the caller may list."""
     request = SimpleNamespace(state=SimpleNamespace(user=acw_principal(key)))
     async for db in get_db():
-        return await accessible_org_ids(request, db)  # type: ignore[arg-type]
+        return await accessible_project_ids(request, db)  # type: ignore[arg-type]
     raise MCPAuthError("Authorization is temporarily unavailable")
 
 
@@ -158,11 +157,10 @@ async def _call_internal(
     Returns the parsed JSON body, raising on any HTTP error so the
     caller's ``dispatch_tool_call`` ``except`` block formats it.
     """
-    from ..config import get_settings
-
-    settings = get_settings()
+    if not key.raw_token:
+        raise MCPAuthError("Caller credential is unavailable")
     headers = dict(kwargs.pop("headers", {}) or {})
-    headers["Authorization"] = f"Bearer {settings.API_TOKEN}"
+    headers["Authorization"] = f"Bearer {key.raw_token}"
     headers["X-MCP-Key-Id"] = key.key_id
 
     base = _loopback_url()
@@ -337,7 +335,7 @@ _SCOPE_FOR_TOOL: dict[str, str] = {
     "aifactory.start_task": MCP_WRITE_SCOPE,
     "aifactory.stop_task": MCP_WRITE_SCOPE,
     "aifactory.approve_plan": MCP_WRITE_SCOPE,
-    "aifactory.merge_pr": MCP_WRITE_SCOPE,
+    "aifactory.merge_pr": "task:merge",
     # V1.1
     "aifactory.get_qa_report": MCP_READ_SCOPE,
     "aifactory.tail_agent_console": MCP_READ_SCOPE,
@@ -367,57 +365,62 @@ async def dispatch_tool_call(
             tool_name,
             arguments,
             key,
-            "viewer" if required_scope == MCP_READ_SCOPE else "member",
+            "admin"
+            if tool_name == "aifactory.merge_pr"
+            else ("viewer" if required_scope == MCP_READ_SCOPE else "member"),
         )
     except MCPAuthError as exc:
         return _format_error(str(exc))
 
     try:
         if tool_name == "aifactory.list_projects":
-            listed = await _call_internal("GET", "/api/projects", key)
-            allowed = await _accessible_org_ids(key)
-            if allowed is not None:
-                projects = load_projects()
-                listed = [
-                    p
-                    for p in listed
-                    if projects.get(p.get("id"), {}).get("org_id") in allowed
-                ]
+            listed = await _call_internal("GET", "/api/mcp-stdio/projects", key)
+            allowed = await _accessible_project_ids(key)
+            listed = [p for p in listed if p.get("id") in allowed]
             return _format_json(listed)
         if tool_name == "aifactory.list_tasks":
             project_id = arguments["project_id"]
-            return _format_json(
-                await _call_internal("GET", f"/api/projects/{project_id}/tasks", key)
+            result = await _call_internal(
+                "GET", "/api/mcp-stdio/tasks", key, params={"project_id": project_id}
             )
+            return _format_json(result["tasks"])
         if tool_name == "aifactory.get_task":
             return _format_json(
-                await _call_internal("GET", f"/api/tasks/{arguments['task_id']}", key)
+                await _call_internal(
+                    "GET", f"/api/mcp-stdio/tasks/{arguments['task_id']}", key
+                )
             )
         if tool_name == "aifactory.get_worktree_diff":
             return _format_json(
                 await _call_internal(
                     "GET",
-                    f"/api/tasks/{arguments['task_id']}/worktree/diff",
+                    f"/api/mcp-stdio/tasks/{arguments['task_id']}/worktree/diff",
                     key,
                 )
             )
         if tool_name == "aifactory.start_task":
             return _format_json(
                 await _call_internal(
-                    "POST", f"/api/tasks/{arguments['task_id']}/start", key, json={}
+                    "POST",
+                    f"/api/mcp-stdio/tasks/{arguments['task_id']}/start",
+                    key,
+                    json={},
                 )
             )
         if tool_name == "aifactory.stop_task":
             return _format_json(
                 await _call_internal(
-                    "POST", f"/api/tasks/{arguments['task_id']}/stop", key, json={}
+                    "POST",
+                    f"/api/mcp-stdio/tasks/{arguments['task_id']}/stop",
+                    key,
+                    json={},
                 )
             )
         if tool_name == "aifactory.approve_plan":
             return _format_json(
                 await _call_internal(
                     "POST",
-                    f"/api/tasks/{arguments['task_id']}/approve-plan",
+                    f"/api/mcp-stdio/tasks/{arguments['task_id']}/approve-plan",
                     key,
                     json={},
                 )
@@ -426,7 +429,7 @@ async def dispatch_tool_call(
             return _format_json(
                 await _call_internal(
                     "POST",
-                    f"/api/tasks/{arguments['task_id']}/worktree/merge",
+                    f"/api/mcp-stdio/tasks/{arguments['task_id']}/worktree/merge",
                     key,
                     json={"merge_method": arguments.get("merge_method", "merge")},
                 )
@@ -436,7 +439,7 @@ async def dispatch_tool_call(
             return _format_json(
                 await _call_internal(
                     "GET",
-                    f"/api/tasks/{arguments['task_id']}/qa-report",
+                    f"/api/mcp-stdio/tasks/{arguments['task_id']}/qa-report",
                     key,
                 )
             )
@@ -446,7 +449,7 @@ async def dispatch_tool_call(
             # client should connect to itself. The client uses the same
             # Authorization header it already has.
             task_id = arguments["task_id"]
-            url = f"{_loopback_url()}/api/tasks/{task_id}/agent-console/sse"
+            url = f"{_loopback_url()}/api/mcp-stdio/tasks/{task_id}/agent-console/sse"
             return _format_json(
                 {
                     "task_id": task_id,
@@ -466,7 +469,7 @@ async def dispatch_tool_call(
             return _format_json(
                 await _call_internal(
                     "POST",
-                    f"/api/tasks/{arguments['task_id']}/reject-plan",
+                    f"/api/mcp-stdio/tasks/{arguments['task_id']}/reject-plan",
                     key,
                     json=payload,
                 )
@@ -475,7 +478,7 @@ async def dispatch_tool_call(
             return _format_json(
                 await _call_internal(
                     "POST",
-                    f"/api/tasks/{arguments['task_id']}/recover",
+                    f"/api/mcp-stdio/tasks/{arguments['task_id']}/recover",
                     key,
                     json={"autoRestart": arguments.get("auto_restart", False)},
                 )

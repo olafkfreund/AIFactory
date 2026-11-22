@@ -1,38 +1,53 @@
-"""Object-level authorization for project-scoped routes (epic #318, #319).
-
-Projects are owned by an organization (``org_id`` on the project record).
-Access is gated per-org via ``OrgMember`` — except for the **service
-principal** (machine-to-machine callers authenticated by the legacy
-``API_TOKEN``, and the auth-disabled dev user), which bypasses per-org checks so
-Factory-sibling traffic (PFactory / TFactory) and the local UI keep working
-unchanged (design A on #319).
-
-The decision is split in two so it can be unit-tested without a database:
-
-* :func:`check_project_access` — the pure rule (raises ``HTTPException``).
-* :class:`ProjectAccessChecker` / :func:`require_project_access` — the FastAPI
-  dependency that loads the project + membership and applies the rule.
-"""
+"""Project authorization from team membership and token scope ceilings."""
 
 from __future__ import annotations
 
-import contextlib
+from dataclasses import dataclass
+from pathlib import Path
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..database.engine import get_db
-from ..database.models import OrgMember
-from .organizations import ROLE_LEVELS
+from server import project_registry
+from server.config import get_settings
+from server.database.engine import get_db
+from server.database.models import OrgMember, Team, TeamMembership
+from server.utils.roles import ROLE_LEVELS
 
 __all__ = [
-    "check_project_access",
     "ProjectAccessChecker",
     "require_project_access",
     "is_service_principal",
     "authorize_project_for_user",
+    "require_project_role",
+    "accessible_project_ids",
+    "scope_ceiling",
 ]
+
+
+@dataclass(frozen=True)
+class ProjectAccess:
+    project_id: str
+    org_id: str
+    team_id: str | None
+    role: str
+
+
+def scope_ceiling(scopes: object) -> str | None:
+    """Highest project role permitted by a token's scopes."""
+    if scopes is None:
+        return "owner"
+    if not isinstance(scopes, (list, set, tuple, frozenset)):
+        return None
+    scopes = set(scopes)
+    if scopes & {"task:merge", "project:admin", "*:admin", "admin"}:
+        return "admin"
+    if scopes & {"project:write", "task:write", "plan:write", "mcp:write", "api"}:
+        return "member"
+    if scopes & {"mcp:read", "project:read", "task:read", "*:read"}:
+        return "viewer"
+    return None
 
 
 def _auth_disabled() -> bool:
@@ -48,78 +63,129 @@ def _auth_disabled() -> bool:
 
 
 def is_service_principal(user: dict | None) -> bool:
-    """Whether the caller is a machine/dev principal that bypasses per-org authz.
-
-    True for the legacy ``API_TOKEN`` identity and the auth-disabled dev
-    principal, both marked ``is_service``; a role claim never counts. These are
-    trusted M2M/local callers (Factory siblings + the local UI), not
-    multi-tenant human users.
-    """
+    """Legacy identity predicate for callers migrating to project grants."""
     if not isinstance(user, dict):
         return False
     return bool(user.get("is_service"))
 
 
-def check_project_access(
-    user: dict | None,
-    project: dict | None,
-    membership: OrgMember | None,
-    minimum_role: str = "viewer",
-) -> None:
-    """Pure authorization rule. Raises ``HTTPException`` on denial; returns None on allow.
-
-    - no user                       → 401
-    - service principal / admin      → allow (M2M / dev)
-    - project missing                → 404
-    - project has no ``org_id``      → 403 (unowned legacy project, admin-only)
-    - API key bound to another org   → 403
-    - caller not a member            → 403
-    - member role below ``minimum``  → 403
-    """
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    if is_service_principal(user):
-        return
-
-    if project is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
-        )
-
+async def _team_grant(
+    principal: dict[str, object], project: dict[str, object], db: AsyncSession
+) -> tuple[str | None, str | None]:
     org_id = project.get("org_id")
-    if not org_id:
-        # Legacy project never assigned to an org — only the service/admin
-        # principal (handled above) may touch it until it's reassigned.
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Project is not assigned to an organization",
-        )
+    if not org_id or (principal.get("org_id") and principal["org_id"] != org_id):
+        return None, None
 
-    if user.get("api_key_id") and user.get("org_id") != org_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This API key is scoped to another organization",
+    team_id = project.get("team_id")
+    if team_id is None:
+        team_id = (
+            await db.execute(
+                select(Team.id).where(Team.org_id == org_id, Team.is_default.is_(True))
+            )
+        ).scalar_one_or_none()
+    if not team_id:
+        return None, None
+    default_team = (
+        await db.execute(
+            select(Team.is_default).where(Team.id == team_id, Team.org_id == org_id)
         )
+    ).scalar_one_or_none()
+    if default_team is None:
+        return None, None
 
-    if membership is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have access to this project",
-        )
+    if (
+        principal.get("scoped_service")
+        and principal.get("org_id") == org_id
+        and default_team
+    ):
+        return "admin", team_id
 
-    minimum_level = ROLE_LEVELS.get(minimum_role, 0)
-    if ROLE_LEVELS.get(membership.role, -1) < minimum_level:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                f"This action requires at least '{minimum_role}' role in the "
-                f"project's organization."
-            ),
+    user_id = principal.get("id")
+    if not user_id:
+        return None, team_id
+    role = (
+        await db.execute(
+            select(TeamMembership.role).where(
+                TeamMembership.team_id == team_id,
+                TeamMembership.user_id == user_id,
+            )
         )
+    ).scalar_one_or_none()
+    if role is None and default_team:
+        role = (
+            await db.execute(
+                select(OrgMember.role).where(
+                    OrgMember.org_id == org_id, OrgMember.user_id == user_id
+                )
+            )
+        ).scalar_one_or_none()
+    return role, team_id
+
+
+async def _effective_role(
+    principal: dict[str, object], project: dict[str, object], db: AsyncSession
+) -> tuple[str | None, str | None]:
+    if _auth_disabled() or (
+        principal.get("is_legacy_shared_token")
+        and get_settings().LEGACY_SHARED_TOKEN_FULL_ACCESS
+    ):
+        team_id = project.get("team_id")
+        return "owner", team_id if isinstance(team_id, str) else None
+    if principal.get("is_legacy_shared_token"):
+        return None, None
+    role, team_id = await _team_grant(principal, project, db)
+    scopes = principal.get("scopes")
+    ceiling = scope_ceiling(scopes)
+    if role in ROLE_LEVELS and ceiling is not None:
+        return min((role, ceiling), key=lambda r: ROLE_LEVELS[r]), team_id
+    return None, team_id
+
+
+async def require_project_role(
+    principal: dict[str, object] | None,
+    project_id: str | None,
+    min_role: str = "viewer",
+    db: AsyncSession | None = None,
+) -> ProjectAccess:
+    """Resolve the team grant and token ceiling for one registered project."""
+    if db is None:
+        raise ValueError("db is required")
+    if min_role not in ROLE_LEVELS:
+        raise ValueError(f"Unknown project role {min_role!r}")
+    if not principal and _auth_disabled():
+        principal = {"id": "default"}
+    if not principal:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    project = (
+        (await project_registry.aload_projects()).get(project_id)
+        if project_id
+        else None
+    )
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    org_id = str(project.get("org_id") or "")
+    try:
+        role, team_id = await _effective_role(principal, project, db)
+        if role is None or ROLE_LEVELS.get(role, -1) < ROLE_LEVELS["viewer"]:
+            raise HTTPException(status_code=404, detail="Project not found")
+        if ROLE_LEVELS[role] < ROLE_LEVELS[min_role]:
+            await db.rollback()
+            from server.services.audit_service import ACTION_GATE_REJECTED
+
+            await _audit_authz_denial(
+                ACTION_GATE_REJECTED,
+                principal,
+                project_id,
+                org_id,
+                min_role,
+                f"This action requires at least '{min_role}' role",
+            )
+            raise HTTPException(status_code=403, detail="Forbidden")
+        return ProjectAccess(str(project_id), org_id, team_id, role)
+    finally:
+        if db.in_transaction():
+            await db.rollback()
 
 
 async def authorize_project_for_user(
@@ -128,66 +194,65 @@ async def authorize_project_for_user(
     db: AsyncSession,
     minimum_role: str = "viewer",
 ) -> str | None:
-    """Authorize ``user`` against ``project_id``'s owning org (#322).
+    """Compatibility entry point for WebSocket and MCP callers."""
+    return (await require_project_role(user, project_id, minimum_role, db)).org_id
 
-    Standalone variant of :meth:`ProjectAccessChecker._authorize` that takes the
-    ``user`` dict directly, so WebSocket handlers — which bypass the HTTP
-    ``TokenAuthMiddleware`` — can authorize too. Raises ``HTTPException`` on
-    denial; returns the project's ``org_id`` (or ``None`` for the service
-    principal / auth-disabled paths) for audit attribution.
-    """
-    if _auth_disabled():
-        return None
-    if is_service_principal(user):
-        check_project_access(user, None, None, minimum_role)
-        return None
 
-    from server.project_registry import (
-        aload_projects,  # lazy: avoid projects↔authz cycle
-    )
+async def authorize_host_path(
+    request: Request, db: AsyncSession, path: Path, role: str = "member"
+) -> str:
+    """Authorize a checkout, including registered projects below its directory."""
+    from server.specpath import project_id_for_path
 
-    project = (await aload_projects()).get(project_id) if project_id else None
-    org_id = project.get("org_id") if project else None
-    membership = None
-    if isinstance(user, dict) and user.get("id") and org_id:
-        result = await db.execute(
-            select(OrgMember).where(
-                OrgMember.org_id == org_id,
-                OrgMember.user_id == user["id"],
-            )
-        )
-        membership = result.scalar_one_or_none()
-
-    try:
-        check_project_access(user, project, membership, minimum_role)
-    except HTTPException as exc:
-        # Factory#313 — record project-authz denials as chained audit events.
-        # A member whose role is too low is a privilege-GATE rejection
-        # (``gate.rejected``); everyone else denied at 403 is a plain access
-        # denial (``authz.denied``). 401/404 from the rule aren't authz denials.
-        if exc.status_code == status.HTTP_403_FORBIDDEN:
-            from ..services.audit_service import (
-                ACTION_AUTHZ_DENIED,
-                ACTION_GATE_REJECTED,
-            )
-
-            action = (
-                ACTION_GATE_REJECTED if membership is not None else ACTION_AUTHZ_DENIED
-            )
-            # Hand the request's connection back before the audit write takes a
-            # second one, so a 403 never holds two pooled connections (#1919).
-            # Safe: every caller authorizes before writing anything.
-            with contextlib.suppress(Exception):
-                await db.rollback()
-            await _audit_authz_denial(
-                action, user, project_id, org_id, minimum_role, exc.detail
-            )
-        raise
-    # Allowed: release the connection too, so the caller's push/gh/dispatch
-    # work never holds it idle-in-transaction (#1963).
-    with contextlib.suppress(Exception):
-        await db.rollback()
+    target = path.resolve()
+    principal = getattr(request.state, "user", None)
+    pid = project_id_for_path(str(target))
+    if pid:
+        return (await require_project_role(principal, pid, role, db)).org_id
+    org_id = await resolve_owner_org_id(request, db)
+    team_id = None
+    for child_id, project in (await project_registry.aload_projects()).items():
+        if project.get("path") and target in Path(project["path"]).resolve().parents:
+            access = await require_project_role(principal, child_id, "member", db)
+            if access.org_id != org_id or (team_id and team_id != access.team_id):
+                raise HTTPException(status_code=404, detail="Project not found")
+            team_id = access.team_id
     return org_id
+
+
+async def accessible_project_ids(
+    request: Request, db: AsyncSession, minimum_role: str = "viewer"
+) -> set[str]:
+    """Registered projects visible to the caller at the requested role."""
+    principal = getattr(request.state, "user", None)
+    projects = await project_registry.aload_projects()
+    if not isinstance(principal, dict) and _auth_disabled():
+        principal = {"id": "default"}
+    if not isinstance(principal, dict):
+        return set()
+    if _auth_disabled() or (
+        principal.get("is_legacy_shared_token")
+        and get_settings().LEGACY_SHARED_TOKEN_FULL_ACCESS
+    ):
+        return set(projects)
+    if principal.get("is_legacy_shared_token"):
+        return set()
+    ceiling = scope_ceiling(principal.get("scopes"))
+    if ceiling is None or ROLE_LEVELS[ceiling] < ROLE_LEVELS[minimum_role]:
+        return set()
+    visible = set()
+    try:
+        for project_id, project in projects.items():
+            role, _ = await _team_grant(principal, project, db)
+            if (
+                role is not None
+                and ROLE_LEVELS.get(role, -1) >= ROLE_LEVELS[minimum_role]
+            ):
+                visible.add(project_id)
+        return visible
+    finally:
+        if db.in_transaction():
+            await db.rollback()
 
 
 async def _audit_authz_denial(
@@ -224,12 +289,7 @@ async def _audit_authz_denial(
 
 
 class ProjectAccessChecker:
-    """FastAPI dependency: authorize the caller against a project's owning org.
-
-    Reads identity from ``request.state.user`` (set by ``TokenAuthMiddleware``)
-    so the service-principal path needs no DB ``User`` row. For human users it
-    resolves the project's ``org_id`` and looks up ``OrgMember``.
-    """
+    """FastAPI dependency for a project ID in a path parameter."""
 
     def __init__(self, minimum_role: str = "viewer") -> None:
         self.minimum_role = minimum_role
@@ -239,26 +299,23 @@ class ProjectAccessChecker:
     ) -> dict:
         """Shared rule used by the project- and task-scoped variants."""
         user = getattr(request.state, "user", None)
-
-        # Auth disabled (dev mode) → allow, like the middleware.
-        if _auth_disabled():
-            return (
-                user
-                if isinstance(user, dict)
-                else {"id": "default", "role": "admin", "is_service": True}
-            )
-
-        # Shared rule (also used by the rmux WS bridge, #322).
-        await authorize_project_for_user(user, project_id, db, self.minimum_role)
+        if user is None and _auth_disabled():
+            user = {"id": "default", "role": "admin", "is_service": True}
+        await require_project_role(user, project_id, self.minimum_role, db)
         return user
 
     async def __call__(
         self,
-        project_id: str,
         request: Request,
         db: AsyncSession = Depends(get_db),
-    ) -> dict:
-        return await self._authorize(project_id, request, db)
+    ) -> dict[str, object]:
+        pid = (
+            request.path_params.get("project_id")
+            or request.path_params.get("projectId")
+            or request.query_params.get("project_id")
+            or ""
+        )
+        return await self._authorize(pid, request, db)
 
 
 class TaskAccessChecker(ProjectAccessChecker):
@@ -271,7 +328,9 @@ class TaskAccessChecker(ProjectAccessChecker):
         request: Request,
         db: AsyncSession = Depends(get_db),
     ) -> dict:
-        project_id = task_id.split(":", 1)[0] if ":" in task_id else task_id
+        if ":" not in task_id:
+            raise HTTPException(status_code=400, detail="Invalid task ID")
+        project_id = task_id.partition(":")[0]
         return await self._authorize(project_id, request, db)
 
 
@@ -294,8 +353,7 @@ def _roles_at_or_above(minimum_role: str) -> list[str]:
 
     Pure function pulled out of ``accessible_org_ids`` so the role-floor
     logic (#1554 finding 2) is unit-testable without a database session.
-    An unrecognised ``minimum_role`` floors at level 0 (``viewer``), same as
-    ``check_project_access``'s existing ``ROLE_LEVELS.get(role, 0)`` default.
+    An unrecognised ``minimum_role`` floors at level 0 (``viewer``).
     """
     threshold = ROLE_LEVELS.get(minimum_role, 0)
     return [role for role, level in ROLE_LEVELS.items() if level >= threshold]
@@ -320,8 +378,23 @@ async def accessible_org_ids(
     of one project's membership row.
     """
     user = getattr(request.state, "user", None)
-    if _auth_disabled() or is_service_principal(user):
+    if _auth_disabled() or (
+        isinstance(user, dict)
+        and user.get("is_legacy_shared_token")
+        and get_settings().LEGACY_SHARED_TOKEN_FULL_ACCESS
+    ):
         return None
+    if isinstance(user, dict) and user.get("is_legacy_shared_token"):
+        return set()
+    if isinstance(user, dict) and user.get("scoped_service"):
+        ceiling = scope_ceiling(user.get("scopes"))
+        return (
+            {str(user["org_id"])}
+            if user.get("org_id")
+            and ceiling
+            and ROLE_LEVELS[ceiling] >= ROLE_LEVELS[minimum_role]
+            else set()
+        )
     if not isinstance(user, dict) or not user.get("id"):
         return set()
     query = select(OrgMember.org_id).where(OrgMember.user_id == user["id"])
@@ -342,12 +415,28 @@ async def resolve_owner_org_id(request: Request, db: AsyncSession) -> str:
     - Fallback → ``default`` org (never fails the create path).
     """
     user = getattr(request.state, "user", None)
-    if is_service_principal(user) or not isinstance(user, dict) or not user.get("id"):
+    if _auth_disabled():
         return DEFAULT_ORG_ID
-    if user.get("api_key_id") and user.get("org_id"):
+    if not isinstance(user, dict):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if user.get("is_legacy_shared_token"):
+        if get_settings().LEGACY_SHARED_TOKEN_FULL_ACCESS:
+            return DEFAULT_ORG_ID
+        raise HTTPException(status_code=403, detail="Forbidden")
+    ceiling = scope_ceiling(user.get("scopes"))
+    if ceiling is None or ROLE_LEVELS[ceiling] < ROLE_LEVELS["member"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if user.get("scoped_service") and user.get("org_id"):
         return str(user["org_id"])
-    result = await db.execute(
-        select(OrgMember.org_id).where(OrgMember.user_id == user["id"])
+    if not user.get("id"):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    query = select(OrgMember.org_id).where(
+        OrgMember.user_id == user["id"],
+        OrgMember.role.in_(_roles_at_or_above("member")),
     )
-    org_id = result.scalars().first()
-    return org_id or DEFAULT_ORG_ID
+    if user.get("org_id"):
+        query = query.where(OrgMember.org_id == user["org_id"])
+    org_id = (await db.execute(query)).scalars().first()
+    if not org_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return str(org_id)

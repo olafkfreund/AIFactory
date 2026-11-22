@@ -44,10 +44,10 @@ async def _watch(
             except Exception:  # noqa: BLE001 - a failing validator counts as revoked
                 user = None
             if user is None:
-                await websocket.close(code=4001)
+                await websocket.close(code=4401)
                 return
-        if not await may_use(user, session):
-            await websocket.close(code=4003)
+        if not await may_use(user, session, "admin"):
+            await websocket.close(code=4403)
             return
 
 
@@ -67,15 +67,14 @@ async def terminal_websocket(websocket: WebSocket, terminal_id: str):
     except WebSocketAuthError:
         return
     except Exception:  # noqa: BLE001 - unreadable auth state fails closed
-        await websocket.close(code=4003)
+        await websocket.close(code=4403)
         return
 
     await websocket.accept()
 
     manager = get_pty_manager()
     session = manager.get_session(terminal_id)
-    # user None: legacy token or auth disabled, unrestricted as on all-task sockets.
-    if session is not None and user is not None and not await may_use(user, session):
+    if session is not None and not await may_use(user, session, "admin"):
         session = None  # another user's terminal reads as missing
 
     if session is None:
@@ -85,7 +84,7 @@ async def terminal_websocket(websocket: WebSocket, terminal_id: str):
                 "message": f"Terminal {terminal_id} not found",
             }
         )
-        await websocket.close(code=4004)
+        await websocket.close(code=4404)
         return
 
     if not session.is_alive():
@@ -95,7 +94,7 @@ async def terminal_websocket(websocket: WebSocket, terminal_id: str):
                 "message": "Terminal process has exited",
             }
         )
-        await websocket.close(code=4004)
+        await websocket.close(code=4404)
         return
 
     # Send connection confirmation

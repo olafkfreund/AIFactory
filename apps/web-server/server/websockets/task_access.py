@@ -11,6 +11,7 @@ from server.auth import (
     _ws_extract_token,
     authenticate_websocket,
 )
+from server.config import get_settings
 from server.database import engine
 from server.routes.project_authz import authorize_project_for_user, is_service_principal
 
@@ -18,6 +19,11 @@ _KEY_RECHECK_SECONDS = 300
 
 
 async def _project_authorized(user: dict[str, Any], project_id: str | None) -> bool:
+    if (
+        user.get("is_legacy_shared_token")
+        and get_settings().LEGACY_SHARED_TOKEN_FULL_ACCESS
+    ):
+        return True
     try:
         async with engine.async_session_factory() as db:
             await authorize_project_for_user(user, project_id, db)
@@ -35,20 +41,23 @@ class TaskSocketAccess:
         self.key_token: str | None = None
         self.last_check = time.monotonic()
 
-    async def connect(self) -> bool:
+    async def connect(self) -> bool:  # noqa: PLR0911
         try:
             self.user = await authenticate_websocket(self.websocket)
         except WebSocketAuthError:
             return False
         except Exception:  # noqa: BLE001 - unreadable auth state fails closed
-            await self.websocket.close(code=4003)
+            await self.websocket.close(code=4403)
             return False
-        if self.user is None:
+        if self.user is None and get_settings().DISABLE_AUTH:
             return True
-        if not self.project_id or not self.task_id.split(":", 1)[1]:
-            await self.websocket.close(code=4003)
+        if self.user is None:
+            await self.websocket.close(code=4401)
             return False
-        if not await self._authorized(self.user, 4003):
+        if not self.project_id or not self.task_id.split(":", 1)[1]:
+            await self.websocket.close(code=4403)
+            return False
+        if not await self._authorized(self.user, 4403):
             return False
         token = _ws_extract_token(self.websocket)
         if token and token.startswith("acw_") and self.user.get("api_key_id"):
@@ -67,9 +76,9 @@ class TaskSocketAccess:
         except Exception:  # noqa: BLE001 - a failing validator counts as revoked
             principal = None
         if principal is None:
-            await self.websocket.close(code=4001)
+            await self.websocket.close(code=4401)
             return False
-        if not await self._authorized(principal, 4001):
+        if not await self._authorized(principal, 4401):
             return False
         self.user = principal
         self.last_check = time.monotonic()
@@ -95,7 +104,7 @@ class AllTaskSocketAccess:
         except WebSocketAuthError:
             return False
         except Exception:  # noqa: BLE001 - unreadable auth state fails closed
-            await self.websocket.close(code=4003)
+            await self.websocket.close(code=4403)
             return False
         token = _ws_extract_token(self.websocket)
         if (
@@ -119,14 +128,19 @@ class AllTaskSocketAccess:
         except Exception:  # noqa: BLE001 - a failing validator counts as revoked
             principal = None
         if principal is None:
-            await self.websocket.close(code=4001)
+            await self.websocket.close(code=4401)
             return False
         self.user = principal
         self.last_check = time.monotonic()
         return True
 
     async def readable(self, task_ids: list[str]) -> set[str]:
-        if self.user is None or is_service_principal(self.user):
+        if self.user is None:
+            return set(task_ids) if get_settings().DISABLE_AUTH else set()
+        if is_service_principal(self.user) or (
+            self.user.get("is_legacy_shared_token")
+            and get_settings().LEGACY_SHARED_TOKEN_FULL_ACCESS
+        ):
             return set(task_ids)
         projects: dict[str, bool] = {}
         readable = set()

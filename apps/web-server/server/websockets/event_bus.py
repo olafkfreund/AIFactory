@@ -51,6 +51,8 @@ from typing import Any
 
 from fastapi import WebSocket
 
+from server.websockets.task_access import _project_authorized
+
 from ..config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -77,6 +79,7 @@ class ConnectedClient:
     user_id: str | None = None
     org_ids: set[str] = field(default_factory=set)
     key_org_id: str | None = None
+    principal: dict[str, Any] | None = None
 
 
 _clients: dict[WebSocket, ConnectedClient] = {}
@@ -97,6 +100,7 @@ def register_client(ws: WebSocket, user_info: dict | None) -> ConnectedClient:
         websocket=ws,
         user_id=user_info["id"] if user_info else None,
         key_org_id=(user_info or {}).get("org_id"),
+        principal=user_info,
     )
     _clients[ws] = client
     active_connections.add(ws)
@@ -156,6 +160,12 @@ def _payload_org(payload: dict[str, Any]) -> str | None:
 
 
 def _may_receive(client: ConnectedClient, org: str | None) -> bool:
+    if (
+        client.principal
+        and client.principal.get("is_legacy_shared_token")
+        and get_settings().LEGACY_SHARED_TOKEN_FULL_ACCESS
+    ):
+        return True
     # Key rule first: an org-bound key with no owner must not pass as a service client.
     if client.key_org_id is not None:
         # Also needs live membership: a failed lookup or a removed owner gets nothing.
@@ -306,7 +316,18 @@ async def deliver_local(scope: Scope, event_type: str, payload: dict) -> None:
     else:
         targets = []
 
-    for ws, _client in targets:
+    project_id = payload.get("projectId") or payload.get("project_id")
+    task_id = payload.get("taskId") or payload.get("task_id")
+    if not project_id and isinstance(task_id, str):
+        project_id = task_id.partition(":")[0]
+    for ws, client in targets:
+        if project_id:
+            if not client.principal and not get_settings().DISABLE_AUTH:
+                continue
+            if client.principal and not await _project_authorized(
+                client.principal, project_id
+            ):
+                continue
         try:
             await ws.send_text(message)
         except Exception:

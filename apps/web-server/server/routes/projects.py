@@ -32,6 +32,7 @@ from server.project_registry import (
     save_projects,
 )
 from server.project_store import SlugConflictError, aarchive_project
+from server.pty.access import project_id_for_path
 from server.services import github_app, project_settings_store
 from server.services.audit_service import ACTION_TASK_CREATE, audit_task_action
 from server.services.http_verdict import honest_status
@@ -61,14 +62,17 @@ from ..tenancy import (
 )
 from . import changelog, context, files, git, github
 from .project_authz import (
-    accessible_org_ids,
+    accessible_project_ids,
     authorize_project_for_user,
     require_project_access,
+    require_project_role,
+    resolve_owner_org_id,
 )
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+_DB_DEP = Depends(get_db)
 
 
 # Registered before the ``/{projectId}/...`` sub-routers so a project whose slug
@@ -386,6 +390,8 @@ def project_to_response(project_id: str, project_data: dict) -> dict:
                 k: v for k, v in saved_settings.items() if k != "notifications"
             }
         default_settings.update(saved_settings)
+    default_settings.pop("gitToken", None)
+    default_settings.pop("githubToken", None)
 
     return {
         "id": project_id,
@@ -438,10 +444,8 @@ async def _visible_projects(
 ) -> list[tuple[str, dict[str, Any]]]:
     """Active projects the caller may see (org filter, then tenant filter)."""
     projects = await aload_projects()
-    allowed = await accessible_org_ids(request, db)
-    items = list(projects.items())
-    if allowed is not None:
-        items = [(pid, p) for pid, p in items if p.get("org_id") in allowed]
+    allowed = await accessible_project_ids(request, db)
+    items = [(pid, p) for pid, p in projects.items() if pid in allowed]
     # Multi-tenancy (#925): scope to the caller's tenant when the flag is on;
     # a project with no stamp belongs to the default tenant.
     if multi_tenant_enabled():
@@ -490,7 +494,7 @@ class ScanProjectsRequest(BaseModel):
     )
 
 
-def _refuse_clone_overlap(org_id: str | None, git_url: str) -> None:
+def _refuse_clone_overlap(git_url: str) -> None:
     """Before any git work: a clone would fetch and reset the other org's copy."""
     from server.services.project_workspace_service import (  # noqa: PLC0415
         slug_from_git_url,
@@ -498,24 +502,53 @@ def _refuse_clone_overlap(org_id: str | None, git_url: str) -> None:
     )
 
     with contextlib.suppress(InputRejectedError):  # the clone reports it as 400
-        _refuse_overlap(org_id, workspace_root() / slug_from_git_url(git_url))
+        destination = workspace_root() / slug_from_git_url(git_url)
+        _refuse_registered(load_projects(), destination)
 
 
 def _refuse_registered(projects: dict[str, Any], path: Path) -> None:
-    if any(p["path"] == str(path.resolve()) for p in projects.values()):
+    resolved = path.resolve()
+    if any(
+        resolved == Path(p["path"]).resolve()
+        for p in projects.values()
+        if p.get("path")
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Project already registered",
         )
 
 
-def _confine_new_path(path: str, org_id: str | None) -> Path:
+def _confine_new_path(path: str) -> Path:
     """`within_roots` for a new project, then the overlap check (both before any mkdir)."""
     confined = within_roots(
         path, browse_roots(), "browsable directories", expand_user=True
     )
-    _refuse_overlap(org_id, confined)
     return confined
+
+
+async def _authorize_registration_overlap(
+    request: Request, db: AsyncSession, path: Path, org_id: str
+) -> None:
+    """Permit nested projects only to a member of the same owning team."""
+    resolved = path.resolve()
+    team_id = None
+    for pid, project in (await aload_projects()).items():
+        if not project.get("path"):
+            continue
+        root = Path(project["path"]).resolve()
+        if (
+            root not in resolved.parents
+            and resolved not in root.parents
+            and root != resolved
+        ):
+            continue
+        access = await require_project_role(
+            getattr(request.state, "user", None), pid, "member", db
+        )
+        if access.org_id != org_id or (team_id and team_id != access.team_id):
+            raise HTTPException(status_code=404, detail="Project not found")
+        team_id = access.team_id
 
 
 def _refuse_overlap(org_id: str | None, path: Path, skip: str | None = None) -> None:
@@ -530,7 +563,11 @@ def _refuse_overlap(org_id: str | None, path: Path, skip: str | None = None) -> 
 
 
 @router.post("/scan")
-async def scan_for_projects(request: ScanProjectsRequest):
+async def scan_for_projects(
+    request: ScanProjectsRequest,
+    http_request: Request,
+    db: AsyncSession = Depends(get_db),
+):
     """
     Scan filesystem for Magestic AI projects.
 
@@ -551,6 +588,8 @@ async def scan_for_projects(request: ScanProjectsRequest):
     Raises:
         HTTPException: 400 if path doesn't exist or isn't a directory
     """
+    await resolve_owner_org_id(http_request, db)
+    visible = await accessible_project_ids(http_request, db)
     try:
         # Confine, then check existence (#1278). The old order asked "is it
         # there" and never asked "is it allowed", so this endpoint would happily
@@ -561,6 +600,9 @@ async def scan_for_projects(request: ScanProjectsRequest):
             "browsable directories",
             expand_user=True,
         )
+        base_project = project_id_for_path(str(base))
+        if base_project and base_project not in visible:
+            raise HTTPException(status_code=404, detail="Project not found")
 
         if not base.exists():
             raise HTTPException(
@@ -585,6 +627,9 @@ async def scan_for_projects(request: ScanProjectsRequest):
                 # Sort entries for consistent ordering
                 for entry in sorted(dir_path.iterdir(), key=lambda e: e.name.lower()):
                     if not entry.is_dir():
+                        continue
+                    entry_project = project_id_for_path(str(entry))
+                    if entry_project and entry_project not in visible:
                         continue
 
                     # Skip hidden directories and common non-project dirs
@@ -672,7 +717,7 @@ def _slug_error(exc: SlugConflictError) -> HTTPException:
 async def add_project(  # noqa: PLR0912, PLR0915 - one flow: clone or local, then register
     project: ProjectCreate,
     request: Request = None,  # noqa: RUF013 — FastAPI injects; None lets direct callers omit
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = _DB_DEP,
 ):
     """Add a new project. Two paths (#82 PR-A):
 
@@ -690,9 +735,9 @@ async def add_project(  # noqa: PLR0912, PLR0915 - one flow: clone or local, the
     # Resolve the owner before cloning so its installation supplies git auth.
     org_id = DEFAULT_ORG_ID
     if request is not None and isinstance(db, AsyncSession):
-        from .project_authz import resolve_owner_org_id
-
         org_id = await resolve_owner_org_id(request, db)
+    else:
+        raise HTTPException(status_code=401, detail="Authentication required")
 
     if project.gitUrl:
         # Clone mode — defer to project_workspace_service.
@@ -700,8 +745,18 @@ async def add_project(  # noqa: PLR0912, PLR0915 - one flow: clone or local, the
         from server.services.project_workspace_service import (
             GitOperationError,
             clone_or_update,
+            slug_from_git_url,
             workspace_root,
         )
+
+        with contextlib.suppress(InputRejectedError):
+            destination = workspace_root() / slug_from_git_url(project.gitUrl)
+            await _authorize_registration_overlap(request, db, destination, org_id)
+            existing_id = project_id_for_path(str(destination))
+            if existing_id:
+                await authorize_project_for_user(
+                    getattr(request.state, "user", None), existing_id, db, "viewer"
+                )
 
         # Stored credential lookup (#82 PR-C). When the caller passes
         # gitCredentialId, fetch the (username, token) tuple from the
@@ -709,7 +764,7 @@ async def add_project(  # noqa: PLR0912, PLR0915 - one flow: clone or local, the
         credential: tuple[str, str] | None = None
         if project.gitCredentialId:
             credential = await _resolve_git_credential(project.gitCredentialId)
-        _refuse_clone_overlap(org_id, project.gitUrl)
+        _refuse_clone_overlap(project.gitUrl)
         try:
             await asyncio.to_thread(github_app.token_for_org, org_id)
         except Exception as e:
@@ -745,6 +800,12 @@ async def add_project(  # noqa: PLR0912, PLR0915 - one flow: clone or local, the
     else:
         # Local mode — register the existing directory.
         assert project.path is not None  # model_validator guarantees this
+        project_path = _confine_new_path(project.path)
+        existing_id = project_id_for_path(str(project_path))
+        if existing_id:
+            await authorize_project_for_user(
+                getattr(request.state, "user", None), existing_id, db, "viewer"
+            )
         # Confine BEFORE the mkdir below, not after (#1278). This is the write
         # that makes projects.json a trust boundary: every downstream consumer
         # reads a path back out of the registry and uses it unchecked, so the
@@ -753,7 +814,7 @@ async def add_project(  # noqa: PLR0912, PLR0915 - one flow: clone or local, the
         # can reach — /etc/cron.d, ~/.ssh, /var/lib/anything.
         # `browse_roots`, not `registered_project_roots`: the whole point of
         # adding a project is that it is not registered yet.
-        project_path = _confine_new_path(project.path, org_id)
+        await _authorize_registration_overlap(request, db, project_path, org_id)
 
         if not project_path.exists():
             try:

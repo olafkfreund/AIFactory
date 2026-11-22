@@ -15,14 +15,19 @@ helpers from ``tasks.py`` -- which is why this cluster is the lowest-risk slice
 of the god-file to lift out first.
 """
 
+import contextlib
 import logging
 import subprocess
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from server.database.engine import get_db
 from server.error_ref import client_error
+from server.pty.access import project_id_for_path
+from server.routes.project_authz import require_project_role
 from server.services.argv_safety import assert_not_option
 from server.services.http_verdict import honest_status
 from server.specpath import contained_path, registered_project_roots
@@ -31,6 +36,20 @@ from server.utils.subprocess_env import child_env
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+_DB_DEP = Depends(get_db)
+
+
+async def _worktree_path_member(request: Request, db: AsyncSession = _DB_DEP) -> None:
+    """Enforce ``member`` role on the owning project of ``worktreePath``."""
+    with contextlib.suppress(ValueError, UnicodeDecodeError):
+        body = await request.json()
+        if isinstance(body, dict) and isinstance(body.get("worktreePath"), str):
+            pid = project_id_for_path(body["worktreePath"])
+            await require_project_role(
+                getattr(request.state, "user", None), pid, "admin", db
+            )
 
 
 # ============================================
@@ -256,7 +275,7 @@ def get_terminal_command(terminal: str, path: str) -> list[str]:
     return terminal_commands.get(terminal, terminal_commands.get("system", ["xterm"]))
 
 
-@router.post("/worktree/open-in-ide")
+@router.post("/worktree/open-in-ide", dependencies=[Depends(_worktree_path_member)])
 @honest_status
 async def open_worktree_in_ide(request: OpenInIDERequest):
     """
@@ -296,7 +315,9 @@ async def open_worktree_in_ide(request: OpenInIDERequest):
         }
 
 
-@router.post("/worktree/open-in-terminal")
+@router.post(
+    "/worktree/open-in-terminal", dependencies=[Depends(_worktree_path_member)]
+)
 @honest_status
 async def open_worktree_in_terminal(request: OpenInTerminalRequest):
     """

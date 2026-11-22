@@ -21,7 +21,7 @@ Why not extend ``TokenAuthMiddleware`` instead?
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -51,6 +51,7 @@ class AuthenticatedKey:
     """Resolved user id for audit attribution. May be None for legacy keys."""
 
     org_id: str | None = None
+    raw_token: str = field(default="", repr=False)
     """Resolved org id from the ApiKey row. Used to scope audit log
     entries to the right organization (Epic #50 acceptance criterion #2)."""
 
@@ -107,7 +108,7 @@ async def authenticate(authorization_header: str | None) -> AuthenticatedKey:
     digest = _hash_key(raw)
 
     async for session in get_db():
-        return await _lookup_by_digest(session, digest)
+        return replace(await _lookup_by_digest(session, digest), raw_token=raw)
     # get_db yields exactly once; if we got here, the dependency didn't
     # run — surface as an auth error rather than a silent pass.
     # Deliberately not "database session not available": that is our internal

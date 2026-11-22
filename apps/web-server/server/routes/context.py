@@ -13,10 +13,11 @@ from pathlib import Path as FilePath
 from typing import Any
 
 from factory_common.logsafe import sanitize_log
-from fastapi import APIRouter, Path, Query
+from fastapi import APIRouter, Depends, Path, Query
 from pydantic import BaseModel, Field, SecretStr
 
 from server.error_ref import client_error
+from server.routes.project_authz import require_project_access
 from server.services import project_settings_store
 from server.services.http_verdict import honest_status
 from server.services.pr_endgame import is_graphiti_enabled
@@ -85,7 +86,10 @@ class TestGraphitiRequest(BaseModel):
 project_router = APIRouter()
 
 
-@project_router.get("/context")
+@project_router.get(
+    "/context",
+    dependencies=[Depends(require_project_access("viewer"))],
+)
 @honest_status
 async def get_project_context(projectId: str = Path(...)):
     """Get project context including index and memories."""
@@ -191,7 +195,10 @@ async def get_project_context(projectId: str = Path(...)):
     }
 
 
-@project_router.post("/context/refresh")
+@project_router.post(
+    "/context/refresh",
+    dependencies=[Depends(require_project_access("member"))],
+)
 @honest_status
 async def refresh_project_index(projectId: str = Path(...)):
     """Refresh/regenerate project index."""
@@ -244,7 +251,10 @@ async def refresh_project_index(projectId: str = Path(...)):
         }
 
 
-@project_router.get("/memory/status")
+@project_router.get(
+    "/memory/status",
+    dependencies=[Depends(require_project_access("viewer"))],
+)
 @honest_status
 async def get_memory_status(projectId: str = Path(...)):
     """Get memory system status for project."""
@@ -283,7 +293,10 @@ async def get_memory_status(projectId: str = Path(...)):
     }
 
 
-@project_router.get("/memory/search")
+@project_router.get(
+    "/memory/search",
+    dependencies=[Depends(require_project_access("viewer"))],
+)
 @honest_status
 async def search_memories(projectId: str = Path(...), q: str = Query(...)):
     """Search project memories."""
@@ -343,7 +356,10 @@ async def search_memories(projectId: str = Path(...), q: str = Query(...)):
     return {"success": True, "data": results[:20]}
 
 
-@project_router.get("/memory/recent")
+@project_router.get(
+    "/memory/recent",
+    dependencies=[Depends(require_project_access("viewer"))],
+)
 @honest_status
 async def get_recent_memories(projectId: str = Path(...), limit: int = Query(10)):
     """Get recent memories for project."""
@@ -421,7 +437,10 @@ def _extract_memory_summary(data: dict) -> str:
     return " | ".join(parts) if parts else "Session completed"
 
 
-@project_router.get("/env")
+@project_router.get(
+    "/env",
+    dependencies=[Depends(require_project_access("admin"))],
+)
 @honest_status
 async def get_project_env(projectId: str = Path(...)):
     """Get project environment configuration."""
@@ -576,7 +595,10 @@ async def get_project_env(projectId: str = Path(...)):
     return {"success": True, "data": config}
 
 
-@project_router.patch("/env")
+@project_router.patch(
+    "/env",
+    dependencies=[Depends(require_project_access("admin"))],
+)
 @honest_status
 async def update_project_env(
     projectId: str = Path(...), config: ProjectEnvUpdate = ...
@@ -843,13 +865,19 @@ async def update_project_env(
         }
 
 
-@project_router.get("/claude-auth")
+@project_router.get(
+    "/claude-auth",
+    dependencies=[Depends(require_project_access("viewer"))],
+)
 async def check_claude_auth(projectId: str = Path(...)):
     """Check Claude authentication status."""
     return {"success": True, "data": {"authenticated": False, "method": None}}
 
 
-@project_router.post("/claude-setup")
+@project_router.post(
+    "/claude-setup",
+    dependencies=[Depends(require_project_access("member"))],
+)
 @honest_status
 async def invoke_claude_setup(projectId: str = Path(...)):
     """
