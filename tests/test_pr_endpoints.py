@@ -65,10 +65,17 @@ def project_dir(tmp_path: Path) -> Path:
 def _mock_load_projects(project_dir: Path):
     """Patch load_projects so that 'test-proj' resolves to project_dir."""
     projects_dict = {"test-proj": {"path": str(project_dir), "name": "Test Project"}}
-    with patch(
-        "server.routes.github._resolve_project_path",
-        side_effect=lambda pid: (
-            Path(projects_dict[pid]["path"]) if pid in projects_dict else None
+
+    async def aload_projects():
+        return projects_dict
+
+    with (
+        patch("server.project_registry.aload_projects", aload_projects),
+        patch(
+            "server.routes.github._resolve_project_path",
+            side_effect=lambda pid: (
+                Path(projects_dict[pid]["path"]) if pid in projects_dict else None
+            ),
         ),
     ):
         yield
@@ -209,9 +216,8 @@ class TestListPRs:
     def test_list_prs_project_not_found(self, client):
         """Returns error for unknown project ID."""
         resp = client.get("/api/projects/nonexistent/github/prs")
-        data = resp.json()
-        assert data["success"] is False
-        assert "not found" in data.get("error", "").lower()
+        assert resp.status_code == 404
+        assert resp.json()["detail"] == "Project not found"
 
     def test_list_prs_empty_list(self, client, project_dir):
         """Returns empty array when no PRs exist."""

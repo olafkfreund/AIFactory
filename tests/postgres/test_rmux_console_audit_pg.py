@@ -25,6 +25,7 @@ from server.database.models import (  # noqa: E402
     Base,
     Organization,
     OrgMember,
+    Team,
     User,
 )
 from server.rmux import bridge  # noqa: E402
@@ -95,6 +96,7 @@ def test_attach_and_detach_rows_survive_request_rollback(
             s.add(Organization(id="org-x", name="x", slug="x", owner_id="user-1"))
             await s.flush()
             s.add(OrgMember(org_id="org-x", user_id="user-1", role="member"))
+            s.add(Team(org_id="org-x", name="Default", slug="default", is_default=True))
             await s.commit()
 
         # One request session per call, closed without a commit like get_db.

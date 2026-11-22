@@ -15,9 +15,11 @@ from typing import Any
 from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.background import spawn
 from server.config import get_settings
+from server.database.engine import get_db
 from server.error_ref import client_error
 from server.project_registry import load_projects, resolve_project_id
 from server.services.agent_job_backend import (
@@ -60,7 +62,13 @@ from .from_issue import (
     _intake_auto_handoff_enabled,
     _set_task_metadata_flag,
 )
-from .project_authz import require_project_access, require_task_access
+from .github import _bound_github_repo, _github_repo_identity
+from .project_authz import (
+    _auth_disabled,
+    accessible_project_ids,
+    require_project_access,
+    require_task_access,
+)
 from .tasks import _resolve_task, get_next_spec_id, sync_worktree_to_main_spec
 
 # Add the backend dir to sys.path so backend seams (e.g. qa.correction) resolve.
@@ -298,11 +306,20 @@ class RunningTasksResponse(BaseModel):
 # --------------------------------------------------------------------------
 
 
+_DB_DEP = Depends(get_db)
+
+
 @router.get("/running", response_model=RunningTasksResponse)
-async def get_running_tasks():
+async def get_running_tasks(
+    request: Request = None,  # type: ignore[assignment]
+    db: AsyncSession = _DB_DEP,
+):
     """Get list of all currently running tasks."""
     agent_service = get_agent_service()
     running = agent_service.get_running_task_ids()
+    if request is not None and isinstance(db, AsyncSession):
+        allowed = await accessible_project_ids(request, db)
+        running = [t for t in running if t.partition(":")[0] in allowed]
     return RunningTasksResponse(tasks=running, count=len(running))
 
 
@@ -1565,14 +1582,34 @@ async def _adopt_plan_handoff(
         )
 
 
+async def _authorize_resolved_project(
+    raw_request: Request | None,
+    project_id: str,
+    db: AsyncSession,
+    projects: dict[str, Any],
+) -> dict[str, Any] | None:
+    if raw_request is None or not isinstance(db, AsyncSession):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if _auth_disabled() and project_id in projects:
+        user = getattr(raw_request.state, "user", None)
+        return (
+            user
+            if isinstance(user, dict)
+            else {"id": "default", "role": "admin", "is_service": True}
+        )
+    return await require_project_access("member")._authorize(
+        project_id, raw_request, db
+    )
+
+
 @router.post("/from-plan")
-async def create_from_trusted_plan(
+async def create_from_trusted_plan(  # noqa: PLR0913 - FastAPI route params
     project_id: str,
     title: str,
     description: str,
     request: FromPlanRequest,
-    raw_request: Request = None,  # noqa: RUF013 — FastAPI injects; None lets direct callers omit
-    _access: dict = Depends(require_project_access("member")),
+    raw_request: Request = None,  # type: ignore[assignment]
+    db: AsyncSession = _DB_DEP,
 ):
     """Trusted Plan Handoff (#390): verify a signed plan and build directly.
 
@@ -1591,6 +1628,7 @@ async def create_from_trusted_plan(
             status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
         )
     project_id = resolved
+    _access = await _authorize_resolved_project(raw_request, project_id, db, projects)
 
     project_path = Path(projects[project_id]["path"])
     agent_service = get_agent_service()
@@ -1882,14 +1920,19 @@ async def dispatch_task_to_copilot(
             detail="Copilot dispatch is not enabled on this instance",
         )
 
-    _, _, project_path, spec_dir = _resolve_task(task_id)
+    project_id, _, project_path, spec_dir = _resolve_task(task_id)
+    bound_repo = await asyncio.to_thread(
+        _bound_github_repo, load_projects().get(project_id, {})
+    )
+    if not bound_repo or _github_repo_identity(request.repo_full_name) != bound_repo:
+        raise HTTPException(status_code=404, detail="Project not found")
     task_metadata_path = spec_dir / "task_metadata.json"
 
     service = CopilotDispatchService()
     try:
         with project_github_token(project_path):
             dispatch_meta = await asyncio.to_thread(
-                service.dispatch, request.repo_full_name, request.issue_number
+                service.dispatch, bound_repo, request.issue_number
             )
     except RuntimeError as exc:
         logger.warning(
@@ -1932,7 +1975,7 @@ async def dispatch_task_to_copilot(
         spawn(
             watch_for_copilot_pr(
                 task_id=task_id,
-                repo_full_name=request.repo_full_name,
+                repo_full_name=bound_repo,
                 issue_number=request.issue_number,
                 task_metadata_path=task_metadata_path,
                 on_pr_opened=_on_pr_opened,
@@ -1943,7 +1986,7 @@ async def dispatch_task_to_copilot(
         _access,
         ACTION_TASK_DISPATCH,
         task_id,
-        details={"repo": request.repo_full_name, "issue_number": request.issue_number},
+        details={"repo": bound_repo, "issue_number": request.issue_number},
     )
     return {
         "task_id": task_id,
@@ -1951,7 +1994,7 @@ async def dispatch_task_to_copilot(
         "agent_handle": dispatch_meta["agent_handle"],
         "dispatched_at": dispatch_meta["dispatched_at"],
         "issue_number": request.issue_number,
-        "repo": request.repo_full_name,
+        "repo": bound_repo,
     }
 
 

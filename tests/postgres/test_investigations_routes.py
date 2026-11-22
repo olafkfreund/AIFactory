@@ -26,7 +26,7 @@ if str(WEB) not in sys.path:
 from server import auth, project_registry  # noqa: E402
 from server.config import get_settings  # noqa: E402
 from server.database.engine import get_db  # noqa: E402
-from server.database.models import Organization, OrgMember, User  # noqa: E402
+from server.database.models import Organization, OrgMember, Team, User  # noqa: E402
 from server.main import create_app  # noqa: E402
 from server.routes import investigations  # noqa: E402
 from server.services.investigation_backend import InvestigationBackend  # noqa: E402
@@ -99,6 +99,9 @@ def env(test_postgres_url: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
                 [
                     OrgMember(org_id=org_id, user_id=users["viewer"], role="viewer"),
                     OrgMember(org_id=org_id, user_id=users["editor"], role="member"),
+                    Team(
+                        org_id=org_id, name="Default", slug="default", is_default=True
+                    ),
                 ]
             )
             await session.commit()

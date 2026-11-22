@@ -224,9 +224,10 @@ async def events_websocket(websocket: WebSocket):  # noqa: PLR0912 - already bra
                 if key_token:
                     principal = await _ws_acw_principal(key_token)
                     if principal is None or not principal.get("id"):
-                        await websocket.close(code=4001)
+                        await websocket.close(code=4401)
                         break
                     user_info = principal
+                    client.principal = principal
                     org_id = principal.get("org_id")
                     client.key_org_id = str(org_id) if org_id else None
                     client.user_id = str(principal["id"])

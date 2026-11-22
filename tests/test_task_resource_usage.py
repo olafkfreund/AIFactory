@@ -56,9 +56,16 @@ def client(_app: FastAPI, project_dir: Path):
     therefore ``proj1:001-demo``.
     """
     projects = {"proj1": {"path": str(project_dir)}}
+
+    async def aload_projects():
+        return projects
+
     # _resolve_task is the canonical resolver in routes/task_service (#769); patch
     # load_projects at that single seam so task resolution sees this fixture.
-    with patch("server.routes.task_service.load_projects", return_value=projects):
+    with (
+        patch("server.routes.task_service.load_projects", return_value=projects),
+        patch("server.project_registry.aload_projects", aload_projects),
+    ):
         with TestClient(_app, raise_server_exceptions=True) as c:
             yield c
 

@@ -16,8 +16,36 @@ sys.path.insert(0, str(_ROOT / "apps" / "backend"))
 
 from server import auth as auth_mod  # noqa: E402
 from server.mcp_remote import auth as mcp_auth  # noqa: E402
-from server.websockets import event_bus, events  # noqa: E402
+from server.websockets import (  # noqa: E402
+    event_bus,
+    events,
+    task_access,  # noqa: E402
+)
 from server.websockets.event_bus import OrgScope  # noqa: E402
+
+
+@pytest.mark.asyncio
+async def test_project_events_require_project_grant(monkeypatch):
+    class Socket:
+        def __init__(self):
+            self.sent = []
+
+        async def send_text(self, message):
+            self.sent.append(json.loads(message))
+
+    ws = Socket()
+    client = event_bus.register_client(ws, {"id": "user", "org_id": "A"})
+    client.org_ids = {"A"}
+    monkeypatch.setattr(
+        task_access, "_project_authorized", lambda *args: asyncio.sleep(0, result=False)
+    )
+    try:
+        await event_bus.deliver_local(
+            OrgScope("A"), "task:update", {"projectId": "hidden"}
+        )
+        assert ws.sent == []
+    finally:
+        event_bus.unregister_client(ws)
 
 
 class FakeWebSocket:
@@ -71,7 +99,7 @@ async def test_invalid_key_closes(ws_auth, monkeypatch, failure):
     ws = FakeWebSocket()
     with pytest.raises(auth_mod.WebSocketAuthError):
         await auth_mod.authenticate_websocket(ws)
-    assert ws.closed == [{"code": 4001, "reason": "Unauthorized"}]
+    assert ws.closed == [{"code": 4401, "reason": "Unauthorized"}]
 
 
 class _FakeDb:
@@ -116,7 +144,7 @@ async def test_expired_key_closes_through_real_lookup(
     if closed:
         with pytest.raises(auth_mod.WebSocketAuthError):
             await auth_mod.authenticate_websocket(ws)
-        assert ws.closed == [{"code": 4001, "reason": "Unauthorized"}]
+        assert ws.closed == [{"code": 4401, "reason": "Unauthorized"}]
     else:
         principal = await auth_mod.authenticate_websocket(ws)
         assert principal["id"] == "user"
@@ -164,7 +192,7 @@ async def test_ownerless_key_closes(ws_auth, monkeypatch):
     ws = FakeWebSocket()
     with pytest.raises(auth_mod.WebSocketAuthError):
         await auth_mod.authenticate_websocket(ws)
-    assert ws.closed[0]["code"] == 4001
+    assert ws.closed[0]["code"] == 4401
 
 
 @pytest.mark.asyncio
@@ -176,7 +204,7 @@ async def test_validator_exception_closes(ws_auth, monkeypatch, caplog):
     ws = FakeWebSocket()
     with pytest.raises(auth_mod.WebSocketAuthError):
         await auth_mod.authenticate_websocket(ws)
-    assert ws.closed[0]["code"] == 4001
+    assert ws.closed[0]["code"] == 4401
     assert "WS key validation failed: RuntimeError" in caplog.text
     assert "acw_test" not in caplog.text
 
@@ -194,7 +222,7 @@ async def test_jwt_and_legacy_paths_still_work(ws_auth, monkeypatch):
     }
     monkeypatch.setattr(auth_mod, "_try_decode_jwt", lambda token: None)
     ws.query_params = {"token": "legacy"}
-    assert await auth_mod.authenticate_websocket(ws) is None
+    assert (await auth_mod.authenticate_websocket(ws))["is_legacy_shared_token"] is True
     assert ws.closed == []
 
 

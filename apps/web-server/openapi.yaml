@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: AIFactory Web API
   description: Web API for AIFactory — self-hosted AI task management + agent orchestration
-  version: 3.20.1
+  version: 3.21.0
 paths:
   /api/auth/register:
     post:
@@ -2451,7 +2451,11 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Create Task From Insights Api Projects  Projectid  Insights Create Task
+                  Post
         '422':
           description: Validation Error
           content:
@@ -8150,7 +8154,10 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response List Github User Repos Api Github Repos Get
     post:
       tags:
       - GitHub
@@ -8318,9 +8325,7 @@ paths:
         required: true
         schema:
           type: string
-          description: Absolute path to the project
           title: Project Path
-        description: Absolute path to the project
       responses:
         '200':
           description: Successful Response
@@ -8781,6 +8786,58 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp-stdio/tasks/{task_id}/qa-report:
+    get:
+      tags:
+      - MCP (stdio)
+      summary: Proxy Get Qa Report
+      operationId: proxy_get_qa_report_api_mcp_stdio_tasks__task_id__qa_report_get
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                title: Response Proxy Get Qa Report Api Mcp Stdio Tasks  Task Id  Qa Report Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp-stdio/tasks/{task_id}/agent-console/sse:
+    get:
+      tags:
+      - MCP (stdio)
+      summary: Proxy Agent Console
+      operationId: proxy_agent_console_api_mcp_stdio_tasks__task_id__agent_console_sse_get
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                title: Response Proxy Agent Console Api Mcp Stdio Tasks  Task Id  Agent Console Sse Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/mcp-stdio/tasks/create-and-run:
     post:
       tags:
@@ -8912,6 +8969,32 @@ paths:
           content:
             application/json:
               schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp-stdio/tasks/{task_id}/reject-plan:
+    post:
+      tags:
+      - MCP (stdio)
+      summary: Proxy Reject Plan
+      operationId: proxy_reject_plan_api_mcp_stdio_tasks__task_id__reject_plan_post
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                title: Response Proxy Reject Plan Api Mcp Stdio Tasks  Task Id  Reject Plan Post
         '422':
           description: Validation Error
           content:
@@ -11408,6 +11491,11 @@ components:
       title: CreatePRFromTaskOptions
     CreateRepoRequest:
       properties:
+        projectPath:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Projectpath
         repoName:
           type: string
           title: Reponame

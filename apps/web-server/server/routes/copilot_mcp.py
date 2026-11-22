@@ -9,6 +9,8 @@ of scope here.
 Enabled when ``AIFACTORY_MCP_SECRET`` is set in the environment (the bearer
 token the Copilot cloud agent sends).  If the variable is absent the server
 accepts all requests (dev convenience); set it in production.
+Tool calls with this credential also require ``AIFACTORY_MCP_PROJECT_ID`` or
+``AIFACTORY_MCP_ORG_ID`` to bind it to one project or organization.
 
 Configure in GitHub repository settings → Copilot → MCP servers:
     {
@@ -39,7 +41,11 @@ from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from server.database import engine
 from server.error_ref import client_error
+from server.project_registry import load_projects
+from server.pty.access import project_id_for_path
+from server.routes.project_authz import require_project_role
 
 logger = logging.getLogger(__name__)
 
@@ -289,12 +295,46 @@ async def _tool_get_build_progress(spec_dir: Path, metadata: dict) -> str:
 
 
 async def _dispatch_tool(
-    name: str, arguments: dict, issue_number: int | None, task_id_arg: str | None
+    name: str,
+    arguments: dict,
+    issue_number: int | None,
+    task_id_arg: str | None,
+    principal: dict[str, Any] | None = None,
 ) -> str:
     spec_dir, metadata = await _resolve_task(issue_number, task_id_arg)
 
     if spec_dir is None:
-        return f"No task found for issue_number={issue_number} task_id={task_id_arg}"
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    project_id = project_id_for_path(str(spec_dir.parent.parent.parent))
+    if isinstance(principal, dict) and principal.get("copilot_credential"):
+        bound_project = os.environ.get("AIFACTORY_MCP_PROJECT_ID")
+        bound_org = os.environ.get("AIFACTORY_MCP_ORG_ID")
+        if (
+            not project_id
+            or (bound_project and project_id != bound_project)
+            or (
+                bound_org
+                and load_projects().get(project_id, {}).get("org_id") != bound_org
+            )
+            or not (bound_project or bound_org)
+        ):
+            raise HTTPException(status_code=404, detail="Project not found")
+        principal = {
+            "id": None,
+            "org_id": load_projects()[project_id].get("org_id"),
+            "scoped_service": True,
+            "scopes": ["project:write"],
+        }
+    async with engine.async_session_factory() as db:
+        await require_project_role(
+            principal,
+            project_id,
+            "member"
+            if name in {"aifactory_record_discovery", "aifactory_record_gotcha"}
+            else "viewer",
+            db,
+        )
 
     if name == "aifactory_get_spec":
         return await _tool_get_spec(spec_dir)
@@ -322,7 +362,7 @@ async def _dispatch_tool(
 
 
 @router.post("/mcp")
-async def mcp_endpoint(request: Request) -> JSONResponse:
+async def mcp_endpoint(request: Request) -> JSONResponse:  # noqa: PLR0911
     """JSON-RPC 2.0 MCP endpoint for the GitHub Copilot cloud agent.
 
     Handles: initialize, tools/list, tools/call.
@@ -363,7 +403,20 @@ async def mcp_endpoint(request: Request) -> JSONResponse:
         task_id_arg = arguments.get("task_id")
 
         try:
-            text = await _dispatch_tool(tool_name, arguments, issue_number, task_id_arg)
+            text = await _dispatch_tool(
+                tool_name,
+                arguments,
+                issue_number,
+                task_id_arg,
+                {"copilot_credential": True}
+                if os.environ.get("AIFACTORY_MCP_SECRET")
+                else getattr(request.state, "user", None),
+            )
+        except HTTPException as exc:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content=_error(-32000, str(exc.detail), rpc_id),
+            )
         except Exception as exc:
             logger.exception(
                 "[copilot-mcp] tool call failed tool=%s", sanitize_log(tool_name)

@@ -1814,7 +1814,7 @@ async def abort_worktree_merge(
 async def merge_worktree(
     task_id: str,
     options: WorktreeMergeOptions = None,
-    _access: dict = Depends(require_task_access("member")),
+    _access: dict = Depends(require_task_access("admin")),
 ):
     """
     Merge the worktree branch into the base branch.

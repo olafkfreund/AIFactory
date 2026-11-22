@@ -2,6 +2,7 @@
 Git, Ollama, MCP, and utility routes.
 """
 
+import asyncio
 import contextlib
 import logging
 import shlex
@@ -14,10 +15,13 @@ from factory_common.url_safety import (
     assert_safe_outbound_url,
     build_no_redirect_opener,
 )
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 
+from server.database.engine import get_db
 from server.error_ref import client_error
+from server.pty.access import project_id_for_path
+from server.routes.project_authz import authorize_host_path, require_project_access
 from server.services.http_verdict import honest_status
 from server.specpath import browse_roots, within_roots
 from server.utils.subprocess_env import child_env, merge_driver_pins, project_github_env
@@ -52,6 +56,27 @@ def _confined(path: str) -> str:
     return str(within_roots(path, browse_roots(), "browsable directories"))
 
 
+async def _authorize_git_path(request: Request, path: str, role: str) -> None:
+    """If ``path`` falls inside a registered project, enforce ``role`` on it."""
+    pid = project_id_for_path(path)
+    if pid:
+        async with contextlib.asynccontextmanager(get_db)() as db:
+            await require_project_access(role)._authorize(pid, request, db)
+
+
+async def _git_query_path_viewer(request: Request, path: str = Query(...)) -> None:
+    await _authorize_git_path(request, _confined(path), "viewer")
+
+
+async def _git_body_path_member(request: Request) -> None:
+    with contextlib.suppress(ValueError, UnicodeDecodeError):
+        body = await request.json()
+        if isinstance(body, dict) and isinstance(body.get("path"), str):
+            await _authorize_git_path(request, _confined(body["path"]), "member")
+            async with contextlib.asynccontextmanager(get_db)() as db:
+                await authorize_host_path(request, db, Path(_confined(body["path"])))
+
+
 def run_git_command(args: list[str], cwd: str) -> dict:
     """Run a git command and return result."""
     try:
@@ -75,7 +100,7 @@ def run_git_command(args: list[str], cwd: str) -> dict:
         }
 
 
-@router.get("/branches")
+@router.get("/branches", dependencies=[Depends(_git_query_path_viewer)])
 async def get_git_branches(path: str = Query(...)):
     """Get all branches for a repository."""
     path = _confined(path)
@@ -86,7 +111,7 @@ async def get_git_branches(path: str = Query(...)):
     return {"success": True, "data": []}
 
 
-@router.get("/current-branch")
+@router.get("/current-branch", dependencies=[Depends(_git_query_path_viewer)])
 async def get_current_git_branch(path: str = Query(...)):
     """Get current branch name."""
     path = _confined(path)
@@ -96,7 +121,7 @@ async def get_current_git_branch(path: str = Query(...)):
     return {"success": True, "data": None}
 
 
-@router.get("/main-branch")
+@router.get("/main-branch", dependencies=[Depends(_git_query_path_viewer)])
 async def detect_main_branch(path: str = Query(...)):
     """Detect the main branch (main or master)."""
     path = _confined(path)
@@ -113,7 +138,7 @@ async def detect_main_branch(path: str = Query(...)):
     return {"success": True, "data": None}
 
 
-@router.get("/status")
+@router.get("/status", dependencies=[Depends(_git_query_path_viewer)])
 async def check_git_status(path: str = Query(...)):
     """Check git status for a repository."""
     path = _confined(path)
@@ -147,7 +172,7 @@ class InitGitRequest(BaseModel):
     path: str
 
 
-@router.post("/init")
+@router.post("/init", dependencies=[Depends(_git_body_path_member)])
 @honest_status
 async def initialize_git(request: InitGitRequest):
     """Initialize a new git repository with an initial commit (if needed)."""
@@ -162,7 +187,9 @@ async def initialize_git(request: InitGitRequest):
     # Check if repo already has commits
     has_commits = False
     if is_git_repo:
-        commit_check = run_git_command(["rev-parse", "HEAD"], path)
+        commit_check = await asyncio.to_thread(
+            run_git_command, ["rev-parse", "HEAD"], path
+        )
         has_commits = commit_check["success"]
 
     # If already has commits, nothing to do
@@ -171,7 +198,7 @@ async def initialize_git(request: InitGitRequest):
 
     # Initialize git repo if not already
     if not is_git_repo:
-        result = run_git_command(["init"], path)
+        result = await asyncio.to_thread(run_git_command, ["init"], path)
         if not result["success"]:
             return {"success": False, "error": result.get("error")}
 
@@ -200,8 +227,12 @@ async def initialize_git(request: InitGitRequest):
         pins = merge_driver_pins(path)
     except RuntimeError:
         return {"success": False, "error": "Could not read merge drivers (#1761)"}
-    run_git_command([*pins, "add", "-A"], path)
-    run_git_command([*pins, "commit", "-m", "Initial commit", "--allow-empty"], path)
+    await asyncio.to_thread(run_git_command, [*pins, "add", "-A"], path)
+    await asyncio.to_thread(
+        run_git_command,
+        [*pins, "commit", "-m", "Initial commit", "--allow-empty"],
+        path,
+    )
 
     return {"success": True}
 
@@ -1490,7 +1521,10 @@ def run_gh_command(args: list[str], cwd: str) -> dict:
         }
 
 
-@releases_router.post("")
+@releases_router.post(
+    "",
+    dependencies=[Depends(require_project_access("admin"))],
+)
 @honest_status
 async def create_release(projectId: str, request: CreateReleaseRequest):
     """Create a release using GitHub (gh) CLI.

@@ -7,11 +7,13 @@ single-tenant AIFactory: no stamps written, nothing filtered, no envelope field.
 
 import asyncio
 import json
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from server import tenancy
 from server.routes import from_issue  # also puts apps/backend on sys.path
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class _Req:
@@ -126,6 +128,12 @@ async def _noop_overlay(tasks):
 def _list_tasks(project_path, headers):
     from server.routes import tasks as tasks_mod
 
+    async def fetch() -> Any:
+        async with AsyncSession() as db:
+            return await tasks_mod.list_tasks(
+                project_id=None, status=None, request=_Req(headers), db=db
+            )
+
     with (
         patch.object(
             tasks_mod,
@@ -133,12 +141,11 @@ def _list_tasks(project_path, headers):
             return_value={"p1": {"path": str(project_path)}},
         ),
         patch.object(tasks_mod, "overlay_durable_status", new=_noop_overlay),
+        patch.object(
+            tasks_mod, "accessible_project_ids", new=AsyncMock(return_value={"p1"})
+        ),
     ):
-        return asyncio.run(
-            tasks_mod.list_tasks(
-                project_id=None, status=None, request=_Req(headers), db=None
-            )
-        )
+        return asyncio.run(fetch())
 
 
 def test_list_tasks_filters_by_tenant_when_enabled(flag_on, tmp_path):
@@ -161,8 +168,8 @@ def _list_projects(data, headers):
     with (
         patch.object(projects_mod, "aload_projects", new=AsyncMock(return_value=data)),
         patch(
-            "server.routes.projects.accessible_org_ids",
-            new=AsyncMock(return_value=None),
+            "server.routes.projects.accessible_project_ids",
+            new=AsyncMock(return_value=set(data)),
         ),
     ):
         return asyncio.run(projects_mod.list_projects(request=_Req(headers), db=None))
