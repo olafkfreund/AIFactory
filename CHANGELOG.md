@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+## 3.21.0 - 2026-11-22
+
+Merged to `dev` since 3.20.1.
+
+### Added
+
+- Per-project authorization enforcement: `require_project_role` checks token scopes intersected with project grants on every project path. `APP_LEGACY_SHARED_TOKEN_FULL_ACCESS` defaults to true, so the legacy shared token keeps full access until it is turned off. (Factory#3857 phase 2, #2181, #2182)
+
 ## 3.20.1 - 2026-11-21
 
 Merged to `dev` since 3.20.0.
