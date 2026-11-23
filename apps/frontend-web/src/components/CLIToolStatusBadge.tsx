@@ -304,12 +304,12 @@ export function CLIToolStatusBadge({ className, iconOnly = false }: CLIToolStatu
   // Listen for WebSocket auth events for immediate refresh
   useEffect(() => {
     if (!window.API?.onCLIAccountAuth) return;
-    const unsubscribe = window.API.onCLIAccountAuth((info) => {
+    const unsubscribe: unknown = window.API.onCLIAccountAuth((info) => {
       if (info.success) {
         detect();
       }
     });
-    return unsubscribe;
+    return typeof unsubscribe === 'function' ? (unsubscribe as () => void) : undefined;
   }, [detect]);
 
   if (isLoading) return null;

@@ -1,55 +1,78 @@
-import { render } from '@testing-library/react';
-import { beforeAll, expect, it, vi } from 'vitest';
+/** @vitest-environment jsdom */
+import { describe, expect, it, vi } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
+import '../../shared/i18n';
 import type { Task } from '../../shared/types/task';
-import { PipelineBoard } from './PipelineBoard';
-import { PipelineHeader } from './PipelineHeader';
+import { PipelineBoard, activeStage, isDone, isFailed, phaseStrip, stageOf } from './PipelineBoard';
 
-vi.mock('../TaskCard', () => ({ TaskCard: () => <div>Task card</div> }));
-
-beforeAll(() => {
-  globalThis.ResizeObserver = class {
-    observe() {}
-    unobserve() {}
-    disconnect() {}
-  };
-});
-
-function task(id: string, status: Task['status'], phase: NonNullable<Task['executionProgress']>['phase']): Task {
+function task(
+  id: string,
+  status: Task['status'],
+  phase: NonNullable<Task['executionProgress']>['phase'],
+  reviewReason?: Task['reviewReason']
+): Task {
   return {
-    id, specId: id, projectId: 'project', title: id, description: '', status,
-    subtasks: [], logs: [], createdAt: new Date(), updatedAt: new Date(),
+    id,
+    specId: id,
+    projectId: 'project',
+    title: id,
+    description: '',
+    status,
+    reviewReason,
+    subtasks: [],
+    logs: [],
+    createdAt: new Date(),
+    updatedAt: new Date(),
     executionProgress: { phase, phaseProgress: 0, overallProgress: 0 },
   };
 }
 
-function stage(container: HTMLElement, label: string): Element | undefined {
-  return [...container.querySelectorAll('.pl-stage')]
-    .find((element) => element.querySelector('.pl-label')?.textContent === label);
-}
+describe('PipelineBoard stage helpers', () => {
+  it('ignores stale phases on done tasks while showing the active QA task', () => {
+    const doneTasks = [
+      task('old plan', 'done', 'planning'),
+      task('old code', 'done', 'coding'),
+      task('old review', 'done', 'qa_review'),
+    ];
+    const liveTask = task('live review', 'ai_review', 'qa_review');
 
-it('ignores stale phases on done tasks while showing the active review task', () => {
-  const doneTasks = [
-    task('old plan', 'done', 'planning'),
-    task('old code', 'done', 'coding'),
-    task('old review', 'done', 'qa_review'),
-  ];
-  const liveTask = task('live review', 'ai_review', 'qa_review');
+    for (const d of doneTasks) {
+      expect(isDone(d)).toBe(true);
+      expect(stageOf(d)).toBe('review');
+      expect(activeStage(d)).toBeNull();
+    }
 
-  const board = render(<PipelineBoard tasks={doneTasks} onTaskClick={vi.fn()} onNewTaskClick={vi.fn()} />);
-  const rail = board.container.querySelector('.pl-railpanel') as HTMLElement;
-  expect(stage(rail, 'Plan')).not.toHaveClass('is-active');
-  expect(stage(rail, 'Code')).not.toHaveClass('is-active');
-  expect(stage(rail, 'Review')).not.toHaveClass('is-active');
-  expect(board.container.querySelectorAll('.pl-card-wrap.is-live')).toHaveLength(0);
-  board.rerender(<PipelineBoard tasks={[...doneTasks, liveTask]} onTaskClick={vi.fn()} onNewTaskClick={vi.fn()} />);
-  expect(stage(rail, 'Review')).toHaveClass('is-active');
-  expect(board.container.querySelectorAll('.pl-card-wrap.is-live')).toHaveLength(1);
+    expect(isDone(liveTask)).toBe(false);
+    expect(stageOf(liveTask)).toBe('qa');
+    expect(activeStage(liveTask)).toBe('qa');
+    expect(phaseStrip(liveTask)).toEqual([
+      { key: 'plan', label: 'Plan', state: 'done' },
+      { key: 'code', label: 'Code', state: 'done' },
+      { key: 'qa', label: 'QA', state: 'active' },
+      { key: 'review', label: 'Review', state: 'pending' },
+    ]);
 
-  const header = render(<PipelineHeader tasks={doneTasks} />);
-  expect(stage(header.container, 'Plan')).not.toHaveClass('is-active');
-  expect(stage(header.container, 'Code')).not.toHaveClass('is-active');
-  expect(stage(header.container, 'Test')).not.toHaveClass('is-active');
-  header.rerender(<PipelineHeader tasks={[...doneTasks, liveTask]} />);
-  expect(stage(header.container, 'Test')).toHaveClass('is-active');
-  expect(header.getByRole('img')).toHaveAttribute('aria-label', 'Pipeline: 0 planning, 0 coding with 0 active agents, 1 testing');
+    render(<PipelineBoard tasks={[...doneTasks, liveTask]} onTaskClick={vi.fn()} onNewTaskClick={vi.fn()} />);
+    expect(screen.getByRole('toolbar', { name: /Pipeline stages/i })).toBeInTheDocument();
+  });
+
+  it('classifies failures and filters via the PipelineStrip', () => {
+    const running = task('running-1', 'in_progress', 'coding');
+    const failed = task('failed-1', 'human_review', 'failed', 'errors');
+
+    expect(isFailed(failed)).toBe(true);
+    expect(stageOf(failed)).toBe('code');
+
+    const { container } = render(
+      <PipelineBoard tasks={[running, failed]} onTaskClick={vi.fn()} onNewTaskClick={vi.fn()} />
+    );
+
+    expect(container.querySelectorAll('.f-column .f-card')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: /Filter Code failures/i }));
+    expect(container.querySelectorAll('.f-column .f-card')).toHaveLength(0);
+    expect(screen.getByTestId('failed-runs')).toHaveTextContent('failed-1');
+    fireEvent.click(screen.getByRole('button', { name: /Clear filter/i }));
+    expect(container.querySelectorAll('.f-column .f-card')).toHaveLength(1);
+    expect(screen.queryByTestId('failed-runs')).toBeNull();
+  });
 });

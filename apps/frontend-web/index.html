@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-portal="build">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
@@ -7,6 +7,7 @@
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#201f1d" />
     <!-- Factory design language: Hanken Grotesk (UI) + Archivo (display) +
          JetBrains Mono (data plane). Shared across all Factory portals. -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -17,18 +18,15 @@
   <body>
     <script>
       // Apply theme synchronously before first paint to prevent color flash.
-      // Gruvbox palette is the default in index.css; the dark class is toggled
-      // for dark mode, and a data-theme attribute selects alternate palettes.
+      // Light/dark is read from the localStorage cache written by App.tsx.
       (function() {
         try {
           var theme = localStorage.getItem('aifactory-theme') || 'system';
           var root = document.documentElement;
           if (theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
             root.classList.add('dark');
-          }
-          var colorTheme = localStorage.getItem('aifactory-color-theme');
-          if (colorTheme && colorTheme !== 'gruvbox') {
-            root.setAttribute('data-theme', colorTheme);
+          } else {
+            root.classList.remove('dark');
           }
         } catch(e) {}
       })();

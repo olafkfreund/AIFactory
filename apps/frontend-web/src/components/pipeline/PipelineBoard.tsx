@@ -1,334 +1,390 @@
 /**
- * PipelineBoard — the Tasks view as an animated pipeline of rings.
+ * PipelineBoard — AIFactory tasks board rendered with the hub-owned
+ * shared factory-ui PipelineStrip, WorkColumn and WorkCard components (#3876).
  *
- * A prominent bordered rail of four big stage rings — Plan → Code → Review →
- * Done (with factory sub-labels) — sits above four task columns. The active ring
- * glows + animates; stage transitions fly a package-box between rings. Each task
- * card carries its own live state inside it: an animated current-stage icon, a
- * terminal per active agent/subtask (coding), and a Plan·Code·Validate·Log strip
- * with a robot thumbs-up (done) / thumbs-down + red cross (failed).
+ * Stages: Plan → Code → QA → Review.
+ * Done/archived tasks collapse to a single 36px row by default; WorkCard sits
+ * inside SortableTaskCard keeping drag-and-drop, memo comparators, start/stop/
+ * recover/archive with busy states, Copilot issue/PR links, and phase progress.
  */
-import { AnimatePresence, motion } from 'motion/react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
-  useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
-  type CSSProperties,
-} from 'react';
-import type { Task } from '../../shared/types/task';
-import { TaskCard } from '../TaskCard';
+  DndContext,
+  DragOverlay,
+  closestCorners,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  useDroppable,
+  type DragStartEvent,
+  type DragEndEvent,
+} from '@dnd-kit/core';
 import {
-  CrossIcon, DoneIcon, PackageIcon, PlanDocIcon, ReviewIcon,
-  RobotHeadIcon, RobotThumbsDownIcon, RobotThumbsUpIcon, SignalIcon, TerminalIcon,
-} from './icons';
-import './pipeline.css';
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
 
-type Stage = 'plan' | 'code' | 'review' | 'done';
+import { usePipelineStripSlot } from '../../contexts/PipelineStripContext';
+import {
+  PipelineStrip,
+  type PipelineStage,
+  type PipelineStripLabels,
+  type PipelineStripProps,
+  type StageTone,
+} from '../factory-ui/PipelineStrip';
+import { WorkColumn } from '../factory-ui/WorkColumn';
+import { SortableTaskCard } from '../SortableTaskCard';
+import { TaskCard, isTaskDone, isTaskFailed, buildTaskPhases } from '../TaskCard';
+import { Button } from '../ui/button';
+import { persistTaskStatus } from '../../stores/task-store';
+import type { Task, TaskStatus } from '../../shared/types';
+
+export type Stage = 'plan' | 'code' | 'qa' | 'review';
 
 const PLAN_PHASES = new Set(['spec_creation', 'planning', 'plan_review']);
-const REVIEW_PHASES = new Set(['qa_review', 'qa_fixing']);
-const ORDER: Stage[] = ['plan', 'code', 'review', 'done'];
-const MAX_TERMS = 5;
+const QA_PHASES = new Set(['qa_review', 'qa_fixing']);
+const ORDER: Stage[] = ['plan', 'code', 'qa', 'review'];
 
-const STAGES: { key: Stage; label: string; sub: string; Icon: typeof RobotHeadIcon }[] = [
-  { key: 'plan', label: 'Plan', sub: 'PFactory', Icon: PlanDocIcon },
-  { key: 'code', label: 'Code', sub: 'AIFactory', Icon: RobotHeadIcon },
-  { key: 'review', label: 'Review', sub: 'TFactory', Icon: ReviewIcon },
-  { key: 'done', label: 'Done', sub: 'Shipped', Icon: DoneIcon },
+const STAGES: { key: Stage; label: string; service: string; tone: StageTone; dropStatus: TaskStatus }[] = [
+  { key: 'plan', label: 'Plan', service: 'Planner', tone: 'plan', dropStatus: 'backlog' },
+  { key: 'code', label: 'Code', service: 'Coder', tone: 'code', dropStatus: 'in_progress' },
+  { key: 'qa', label: 'QA', service: 'QA Reviewer · Fixer', tone: 'test', dropStatus: 'ai_review' },
+  { key: 'review', label: 'Review', service: 'Human Review · Shipped', tone: 'success', dropStatus: 'human_review' },
 ];
 
-function stageOf(task: Task): Stage {
+export { isTaskDone as isDone, isTaskFailed as isFailed, buildTaskPhases as phaseStrip };
+
+export function stageOf(task: Task): Stage {
   const phase = task.executionProgress?.phase;
-  if (task.status === 'done') return 'done';
+  if (task.status === 'done') return 'review';
+  if (task.status === 'human_review') {
+    if (task.reviewReason === 'plan_review') return 'plan';
+    if (task.reviewReason === 'qa_rejected') return 'qa';
+    if (task.reviewReason === 'errors' || task.reviewReason === 'no_work') return 'code';
+    return 'review';
+  }
   if (phase === 'coding') return 'code';
-  if (phase && REVIEW_PHASES.has(phase)) return 'review';
+  if (phase && QA_PHASES.has(phase)) return 'qa';
   if (phase && PLAN_PHASES.has(phase)) return 'plan';
-  if (task.status === 'in_progress') return 'code';
-  if (task.status === 'ai_review' || task.status === 'human_review') return 'review';
+  if (task.status === 'in_progress' || task.status === 'copilot_running' || task.status === 'copilot_pr_opened') {
+    return 'code';
+  }
+  if (task.status === 'ai_review') return 'qa';
   if (task.status === 'backlog') return 'plan';
   return 'plan';
 }
 
-function isCompleted(task: Task): boolean {
-  if (task.status === 'done') return true;
-  if (task.reviewReason === 'completed') return true;
-  return task.executionProgress?.phase === 'complete';
-}
-
-function isFailed(task: Task): boolean {
-  return task.reviewReason === 'errors'
-    || task.reviewReason === 'qa_rejected'
-    || task.executionProgress?.phase === 'failed';
-}
-
-/** Active agents (terminals) for a coding task — its in-flight subtasks. */
-function agentCount(task: Task): number {
-  const phase = task.executionProgress?.phase;
-  const coding = phase === 'coding' || (task.status === 'in_progress' && stageOf(task) === 'code');
-  if (!coding) return 0;
-  return Math.max((task.subtasks || []).filter((s) => s.status === 'in_progress').length, 1);
-}
-
-/** The stage a task is actively working RIGHT NOW (null when idle/terminal). */
-function activeStage(task: Task): Stage | null {
+export function activeStage(task: Task): Stage | null {
   if (task.status === 'done') return null;
   const phase = task.executionProgress?.phase;
-  if (!phase || phase === 'idle' || phase === 'complete' || phase === 'failed') return null;
-  if (phase === 'coding') return 'code';
-  if (REVIEW_PHASES.has(phase)) return 'review';
-  if (PLAN_PHASES.has(phase)) return 'plan';
+  if (phase && phase !== 'idle' && phase !== 'complete' && phase !== 'failed') {
+    if (phase === 'coding') return 'code';
+    if (QA_PHASES.has(phase)) return 'qa';
+    if (PLAN_PHASES.has(phase)) return 'plan';
+  }
+  if (task.status === 'in_progress' || task.status === 'copilot_running') return 'code';
+  if (task.status === 'ai_review') return 'qa';
   return null;
 }
 
-type PState = 'done' | 'active' | 'failed' | 'pending';
-
-function phaseStrip(task: Task): { key: string; label: string; Icon: typeof RobotHeadIcon; state: PState }[] {
-  const phase = task.executionProgress?.phase;
-  const done = isCompleted(task);
-  const failed = isFailed(task);
-  const reached = (...stages: Stage[]) => stages.includes(stageOf(task));
-
-  const plan: PState = done || reached('code', 'review', 'done') ? 'done'
-    : phase && PLAN_PHASES.has(phase) ? 'active'
-    : task.status === 'backlog' && !phase ? 'pending' : 'done';
-  const code: PState = done || reached('review', 'done') ? 'done'
-    : phase === 'coding' || reached('code') ? 'active'
-    : failed && task.reviewReason === 'errors' ? 'failed' : 'pending';
-  const validation: PState = done ? 'done'
-    : task.reviewReason === 'qa_rejected' ? 'failed'
-    : phase && REVIEW_PHASES.has(phase) ? 'active'
-    : failed ? 'failed' : 'pending';
-  const log: PState = (task.logs && task.logs.length > 0) || phase ? 'done' : 'pending';
-
-  return [
-    { key: 'plan', label: 'Plan', Icon: PlanDocIcon, state: plan },
-    { key: 'code', label: 'Code', Icon: RobotHeadIcon, state: code },
-    { key: 'val', label: 'Validate', Icon: ReviewIcon, state: validation },
-    { key: 'log', label: 'Log', Icon: TerminalIcon, state: log },
-  ];
+function DroppableStageShell({
+  stageKey,
+  children,
+}: {
+  stageKey: Stage;
+  children: React.ReactNode;
+}) {
+  const { setNodeRef } = useDroppable({ id: stageKey });
+  return (
+    <div ref={setNodeRef} data-stage={stageKey}>
+      {children}
+    </div>
+  );
 }
-
-const STAGE_ICON: Record<Stage, typeof RobotHeadIcon> = {
-  plan: PlanDocIcon, code: RobotHeadIcon, review: ReviewIcon, done: DoneIcon,
-};
-
-interface Flight { id: string; to: number; x0: number; x1: number; y: number; }
 
 interface Props {
   tasks: Task[];
+  projectId?: string;
   onTaskClick: (task: Task) => void;
-  onNewTaskClick: () => void;
+  onNewTaskClick?: () => void;
   isInitialized?: boolean;
 }
 
-export function PipelineBoard({ tasks, onTaskClick, onNewTaskClick }: Props) {
-  const boardRef = useRef<HTMLDivElement>(null);
-  const ringRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const [centers, setCenters] = useState<{ x: number; y: number }[]>([]);
-  const [flights, setFlights] = useState<Flight[]>([]);
-  const prevStage = useRef<Map<string, Stage>>(new Map());
+export function PipelineBoard({ tasks, projectId, onTaskClick }: Props) {
+  const { t } = useTranslation(['tasks', 'navigation']);
+  const stripSlot = usePipelineStripSlot();
+  const [selectedStage, setSelectedStage] = useState<Stage | null>(null);
+  const [failureOnly, setFailureOnly] = useState(false);
+  const [showFailed, setShowFailed] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
+  const [activeTask, setActiveTask] = useState<Task | null>(null);
+  const [alarm, setAlarm] = useState<{ key: string; event: string } | undefined>(undefined);
+  const prevFailedRef = useRef<Map<string, string> | null>(null);
 
-  const byStage = useMemo(() => {
-    const g: Record<Stage, Task[]> = { plan: [], code: [], review: [], done: [] };
-    for (const t of tasks) g[stageOf(t)].push(t);
-    for (const k of ORDER) g[k].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    return g;
-  }, [tasks]);
+  const visible = useMemo(
+    () => (showArchived ? tasks : tasks.filter((task) => !task.metadata?.archivedAt)),
+    [tasks, showArchived]
+  );
 
-  const active = useMemo(() => {
-    const a: Record<Stage, boolean> = { plan: false, code: false, review: false, done: false };
-    for (const t of tasks) {
-      const s = activeStage(t);
-      if (s) a[s] = true;
-    }
-    return a;
-  }, [tasks]);
-
-  const measure = useCallback(() => {
-    const board = boardRef.current;
-    if (!board) return;
-    const br = board.getBoundingClientRect();
-    setCenters(ringRefs.current.map((el) => {
-      if (!el) return { x: 0, y: 0 };
-      const r = el.getBoundingClientRect();
-      return { x: r.left - br.left + r.width / 2, y: r.top - br.top + r.height / 2 };
-    }));
-  }, []);
-
-  useLayoutEffect(() => { measure(); }, [measure, tasks.length]);
-  useEffect(() => {
-    const board = boardRef.current;
-    if (!board) return;
-    const ro = new ResizeObserver(() => { measure(); });
-    ro.observe(board);
-    window.addEventListener('resize', measure);
-    return () => { ro.disconnect(); window.removeEventListener('resize', measure); };
-  }, [measure]);
+  const failed = useMemo(() => visible.filter(isTaskFailed), [visible]);
 
   useEffect(() => {
-    if (centers.length < ORDER.length) {
-      if (prevStage.current.size === 0) for (const t of tasks) prevStage.current.set(t.id, stageOf(t));
-      return;
-    }
-    const launched: Flight[] = [];
-    const seen = new Set<string>();
-    for (const t of tasks) {
-      seen.add(t.id);
-      const cur = stageOf(t);
-      const was = prevStage.current.get(t.id);
-      prevStage.current.set(t.id, cur);
-      if (was && was !== cur) {
-        const from = ORDER.indexOf(was), to = ORDER.indexOf(cur);
-        launched.push({ id: `${t.id}-${was}-${cur}-${Date.now()}`, to, x0: centers[from].x, x1: centers[to].x, y: centers[from].y });
+    const nextFailed = new Map<string, string>();
+    let latestAlarm: { key: string; event: string } | undefined;
+    for (const task of failed) {
+      const key = `${task.projectId}:${task.id}`;
+      const stamp = String(task.updatedAt);
+      nextFailed.set(key, stamp);
+      if (prevFailedRef.current && prevFailedRef.current.get(key) !== stamp) {
+        latestAlarm = { key: stageOf(task), event: `${key}:${stamp}` };
       }
     }
-    for (const id of [...prevStage.current.keys()]) if (!seen.has(id)) prevStage.current.delete(id);
-    if (launched.length) setFlights((f) => [...f, ...launched]);
-  }, [tasks, centers]);
+    prevFailedRef.current = nextFailed;
+    if (latestAlarm) setAlarm(latestAlarm);
+  }, [failed]);
 
-  const removeFlight = useCallback((id: string) => { setFlights((f) => f.filter((x) => x.id !== id)); }, []);
+  const byStage = useMemo(() => {
+    const g: Record<Stage, Task[]> = { plan: [], code: [], qa: [], review: [] };
+    for (const task of visible) {
+      if (!isTaskFailed(task)) g[stageOf(task)].push(task);
+    }
+    for (const k of ORDER) {
+      g[k].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    }
+    return g;
+  }, [visible]);
+
+  const failedByStage = useMemo(() => {
+    const g: Record<Stage, Task[]> = { plan: [], code: [], qa: [], review: [] };
+    for (const task of failed) {
+      g[stageOf(task)].push(task);
+    }
+    for (const k of ORDER) {
+      g[k].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    }
+    return g;
+  }, [failed]);
+
+  const stages: PipelineStage[] = useMemo(
+    () =>
+      STAGES.map((stage) => ({
+        key: stage.key,
+        label: stage.label,
+        service: stage.service,
+        count: byStage[stage.key].length,
+        failed: failedByStage[stage.key].length,
+        tone: stage.tone,
+      })),
+    [byStage, failedByStage]
+  );
+
+  const handleSelectStage = useCallback((key: string | null) => {
+    setSelectedStage((key as Stage | null) ?? null);
+    setFailureOnly(false);
+    if (key === null) setShowFailed(false);
+  }, []);
+
+  const handleSelectFailed = useCallback((key: string) => {
+    setSelectedStage(key as Stage);
+    setFailureOnly(true);
+    setShowFailed(true);
+  }, []);
+
+  const stripProps: PipelineStripProps = useMemo(
+    () => ({
+      stages,
+      activeStage: selectedStage,
+      onSelectStage: handleSelectStage,
+      onSelectFailed: handleSelectFailed,
+      alarm,
+    }),
+    [stages, selectedStage, handleSelectStage, handleSelectFailed, alarm]
+  );
+
+  useEffect(() => {
+    if (!stripSlot) return;
+    stripSlot.setStrip(stripProps);
+    return () => {
+      stripSlot.setStrip(undefined);
+    };
+  }, [stripSlot, stripProps]);
+
+  const pipelineLabels: PipelineStripLabels = useMemo(
+    () => ({
+      pipeline: t('navigation:shell.pipeline', 'Pipeline stages'),
+      clearFilter: t('navigation:shell.clearFilter', 'Clear filter'),
+      failures: (count: number) => t('tasks:pipeline.failed', { count, defaultValue: '{{count}} failed' }),
+      filterFailures: (stage) =>
+        t('navigation:shell.filterFailures', {
+          stage: stage.label,
+          count: stage.failed,
+          defaultValue: 'Filter {{stage}} failures ({{count}})',
+        }),
+    }),
+    [t]
+  );
+
+  const visibleStages = useMemo(
+    () => (selectedStage ? STAGES.filter((s) => s.key === selectedStage) : STAGES),
+    [selectedStage]
+  );
+
+  const visibleFailed = useMemo(
+    () => (selectedStage ? failedByStage[selectedStage] : failed),
+    [selectedStage, failedByStage, failed]
+  );
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 8 },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  const handleDragStart = (event: DragStartEvent) => {
+    const task = tasks.find((tItem) => tItem.id === event.active.id);
+    if (task) setActiveTask(task);
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    setActiveTask(null);
+    if (!over) return;
+
+    const activeTaskId = String(active.id);
+    const overId = String(over.id);
+    const draggedTask = tasks.find((tItem) => tItem.id === activeTaskId);
+    if (!draggedTask) return;
+
+    const stageMatch = STAGES.find((s) => s.key === overId);
+    if (stageMatch) {
+      if (draggedTask.status !== stageMatch.dropStatus) {
+        void persistTaskStatus(activeTaskId, stageMatch.dropStatus);
+      }
+      return;
+    }
+
+    const overTask = tasks.find((tItem) => tItem.id === overId);
+    if (overTask && draggedTask.status !== overTask.status) {
+      void persistTaskStatus(activeTaskId, overTask.status);
+    }
+  };
 
   return (
-    <div ref={boardRef} className="pl-board">
-      {/* prominent ring rail */}
-      <div className="pl-railpanel">
-        <div className="pl-rail">
-          {STAGES.map((stage, i) => {
-            const isActive = active[stage.key];
-            const cssVar = { ['--c' as string]: `var(--pl-${stage.key})` } as CSSProperties;
+    <div className="space-y-4 p-4">
+      {!stripSlot && <PipelineStrip {...stripProps} labels={pipelineLabels} />}
+
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCorners}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+      >
+        <div className="f-board">
+          {visibleStages.map((stage) => {
+            const stageTasks = failureOnly ? [] : byStage[stage.key];
             return (
-              <div className="pl-rail-cell" key={stage.key} style={cssVar}>
-                <div className={`pl-stage ${isActive ? 'is-active' : byStage[stage.key].length === 0 ? 'is-idle' : ''}`}>
-                  <div className="pl-ring" ref={(el) => { ringRefs.current[i] = el; }}>
-                    <stage.Icon size={40} />
-                    <span className="pl-badge">{byStage[stage.key].length}</span>
-                    {stage.key === 'plan' && <span className="pl-mcp" title="Fetching context (MCP)"><SignalIcon /></span>}
-                  </div>
-                  <span className="pl-label">{stage.label}</span>
-                  <span className="pl-sublabel">{stage.sub}</span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        <div className="pl-connectors" aria-hidden>
-          {centers.length === ORDER.length && ORDER.slice(0, -1).map((s, i) => {
-            const a = centers[i], b = centers[i + 1];
-            const flowing = active[ORDER[i]] || active[ORDER[i + 1]];
-            return (
-              <div key={s} className={`pl-conn ${flowing ? 'is-flowing' : ''}`}
-                style={{ left: a.x + 56, top: a.y - 1.5, width: Math.max(b.x - a.x - 112, 0),
-                         ['--c' as string]: `var(--pl-${s})` }} />
-            );
-          })}
-        </div>
-      </div>
-
-      {/* task columns */}
-      <div className="pl-board-grid">
-        {STAGES.map((stage) => {
-          const list = byStage[stage.key];
-          const cssVar = { ['--c' as string]: `var(--pl-${stage.key})` } as CSSProperties;
-          return (
-            <div className="pl-col" key={stage.key} style={cssVar}>
-              <div className="pl-col-list">
-                {stage.key === 'plan' && <button className="pl-add" onClick={onNewTaskClick}>+ New task</button>}
-                <AnimatePresence initial={false}>
-                  {list.map((task) => {
-                    const done = isCompleted(task);
-                    const failed = !done && isFailed(task);
-                    const now = activeStage(task);
-                    const NowIcon = now ? STAGE_ICON[now] : null;
-                    const agents = Math.min(agentCount(task), MAX_TERMS);
-                    const overflow = agentCount(task) - agents;
-                    return (
-                      <motion.div key={task.id} layout
-                        className={`pl-card-wrap ${failed ? 'is-failed' : ''} ${done ? 'is-done' : ''} ${now ? 'is-live' : ''}`}
-                        initial={{ opacity: 0, y: 10, scale: 0.98 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.92 }}
-                        transition={{ type: 'spring', stiffness: 380, damping: 30 }}>
-                        {done && (
-                          <motion.span className="pl-card-done" aria-label="Task done"
-                            initial={{ scale: 0, rotate: -25 }} animate={{ scale: 1, rotate: 0 }}
-                            transition={{ type: 'spring', stiffness: 500, damping: 14, delay: 0.1 }}>
-                            <RobotThumbsUpIcon size={20} />
-                          </motion.span>
-                        )}
-                        {failed && (
-                          <motion.span className="pl-card-fail" aria-label="Task failed"
-                            initial={{ scale: 0, rotate: 25 }} animate={{ scale: 1, rotate: 0 }}
-                            transition={{ type: 'spring', stiffness: 500, damping: 14, delay: 0.1 }}>
-                            <RobotThumbsDownIcon size={20} />
-                          </motion.span>
-                        )}
-                        {!done && !failed && NowIcon && (
-                          <span className="pl-card-now" title={`Now: ${now}`}><NowIcon size={18} /></span>
-                        )}
-                        {failed && <span className="pl-card-cross" aria-hidden><CrossIcon size={84} /></span>}
-
-                        <TaskCard task={task} onClick={() => { onTaskClick(task); }} />
-
-                        {agents > 0 && (
-                          <div className="pl-card-agents" title={`${agentCount(task)} agent(s) active`}>
-                            <span className="pl-card-agents-lbl">agents</span>
-                            <AnimatePresence>
-                              {Array.from({ length: agents }).map((_, idx) => (
-                                <motion.span key={idx} className="pl-term"
-                                  initial={{ opacity: 0, scale: 0.4 }} animate={{ opacity: 1, scale: 1 }}
-                                  exit={{ opacity: 0, scale: 0.4 }}
-                                  transition={{ delay: idx * 0.07, type: 'spring', stiffness: 420, damping: 26 }}>
-                                  <TerminalIcon size={18} />
-                                </motion.span>
-                              ))}
-                            </AnimatePresence>
-                            {overflow > 0 && <span className="pl-term-more">+{overflow}</span>}
+              <DroppableStageShell key={stage.key} stageKey={stage.key}>
+                <SortableContext
+                  items={stageTasks.map((tItem) => tItem.id)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  <WorkColumn
+                    title={stage.label}
+                    tone={stage.tone}
+                    projectId={projectId}
+                    emptyLabel={emptyText(stage.key)}
+                    showMoreLabel={(count) =>
+                      t('tasks:pipeline.showMore', { count, defaultValue: `Show ${count} more` })
+                    }
+                    items={stageTasks.map((task) => {
+                      const done = task.status === 'done' || Boolean(task.metadata?.archivedAt);
+                      return {
+                        id: task.id,
+                        projectId: task.projectId,
+                        collapsedByDefault: done,
+                        render: ({ expanded, onToggle }) => (
+                          <div data-testid={`task-row-${task.id}`}>
+                            <SortableTaskCard
+                              task={task}
+                              onClick={() => onTaskClick(task)}
+                              expanded={expanded}
+                              onToggle={onToggle}
+                              collapsedByDefault={done}
+                            />
                           </div>
-                        )}
+                        ),
+                      };
+                    })}
+                  />
+                </SortableContext>
+              </DroppableStageShell>
+            );
+          })}
+        </div>
 
-                        <div className="pl-phase-strip" aria-hidden>
-                          {phaseStrip(task).map((p) => (
-                            <span key={p.key} className="pl-chip" data-state={p.state} title={`${p.label}: ${p.state}`}>
-                              <span className="pl-chip-ico">
-                                <p.Icon size={14} />
-                                {p.state === 'failed' && <span className="pl-chip-x"><CrossIcon size={11} /></span>}
-                              </span>
-                              <span className="pl-chip-lbl">{p.label}</span>
-                            </span>
-                          ))}
-                        </div>
-                      </motion.div>
-                    );
-                  })}
-                </AnimatePresence>
-                {list.length === 0 && stage.key !== 'plan' && <div className="pl-empty">{emptyText(stage.key)}</div>}
-              </div>
+        <DragOverlay>
+          {activeTask ? (
+            <div className="drag-overlay-card">
+              <TaskCard task={activeTask} onClick={() => {}} />
             </div>
-          );
-        })}
+          ) : null}
+        </DragOverlay>
+      </DndContext>
+
+      <div className="flex flex-wrap items-center gap-4 text-sm">
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          aria-expanded={showFailed}
+          onClick={() => setShowFailed((value) => !value)}
+        >
+          {t('tasks:pipeline.failed', { count: visibleFailed.length })}
+        </Button>
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={showArchived}
+            onChange={(event) => setShowArchived(event.target.checked)}
+          />
+          {t('tasks:pipeline.showArchived', 'Show archived')}
+        </label>
       </div>
 
-      <div className="pl-flights" aria-hidden>
-        <AnimatePresence>
-          {flights.map((fl) => (
-            <motion.div key={fl.id} className="pl-pkg"
-              style={{ top: fl.y, ['--c' as string]: `var(--pl-${ORDER[fl.to]})` }}
-              initial={{ left: fl.x0, opacity: 0, scale: 0.5 }}
-              animate={{ left: fl.x1, opacity: [0, 1, 1, 0], scale: [0.5, 1.15, 1, 0.8], y: [0, -26, -26, 0] }}
-              transition={{ duration: 1.1, ease: 'easeInOut', times: [0, 0.2, 0.8, 1] }}
-              onAnimationComplete={() => { removeFlight(fl.id); }}>
-              <PackageIcon size={26} />
-            </motion.div>
+      {showFailed && visibleFailed.length > 0 && (
+        <div data-testid="failed-runs" className="grid gap-2">
+          {visibleFailed.map((task) => (
+            <div key={task.id} data-testid={`task-row-${task.id}`}>
+              <SortableTaskCard
+                task={task}
+                onClick={() => onTaskClick(task)}
+                collapsedByDefault={Boolean(task.metadata?.archivedAt)}
+              />
+            </div>
           ))}
-        </AnimatePresence>
-      </div>
+        </div>
+      )}
     </div>
   );
 }
 
 function emptyText(stage: Stage): string {
   switch (stage) {
-    case 'code': return 'Nothing building';
-    case 'review': return 'Nothing in review';
-    case 'done': return 'No completed tasks yet';
-    default: return '';
+    case 'plan':
+      return 'Nothing planned';
+    case 'code':
+      return 'Nothing building';
+    case 'qa':
+      return 'Nothing in QA';
+    case 'review':
+      return 'Nothing in review';
+    default:
+      return '';
   }
 }

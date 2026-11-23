@@ -1,6 +1,5 @@
 import { useState, useMemo, memo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { PipelineHeader } from './pipeline/PipelineHeader';
 import {
   DndContext,
   DragOverlay,
@@ -12,20 +11,21 @@ import {
   useDroppable,
   type DragStartEvent,
   type DragEndEvent,
-  type DragOverEvent
+  type DragOverEvent,
 } from '@dnd-kit/core';
 import {
   SortableContext,
   sortableKeyboardCoordinates,
-  verticalListSortingStrategy
+  verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import { Plus, Inbox, Loader2, Eye, CheckCircle2, UserCheck, Archive, RefreshCw } from 'lucide-react';
+import { Plus, Archive, RefreshCw } from 'lucide-react';
 import { toast } from '../hooks/use-toast';
-import { ScrollArea } from './ui/scroll-area';
 import { Button } from './ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { TaskCard } from './TaskCard';
 import { SortableTaskCard } from './SortableTaskCard';
+import { WorkColumn } from './factory-ui/WorkColumn';
+import type { StageTone } from './factory-ui/PipelineStrip';
 import { KanbanColumnSkeleton } from './ui/skeleton';
 import { TASK_STATUS_COLUMNS, TASK_STATUS_LABELS } from '../shared/constants';
 import { cn } from '../lib/utils';
@@ -34,6 +34,7 @@ import type { Task, TaskStatus } from '../shared/types';
 
 interface KanbanBoardProps {
   tasks: Task[];
+  projectId?: string;
   onTaskClick: (task: Task) => void;
   onNewTaskClick?: () => void;
   onRefresh?: () => void;
@@ -43,6 +44,7 @@ interface KanbanBoardProps {
 
 interface DroppableColumnProps {
   status: TaskStatus;
+  projectId?: string;
   tasks: Task[];
   onTaskClick: (task: Task) => void;
   isOver: boolean;
@@ -53,15 +55,10 @@ interface DroppableColumnProps {
   onToggleArchived?: () => void;
 }
 
-/**
- * Compare two tasks arrays for meaningful changes.
- * Returns true if tasks are equivalent (should skip re-render).
- */
 function tasksAreEquivalent(prevTasks: Task[], nextTasks: Task[]): boolean {
   if (prevTasks.length !== nextTasks.length) return false;
   if (prevTasks === nextTasks) return true;
 
-  // Compare by ID and fields that affect rendering
   for (let i = 0; i < prevTasks.length; i++) {
     const prev = prevTasks[i];
     const next = nextTasks[i];
@@ -77,15 +74,12 @@ function tasksAreEquivalent(prevTasks: Task[], nextTasks: Task[]): boolean {
   return true;
 }
 
-/**
- * Custom comparator for DroppableColumn memo.
- */
 function droppableColumnPropsAreEqual(
   prevProps: DroppableColumnProps,
   nextProps: DroppableColumnProps
 ): boolean {
-  // Quick checks first
   if (prevProps.status !== nextProps.status) return false;
+  if (prevProps.projectId !== nextProps.projectId) return false;
   if (prevProps.isOver !== nextProps.isOver) return false;
   if (prevProps.onTaskClick !== nextProps.onTaskClick) return false;
   if (prevProps.onAddClick !== nextProps.onAddClick) return false;
@@ -94,301 +88,184 @@ function droppableColumnPropsAreEqual(
   if (prevProps.showArchived !== nextProps.showArchived) return false;
   if (prevProps.onToggleArchived !== nextProps.onToggleArchived) return false;
 
-  // Deep compare tasks
-  const tasksEqual = tasksAreEquivalent(prevProps.tasks, nextProps.tasks);
-
-  // Only log when re-rendering (reduces noise)
-  if (window.DEBUG && !tasksEqual) {
-    console.log(`[DroppableColumn] Re-render: ${nextProps.status} column (${nextProps.tasks.length} tasks)`);
-  }
-
-  return tasksEqual;
+  return tasksAreEquivalent(prevProps.tasks, nextProps.tasks);
 }
 
-// Empty state content for each column
-const getEmptyStateContent = (status: TaskStatus, t: (key: string) => string): { icon: React.ReactNode; message: string; subtext?: string } => {
+function columnTone(status: TaskStatus): StageTone {
   switch (status) {
     case 'backlog':
-      return {
-        icon: <Inbox className="h-6 w-6 text-muted-foreground/50" />,
-        message: t('kanban.emptyBacklog'),
-        subtext: t('kanban.emptyBacklogHint')
-      };
+      return 'plan';
     case 'in_progress':
-      return {
-        icon: <Loader2 className="h-6 w-6 text-muted-foreground/50" />,
-        message: t('kanban.emptyInProgress'),
-        subtext: t('kanban.emptyInProgressHint')
-      };
+      return 'code';
     case 'ai_review':
-      return {
-        icon: <Eye className="h-6 w-6 text-muted-foreground/50" />,
-        message: t('kanban.emptyAiReview'),
-        subtext: t('kanban.emptyAiReviewHint')
-      };
+      return 'test';
     case 'human_review':
-      return {
-        icon: <Eye className="h-6 w-6 text-muted-foreground/50" />,
-        message: t('kanban.emptyHumanReview'),
-        subtext: t('kanban.emptyHumanReviewHint')
-      };
+      return 'warning';
     case 'done':
-      return {
-        icon: <CheckCircle2 className="h-6 w-6 text-muted-foreground/50" />,
-        message: t('kanban.emptyDone'),
-        subtext: t('kanban.emptyDoneHint')
-      };
+      return 'success';
     default:
-      return {
-        icon: <Inbox className="h-6 w-6 text-muted-foreground/50" />,
-        message: t('kanban.emptyDefault')
-      };
+      return 'neutral';
   }
-};
+}
 
-const DroppableColumn = memo(function DroppableColumn({ status, tasks, onTaskClick, isOver, onAddClick, onArchiveAll, archivedCount, showArchived, onToggleArchived }: DroppableColumnProps) {
+function emptyLabelForStatus(status: TaskStatus, t: (key: string) => string): string {
+  switch (status) {
+    case 'backlog':
+      return t('kanban.emptyBacklog');
+    case 'in_progress':
+      return t('kanban.emptyInProgress');
+    case 'ai_review':
+      return t('kanban.emptyAiReview');
+    case 'human_review':
+      return t('kanban.emptyHumanReview');
+    case 'done':
+      return t('kanban.emptyDone');
+    default:
+      return t('kanban.emptyDefault');
+  }
+}
+
+const DroppableColumn = memo(function DroppableColumn({
+  status,
+  projectId,
+  tasks,
+  onTaskClick,
+  isOver,
+  onAddClick,
+  onArchiveAll,
+  archivedCount,
+  showArchived,
+  onToggleArchived,
+}: DroppableColumnProps) {
   const { t } = useTranslation(['tasks', 'common']);
-  const { setNodeRef } = useDroppable({
-    id: status
-  });
+  const { setNodeRef } = useDroppable({ id: status });
 
-  // Memoize taskIds to prevent SortableContext from re-rendering unnecessarily
-  const taskIds = useMemo(() => tasks.map((t) => t.id), [tasks]);
+  const taskIds = useMemo(() => tasks.map((task) => task.id), [tasks]);
 
-  // Create stable onClick handlers for each task to prevent unnecessary re-renders
   const onClickHandlers = useMemo(() => {
     const handlers = new Map<string, () => void>();
     tasks.forEach((task) => {
-      handlers.set(task.id, () => { onTaskClick(task); });
+      handlers.set(task.id, () => {
+        onTaskClick(task);
+      });
     });
     return handlers;
   }, [tasks, onTaskClick]);
 
-  // Memoize task card elements to prevent recreation on every render
-  const taskCards = useMemo(() => {
-    if (tasks.length === 0) return null;
-    return tasks.map((task) => (
-      <SortableTaskCard
-        key={task.id}
-        task={task}
-        onClick={onClickHandlers.get(task.id)!}
-      />
-    ));
-  }, [tasks, onClickHandlers]);
-
-  const getColumnBorderColor = (): string => {
-    switch (status) {
-      case 'backlog':
-        return 'column-backlog';
-      case 'in_progress':
-        return 'column-in-progress';
-      case 'ai_review':
-        return 'column-ai-review';
-      case 'human_review':
-        return 'column-human-review';
-      case 'done':
-        return 'column-done';
-      default:
-        return 'border-t-muted-foreground/30';
-    }
-  };
-
-  // Colorful header border based on status
-  const getHeaderBorderColor = (): string => {
-    switch (status) {
-      case 'backlog':
-        return 'border-b-gray-500/50';
-      case 'in_progress':
-        return 'border-b-orange-500/50';
-      case 'ai_review':
-        return 'border-b-violet-500/50';
-      case 'human_review':
-        return 'border-b-fuchsia-500/50';
-      case 'done':
-        return 'border-b-emerald-500/50';
-      default:
-        return 'border-b-white/10';
-    }
-  };
-
-  // Status icon shown beside the column label, tinted to match the column border
-  const ColumnIcon = (() => {
-    switch (status) {
-      case 'backlog': return Inbox;
-      case 'in_progress': return Loader2;
-      case 'ai_review': return Eye;
-      case 'human_review': return UserCheck;
-      case 'done': return CheckCircle2;
-      default: return Inbox;
-    }
-  })();
-  const columnIconColor = (() => {
-    switch (status) {
-      case 'backlog': return 'text-gray-400';
-      case 'in_progress': return 'text-orange-400';
-      case 'ai_review': return 'text-violet-400';
-      case 'human_review': return 'text-fuchsia-400';
-      case 'done': return 'text-emerald-400';
-      default: return 'text-muted-foreground';
-    }
-  })();
-
-  const emptyState = getEmptyStateContent(status, t);
-
   return (
     <div
       ref={setNodeRef}
-      className={cn(
-        'flex min-w-52 max-w-[22rem] flex-1 flex-col rounded-xl border border-white/5 bg-linear-to-b from-secondary/30 to-transparent backdrop-blur-sm transition-all duration-200',
-        getColumnBorderColor(),
-        'border-t-2',
-        isOver && 'drop-zone-highlight'
-      )}
+      className={cn('min-w-56 flex-1 transition-all duration-200', isOver && 'drop-zone-highlight')}
     >
-      {/* Column header - enhanced styling with colorful border */}
-      <div className={cn("flex items-center justify-between p-4 border-b-2", getHeaderBorderColor())}>
-        <div className="flex items-center gap-2">
-          <ColumnIcon
-            className={cn(
-              'h-4 w-4 shrink-0',
-              columnIconColor,
-              status === 'in_progress' && tasks.length > 0 && 'animate-spin'
-            )}
-          />
-          <h2 className="font-semibold text-sm text-foreground tracking-tight">
-            {TASK_STATUS_LABELS[status]}
-          </h2>
-          <span className="column-count-badge font-mono">
-            {tasks.length}
-          </span>
-        </div>
-        <div className="flex items-center gap-1">
-          {status === 'backlog' && onAddClick && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7 hover:bg-primary/10 hover:text-primary transition-colors"
-              onClick={onAddClick}
-            >
-              <Plus className="h-4 w-4" />
-            </Button>
-          )}
-          {status === 'done' && onArchiveAll && tasks.length > 0 && !showArchived && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7 hover:bg-muted-foreground/10 hover:text-muted-foreground transition-colors"
-              onClick={onArchiveAll}
-              title={t('tooltips.archiveAllDone')}
-            >
-              <Archive className="h-4 w-4" />
-            </Button>
-          )}
-          {status === 'done' && archivedCount !== undefined && archivedCount > 0 && onToggleArchived && (
-            <Tooltip delayDuration={200}>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className={cn(
-                    'h-7 w-7 transition-colors relative',
-                    showArchived
-                      ? 'text-primary bg-primary/10 hover:bg-primary/20'
-                      : 'hover:bg-muted-foreground/10 hover:text-muted-foreground'
-                  )}
-                  onClick={onToggleArchived}
-                  aria-pressed={showArchived}
-                >
-                  <Archive className="h-4 w-4" />
-                  <span className="absolute -top-1 -right-1 text-[10px] font-medium bg-muted rounded-full min-w-[14px] h-[14px] flex items-center justify-center">
-                    {archivedCount}
-                  </span>
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {showArchived ? t('common:projectTab.hideArchived') : t('common:projectTab.showArchived')}
-              </TooltipContent>
-            </Tooltip>
-          )}
-        </div>
+      <div className="mb-1 flex items-center justify-end gap-1">
+        {status === 'backlog' && onAddClick && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 hover:bg-primary/10 hover:text-primary transition-colors"
+            onClick={onAddClick}
+          >
+            <Plus className="h-4 w-4" />
+          </Button>
+        )}
+        {status === 'done' && onArchiveAll && tasks.length > 0 && !showArchived && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 hover:bg-muted-foreground/10 hover:text-muted-foreground transition-colors"
+            onClick={onArchiveAll}
+            title={t('tooltips.archiveAllDone')}
+          >
+            <Archive className="h-4 w-4" />
+          </Button>
+        )}
+        {status === 'done' && archivedCount !== undefined && archivedCount > 0 && onToggleArchived && (
+          <Tooltip delayDuration={200}>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className={cn(
+                  'h-7 w-7 transition-colors relative',
+                  showArchived
+                    ? 'text-primary bg-primary/10 hover:bg-primary/20'
+                    : 'hover:bg-muted-foreground/10 hover:text-muted-foreground'
+                )}
+                onClick={onToggleArchived}
+                aria-pressed={showArchived}
+              >
+                <Archive className="h-4 w-4" />
+                <span className="absolute -top-1 -right-1 text-xs font-medium bg-muted rounded-full min-w-[14px] h-[14px] flex items-center justify-center">
+                  {archivedCount}
+                </span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {showArchived ? t('common:projectTab.hideArchived') : t('common:projectTab.showArchived')}
+            </TooltipContent>
+          </Tooltip>
+        )}
       </div>
 
-      {/* Task list */}
-      <div className="flex-1 min-h-0">
-        <ScrollArea className="h-full px-3 pb-3 pt-2">
-          <SortableContext
-            items={taskIds}
-            strategy={verticalListSortingStrategy}
-          >
-            <div className="space-y-3 min-h-[120px]">
-              {tasks.length === 0 ? (
-                <div
-                  className={cn(
-                    'empty-column-dropzone flex flex-col items-center justify-center py-6',
-                    isOver && 'active'
-                  )}
-                >
-                  {isOver ? (
-                    <>
-                      <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center mb-2">
-                        <Plus className="h-4 w-4 text-primary" />
-                      </div>
-                      <span className="text-sm font-medium text-primary">{t('kanban.dropHere')}</span>
-                    </>
-                  ) : (
-                    <>
-                      {emptyState.icon}
-                      <span className="mt-2 text-sm font-medium text-muted-foreground/70">
-                        {emptyState.message}
-                      </span>
-                      {emptyState.subtext && (
-                        <span className="mt-0.5 text-xs text-muted-foreground/50">
-                          {emptyState.subtext}
-                        </span>
-                      )}
-                    </>
-                  )}
-                </div>
-              ) : (
-                taskCards
-              )}
-            </div>
-          </SortableContext>
-        </ScrollArea>
-      </div>
+      <SortableContext items={taskIds} strategy={verticalListSortingStrategy}>
+        <WorkColumn
+          title={TASK_STATUS_LABELS[status]}
+          tone={columnTone(status)}
+          projectId={projectId}
+          emptyLabel={emptyLabelForStatus(status, t)}
+          showMoreLabel={(count) => t('tasks:pipeline.showMore', { count, defaultValue: `Show ${count} more` })}
+          items={tasks.map((task) => {
+            const done = task.status === 'done' || Boolean(task.metadata?.archivedAt);
+            return {
+              id: task.id,
+              projectId: task.projectId,
+              collapsedByDefault: done,
+              render: ({ expanded, onToggle }) => (
+                <SortableTaskCard
+                  key={task.id}
+                  task={task}
+                  onClick={onClickHandlers.get(task.id)!}
+                  expanded={expanded}
+                  onToggle={onToggle}
+                  collapsedByDefault={done}
+                />
+              ),
+            };
+          })}
+        />
+      </SortableContext>
     </div>
   );
 }, droppableColumnPropsAreEqual);
 
-export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isRefreshing, isInitialized }: KanbanBoardProps) {
+export function KanbanBoard({
+  tasks,
+  projectId,
+  onTaskClick,
+  onNewTaskClick,
+  onRefresh,
+  isRefreshing,
+  isInitialized,
+}: KanbanBoardProps) {
   const { t } = useTranslation('tasks');
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [overColumnId, setOverColumnId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const toggleShowArchived = () => setShowArchived((prev) => !prev);
 
-  // Calculate archived count for Done column button
-  const archivedCount = useMemo(() =>
-    tasks.filter(t => t.metadata?.archivedAt).length,
-    [tasks]
-  );
+  const archivedCount = useMemo(() => tasks.filter((task) => task.metadata?.archivedAt).length, [tasks]);
 
-  // Filter tasks based on archive status
   const filteredTasks = useMemo(() => {
-    if (showArchived) {
-      return tasks; // Show all tasks including archived
-    }
-    return tasks.filter((t) => !t.metadata?.archivedAt);
+    if (showArchived) return tasks;
+    return tasks.filter((task) => !task.metadata?.archivedAt);
   }, [tasks, showArchived]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
-      activationConstraint: {
-        distance: 8 // 8px movement required before drag starts
-      }
+      activationConstraint: { distance: 8 },
     }),
     useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates
+      coordinateGetter: sortableKeyboardCoordinates,
     })
   );
 
@@ -400,26 +277,24 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
       in_progress: [],
       ai_review: [],
       human_review: [],
-      done: []
+      done: [],
     };
 
     filteredTasks.forEach((task) => {
-      // Copilot sub-statuses display in the in_progress column
       const column: KanbanColumn =
         task.status === 'copilot_running' || task.status === 'copilot_pr_opened'
           ? 'in_progress'
-          : (task.status);
+          : task.status;
       if (grouped[column] !== undefined) {
         grouped[column].push(task);
       }
     });
 
-    // Sort tasks within each column by createdAt (newest first)
     Object.keys(grouped).forEach((status) => {
       grouped[status as KanbanColumn].sort((a, b) => {
         const dateA = new Date(a.createdAt).getTime();
         const dateB = new Date(b.createdAt).getTime();
-        return dateB - dateA; // Descending order (newest first)
+        return dateB - dateA;
       });
     });
 
@@ -427,17 +302,16 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
   }, [filteredTasks]);
 
   const handleArchiveAll = async () => {
-    // Get projectId from the first task (all tasks should have the same projectId)
-    const projectId = tasks[0]?.projectId;
-    if (!projectId) {
+    const targetProjectId = projectId ?? tasks[0]?.projectId;
+    if (!targetProjectId) {
       toast({ variant: 'destructive', title: t('kanban.archiveFailed'), description: 'No project found' });
       return;
     }
 
-    const doneTaskIds = tasksByStatus.done.map((t) => t.id);
+    const doneTaskIds = tasksByStatus.done.map((task) => task.id);
     if (doneTaskIds.length === 0) return;
 
-    const result = await archiveTasks(projectId, doneTaskIds);
+    const result = await archiveTasks(targetProjectId, doneTaskIds);
     if (!result.success) {
       toast({ variant: 'destructive', title: t('kanban.archiveFailed'), description: result.error });
     } else {
@@ -446,34 +320,25 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
   };
 
   const handleDragStart = (event: DragStartEvent) => {
-    const { active } = event;
-    const task = tasks.find((t) => t.id === active.id);
-    if (task) {
-      setActiveTask(task);
-    }
+    const task = tasks.find((tItem) => tItem.id === event.active.id);
+    if (task) setActiveTask(task);
   };
 
   const handleDragOver = (event: DragOverEvent) => {
     const { over } = event;
-
     if (!over) {
       setOverColumnId(null);
       return;
     }
 
     const overId = over.id as string;
-
-    // Check if over a column
     if (TASK_STATUS_COLUMNS.includes(overId as KanbanColumn)) {
       setOverColumnId(overId);
       return;
     }
 
-    // Check if over a task - get its column
-    const overTask = tasks.find((t) => t.id === overId);
-    if (overTask) {
-      setOverColumnId(overTask.status);
-    }
+    const overTask = tasks.find((tItem) => tItem.id === overId);
+    if (overTask) setOverColumnId(overTask.status);
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -486,34 +351,26 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
     const activeTaskId = active.id as string;
     const overId = over.id as string;
 
-    // Check if dropped on a column
     if (TASK_STATUS_COLUMNS.includes(overId as KanbanColumn)) {
       const newStatus = overId as KanbanColumn;
-      const task = tasks.find((t) => t.id === activeTaskId);
-
+      const task = tasks.find((tItem) => tItem.id === activeTaskId);
       if (task && task.status !== newStatus) {
-        // Persist status change to file and update local state
-        persistTaskStatus(activeTaskId, newStatus);
+        void persistTaskStatus(activeTaskId, newStatus);
       }
       return;
     }
 
-    // Check if dropped on another task - move to that task's column
-    const overTask = tasks.find((t) => t.id === overId);
+    const overTask = tasks.find((tItem) => tItem.id === overId);
     if (overTask) {
-      const task = tasks.find((t) => t.id === activeTaskId);
+      const task = tasks.find((tItem) => tItem.id === activeTaskId);
       if (task && task.status !== overTask.status) {
-        // Persist status change to file and update local state
-        persistTaskStatus(activeTaskId, overTask.status);
+        void persistTaskStatus(activeTaskId, overTask.status);
       }
     }
   };
 
   return (
     <div className="flex h-full flex-col">
-      {/* Animated Plan → Code → Test pipeline census across all tasks */}
-      <PipelineHeader tasks={filteredTasks} />
-      {/* Kanban header with refresh button */}
       {onRefresh && (
         <div className="flex items-center justify-end px-6 pt-4 pb-2">
           <Button
@@ -523,58 +380,56 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
             disabled={isRefreshing}
             className="gap-2 text-muted-foreground hover:text-foreground"
           >
-            <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
+            <RefreshCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} />
             {isRefreshing ? 'Refreshing...' : 'Refresh Tasks'}
           </Button>
         </div>
       )}
-      {/* Loading: shimmer skeleton columns instead of misleading empty states */}
       {isInitialized === false ? (
         <div className="flex flex-1 gap-3 overflow-x-auto p-4">
           {TASK_STATUS_COLUMNS.map((status, i) => (
             <div
               key={status}
-              className="flex min-w-52 max-w-[22rem] flex-1 flex-col rounded-xl border border-white/5 bg-linear-to-b from-secondary/30 to-transparent p-4"
+              className="flex min-w-52 max-w-[22rem] flex-1 flex-col rounded-xl border border-border bg-card p-4"
             >
               <KanbanColumnSkeleton cards={i === 0 ? 3 : i < 3 ? 2 : 1} />
             </div>
           ))}
         </div>
       ) : (
-      /* Kanban columns */
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCorners}
-        onDragStart={handleDragStart}
-        onDragOver={handleDragOver}
-        onDragEnd={handleDragEnd}
-      >
-        <div className="flex flex-1 gap-3 overflow-x-auto p-4">
-          {TASK_STATUS_COLUMNS.map((status) => (
-            <DroppableColumn
-              key={status}
-              status={status}
-              tasks={tasksByStatus[status]}
-              onTaskClick={onTaskClick}
-              isOver={overColumnId === status}
-              onAddClick={status === 'backlog' && isInitialized ? onNewTaskClick : undefined}
-              onArchiveAll={status === 'done' ? handleArchiveAll : undefined}
-              archivedCount={status === 'done' ? archivedCount : undefined}
-              showArchived={status === 'done' ? showArchived : undefined}
-              onToggleArchived={status === 'done' ? toggleShowArchived : undefined}
-            />
-          ))}
-        </div>
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCorners}
+          onDragStart={handleDragStart}
+          onDragOver={handleDragOver}
+          onDragEnd={handleDragEnd}
+        >
+          <div className="flex flex-1 gap-3 overflow-x-auto p-4">
+            {TASK_STATUS_COLUMNS.map((status) => (
+              <DroppableColumn
+                key={status}
+                status={status}
+                projectId={projectId}
+                tasks={tasksByStatus[status]}
+                onTaskClick={onTaskClick}
+                isOver={overColumnId === status}
+                onAddClick={status === 'backlog' && isInitialized ? onNewTaskClick : undefined}
+                onArchiveAll={status === 'done' ? () => { void handleArchiveAll(); } : undefined}
+                archivedCount={status === 'done' ? archivedCount : undefined}
+                showArchived={status === 'done' ? showArchived : undefined}
+                onToggleArchived={status === 'done' ? toggleShowArchived : undefined}
+              />
+            ))}
+          </div>
 
-        {/* Drag overlay - enhanced visual feedback */}
-        <DragOverlay>
-          {activeTask ? (
-            <div className="drag-overlay-card">
-              <TaskCard task={activeTask} onClick={() => {}} />
-            </div>
-          ) : null}
-        </DragOverlay>
-      </DndContext>
+          <DragOverlay>
+            {activeTask ? (
+              <div className="drag-overlay-card">
+                <TaskCard task={activeTask} onClick={() => {}} />
+              </div>
+            ) : null}
+          </DragOverlay>
+        </DndContext>
       )}
     </div>
   );

@@ -1,4 +1,9 @@
 {
+  "pipeline": {
+    "failed": "Falhas ({{count}})",
+    "showArchived": "Mostrar arquivadas",
+    "showMore": "Mostrar mais {{count}}"
+  },
   "status": {
     "backlog": "Backlog",
     "todo": "A Fazer",

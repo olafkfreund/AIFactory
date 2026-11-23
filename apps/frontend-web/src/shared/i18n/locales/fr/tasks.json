@@ -1,4 +1,9 @@
 {
+  "pipeline": {
+    "failed": "Échecs ({{count}})",
+    "showArchived": "Afficher les archivées",
+    "showMore": "Afficher {{count}} de plus"
+  },
   "status": {
     "backlog": "Backlog",
     "todo": "À faire",

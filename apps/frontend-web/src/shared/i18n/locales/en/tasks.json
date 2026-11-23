@@ -1,4 +1,9 @@
 {
+  "pipeline": {
+    "failed": "Failed ({{count}})",
+    "showArchived": "Show archived",
+    "showMore": "Show {{count}} more"
+  },
   "status": {
     "backlog": "Backlog",
     "todo": "To Do",

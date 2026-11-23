@@ -6,45 +6,39 @@ import { useProjectStore } from '../stores/project-store';
 import { useTaskStore, loadTasks } from '../stores/task-store';
 import { useEnsureProjects } from '../hooks/useEnsureProjects';
 import { findProjectByRef, projectSlug } from '../lib/project-route';
+import { useTranslation } from 'react-i18next';
 
 /**
  * Standalone deep-link page showing EVERY active agent's Live Console for a
- * project at once, in a responsive grid — the multi-agent counterpart to the
- * single-task ``/console/:projectId/:specId`` page.
+ * project at once, in a responsive grid.
  *
  * URL pattern: ``/p/:slug/console`` (legacy ``/console/:projectId`` redirects here)
- *
- *   https://aifactory.example.com/console/ac62db91-...
- *
- * Each tile is an independent read-only rmux stream (its own WebSocket +
- * per-task FIFO); click the expand icon to open that one task fullscreen.
- * Shareable like the single console — openable on a wall display to watch
- * the whole fleet build.
  */
 export function ConsoleGridPage(): ReactNode {
   const { slug } = useParams<{ slug: string }>();
-  useEnsureProjects();
+  const { ready, error, retry } = useEnsureProjects();
+  const { t } = useTranslation('welcome');
   const projects = useProjectStore((s) => s.projects);
-  const project = slug ? findProjectByRef(projects, slug) : undefined;
-  const projectId = project?.id ?? slug;
+  const project = ready && !error && slug ? findProjectByRef(projects, slug) : undefined;
+  const projectId = project?.id;
   const tasks = useTaskStore((s) => s.tasks);
 
   useEffect(() => {
-    if (projectId) loadTasks(projectId);
+    if (projectId) void loadTasks(projectId);
   }, [projectId]);
 
   // "Active" = currently doing work: running, or in AI review (QA agents).
   const active = useMemo(
     () =>
       tasks.filter(
-        (t) =>
-          t.projectId === projectId &&
-          (t.status === 'in_progress' || t.status === 'ai_review')
+        (tItem) =>
+          tItem.projectId === projectId &&
+          (tItem.status === 'in_progress' || tItem.status === 'ai_review')
       ),
     [tasks, projectId]
   );
 
-  if (!projectId) {
+  if (!slug) {
     return (
       <div className="flex h-screen items-center justify-center text-muted-foreground">
         <p>
@@ -55,11 +49,15 @@ export function ConsoleGridPage(): ReactNode {
     );
   }
 
+  if (!ready) return null;
+  if (error) return <div role="alert">{error} <button onClick={retry}>{t('projectsPage.retry')}</button></div>;
+  if (!projectId) return <div>{t('projectsPage.notFound', { ref: slug })}</div>;
+
   return (
     <div className="flex h-screen flex-col bg-background">
       <header className="flex items-center gap-3 border-b border-border px-4 py-2 text-sm">
         <Link
-          to="/"
+          to={project ? `/p/${encodeURIComponent(projectSlug(projects, project))}` : '/'}
           className="flex items-center gap-1 text-muted-foreground hover:text-foreground"
           title="Back to portal"
         >
@@ -105,7 +103,7 @@ export function ConsoleGridPage(): ReactNode {
                     {task.specId}
                   </code>
                   <Link
-                    to={`/p/${project ? projectSlug(projects, project) : task.projectId}/console/${task.specId}`}
+                    to={`/p/${encodeURIComponent(project ? projectSlug(projects, project) : task.projectId)}/console/${encodeURIComponent(task.specId)}`}
                     className="ml-auto shrink-0 text-muted-foreground hover:text-foreground"
                     title="Open this console fullscreen"
                   >
