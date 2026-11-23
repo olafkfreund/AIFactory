@@ -123,8 +123,10 @@ def test_default_location_is_only_exposed_within_browse_roots(api, monkeypatch):
 
 def test_default_location_handles_expanduser_runtime_error(api, monkeypatch):
     client, _ = api
+
     def broken_root():
         raise RuntimeError("home directory unavailable")
+
     monkeypatch.setattr(
         "server.services.project_workspace_service.workspace_root", broken_root
     )

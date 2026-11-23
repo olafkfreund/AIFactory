@@ -353,7 +353,9 @@ async def seed_tenant_defaults(disable_auth: bool) -> None:
             all_users = (await session.execute(select(User.id, User.oidc_sub))).all()
             all_user_ids = [uid for uid, _ in all_users]
             oidc_user_ids = {
-                uid for uid, sub in all_users if sub is not None and uid != DEFAULT_USER_ID
+                uid
+                for uid, sub in all_users
+                if sub is not None and uid != DEFAULT_USER_ID
             }
             for uid in all_user_ids:
                 if uid not in existing_members:
@@ -410,7 +412,9 @@ async def seed_tenant_defaults(disable_auth: bool) -> None:
                             if member.user_id == DEFAULT_USER_ID
                             else member.role,
                             provenance=(
-                                "backfill" if member.user_id in oidc_user_ids else "manual"
+                                "backfill"
+                                if member.user_id in oidc_user_ids
+                                else "manual"
                             ),
                         )
                     )

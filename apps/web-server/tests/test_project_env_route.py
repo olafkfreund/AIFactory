@@ -144,11 +144,18 @@ def test_non_admin_gets_explicit_allowlist(api, who):
     assert data["githubTokenSet"] is True
     assert all(data["graphitiKeysSet"].values())
     assert data["customMcpServers"] == [
-        {"id": "http-id", "name": "custom", "type": "http", "url": "https://mcp.test/path"},
+        {
+            "id": "http-id",
+            "name": "custom",
+            "type": "http",
+            "url": "https://mcp.test/path",
+        },
         {"id": "stdio-id", "name": "command", "type": "stdio", "command": "npx"},
     ]
     assert "secret-sentinel" not in json.dumps(data)
-    assert "gitToken" not in data and "openaiApiKey" not in data["graphitiProviderConfig"]
+    assert (
+        "gitToken" not in data and "openaiApiKey" not in data["graphitiProviderConfig"]
+    )
 
 
 @pytest.mark.parametrize(
@@ -171,11 +178,17 @@ def test_viewer_mcp_metadata_rejects_malformed_fields(api, monkeypatch):
     client, _ = api
     settings = {
         "GRAPHITI_EMBEDDER_PROVIDER": "https://u:provider-secret@host/x",
-        "CUSTOM_MCP_SERVERS": json.dumps([
-            {"name": {"secret": "name-secret"}, "type": ["type-secret"], "url": 42,
-             "command": "TOKEN=command-secret /usr/bin/npx --arg value"},
-            {"name": "broken", "type": "http", "url": "https://u:p@[::1/x"},
-        ])
+        "CUSTOM_MCP_SERVERS": json.dumps(
+            [
+                {
+                    "name": {"secret": "name-secret"},
+                    "type": ["type-secret"],
+                    "url": 42,
+                    "command": "TOKEN=command-secret /usr/bin/npx --arg value",
+                },
+                {"name": "broken", "type": "http", "url": "https://u:p@[::1/x"},
+            ]
+        ),
     }
     monkeypatch.setattr(
         context.project_settings_store,
