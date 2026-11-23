@@ -999,7 +999,7 @@ async def detect_local_llm_providers():
 @honest_status
 async def list_ollama_models(
     ollamaBaseUrl: str = Query(default="http://localhost:11434"),
-):
+) -> dict[str, Any]:
     """List available Ollama models."""
     try:
         import httpx

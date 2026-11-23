@@ -5515,7 +5515,10 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response List Ollama Models Api Settings Ollama Models Get
         '422':
           description: Validation Error
           content:
@@ -5537,7 +5540,10 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response List Ollama Models Post Api Settings Ollama Models Post
         '422':
           description: Validation Error
           content:
