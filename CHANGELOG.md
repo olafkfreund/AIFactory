@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+## 3.21.3 - 2026-11-23
+
+Merged to `dev` since 3.21.2.
+
+### Fixed
+
+- The investigation test pod copies the source with `cp -R /src/. /work/` instead of `cp -a`, which failed on the read-only mount. (#2203, #2204)
+
 ## 3.21.2 - 2026-11-23
 
 Merged to `dev` since 3.21.1.
