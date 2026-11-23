@@ -356,6 +356,7 @@
   "agentProfile": {
     "label": "Profil d'agent",
     "title": "Profil d'agent par défaut",
+    "autoDefault": "Auto (par défaut)",
     "sectionDescription": "Sélectionnez une configuration prédéfinie pour le modèle et le niveau de réflexion",
     "profilesInfo": "Les profils d'agent fournissent des configurations prédéfinies pour le modèle Claude et le niveau de réflexion. Quand vous créez une nouvelle tâche, ces paramètres seront utilisés par défaut. Vous pouvez toujours les modifier dans l'assistant de création de tâche.",
     "custom": "Personnalisé",

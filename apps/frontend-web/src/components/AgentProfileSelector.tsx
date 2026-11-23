@@ -28,11 +28,14 @@ import {
   DEFAULT_PHASE_MODELS,
   DEFAULT_PHASE_THINKING,
   fetchOllamaModels,
+  ollamaProbeUrl,
+  DEFAULT_OLLAMA_BASE_URL,
   fetchOpenAIEndpointModels,
   fetchGitHubModels
 } from '../shared/constants';
 import type { ModelType, ThinkingLevel } from '../shared/types';
 import type { PhaseModelConfig, PhaseThinkingConfig } from '../shared/types/settings';
+import { useSettingsStore } from '../stores/settings-store';
 import { cn } from '../lib/utils';
 
 interface AgentProfileSelectorProps {
@@ -90,15 +93,30 @@ export function AgentProfileSelector({
   disabled
 }: AgentProfileSelectorProps) {
   const { t } = useTranslation('settings');
+  const settings = useSettingsStore((state) => state.settings);
   const [showPhaseDetails, setShowPhaseDetails] = useState(false);
   const [ollamaModels, setOllamaModels] = useState<{ value: string; label: string }[]>([]);
   const [openaiEndpointModels, setOpenaiEndpointModels] = useState<{ value: string; label: string }[]>([]);
   const [githubModels, setGithubModels] = useState<{ value: string; label: string }[]>([]);
 
+  const ollamaBaseUrl = ollamaProbeUrl(settings.ollamaBaseUrl, settings.llmOllamaBaseUrl);
+  const shouldProbeOllama =
+    settings.llmProvider === 'ollama' ||
+    settings.graphitiLlmProvider === 'ollama' ||
+    settings.memoryEmbeddingProvider === 'ollama' ||
+    Boolean(ollamaBaseUrl && ollamaBaseUrl !== DEFAULT_OLLAMA_BASE_URL);
+
   useEffect(() => {
-    fetchOllamaModels().then(setOllamaModels);
-    fetchOpenAIEndpointModels().then(setOpenaiEndpointModels);
-    fetchGitHubModels().then(setGithubModels);
+    if (shouldProbeOllama) {
+      void fetchOllamaModels(ollamaBaseUrl).then(setOllamaModels);
+    } else {
+      setOllamaModels([]);
+    }
+  }, [shouldProbeOllama, ollamaBaseUrl]);
+
+  useEffect(() => {
+    void fetchOpenAIEndpointModels().then(setOpenaiEndpointModels);
+    void fetchGitHubModels().then(setGithubModels);
   }, []);
 
   const isCustom = profileId === 'custom';

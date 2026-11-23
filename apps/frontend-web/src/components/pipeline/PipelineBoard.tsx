@@ -69,6 +69,7 @@ function agentCount(task: Task): number {
 
 /** The stage a task is actively working RIGHT NOW (null when idle/terminal). */
 function activeStage(task: Task): Stage | null {
+  if (task.status === 'done') return null;
   const phase = task.executionProgress?.phase;
   if (!phase || phase === 'idle' || phase === 'complete' || phase === 'failed') return null;
   if (phase === 'coding') return 'code';

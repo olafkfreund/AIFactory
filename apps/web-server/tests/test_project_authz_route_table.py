@@ -188,6 +188,7 @@ NON_PROJECT_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("POST", "/api/settings/import-claude-credentials"),
         ("GET", "/api/settings/local-llm/detect"),
         ("GET", "/api/settings/ollama/models"),
+        ("POST", "/api/settings/ollama/models"),
         ("POST", "/api/settings/ollama/pull"),
         ("POST", "/api/settings/ollama/test"),
         ("GET", "/api/settings/openai-compat/models"),

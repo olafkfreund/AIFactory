@@ -1535,6 +1535,14 @@ components:
       type: object
       title: AutoSwitchSettingsUpdate
       description: Model for updating auto-switch settings.
+    Body_list_ollama_models_post_api_settings_ollama_models_post:
+      properties:
+        ollamaBaseUrl:
+          type: string
+          title: Ollamabaseurl
+          default: http://localhost:11434
+      type: object
+      title: Body_list_ollama_models_post_api_settings_ollama_models_post
     Body_pull_ollama_model_api_settings_ollama_pull_post:
       properties:
         modelName:

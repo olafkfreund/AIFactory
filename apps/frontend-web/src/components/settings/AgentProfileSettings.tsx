@@ -9,6 +9,8 @@ import {
   DEFAULT_PHASE_MODELS,
   DEFAULT_PHASE_THINKING,
   fetchOllamaModels,
+  ollamaProbeUrl,
+  DEFAULT_OLLAMA_BASE_URL,
   fetchOpenAIEndpointModels
 } from '../../shared/constants';
 import { useSettingsStore, saveSettings } from '../../stores/settings-store';
@@ -44,14 +46,29 @@ const PHASE_KEYS: Array<keyof PhaseModelConfig> = ['spec', 'planning', 'coding',
 export function AgentProfileSettings() {
   const { t } = useTranslation('settings');
   const settings = useSettingsStore((state) => state.settings);
-  const selectedProfileId = settings.selectedAgentProfile || 'auto';
-  const [showPhaseConfig, setShowPhaseConfig] = useState(selectedProfileId === 'auto');
+  const savedProfileId = settings.selectedAgentProfile ? settings.selectedAgentProfile : null;
+  const effectiveProfileId = savedProfileId ?? 'auto';
+  const [showPhaseConfig, setShowPhaseConfig] = useState(effectiveProfileId === 'auto');
   const [ollamaModels, setOllamaModels] = useState<{ value: string; label: string }[]>([]);
   const [openaiEndpointModels, setOpenaiEndpointModels] = useState<{ value: string; label: string }[]>([]);
 
+  const ollamaBaseUrl = ollamaProbeUrl(settings.ollamaBaseUrl, settings.llmOllamaBaseUrl);
+  const shouldProbeOllama =
+    settings.llmProvider === 'ollama' ||
+    settings.graphitiLlmProvider === 'ollama' ||
+    settings.memoryEmbeddingProvider === 'ollama' ||
+    Boolean(ollamaBaseUrl && ollamaBaseUrl !== DEFAULT_OLLAMA_BASE_URL);
+
   useEffect(() => {
-    fetchOllamaModels().then(setOllamaModels);
-    fetchOpenAIEndpointModels().then(setOpenaiEndpointModels);
+    if (shouldProbeOllama) {
+      void fetchOllamaModels(ollamaBaseUrl).then(setOllamaModels);
+    } else {
+      setOllamaModels([]);
+    }
+  }, [shouldProbeOllama, ollamaBaseUrl]);
+
+  useEffect(() => {
+    void fetchOpenAIEndpointModels().then(setOpenaiEndpointModels);
   }, []);
 
   // Get current phase config from settings or defaults
@@ -121,7 +138,11 @@ export function AgentProfileSettings() {
    * Render a single profile card
    */
   const renderProfileCard = (profile: AgentProfile) => {
-    const isSelected = selectedProfileId === profile.id;
+    const isSelected = savedProfileId === profile.id;
+    const isImplicitDefault = !savedProfileId && profile.id === 'auto';
+    const displayName = isImplicitDefault
+      ? t('agentProfile.autoDefault', 'Auto (default)')
+      : profile.name;
     const Icon = iconMap[profile.icon || 'Brain'] || Brain;
 
     return (
@@ -160,7 +181,7 @@ export function AgentProfileSettings() {
           </div>
 
           <div className="flex-1 min-w-0 pr-6">
-            <h3 className="font-medium text-sm text-foreground">{profile.name}</h3>
+            <h3 className="font-medium text-sm text-foreground">{displayName}</h3>
             <p className="mt-0.5 text-xs text-muted-foreground line-clamp-2">
               {profile.description}
             </p>
@@ -199,7 +220,7 @@ export function AgentProfileSettings() {
         </div>
 
         {/* Phase Configuration (only for Auto profile) */}
-        {selectedProfileId === 'auto' && (
+        {effectiveProfileId === 'auto' && (
           <div className="mt-6 rounded-lg border border-border bg-card">
             {/* Header - Collapsible */}
             <button

@@ -93,7 +93,7 @@ export async function apiRequest<T>(
       const errorMsg = extractErrorMessage(errorData)
         || `HTTP ${response.status}: ${response.statusText}`;
       const logFn = response.status >= 500 ? log.error : log.warn;
-      logFn(`API error: ${method} ${endpoint}`, { status: response.status, error: errorMsg });
+      logFn(`API error: ${method} ${endpoint.split('?')[0]}`, { status: response.status });
       return {
         success: false,
         error: errorMsg,
@@ -123,11 +123,11 @@ export async function apiRequest<T>(
     return { success: true, data };
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      log.debug(`Request aborted: ${method} ${endpoint}`);
+      log.debug(`Request aborted: ${method} ${endpoint.split('?')[0]}`);
       return { success: false, error: 'Request aborted' };
     }
     const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-    log.error(`Network error: ${method} ${endpoint}`, error);
+    log.error(`Network error: ${method} ${endpoint.split('?')[0]}`);
     return {
       success: false,
       error: errorMsg,
