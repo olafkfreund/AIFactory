@@ -44,6 +44,7 @@ function derive(tasks: Task[]): Derived {
   let agents = 0;
 
   for (const task of tasks) {
+    if (task.status === 'done') continue;
     const stage = macroStage(task);
     if (stage) counts[stage] += 1;
 

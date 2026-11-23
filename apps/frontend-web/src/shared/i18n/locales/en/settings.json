@@ -356,6 +356,7 @@
   "agentProfile": {
     "label": "Agent Profile",
     "title": "Default Agent Profile",
+    "autoDefault": "Auto (default)",
     "sectionDescription": "Select a preset configuration for model and thinking level",
     "profilesInfo": "Agent profiles provide preset configurations for Claude model and thinking level. When you create a new task, these settings will be used as defaults. You can always override them in the task creation wizard.",
     "custom": "Custom",

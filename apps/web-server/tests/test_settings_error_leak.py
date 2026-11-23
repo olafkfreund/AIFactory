@@ -71,6 +71,7 @@ def client() -> TestClient:
     ("method", "path", "body"),
     [
         ("get", "/api/settings/ollama/models", None),
+        ("post", "/api/settings/ollama/models", {"ollamaBaseUrl": "http://x:1"}),
         ("get", "/api/settings/openai-compat/models", None),
         ("post", "/api/settings/openai-compat/test", {"baseUrl": "http://x:1"}),
         ("post", "/api/settings/ollama/pull", {"modelName": "llama3"}),

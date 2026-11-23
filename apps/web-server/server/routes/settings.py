@@ -999,7 +999,7 @@ async def detect_local_llm_providers():
 @honest_status
 async def list_ollama_models(
     ollamaBaseUrl: str = Query(default="http://localhost:11434"),
-):
+) -> dict[str, Any]:
     """List available Ollama models."""
     try:
         import httpx
@@ -1048,6 +1048,16 @@ async def list_ollama_models(
             "success": False,
             "error": client_error(logger, "Failed to list Ollama models", e),
         }
+
+
+@router.post("/ollama/models")
+@honest_status
+async def list_ollama_models_post(
+    ollama_base_url: str = Body(
+        default="http://localhost:11434", embed=True, alias="ollamaBaseUrl"
+    ),
+) -> dict[str, Any]:
+    return await list_ollama_models(ollama_base_url)
 
 
 @router.get("/openai-compat/models")
