@@ -19,11 +19,11 @@ describe('B6 provider probe gating and B12 unset profile rendering', () => {
       settings: {
         ...DEFAULT_APP_SETTINGS,
         selectedAgentProfile: undefined,
-        llmProvider: undefined,
         graphitiLlmProvider: undefined,
         memoryEmbeddingProvider: undefined,
         ollamaBaseUrl: undefined,
-        llmOllamaBaseUrl: undefined,
+        llmOllamaBaseUrl: 'http://localhost:11434',
+        llmProvider: 'anthropic',
         llmOpenaiBaseUrl: undefined,
       },
     });
@@ -126,13 +126,29 @@ describe('B6 provider probe gating and B12 unset profile rendering', () => {
     );
 
     await waitFor(() => {
-      expect(apiSpy).toHaveBeenCalledWith(
-        `/settings/ollama/models?ollamaBaseUrl=${encodeURIComponent('http://ollama.internal:11434')}`
-      );
+      expect(apiSpy).toHaveBeenCalledWith('/settings/ollama/models', {
+        method: 'POST',
+        body: { ollamaBaseUrl: 'http://ollama.internal:11434' },
+      });
       expect(apiSpy).toHaveBeenCalledWith(
         `/settings/openai-compat/models?baseUrl=${encodeURIComponent('http://vllm.internal:8000')}`
       );
     });
+  });
+
+  it('uses an explicit LLM URL when the other Ollama URL is the server default', async () => {
+    const apiSpy = vi.spyOn(apiClient, 'apiRequest').mockResolvedValue({ success: true, data: { models: [] } });
+    const settings: AppSettings = {
+      ...DEFAULT_APP_SETTINGS,
+      llmProvider: 'anthropic',
+      ollamaBaseUrl: 'http://localhost:11434',
+      llmOllamaBaseUrl: 'http://custom.internal:11434',
+    };
+    render(<GeneralSettings settings={settings} onSettingsChange={vi.fn()} section="agent" />);
+    await waitFor(() => expect(apiSpy).toHaveBeenCalledWith('/settings/ollama/models', {
+      method: 'POST',
+      body: { ollamaBaseUrl: 'http://custom.internal:11434' },
+    }));
   });
 
   it('shows "Auto (default)" without highlighting any profile card when selectedAgentProfile is unset, and keeps phase controls visible', async () => {

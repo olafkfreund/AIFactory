@@ -33,12 +33,9 @@ interface AddProjectModalProps {
   onProjectAdded?: (project: Project, needsInit: boolean) => void;
 }
 
-// Default projects folder - can be customized
-const DEFAULT_PROJECTS_FOLDER = '/home';
-
 export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProjectModalProps) {
   const { t } = useTranslation('dialogs');
-  const [projectsFolder, setProjectsFolder] = useState(DEFAULT_PROJECTS_FOLDER);
+  const [projectsFolder, setProjectsFolder] = useState('');
   const [discoveredProjects, setDiscoveredProjects] = useState<DiscoveredProject[]>([]);
   const [selectedProject, setSelectedProject] = useState<DiscoveredProject | null>(null);
   const [customPath, setCustomPath] = useState('');
@@ -56,6 +53,7 @@ export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProje
   const [gitBranch, setGitBranch] = useState('');
   const [gitName, setGitName] = useState('');
   const hasScannedLocalRef = useRef(false);
+  const defaultRequestRef = useRef(0);
 
   // Filter and sort projects - Claude-ready projects first
   const sortedProjects = [...discoveredProjects].sort((a, b) => {
@@ -74,6 +72,7 @@ export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProje
 
   // Scan for projects in the given (or current) folder
   const scanProjects = useCallback(async (folderOverride?: string) => {
+    if (folderOverride === undefined) defaultRequestRef.current += 1;
     const targetFolder = (folderOverride ?? projectsFolder).trim();
     if (!targetFolder) return;
 
@@ -101,8 +100,9 @@ export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProje
 
   // Reset modal state on open only (no auto-scan in clone mode)
   useEffect(() => {
+    defaultRequestRef.current += 1;
     if (open) {
-      setProjectsFolder(DEFAULT_PROJECTS_FOLDER);
+      setProjectsFolder('');
       setDiscoveredProjects([]);
       setCustomPath('');
       setSelectedProject(null);
@@ -124,19 +124,18 @@ export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProje
       return;
     }
     hasScannedLocalRef.current = true;
+    const request = ++defaultRequestRef.current;
 
-    let initialFolder = DEFAULT_PROJECTS_FOLDER;
     try {
       const defaultLoc = await window.API.getDefaultProjectLocation();
-      if (typeof defaultLoc === 'string' && defaultLoc.trim()) {
-        initialFolder = defaultLoc.trim();
+      if (request === defaultRequestRef.current && typeof defaultLoc === 'string' && defaultLoc.trim()) {
+        const initialFolder = defaultLoc.trim();
+        setProjectsFolder(initialFolder);
+        await scanProjects(initialFolder);
       }
     } catch {
-      // Fall back to DEFAULT_PROJECTS_FOLDER
+      // Leave the folder ready for manual entry.
     }
-
-    setProjectsFolder(initialFolder);
-    await scanProjects(initialFolder);
   }, [scanProjects]);
 
   const handleAddProject = async () => {
@@ -254,7 +253,7 @@ export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProje
             </button>
             <button
               type="button"
-              onClick={() => { setMode('clone'); }}
+              onClick={() => { defaultRequestRef.current += 1; setMode('clone'); }}
               className={cn(
                 'flex-1 text-sm font-medium rounded-md px-3 py-1.5 transition-colors',
                 mode === 'clone'
@@ -326,7 +325,7 @@ export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProje
                 id="projects-folder"
                 placeholder="/home/user/projects"
                 value={projectsFolder}
-                onChange={(e) => { setProjectsFolder(e.target.value); }}
+                onChange={(e) => { defaultRequestRef.current += 1; setProjectsFolder(e.target.value); }}
                 onKeyDown={handleKeyDown}
               />
               <Button

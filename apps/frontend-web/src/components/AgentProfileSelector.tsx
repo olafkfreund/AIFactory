@@ -28,6 +28,8 @@ import {
   DEFAULT_PHASE_MODELS,
   DEFAULT_PHASE_THINKING,
   fetchOllamaModels,
+  ollamaProbeUrl,
+  DEFAULT_OLLAMA_BASE_URL,
   fetchOpenAIEndpointModels,
   fetchGitHubModels
 } from '../shared/constants';
@@ -97,14 +99,12 @@ export function AgentProfileSelector({
   const [openaiEndpointModels, setOpenaiEndpointModels] = useState<{ value: string; label: string }[]>([]);
   const [githubModels, setGithubModels] = useState<{ value: string; label: string }[]>([]);
 
-  const ollamaBaseUrl = [settings.ollamaBaseUrl, settings.llmOllamaBaseUrl]
-    .find((url) => Boolean(url?.trim()))
-    ?.trim();
+  const ollamaBaseUrl = ollamaProbeUrl(settings.ollamaBaseUrl, settings.llmOllamaBaseUrl);
   const shouldProbeOllama =
     settings.llmProvider === 'ollama' ||
     settings.graphitiLlmProvider === 'ollama' ||
     settings.memoryEmbeddingProvider === 'ollama' ||
-    Boolean(ollamaBaseUrl);
+    Boolean(ollamaBaseUrl && ollamaBaseUrl !== DEFAULT_OLLAMA_BASE_URL);
 
   useEffect(() => {
     if (shouldProbeOllama) {

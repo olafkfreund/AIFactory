@@ -116,10 +116,12 @@ export function AppSettingsDialog({ open, onOpenChange, initialSection, initialP
   const [projectSettingsHook, setProjectSettingsHook] = useState<UseProjectSettingsReturn | null>(null);
   const [projectError, setProjectError] = useState<string | null>(null);
 
-  // Load app version on mount
+  // Retry a failed version lookup when the dialog reopens.
   useEffect(() => {
-    window.API.getAppVersion().then(setVersion);
-  }, []);
+    if (open) {
+      window.API.getAppVersion().then(setVersion);
+    }
+  }, [open]);
 
   // Memoize the callback to avoid infinite loops
   const handleProjectHookReady = useCallback((hook: UseProjectSettingsReturn | null) => {

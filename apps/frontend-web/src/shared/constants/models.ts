@@ -68,12 +68,20 @@ export const ALL_AVAILABLE_MODELS = [
 // Backward compatibility alias
 export const QA_AVAILABLE_MODELS = ALL_AVAILABLE_MODELS;
 
+export const DEFAULT_OLLAMA_BASE_URL = 'http://localhost:11434';
+
+export function ollamaProbeUrl(ollamaBaseUrl?: string, llmOllamaBaseUrl?: string): string | undefined {
+  const urls = [ollamaBaseUrl?.trim(), llmOllamaBaseUrl?.trim()].filter((url): url is string => Boolean(url));
+  return urls.find((url) => url !== DEFAULT_OLLAMA_BASE_URL) ?? urls[0];
+}
+
 // Dynamically fetch installed Ollama chat models for phase dropdowns
 export async function fetchOllamaModels(baseUrl?: string): Promise<{ value: string; label: string }[]> {
   try {
-    const trimmed = baseUrl?.trim();
-    const query = trimmed ? `?ollamaBaseUrl=${encodeURIComponent(trimmed)}` : '';
-    const result = await apiRequest<{ models: { name: string }[] }>(`/settings/ollama/models${query}`);
+    const result = await apiRequest<{ models: { name: string }[] }>('/settings/ollama/models', {
+      method: 'POST',
+      body: { ollamaBaseUrl: baseUrl?.trim() || DEFAULT_OLLAMA_BASE_URL },
+    });
     if (result.success && result.data?.models) {
       return result.data.models.map(m => ({
         value: `ollama:${m.name}`,

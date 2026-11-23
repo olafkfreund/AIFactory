@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { render, screen } from '@testing-library/react';
 import { ChatHistorySidebar } from '../ChatHistorySidebar';
-import { sendMessage, switchSession, useInsightsStore } from '../../stores/insights-store';
+import { newSession, sendMessage, switchSession, useInsightsStore } from '../../stores/insights-store';
 import type { API, InsightsSession, InsightsSessionSummary } from '../../shared/types';
 
 function makeSummary(
@@ -49,6 +49,7 @@ describe('ChatHistorySidebar and insights-store session visibility (B17)', () =>
     useInsightsStore.setState({
       session: null,
       sessions: [],
+      localSummaries: {},
     });
   });
 
@@ -128,5 +129,36 @@ describe('ChatHistorySidebar and insights-store session visibility (B17)', () =>
     // Both session A (now with 1 message) and session B are visible
     expect(screen.getByText('First Chat')).toBeInTheDocument();
     expect(screen.getByText('Second Chat')).toBeInTheDocument();
+  });
+
+  it('keeps a sent chat when an older summaries response arrives after the send', async () => {
+    let resolveList!: (result: { success: true; data: InsightsSessionSummary[] }) => void;
+    (window as unknown as { API: Partial<API> }).API = {
+      sendInsightsMessage,
+      switchInsightsSession,
+      newInsightsSession: vi.fn().mockResolvedValue({ success: true, data: makeSession('s-a', 'First Chat') }),
+      listInsightsSessions: vi.fn().mockReturnValue(new Promise((resolve) => { resolveList = resolve; })),
+    };
+
+    const pending = newSession('proj-1');
+    await vi.waitFor(() => expect(useInsightsStore.getState().session?.id).toBe('s-a'));
+    sendMessage('proj-1', 'Hello');
+    resolveList({ success: true, data: [makeSummary('s-a', 'First Chat', 0)] });
+    await pending;
+
+    switchInsightsSession.mockResolvedValue({ success: true, data: makeSession('s-b', 'Second Chat') });
+    await switchSession('proj-1', 's-b');
+    const state = useInsightsStore.getState();
+    render(<ChatHistorySidebar
+      sessions={state.sessions}
+      currentSessionId={state.session?.id ?? null}
+      isLoading={false}
+      onNewSession={vi.fn()}
+      onSelectSession={vi.fn()}
+      onDeleteSession={vi.fn()}
+      onRenameSession={vi.fn()}
+    />);
+    expect(screen.getByText('First Chat')).toBeInTheDocument();
+    expect(useInsightsStore.getState().sessions.find((s) => s.id === 's-a')?.messageCount).toBe(1);
   });
 });

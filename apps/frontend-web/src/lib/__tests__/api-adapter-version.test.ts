@@ -75,4 +75,19 @@ describe('webAPI version and default project location (B4, B10)', () => {
     expect(getSpy).toHaveBeenNthCalledWith(1, '/projects/default-location');
     expect(getSpy).toHaveBeenNthCalledWith(2, '/projects/default-location');
   });
+
+  it('strips Ollama URL credentials from legacy query probes', async () => {
+    const getSpy = vi.spyOn(apiClient, 'get').mockResolvedValue({ success: true, data: [] });
+    const url = 'http://user:password@ollama.internal:11434';
+    await Promise.all([
+      webAPI.checkOllamaStatus(url),
+      webAPI.listOllamaModels(url),
+      webAPI.listOllamaEmbeddingModels(url),
+    ]);
+    for (const [endpoint] of getSpy.mock.calls) {
+      expect(endpoint).not.toContain('user');
+      expect(endpoint).not.toContain('password');
+      expect(endpoint).toContain(encodeURIComponent('http://ollama.internal:11434/'));
+    }
+  });
 });

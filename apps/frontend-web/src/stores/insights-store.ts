@@ -23,6 +23,7 @@ interface InsightsState {
   // Data
   session: InsightsSession | null;
   sessions: InsightsSessionSummary[]; // List of all sessions
+  localSummaries: Record<string, InsightsSessionSummary>;
   status: InsightsChatStatus;
   pendingMessage: string;
   streamingContent: string; // Accumulates streaming response
@@ -35,7 +36,7 @@ interface InsightsState {
 
   // Actions
   setSession: (session: InsightsSession | null) => void;
-  setSessions: (sessions: InsightsSessionSummary[]) => void;
+  setSessions: (sessions: InsightsSessionSummary[], projectId: string) => void;
   setStatus: (status: InsightsChatStatus) => void;
   setPendingMessage: (message: string) => void;
   addMessage: (message: InsightsChatMessage) => void;
@@ -62,6 +63,7 @@ export const useInsightsStore = create<InsightsState>((set, _get) => ({
   // Initial state
   session: null,
   sessions: [],
+  localSummaries: {},
   status: initialStatus,
   pendingMessage: '',
   streamingContent: '',
@@ -75,7 +77,22 @@ export const useInsightsStore = create<InsightsState>((set, _get) => ({
   // Actions
   setSession: (session) => { set({ session }); },
 
-  setSessions: (sessions) => { set({ sessions }); },
+  setSessions: (sessions, projectId) => { set((state) => {
+    const merged = sessions.map((summary) => {
+      const local = state.localSummaries[summary.id];
+      const current = state.sessions.find((item) => item.id === summary.id);
+      const newerCount = local ? Math.max(local.messageCount, current?.messageCount || 0) : 0;
+      return local && newerCount > summary.messageCount
+        ? { ...summary, messageCount: newerCount, updatedAt: current?.updatedAt || local.updatedAt }
+        : summary;
+    });
+    for (const local of Object.values(state.localSummaries)) {
+      if (local.projectId === projectId && !merged.some((summary) => summary.id === local.id)) {
+        merged.push(state.sessions.find((summary) => summary.id === local.id) || local);
+      }
+    }
+    return { sessions: merged };
+  }); },
 
   setStatus: (status) => { set({ status }); },
 
@@ -105,17 +122,19 @@ export const useInsightsStore = create<InsightsState>((set, _get) => ({
 
       const updatedMessages = [...state.session.messages, message];
       const sessionId = state.session.id;
-      const sessions = state.sessions.some((s) => s.id === sessionId)
-        ? state.sessions.map((s) =>
-            s.id === sessionId
-              ? {
-                  ...s,
-                  messageCount: Math.max(s.messageCount + 1, updatedMessages.length),
-                  updatedAt: now
-                }
-              : s
-          )
-        : state.sessions;
+      const existing = state.sessions.find((s) => s.id === sessionId);
+      const summary: InsightsSessionSummary = {
+        id: sessionId,
+        projectId: state.session.projectId,
+        title: existing?.title || state.session.title || 'New conversation',
+        messageCount: Math.max((existing?.messageCount || 0) + 1, updatedMessages.length),
+        modelConfig: state.session.modelConfig,
+        createdAt: state.session.createdAt,
+        updatedAt: now,
+      };
+      const sessions = existing
+        ? state.sessions.map((s) => s.id === sessionId ? { ...s, ...summary } : s)
+        : [...state.sessions, summary];
 
       return {
         session: {
@@ -123,7 +142,8 @@ export const useInsightsStore = create<InsightsState>((set, _get) => ({
           messages: updatedMessages,
           updatedAt: now
         },
-        sessions
+        sessions,
+        localSummaries: { ...state.localSummaries, [sessionId]: summary },
       };
     }); },
 
@@ -237,13 +257,19 @@ export const useInsightsStore = create<InsightsState>((set, _get) => ({
     }); },
 
   clearSession: () =>
-    { set({
+    { set((state) => {
+      const localSummaries = { ...state.localSummaries };
+      if (state.session) delete localSummaries[state.session.id];
+      return {
       session: null,
+      localSummaries,
+      sessions: state.sessions.filter((summary) => summary.id !== state.session?.id),
       status: initialStatus,
       pendingMessage: '',
       streamingContent: '',
       currentTool: null,
       toolsUsed: []
+      };
     }); }
 }));
 
@@ -256,9 +282,9 @@ export async function loadInsightsSessions(projectId: string): Promise<void> {
   try {
     const result = await window.API.listInsightsSessions(projectId);
     if (result.success && result.data) {
-      store.setSessions(result.data);
+      store.setSessions(result.data, projectId);
     } else {
-      store.setSessions([]);
+      store.setSessions([], projectId);
     }
   } finally {
     store.setLoadingSessions(false);
@@ -377,6 +403,11 @@ export async function switchSession(projectId: string, sessionId: string): Promi
 export async function deleteSession(projectId: string, sessionId: string): Promise<boolean> {
   const result = await window.API.deleteInsightsSession(projectId, sessionId);
   if (result.success) {
+    useInsightsStore.setState((state) => {
+      const localSummaries = { ...state.localSummaries };
+      delete localSummaries[sessionId];
+      return { localSummaries, sessions: state.sessions.filter((s) => s.id !== sessionId) };
+    });
     const data = result.data as { switchedTo?: string } | undefined;
     if (data?.switchedTo) {
       // Switch to the next available session

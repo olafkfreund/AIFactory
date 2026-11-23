@@ -89,6 +89,18 @@ export function resetAppVersionCache(): void {
   appVersionPromise = null;
 }
 
+function ollamaQuery(baseUrl?: string): string {
+  if (!baseUrl) return '';
+  try {
+    const url = new URL(baseUrl);
+    url.username = '';
+    url.password = '';
+    return `?baseUrl=${encodeURIComponent(url.toString())}`;
+  } catch {
+    return '';
+  }
+}
+
 function registerCallback<T extends Callback>(event: string, callback: T): () => void {
   if (!eventCallbacks.has(event)) {
     eventCallbacks.set(event, new Set());
@@ -972,13 +984,13 @@ export const webAPI: API & { _isWebMode: boolean } = {
 
   // ========== Ollama Operations ==========
   checkOllamaStatus: (baseUrl) =>
-    get(`/ollama/status${baseUrl ? `?baseUrl=${encodeURIComponent(baseUrl)}` : ''}`),
+    get(`/ollama/status${ollamaQuery(baseUrl)}`),
   checkOllamaInstalled: () => get('/ollama/installed'),
   installOllama: () => post('/ollama/install'),
   listOllamaModels: (baseUrl) =>
-    get(`/ollama/models${baseUrl ? `?baseUrl=${encodeURIComponent(baseUrl)}` : ''}`),
+    get(`/ollama/models${ollamaQuery(baseUrl)}`),
   listOllamaEmbeddingModels: (baseUrl) =>
-    get(`/ollama/embedding-models${baseUrl ? `?baseUrl=${encodeURIComponent(baseUrl)}` : ''}`),
+    get(`/ollama/embedding-models${ollamaQuery(baseUrl)}`),
   pullOllamaModel: (modelName: string, baseUrl) =>
     post('/ollama/pull', { modelName, baseUrl }),
   onDownloadProgress: (callback) => registerCallback('ollama:download-progress', callback),

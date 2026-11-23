@@ -3,7 +3,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { AddProjectModal } from '../AddProjectModal';
 import type { API } from '../../shared/types';
 
@@ -92,5 +92,29 @@ describe('AddProjectModal (B10)', () => {
     );
     expect(getDefaultProjectLocation).toHaveBeenCalledTimes(1);
     expect(discoverProjects).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a manually edited folder when the default arrives late', async () => {
+    let resolveDefault!: (path: string) => void;
+    getDefaultProjectLocation.mockReturnValue(new Promise((resolve) => { resolveDefault = resolve; }));
+    render(<AddProjectModal open={true} onOpenChange={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /Local folder/i }));
+    fireEvent.change(screen.getByLabelText(/Projects Folder/i), {
+      target: { value: '/custom/projects' },
+    });
+    fireEvent.keyDown(screen.getByLabelText(/Projects Folder/i), { key: 'Enter' });
+    await waitFor(() => expect(discoverProjects).toHaveBeenCalledWith('/custom/projects', 2));
+    await act(async () => { resolveDefault('/late/default'); });
+    expect(screen.getByLabelText(/Projects Folder/i)).toHaveValue('/custom/projects');
+    expect(discoverProjects).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves the folder empty without scanning when the server has no default', async () => {
+    getDefaultProjectLocation.mockResolvedValue(null);
+    render(<AddProjectModal open={true} onOpenChange={vi.fn()} />);
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Local folder/i })); });
+    expect(getDefaultProjectLocation).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText(/Projects Folder/i)).toHaveValue('');
+    expect(discoverProjects).not.toHaveBeenCalled();
   });
 });
