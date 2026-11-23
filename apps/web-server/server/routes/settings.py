@@ -1053,9 +1053,11 @@ async def list_ollama_models(
 @router.post("/ollama/models")
 @honest_status
 async def list_ollama_models_post(
-    ollamaBaseUrl: str = Body(default="http://localhost:11434", embed=True),
+    ollama_base_url: str = Body(
+        default="http://localhost:11434", embed=True, alias="ollamaBaseUrl"
+    ),
 ):
-    return await list_ollama_models(ollamaBaseUrl)
+    return await list_ollama_models(ollama_base_url)
 
 
 @router.get("/openai-compat/models")

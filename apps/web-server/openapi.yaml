@@ -5522,6 +5522,28 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - Settings
+      summary: List Ollama Models Post
+      operationId: list_ollama_models_post_api_settings_ollama_models_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Body_list_ollama_models_post_api_settings_ollama_models_post'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/settings/openai-compat/models:
     get:
       tags:
@@ -10970,6 +10992,14 @@ components:
       type: object
       title: AutoSwitchSettingsUpdate
       description: Model for updating auto-switch settings.
+    Body_list_ollama_models_post_api_settings_ollama_models_post:
+      properties:
+        ollamaBaseUrl:
+          type: string
+          title: Ollamabaseurl
+          default: http://localhost:11434
+      type: object
+      title: Body_list_ollama_models_post_api_settings_ollama_models_post
     Body_pull_ollama_model_api_settings_ollama_pull_post:
       properties:
         modelName:
