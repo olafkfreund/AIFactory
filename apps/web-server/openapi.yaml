@@ -1078,6 +1078,24 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/MarkAllReadResponse'
+  /api/projects/default-location:
+    get:
+      tags:
+      - Projects
+      summary: Get Default Project Location
+      operationId: get_default_project_location_api_projects_default_location_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                type: object
+                title: Response Get Default Project Location Api Projects Default Location Get
   /api/projects/by-slug/{slug}:
     get:
       tags:
