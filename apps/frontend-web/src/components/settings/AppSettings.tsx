@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Save,
@@ -32,6 +32,8 @@ import { DebugSettings } from './DebugSettings';
 import { LLMProvidersPage } from './sections/LLMProvidersPage';
 import { ProjectSettingsContent, type ProjectSettingsSection } from './ProjectSettingsContent';
 import { useProjectStore } from '../../stores/project-store';
+import { useSettingsStore } from '../../stores/settings-store';
+import type { AppSettings } from '../../shared/types';
 import type { UseProjectSettingsReturn } from '../project-settings/hooks/useProjectSettings';
 
 // App-level settings sections
@@ -86,6 +88,8 @@ export function ProjectSettingsPage({ projectId, initialSection = 'general' }: P
   const selectedProject = projects.find((p) => p.id === projectId);
   const [projectSettingsHook, setProjectSettingsHook] = useState<UseProjectSettingsReturn | null>(null);
   const [projectError, setProjectError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
 
   const handleProjectHookReady = useCallback((hook: UseProjectSettingsReturn | null) => {
     setProjectSettingsHook(hook);
@@ -97,9 +101,16 @@ export function ProjectSettingsPage({ projectId, initialSection = 'general' }: P
   }, []);
 
   const handleSave = async () => {
-    if (!selectedProject || !projectSettingsHook) return;
-    await projectSettingsHook.handleSave(() => {});
-    setProjectError(projectSettingsHook.error || projectSettingsHook.envError || null);
+    if (!selectedProject || !projectSettingsHook || savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    try {
+      await projectSettingsHook.handleSave(() => {});
+      setProjectError(projectSettingsHook.error || projectSettingsHook.envError || null);
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
   };
 
   return (
@@ -115,8 +126,8 @@ export function ProjectSettingsPage({ projectId, initialSection = 'general' }: P
         </div>
         {selectedProject && (
           <div className="f-page-head__actions">
-            <Button onClick={() => { void handleSave(); }} disabled={Boolean(projectSettingsHook?.isSaving)}>
-              {projectSettingsHook?.isSaving ? (
+            <Button onClick={() => { void handleSave(); }} disabled={saving}>
+              {saving ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   {t('common:buttons.saving', 'Saving...')}
@@ -189,7 +200,12 @@ export function PreferencesPage({ initialSection = 'agent', onRerunWizard }: Pre
   const [appSection, setAppSection] = useState<AppSection>(initialSection);
   const [version, setVersion] = useState<string>('');
 
-  useEffect(() => () => revertTheme(), [revertTheme]);
+  const previewRef = useRef<Pick<AppSettings, 'theme' | 'colorTheme' | 'uiScale'> | null>(null);
+  useEffect(() => () => {
+    const preview = previewRef.current;
+    const current = useSettingsStore.getState().settings;
+    if (preview && current.theme === preview.theme && current.colorTheme === preview.colorTheme && current.uiScale === preview.uiScale) revertTheme();
+  }, [revertTheme]);
 
   useEffect(() => {
     void window.API?.getAppVersion?.().then((v: unknown) => {
@@ -201,13 +217,14 @@ export function PreferencesPage({ initialSection = 'agent', onRerunWizard }: Pre
     const ok = await saveSettings();
     if (ok) {
       commitTheme();
+      previewRef.current = null;
     }
   };
 
   const renderAppSection = () => {
     switch (appSection) {
       case 'appearance':
-        return <ThemeSettings settings={settings} onSettingsChange={setSettings} />;
+        return <ThemeSettings settings={settings} onSettingsChange={(next) => { previewRef.current = next; setSettings(next); }} />;
       case 'language':
         return <LanguageSettings settings={settings} onSettingsChange={setSettings} />;
       case 'agent':

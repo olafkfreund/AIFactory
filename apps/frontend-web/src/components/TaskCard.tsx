@@ -261,12 +261,12 @@ export const TaskCard = memo(function TaskCard({
     setIsStartingStopping(true);
     try {
       if (isRunning && !isStuck) {
-        stopTask(task.id);
+        await stopTask(task.id);
       } else {
         await startTask(task.id);
       }
-    } catch {
-      // startTask handles rollback
+    } catch (error) {
+      toast({ variant: 'destructive', title: t('labels.error', 'Task action failed'), description: error instanceof Error ? error.message : 'Task action failed' });
     } finally {
       setIsStartingStopping(false);
     }
@@ -512,6 +512,9 @@ export const TaskCard = memo(function TaskCard({
   const copilotPrUrl =
     task.status === 'copilot_pr_opened' ? task.metadata?.copilotDispatch?.pr_url : undefined;
   const copilotPrNum = task.metadata?.copilotDispatch?.pr_number;
+  const agentCount = task.status !== 'done' && (executionPhase === 'coding' || (task.status === 'in_progress' && !executionPhase))
+    ? Math.max(task.subtasks.filter((subtask) => subtask.status === 'in_progress').length, 1)
+    : 0;
 
   return (
     <div data-testid={`task-card-${task.id}`}>
@@ -519,7 +522,7 @@ export const TaskCard = memo(function TaskCard({
         labels={workCardLabels}
         title={formattedTitle}
         subtitle={sanitizedDescription ?? (taskNumber ? `#${taskNumber}` : task.specId)}
-        status={statusText}
+        status={agentCount ? `${statusText} · ${t('pipeline.activeAgents', { count: agentCount, defaultValue: '{{count}} active agents' })}` : statusText}
         tone={tone}
         age={relativeTime}
         reason={reason}

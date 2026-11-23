@@ -5,7 +5,7 @@ import { AgentConsole } from '../components/task-detail/AgentConsole';
 import { useProjectStore } from '../stores/project-store';
 import { useTaskStore, loadTasks } from '../stores/task-store';
 import { useEnsureProjects } from '../hooks/useEnsureProjects';
-import { findProjectByRef, projectSlug } from '../lib/project-route';
+import { findProjectByRef, isBareSlugChooser, projectsForBareSlug, projectSlug } from '../lib/project-route';
 import { useTranslation } from 'react-i18next';
 
 /**
@@ -51,6 +51,7 @@ export function ConsoleGridPage(): ReactNode {
 
   if (!ready) return null;
   if (error) return <div role="alert">{error} <button onClick={retry}>{t('projectsPage.retry')}</button></div>;
+  if (isBareSlugChooser(projects, slug)) return <div className="flex h-screen flex-col items-center justify-center gap-2"><p>{t('projectsPage.chooseProject')}</p>{projectsForBareSlug(projects, slug).map((item) => <Link key={item.id} to={`/p/${encodeURIComponent(projectSlug(projects, item))}/console`}>{item.name} — {item.path}</Link>)}</div>;
   if (!projectId) return <div>{t('projectsPage.notFound', { ref: slug })}</div>;
 
   return (

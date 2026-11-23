@@ -23,6 +23,16 @@ afterEach(() => {
 });
 
 describe('getTerminalTheme', () => {
+  it('reads light ANSI status colours from shared tokens', () => {
+    document.documentElement.style.setProperty('--color-success', '#176448');
+    document.documentElement.style.setProperty('--color-warning', '#645000');
+    document.documentElement.style.setProperty('--color-destructive', '#9b2020');
+    document.documentElement.style.setProperty('--color-info', '#285b8b');
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+    const theme = getTerminalTheme();
+    expect([theme.green, theme.yellow, theme.red, theme.blue]).toEqual(['#176448', '#645000', '#9b2020', '#285b8b']);
+  });
+
   it('uses a readable light palette and transparent selection for an oklch token', () => {
     const root = document.documentElement;
     root.style.setProperty('--color-primary', 'oklch(0.475 0.097 75)');

@@ -75,8 +75,10 @@ export function findProjectByRef(projects: Project[], ref: string): Project | un
   if (byId) return byId;
   if (isBareSlugChooser(projects, normalized)) return undefined;
   const slugs = projectSlugs(projects);
+  const legacyMatches = projects.filter((project) => `${baseSlug(project)}-${project.id.slice(0, 8)}`.toLowerCase() === normalized);
   return projects.find((project) => slugs.get(project.id)?.toLowerCase() === normalized)
-    ?? projects.find((project) => reservations()[normalized] === project.id);
+    ?? projects.find((project) => reservations()[normalized] === project.id)
+    ?? (legacyMatches.length === 1 ? legacyMatches[0] : undefined);
 }
 
 export function parseRoute(pathname: string): AppRoute {

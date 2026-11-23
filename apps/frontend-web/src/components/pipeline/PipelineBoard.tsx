@@ -90,6 +90,11 @@ export function activeStage(task: Task): Stage | null {
   return null;
 }
 
+export function dropStatusFor(tasks: Task[], overId: string): TaskStatus | undefined {
+  const target = tasks.find((task) => task.id === overId);
+  return STAGES.find((stage) => stage.key === overId || (target && stage.key === stageOf(target)))?.dropStatus;
+}
+
 function DroppableStageShell({
   stageKey,
   children,
@@ -122,7 +127,16 @@ export function PipelineBoard({ tasks, projectId, onTaskClick }: Props) {
   const [showArchived, setShowArchived] = useState(false);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [alarm, setAlarm] = useState<{ key: string; event: string } | undefined>(undefined);
+  const [dropError, setDropError] = useState<string | null>(null);
   const prevFailedRef = useRef<Map<string, string> | null>(null);
+  const clickHandlers = useRef(new Map<string, { task: Task; onClick: () => void }>());
+  const taskClick = (task: Task) => {
+    const previous = clickHandlers.current.get(task.id);
+    if (previous?.task === task) return previous.onClick;
+    const onClick = () => onTaskClick(task);
+    clickHandlers.current.set(task.id, { task, onClick });
+    return onClick;
+  };
 
   const visible = useMemo(
     () => (showArchived ? tasks : tasks.filter((task) => !task.metadata?.archivedAt)),
@@ -173,12 +187,13 @@ export function PipelineBoard({ tasks, projectId, onTaskClick }: Props) {
       STAGES.map((stage) => ({
         key: stage.key,
         label: stage.label,
-        service: stage.service,
+        service: byStage[stage.key].some((task) => activeStage(task) === stage.key)
+          ? `${stage.service} · ${t('tasks:pipeline.active', 'Active')}` : stage.service,
         count: byStage[stage.key].length,
         failed: failedByStage[stage.key].length,
         tone: stage.tone,
       })),
-    [byStage, failedByStage]
+    [byStage, failedByStage, t]
   );
 
   const handleSelectStage = useCallback((key: string | null) => {
@@ -261,23 +276,18 @@ export function PipelineBoard({ tasks, projectId, onTaskClick }: Props) {
     const draggedTask = tasks.find((tItem) => tItem.id === activeTaskId);
     if (!draggedTask) return;
 
-    const stageMatch = STAGES.find((s) => s.key === overId);
-    if (stageMatch) {
-      if (draggedTask.status !== stageMatch.dropStatus) {
-        void persistTaskStatus(activeTaskId, stageMatch.dropStatus);
-      }
-      return;
-    }
-
-    const overTask = tasks.find((tItem) => tItem.id === overId);
-    if (overTask && draggedTask.status !== overTask.status) {
-      void persistTaskStatus(activeTaskId, overTask.status);
-    }
+    const dropStatus = dropStatusFor(tasks, overId);
+    if (!dropStatus || draggedTask.status === dropStatus) return;
+    setDropError(null);
+    void persistTaskStatus(activeTaskId, dropStatus).then((ok) => {
+      if (!ok) setDropError(t('tasks:pipeline.moveFailed', 'Could not move task'));
+    });
   };
 
   return (
     <div className="space-y-4 p-4">
       {!stripSlot && <PipelineStrip {...stripProps} labels={pipelineLabels} />}
+      {dropError && <div role="alert" className="text-destructive">{dropError}</div>}
 
       <DndContext
         sensors={sensors}
@@ -312,7 +322,7 @@ export function PipelineBoard({ tasks, projectId, onTaskClick }: Props) {
                           <div data-testid={`task-row-${task.id}`}>
                             <SortableTaskCard
                               task={task}
-                              onClick={() => onTaskClick(task)}
+                              onClick={taskClick(task)}
                               expanded={expanded}
                               onToggle={onToggle}
                               collapsedByDefault={done}
@@ -335,6 +345,17 @@ export function PipelineBoard({ tasks, projectId, onTaskClick }: Props) {
             </div>
           ) : null}
         </DragOverlay>
+        {showFailed && visibleFailed.length > 0 && (
+          <SortableContext items={visibleFailed.map((task) => task.id)} strategy={verticalListSortingStrategy}>
+            <div data-testid="failed-runs" className="grid gap-2">
+              {visibleFailed.map((task) => (
+                <div key={task.id} data-testid={`task-row-${task.id}`}>
+                  <SortableTaskCard task={task} onClick={taskClick(task)} collapsedByDefault={Boolean(task.metadata?.archivedAt)} />
+                </div>
+              ))}
+            </div>
+          </SortableContext>
+        )}
       </DndContext>
 
       <div className="flex flex-wrap items-center gap-4 text-sm">
@@ -343,7 +364,7 @@ export function PipelineBoard({ tasks, projectId, onTaskClick }: Props) {
           size="sm"
           variant="outline"
           aria-expanded={showFailed}
-          onClick={() => setShowFailed((value) => !value)}
+          onClick={() => setShowFailed((value) => { if (value) setFailureOnly(false); return !value; })}
         >
           {t('tasks:pipeline.failed', { count: visibleFailed.length })}
         </Button>
@@ -357,19 +378,6 @@ export function PipelineBoard({ tasks, projectId, onTaskClick }: Props) {
         </label>
       </div>
 
-      {showFailed && visibleFailed.length > 0 && (
-        <div data-testid="failed-runs" className="grid gap-2">
-          {visibleFailed.map((task) => (
-            <div key={task.id} data-testid={`task-row-${task.id}`}>
-              <SortableTaskCard
-                task={task}
-                onClick={() => onTaskClick(task)}
-                collapsedByDefault={Boolean(task.metadata?.archivedAt)}
-              />
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

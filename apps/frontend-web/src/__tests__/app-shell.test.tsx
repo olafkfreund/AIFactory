@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { render, renderHook, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import '../shared/i18n';
 import App from '../App';
@@ -10,6 +10,7 @@ import { useProjectStore } from '../stores/project-store';
 import { useSettingsStore } from '../stores/settings-store';
 import { useTaskStore } from '../stores/task-store';
 import type { Project, Task } from '../shared/types';
+import { useToast } from '../hooks/use-toast';
 
 vi.mock('../hooks/useIpc', () => ({ useIpcListeners: () => undefined }));
 vi.mock('../lib/api-client', () => ({
@@ -182,6 +183,15 @@ describe('AIFactory adapted AppShell', () => {
     await waitFor(() => expect(useSettingsStore.getState().settings.theme).toBe('dark'));
   });
 
+  it('keeps a top-bar theme choice saved while Preferences is open', async () => {
+    render(<MemoryRouter initialEntries={['/preferences']}><App /></MemoryRouter>);
+    await screen.findByTestId('preferences-page');
+    fireEvent.click(screen.getByRole('button', { name: /Light/ }));
+    await waitFor(() => expect(useSettingsStore.getState().settings.theme).toBe('light'));
+    fireEvent.click(screen.getByRole('button', { name: 'Tasks' }));
+    expect(useSettingsStore.getState().settings.theme).toBe('light');
+  });
+
   it('handles item actions in pending and rejected states on failed WorkCards', async () => {
     mockTasks = [
       makeTask({
@@ -214,5 +224,26 @@ describe('AIFactory adapted AppShell', () => {
 
     resolveArchive?.({ success: false, error: 'Disk full' });
     await waitFor(() => expect(archiveBtn).not.toBeDisabled());
+    const { result } = renderHook(() => useToast());
+    expect(result.current.toasts[0]?.description).toBe('Disk full');
+  });
+
+  it('limits collapsed done rows to eight, remembers expansion, and opens Copilot links', async () => {
+    mockTasks = [
+      ...Array.from({ length: 10 }, (_, index) => makeTask({ id: `done-${index}`, status: 'done', createdAt: new Date(2026, 0, index + 1) })),
+      makeTask({ id: 'copilot-issue', status: 'copilot_running', metadata: { copilotDispatch: { issue_url: 'https://example.com/issues/1', issue_number: 1 } } }),
+      makeTask({ id: 'copilot-pr', status: 'copilot_pr_opened', metadata: { copilotDispatch: { pr_url: 'https://example.com/pull/2', pr_number: 2 } } }),
+    ];
+    render(<MemoryRouter initialEntries={['/p/alpha']}><App /></MemoryRouter>);
+    await screen.findByTestId('task-row-done-9');
+    expect(screen.queryByTestId('task-row-done-0')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show 2 more' }));
+    expect(screen.getByTestId('task-row-done-0')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Expand done-9' }));
+    expect(localStorage.getItem('factory-ui:work-expansion:"id-alpha"')).toContain('done-9');
+    fireEvent.click(screen.getByRole('button', { name: 'Expand copilot-issue' }));
+    expect(screen.getByRole('link', { name: '#1' })).toHaveAttribute('href', 'https://example.com/issues/1');
+    fireEvent.click(screen.getByRole('button', { name: 'Expand copilot-pr' }));
+    expect(screen.getByRole('link', { name: 'PR #2' })).toHaveAttribute('href', 'https://example.com/pull/2');
   });
 });

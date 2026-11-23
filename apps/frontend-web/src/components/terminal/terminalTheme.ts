@@ -60,6 +60,16 @@ export function getTerminalTheme() {
       brightMagenta: '#DEB3FF',
       brightCyan: '#A6E8FF',
       brightWhite: '#FFFFFF',
-    } : lightPalette),
+    } : {
+      ...lightPalette,
+      red: readColor('--color-destructive', lightPalette.red),
+      green: readColor('--color-success', lightPalette.green),
+      yellow: readColor('--color-warning', lightPalette.yellow),
+      blue: readColor('--color-info', lightPalette.blue),
+      brightRed: readColor('--color-destructive', lightPalette.brightRed),
+      brightGreen: readColor('--color-success', lightPalette.brightGreen),
+      brightYellow: readColor('--color-warning', lightPalette.brightYellow),
+      brightBlue: readColor('--color-info', lightPalette.brightBlue),
+    }),
   };
 }

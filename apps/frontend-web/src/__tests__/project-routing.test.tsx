@@ -66,6 +66,7 @@ import App from '../App';
 import { useProjectStore } from '../stores/project-store';
 import { useTaskStore } from '../stores/task-store';
 import { useAuthStore } from '../stores/auth-store';
+import { findProjectByRef } from '../lib/project-route';
 
 const proj = (id: string, name: string, createdAt: string): Project =>
   ({ id, name, path: `/src/${id}`, autoBuildPath: '.a', createdAt: new Date(createdAt), updatedAt: new Date(createdAt) }) as unknown as Project;
@@ -126,6 +127,29 @@ beforeEach(() => {
 });
 
 describe('URL-scoped projects', () => {
+  it('loads fleet tasks on a cold global Tasks route', async () => {
+    setApi({});
+    renderAt('/tasks');
+    expect(await screen.findByTestId('task-row-t1')).toBeInTheDocument();
+    expect(screen.getByTestId('task-row-t2')).toBeInTheDocument();
+  });
+
+  it('keeps an unambiguous eight-character collision alias', () => {
+    const first = proj('bbbbbbbb-first', 'Demo', '2026-02-01');
+    const second = proj('cccccccc-second', 'Demo', '2026-02-02');
+    expect(findProjectByRef([first, second], 'demo-bbbbbbbb')?.id).toBe(first.id);
+    expect(findProjectByRef([first, { ...second, id: 'bbbbbbbb-second' }], 'demo-bbbbbbbb')).toBeUndefined();
+  });
+
+  it('offers ambiguous console destinations with the task path preserved', async () => {
+    const first = proj('id-first', 'Demo', '2026-02-01');
+    const second = proj('id-second', 'Demo', '2026-02-02');
+    setApi({});
+    (window.API as unknown as { getProjects: () => Promise<unknown> }).getProjects = () => Promise.resolve({ success: true, data: [first, second] });
+    renderAt('/p/demo/console/spec-1');
+    expect(await screen.findByText('Choose a project')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /id-first/ })).toHaveAttribute('href', '/p/demo-id-first/console/spec-1');
+  });
   it('URL beats the saved active tab and last-selected project', async () => {
     localStorage.setItem('lastSelectedProjectId', 'id-beta');
     setApi({ openProjectIds: ['id-beta'], activeProjectId: 'id-beta', tabOrder: ['id-beta'] });

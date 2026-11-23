@@ -46,7 +46,7 @@ import { EditorPage } from './pages/EditorPage';
 import { ConsolePage } from './pages/ConsolePage';
 import { ConsoleGridPage } from './pages/ConsoleGridPage';
 import { useProjectStore, loadProjects } from './stores/project-store';
-import { useTaskStore, loadTasks } from './stores/task-store';
+import { useTaskStore, loadTasks, loadFleetTasks, clearLoadedTasks } from './stores/task-store';
 import { useSettingsStore, loadSettings, saveSettings } from './stores/settings-store';
 import { useAuthStore } from './stores/auth-store';
 import { useIpcListeners } from './hooks/useIpc';
@@ -202,6 +202,10 @@ function AuthenticatedApp() {
 
   const inSync = !!urlProjectId && activeProjectId === urlProjectId && selectedProjectId === urlProjectId;
   const selectedProject = inSync ? urlProject : undefined;
+  const boardTasks = useMemo(
+    () => selectedProject ? tasks.filter((task) => task.projectId === selectedProject.id) : pathname === '/tasks' ? tasks : [],
+    [tasks, selectedProject, pathname]
+  );
 
   useEffect(() => {
     if (!selectedProject) setIsNewTaskDialogOpen(false);
@@ -423,13 +427,14 @@ function AuthenticatedApp() {
     setSelectedTaskId(null);
     setMissionControlId(null);
     if (!urlProjectId) {
-      useTaskStore.getState().clearTasks();
+      if (pathname === '/tasks' && projectsLoaded && !projectError) void loadFleetTasks(projects.map((project) => project.id));
+      else clearLoadedTasks();
       return;
     }
     if (inSync) {
       void loadTasks(urlProjectId);
     }
-  }, [urlProjectId, inSync]);
+  }, [urlProjectId, inSync, pathname, projectsLoaded, projectError, projects]);
 
   useEffect(() => {
     if (!isSwitchingProject) return;
@@ -640,7 +645,11 @@ function AuthenticatedApp() {
             disabled: primaryDisabled,
             disabledReason: primaryDisabledReason,
           }}
-          strip={isSettingsPage ? undefined : strip}
+          strip={isSettingsPage || !strip ? undefined : {
+            ...strip,
+            onSelectStage: (key) => { if (activeView !== 'kanban') setActiveView('kanban'); strip.onSelectStage(key); },
+            onSelectFailed: (key) => { if (activeView !== 'kanban') setActiveView('kanban'); strip.onSelectFailed?.(key); },
+          }}
           topbarStatus={
             <>
               <ClaudeCodeStatusBadge iconOnly onOpenOnboarding={() => setIsOnboardingOpen(true)} />
@@ -698,7 +707,7 @@ function AuthenticatedApp() {
             <div className={(selectedProject && activeView === 'kanban') || pathname === '/tasks' ? 'h-full overflow-auto' : 'hidden'}>
               <PipelineBoard
                 key={selectedProject?.id ?? 'fleet'}
-                tasks={tasks}
+                tasks={boardTasks}
                 projectId={selectedProject?.id}
                 onTaskClick={handleTaskClick}
                 onNewTaskClick={() => setIsNewTaskDialogOpen(true)}

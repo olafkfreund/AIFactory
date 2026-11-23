@@ -2,7 +2,11 @@
   "pipeline": {
     "failed": "Échecs ({{count}})",
     "showArchived": "Afficher les archivées",
-    "showMore": "Afficher {{count}} de plus"
+    "showMore": "Afficher {{count}} de plus",
+    "active": "Actif",
+    "activeAgents_one": "{{count}} agent actif",
+    "activeAgents_other": "{{count}} agents actifs",
+    "moveFailed": "Impossible de déplacer la tâche"
   },
   "status": {
     "backlog": "Backlog",
@@ -22,6 +26,7 @@
     "view": "Voir les détails"
   },
   "labels": {
+    "error": "Échec de l'action sur la tâche",
     "running": "En cours",
     "aiReview": "Révision IA",
     "needsReview": "À réviser",
