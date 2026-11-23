@@ -1,0 +1,180 @@
+name: Publish AIFactory base images
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - docker/base.Dockerfile
+  schedule:
+    - cron: "23 5 * * 0"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: base-image
+
+env:
+  IMAGE: ghcr.io/olafkfreund/aifactory-base
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Build and push the bases
+        id: publish
+        run: |
+          set -euo pipefail
+          stamp="$(date -u +%Y%m%d)-$(git rev-parse --short HEAD)-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          refresh="$(date -u +%Y-%m-%d)"
+          echo "stamp=$stamp" >> "$GITHUB_OUTPUT"
+          for target in py-build runtime build-runtime gateway; do
+            docker buildx build --platform linux/amd64 --push \
+              -f docker/base.Dockerfile --target "$target" \
+              --build-arg "SECURITY_REFRESH=$refresh" \
+              --provenance=mode=min \
+              --metadata-file "$RUNNER_TEMP/$target-base.json" \
+              -t "$IMAGE:$target-$stamp" .
+          done
+
+      - name: Rewrite application base pins
+        env:
+          STAMP: ${{ steps.publish.outputs.stamp }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          path = Path("Dockerfile")
+          content = path.read_text()
+          image = os.environ["IMAGE"]
+          stamp = os.environ["STAMP"]
+          metadata = Path(os.environ["RUNNER_TEMP"])
+          upstream = r"cgr\.dev/chainguard/python:latest-dev@sha256:[0-9a-f]{64}"
+          first_rollout = "FROM runtime AS build-runtime\n" in content
+
+          for target in ("py-build", "runtime", "build-runtime", "gateway"):
+              digest = json.loads((metadata / f"{target}-base.json").read_text())["containerimage.digest"]
+              if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+                  raise SystemExit(f"Invalid digest for {target}: {digest}")
+
+              original = "runtime" if target == "build-runtime" else upstream
+              published = rf"{re.escape(image)}:{target}-[^\s@]+@(?P<digest>sha256:[0-9a-f]{{64}})"
+              source = original if first_rollout else published
+              content, count = re.subn(
+                  rf"^FROM {source} AS {target}$",
+                  lambda match: match[0] if match.groupdict().get("digest") == digest
+                  else f"FROM {image}:{target}-{stamp}@{digest} AS {target}",
+                  content,
+                  flags=re.MULTILINE,
+              )
+              if count != 1:
+                  raise SystemExit(f"Expected exactly one {target} FROM line, found {count}")
+
+          if first_rollout:
+              for first, last in (
+                  ("RUN apk add --no-cache build-base", "# xmlsec's build links"),
+                  ("# Pull all available Wolfi security patches", "# Node from the official image"),
+                  ("# System packages from Wolfi APK index.", "# Node must come only"),
+                  ("# Remove the base image's pip too", "# Git identity"),
+                  ("ARG SECURITY_REFRESH=0", "# COPY creates /app"),
+              ):
+                  start = content.index(first)
+                  end = content.index(last, start)
+                  content = content[:start] + content[end:]
+
+              content = content.replace(
+                  "RUN apk add --no-cache chromium \\\n && npm install",
+                  "RUN npm install",
+              ).replace(
+                  "the base copies are apk-deleted below.",
+                  "the base copies are removed in docker/base.Dockerfile.",
+              ).replace(
+                  "Checked AFTER the apk block, where it could appear.",
+                  "Check the packages baked into the runtime base.",
+              ).replace(
+                  "same pinned base and security refresh as ``runtime``.",
+                  "its base is refreshed by the weekly base workflow.",
+              ).replace(
+                  "stage provisions via nix + apk + npm",
+                  "stage provisions via Nix and npm",
+              )
+
+              # build-runtime starts from the Chromium base and reuses the runtime app.
+              runtime_env = content[content.index("ENV APP_HOST="):content.index("# Direct CMD")]
+              cmd = re.search(r"(?m)^CMD \[.*\]$", content)[0]
+              content = content.replace(
+                  'USER root\n\n# Pull the Nix store',
+                  'USER root\n\n'
+                  'COPY --from=runtime /usr/local/ /usr/local/\n'
+                  'COPY --from=runtime --chown=65532:65532 /home/projects/ /home/projects/\n'
+                  'COPY --from=runtime --chown=65532:65532 /home/nonroot/ /home/nonroot/\n\n'
+                  + runtime_env + '# Pull the Nix store',
+              ).replace(
+                  "# ENTRYPOINT/CMD/HEALTHCHECK/WORKDIR are inherited from the runtime stage.",
+                  "ENTRYPOINT []\n" + cmd,
+              )
+
+          if re.search(r"(?m)^\s*(?:RUN|&&)\s+apk\s+(?:add|del|upgrade)\b", content):
+              raise SystemExit("Move all remaining Wolfi package-index operations into the base")
+          path.write_text(content)
+
+          if first_rollout:
+              # The P0 supply-chain test already requires digest pins for every external FROM.
+              test = Path("tests/docker/test_p0_multi_arch.py")
+              text = test.read_text()
+              arm64_check = '        assert "arm64" in arches, ('
+              if text.count(arm64_check) != 1:
+                  raise SystemExit("Expected exactly one P0 arm64 assertion")
+              text = (
+                  '"""P0.6 — published base manifests cover the supported architectures.\n\n'
+                  'The AIFactory bases are published for amd64. Upstream bases cover amd64 and arm64.\n'
+                  '"""' + text[text.index('"""', 3) + 3:]
+              )
+              test.write_text(text.replace(
+                  'base images we pin support both linux/amd64 and linux/arm64.',
+                  'base images support the platforms on which they are published.',
+              ).replace(
+                  arm64_check,
+                  f'        if ref.startswith("{image}:"):\n'
+                  '            continue  # The base workflow publishes linux/amd64 only.\n'
+                  + arm64_check,
+              ))
+          PY
+
+      - name: Open the digest bump PR
+        env:
+          GH_TOKEN: ${{ secrets.GITOPS_PAT }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- Dockerfile; then
+            echo "All base digests already pinned"
+            exit 0
+          fi
+          branch="chore/3880-aifactory-base-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          git switch -c "$branch"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Dockerfile tests/docker/test_p0_multi_arch.py
+          git commit -m "chore(docker): pin GHCR base images (#3880)"
+          gh auth setup-git
+          git push origin "$branch"
+          gh pr create --base dev --head "$branch" \
+            --title "chore(docker): pin GHCR base images" \
+            --body "Pins the published AIFactory base images by digest. The PR image checks pull anonymously, so the aifactory-base GHCR package needs public read access. Refs olafkfreund/Factory#3880."

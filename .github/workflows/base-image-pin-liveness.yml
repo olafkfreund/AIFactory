@@ -1,4 +1,4 @@
-# Keep the Dockerfile's pinned base-image digests alive and current (#1091, #1104).
+# Keep the Dockerfiles' pinned base-image digests alive and current (#1091, #1104).
 #
 # One job, driven by scripts/base_image_pins.py so the parsing is tested
 # (tests/test_base_image_pins.py) rather than living in inline shell:
@@ -54,6 +54,7 @@ on:
   pull_request:
     paths:
       - Dockerfile
+      - docker/base.Dockerfile
       - scripts/base_image_pins.py
       - .github/workflows/base-image-pin-liveness.yml
 
@@ -67,4 +68,5 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: python3 scripts/base_image_pins.py check --dockerfile docker/base.Dockerfile
       - run: python3 scripts/base_image_pins.py check
