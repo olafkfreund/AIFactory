@@ -10,7 +10,7 @@ import re
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path as FilePath
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import urlsplit, urlunsplit
 
 from factory_common.logsafe import sanitize_log
@@ -443,8 +443,8 @@ def _extract_memory_summary(data: dict) -> str:
 )
 @honest_status
 async def get_project_env(
+    access: Annotated[ProjectAccess, Depends(require_project_access("viewer"))],
     projectId: str = Path(...),
-    access: ProjectAccess = Depends(require_project_access("viewer")),
 ):
     """Get project environment configuration."""
     from server.project_registry import load_projects

@@ -33,7 +33,7 @@ from server.project_registry import (
 )
 from server.project_store import SlugConflictError, aarchive_project
 from server.pty.access import project_id_for_path
-from server.services import github_app, project_settings_store
+from server.services import github_app, project_settings_store, project_workspace_service
 from server.services.audit_service import ACTION_TASK_CREATE, audit_task_action
 from server.services.http_verdict import honest_status
 from server.services.originator import principal_attribution
@@ -82,13 +82,13 @@ _DB_DEP = Depends(get_db)
 
 @router.get("/default-location")
 def get_default_project_location() -> dict[str, str | None]:
-    from server.services.project_workspace_service import workspace_root
-
     try:
         return {
             "path": str(
                 contained_path(
-                    workspace_root(), browse_roots(), "browsable directories"
+                    project_workspace_service.workspace_root(),
+                    browse_roots(),
+                    "browsable directories",
                 )
             )
         }

@@ -99,7 +99,7 @@ def api(tmp_path, monkeypatch):
     monkeypatch.setattr(
         context.subprocess,
         "run",
-        lambda *a, **kw: type("Result", (), {"returncode": 1})(),
+        lambda *_a, **_kw: type("Result", (), {"returncode": 1})(),
     )
 
     app = FastAPI()

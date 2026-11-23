@@ -146,12 +146,13 @@ async def jit_provision_user(
     if user.role != role:
         changes.append(("user", user.role, role))
         user.role = role
-    result = await db.execute(
-        select(OrgMember).where(
-            OrgMember.org_id == org.id, OrgMember.user_id == user.id
+    membership = (
+        await db.execute(
+            select(OrgMember).where(
+                OrgMember.org_id == org.id, OrgMember.user_id == user.id
+            )
         )
-    )
-    membership = result.scalar_one_or_none()
+    ).scalar_one_or_none()
     if membership is None:
         membership = OrgMember(org_id=org.id, user_id=user.id, role=role)
         db.add(membership)
