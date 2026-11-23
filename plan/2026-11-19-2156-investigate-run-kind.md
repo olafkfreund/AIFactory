@@ -88,6 +88,9 @@ Codex's plan review found two gaps the spec left open. Approving the plan approv
     - **Why:** the spec assumed the chart's base policy, which isolates the server's ingress. On the live cluster no policy selects the server pods. An `…-investigate-api` ingress policy there would isolate them and cut off every other client of the server.
     - **What changes:** `network_check` still requires exactly one agent policy and one test policy, each selecting its pods alone, and still refuses any other policy that selects them. It no longer requires an API policy. That policy only proves the agent can reach the server; without it, a run fails and nothing is less isolated.
     - **The chart** keeps `networkpolicy-investigate-api.yaml`, because its base policy does isolate the server. factory-gitops does not add it.
+14. **The agent pod sets `PYTHONPATH`** (step 12 live check, #2190).
+    - **Why:** the agent runs `python -P -m agents.investigate` from `/tmp`. `-P` keeps the working directory off `sys.path`, and the image does not put `apps/backend` there, so every run failed at start with `No module named 'agents'`. The unit tests set the path themselves.
+    - **What changes:** the agent env gains `PYTHONPATH=/home/projects/MagesticAI/apps/backend` (the value TFactory's manifests use), and the exact-env allowlist gains `PYTHONPATH`. `-P` stays, so nothing in the writable `/tmp` is importable.
 
 ## Decisions carried over (approved intent and spec)
 
@@ -207,7 +210,7 @@ They **never** carry `app.kubernetes.io/instance` (the release policy selects th
 - **Volumes:**
   - `/src`: the PVC subPath `investigations/<id>/src`, read-only;
   - `/tmp`: an emptyDir of 256 Mi.
-- **Env (exactly these):** `JOB_ID`, `AIFACTORY_INVESTIGATION_ID`, `AIFACTORY_API_URL`, `HOME=/tmp/home`, `CLAUDE_CONFIG_DIR=/tmp/claude`, plus `CLAUDE_CODE_OAUTH_TOKEN` and `AIFACTORY_RUN_TOKEN` from the Secret `aif-inv-<id8>` (ownerReference to the Job).
+- **Env (exactly these):** `JOB_ID`, `AIFACTORY_INVESTIGATION_ID`, `AIFACTORY_API_URL`, `HOME=/tmp/home`, `CLAUDE_CONFIG_DIR=/tmp/claude`, `PYTHONPATH=/home/projects/MagesticAI/apps/backend` (deviation 14), plus `CLAUDE_CODE_OAUTH_TOKEN` and `AIFACTORY_RUN_TOKEN` from the Secret `aif-inv-<id8>` (ownerReference to the Job).
 - **Command:** `python -m agents.investigate`.
 - **Checks:** `assert_job_policy` plus `_assert_investigation_manifest`. The latter refuses any env, volume or mount outside the allowlist, automount not false, an `instance` label, or a missing investigation pod label.
 
