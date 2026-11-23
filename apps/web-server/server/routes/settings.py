@@ -1056,7 +1056,7 @@ async def list_ollama_models_post(
     ollama_base_url: str = Body(
         default="http://localhost:11434", embed=True, alias="ollamaBaseUrl"
     ),
-):
+) -> dict[str, Any]:
     return await list_ollama_models(ollama_base_url)
 
 
