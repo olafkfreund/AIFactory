@@ -268,3 +268,25 @@ def test_agent_pythonpath_makes_the_entry_point_importable(run, tmp_path):
         text=True,
     )
     assert probe.returncode == 0, probe.stderr
+
+
+def test_copy_source_leaves_the_work_root_alone(run, tmp_path):
+    """/work is a root-owned emptyDir: copying must not set its mode or times (#2203)."""
+    init = manifests.test_manifest(run, 1)["spec"]["template"]["spec"][
+        "initContainers"
+    ][0]
+    assert init["name"] == "copy-source"
+    src, work = tmp_path / "src", tmp_path / "work"
+    (src / "pkg").mkdir(parents=True)
+    (src / ".env.example").write_text("x")
+    (src / "pkg" / "a.py").write_text("y")
+    (src / "link").symlink_to("/etc/passwd")
+    src.chmod(0o700)
+    work.mkdir()
+    work.chmod(0o777)
+    script = init["command"][2].replace("/src", str(src)).replace("/work", str(work))
+    subprocess.run(["sh", "-c", script], check=True)
+    assert work.stat().st_mode & 0o7777 == 0o777
+    assert (work / ".env.example").read_text() == "x"
+    assert (work / "pkg" / "a.py").read_text() == "y"
+    assert (work / "link").is_symlink()
