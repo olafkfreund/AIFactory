@@ -52,7 +52,7 @@ def test_manifests_are_hardened_and_have_exact_env(run, monkeypatch):
         ),
         (
             manifests.test_manifest(run, 1),
-            {"HTTPS_PROXY", "HTTP_PROXY", "CI", "TEST_COMMAND"},
+            {"HTTPS_PROXY", "HTTP_PROXY", "CI", "TEST_COMMAND", "HOME"},
         ),
     ):
         assert_job_policy(manifest)

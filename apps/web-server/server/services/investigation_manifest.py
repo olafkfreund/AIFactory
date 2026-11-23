@@ -157,6 +157,8 @@ def test_manifest(run: Any, n: int) -> dict[str, Any]:
         {"name": "HTTP_PROXY", "value": proxy},
         {"name": "CI", "value": "1"},
         {"name": "TEST_COMMAND", "value": _value(run, "test_command")},
+        # npm, pip and cargo cache under HOME; the image's home is read-only (#2207).
+        {"name": "HOME", "value": "/tmp/home"},  # noqa: S108 - Pod scratch volume.
     ]
     container: dict[str, Any] = {
         "name": "test",
@@ -372,7 +374,7 @@ def _check_investigation_manifest(m: dict[str, Any]) -> None:  # noqa: PLR0912, 
                 "AIFACTORY_RUN_TOKEN",
             }
             if kind == "investigate-agent"
-            else {"HTTPS_PROXY", "HTTP_PROXY", "CI", "TEST_COMMAND"}
+            else {"HTTPS_PROXY", "HTTP_PROXY", "CI", "TEST_COMMAND", "HOME"}
         )
         if not (len(container.get("env", [])) == len(expected_env)):
             raise ManifestRefused("investigation manifest refused")
