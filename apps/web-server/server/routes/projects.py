@@ -33,11 +33,20 @@ from server.project_registry import (
 )
 from server.project_store import SlugConflictError, aarchive_project
 from server.pty.access import project_id_for_path
-from server.services import github_app, project_settings_store
+from server.services import (
+    github_app,
+    project_settings_store,
+    project_workspace_service,
+)
 from server.services.audit_service import ACTION_TASK_CREATE, audit_task_action
 from server.services.http_verdict import honest_status
 from server.services.originator import principal_attribution
-from server.specpath import browse_roots, safe_spec_component, within_roots
+from server.specpath import (
+    browse_roots,
+    contained_path,
+    safe_spec_component,
+    within_roots,
+)
 from server.utils.subprocess_env import child_env
 
 from ..database.engine import DEFAULT_ORG_ID, get_db
@@ -62,6 +71,7 @@ from ..tenancy import (
 )
 from . import changelog, context, files, git, github
 from .project_authz import (
+    ProjectAccess,
     accessible_project_ids,
     authorize_project_for_user,
     require_project_access,
@@ -73,6 +83,22 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 _DB_DEP = Depends(get_db)
+
+
+@router.get("/default-location")
+def get_default_project_location() -> dict[str, str | None]:
+    try:
+        return {
+            "path": str(
+                contained_path(
+                    project_workspace_service.workspace_root(),
+                    browse_roots(),
+                    "browsable directories",
+                )
+            )
+        }
+    except (OSError, ValueError, RuntimeError):
+        return {"path": None}
 
 
 # Registered before the ``/{projectId}/...`` sub-routers so a project whose slug
@@ -875,7 +901,7 @@ async def add_project(  # noqa: PLR0912, PLR0915 - one flow: clone or local, the
 @router.get("/{project_id}")
 async def get_project(
     project_id: str,
-    _access: dict = Depends(require_project_access("viewer")),
+    _access: ProjectAccess = Depends(require_project_access("viewer")),
 ):
     """Get a specific project by ID."""
     projects = load_projects()
@@ -892,7 +918,7 @@ async def get_project(
 async def update_project(
     project_id: str,
     project: ProjectUpdate,
-    _access: dict = Depends(require_project_access("member")),
+    _access: ProjectAccess = Depends(require_project_access("member")),
 ):
     """Update a project's metadata."""
     projects = load_projects()
@@ -939,7 +965,7 @@ async def update_project(
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_project(
     project_id: str,
-    _access: dict = Depends(require_project_access("admin")),
+    _access: ProjectAccess = Depends(require_project_access("admin")),
 ):
     """Archive a project: it leaves every list and lookup, files and history stay."""
     projects = await aload_projects()
@@ -976,7 +1002,7 @@ async def remove_project(
 @honest_status
 async def initialize_project(
     project_id: str,
-    _access: dict = Depends(require_project_access("member")),
+    _access: ProjectAccess = Depends(require_project_access("member")),
 ):
     """Initialize Magestic AI in a project (create .aifactory directory).
 
@@ -1015,7 +1041,7 @@ async def initialize_project(
 @router.get("/{project_id}/version")
 async def check_project_version(
     project_id: str,
-    _access: dict = Depends(require_project_access("viewer")),
+    _access: ProjectAccess = Depends(require_project_access("viewer")),
 ):
     """Check Magestic AI version info for a project."""
     projects = load_projects()
@@ -1111,7 +1137,7 @@ class ProjectSettingsUpdate(BaseModel):
 async def update_project_settings(
     project_id: str,
     settings: ProjectSettingsUpdate,
-    _access: dict = Depends(require_project_access("admin")),
+    _access: ProjectAccess = Depends(require_project_access("admin")),
 ):
     """Update project settings."""
     projects = load_projects()
@@ -1212,7 +1238,7 @@ async def update_project_settings(
 @router.get("/{project_id}/worktrees")
 async def list_project_worktrees(
     project_id: str,
-    _access: dict = Depends(require_project_access("viewer")),
+    _access: ProjectAccess = Depends(require_project_access("viewer")),
 ):
     """List worktrees for a project with detailed stats."""
     import subprocess
@@ -1377,7 +1403,7 @@ async def list_project_worktrees(
 async def list_project_tasks(
     project_id: str,
     raw_request: Request = None,  # noqa: RUF013 — FastAPI injects; None lets direct callers omit
-    _access: dict = Depends(require_project_access("viewer")),
+    _access: ProjectAccess = Depends(require_project_access("viewer")),
 ):
     """List all tasks for a specific project.
 
@@ -1438,7 +1464,7 @@ async def create_project_task(
     project_id: str,
     task_data: TaskCreateRequest,
     raw_request: Request = None,  # noqa: RUF013 — FastAPI injects; None lets direct callers omit
-    _access: dict = Depends(require_project_access("member")),
+    _access: ProjectAccess = Depends(require_project_access("member")),
 ):
     """Create a new task in a project.
 
@@ -1500,7 +1526,7 @@ Created via Magestic AI Web UI
         "title": title,
         "description": task_data.description,
         "created_at": datetime.now(UTC).isoformat(),
-        **principal_attribution(_access if isinstance(_access, dict) else None),
+        **principal_attribution(_access),
     }
     if task_data.metadata:
         requirements["metadata"] = task_data.metadata
@@ -1569,7 +1595,7 @@ Created via Magestic AI Web UI
 async def watch_project_task_logs(
     project_id: str,
     spec_id: str,
-    _access: dict = Depends(require_project_access("viewer")),
+    _access: ProjectAccess = Depends(require_project_access("viewer")),
 ):
     """
     Start watching task logs (stub endpoint for frontend compatibility).
@@ -1584,7 +1610,7 @@ async def watch_project_task_logs(
 async def unwatch_project_task_logs(
     project_id: str,
     spec_id: str,
-    _access: dict = Depends(require_project_access("viewer")),
+    _access: ProjectAccess = Depends(require_project_access("viewer")),
 ):
     """
     Stop watching task logs (stub endpoint for frontend compatibility).
@@ -1599,7 +1625,7 @@ async def unwatch_project_task_logs(
 async def get_project_task_logs(
     project_id: str,
     spec_id: str,
-    _access: dict = Depends(require_project_access("viewer")),
+    _access: ProjectAccess = Depends(require_project_access("viewer")),
 ):
     """Get logs for a task (delegates to tasks router)."""
     from . import tasks as tasks_module
@@ -1632,7 +1658,7 @@ class UnarchiveTasksRequest(BaseModel):
 async def archive_tasks(
     project_id: str,
     request: ArchiveTasksRequest,
-    _access: dict = Depends(require_project_access("member")),
+    _access: ProjectAccess = Depends(require_project_access("member")),
 ):
     """Archive completed tasks.
 
@@ -1708,7 +1734,7 @@ async def archive_tasks(
 async def unarchive_tasks(
     project_id: str,
     request: UnarchiveTasksRequest,
-    _access: dict = Depends(require_project_access("member")),
+    _access: ProjectAccess = Depends(require_project_access("member")),
 ):
     """Unarchive tasks.
 

@@ -400,7 +400,7 @@ class TeamMembership(Base):
     role: Mapped[str] = mapped_column(String(50), nullable=False, default="member")
     provenance: Mapped[str] = mapped_column(
         String(16), nullable=False, default="manual"
-    )  # sso | manual
+    )  # sso | manual | backfill
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now()
     )
@@ -413,7 +413,7 @@ class TeamMembership(Base):
 
     @validates("provenance")
     def _check_provenance(self, _key: str, provenance: str) -> str:
-        if provenance not in ("sso", "manual"):
+        if provenance not in ("sso", "manual", "backfill"):
             raise ValueError(f"Unknown membership provenance {provenance!r}")
         return provenance
 

@@ -25,8 +25,18 @@ from server.routes import (  # noqa: E402
 )
 from server.routes.from_issue import FromIssueRequest  # noqa: E402
 from server.routes.github import ImportIssuesRequest  # noqa: E402
+from server.routes.project_authz import ProjectAccess  # noqa: E402
+from server.services.originator import principal_attribution  # noqa: E402
 
 mcp_router = importlib.import_module("server.mcp_stdio.router")
+
+
+def test_project_access_preserves_task_attribution():
+    access = ProjectAccess("p", "o", None, "member", {"id": "u1", "api_key_id": "k1"})
+    assert principal_attribution(access) == {
+        "originator": "u1",
+        "agent_identity": "agent:aifactory/k1",
+    }
 
 
 def _requirements(project: Path, task_id: str) -> dict:

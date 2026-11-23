@@ -342,18 +342,19 @@ async def audit_task_action(
 ) -> None:
     """Write one ``task.*`` row for a REST task action (#1466).
 
-    ``access`` is the principal a route's ``require_*_access`` dependency
+    ``access`` is the project access or principal a route's dependency
     resolved. When the MCP proxy calls a route function DIRECTLY, that
-    parameter is left at its ``Depends(...)`` default -- not a dict -- and the
+    parameter is left at its ``Depends(...)`` default -- not an access -- and the
     proxy writes its own ``mcp.task.*`` row, so skipping here keeps it to
     exactly one row per action. Never raises (``log_audit_event_bg`` swallows).
     """
-    if not isinstance(access, dict):
+    principal = getattr(access, "principal", access)
+    if not isinstance(principal, dict):
         return
     client = getattr(request, "client", None)
     await log_audit_event_bg(
-        user_id=access.get("id"),
-        org_id=access.get("org_id"),
+        user_id=principal.get("id"),
+        org_id=principal.get("org_id"),
         action=action,
         resource_type="task",
         resource_id=task_id,

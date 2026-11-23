@@ -76,6 +76,9 @@ def test_options():
     assert set(options.mcp_servers) == {"investigate"}
     assert options.can_use_tool is investigate_guard.can_use_tool
     assert len(options.hooks["PreToolUse"]) == 1
+    # run_tests must load up front: ToolSearch is outside the boundary (#2196).
+    assert options.env["ENABLE_TOOL_SEARCH"] == "false"
+    assert not investigate_guard.permitted("ToolSearch", {})
 
 
 def test_token_accounting_distinct_ids_and_cumulative_output():

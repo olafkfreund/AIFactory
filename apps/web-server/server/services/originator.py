@@ -3,6 +3,7 @@
 
 def principal_attribution(principal: object) -> dict[str, str | None]:
     """Derive task attribution from a trusted auth principal."""
+    principal = getattr(principal, "principal", principal)
     if not isinstance(principal, dict):
         return {"originator": None, "agent_identity": None}
 
