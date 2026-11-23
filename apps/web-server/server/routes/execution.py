@@ -52,6 +52,7 @@ from server.services.trusted_contract_store import (
     spec_key_for_dir,
 )
 from server.specpath import safe_spec_component
+from server.tenancy import spec_tenant
 
 from ..services import task_control
 from ..services.agent_service import get_agent_service
@@ -1601,8 +1602,46 @@ async def _authorize_resolved_project(
     )
 
 
+def _submitted_spec(
+    project_path: Path, plan: dict[str, Any], tenant: str
+) -> str | None:
+    """Find an installed signed contract for this plan's submission_id, if any.
+
+    shortcut: check-then-create is not atomic across concurrent POSTs; PFactory
+    holds its emit lease per session, so only sequential retries reach here.
+    Add a per-(project, submission_id) lock if another sender appears.
+    """
+    provenance = plan.get("provenance")
+    submission_id = (
+        provenance.get("submission_id") if isinstance(provenance, dict) else None
+    )
+    specs_dir = project_path / ".aifactory" / "specs"
+    if submission_id is None or not specs_dir.is_dir():
+        return None
+    for spec_dir in specs_dir.iterdir():
+        if (
+            spec_dir.is_symlink()
+            or not spec_dir.is_dir()
+            or spec_tenant(spec_dir) != tenant
+        ):
+            continue
+        contract_file = spec_dir / "context" / "task_contract.json"
+        try:
+            contract = json.loads(contract_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        provenance = contract.get("provenance") if isinstance(contract, dict) else None
+        if (
+            isinstance(provenance, dict)
+            and provenance.get("submission_id") == submission_id
+            and verify_trusted_plan(contract).ok
+        ):
+            return spec_dir.name
+    return None
+
+
 @router.post("/from-plan")
-async def create_from_trusted_plan(  # noqa: PLR0913 - FastAPI route params
+async def create_from_trusted_plan(  # noqa: PLR0912, PLR0913 - ordered trust gates before allocation; FastAPI route params
     project_id: str,
     title: str,
     description: str,
@@ -1651,6 +1690,16 @@ async def create_from_trusted_plan(  # noqa: PLR0913 - FastAPI route params
         )
 
     handoff = _extract_plan_handoff(request, project_id, project_path)
+
+    existing = _submitted_spec(project_path, request.plan, resolve_tenant(raw_request))
+    if existing is not None:
+        return {
+            "success": True,
+            "task_id": f"{project_id}:{existing}",
+            "approved_by": verdict.approved_by,
+            "approval_timestamp": verdict.approval_timestamp,
+            "message": "Trusted plan already submitted.",
+        }
 
     # Baseline freshness (#1109). The signature answers "did anyone edit the
     # instructions"; this answers "are the instructions still about this
