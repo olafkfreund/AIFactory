@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+## 3.21.4 - 2026-11-23
+
+Merged to `dev` since 3.21.3.
+
+### Fixed
+
+- The investigation test pod sets `HOME=/tmp/home` and passes it through the test-env allowlist. (#2207, #2208)
+
 ## 3.21.3 - 2026-11-23
 
 Merged to `dev` since 3.21.2.
