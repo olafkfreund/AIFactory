@@ -1,5 +1,14 @@
 ## [Unreleased]
 
+## 3.21.5 - 2026-11-23
+
+Merged to `dev` since 3.21.4.
+
+### Fixed
+
+- The project env viewer is readable at viewer role, with a redacted allowlist below admin (no git token, Graphiti keys or URL credentials). PATCH stays admin. `GET /api/projects/default-location` is new. SSO login picks the highest mapped role and syncs `User.role`; a startup migration marks backfilled team rows `provenance=backfill`. (#2198, #2200)
+- Done tasks no longer light a pipeline stage. Settings and Debug show the version from `/api/health`. Ollama and OpenAI-compatible probes run only when configured. Add Project opens on Git URL. The unset provider shows "Auto (default)". Empty chat sessions are hidden. (#2198, #2201)
+
 ## 3.21.4 - 2026-11-23
 
 Merged to `dev` since 3.21.3.
