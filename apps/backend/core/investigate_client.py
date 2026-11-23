@@ -25,7 +25,12 @@ def create_investigate_client(
 
     options = ClaudeAgentOptions(
         cwd="/src",
-        env={**get_agent_env_blanks(), "AIFACTORY_RUN_TOKEN": ""},
+        env={
+            **get_agent_env_blanks(),
+            "AIFACTORY_RUN_TOKEN": "",
+            # Deferred tools need ToolSearch, which the tool boundary denies (#2196).
+            "ENABLE_TOOL_SEARCH": "false",
+        },
         setting_sources=[],  # never load a repository's .claude/ settings, hooks or MCP
         permission_mode="default",
         allowed_tools=["mcp__investigate__run_tests"],

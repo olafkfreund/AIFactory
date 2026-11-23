@@ -50,6 +50,8 @@ def _pod(run: Any, containers: list[dict[str, Any]]) -> dict[str, Any]:
     spec = {
         "restartPolicy": "Never",
         "automountServiceAccountToken": False,
+        # Service links put every cluster service's address in the env (#2196).
+        "enableServiceLinks": False,
         "terminationGracePeriodSeconds": 10,
         "securityContext": {
             "runAsNonRoot": True,
@@ -171,7 +173,8 @@ def test_manifest(run: Any, n: int) -> dict[str, Any]:
         {
             "name": "copy-source",
             "image": _resolve_build_image(DEFAULT_NIX_IMAGE),
-            "command": ["sh", "-c", "cp -a /src/. /work/"],
+            # Not -a: it sets /work's own times and mode, and /work is root-owned (#2203).
+            "command": ["sh", "-c", "cp -R /src/. /work/"],
             "securityContext": _hardened(),
             "volumeMounts": [
                 {
@@ -245,6 +248,8 @@ def _check_investigation_manifest(m: dict[str, Any]) -> None:  # noqa: PLR0912, 
     spec = pod["spec"]
     if spec.get("automountServiceAccountToken") is not False:
         raise ManifestRefused("investigation manifest refused")
+    if spec.get("enableServiceLinks") is not False:
+        raise ManifestRefused("investigation manifest refused")
     if spec.get("terminationGracePeriodSeconds") != 10:  # noqa: PLR2004 - Required pod grace.
         raise ManifestRefused("investigation manifest refused")
     if spec.get("serviceAccountName"):
@@ -254,6 +259,7 @@ def _check_investigation_manifest(m: dict[str, Any]) -> None:  # noqa: PLR0912, 
         <= {
             "restartPolicy",
             "automountServiceAccountToken",
+            "enableServiceLinks",
             "terminationGracePeriodSeconds",
             "securityContext",
             "volumes",
