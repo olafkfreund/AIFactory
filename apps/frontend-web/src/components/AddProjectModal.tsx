@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FolderOpen, Search, Loader2, GitBranch, Package, FileCode, CheckCircle, FileText, FolderPlus } from 'lucide-react';
 import { Button } from './ui/button';
@@ -33,12 +33,9 @@ interface AddProjectModalProps {
   onProjectAdded?: (project: Project, needsInit: boolean) => void;
 }
 
-// Default projects folder - can be customized
-const DEFAULT_PROJECTS_FOLDER = '/home';
-
 export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProjectModalProps) {
   const { t } = useTranslation('dialogs');
-  const [projectsFolder, setProjectsFolder] = useState(DEFAULT_PROJECTS_FOLDER);
+  const [projectsFolder, setProjectsFolder] = useState('');
   const [discoveredProjects, setDiscoveredProjects] = useState<DiscoveredProject[]>([]);
   const [selectedProject, setSelectedProject] = useState<DiscoveredProject | null>(null);
   const [customPath, setCustomPath] = useState('');
@@ -50,11 +47,13 @@ export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProje
   const [createdDirPath, setCreatedDirPath] = useState<string | null>(null);
   // Epic #82 PR-B — clone-from-Git-URL mode. Mutually exclusive with the
   // local-folder mode above; toggled via the segmented button at the top
-  // of the modal body.
-  const [mode, setMode] = useState<'local' | 'clone'>('local');
+  // of the modal body. Defaults to 'clone' (#2198 B10).
+  const [mode, setMode] = useState<'local' | 'clone'>('clone');
   const [gitUrl, setGitUrl] = useState('');
   const [gitBranch, setGitBranch] = useState('');
   const [gitName, setGitName] = useState('');
+  const hasScannedLocalRef = useRef(false);
+  const defaultRequestRef = useRef(0);
 
   // Filter and sort projects - Claude-ready projects first
   const sortedProjects = [...discoveredProjects].sort((a, b) => {
@@ -71,9 +70,11 @@ export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProje
 
   const claudeReadyCount = discoveredProjects.filter(p => p.has_claude_md).length;
 
-  // Scan for projects when folder changes
-  const scanProjects = useCallback(async () => {
-    if (!projectsFolder.trim()) return;
+  // Scan for projects in the given (or current) folder
+  const scanProjects = useCallback(async (folderOverride?: string) => {
+    if (folderOverride === undefined) defaultRequestRef.current += 1;
+    const targetFolder = (folderOverride ?? projectsFolder).trim();
+    if (!targetFolder) return;
 
     setIsScanning(true);
     setError(null);
@@ -81,7 +82,7 @@ export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProje
     setSelectedProject(null);
 
     try {
-      const result = await window.API.discoverProjects(projectsFolder, 2);
+      const result = await window.API.discoverProjects(targetFolder, 2);
       if (result.success && result.data) {
         setDiscoveredProjects(result.data);
         if (result.data.length === 0) {
@@ -97,22 +98,45 @@ export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProje
     }
   }, [projectsFolder]);
 
-  // Scan on modal open
+  // Reset modal state on open only (no auto-scan in clone mode)
   useEffect(() => {
+    defaultRequestRef.current += 1;
     if (open) {
+      setProjectsFolder('');
+      setDiscoveredProjects([]);
       setCustomPath('');
       setSelectedProject(null);
       setUseCustomPath(false);
       setShowClaudeReadyOnly(false);
       setError(null);
       setCreatedDirPath(null);
-      setMode('local');
+      setMode('clone');
       setGitUrl('');
       setGitBranch('');
       setGitName('');
-      scanProjects();
+      hasScannedLocalRef.current = false;
     }
-  }, [open, scanProjects]);
+  }, [open]);
+
+  const handleSelectLocalMode = useCallback(async () => {
+    setMode('local');
+    if (hasScannedLocalRef.current) {
+      return;
+    }
+    hasScannedLocalRef.current = true;
+    const request = ++defaultRequestRef.current;
+
+    try {
+      const defaultLoc = await window.API.getDefaultProjectLocation();
+      if (request === defaultRequestRef.current && typeof defaultLoc === 'string' && defaultLoc.trim()) {
+        const initialFolder = defaultLoc.trim();
+        setProjectsFolder(initialFolder);
+        await scanProjects(initialFolder);
+      }
+    } catch {
+      // Leave the folder ready for manual entry.
+    }
+  }, [scanProjects]);
 
   const handleAddProject = async () => {
     setIsAdding(true);
@@ -217,7 +241,7 @@ export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProje
           <div className="flex rounded-lg border border-border p-1 bg-muted/30">
             <button
               type="button"
-              onClick={() => { setMode('local'); }}
+              onClick={() => { void handleSelectLocalMode(); }}
               className={cn(
                 'flex-1 text-sm font-medium rounded-md px-3 py-1.5 transition-colors',
                 mode === 'local'
@@ -229,7 +253,7 @@ export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProje
             </button>
             <button
               type="button"
-              onClick={() => { setMode('clone'); }}
+              onClick={() => { defaultRequestRef.current += 1; setMode('clone'); }}
               className={cn(
                 'flex-1 text-sm font-medium rounded-md px-3 py-1.5 transition-colors',
                 mode === 'clone'
@@ -301,12 +325,12 @@ export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProje
                 id="projects-folder"
                 placeholder="/home/user/projects"
                 value={projectsFolder}
-                onChange={(e) => { setProjectsFolder(e.target.value); }}
+                onChange={(e) => { defaultRequestRef.current += 1; setProjectsFolder(e.target.value); }}
                 onKeyDown={handleKeyDown}
               />
               <Button
                 variant="outline"
-                onClick={scanProjects}
+                onClick={() => { void scanProjects(); }}
                 disabled={isScanning || !projectsFolder.trim()}
               >
                 {isScanning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}

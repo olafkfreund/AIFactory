@@ -9,6 +9,11 @@ import { ServiceCard } from './ServiceCard';
 import { InfoItem } from './InfoItem';
 import type { ProjectIndex } from '../../shared/types';
 
+function formatRootName(projectRoot: string): string {
+  const cleanRoot = projectRoot.replace(/[\\/]+$/, '');
+  return cleanRoot.split(/[\\/]/).filter(Boolean).pop() ?? cleanRoot;
+}
+
 interface ProjectIndexTabProps {
   projectIndex: ProjectIndex | null;
   indexLoading: boolean;
@@ -111,7 +116,7 @@ export function ProjectIndexTab({
                 </div>
                 {projectIndex.project_root && (
                   <p className="text-sm text-muted-foreground font-mono truncate">
-                    {projectIndex.project_root}
+                    {formatRootName(projectIndex.project_root)}
                   </p>
                 )}
                 {projectIndex.languages && Object.keys(projectIndex.languages).length > 0 && (
@@ -134,7 +139,12 @@ export function ProjectIndexTab({
                 </h3>
                 <div className="grid gap-4 md:grid-cols-2">
                   {Object.entries(projectIndex.services).map(([name, service]) => (
-                    <ServiceCard key={name} name={name} service={service} />
+                    <ServiceCard
+                      key={name}
+                      name={name}
+                      service={service}
+                      projectRoot={projectIndex.project_root}
+                    />
                   ))}
                 </div>
               </div>

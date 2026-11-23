@@ -24,6 +24,7 @@ from server.routes import (
     tasks,
     worktree_merge,
 )
+from server.routes.project_authz import ProjectAccess
 from server.services import audit_service
 
 pytestmark = pytest.mark.audit
@@ -64,6 +65,13 @@ def test_helper_writes_one_attributed_row(rows):
             "ip": "10.0.0.9",
         }
     ]
+
+
+def test_helper_accepts_project_access(rows):
+    access = ProjectAccess("p", "o-1", None, "member", USER)
+    _run(audit_service.audit_task_action(access, "task.stop", "p:001"))
+    assert rows[0]["user_id"] == "u-1"
+    assert rows[0]["org_id"] == "o-1"
 
 
 def test_helper_skips_a_proxied_call(rows):

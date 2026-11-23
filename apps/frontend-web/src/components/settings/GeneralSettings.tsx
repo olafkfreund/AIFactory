@@ -15,6 +15,8 @@ import {
   DEFAULT_FEATURE_THINKING,
   FEATURE_LABELS,
   fetchOllamaModels,
+  ollamaProbeUrl,
+  DEFAULT_OLLAMA_BASE_URL,
   fetchOpenAICompatibleModels
 } from '../../shared/constants';
 import type {
@@ -45,11 +47,28 @@ export function GeneralSettings({ settings, onSettingsChange }: GeneralSettingsP
   const [ollamaModels, setOllamaModels] = useState<{ value: string; label: string }[]>([]);
   const [openAICompatModels, setOpenAICompatModels] = useState<{ value: string; label: string }[]>([]);
 
-  const llmOpenaiBaseUrl = settings.llmOpenaiBaseUrl;
+  const llmOpenaiBaseUrl = settings.llmOpenaiBaseUrl?.trim();
+  const ollamaBaseUrl = ollamaProbeUrl(settings.ollamaBaseUrl, settings.llmOllamaBaseUrl);
+  const shouldProbeOllama =
+    settings.llmProvider === 'ollama' ||
+    settings.graphitiLlmProvider === 'ollama' ||
+    settings.memoryEmbeddingProvider === 'ollama' ||
+    Boolean(ollamaBaseUrl && ollamaBaseUrl !== DEFAULT_OLLAMA_BASE_URL);
 
   useEffect(() => {
-    fetchOllamaModels().then(setOllamaModels);
-    fetchOpenAICompatibleModels(llmOpenaiBaseUrl).then(setOpenAICompatModels);
+    if (shouldProbeOllama) {
+      void fetchOllamaModels(ollamaBaseUrl).then(setOllamaModels);
+    } else {
+      setOllamaModels([]);
+    }
+  }, [shouldProbeOllama, ollamaBaseUrl]);
+
+  useEffect(() => {
+    if (llmOpenaiBaseUrl) {
+      void fetchOpenAICompatibleModels(llmOpenaiBaseUrl).then(setOpenAICompatModels);
+    } else {
+      setOpenAICompatModels([]);
+    }
   }, [llmOpenaiBaseUrl]);
 
   return (

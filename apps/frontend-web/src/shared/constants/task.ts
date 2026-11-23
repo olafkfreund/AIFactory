@@ -68,7 +68,7 @@ export const TASK_STATUS_COLORS: Record<string, string> = {
   backlog: 'bg-muted text-muted-foreground',
   in_progress: 'bg-info/10 text-info',
   ai_review: 'bg-warning/10 text-warning',
-  human_review: 'bg-purple-500/10 text-purple-400',
+  human_review: 'bg-warning/10 text-warning',
   done: 'bg-success/10 text-success',
   copilot_running: 'bg-warning/10 text-warning',
   copilot_pr_opened: 'bg-info/10 text-info',
@@ -105,11 +105,11 @@ export const EXECUTION_PHASE_LABELS: Record<string, string> = {
 // Execution phase colors (for progress bars and indicators)
 export const EXECUTION_PHASE_COLORS: Record<string, string> = {
   idle: 'bg-muted text-muted-foreground',
-  spec_creation: 'bg-amber-500 text-amber-50',  // Orange for spec creation
-  planning: 'bg-amber-500 text-amber-50',
-  plan_review: 'bg-purple-500 text-purple-50',
+  spec_creation: 'bg-warning text-warning-foreground',
+  planning: 'bg-warning text-warning-foreground',
+  plan_review: 'bg-warning text-warning-foreground',
   coding: 'bg-info text-info-foreground',
-  qa_review: 'bg-purple-500 text-purple-50',
+  qa_review: 'bg-info text-info-foreground',
   qa_fixing: 'bg-warning text-warning-foreground',
   complete: 'bg-success text-success-foreground',
   failed: 'bg-destructive text-destructive-foreground'
@@ -118,11 +118,11 @@ export const EXECUTION_PHASE_COLORS: Record<string, string> = {
 // Execution phase badge colors (outline style)
 export const EXECUTION_PHASE_BADGE_COLORS: Record<string, string> = {
   idle: 'bg-muted/50 text-muted-foreground border-muted',
-  spec_creation: 'bg-amber-500/10 text-amber-500 border-amber-500/30',  // Orange badge for spec creation
-  planning: 'bg-amber-500/10 text-amber-500 border-amber-500/30',
-  plan_review: 'bg-purple-500/10 text-purple-400 border-purple-500/30',
+  spec_creation: 'bg-warning/10 text-warning border-warning/30',
+  planning: 'bg-warning/10 text-warning border-warning/30',
+  plan_review: 'bg-warning/10 text-warning border-warning/30',
   coding: 'bg-info/10 text-info border-info/30',
-  qa_review: 'bg-purple-500/10 text-purple-400 border-purple-500/30',
+  qa_review: 'bg-info/10 text-info border-info/30',
   qa_fixing: 'bg-warning/10 text-warning border-warning/30',
   complete: 'bg-success/10 text-success border-success/30',
   failed: 'bg-destructive/10 text-destructive border-destructive/30'
@@ -160,13 +160,13 @@ export const TASK_CATEGORY_LABELS: Record<string, string> = {
 export const TASK_CATEGORY_COLORS: Record<string, string> = {
   feature: 'bg-primary/10 text-primary border-primary/30',
   bug_fix: 'bg-destructive/10 text-destructive border-destructive/30',
-  refactoring: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30',
-  documentation: 'bg-amber-500/10 text-amber-500 border-amber-500/30',
-  security: 'bg-red-500/10 text-red-400 border-red-500/30',
-  performance: 'bg-purple-500/10 text-purple-400 border-purple-500/30',
+  refactoring: 'bg-info/10 text-info border-info/30',
+  documentation: 'bg-warning/10 text-warning border-warning/30',
+  security: 'bg-destructive/10 text-destructive border-destructive/30',
+  performance: 'bg-info/10 text-info border-info/30',
   ui_ux: 'bg-info/10 text-info border-info/30',
-  infrastructure: 'bg-slate-500/10 text-slate-400 border-slate-500/30',
-  testing: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+  infrastructure: 'bg-muted text-muted-foreground border-border',
+  testing: 'bg-success/10 text-success border-success/30'
 };
 
 // ============================================
@@ -185,7 +185,7 @@ export const TASK_COMPLEXITY_COLORS: Record<string, string> = {
   trivial: 'bg-success/10 text-success',
   small: 'bg-info/10 text-info',
   medium: 'bg-warning/10 text-warning',
-  large: 'bg-orange-500/10 text-orange-400',
+  large: 'bg-warning/10 text-warning',
   complex: 'bg-destructive/10 text-destructive'
 };
 

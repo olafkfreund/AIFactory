@@ -1,5 +1,54 @@
 ## [Unreleased]
 
+## 3.21.6 - 2026-11-23
+
+Merged to `dev` since 3.21.5.
+
+### Changed
+
+- The web app adopts the shared Factory design tokens (Build accent, `data-portal="build"`) and the shared hub shell: a 48px top bar with a breadcrumb project switcher, a sidebar, a 64px pipeline strip and `WorkCard` task cards. Drag, start, stop, recover, archive and Copilot links are kept. There is no backend change. (Factory#3876, #2213)
+
+## 3.21.5 - 2026-11-23
+
+Merged to `dev` since 3.21.4.
+
+### Fixed
+
+- The project env viewer is readable at viewer role, with a redacted allowlist below admin (no git token, Graphiti keys or URL credentials). PATCH stays admin. `GET /api/projects/default-location` is new. SSO login picks the highest mapped role and syncs `User.role`; a startup migration marks backfilled team rows `provenance=backfill`. (#2198, #2200)
+- Done tasks no longer light a pipeline stage. Settings and Debug show the version from `/api/health`. Ollama and OpenAI-compatible probes run only when configured. Add Project opens on Git URL. The unset provider shows "Auto (default)". Empty chat sessions are hidden. (#2198, #2201)
+
+## 3.21.4 - 2026-11-23
+
+Merged to `dev` since 3.21.3.
+
+### Fixed
+
+- The investigation test pod sets `HOME=/tmp/home` and passes it through the test-env allowlist. (#2207, #2208)
+
+## 3.21.3 - 2026-11-23
+
+Merged to `dev` since 3.21.2.
+
+### Fixed
+
+- The investigation test pod copies the source with `cp -R /src/. /work/` instead of `cp -a`, which failed on the read-only mount. (#2203, #2204)
+
+## 3.21.2 - 2026-11-23
+
+Merged to `dev` since 3.21.1.
+
+### Fixed
+
+- The investigation agent sets `ENABLE_TOOL_SEARCH=false` so `run_tests` loads up front, and investigation pods set `enableServiceLinks: false`. (#2196, #2197)
+
+## 3.21.1 - 2026-11-23
+
+Merged to `dev` since 3.21.0.
+
+### Fixed
+
+- The investigation agent pod sets `PYTHONPATH` so it can import its entry point, and the MCP keys settings page offers the `api` scope. (#2190, #2191)
+
 ## 3.21.0 - 2026-11-22
 
 Merged to `dev` since 3.20.1.

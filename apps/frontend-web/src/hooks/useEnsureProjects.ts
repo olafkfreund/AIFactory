@@ -1,20 +1,16 @@
 import { useEffect, useState } from 'react';
-import { useProjectStore, loadProjects } from '../stores/project-store';
+import { loadProjects, useProjectStore } from '../stores/project-store';
 
-/** For routes outside AuthenticatedApp (console pages, legacy redirects): load
- * the project list on a cold browser load. True once projects are available. */
-export function useEnsureProjects(): boolean {
-  const have = useProjectStore((s) => s.projects.length > 0);
-  const [done, setDone] = useState(have);
+export function useEnsureProjects(): { ready: boolean; error: string | null; retry: () => void } {
+  const error = useProjectStore((state) => state.error);
+  const [ready, setReady] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+
   useEffect(() => {
-    if (have) {
-      setDone(true);
-      return;
-    }
     let cancelled = false;
-    void loadProjects().finally(() => { if (!cancelled) setDone(true); });
+    void loadProjects().finally(() => { if (!cancelled) setReady(true); });
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once on mount
-  }, []);
-  return done;
+  }, [attempt]);
+
+  return { ready, error, retry: () => { setReady(false); setAttempt((n) => n + 1); } };
 }

@@ -1,4 +1,13 @@
 {
+  "pipeline": {
+    "failed": "Failed ({{count}})",
+    "showArchived": "Show archived",
+    "showMore": "Show {{count}} more",
+    "active": "Active",
+    "activeAgents_one": "{{count}} active agent",
+    "activeAgents_other": "{{count}} active agents",
+    "moveFailed": "Could not move task"
+  },
   "status": {
     "backlog": "Backlog",
     "todo": "To Do",
@@ -17,6 +26,7 @@
     "view": "View Details"
   },
   "labels": {
+    "error": "Task action failed",
     "running": "Running",
     "aiReview": "AI Review",
     "needsReview": "Needs Review",

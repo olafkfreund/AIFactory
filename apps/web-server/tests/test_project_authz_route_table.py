@@ -141,6 +141,7 @@ NON_PROJECT_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("GET", "/api/ollama/models"),
         ("POST", "/api/ollama/pull"),
         ("GET", "/api/ollama/status"),
+        ("GET", "/api/projects/default-location"),
         ("GET", "/api/orgs"),
         ("POST", "/api/orgs"),
         ("DELETE", "/api/orgs/{org_id}"),
@@ -187,6 +188,7 @@ NON_PROJECT_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("POST", "/api/settings/import-claude-credentials"),
         ("GET", "/api/settings/local-llm/detect"),
         ("GET", "/api/settings/ollama/models"),
+        ("POST", "/api/settings/ollama/models"),
         ("POST", "/api/settings/ollama/pull"),
         ("POST", "/api/settings/ollama/test"),
         ("GET", "/api/settings/openai-compat/models"),
@@ -633,6 +635,7 @@ async def test_team_grant_intersect_scope_ceiling_matrix(
     async with authz_db() as db:
         access = await project_authz.require_project_role(principal, "p1", expected, db)
         assert access.role == expected
+        assert access.principal is principal
 
         higher_roles = [
             r for r, lvl in ROLE_LEVELS.items() if lvl > ROLE_LEVELS[expected]

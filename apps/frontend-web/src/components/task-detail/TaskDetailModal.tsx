@@ -203,12 +203,15 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
   }, [task.specId, state.needsReview, task.reviewReason, showTaskReview, task.status]);
 
   // Event Handlers
-  const handleStartStop = () => {
-    if (state.isRunning && !state.isStuck) {
-      stopTask(task.id);
-    } else {
-      startTask(task.id);
-      onOpenChange(false);
+  const handleStartStop = async () => {
+    try {
+      if (state.isRunning && !state.isStuck) await stopTask(task.id);
+      else {
+        await startTask(task.id);
+        onOpenChange(false);
+      }
+    } catch (error) {
+      toast({ variant: 'destructive', title: t('labels.error', 'Task action failed'), description: error instanceof Error ? error.message : 'Task action failed' });
     }
   };
 

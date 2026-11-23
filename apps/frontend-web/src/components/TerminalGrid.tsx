@@ -313,11 +313,8 @@ export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: 
     return { rows: 3, cols: 4 }; // Max 12 terminals = 3x4
   }, [terminals.length]);
 
-  // Get terminal IDs for SortableContext
-  const terminalIds = useMemo(() => terminals.map(t => t.id), [terminals]);
-
   // Empty state
-  if (terminals.length === 0) {
+  if (allTerminals.length === 0) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-6 p-8">
         <div className="flex flex-col items-center gap-3 text-center">
@@ -440,7 +437,7 @@ export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: 
             "flex-1 overflow-hidden p-2 transition-all duration-300 ease-out",
             fileExplorerOpen && "pr-0"
           )}>
-            <SortableContext items={terminalIds} strategy={rectSortingStrategy}>
+            <SortableContext items={terminals.map(t => t.id)} strategy={rectSortingStrategy}>
               <div
                 className="grid gap-2 h-full min-w-0"
                 style={{
@@ -448,19 +445,20 @@ export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: 
                   gridTemplateRows: `repeat(${gridLayout.rows}, 1fr)`,
                 }}
               >
-                {terminals.map((terminal) => (
-                  <SortableTerminal
-                    key={terminal.id}
-                    id={terminal.id}
-                    cwd={terminal.cwd || projectPath}
-                    projectPath={projectPath}
-                    isActive={terminal.id === activeTerminalId}
-                    onClose={() => { handleCloseTerminal(terminal.id); }}
-                    onActivate={() => { setActiveTerminal(terminal.id); }}
-                    tasks={tasks}
-                    onNewTaskClick={onNewTaskClick}
-                    terminalCount={terminals.length}
-                  />
+                {allTerminals.map((terminal) => (
+                  <div key={terminal.id} className={terminals.includes(terminal) ? 'min-h-0 min-w-0' : 'hidden'}>
+                    <SortableTerminal
+                      id={terminal.id}
+                      cwd={terminal.cwd || terminal.projectPath || projectPath}
+                      projectPath={terminal.projectPath || projectPath}
+                      isActive={terminals.includes(terminal) && terminal.id === activeTerminalId}
+                      onClose={() => { handleCloseTerminal(terminal.id); }}
+                      onActivate={() => { setActiveTerminal(terminal.id); }}
+                      tasks={tasks}
+                      onNewTaskClick={onNewTaskClick}
+                      terminalCount={terminals.length}
+                    />
+                  </div>
                 ))}
               </div>
             </SortableContext>

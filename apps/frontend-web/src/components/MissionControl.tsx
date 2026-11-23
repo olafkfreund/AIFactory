@@ -132,9 +132,13 @@ function MissionControlContent({
       : undefined;
 
   // Actions — kept open after start so the operator watches the run live.
-  const handleStartStop = () => {
-    if (state.isRunning && !state.isStuck) stopTask(task.id);
-    else startTask(task.id);
+  const handleStartStop = async () => {
+    try {
+      if (state.isRunning && !state.isStuck) await stopTask(task.id);
+      else await startTask(task.id);
+    } catch (error) {
+      toast({ variant: 'destructive', title: t('labels.error', 'Task action failed'), description: error instanceof Error ? error.message : 'Task action failed' });
+    }
   };
 
   const handleRecover = async () => {
