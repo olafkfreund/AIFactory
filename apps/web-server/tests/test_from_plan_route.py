@@ -11,7 +11,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 _BACKEND = Path(__file__).resolve().parents[2] / "backend"
@@ -141,12 +141,27 @@ def _signed_plan(
     return plan
 
 
-def _post_from_plan(
+def _with_submission(plan: dict[str, Any]) -> dict[str, Any]:
+    plan = json.loads(json.dumps(plan))
+    plan.pop(APPROVAL_KEY)
+    plan["provenance"]["submission_id"] = "d" * 64
+    plan[APPROVAL_KEY] = sign_plan(
+        plan,
+        key=KEY,
+        approved_by="pfactory",
+        approval_timestamp="2026-11-20T12:00:00Z",
+    )
+    return plan
+
+
+def _post_from_plan(  # noqa: PLR0913 - route variants share one test client setup
     project_id: str,
     project_path: Path,
     body: dict[str, Any],
     *,
     fake_service: MagicMock | None = None,
+    headers: dict[str, str] | None = None,
+    registered: bool = True,
 ):
     fake_service = fake_service or MagicMock(
         start_task_execution=AsyncMock(return_value=None)
@@ -164,7 +179,11 @@ def _post_from_plan(
                 }
             },
         ),
-        patch.object(execution, "resolve_project_id", return_value=project_id),
+        patch.object(
+            execution,
+            "resolve_project_id",
+            return_value=project_id if registered else None,
+        ),
         patch.object(execution, "_auth_disabled", return_value=True),
         patch.object(execution, "get_agent_service", return_value=fake_service),
         patch.object(execution, "emit_task_status", AsyncMock()),
@@ -183,8 +202,80 @@ def _post_from_plan(
                 "description": "signed contract",
             },
             json=body,
+            headers=headers,
         )
     return resp, fake_service
+
+
+def test_from_plan_reuses_submission_within_project_and_tenant(
+    handoff_project, monkeypatch: pytest.MonkeyPatch
+):
+    project_id, project_path, base_sha, approved_sha = handoff_project
+    plan = _with_submission(_signed_plan(base_sha, approved_sha))
+    service = MagicMock(start_task_execution=AsyncMock(return_value=None))
+    monkeypatch.setattr(github, "_get_project_provider", lambda *_a, **_k: None)
+
+    first, _ = _post_from_plan(
+        project_id, project_path, {"plan": plan}, fake_service=service
+    )
+    repeat, _ = _post_from_plan(
+        project_id, project_path, {"plan": plan}, fake_service=service
+    )
+
+    assert first.status_code == repeat.status_code == 200
+    assert first.json()["task_id"] == repeat.json()["task_id"]
+    service.start_task_execution.assert_awaited_once()
+    specs_dir = project_path / ".aifactory" / "specs"
+    assert len([d for d in specs_dir.iterdir() if d.is_dir()]) == 1
+
+    monkeypatch.setenv("AIFACTORY_MULTI_TENANT", "1")
+    other_tenant, _ = _post_from_plan(
+        project_id,
+        project_path,
+        {"plan": plan},
+        fake_service=service,
+        headers={"X-Tenant-Id": "other"},
+    )
+    assert other_tenant.status_code == 200
+    assert other_tenant.json()["task_id"] != first.json()["task_id"]
+    assert service.start_task_execution.await_count == 2
+
+
+def test_from_plan_without_submission_allocates_each_time(handoff_project):
+    project_id, project_path, base_sha, approved_sha = handoff_project
+    plan = _signed_plan(base_sha, approved_sha)
+    service = MagicMock(start_task_execution=AsyncMock(return_value=None))
+
+    first, _ = _post_from_plan(
+        project_id, project_path, {"plan": plan}, fake_service=service
+    )
+    second, _ = _post_from_plan(
+        project_id, project_path, {"plan": plan}, fake_service=service
+    )
+
+    assert first.status_code == second.status_code == 200
+    assert first.json()["task_id"] != second.json()["task_id"]
+    assert service.start_task_execution.await_count == 2
+
+
+def test_from_plan_invisible_project_does_not_reveal_submission(
+    handoff_project, monkeypatch: pytest.MonkeyPatch
+):
+    project_id, project_path, base_sha, approved_sha = handoff_project
+    plan = _with_submission(_signed_plan(base_sha, approved_sha))
+    created, _ = _post_from_plan(project_id, project_path, {"plan": plan})
+    assert created.status_code == 200
+
+    async def invisible(*_args, **_kwargs):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    monkeypatch.setattr(execution, "_authorize_resolved_project", invisible)
+    hidden, _ = _post_from_plan(project_id, project_path, {"plan": plan})
+    unknown, _ = _post_from_plan(
+        project_id, project_path, {"plan": plan}, registered=False
+    )
+    assert hidden.status_code == 404
+    assert hidden.json() == unknown.json() == {"detail": "Project not found"}
 
 
 def test_from_plan_adopts_provenance_records_branch_and_transitions_label(

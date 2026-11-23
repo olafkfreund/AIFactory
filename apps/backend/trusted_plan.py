@@ -1196,6 +1196,9 @@ def _record_approval_provenance(
             "source_branch",
             "approved_head_sha",
             "pr_number",
+            "source_artifacts",
+            "human_approval",
+            "submission_id",
         ):
             if key in signed_provenance:
                 provenance[key] = signed_provenance[key]

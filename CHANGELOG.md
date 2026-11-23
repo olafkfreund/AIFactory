@@ -1,5 +1,14 @@
 ## [Unreleased]
 
+## 3.21.7 - 2026-11-23
+
+Merged to `dev` since 3.21.6.
+
+### Fixed
+
+- `POST /api/tasks/from-plan` is idempotent on the signed `provenance.submission_id`: a repeat in the same project and tenant returns the existing task instead of allocating a new spec. (Factory#3865, #2193)
+- The shared hub shell is re-vendored at hub 3b02535, so the top bar fits at 390px. (Factory#3876, #2216)
+
 ## 3.21.6 - 2026-11-23
 
 Merged to `dev` since 3.21.5.
