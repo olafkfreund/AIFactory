@@ -1355,9 +1355,7 @@ async def create_and_run_task(
         "description": description,
         "created_at": datetime.now(UTC).isoformat(),
     }
-    requirements.update(
-        principal_attribution(_access if isinstance(_access, dict) else None)
-    )
+    requirements.update(principal_attribution(_access))
     # Persist upstream provenance (#332) so the PFactory→issue→spec chain is
     # traversable. Optional — omitted entirely when no fields are provided.
     if request.provenance is not None:

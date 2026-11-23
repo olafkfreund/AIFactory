@@ -634,6 +634,7 @@ async def test_team_grant_intersect_scope_ceiling_matrix(
     async with authz_db() as db:
         access = await project_authz.require_project_role(principal, "p1", expected, db)
         assert access.role == expected
+        assert access.principal is principal
 
         higher_roles = [
             r for r, lvl in ROLE_LEVELS.items() if lvl > ROLE_LEVELS[expected]

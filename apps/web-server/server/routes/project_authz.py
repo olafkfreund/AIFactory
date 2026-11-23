@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from fastapi import Depends, HTTPException, Request
@@ -32,6 +32,9 @@ class ProjectAccess:
     org_id: str
     team_id: str | None
     role: str
+    principal: dict[str, object] = field(
+        default_factory=dict, compare=False, hash=False, repr=False
+    )
 
 
 def scope_ceiling(scopes: object) -> str | None:
@@ -182,7 +185,7 @@ async def require_project_role(
                 f"This action requires at least '{min_role}' role",
             )
             raise HTTPException(status_code=403, detail="Forbidden")
-        return ProjectAccess(str(project_id), org_id, team_id, role)
+        return ProjectAccess(str(project_id), org_id, team_id, role, principal)
     finally:
         if db.in_transaction():
             await db.rollback()
