@@ -89,6 +89,7 @@ export const useInsightsStore = create<InsightsState>((set, _get) => ({
 
   addMessage: (message) =>
     { set((state) => {
+      const now = new Date();
       if (!state.session) {
         // Create new session if none exists
         return {
@@ -96,18 +97,33 @@ export const useInsightsStore = create<InsightsState>((set, _get) => ({
             id: `session-${Date.now()}`,
             projectId: '',
             messages: [message],
-            createdAt: new Date(),
-            updatedAt: new Date()
+            createdAt: now,
+            updatedAt: now
           }
         };
       }
 
+      const updatedMessages = [...state.session.messages, message];
+      const sessionId = state.session.id;
+      const sessions = state.sessions.some((s) => s.id === sessionId)
+        ? state.sessions.map((s) =>
+            s.id === sessionId
+              ? {
+                  ...s,
+                  messageCount: Math.max(s.messageCount + 1, updatedMessages.length),
+                  updatedAt: now
+                }
+              : s
+          )
+        : state.sessions;
+
       return {
         session: {
           ...state.session,
-          messages: [...state.session.messages, message],
-          updatedAt: new Date()
-        }
+          messages: updatedMessages,
+          updatedAt: now
+        },
+        sessions
       };
     }); },
 
@@ -193,14 +209,30 @@ export const useInsightsStore = create<InsightsState>((set, _get) => ({
         };
       }
 
+      const now = new Date();
+      const updatedMessages = [...state.session.messages, newMessage];
+      const sessionId = state.session.id;
+      const sessions = state.sessions.some((s) => s.id === sessionId)
+        ? state.sessions.map((s) =>
+            s.id === sessionId
+              ? {
+                  ...s,
+                  messageCount: Math.max(s.messageCount + 1, updatedMessages.length),
+                  updatedAt: now
+                }
+              : s
+          )
+        : state.sessions;
+
       return {
         streamingContent: '',
         toolsUsed: [],
         session: {
           ...state.session,
-          messages: [...state.session.messages, newMessage],
-          updatedAt: new Date()
-        }
+          messages: updatedMessages,
+          updatedAt: now
+        },
+        sessions
       };
     }); },
 
