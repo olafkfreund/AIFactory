@@ -209,6 +209,56 @@ class TestCompleteness:
 
 
 class TestVerifyAndIngest:
+    def test_signed_artifact_provenance_is_stored_and_tamper_evident(self, tmp_path):
+        plan = _complete_plan()
+        provenance = {
+            "source_artifacts": [
+                {
+                    "stage": stage,
+                    "path": f"{stage}/example.md",
+                    "blob_sha": "a" * 40,
+                    "approve_commit_sha": "b" * 40,
+                    "approve_commit_author": "Reviewer <reviewer@example.com>",
+                    "attested_by": "client",
+                }
+                for stage in ("intent", "spec", "plan")
+            ],
+            "human_approval": {
+                "user_id": "u1",
+                "approver_display": "Reviewer",
+                "auth_kind": "user",
+                "approved_at": TS,
+                "plan_hash": "c" * 64,
+            },
+            "submission_id": "d" * 64,
+        }
+        plan["provenance"] = provenance
+        signed = _signed(plan, approved_by="pfactory")
+        spec_dir = tmp_path / "spec"
+
+        assert ingest_trusted_plan(spec_dir, signed, keyring={"pfactory": KEY}).ok
+        assert (
+            json.loads((spec_dir / "context" / "task_contract.json").read_text())
+            == signed
+        )
+        stored_provenance = json.loads((spec_dir / "requirements.json").read_text())[
+            "provenance"
+        ]
+        for field, value in provenance.items():
+            assert stored_provenance[field] == value
+
+        for field in provenance["source_artifacts"][0]:
+            altered = json.loads(json.dumps(signed))
+            altered["provenance"]["source_artifacts"][0][field] = "changed"
+            assert not verify_trusted_plan(altered, keyring={"pfactory": KEY}).ok
+        for field in provenance["human_approval"]:
+            altered = json.loads(json.dumps(signed))
+            altered["provenance"]["human_approval"][field] = "changed"
+            assert not verify_trusted_plan(altered, keyring={"pfactory": KEY}).ok
+        altered = json.loads(json.dumps(signed))
+        altered["provenance"]["submission_id"] = "e" * 64
+        assert not verify_trusted_plan(altered, keyring={"pfactory": KEY}).ok
+
     def _handoff_repo(self, tmp_path):
         repo = tmp_path / "repo"
         repo.mkdir()
