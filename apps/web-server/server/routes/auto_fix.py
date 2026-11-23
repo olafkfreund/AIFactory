@@ -31,15 +31,15 @@ from pydantic import BaseModel, Field
 from server.error_ref import client_error
 
 from ..services import auto_fix_service
-from .project_authz import require_project_access
+from .project_authz import ProjectAccess, require_project_access
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-Viewer = Annotated[dict[str, Any], Depends(require_project_access("viewer"))]
-Member = Annotated[dict[str, Any], Depends(require_project_access("member"))]
-Admin = Annotated[dict[str, Any], Depends(require_project_access("admin"))]
+Viewer = Annotated[ProjectAccess, Depends(require_project_access("viewer"))]
+Member = Annotated[ProjectAccess, Depends(require_project_access("member"))]
+Admin = Annotated[ProjectAccess, Depends(require_project_access("admin"))]
 
 # GET never returns the stored bot token; PUT treats this value (or an omitted
 # field) as "keep the stored token" so a round-tripped config does not wipe it.

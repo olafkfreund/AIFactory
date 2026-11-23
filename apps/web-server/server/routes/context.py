@@ -7,6 +7,7 @@ Handles project context, memory infrastructure, and Graphiti integration.
 import json
 import logging
 import re
+import shlex
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path as FilePath
@@ -31,6 +32,22 @@ router = APIRouter()
 _AGENT_MCP_PREFIX = "AGENT_MCP_"
 _AGENT_NAME_RE = re.compile(r"[A-Za-z0-9_]+")
 _AGENT_MCP_KEY_RE = re.compile(r"AGENT_MCP_([A-Za-z0-9_]+)_(ADD|REMOVE)")
+
+
+def sanitize_url_for_viewer(value: object) -> str:
+    """Remove credentials and URL parameters from viewer-visible settings."""
+    if not isinstance(value, str):
+        return ""
+    try:
+        parts = urlsplit(value)
+        host = parts.hostname
+        if host is None and "@" in value:
+            return ""
+        return urlunsplit(
+            (parts.scheme, parts.netloc.rsplit("@", 1)[-1], parts.path, "", "")
+        )
+    except ValueError:
+        return ""
 
 
 # ============================================
@@ -511,6 +528,8 @@ async def get_project_env(
         # Graphiti provider config fields
         elif key == "GRAPHITI_EMBEDDER_PROVIDER":
             graphiti_provider_config["embeddingProvider"] = value
+        elif key == "GRAPHITI_LLM_PROVIDER":
+            graphiti_provider_config["llmProvider"] = value
         elif key == "OLLAMA_BASE_URL":
             graphiti_provider_config["ollamaBaseUrl"] = value
         elif key == "OLLAMA_EMBEDDING_MODEL":
@@ -596,7 +615,7 @@ async def get_project_env(
         logger.warning("failed to check claude CLI auth status", exc_info=True)
 
     if access.role not in ("admin", "owner"):
-        safe = {
+        safe: dict[str, Any] = {
             key: config[key]
             for key in (
                 "gitProvider",
@@ -607,15 +626,22 @@ async def get_project_env(
                 "gitBaseUrl",
                 "githubEnabled",
                 "githubTokenSet",
+                "claudeAuthStatus",
                 "graphitiEnabled",
                 "enableFancyUi",
             )
             if key in config
         }
-        base_url = urlsplit(safe.get("gitBaseUrl", ""))
-        safe["gitBaseUrl"] = urlunsplit(
-            base_url._replace(netloc=base_url.netloc.rsplit("@", 1)[-1])
-        )
+        for key in ("gitBaseUrl", "gitRepo", "githubRepo"):
+            if key in safe:
+                safe[key] = sanitize_url_for_viewer(safe[key])
+        safe["graphitiProviderConfig"] = {
+            key: value
+            for key, value in graphiti_provider_config.items()
+            if key in ("embeddingProvider", "llmProvider")
+            and isinstance(value, str)
+            and re.fullmatch(r"[A-Za-z0-9_-]+", value)
+        }
         safe["graphitiKeysSet"] = {
             key: bool(graphiti_provider_config.get(key))
             for key in (
@@ -627,20 +653,29 @@ async def get_project_env(
         }
         safe["mcpServers"] = mcp_servers
         safe["agentMcpOverrides"] = agent_mcp_overrides
-        safe["customMcpServers"] = [
-            {
-                "name": server.get("name"),
-                "type": server.get("type"),
-                **({"command": server["command"]} if server.get("command") else {}),
-                **(
-                    {"host": urlsplit(server["url"]).hostname}
-                    if server.get("url")
-                    else {}
-                ),
+        safe["customMcpServers"] = []
+        for server in config.get("customMcpServers", []):
+            if not isinstance(server, dict):
+                continue
+            entry: dict[str, Any] = {
+                key: server[key]
+                for key in ("id", "name", "type")
+                if isinstance(server.get(key), str)
             }
-            for server in config.get("customMcpServers", [])
-            if isinstance(server, dict)
-        ]
+            if "url" in server:
+                entry["url"] = sanitize_url_for_viewer(server["url"])
+            command = server.get("command")
+            if isinstance(command, str):
+                try:
+                    args = shlex.split(command)
+                except ValueError:
+                    args = []
+                entry["command"] = (
+                    FilePath(args[0]).name
+                    if args and re.fullmatch(r"[A-Za-z0-9_./+-]+", args[0])
+                    else ""
+                )
+            safe["customMcpServers"].append(entry)
         config = safe
     return {"success": True, "data": config}
 
@@ -765,6 +800,7 @@ async def update_project_env(
             if isinstance(gpc, dict):
                 provider_mapping = {
                     "embeddingProvider": "GRAPHITI_EMBEDDER_PROVIDER",
+                    "llmProvider": "GRAPHITI_LLM_PROVIDER",
                     "ollamaBaseUrl": "OLLAMA_BASE_URL",
                     "ollamaEmbeddingModel": "OLLAMA_EMBEDDING_MODEL",
                     "ollamaEmbeddingDim": "OLLAMA_EMBEDDING_DIM",

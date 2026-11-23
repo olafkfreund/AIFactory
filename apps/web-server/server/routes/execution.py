@@ -64,6 +64,7 @@ from .from_issue import (
 )
 from .github import _bound_github_repo, _github_repo_identity
 from .project_authz import (
+    ProjectAccess,
     _auth_disabled,
     accessible_project_ids,
     require_project_access,
@@ -1319,7 +1320,7 @@ async def create_and_run_task(
     description: str,
     request: CreateAndRunRequest,
     raw_request: Request = None,  # noqa: RUF013 — FastAPI injects; None lets direct callers omit
-    _access: dict = Depends(require_project_access("member")),
+    _access: ProjectAccess = Depends(require_project_access("member")),
 ):
     """Create a new task and immediately start execution.
 
@@ -1587,7 +1588,7 @@ async def _authorize_resolved_project(
     project_id: str,
     db: AsyncSession,
     projects: dict[str, Any],
-) -> dict[str, Any] | None:
+) -> dict[str, Any] | ProjectAccess:
     if raw_request is None or not isinstance(db, AsyncSession):
         raise HTTPException(status_code=401, detail="Authentication required")
     if _auth_disabled() and project_id in projects:

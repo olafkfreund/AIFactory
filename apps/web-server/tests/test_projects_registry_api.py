@@ -121,6 +121,16 @@ def test_default_location_is_only_exposed_within_browse_roots(api, monkeypatch):
     assert client.get("/api/projects/default-location").json() == {"path": None}
 
 
+def test_default_location_handles_expanduser_runtime_error(api, monkeypatch):
+    client, _ = api
+    def broken_root():
+        raise RuntimeError("home directory unavailable")
+    monkeypatch.setattr(
+        "server.services.project_workspace_service.workspace_root", broken_root
+    )
+    assert client.get("/api/projects/default-location").json() == {"path": None}
+
+
 def test_create_returns_slug_and_writes_no_projects_json(api):
     client, tmp = api
     r = _make(client, tmp, "My App")

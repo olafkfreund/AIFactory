@@ -320,7 +320,10 @@ async def test_github_fork_info_refusal_has_a_status(tmp_path: Path) -> None:
 async def test_context_project_env_refusal_has_a_status() -> None:
     """`context.get_project_env` -- an unknown project id."""
     with patch("server.project_registry.load_projects", return_value={}):
-        result = await context.get_project_env(projectId="nope")
+        result = await context.get_project_env(
+            projectId="nope",
+            access=context.ProjectAccess("nope", "org", None, "viewer"),
+        )
     status, payload = verdict(result)
     assert status == REFUSED_STATUS
     assert payload["error"] == "Project nope not found"

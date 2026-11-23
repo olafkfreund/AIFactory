@@ -42,6 +42,9 @@ def _slugify(text: str) -> str:
 def _role_for_userinfo(userinfo: dict) -> str:
     """Resolve the internal role from the IdP's userinfo claims."""
     default_role = os.environ.get("APP_OIDC_DEFAULT_ROLE", "member")
+    if default_role not in ROLE_LEVELS:
+        logger.warning("APP_OIDC_DEFAULT_ROLE is invalid; falling back to member")
+        default_role = "member"
     mapping_json = os.environ.get("APP_OIDC_GROUP_TO_ROLE", "")
     if not mapping_json:
         return default_role
@@ -57,6 +60,8 @@ def _role_for_userinfo(userinfo: dict) -> str:
     groups = userinfo.get("groups") or []
     if isinstance(groups, str):
         groups = [groups]
+    if not isinstance(groups, (list, tuple, set, frozenset)):
+        return default_role
     roles = [
         mapping[group]
         for group in groups

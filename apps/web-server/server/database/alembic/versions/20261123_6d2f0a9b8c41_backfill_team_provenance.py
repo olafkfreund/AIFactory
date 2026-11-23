@@ -23,8 +23,8 @@ def upgrade() -> None:
             WHERE t.id = team_memberships.team_id
               AND t.is_default = true
               AND om.user_id = team_memberships.user_id
-              AND om.role = team_memberships.role
               AND u.oidc_sub IS NOT NULL
+              AND u.id != 'default'
           )
     """)
     )

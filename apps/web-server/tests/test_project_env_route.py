@@ -69,6 +69,9 @@ def api(tmp_path, monkeypatch):
         "GITHUB_TOKEN": "github-secret-sentinel",
         "GIT_TOKEN": "git-secret-sentinel",
         "GIT_BASE_URL": "https://url-secret-sentinel@example.test/repo",
+        "GIT_REPO": "https://oauth2:glpat-X@gitlab.com/g/r.git?private_token=S#access_token=S",
+        "GRAPHITI_EMBEDDER_PROVIDER": "openai",
+        "GRAPHITI_LLM_PROVIDER": "anthropic",
         "OPENAI_API_KEY": "openai-secret-sentinel",
         "VOYAGE_API_KEY": "voyage-secret-sentinel",
         "GOOGLE_API_KEY": "google-secret-sentinel",
@@ -76,17 +79,19 @@ def api(tmp_path, monkeypatch):
         "CUSTOM_MCP_SERVERS": json.dumps(
             [
                 {
+                    "id": "http-id",
                     "name": "custom",
                     "type": "http",
-                    "url": "https://mcp-secret-sentinel@mcp.test/path",
+                    "url": "https://mcp-secret-sentinel@mcp.test/path?private_token=S#access_token=S",
                     "headers": {"Authorization": "header-secret-sentinel"},
                     "env": {"KEY": "env-secret-sentinel"},
                     "args": ["args-secret-sentinel"],
                 },
                 {
+                    "id": "stdio-id",
                     "name": "command",
                     "type": "stdio",
-                    "command": "npx",
+                    "command": "/usr/bin/npx --token command-secret-sentinel",
                     "env": {"KEY": "command-env-secret-sentinel"},
                     "args": ["command-args-secret-sentinel"],
                 },
@@ -129,14 +134,61 @@ def test_non_admin_gets_explicit_allowlist(api, who):
     assert response.status_code == 200, response.text
     data = response.json()["data"]
     assert data["gitBaseUrl"] == "https://example.test/repo"
+    assert data["gitRepo"] == "https://gitlab.com/g/r.git"
+    assert data["githubRepo"] == "https://gitlab.com/g/r.git"
+    assert data["claudeAuthStatus"] == "not_configured"
+    assert data["graphitiProviderConfig"] == {
+        "embeddingProvider": "openai",
+        "llmProvider": "anthropic",
+    }
     assert data["githubTokenSet"] is True
     assert all(data["graphitiKeysSet"].values())
     assert data["customMcpServers"] == [
-        {"name": "custom", "type": "http", "host": "mcp.test"},
-        {"name": "command", "type": "stdio", "command": "npx"},
+        {"id": "http-id", "name": "custom", "type": "http", "url": "https://mcp.test/path"},
+        {"id": "stdio-id", "name": "command", "type": "stdio", "command": "npx"},
     ]
     assert "secret-sentinel" not in json.dumps(data)
-    assert "gitToken" not in data and "graphitiProviderConfig" not in data
+    assert "gitToken" not in data and "openaiApiKey" not in data["graphitiProviderConfig"]
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("https://oauth2:glpat-X@gitlab.com/g/r.git", "https://gitlab.com/g/r.git"),
+        ("user:tok@gitlab.example/x", ""),
+        ("tok@host/x", ""),
+        ("git@github.com:o/r.git", ""),
+        ("https://host/x?private_token=S#access_token=S", "https://host/x"),
+        ("https://u:p@[::1/x", ""),
+        (42, ""),
+    ],
+)
+def test_sanitize_url_for_viewer(value, expected):
+    assert context.sanitize_url_for_viewer(value) == expected
+
+
+def test_viewer_mcp_metadata_rejects_malformed_fields(api, monkeypatch):
+    client, _ = api
+    settings = {
+        "GRAPHITI_EMBEDDER_PROVIDER": "https://u:provider-secret@host/x",
+        "CUSTOM_MCP_SERVERS": json.dumps([
+            {"name": {"secret": "name-secret"}, "type": ["type-secret"], "url": 42,
+             "command": "TOKEN=command-secret /usr/bin/npx --arg value"},
+            {"name": "broken", "type": "http", "url": "https://u:p@[::1/x"},
+        ])
+    }
+    monkeypatch.setattr(
+        context.project_settings_store,
+        "get_settings",
+        AsyncMock(return_value=settings),
+    )
+    data = client.get("/api/projects/p/env").json()["data"]
+    assert data["customMcpServers"] == [
+        {"url": "", "command": ""},
+        {"name": "broken", "type": "http", "url": ""},
+    ]
+    assert data["graphitiProviderConfig"] == {}
+    assert "secret" not in json.dumps(data)
 
 
 def test_admin_gets_full_payload_and_member_cannot_patch(api):
