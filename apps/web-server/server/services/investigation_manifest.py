@@ -173,7 +173,8 @@ def test_manifest(run: Any, n: int) -> dict[str, Any]:
         {
             "name": "copy-source",
             "image": _resolve_build_image(DEFAULT_NIX_IMAGE),
-            "command": ["sh", "-c", "cp -a /src/. /work/"],
+            # Not -a: it sets /work's own times and mode, and /work is root-owned (#2203).
+            "command": ["sh", "-c", "cp -R /src/. /work/"],
             "securityContext": _hardened(),
             "volumeMounts": [
                 {

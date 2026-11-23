@@ -97,6 +97,9 @@ Codex's plan review found two gaps the spec left open. Approving the plan approv
 16. **Investigation pods turn off service links** (step 12 live check, #2196; owner, 2026-11-23: "use your recommendation").
     - **Why:** Kubernetes adds `*_SERVICE_HOST` and `*_PORT` variables for every service in the namespace by default. The agent pod's env therefore went beyond the exact-env allowlist and showed the agent the cluster's layout (check 4, run `e92e5cea`).
     - **What changes:** both pod kinds set `enableServiceLinks: false`, and the manifest guard refuses a pod that leaves it out or sets it to true.
+17. **The test pod copies the source with `cp -R`, not `cp -a`** (step 12 live check, #2203).
+    - **Why:** `cp -a /src/. /work/` also sets `/work`'s own times and mode. `/work` is the emptyDir mount root, owned by root, so the non-root `copy-source` init container failed with `preserving times for '/work/.': Operation not permitted`, and no test ever ran (runs `87b3e3f2`, `ff95f95d`).
+    - **What changes:** the init container runs `cp -R /src/. /work/`. It copies the contents, dotfiles included, keeps symlinks as links, and leaves `/work` itself alone.
 
 ## Decisions carried over (approved intent and spec)
 
