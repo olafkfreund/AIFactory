@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+## 3.21.1 - 2026-11-23
+
+Merged to `dev` since 3.21.0.
+
+### Fixed
+
+- The investigation agent pod sets `PYTHONPATH` so it can import its entry point, and the MCP keys settings page offers the `api` scope. (#2190, #2191)
+
 ## 3.21.0 - 2026-11-22
 
 Merged to `dev` since 3.20.1.
