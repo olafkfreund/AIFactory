@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+## 3.21.2 - 2026-11-23
+
+Merged to `dev` since 3.21.1.
+
+### Fixed
+
+- The investigation agent sets `ENABLE_TOOL_SEARCH=false` so `run_tests` loads up front, and investigation pods set `enableServiceLinks: false`. (#2196, #2197)
+
 ## 3.21.1 - 2026-11-23
 
 Merged to `dev` since 3.21.0.
