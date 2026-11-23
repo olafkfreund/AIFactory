@@ -50,6 +50,8 @@ const ORG_STORAGE_KEY = 'aifactory.apiKeys.orgId';
 // Scopes shipped in PR #162 (mcp_stdio proxy).
 const AVAILABLE_SCOPES: Array<{ id: string; description: string }> = [
   { id: 'mcp:read', description: 'List + status + logs (read-only tools)' },
+  // REST calls with a key need `api` (#1913); without it the key only works over MCP (#2190).
+  { id: 'api', description: 'REST API as you (scripts, curl)' },
   { id: 'project:write', description: 'Create new projects' },
   { id: 'task:write', description: 'Start / stop / recover / approve tasks' },
   { id: 'task:merge', description: 'Create PRs + merge worktrees (high blast radius)' },
