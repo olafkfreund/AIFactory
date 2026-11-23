@@ -63,6 +63,7 @@ def test_manifests_are_hardened_and_have_exact_env(run, monkeypatch):
         assert "app.kubernetes.io/instance" not in pod["metadata"]["labels"]
         assert pod["metadata"]["labels"]["factory.io/investigation"] == str(run["id"])
         assert spec["automountServiceAccountToken"] is False
+        assert spec["enableServiceLinks"] is False
         assert spec["terminationGracePeriodSeconds"] == 10
         assert all(
             c["securityContext"]["readOnlyRootFilesystem"]
@@ -103,6 +104,8 @@ def test_guard_rejects_extra_inputs(run):
         lambda m: m["spec"]["template"]["spec"].update(
             automountServiceAccountToken=True
         ),
+        lambda m: m["spec"]["template"]["spec"].update(enableServiceLinks=True),
+        lambda m: m["spec"]["template"]["spec"].pop("enableServiceLinks"),
         lambda m: m["spec"]["template"]["metadata"]["labels"].update(
             {"app.kubernetes.io/instance": "aifactory"}
         ),
