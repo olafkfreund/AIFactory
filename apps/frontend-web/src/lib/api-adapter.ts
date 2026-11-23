@@ -60,6 +60,47 @@ const activeTerminalSubscriptions = new Map<string, () => void>();
 // Track pending task start requests to prevent duplicates
 const pendingTaskStarts = new Set<string>();
 
+// Session-cached in-flight promise for app version from /api/health (B4).
+// Cleared on failure so subsequent opens retry.
+let appVersionPromise: Promise<string> | null = null;
+
+function fetchAppVersion(): Promise<string> {
+  if (!appVersionPromise) {
+    appVersionPromise = get<{ version?: string }>('/health')
+      .then((result) => {
+        const version = result.success && typeof result.data?.version === 'string'
+          ? result.data.version.trim()
+          : '';
+        if (version) {
+          return version;
+        }
+        appVersionPromise = null;
+        return 'unknown';
+      })
+      .catch(() => {
+        appVersionPromise = null;
+        return 'unknown';
+      });
+  }
+  return appVersionPromise;
+}
+
+export function resetAppVersionCache(): void {
+  appVersionPromise = null;
+}
+
+function ollamaQuery(baseUrl?: string): string {
+  if (!baseUrl) return '';
+  try {
+    const url = new URL(baseUrl);
+    url.username = '';
+    url.password = '';
+    return `?baseUrl=${encodeURIComponent(url.toString())}`;
+  } catch {
+    return '';
+  }
+}
+
 function registerCallback<T extends Callback>(event: string, callback: T): () => void {
   if (!eventCallbacks.has(event)) {
     eventCallbacks.set(event, new Set());
@@ -669,10 +710,38 @@ export const webAPI: API & { _isWebMode: boolean } = {
     success: false,
     error: 'Not available in web mode',
   }),
-  getDefaultProjectLocation: async () => null,
+  getDefaultProjectLocation: async () => {
+    const result = await get<
+      | string
+      | {
+          path?: string | null;
+          defaultLocation?: string | null;
+          default_location?: string | null;
+          location?: string | null;
+        }
+      | null
+    >('/projects/default-location');
+    if (!result.success || result.data == null) {
+      return null;
+    }
+    if (typeof result.data === 'string') {
+      const trimmed = result.data.trim();
+      return trimmed ? trimmed : null;
+    }
+    if (typeof result.data === 'object') {
+      const candidate =
+        result.data.path ??
+        result.data.defaultLocation ??
+        result.data.default_location ??
+        result.data.location ??
+        null;
+      return typeof candidate === 'string' && candidate.trim() ? candidate.trim() : null;
+    }
+    return null;
+  },
 
   // App info
-  getAppVersion: async () => '1.0.0-web',
+  getAppVersion: () => fetchAppVersion(),
 
   // ========== Context Operations ==========
   getProjectContext: (projectId: string) => get(`/projects/${projectId}/context`),
@@ -915,13 +984,13 @@ export const webAPI: API & { _isWebMode: boolean } = {
 
   // ========== Ollama Operations ==========
   checkOllamaStatus: (baseUrl) =>
-    get(`/ollama/status${baseUrl ? `?baseUrl=${encodeURIComponent(baseUrl)}` : ''}`),
+    get(`/ollama/status${ollamaQuery(baseUrl)}`),
   checkOllamaInstalled: () => get('/ollama/installed'),
   installOllama: () => post('/ollama/install'),
   listOllamaModels: (baseUrl) =>
-    get(`/ollama/models${baseUrl ? `?baseUrl=${encodeURIComponent(baseUrl)}` : ''}`),
+    get(`/ollama/models${ollamaQuery(baseUrl)}`),
   listOllamaEmbeddingModels: (baseUrl) =>
-    get(`/ollama/embedding-models${baseUrl ? `?baseUrl=${encodeURIComponent(baseUrl)}` : ''}`),
+    get(`/ollama/embedding-models${ollamaQuery(baseUrl)}`),
   pullOllamaModel: (modelName: string, baseUrl) =>
     post('/ollama/pull', { modelName, baseUrl }),
   onDownloadProgress: (callback) => registerCallback('ollama:download-progress', callback),
@@ -940,7 +1009,7 @@ export const webAPI: API & { _isWebMode: boolean } = {
 
   // ========== Debug Operations ==========
   getDebugInfo: async () => ({
-    systemInfo: { appVersion: '1.0.0-web', platform: 'web', isPackaged: 'false' },
+    systemInfo: { appVersion: await fetchAppVersion(), platform: 'web', isPackaged: 'false' },
     recentErrors: [],
     logsPath: '/api/logs',
     debugReport: '[Web Mode] Debug report not available',

@@ -17,9 +17,26 @@ import {
 interface ServiceCardProps {
   name: string;
   service: ServiceInfo;
+  projectRoot?: string;
 }
 
-export function ServiceCard({ name, service }: ServiceCardProps) {
+function formatProjectPath(targetPath: string, projectRoot?: string): string {
+  const cleanTarget = targetPath.replace(/[\\/]+$/, '');
+  const cleanRoot = projectRoot?.replace(/[\\/]+$/, '') ?? '';
+
+  if (cleanRoot) {
+    if (cleanTarget === cleanRoot) {
+      return cleanRoot.split(/[\\/]/).filter(Boolean).pop() ?? cleanTarget;
+    }
+    if (cleanTarget.startsWith(`${cleanRoot}/`) || cleanTarget.startsWith(`${cleanRoot}\\`)) {
+      return cleanTarget.slice(cleanRoot.length + 1);
+    }
+  }
+
+  return targetPath;
+}
+
+export function ServiceCard({ name, service, projectRoot }: ServiceCardProps) {
   const Icon = serviceTypeIcons[service.type || 'unknown'];
   const colorClass = serviceTypeColors[service.type || 'unknown'];
 
@@ -37,7 +54,7 @@ export function ServiceCard({ name, service }: ServiceCardProps) {
         </div>
         {service.path && (
           <CardDescription className="font-mono text-xs truncate">
-            {service.path}
+            {formatProjectPath(service.path, projectRoot)}
           </CardDescription>
         )}
       </CardHeader>
@@ -71,7 +88,7 @@ export function ServiceCard({ name, service }: ServiceCardProps) {
           {service.entry_point && (
             <div className="flex items-center gap-2 text-muted-foreground">
               <FileCode className="h-3 w-3 shrink-0" />
-              <span className="truncate font-mono">{service.entry_point}</span>
+              <span className="truncate font-mono">{formatProjectPath(service.entry_point, projectRoot)}</span>
             </div>
           )}
           {service.testing && (

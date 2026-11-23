@@ -16,6 +16,7 @@ import server.services.project_settings_store as pss
 from pydantic import ValidationError
 from server.crypto import kms
 from server.database.models import Base
+from server.routes.project_authz import ProjectAccess
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -23,6 +24,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 pytestmark = pytest.mark.asyncio
+_ADMIN_ACCESS = ProjectAccess("proj-1", "org", None, "admin")
 
 
 @pytest.fixture(autouse=True)
@@ -138,7 +140,9 @@ async def test_patch_env_mcp_fields_round_trip_through_get_env(
     assert patch_res["success"] is True
     assert not (project_dir / ".aifactory" / ".env").exists()
 
-    get_res = await context_routes.get_project_env(projectId="proj-1")
+    get_res = await context_routes.get_project_env(
+        projectId="proj-1", access=_ADMIN_ACCESS
+    )
     assert get_res["success"] is True
     data = get_res["data"]
     assert data["mcpServers"] == {"context7Enabled": False, "playwrightEnabled": True}
@@ -156,7 +160,9 @@ async def test_patch_env_mcp_fields_round_trip_through_get_env(
     )
     assert clear_res["success"] is True
 
-    get_after = await context_routes.get_project_env(projectId="proj-1")
+    get_after = await context_routes.get_project_env(
+        projectId="proj-1", access=_ADMIN_ACCESS
+    )
     data_after = get_after["data"]
     assert data_after["agentMcpOverrides"] == {
         "qa_reviewer": {"remove": ["playwright"]}
@@ -188,7 +194,7 @@ async def test_get_env_reports_legacy_settings_file(project_dir: Path) -> None:
     newest = env_dir / ".env.migrated-2026-10-15"
     newest.write_text("MAIN_BRANCH=main\n")
 
-    res = await context_routes.get_project_env(projectId="proj-1")
+    res = await context_routes.get_project_env(projectId="proj-1", access=_ADMIN_ACCESS)
     assert res["success"] is True
     assert res["data"]["legacySettingsFile"] == ".env.migrated-2026-10-15"
 

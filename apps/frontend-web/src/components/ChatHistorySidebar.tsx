@@ -96,8 +96,13 @@ export function ChatHistorySidebar({
     }
   };
 
+  // Filter out empty background sessions unless currently selected (#2198 B17)
+  const visibleSessions = sessions.filter(
+    (session) => session.messageCount > 0 || session.id === currentSessionId
+  );
+
   // Group sessions by date
-  const groupedSessions = sessions.reduce<Record<string, InsightsSessionSummary[]>>((groups, session) => {
+  const groupedSessions = visibleSessions.reduce<Record<string, InsightsSessionSummary[]>>((groups, session) => {
     const dateLabel = formatDate(session.updatedAt);
     if (!groups[dateLabel]) {
       groups[dateLabel] = [];
@@ -128,7 +133,7 @@ export function ChatHistorySidebar({
           <div className="flex items-center justify-center py-8">
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
           </div>
-        ) : sessions.length === 0 ? (
+        ) : visibleSessions.length === 0 ? (
           <div className="px-3 py-8 text-center text-sm text-muted-foreground">
             No conversations yet
           </div>

@@ -68,10 +68,20 @@ export const ALL_AVAILABLE_MODELS = [
 // Backward compatibility alias
 export const QA_AVAILABLE_MODELS = ALL_AVAILABLE_MODELS;
 
+export const DEFAULT_OLLAMA_BASE_URL = 'http://localhost:11434';
+
+export function ollamaProbeUrl(ollamaBaseUrl?: string, llmOllamaBaseUrl?: string): string | undefined {
+  const urls = [ollamaBaseUrl?.trim(), llmOllamaBaseUrl?.trim()].filter((url): url is string => Boolean(url));
+  return urls.find((url) => url !== DEFAULT_OLLAMA_BASE_URL) ?? urls[0];
+}
+
 // Dynamically fetch installed Ollama chat models for phase dropdowns
-export async function fetchOllamaModels(): Promise<{ value: string; label: string }[]> {
+export async function fetchOllamaModels(baseUrl?: string): Promise<{ value: string; label: string }[]> {
   try {
-    const result = await apiRequest<{ models: { name: string }[] }>('/settings/ollama/models');
+    const result = await apiRequest<{ models: { name: string }[] }>('/settings/ollama/models', {
+      method: 'POST',
+      body: { ollamaBaseUrl: baseUrl?.trim() || DEFAULT_OLLAMA_BASE_URL },
+    });
     if (result.success && result.data?.models) {
       return result.data.models.map(m => ({
         value: `ollama:${m.name}`,
@@ -158,8 +168,12 @@ export async function fetchGitHubModels(): Promise<{ value: string; label: strin
 
 // Dynamically fetch models from any OpenAI-compatible server (LM Studio, vLLM, LocalAI, etc.)
 export async function fetchOpenAICompatibleModels(baseUrl?: string): Promise<{ value: string; label: string }[]> {
+  const trimmed = baseUrl?.trim();
+  if (!trimmed) {
+    return [];
+  }
   try {
-    const query = baseUrl ? `?baseUrl=${encodeURIComponent(baseUrl)}` : '';
+    const query = `?baseUrl=${encodeURIComponent(trimmed)}`;
     const result = await apiRequest<{ models: { name: string }[] }>(`/settings/openai-compat/models${query}`);
     if (result.success && result.data?.models) {
       return result.data.models.map(m => ({

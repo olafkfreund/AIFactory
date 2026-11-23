@@ -138,7 +138,7 @@ async def test_member_of_owning_org_allowed(db_factory, monkeypatch):
         res = await ProjectAccessChecker("member")(
             request=_req({"id": "alice", "role": "user"}), db=s
         )
-    assert res["id"] == "alice"
+    assert res.principal["id"] == "alice"
 
 
 async def test_cross_tenant_access_is_404(db_factory, monkeypatch):
@@ -185,7 +185,7 @@ async def test_task_access_member_allowed(db_factory, monkeypatch):
         res = await TaskAccessChecker("member")(
             task_id="p1:001-x", request=_req({"id": "alice", "role": "user"}), db=s
         )
-    assert res["id"] == "alice"
+    assert res.principal["id"] == "alice"
 
 
 async def test_task_access_cross_tenant_404(db_factory, monkeypatch):

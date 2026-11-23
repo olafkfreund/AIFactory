@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: AIFactory Web API
   description: Web API for AIFactory — self-hosted AI task management + agent orchestration
-  version: 3.21.4
+  version: 3.21.5
 paths:
   /api/auth/register:
     post:
@@ -1078,6 +1078,24 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/MarkAllReadResponse'
+  /api/projects/default-location:
+    get:
+      tags:
+      - Projects
+      summary: Get Default Project Location
+      operationId: get_default_project_location_api_projects_default_location_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                type: object
+                title: Response Get Default Project Location Api Projects Default Location Get
   /api/projects/by-slug/{slug}:
     get:
       tags:
@@ -5497,7 +5515,35 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response List Ollama Models Api Settings Ollama Models Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - Settings
+      summary: List Ollama Models Post
+      operationId: list_ollama_models_post_api_settings_ollama_models_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Body_list_ollama_models_post_api_settings_ollama_models_post'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response List Ollama Models Post Api Settings Ollama Models Post
         '422':
           description: Validation Error
           content:
@@ -10952,6 +10998,14 @@ components:
       type: object
       title: AutoSwitchSettingsUpdate
       description: Model for updating auto-switch settings.
+    Body_list_ollama_models_post_api_settings_ollama_models_post:
+      properties:
+        ollamaBaseUrl:
+          type: string
+          title: Ollamabaseurl
+          default: http://localhost:11434
+      type: object
+      title: Body_list_ollama_models_post_api_settings_ollama_models_post
     Body_pull_ollama_model_api_settings_ollama_pull_post:
       properties:
         modelName:
