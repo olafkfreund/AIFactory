@@ -37,7 +37,12 @@ from server.services import github_app, project_settings_store
 from server.services.audit_service import ACTION_TASK_CREATE, audit_task_action
 from server.services.http_verdict import honest_status
 from server.services.originator import principal_attribution
-from server.specpath import browse_roots, safe_spec_component, within_roots
+from server.specpath import (
+    browse_roots,
+    contained_path,
+    safe_spec_component,
+    within_roots,
+)
 from server.utils.subprocess_env import child_env
 
 from ..database.engine import DEFAULT_ORG_ID, get_db
@@ -73,6 +78,22 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 _DB_DEP = Depends(get_db)
+
+
+@router.get("/default-location")
+def get_default_project_location() -> dict[str, str | None]:
+    from server.services.project_workspace_service import workspace_root
+
+    try:
+        return {
+            "path": str(
+                contained_path(
+                    workspace_root(), browse_roots(), "browsable directories"
+                )
+            )
+        }
+    except (OSError, ValueError):
+        return {"path": None}
 
 
 # Registered before the ``/{projectId}/...`` sub-routers so a project whose slug

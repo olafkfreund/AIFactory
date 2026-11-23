@@ -6,7 +6,7 @@ identifier), which is the IdP's permanent ID for the user — falling
 back to email only when sub is unavailable from the IdP.
 
 Role mapping: env var ``APP_OIDC_GROUP_TO_ROLE`` is a JSON object
-mapping IdP group names to internal roles. First match wins. If no
+mapping IdP group names to internal roles. Highest mapped role wins. If no
 group in the user's ``groups`` claim is in the map, the default role
 from ``APP_OIDC_DEFAULT_ROLE`` (or "member") is used.
 
@@ -27,6 +27,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.database import Organization, OrgMember, Team, TeamMembership, User
+from server.services.audit_service import ACTION_MEMBER_ROLE_CHANGE, log_audit_event
+from server.utils.roles import ROLE_LEVELS
 
 logger = logging.getLogger(__name__)
 
@@ -50,13 +52,17 @@ def _role_for_userinfo(userinfo: dict) -> str:
             "APP_OIDC_GROUP_TO_ROLE is not valid JSON; falling back to default role"
         )
         return default_role
+    if not isinstance(mapping, dict):
+        return default_role
     groups = userinfo.get("groups") or []
     if isinstance(groups, str):
         groups = [groups]
-    for group in groups:
-        if group in mapping:
-            return mapping[group]
-    return default_role
+    roles = [
+        mapping[group]
+        for group in groups
+        if isinstance(group, str) and mapping.get(group) in ROLE_LEVELS
+    ]
+    return max(roles, key=ROLE_LEVELS.__getitem__) if roles else default_role
 
 
 async def _get_or_create_default_org(db: AsyncSession, owner: User) -> Organization:
@@ -136,6 +142,10 @@ async def jit_provision_user(
 
     # Ensure OrganizationMember row exists with the current role.
     org = await _get_or_create_default_org(db, user)
+    changes: list[tuple[str, str, str]] = []
+    if user.role != role:
+        changes.append(("user", user.role, role))
+        user.role = role
     result = await db.execute(
         select(OrgMember).where(
             OrgMember.org_id == org.id, OrgMember.user_id == user.id
@@ -145,12 +155,11 @@ async def jit_provision_user(
     if membership is None:
         membership = OrgMember(org_id=org.id, user_id=user.id, role=role)
         db.add(membership)
-        await db.commit()
         logger.info("OIDC added user %s to org %s with role %s", email, org.slug, role)
     elif membership.role != role:
         # IdP-side role changed; sync.
+        changes.append(("org_member", membership.role, role))
         membership.role = role
-        await db.commit()
         logger.info(
             "OIDC updated role for user %s in org %s: %s",
             email,
@@ -188,9 +197,20 @@ async def jit_provision_user(
                 team_id=team.id, user_id=user.id, role=role, provenance="sso"
             )
         )
-        await db.commit()
-    elif team_member.provenance == "sso" and team_member.role != role:
+    elif team_member.provenance in ("sso", "backfill") and team_member.role != role:
+        changes.append(("team_membership", team_member.role, role))
         team_member.role = role
-        await db.commit()
+
+    for resource_type, old_role, new_role in changes:
+        await log_audit_event(
+            db,
+            user_id=user.id,
+            org_id=org.id,
+            action=ACTION_MEMBER_ROLE_CHANGE,
+            resource_type=resource_type,
+            resource_id=user.id,
+            details={"old_role": old_role, "new_role": new_role, "source": "oidc"},
+        )
+    await db.commit()
 
     return user

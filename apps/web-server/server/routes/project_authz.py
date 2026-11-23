@@ -296,19 +296,18 @@ class ProjectAccessChecker:
 
     async def _authorize(
         self, project_id: str, request: Request, db: AsyncSession
-    ) -> dict:
+    ) -> ProjectAccess:
         """Shared rule used by the project- and task-scoped variants."""
         user = getattr(request.state, "user", None)
         if user is None and _auth_disabled():
             user = {"id": "default", "role": "admin", "is_service": True}
-        await require_project_role(user, project_id, self.minimum_role, db)
-        return user
+        return await require_project_role(user, project_id, self.minimum_role, db)
 
     async def __call__(
         self,
         request: Request,
         db: AsyncSession = Depends(get_db),
-    ) -> dict[str, object]:
+    ) -> ProjectAccess:
         pid = (
             request.path_params.get("project_id")
             or request.path_params.get("projectId")
@@ -327,7 +326,7 @@ class TaskAccessChecker(ProjectAccessChecker):
         task_id: str,
         request: Request,
         db: AsyncSession = Depends(get_db),
-    ) -> dict:
+    ) -> ProjectAccess:
         if ":" not in task_id:
             raise HTTPException(status_code=400, detail="Invalid task ID")
         project_id = task_id.partition(":")[0]

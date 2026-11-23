@@ -405,6 +405,7 @@ async def seed_tenant_defaults(disable_auth: bool) -> None:
                             role="owner"
                             if member.user_id == DEFAULT_USER_ID
                             else member.role,
+                            provenance="backfill",
                         )
                     )
 

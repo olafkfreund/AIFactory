@@ -11,13 +11,14 @@ import subprocess
 from datetime import UTC, datetime
 from pathlib import Path as FilePath
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, Depends, Path, Query
 from pydantic import BaseModel, Field, SecretStr
 
 from server.error_ref import client_error
-from server.routes.project_authz import require_project_access
+from server.routes.project_authz import ProjectAccess, require_project_access
 from server.services import project_settings_store
 from server.services.http_verdict import honest_status
 from server.services.pr_endgame import is_graphiti_enabled
@@ -439,10 +440,12 @@ def _extract_memory_summary(data: dict) -> str:
 
 @project_router.get(
     "/env",
-    dependencies=[Depends(require_project_access("admin"))],
 )
 @honest_status
-async def get_project_env(projectId: str = Path(...)):
+async def get_project_env(
+    projectId: str = Path(...),
+    access: ProjectAccess = Depends(require_project_access("viewer")),
+):
     """Get project environment configuration."""
     from server.project_registry import load_projects
 
@@ -592,6 +595,53 @@ async def get_project_env(projectId: str = Path(...)):
     except (OSError, subprocess.TimeoutExpired):
         logger.warning("failed to check claude CLI auth status", exc_info=True)
 
+    if access.role not in ("admin", "owner"):
+        safe = {
+            key: config[key]
+            for key in (
+                "gitProvider",
+                "gitRepo",
+                "githubRepo",
+                "gitOrg",
+                "gitProject",
+                "gitBaseUrl",
+                "githubEnabled",
+                "githubTokenSet",
+                "graphitiEnabled",
+                "enableFancyUi",
+            )
+            if key in config
+        }
+        base_url = urlsplit(safe.get("gitBaseUrl", ""))
+        safe["gitBaseUrl"] = urlunsplit(
+            base_url._replace(netloc=base_url.netloc.rsplit("@", 1)[-1])
+        )
+        safe["graphitiKeysSet"] = {
+            key: bool(graphiti_provider_config.get(key))
+            for key in (
+                "openaiApiKey",
+                "voyageApiKey",
+                "googleApiKey",
+                "azureOpenaiApiKey",
+            )
+        }
+        safe["mcpServers"] = mcp_servers
+        safe["agentMcpOverrides"] = agent_mcp_overrides
+        safe["customMcpServers"] = [
+            {
+                "name": server.get("name"),
+                "type": server.get("type"),
+                **({"command": server["command"]} if server.get("command") else {}),
+                **(
+                    {"host": urlsplit(server["url"]).hostname}
+                    if server.get("url")
+                    else {}
+                ),
+            }
+            for server in config.get("customMcpServers", [])
+            if isinstance(server, dict)
+        ]
+        config = safe
     return {"success": True, "data": config}
 
 

@@ -141,6 +141,7 @@ NON_PROJECT_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("GET", "/api/ollama/models"),
         ("POST", "/api/ollama/pull"),
         ("GET", "/api/ollama/status"),
+        ("GET", "/api/projects/default-location"),
         ("GET", "/api/orgs"),
         ("POST", "/api/orgs"),
         ("DELETE", "/api/orgs/{org_id}"),

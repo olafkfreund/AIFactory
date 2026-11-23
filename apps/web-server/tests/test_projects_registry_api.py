@@ -105,6 +105,22 @@ def _make(client, tmp_path, name, **extra):
     )
 
 
+def test_default_location_is_only_exposed_within_browse_roots(api, monkeypatch):
+    client, tmp = api
+    monkeypatch.setattr(
+        "server.services.project_workspace_service.workspace_root",
+        lambda: tmp / "workspaces",
+    )
+    assert client.get("/api/projects/default-location").json() == {
+        "path": str(tmp / "workspaces")
+    }
+    monkeypatch.setattr(
+        "server.services.project_workspace_service.workspace_root",
+        lambda: tmp.parent / "outside",
+    )
+    assert client.get("/api/projects/default-location").json() == {"path": None}
+
+
 def test_create_returns_slug_and_writes_no_projects_json(api):
     client, tmp = api
     r = _make(client, tmp, "My App")
