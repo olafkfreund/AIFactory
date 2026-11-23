@@ -100,6 +100,9 @@ Codex's plan review found two gaps the spec left open. Approving the plan approv
 17. **The test pod copies the source with `cp -R`, not `cp -a`** (step 12 live check, #2203).
     - **Why:** `cp -a /src/. /work/` also sets `/work`'s own times and mode. `/work` is the emptyDir mount root, owned by root, so the non-root `copy-source` init container failed with `preserving times for '/work/.': Operation not permitted`, and no test ever ran (runs `87b3e3f2`, `ff95f95d`).
     - **What changes:** the init container runs `cp -R /src/. /work/`. It copies the contents, dotfiles included, keeps symlinks as links, and leaves `/work` itself alone.
+18. **The test pod sets `HOME=/tmp/home`** (step 12 live check, #2207).
+    - **Why:** with no `HOME`, npm used the image's `/home/nonroot` on the read-only root, and `npm install` failed with `EROFS` (run `d382ae3d`).
+    - **What changes:** the test container sets `HOME=/tmp/home` on its writable `/tmp` emptyDir, as the agent pod does, and the `investigate-test` exact-env allowlist gains `HOME`.
 
 ## Decisions carried over (approved intent and spec)
 
@@ -234,7 +237,7 @@ They **never** carry `app.kubernetes.io/instance` (the release policy selects th
 - **No command** → `{ran:false, reason:"no tests run: none configured"}`.
 - **The test pod:**
   - no Secret and no automount;
-  - env: only `HTTPS_PROXY`, `HTTP_PROXY`, `CI=1` and `TEST_COMMAND` (a literal from the row);
+  - env: only `HTTPS_PROXY`, `HTTP_PROXY`, `CI=1`, `TEST_COMMAND` (a literal from the row) and `HOME=/tmp/home` (deviation 18);
   - the builds' runner image;
   - an init container copies `/src` to an emptyDir `/work`;
   - it runs `timeout <min(15m, time left)> sh -c "$TEST_COMMAND"`;
