@@ -495,12 +495,35 @@ export async function loadTasks(projectId: string): Promise<void> {
       store.setError(result.error || 'Failed to load tasks');
     }
   } catch (error) {
-    store.setError(error instanceof Error ? error.message : 'Unknown error');
+    if (request === latestTasksRequest) store.setError(error instanceof Error ? error.message : 'Unknown error');
   } finally {
     if (request === latestTasksRequest) store.setLoading(false);
     // Clear project switching state
     useProjectStore.getState().clearSwitchingState();
   }
+}
+
+export async function loadFleetTasks(projectIds: string[]): Promise<void> {
+  const request = ++latestTasksRequest;
+  const store = useTaskStore.getState();
+  store.setLoading(true);
+  store.setError(null);
+  try {
+    const results = await Promise.all(projectIds.map((id) => window.API.getTasks(id)));
+    if (request !== latestTasksRequest) return;
+    const failed = results.find((result) => !result.success);
+    if (failed) store.setError(failed.error || 'Failed to load tasks');
+    else store.setTasks(results.flatMap((result) => result.data ?? []));
+  } catch (error) {
+    if (request === latestTasksRequest) store.setError(error instanceof Error ? error.message : 'Unknown error');
+  } finally {
+    if (request === latestTasksRequest) store.setLoading(false);
+  }
+}
+
+export function clearLoadedTasks(): void {
+  ++latestTasksRequest;
+  useTaskStore.getState().clearTasks();
 }
 
 /**
@@ -553,9 +576,15 @@ export async function startTask(taskId: string, options?: { parallel?: boolean; 
   store.updateTaskStatus(taskId, 'in_progress');
 
   // Persist status change to backend
+  let statusUpdated = false;
   try {
-    await window.API.updateTaskStatus(taskId, 'in_progress');
+    const statusResult = await window.API.updateTaskStatus(taskId, 'in_progress');
+    if (!statusResult.success) throw new Error(statusResult.error || 'Failed to update task status');
+    statusUpdated = true;
+    const startResult = await window.API.startTask(taskId, options);
+    if (!startResult.success) throw new Error(startResult.error || 'Failed to start task');
   } catch (error) {
+    if (statusUpdated) await window.API.updateTaskStatus(taskId, previousStatus).catch(() => undefined);
     // Rollback on failure - restore previous status
     store.updateTaskStatus(taskId, previousStatus);
     if (window.DEBUG) {
@@ -564,21 +593,26 @@ export async function startTask(taskId: string, options?: { parallel?: boolean; 
     throw error; // Re-throw so caller can handle
   }
 
-  // Start the actual execution
-  window.API.startTask(taskId, options);
 }
 
 /**
  * Stop a task
  */
-export function stopTask(taskId: string): void {
+export async function stopTask(taskId: string): Promise<void> {
   const store = useTaskStore.getState();
+  const previousStatus = store.tasks.find(t => t.id === taskId || t.specId === taskId)?.status || 'in_progress';
 
   // Update local state to backlog (task is being stopped)
   store.updateTaskStatus(taskId, 'backlog');
 
   // Tell backend to stop the task
-  window.API.stopTask(taskId);
+  try {
+    const result = await window.API.stopTask(taskId);
+    if (!result.success) throw new Error(result.error || 'Failed to stop task');
+  } catch (error) {
+    store.updateTaskStatus(taskId, previousStatus);
+    throw error;
+  }
 }
 
 /**
@@ -626,6 +660,7 @@ export async function persistTaskStatus(
   options?: { force?: boolean }
 ): Promise<boolean> {
   const store = useTaskStore.getState();
+  const previousStatus = store.tasks.find(t => t.id === taskId || t.specId === taskId)?.status;
 
   try {
     // Update local state first for immediate feedback
@@ -634,11 +669,13 @@ export async function persistTaskStatus(
     // Persist to file
     const result = await window.API.updateTaskStatus(taskId, status, options);
     if (!result.success) {
+      if (previousStatus) store.updateTaskStatus(taskId, previousStatus);
       console.error('Failed to persist task status:', result.error);
       return false;
     }
     return true;
   } catch (error) {
+    if (previousStatus) store.updateTaskStatus(taskId, previousStatus);
     console.error('Error persisting task status:', error);
     return false;
   }
@@ -774,8 +811,10 @@ export async function archiveTasks(
     const result = await window.API.archiveTasks(projectId, taskIds, version);
 
     if (result.success) {
-      // Reload tasks to update the UI (archived tasks will be filtered out by default)
-      await loadTasks(projectId);
+      for (const taskId of taskIds) {
+        const task = useTaskStore.getState().tasks.find((item) => item.id === taskId && item.projectId === projectId);
+        if (task) useTaskStore.getState().updateTask(taskId, { metadata: { ...task.metadata, archivedAt: new Date().toISOString() } });
+      }
       return { success: true };
     }
 

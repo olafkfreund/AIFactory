@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+## 3.21.6 - 2026-11-23
+
+Merged to `dev` since 3.21.5.
+
+### Changed
+
+- The web app adopts the shared Factory design tokens (Build accent, `data-portal="build"`) and the shared hub shell: a 48px top bar with a breadcrumb project switcher, a sidebar, a 64px pipeline strip and `WorkCard` task cards. Drag, start, stop, recover, archive and Copilot links are kept. There is no backend change. (Factory#3876, #2213)
+
 ## 3.21.5 - 2026-11-23
 
 Merged to `dev` since 3.21.4.

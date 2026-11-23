@@ -18,12 +18,12 @@ interface PhaseProgressIndicatorProps {
 // Phase display configuration (colors only - labels are translated)
 const PHASE_COLORS: Record<ExecutionPhase, { color: string; bgColor: string }> = {
   idle: { color: 'bg-muted-foreground', bgColor: 'bg-muted' },
-  spec_creation: { color: 'bg-amber-500', bgColor: 'bg-amber-500/20' },  // Spec creation (orange like planning)
-  planning: { color: 'bg-amber-500', bgColor: 'bg-amber-500/20' },
-  plan_review: { color: 'bg-yellow-500', bgColor: 'bg-yellow-500/20' },  // Waiting for human approval
+  spec_creation: { color: 'bg-warning', bgColor: 'bg-warning/20' },
+  planning: { color: 'bg-warning', bgColor: 'bg-warning/20' },
+  plan_review: { color: 'bg-warning', bgColor: 'bg-warning/20' },
   coding: { color: 'bg-info', bgColor: 'bg-info/20' },
-  qa_review: { color: 'bg-purple-500', bgColor: 'bg-purple-500/20' },
-  qa_fixing: { color: 'bg-orange-500', bgColor: 'bg-orange-500/20' },
+  qa_review: { color: 'bg-info', bgColor: 'bg-info/20' },
+  qa_fixing: { color: 'bg-warning', bgColor: 'bg-warning/20' },
   complete: { color: 'bg-success', bgColor: 'bg-success/20' },
   failed: { color: 'bg-destructive', bgColor: 'bg-destructive/20' },
 };
@@ -244,8 +244,8 @@ export const PhaseProgressIndicator = memo(function PhaseProgressIndicator({
                   // Only animate boxShadow when visible to save GPU cycles
                   ...(shouldPulse && {
                     boxShadow: [
-                      '0 0 0 0 rgba(var(--info), 0.4)',
-                      '0 0 0 4px rgba(var(--info), 0)',
+                      '0 0 0 0 color-mix(in oklch, var(--color-info) 40%, transparent)',
+                      '0 0 0 4px color-mix(in oklch, var(--color-info) 0%, transparent)',
                     ],
                   }),
                 }}

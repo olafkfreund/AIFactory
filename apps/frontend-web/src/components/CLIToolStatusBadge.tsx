@@ -57,8 +57,8 @@ function CLIToolPopover({ cli, status, Icon, label, lastChecked, onRefresh, icon
 
   // Dot color for the trigger button
   const dotColor =
-    statusType === 'authenticated' ? 'bg-green-500' :
-    statusType === 'installed' ? 'bg-yellow-500' :
+    statusType === 'authenticated' ? 'bg-success' :
+    statusType === 'installed' ? 'bg-warning' :
     'bg-muted-foreground/40';
 
   // Auth method label
@@ -127,7 +127,7 @@ function CLIToolPopover({ cli, status, Icon, label, lastChecked, onRefresh, icon
               dotColor={dotColor}
               className={cn(
                 statusType === 'not-installed' && 'opacity-50',
-                statusType === 'installed' && 'text-yellow-600 dark:text-yellow-500',
+                statusType === 'installed' && 'text-warning',
               )}
             >
               {hasUpdate && (
@@ -199,8 +199,8 @@ function CLIToolPopover({ cli, status, Icon, label, lastChecked, onRefresh, icon
             <div className={cn(
               'text-xs p-2 rounded-md flex items-start gap-2',
               authenticated
-                ? 'bg-green-500/10 text-green-700 dark:text-green-400'
-                : 'bg-yellow-500/10 text-yellow-700 dark:text-yellow-400',
+                ? 'bg-success/10 text-success'
+                : 'bg-warning/10 text-warning',
             )}>
               <KeyRound className="h-3.5 w-3.5 shrink-0 mt-0.5" />
               <div className="flex-1 space-y-0.5">
@@ -304,12 +304,12 @@ export function CLIToolStatusBadge({ className, iconOnly = false }: CLIToolStatu
   // Listen for WebSocket auth events for immediate refresh
   useEffect(() => {
     if (!window.API?.onCLIAccountAuth) return;
-    const unsubscribe = window.API.onCLIAccountAuth((info) => {
+    const unsubscribe: unknown = window.API.onCLIAccountAuth((info) => {
       if (info.success) {
         detect();
       }
     });
-    return unsubscribe;
+    return typeof unsubscribe === 'function' ? (unsubscribe as () => void) : undefined;
   }, [detect]);
 
   if (isLoading) return null;

@@ -3,7 +3,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import { render, waitFor } from '@testing-library/react';
-import { AppSettingsDialog } from './AppSettings';
+import { PreferencesPage } from './AppSettings';
 import { DEFAULT_APP_SETTINGS } from '../../shared/constants';
 
 vi.mock('./hooks/useSettings', () => ({
@@ -19,17 +19,17 @@ vi.mock('./hooks/useSettings', () => ({
 }));
 vi.mock('./GeneralSettings', () => ({ GeneralSettings: () => null }));
 
-describe('AppSettingsDialog version lookup', () => {
-  it('retries after a failed lookup when reopened', async () => {
+describe('PreferencesPage version lookup', () => {
+  it('fetches the app version on mount and retries when remounted', async () => {
     const getAppVersion = vi.fn()
       .mockResolvedValueOnce('unknown')
       .mockResolvedValueOnce('3.21.2');
     (window as unknown as { API: { getAppVersion: typeof getAppVersion } }).API = { getAppVersion };
 
-    const { rerender } = render(<AppSettingsDialog open={true} onOpenChange={vi.fn()} />);
+    const { unmount } = render(<PreferencesPage />);
     await waitFor(() => expect(getAppVersion).toHaveBeenCalledTimes(1));
-    rerender(<AppSettingsDialog open={false} onOpenChange={vi.fn()} />);
-    rerender(<AppSettingsDialog open={true} onOpenChange={vi.fn()} />);
+    unmount();
+    render(<PreferencesPage />);
     await waitFor(() => expect(getAppVersion).toHaveBeenCalledTimes(2));
   });
 });

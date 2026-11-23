@@ -238,8 +238,8 @@ export interface API {
   submitClarificationAnswers: (taskId: string, answers: Array<{ questionId: string; question: string; answer: string }>) => Promise<IPCResult<Task>>;
   deleteTask: (taskId: string) => Promise<IPCResult>;
   updateTask: (taskId: string, updates: { title?: string; description?: string; metadata?: Partial<TaskMetadata> }) => Promise<IPCResult<Task>>;
-  startTask: (taskId: string, options?: TaskStartOptions) => void;
-  stopTask: (taskId: string) => void;
+  startTask: (taskId: string, options?: TaskStartOptions) => Promise<IPCResult>;
+  stopTask: (taskId: string) => Promise<IPCResult>;
   submitReview: (taskId: string, approved: boolean, feedback?: string) => Promise<IPCResult>;
   updateTaskStatus: (taskId: string, status: TaskStatus, options?: { force?: boolean }) => Promise<IPCResult>;
   recoverStuckTask: (taskId: string, options?: TaskRecoveryOptions) => Promise<IPCResult<TaskRecoveryResult>>;

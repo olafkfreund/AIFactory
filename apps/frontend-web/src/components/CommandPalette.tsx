@@ -6,27 +6,28 @@
 // an async `onSearch(q)` that returns already-ranked results (federated search,
 // #149; debounced, stale-response-guarded). role="dialog" + a listbox of
 // role="option" rows, Escape to close, ↑↓ to move.
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ComponentType } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import type { ComponentType, KeyboardEvent } from 'react';
 
 export interface PaletteCommand {
   id: string;
   group: 'Go to' | 'Actions';
   label: string;
-  keywords?: string;
-  Icon?: ComponentType<{ className?: string }>;
+  keywords?: string | undefined;
+  Icon?: ComponentType<{ className?: string }> | undefined;
   run: () => void;
 }
 
 export interface PaletteTask {
   id: string;
   title: string;
-  hint?: string; // right-aligned context, e.g. a status or portal
+  hint?: string | undefined; // right-aligned context, e.g. a status or portal
 }
 
 type Row =
-  | { kind: 'cmd'; group: string; cmd: PaletteCommand }
-  | { kind: 'task'; group: string; task: PaletteTask };
+  | { kind: 'cmd'; group: string; cmd: PaletteCommand; keepOpen?: boolean }
+  | { kind: 'task'; group: string; task: PaletteTask }
+  | { kind: 'project'; group: string; project: { slug: string; name: string } };
 
 const has = (hay: string, q: string) => hay.toLowerCase().includes(q);
 
@@ -37,33 +38,50 @@ export function CommandPalette({
   tasks = [],
   onOpenTask,
   onSearch,
+  projects,
+  onSwitchProject,
 }: {
   open: boolean;
   onClose: () => void;
   commands: PaletteCommand[];
-  tasks?: PaletteTask[];
+  tasks?: PaletteTask[] | undefined;
   onOpenTask: (task: PaletteTask) => void;
-  onSearch?: (q: string) => Promise<PaletteTask[]>;
+  onSearch?: ((q: string) => Promise<PaletteTask[]>) | undefined;
+  projects?: { slug: string; name: string }[] | undefined;
+  onSwitchProject?: ((slug: string) => void) | undefined;
 }) {
   const [q, setQ] = useState('');
   const [sel, setSel] = useState(0);
+  const [projectMode, setProjectMode] = useState(false);
   const [results, setResults] = useState<PaletteTask[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const previousFocus = useRef<HTMLElement | null>(null);
+  const listId = useId();
 
   useEffect(() => {
     if (open) {
+      previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       setQ('');
       setSel(0);
+      setProjectMode(false);
       requestAnimationFrame(() => inputRef.current?.focus());
+    } else {
+      previousFocus.current?.focus();
     }
   }, [open]);
+
+  // Entering project mode unmounts the clicked "Switch project..." button: put focus back on the input.
+  useEffect(() => {
+    if (projectMode) inputRef.current?.focus();
+  }, [projectMode]);
 
   // Federated mode (#149): when the host supplies onSearch, debounce the query
   // and render its ranked results; a stale in-flight response is discarded so
   // the list always reflects the latest keystroke. No-op when onSearch is unset
   // (the palette then filters the local `tasks` list, unchanged).
   useEffect(() => {
-    if (!onSearch) return;
+    if (!onSearch || projectMode) return;
     const needle = q.trim();
     if (!open || !needle) {
       setResults([]);
@@ -83,13 +101,26 @@ export function CommandPalette({
       stale = true;
       clearTimeout(timer);
     };
-  }, [q, open, onSearch]);
+  }, [q, open, onSearch, projectMode]);
 
   const rows: Row[] = useMemo(() => {
     const needle = q.trim().toLowerCase();
+    if (projectMode) {
+      return (projects ?? [])
+        .filter((p) => has(p.name, needle) || has(p.slug, needle))
+        .map((p) => ({ kind: 'project', group: 'Projects', project: p }));
+    }
     const cmdRows: Row[] = commands
       .filter((c) => !needle || has(`${c.label} ${c.keywords ?? ''}`, needle))
       .map((c) => ({ kind: 'cmd', group: c.group, cmd: c }));
+    const switchCommand: PaletteCommand = {
+      id: 'switch-project', group: 'Actions', label: 'Switch project...',
+      keywords: 'project switch change',
+      run: () => { setQ(''); setSel(0); setProjectMode(true); },
+    };
+    if (projects && onSwitchProject && (!needle || has(`${switchCommand.label} ${switchCommand.keywords}`, needle))) {
+      cmdRows.push({ kind: 'cmd', group: 'Actions', cmd: switchCommand, keepOpen: true });
+    }
     const matched = onSearch
       ? results
       : tasks.filter((t) => has(t.title, needle)).slice(0, 8);
@@ -97,7 +128,7 @@ export function CommandPalette({
       ? []
       : matched.map((t) => ({ kind: 'task', group: 'Tasks', task: t }));
     return [...taskRows, ...cmdRows];
-  }, [q, commands, tasks, results, onSearch]);
+  }, [q, commands, tasks, results, onSearch, projects, onSwitchProject, projectMode]);
 
   useEffect(() => {
     setSel((s) => Math.max(0, Math.min(s, rows.length - 1)));
@@ -107,15 +138,26 @@ export function CommandPalette({
 
   const runRow = (row: Row | undefined) => {
     if (!row) return;
-    if (row.kind === 'cmd') row.cmd.run();
-    else onOpenTask(row.task);
+    if (row.kind === 'cmd') {
+      row.cmd.run();
+      if (row.keepOpen) return;
+    } else if (row.kind === 'task') onOpenTask(row.task);
+    else onSwitchProject?.(row.project.slug);
     onClose();
   };
 
-  const onKey = (e: React.KeyboardEvent) => {
+  const onKey = (e: KeyboardEvent) => {
     if (e.key === 'Escape') {
       e.preventDefault();
       onClose();
+    } else if (e.key === 'Tab') {
+      const controls = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('input, button:not([tabindex="-1"])') ?? []);
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (first && last && (e.shiftKey ? document.activeElement === first : document.activeElement === last)) {
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+      }
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
       setSel((s) => (rows.length ? (s + 1) % rows.length : 0));
@@ -133,66 +175,70 @@ export function CommandPalette({
   return (
     // eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events -- backdrop dismiss; keyboard close (Escape) is handled on the focused input below
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/55 pt-[11vh] backdrop-blur-sm"
+      className="f-cmdk-backdrop"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div
+        ref={dialogRef}
         role="dialog"
+        onKeyDown={onKey}
         aria-modal="true"
         aria-label="Command palette"
-        className="flex max-h-[70vh] w-[min(620px,92vw)] flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-2xl"
+        className="f-cmdk"
       >
-        <div className="flex items-center gap-3 border-b border-border px-4 py-3">
-          <span className="h-3.5 w-3.5 flex-none rounded-full border-2 border-muted-foreground" />
+        <div className="f-cmdk__header">
+          <span className="f-cmdk__glyph" aria-hidden />
           <input
             ref={inputRef}
             value={q}
             onChange={(e) => { setQ(e.target.value); }}
-            onKeyDown={onKey}
-            placeholder="Search tasks, or jump to a view…"
-            className="flex-1 bg-transparent text-base text-foreground outline-none placeholder:text-muted-foreground"
+            placeholder={projectMode ? 'Switch to project…' : 'Search tasks, or jump to a view…'}
+            className="f-cmdk__input"
             role="combobox"
             aria-expanded
-            aria-controls="cmdk-list"
+            aria-label={projectMode ? 'Switch to project' : 'Search tasks or views'}
+            aria-controls={listId}
+            aria-activedescendant={rows[sel] ? `${listId}-${sel}` : undefined}
             autoComplete="off"
             spellCheck={false}
           />
-          <kbd className="rounded border border-border bg-muted px-1.5 font-mono text-xs text-muted-foreground">esc</kbd>
+          <kbd className="f-cmdk__kbd">esc</kbd>
         </div>
 
-        <div id="cmdk-list" role="listbox" className="overflow-y-auto p-1.5">
+        <div id={listId} role="listbox" className="f-cmdk__list">
           {rows.length === 0 && (
-            <div className="px-3 py-5 text-center text-sm text-muted-foreground">
-              No matches — try a view, an action, or a task.
+            <div className="f-cmdk__empty">
+              {projectMode ? 'No matching projects.' : 'No matches — try a view, an action, or a task.'}
             </div>
           )}
           {rows.map((row, i) => {
             const header = row.group !== lastGroup ? ((lastGroup = row.group), row.group) : null;
             const selected = i === sel;
             return (
-              <div key={row.kind === 'cmd' ? row.cmd.id : `t-${row.task.id}`}>
+              <div key={row.kind === 'cmd' ? row.cmd.id : row.kind === 'task' ? `t-${row.task.id}` : `p-${row.project.slug}`}>
                 {header && (
-                  <div className="px-2 pb-1 pt-2 font-mono text-[0.62rem] uppercase tracking-wider text-muted-foreground">
+                  <div className="f-cmdk__group">
                     {header}
                   </div>
                 )}
                 <button
+                  id={`${listId}-${i}`}
+                  type="button"
                   role="option"
+                  tabIndex={-1}
                   aria-selected={selected}
-                  className={`flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm ${
-                    selected ? 'bg-muted text-foreground' : 'text-foreground/90'
-                  }`}
+                  className="f-cmdk__row"
                   onMouseMove={() => { setSel(i); }}
                   onClick={() => { runRow(row); }}
                 >
-                  <span className={`flex h-4 w-4 flex-none items-center justify-center ${selected ? 'text-primary' : 'text-muted-foreground'}`}>
-                    {row.kind === 'cmd' && row.cmd.Icon ? <row.cmd.Icon className="h-4 w-4" /> : null}
+                  <span className="f-cmdk__icon" aria-hidden>
+                    {row.kind === 'cmd' && row.cmd.Icon ? <row.cmd.Icon className="f-cmdk__icon-svg" /> : null}
                   </span>
-                  <span className="min-w-0 flex-1 truncate">
-                    {row.kind === 'cmd' ? row.cmd.label : row.task.title}
+                  <span className="f-cmdk__label">
+                    {row.kind === 'cmd' ? row.cmd.label : row.kind === 'task' ? row.task.title : row.project.name}
                   </span>
                   {row.kind === 'task' && row.task.hint && (
-                    <span className="flex-none font-mono text-[0.62rem] uppercase tracking-wider text-muted-foreground">
+                    <span className="f-cmdk__hint">
                       {row.task.hint}
                     </span>
                   )}
@@ -202,10 +248,10 @@ export function CommandPalette({
           })}
         </div>
 
-        <div className="flex gap-4 border-t border-border px-4 py-2 font-mono text-[0.68rem] text-muted-foreground">
-          <span><b className="text-foreground/70">↑↓</b> navigate</span>
-          <span><b className="text-foreground/70">↵</b> open</span>
-          <span><b className="text-foreground/70">esc</b> close</span>
+        <div className="f-cmdk__footer">
+          <span><b>↑↓</b> navigate</span>
+          <span><b>↵</b> open</span>
+          <span><b>esc</b> close</span>
         </div>
       </div>
     </div>

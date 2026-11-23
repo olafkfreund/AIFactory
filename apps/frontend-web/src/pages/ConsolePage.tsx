@@ -4,33 +4,25 @@ import { ArrowLeft, LayoutGrid } from 'lucide-react';
 import { AgentConsole } from '../components/task-detail/AgentConsole';
 import { useProjectStore } from '../stores/project-store';
 import { useEnsureProjects } from '../hooks/useEnsureProjects';
-import { findProjectByRef, projectSlug } from '../lib/project-route';
+import { findProjectByRef, isBareSlugChooser, projectsForBareSlug, projectSlug } from '../lib/project-route';
+import { useTranslation } from 'react-i18next';
 
 /**
  * Standalone deep-link page that drops you straight into the rmux Live
  * Agent Console for a given task, no portal chrome / kanban detour.
  *
  * URL pattern: ``/p/:slug/console/:specId`` (legacy ``/console/:projectId/:specId`` redirects here)
- *
- *   https://aifactory.example.com/console/ac62db91-.../001-gh1-add-healthz
- *
- * Shareable to teammates over the LAN/VPN, openable from a phone
- * browser as a fullscreen terminal.  The "Copy console link" button in
- * the task-detail panel writes this URL to the clipboard.
- *
- * Auth is whatever the user already has — the page lives inside the
- * AuthenticatedApp gate so an unauthenticated visitor gets bounced to
- * /login first.
  */
 export function ConsolePage(): ReactNode {
   const { slug, specId } = useParams<{ slug: string; specId: string }>();
-  useEnsureProjects();
+  const { ready, error, retry } = useEnsureProjects();
+  const { t } = useTranslation('welcome');
   const projects = useProjectStore((s) => s.projects);
-  const project = slug ? findProjectByRef(projects, slug) : undefined;
-  const projectId = project?.id ?? slug;
+  const project = ready && !error && slug ? findProjectByRef(projects, slug) : undefined;
+  const projectId = project?.id;
   const slugOrRef = project ? projectSlug(projects, project) : slug;
 
-  if (!projectId || !specId) {
+  if (!slug || !specId) {
     return (
       <div className="flex h-screen items-center justify-center text-muted-foreground">
         <p>
@@ -44,13 +36,18 @@ export function ConsolePage(): ReactNode {
     );
   }
 
+  if (!ready) return null;
+  if (error) return <div role="alert">{error} <button onClick={retry}>{t('projectsPage.retry')}</button></div>;
+  if (isBareSlugChooser(projects, slug)) return <div className="flex h-screen flex-col items-center justify-center gap-2"><p>{t('projectsPage.chooseProject')}</p>{projectsForBareSlug(projects, slug).map((item) => <Link key={item.id} to={`/p/${encodeURIComponent(projectSlug(projects, item))}/console/${encodeURIComponent(specId)}`}>{item.name} — {item.path}</Link>)}</div>;
+  if (!projectId) return <div>{t('projectsPage.notFound', { ref: slug })}</div>;
+
   const taskId = `${projectId}:${specId}`;
 
   return (
     <div className="flex h-screen flex-col bg-background">
       <header className="flex items-center gap-3 border-b border-border px-4 py-2 text-sm">
         <Link
-          to={project ? `/p/${slugOrRef}` : '/'}
+          to={project ? `/p/${encodeURIComponent(slugOrRef ?? '')}` : '/'}
           className="flex items-center gap-1 text-muted-foreground hover:text-foreground"
           title="Back to portal"
         >
@@ -66,7 +63,7 @@ export function ConsolePage(): ReactNode {
           {specId}
         </code>
         <Link
-          to={`/p/${slugOrRef}/console`}
+          to={`/p/${encodeURIComponent(slugOrRef ?? '')}/console`}
           className="ml-auto flex items-center gap-1 text-muted-foreground hover:text-foreground"
           title="View all active consoles for this project"
         >
