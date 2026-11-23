@@ -405,16 +405,11 @@ export const webAPI: API & { _isWebMode: boolean } = {
     // Prevent duplicate start requests
     if (pendingTaskStarts.has(taskId)) {
       log.warn(`Task ${taskId} start already in progress, ignoring duplicate request`);
-      return;
+      return Promise.resolve({ success: false, error: 'Task start already in progress' });
     }
     log.info(`Starting task: ${taskId}`, options);
     pendingTaskStarts.add(taskId);
-    post(`/tasks/${taskId}/start`, options ?? {})
-      .then((result) => {
-        if (!result.success) {
-          log.error(`Failed to start task ${taskId}`, result.error);
-        }
-      })
+    return post(`/tasks/${taskId}/start`, options ?? {})
       .finally(() => {
         // Clear pending state after a short delay to handle rapid clicks
         setTimeout(() => pendingTaskStarts.delete(taskId), 1000);
@@ -422,11 +417,7 @@ export const webAPI: API & { _isWebMode: boolean } = {
   },
   stopTask: (taskId: string) => {
     log.info(`Stopping task: ${taskId}`);
-    post(`/tasks/${taskId}/stop`).then((result) => {
-      if (!result.success) {
-        log.error(`Failed to stop task ${taskId}`, result.error);
-      }
-    }).catch((e) => { log.error(`Failed to stop task ${taskId}`, e); });
+    return post(`/tasks/${taskId}/stop`);
   },
   submitReview: (taskId: string, approved: boolean, feedback?: string) =>
     post(`/tasks/${taskId}/review`, { approved, feedback }),

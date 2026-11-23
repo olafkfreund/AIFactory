@@ -4,7 +4,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import { terminalBufferManager } from '../../lib/terminal-buffer-manager';
-import { getTerminalTheme } from '../../lib/terminal-theme';
+import { getTerminalTheme } from './terminalTheme';
 
 interface UseXtermOptions {
   terminalId: string;

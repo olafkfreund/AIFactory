@@ -8,22 +8,32 @@ import type { Task } from '../shared/types';
 interface SortableTaskCardProps {
   task: Task;
   onClick: () => void;
+  expanded?: boolean | undefined;
+  onToggle?: (() => void) | undefined;
+  collapsedByDefault?: boolean | undefined;
 }
 
-// Custom comparator - only re-render when task or onClick actually changed
+// Custom comparator - only re-render when task or expansion props actually changed
 function sortableTaskCardPropsAreEqual(
   prevProps: SortableTaskCardProps,
   nextProps: SortableTaskCardProps
 ): boolean {
-  // TaskCard has its own memo, so we just need to check reference equality
-  // for the task object and onClick handler
   return (
     prevProps.task === nextProps.task &&
-    prevProps.onClick === nextProps.onClick
+    prevProps.onClick === nextProps.onClick &&
+    prevProps.expanded === nextProps.expanded &&
+    prevProps.onToggle === nextProps.onToggle &&
+    prevProps.collapsedByDefault === nextProps.collapsedByDefault
   );
 }
 
-export const SortableTaskCard = memo(function SortableTaskCard({ task, onClick }: SortableTaskCardProps) {
+export const SortableTaskCard = memo(function SortableTaskCard({
+  task,
+  onClick,
+  expanded,
+  onToggle,
+  collapsedByDefault,
+}: SortableTaskCardProps) {
   const {
     attributes,
     listeners,
@@ -31,17 +41,15 @@ export const SortableTaskCard = memo(function SortableTaskCard({ task, onClick }
     transform,
     transition,
     isDragging,
-    isOver
+    isOver,
   } = useSortable({ id: task.id });
 
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
-    // Prevent z-index stacking issues during drag
-    zIndex: isDragging ? 50 : undefined
+    zIndex: isDragging ? 50 : undefined,
   };
 
-  // Memoize onClick to prevent unnecessary TaskCard re-renders
   const handleClick = useCallback(() => {
     onClick();
   }, [onClick]);
@@ -58,7 +66,13 @@ export const SortableTaskCard = memo(function SortableTaskCard({ task, onClick }
       {...attributes}
       {...listeners}
     >
-      <TaskCard task={task} onClick={handleClick} />
+      <TaskCard
+        task={task}
+        onClick={handleClick}
+        expanded={expanded}
+        onToggle={onToggle}
+        collapsedByDefault={collapsedByDefault}
+      />
     </div>
   );
 }, sortableTaskCardPropsAreEqual);
