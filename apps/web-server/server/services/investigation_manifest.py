@@ -112,6 +112,8 @@ def agent_manifest(run: Any) -> dict[str, Any]:
         },
         {"name": "HOME", "value": "/tmp/home"},  # noqa: S108 - Pod scratch volume.
         {"name": "CLAUDE_CONFIG_DIR", "value": "/tmp/claude"},  # noqa: S108 - Pod scratch volume.
+        # `-P` keeps the cwd off sys.path, so the backend package root must be named (#2190).
+        {"name": "PYTHONPATH", "value": "/home/projects/MagesticAI/apps/backend"},
         *(
             {"name": name, "valueFrom": {"secretKeyRef": {"name": secret, "key": name}}}
             for name in ("CLAUDE_CODE_OAUTH_TOKEN", "AIFACTORY_RUN_TOKEN")
@@ -359,6 +361,7 @@ def _check_investigation_manifest(m: dict[str, Any]) -> None:  # noqa: PLR0912, 
                 "AIFACTORY_API_URL",
                 "HOME",
                 "CLAUDE_CONFIG_DIR",
+                "PYTHONPATH",
                 "CLAUDE_CODE_OAUTH_TOKEN",
                 "AIFACTORY_RUN_TOKEN",
             }

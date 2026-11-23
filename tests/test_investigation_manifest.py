@@ -45,6 +45,7 @@ def test_manifests_are_hardened_and_have_exact_env(run, monkeypatch):
                 "AIFACTORY_API_URL",
                 "HOME",
                 "CLAUDE_CONFIG_DIR",
+                "PYTHONPATH",
                 "CLAUDE_CODE_OAUTH_TOKEN",
                 "AIFACTORY_RUN_TOKEN",
             },
@@ -233,3 +234,34 @@ def test_guard_raises_a_typed_refusal(monkeypatch):
     bad = {"kind": "Job", "metadata": {"name": "x"}, "spec": {}}
     with pytest.raises(im.ManifestRefused):
         im.assert_investigation_manifest(bad)
+
+
+def test_agent_pythonpath_makes_the_entry_point_importable(run, tmp_path):
+    """`-P` keeps the cwd off sys.path; PYTHONPATH must name the backend root (#2190)."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    container = manifests.agent_manifest(run)["spec"]["template"]["spec"]["containers"][
+        0
+    ]
+    env = {e["name"]: e.get("value") for e in container["env"]}
+    image_root = "/home/projects/MagesticAI/"
+    assert env["PYTHONPATH"].startswith(image_root)
+    assert container["command"][:3] == ["python", "-P", "-m"]
+    local = Path(__file__).resolve().parents[1] / env["PYTHONPATH"].removeprefix(
+        image_root
+    )
+    probe = subprocess.run(
+        [
+            sys.executable,
+            "-P",
+            "-c",
+            "import importlib.util as u; assert u.find_spec('agents.investigate')",
+        ],
+        cwd=tmp_path,
+        env={"PYTHONPATH": str(local)},
+        capture_output=True,
+        text=True,
+    )
+    assert probe.returncode == 0, probe.stderr
