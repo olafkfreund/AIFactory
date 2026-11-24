@@ -203,7 +203,8 @@ def require_acw_access(
         project_id = (
             task_id.partition(":")[0]
             if task_id is not None
-            else request.query_params.get("project_id")
+            else request.path_params.get("project_id")
+            or request.query_params.get("project_id")
         )
         await authorize_project_for_user(principal, project_id, db, minimum_role)
         return key

@@ -55,10 +55,12 @@ from ..mcp_remote.auth import AuthenticatedKey
 from ..services.audit_service import (
     ACTION_MCP_PROJECT_CREATE,
     ACTION_MCP_TASK_APPROVE_PLAN,
+    ACTION_MCP_TASK_ARCHIVE,
     ACTION_MCP_TASK_CREATE_AND_RUN,
     ACTION_MCP_TASK_CREATE_PR,
     ACTION_MCP_TASK_MERGE,
     ACTION_MCP_TASK_RECOVER,
+    ACTION_MCP_TASK_REJECT_PLAN,
     ACTION_MCP_TASK_START,
     ACTION_MCP_TASK_STOP,
     log_audit_event_bg,
@@ -477,10 +479,29 @@ async def proxy_approve_plan(
 async def proxy_reject_plan(
     task_id: str,
     request: FastAPIRequest,
-    _: Annotated[object, Depends(require_acw_access(TASK_WRITE_SCOPE, "member"))],
+    key=Depends(require_acw_access(TASK_WRITE_SCOPE, "member")),
 ) -> Any:
     body = await _read_json_body(request)
-    return await reject_plan(task_id, RejectPlanRequest(**body))
+    result = await reject_plan(task_id, RejectPlanRequest(**body))
+    await _audit_mcp_write(key, ACTION_MCP_TASK_REJECT_PLAN, "task", task_id, request)
+    return result
+
+
+@router.post("/projects/{project_id}/tasks/archive")
+async def proxy_archive_tasks(
+    project_id: str,
+    request: FastAPIRequest,
+    key=Depends(require_acw_access(TASK_WRITE_SCOPE, "member")),
+) -> dict[str, Any]:
+    from ..routes.projects import ArchiveTasksRequest, archive_tasks
+
+    try:
+        body = ArchiveTasksRequest(**await _read_json_body(request))
+    except ValidationError as exc:
+        raise RequestValidationError(exc.errors()) from exc
+    result = await archive_tasks(project_id, body)
+    await _audit_mcp_write(key, ACTION_MCP_TASK_ARCHIVE, "project", project_id, request)
+    return result
 
 
 @router.post("/tasks/{task_id}/apply-correction")
