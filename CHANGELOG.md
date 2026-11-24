@@ -1,5 +1,18 @@
 ## [Unreleased]
 
+## 3.21.8 - 2026-11-24
+
+Merged to `dev` since 3.21.7.
+
+### Fixed
+
+- The top-bar project switcher no longer shows the pod filesystem path. (Factory#3887, #2224)
+
+### Changed
+
+- Base images are published to GHCR (phase 1: `docker/base.Dockerfile`, `base-image.yml`, pin liveness and digest auto-merge workflows), so releases stop depending on Chainguard. The phase-2 pin PR (#2221) is not in this release. (Factory#3880, #2219)
+- Dependabot bumps `chainguard/python` in `/docker`. (#2222)
+
 ## 3.21.7 - 2026-11-23
 
 Merged to `dev` since 3.21.6.
