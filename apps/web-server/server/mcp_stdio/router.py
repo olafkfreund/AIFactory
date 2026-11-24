@@ -51,18 +51,20 @@ from server.routes.project_authz import (
 )
 from server.routes.task_models import TaskStatus
 from server.routes.tasks_views import get_qa_report, stream_agent_console
-from server.services.audit_service import ACTION_MCP_TASK_APPLY_CORRECTION
+from server.services.audit_service import (
+    ACTION_MCP_TASK_APPLY_CORRECTION,
+    ACTION_MCP_TASK_ARCHIVE,
+    ACTION_MCP_TASK_REJECT_PLAN,
+)
 
 from ..mcp_remote.auth import AuthenticatedKey
 from ..services.audit_service import (
     ACTION_MCP_PROJECT_CREATE,
     ACTION_MCP_TASK_APPROVE_PLAN,
-    ACTION_MCP_TASK_ARCHIVE,
     ACTION_MCP_TASK_CREATE_AND_RUN,
     ACTION_MCP_TASK_CREATE_PR,
     ACTION_MCP_TASK_MERGE,
     ACTION_MCP_TASK_RECOVER,
-    ACTION_MCP_TASK_REJECT_PLAN,
     ACTION_MCP_TASK_START,
     ACTION_MCP_TASK_STOP,
     log_audit_event_bg,
@@ -84,6 +86,7 @@ logger = logging.getLogger(__name__)
 investigation_router = APIRouter(prefix="/api/mcp-stdio", tags=["MCP (stdio)"])
 _INV_READ = Depends(require_acw_scope(MCP_READ_SCOPE))
 _INV_WRITE = Depends(require_acw_scope(TASK_WRITE_SCOPE))
+_TASK_WRITE_MEMBER = Depends(require_acw_access(TASK_WRITE_SCOPE, "member"))
 
 
 @investigation_router.post("/investigations")
@@ -482,7 +485,7 @@ async def proxy_approve_plan(
 async def proxy_reject_plan(
     task_id: str,
     request: FastAPIRequest,
-    key=Depends(require_acw_access(TASK_WRITE_SCOPE, "member")),
+    key: AuthenticatedKey | _LegacyAdminKey = _TASK_WRITE_MEMBER,
 ) -> Any:
     try:
         body = RejectPlanRequest(**await _read_json_body(request))
@@ -497,9 +500,9 @@ async def proxy_reject_plan(
 async def proxy_archive_tasks(
     project_id: str,
     request: FastAPIRequest,
-    key=Depends(require_acw_access(TASK_WRITE_SCOPE, "member")),
+    key: AuthenticatedKey | _LegacyAdminKey = _TASK_WRITE_MEMBER,
 ) -> dict[str, Any]:
-    from ..routes.projects import ArchiveTasksRequest, archive_tasks
+    from server.routes.projects import ArchiveTasksRequest, archive_tasks  # noqa: PLC0415
 
     try:
         body = ArchiveTasksRequest(**await _read_json_body(request))
@@ -523,7 +526,7 @@ async def proxy_archive_tasks(
         request,
         details={"task_ids": body.taskIds},
     )
-    return result
+    return cast("dict[str, Any]", result)
 
 
 @router.post("/tasks/{task_id}/apply-correction")
