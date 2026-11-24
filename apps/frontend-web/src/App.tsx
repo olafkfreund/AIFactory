@@ -138,7 +138,7 @@ function AuthenticatedApp() {
 
   const slugs = useMemo(() => projectSlugs(projects), [projects]);
   const switcherProjects = useMemo(
-    () => projects.map((p) => ({ slug: slugs.get(p.id) ?? p.id, name: p.name, repoLabel: p.path })),
+    () => projects.map((p) => ({ slug: slugs.get(p.id) ?? p.id, name: p.name })),
     [projects, slugs]
   );
   const breadcrumbProjects = useMemo(
@@ -621,7 +621,6 @@ function AuthenticatedApp() {
           }}
           projects={switcherProjects}
           currentProject={urlSlug}
-          projectSubtitle={urlProject?.path}
           onSelectProject={(slug) => {
             const id = [...slugs].find(([, v]) => v === slug)?.[0] ?? findProjectByRef(projects, slug)?.id;
             if (id) goProject(id, route.kind === 'project' ? route.view : undefined);
