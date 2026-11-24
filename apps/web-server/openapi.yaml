@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: AIFactory Web API
   description: Web API for AIFactory — self-hosted AI task management + agent orchestration
-  version: 3.21.8
+  version: 3.21.9
 paths:
   /api/auth/register:
     post:
@@ -9041,6 +9041,35 @@ paths:
             application/json:
               schema:
                 title: Response Proxy Reject Plan Api Mcp Stdio Tasks  Task Id  Reject Plan Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp-stdio/projects/{project_id}/tasks/archive:
+    post:
+      tags:
+      - MCP (stdio)
+      summary: Proxy Archive Tasks
+      operationId: proxy_archive_tasks_api_mcp_stdio_projects__project_id__tasks_archive_post
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Project Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Proxy Archive Tasks Api Mcp Stdio Projects  Project Id  Tasks Archive
+                  Post
         '422':
           description: Validation Error
           content:
