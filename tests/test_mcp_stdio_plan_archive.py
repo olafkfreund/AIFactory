@@ -29,6 +29,7 @@ def app(tmp_path, monkeypatch):
     projects = {
         "p1": {"org_id": "org-a", "team_id": "team-a", "path": str(tmp_path)},
         "p2": {"org_id": "org-b", "team_id": "team-b", "path": str(tmp_path)},
+        "p3": {"org_id": "org-a", "team_id": "team-c", "path": str(tmp_path)},
     }
     monkeypatch.setattr(project_authz, "_auth_disabled", lambda: False)
     monkeypatch.setattr(project_registry, "load_projects", lambda: projects)
@@ -67,7 +68,10 @@ def app(tmp_path, monkeypatch):
 
         async def execute(self, statement):
             sql = str(statement)
-            return Result(True if "teams.is_default" in sql else "member")
+            other_team = "team-c" in statement.compile().params.values()
+            if "teams.is_default" in sql:
+                return Result(not other_team)
+            return Result(None if other_team else "member")
 
     async def fake_db():
         yield Session()
@@ -135,8 +139,11 @@ async def test_proxy_success_and_access(app, monkeypatch, path, body, expected):
         assert app.state.audits[0][0][1] == (
             "mcp.task.reject_plan" if "reject-plan" in path else "mcp.task.archive"
         )
+        if "archive" in path:
+            assert app.state.audits[0][1]["details"] == {"task_ids": ["p1:001"]}
         assert (await post(path, "acw_read")).status_code == 403
         assert (await post(path.replace("p1", "p2"))).status_code == 404
+        assert (await post(path.replace("p1", "p3"))).status_code == 404
         assert (await post(path.replace("p1", "missing"))).status_code == 404
         assert len(calls) == 1
         assert len(app.state.audits) == 1
@@ -158,5 +165,53 @@ async def test_proxy_unknown_task(app, path, body):
             headers={"Authorization": "Bearer acw_write"},
             json=body,
         )
-    assert result.status_code in (400, 404)
+    assert result.status_code == 404
     assert "not found" in result.json()["detail"].lower()
+
+
+@pytest.mark.parametrize("task_ids", [["p2:001"], ["p1:001", "p2:002"], []])
+async def test_archive_rejects_invalid_task_ids_without_writing(
+    app, monkeypatch, tmp_path, task_ids
+):
+    plan = tmp_path / ".aifactory" / "specs" / "001" / "implementation_plan.json"
+    plan.parent.mkdir(parents=True)
+    plan.write_text('{"status": "done"}')
+    calls = []
+
+    async def delegated(*args):
+        calls.append(args)
+        return {"success": True}
+
+    monkeypatch.setattr(projects_route, "archive_tasks", delegated)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        result = await client.post(
+            "/api/mcp-stdio/projects/p1/tasks/archive",
+            headers={"Authorization": "Bearer acw_write"},
+            json={"taskIds": task_ids},
+        )
+    assert result.status_code == (422 if not task_ids else 404)
+    assert calls == []
+    assert app.state.audits == []
+    assert plan.read_text() == '{"status": "done"}'
+
+
+async def test_reject_plan_bad_body_returns_422(app, monkeypatch):
+    calls = []
+
+    async def delegated(*args):
+        calls.append(args)
+
+    monkeypatch.setattr(stdio_router, "reject_plan", delegated)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        result = await client.post(
+            "/api/mcp-stdio/tasks/p1:001/reject-plan",
+            headers={"Authorization": "Bearer acw_write"},
+            json={"feedback": ["invalid"]},
+        )
+    assert result.status_code == 422
+    assert calls == []
+    assert app.state.audits == []
