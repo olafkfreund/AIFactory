@@ -502,7 +502,10 @@ async def proxy_archive_tasks(
     request: FastAPIRequest,
     key: AuthenticatedKey | _LegacyAdminKey = _TASK_WRITE_MEMBER,
 ) -> dict[str, Any]:
-    from server.routes.projects import ArchiveTasksRequest, archive_tasks  # noqa: PLC0415
+    from server.routes.projects import (  # noqa: PLC0415
+        ArchiveTasksRequest,
+        archive_tasks,
+    )
 
     try:
         body = ArchiveTasksRequest(**await _read_json_body(request))
