@@ -29,15 +29,17 @@ UI-driven actions in the audit log.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi import Request as FastAPIRequest
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.database.engine import get_db
+from server.error_ref import InputRejectedError, client_error
 from server.project_registry import load_projects
 from server.routes import investigations
 from server.routes.plan_approval import RejectPlanRequest, reject_plan
@@ -49,7 +51,11 @@ from server.routes.project_authz import (
 )
 from server.routes.task_models import TaskStatus
 from server.routes.tasks_views import get_qa_report, stream_agent_console
-from server.services.audit_service import ACTION_MCP_TASK_APPLY_CORRECTION
+from server.services.audit_service import (
+    ACTION_MCP_TASK_APPLY_CORRECTION,
+    ACTION_MCP_TASK_ARCHIVE,
+    ACTION_MCP_TASK_REJECT_PLAN,
+)
 
 from ..mcp_remote.auth import AuthenticatedKey
 from ..services.audit_service import (
@@ -76,9 +82,11 @@ from .auth import (
 )
 
 router = APIRouter(prefix="/api/mcp-stdio", tags=["MCP (stdio)"])
+logger = logging.getLogger(__name__)
 investigation_router = APIRouter(prefix="/api/mcp-stdio", tags=["MCP (stdio)"])
 _INV_READ = Depends(require_acw_scope(MCP_READ_SCOPE))
 _INV_WRITE = Depends(require_acw_scope(TASK_WRITE_SCOPE))
+_TASK_WRITE_MEMBER = Depends(require_acw_access(TASK_WRITE_SCOPE, "member"))
 
 
 @investigation_router.post("/investigations")
@@ -477,10 +485,51 @@ async def proxy_approve_plan(
 async def proxy_reject_plan(
     task_id: str,
     request: FastAPIRequest,
-    _: Annotated[object, Depends(require_acw_access(TASK_WRITE_SCOPE, "member"))],
+    key: AuthenticatedKey | _LegacyAdminKey = _TASK_WRITE_MEMBER,
 ) -> Any:
-    body = await _read_json_body(request)
-    return await reject_plan(task_id, RejectPlanRequest(**body))
+    try:
+        body = RejectPlanRequest(**await _read_json_body(request))
+    except ValidationError as exc:
+        raise RequestValidationError(exc.errors()) from exc
+    result = await reject_plan(task_id, body)
+    await _audit_mcp_write(key, ACTION_MCP_TASK_REJECT_PLAN, "task", task_id, request)
+    return result
+
+
+@router.post("/projects/{project_id}/tasks/archive")
+async def proxy_archive_tasks(
+    project_id: str,
+    request: FastAPIRequest,
+    key: AuthenticatedKey | _LegacyAdminKey = _TASK_WRITE_MEMBER,
+) -> dict[str, Any]:
+    from server.routes.projects import (  # noqa: PLC0415
+        ArchiveTasksRequest,
+        archive_tasks,
+    )
+
+    try:
+        body = ArchiveTasksRequest(**await _read_json_body(request))
+    except ValidationError as exc:
+        raise RequestValidationError(exc.errors()) from exc
+    if not body.taskIds:
+        raise HTTPException(status_code=422, detail="taskIds must not be empty")
+    if any(task_id.partition(":")[0] != project_id for task_id in body.taskIds):
+        raise HTTPException(
+            status_code=404,
+            detail=client_error(
+                logger, "Task not found", InputRejectedError("Task not found")
+            ),
+        )
+    result = await archive_tasks(project_id, body)
+    await _audit_mcp_write(
+        key,
+        ACTION_MCP_TASK_ARCHIVE,
+        "project",
+        project_id,
+        request,
+        details={"task_ids": body.taskIds},
+    )
+    return cast("dict[str, Any]", result)
 
 
 @router.post("/tasks/{task_id}/apply-correction")
