@@ -77,12 +77,9 @@ FROM docker.io/node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b26014
 # py-build: compiles the Python venv (#1842). Compilers and -dev headers stay
 # here; only the finished venv is copied into `runtime`.
 # ---------------------------------------------------------------------------
-FROM cgr.dev/chainguard/python:latest-dev@sha256:64f414bffa25ca9ff518f35975ad153a921b2e4850c4a84c31a96885fdb86a02 AS py-build
+FROM ghcr.io/olafkfreund/aifactory-base:py-build-20261124-fc45d57-45347288086-1@sha256:c1ab074f6d15f1529ef8d2af349bf8c1481520ee667d47e7aad72f405c34af5c AS py-build
 
 USER root
-
-RUN apk add --no-cache build-base cmake xmlsec-dev xmlsec-openssl \
-        libxml2-dev libxslt-dev pkgconf openssl-dev libtool
 
 # xmlsec's build links -lxmlsec1-openssl; Wolfi ships only the versioned soname.
 # Resolved at build time so a Wolfi xmlsec rev does not break cold builds.
@@ -137,25 +134,9 @@ RUN set -e; pip=/home/projects/MagesticAI/.venv/bin/pip; cd /tmp; \
     grep -vxFf run.names build.names | xargs -r $pip uninstall -y; \
     $pip uninstall -y pip
 
-FROM cgr.dev/chainguard/python:latest-dev@sha256:64f414bffa25ca9ff518f35975ad153a921b2e4850c4a84c31a96885fdb86a02 AS runtime
+FROM ghcr.io/olafkfreund/aifactory-base:runtime-20261124-fc45d57-45347288086-1@sha256:4163ef38cc3c461b5762acf781f453c0d05d6993124b8ec571c2d71bc3c8ebfa AS runtime
 
 USER root
-
-# Pull all available Wolfi security patches at build time. The base is pinned by
-# digest for reproducibility, but a pinned digest lags behind freshly-disclosed
-# CVEs. `apk upgrade` clears fixable HIGH/CRITICAL findings between digest bumps;
-# when the snapshot itself lags, bump the digest above to a Chainguard rebuild
-# that ships the fix (what cleared CVE-2026-45447, libcrypto3/libssl3 → 3.6.3-r1).
-#
-# SECURITY_REFRESH busts THIS layer's cache. CI builds with `cache-from`, so
-# without it the upgrade layer is served from cache and never re-runs -- the
-# image keeps shipping whatever Debian shipped the day the layer was first
-# built. That is how CFactory#440 hit a Trivy failure for CVE-2026-14456 on an
-# image whose Dockerfile already ran `apt-get upgrade`: the upgrade was real,
-# its result was frozen. CI passes the date, so it rebuilds at most daily.
-ARG SECURITY_REFRESH=0
-RUN echo "security refresh: ${SECURITY_REFRESH}" \
-    && apk upgrade --no-cache
 
 # Node from the official image (Factory#1710). apk `nodejs` is rebuilt on the
 # rolling index against the newest glibc, while this base pins glibc exactly in
@@ -205,84 +186,9 @@ RUN want="$(tr -dc '0-9.' < /tmp/.nvmrc | cut -d. -f1)" \
  || { echo "Node major drift: .nvmrc=$want runtime=$have (Factory#1710)"; exit 1; } \
  && rm /tmp/.nvmrc
 
-# System packages from Wolfi APK index. Build tools come bundled in :latest-dev.
-#   git           — worktree operations
-#   curl, wget    — downloads (HEALTHCHECK uses curl)
-#   gh            — GitHub CLI (Wolfi apk package name)
-#   (Node is NOT from apk: see the node-runtime COPY below, Factory#1710.)
-#   ca-certificates — TLS roots
-#   bash          — entrypoint script (will be removed in P0.3)
-#   bubblewrap    — OS-level bash sandbox for agent commands. Without it the
-#                   Claude Agent SDK logs "Sandbox disabled: ... bubblewrap
-#                   (bwrap) not installed" and runs commands with NO filesystem
-#                   /network enforcement — unacceptable for enterprise use
-#                   (#363). The cluster node allows unprivileged user
-#                   namespaces (verified), so bwrap can create the sandbox.
-#   socat         — required alongside bwrap by the SDK sandbox for the
-#                   network-proxy path; its absence triggers the same warning.
-# Two version floors below are CVE remediation, not preference. `apk upgrade`
-# earlier in this stage does not clear either, because both packages come from
-# the base image layer and must be named explicitly to be pulled forward:
-#   libssl3 / libcrypto3 3.6.3-r3 — CVE-2026-14456 (HIGH), fixed in 3.6.3-r5.
-#                        Named together because they ship from the same openssl
-#                        origin and apk will not move one without the other.
-#   busybox 1.37.0-r61 — CVE-2026-38753 (DoS via crafted AWK in awk_sub) and
-#                        CVE-2026-38754 (heap overflow in ifsbreakup, shell/ash.c),
-#                        both HIGH, both fixed in 1.38.0-r0.
-#   wget    1.25.0-r14 — CVE-2026-58471 and CVE-2026-58472, both HIGH, both
-#                        fixed in 1.25.0-r15.
-#   curl / libcurl-openssl4 8.22.0-r4 — CVE-2026-92392 (HIGH), fixed in
-#                        8.23.0-r0. Named together: same origin.
-#   ca-certificates-bundle 20260909-r2 — CVE-2026-111943 (HIGH), fixed in
-#                        20260909-r3.
-#   uv 0.13.5-r1 — CVE-2026-111943 (HIGH, same Go x509 denylist), fixed in
-#                        0.13.6-r1. Agents launch MCP servers with uvx.
-#   libbrotlicommon1 / libbrotlidec1 / libbrotlienc1 1.2.0-r5 — CVE-2026-111497
-#                        (HIGH), fixed in 1.2.0-r7. Named together: same origin.
-#   py3-pip-wheel 26.2.2-r0 — CVE-2026-114613 (HIGH), msgpack map-deserialization
-#                        leak in pip's vendored msgpack 1.2.1; fixed in 26.2.2-r1
-#                        (vendors 1.2.3). python-3.15 depends on it, so it cannot
-#                        be apk-deleted with the other pip packages below.
-# Floors rather than == pins, so the build stays green as Wolfi revs further
-# (1.38.0-r1 and later already exist); drop each once the base digest ships it.
-# Verified present in the Wolfi x86_64 APKINDEX, then confirmed against the
-# pinned base digest itself — a floor above the newest available version fails
-# the build outright. git-lfs: floor checked the same way (3.7.1-r2 .. 3.8.0-r3);
-# the explicit `git lfs push` before every push needs it (#1690, #1721).
-RUN apk add --no-cache \
-        bash \
-        "busybox>=1.38.0-r0" \
-        "libcrypto3>=3.6.3-r5" \
-        "libssl3>=3.6.3-r5" \
-        bubblewrap \
-        ca-certificates \
-        "ca-certificates-bundle>=20260909-r3" \
-        "uv>=0.13.6-r1" \
-        "libbrotlicommon1>=1.2.0-r7" \
-        "libbrotlidec1>=1.2.0-r7" \
-        "libbrotlienc1>=1.2.0-r7" \
-        "py3-pip-wheel>=26.2.2-r1" \
-        "curl>=8.23.0-r0" \
-        "libcurl-openssl4>=8.23.0-r0" \
-        git \
-        "git-lfs>=3.7.1" \
-        gh \
-        gnupg \
-        socat \
-        "wget>=1.25.0-r15"
-
-# Shared libs the venv's source-built lxml/xmlsec link against (see py-build).
-RUN apk add --no-cache xmlsec xmlsec-openssl libxml2-16 libxslt
-
-# The Wolfi package writes system-wide filter.lfs.* (smudge on, required=true),
-# which would turn every repo's LFS files into pointers we may have no endpoint
-# to upload to. Remove them: the image only needs the binary for the explicit
-# `git lfs push` of pointers a ref already holds (#1721).
-RUN git lfs uninstall --system
-
 # Node must come only from the node-runtime COPY above, never from apk: an apk
 # nodejs would be rebuilt against a glibc newer than this base pins and break
-# the build (Factory#1710). Checked AFTER the apk block, where it could appear.
+# the build (Factory#1710). Check the packages baked into the runtime base.
 RUN if apk info 2>/dev/null | grep -q '^nodejs'; then \
       echo "apk nodejs is installed; runtime Node must come from node-runtime (Factory#1710)"; exit 1; \
     fi
@@ -482,7 +388,7 @@ RUN set -eux; \
 # hash-pinned lock (#1284); copied after the source COPY so it is not clobbered.
 #
 # pip is removed from the venv in the same layer that finishes using it, and
-# the base copies are apk-deleted below. Ported from PFactory#679, which hit
+# the base copies are removed in docker/base.Dockerfile. Ported from PFactory#679, which hit
 # and solved this first; TFactory#1277 is the same two findings here.
 #
 # The two HIGH findings this clears are NOT project dependencies — neither
@@ -497,19 +403,10 @@ RUN set -eux; \
 #
 # pip is build-time-only here — runtime never installs packages, and cluster
 # egress allows apk + npm only, so an in-pod `pip install` could not reach PyPI
-# anyway. The later `build-runtime` stage provisions via nix + apk + npm and
+# anyway. The later `build-runtime` stage provisions via Nix and npm and
 # never calls pip, so removing it here does not affect the -nix image.
 COPY --from=py-build --chown=nonroot:nonroot \
     /home/projects/MagesticAI/.venv /home/projects/MagesticAI/.venv
-
-# Remove the base image's pip too (same findings, second copy).
-# py3-pip-wheel ships deliberately: python-3.15 depends on it, so apk refuses to
-# drop it (warns, exits 0). Its CVEs are cleared by its floor above. The apk info
-# checks fail the build if the removal ever silently no-ops.
-USER root
-RUN apk del --no-cache py3.15-pip py3.15-pip-base \
- && ! apk info -e py3.15-pip && ! apk info -e py3.15-pip-base
-USER nonroot
 
 # Git identity for in-container worktree operations
 RUN git config --global user.name "AIFactory" \
@@ -567,20 +464,10 @@ CMD ["/home/projects/MagesticAI/.venv/bin/python", "-m", "server.main"]
 # Stage: gateway (the ``-gateway`` image tag) -- Factory#1959
 # ---------------------------------------------------------------------------
 # Stdlib-only model gateway: one file, no venv, no app code. Built with
-# ``--target gateway``; same pinned base and security refresh as ``runtime``.
-FROM cgr.dev/chainguard/python:latest-dev@sha256:64f414bffa25ca9ff518f35975ad153a921b2e4850c4a84c31a96885fdb86a02 AS gateway
+# ``--target gateway``; its base is refreshed by the weekly base workflow.
+FROM ghcr.io/olafkfreund/aifactory-base:gateway-20261124-fc45d57-45347288086-1@sha256:63b85f821df47756412d42e83bee8c0b70aa4df853f3456756fd9f62f042d229 AS gateway
 
 USER root
-
-ARG SECURITY_REFRESH=0
-RUN echo "security refresh: ${SECURITY_REFRESH}" \
-    && apk upgrade --no-cache
-
-# CVE-2026-114613 (pip's vendored msgpack 1.2.1): gateway.py is stdlib-only, so
-# pip goes as in the runtime stage; py3-pip-wheel (python dep) takes the floor.
-RUN apk add --no-cache "py3-pip-wheel>=26.2.2-r1" "uv>=0.13.6-r1" \
- && apk del --no-cache py3.15-pip py3.15-pip-base \
- && ! apk info -e py3.15-pip && ! apk info -e py3.15-pip-base
 
 # COPY creates /app without the execute bit here, so the nonroot user cannot
 # traverse it; create it explicitly.
@@ -608,9 +495,28 @@ ENTRYPOINT ["python", "/app/gateway.py"]
 # Only the ``:vX-nix`` tag is built from this stage (CI passes target=runtime
 # for the default + rmux images, target=build-runtime here). The default
 # bank-pilot / rmux images are byte-for-byte unchanged — no nix, no size bump.
-FROM runtime AS build-runtime
+FROM ghcr.io/olafkfreund/aifactory-base:build-runtime-20261124-fc45d57-45347288086-1@sha256:1dd1e6a16d2243036702d4a5368a30f6054cf8f9254d0da37a6bae28a83b4eab AS build-runtime
 
 USER root
+
+COPY --from=runtime /usr/local/ /usr/local/
+COPY --from=runtime --chown=65532:65532 /home/projects/ /home/projects/
+COPY --from=runtime --chown=65532:65532 /home/nonroot/ /home/nonroot/
+
+ENV APP_HOST=0.0.0.0 \
+    APP_PORT=3101 \
+    APP_BACKEND_PATH=/home/projects/MagesticAI/apps/backend \
+    APP_PROJECTS_DATA_DIR=/home/nonroot/.aifactory \
+    APP_DEFAULT_SHELL=/bin/bash \
+    PYTHONUNBUFFERED=1 \
+    PATH="/home/nonroot/.npm-global/bin:/home/projects/MagesticAI/.venv/bin:$PATH"
+
+EXPOSE 3101
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:3101/api/health || exit 1
+
+WORKDIR /home/projects/MagesticAI/apps/web-server
 
 # Pull the Nix store directly from the substrate image via ``COPY --from=<ref>``
 # (a LITERAL external image — a stage-local ARG here fails on the classic builder
@@ -664,8 +570,7 @@ COPY --from=ghcr.io/olafkfreund/factory-runner-nix:latest@sha256:28c94cf7552f81d
 # environment. The revisions are derived from `--dry-run` rather than hardcoded
 # so a playwright bump re-links instead of silently falling back to a download
 # that cannot finish.
-RUN apk add --no-cache chromium \
- && npm install -g playwright@1.49.0 @ffmpeg-installer/linux-x64 \
+RUN npm install -g playwright@1.49.0 @ffmpeg-installer/linux-x64 \
  && FF="$(find /usr/local/lib/node_modules/@ffmpeg-installer -name ffmpeg -type f | head -1)" \
  && test -n "$FF" && chmod 0755 "$FF" \
  && export PLAYWRIGHT_BROWSERS_PATH=/home/nonroot/.cache/ms-playwright \
@@ -695,4 +600,5 @@ ENV PATH="/nix/var/nix/profiles/default/bin:${PATH}" \
 # (validates the /nix/var chown + world-readable store via a pure eval).
 RUN nix --version && [ "$(nix eval --expr '1 + 1')" = "2" ]
 
-# ENTRYPOINT/CMD/HEALTHCHECK/WORKDIR are inherited from the runtime stage.
+ENTRYPOINT []
+CMD ["/home/projects/MagesticAI/.venv/bin/python", "-m", "server.main"]
