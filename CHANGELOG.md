@@ -1,5 +1,17 @@
 ## [Unreleased]
 
+## 3.21.9 - 2026-11-24
+
+Merged to `dev` since 3.21.8.
+
+### Added
+
+- The mcp-stdio server proxies the factory CLI's reject-plan and archive routes (`/api/mcp-stdio/projects/{project}/tasks/archive` and reject-plan). (Factory#3882 step 1b, #2223, #2225)
+
+### Changed
+
+- The Dockerfile pins the GHCR base images (phase 2), so release builds no longer pull from Chainguard. (Factory#3880, #2221)
+
 ## 3.21.8 - 2026-11-24
 
 Merged to `dev` since 3.21.7.
