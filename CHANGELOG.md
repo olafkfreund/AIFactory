@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+## 3.21.10 - 2026-11-25
+
+Merged to `dev` since 3.21.9.
+
+### Fixed
+
+- The top-bar project dropdown is no longer clipped, and the page name is no longer truncated next to the project pill. (Factory#3903, #2231, #2235)
+
 ## 3.21.9 - 2026-11-24
 
 Merged to `dev` since 3.21.8.
