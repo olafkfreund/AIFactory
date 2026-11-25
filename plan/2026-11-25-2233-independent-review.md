@@ -495,3 +495,15 @@ and web-server suites and the full PFactory suite.
   is gone; nothing else is migrated.
 - **PFactory:** revert step 7 and release.
 - **The E2E harness change** is independent.
+
+## Deviations recorded during implementation
+
+- **Step 3: the other-provider candidates.** The plan listed "a frontier
+  model from another provider" as the second candidate.
+  - **Why it changed:** AIFactory's model catalog has only Claude frontier
+    entries, and `check_model_registered` accepts any non-Claude name. A
+    guessed id could therefore be picked, and would then fail at runtime.
+  - **What it is now:** other-provider candidates come only from operator
+    config, `AIFACTORY_QA_ALT_MODELS`, a comma-separated list of real model
+    ids (for example `gpt-5.3-codex`). It is empty by default. With nothing
+    configured, QA uses the Claude ladder: opus, fable, sonnet.

@@ -302,7 +302,7 @@ def handle_build_command(
         debug_section,
         debug_success,
     )
-    from phase_config import get_phase_model
+    from phase_config import _resolve_phase_model, get_phase_model
     from phase_event import ExecutionPhase, emit_phase
     from qa_loop import is_qa_approved, run_qa_validation_loop, should_run_qa
     from solo_mode import is_solo_mode_enabled_for_spec
@@ -320,7 +320,8 @@ def handle_build_command(
     # This respects task_metadata.json phase configuration from the UI
     planning_model = get_phase_model(spec_dir, "planning", model)
     coding_model = get_phase_model(spec_dir, "coding", model)
-    qa_model = get_phase_model(spec_dir, "qa", model)
+    # The QA loop checks registry eligibility while selecting an independent model.
+    qa_model = _resolve_phase_model(spec_dir, "qa", model)
 
     print_banner()
     print(f"\nProject directory: {project_dir}")

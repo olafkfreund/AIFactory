@@ -128,7 +128,7 @@ async def test_cycle_clears_old_evidence_and_requires_fresh_signoff(
     monkeypatch.setattr(loop, "is_build_complete", lambda *_a: True)
     monkeypatch.setattr(loop, "get_task_logger", lambda *_a: None)
     monkeypatch.setattr(loop, "is_no_test_project", lambda *_a: False)
-    monkeypatch.setattr(loop, "_create_qa_reviewer_provider", lambda *_a: client)
+    monkeypatch.setattr(loop, "_create_qa_reviewer_provider", lambda *_a, **_k: client)
 
     async def review(*_args, **_kwargs):
         if fresh:

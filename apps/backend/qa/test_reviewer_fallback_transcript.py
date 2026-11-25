@@ -56,9 +56,7 @@ def _reset():
 
 
 def test_fallback_tool_calls_are_recorded_and_redacted(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        reviewer, "get_tool_fallback_provider", lambda **_k: FakeProvider()
-    )
+    monkeypatch.setattr(reviewer, "get_provider", lambda *_a, **_k: FakeProvider())
     monkeypatch.setattr(
         reviewer, "get_qa_signoff_status", lambda _d: {"status": "approved"}
     )

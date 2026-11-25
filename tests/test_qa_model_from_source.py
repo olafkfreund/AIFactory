@@ -126,7 +126,7 @@ async def test_qa_fixers_and_reviewer_come_from_source(tmp_path: Path) -> None:
     seen = await _drive_qa(tmp_path, reviewer)
 
     assert reviewer.await_count == 2
-    assert len(seen) == 8  # model + thinking for 2 fixers and 2 reviewers
+    assert len(seen) == 6  # reviewer model is selected by the independence picker
     assert HAIKU not in seen
     assert NO_THINKING not in seen
 
@@ -143,7 +143,7 @@ async def test_qa_failover_provider_comes_from_source(tmp_path: Path) -> None:
 
     failover.assert_called_once()
     assert seen.count(HAIKU) == 0
-    assert len(seen) == 5  # fixer-first 2, reviewer 2, failover model 1
+    assert len(seen) == 4  # failover re-picks without re-reading the QA source model
 
 
 @pytest.mark.asyncio
