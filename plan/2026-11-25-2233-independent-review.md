@@ -540,3 +540,8 @@ and web-server suites and the full PFactory suite.
   against the source QA evidence immediately before its merge gate.
 - **Step 6: malformed read-back is empty.** Invalid identity or QA evidence
   files produce empty `phaseModels` or null `qaEvidence` instead of raising.
+- **Step 6: the QA report endpoint reads the protected copy.** Only
+  `qa_evidence_report.md` reaches the project spec dir, so
+  `GET /api/tasks/{id}/qa-report` falls back to it when `qa_report.md` is
+  absent. Found by the live E2E run (Factory#3882), where it returned 404 for
+  an approved task.

@@ -34,3 +34,18 @@ def test_view_routes_still_mounted_on_tasks_router():
     paths = {r.path for r in tasks_router.routes}
     assert "/{task_id}/qa-report" in paths
     assert "/{task_id}/plan-html" in paths
+
+
+def test_qa_report_falls_back_to_protected_evidence_report(tmp_path, monkeypatch):
+    """#2233: the project spec dir holds only qa_evidence_report.md."""
+    import asyncio
+
+    spec = tmp_path / ".aifactory" / "specs" / "001-x"
+    spec.mkdir(parents=True)
+    (spec / "qa_evidence_report.md").write_text("# QA\nAPPROVED\n", encoding="utf-8")
+    monkeypatch.setattr(
+        tasks_views, "load_projects", lambda: {"p1": {"path": str(tmp_path)}}
+    )
+    out = asyncio.run(tasks_views.get_qa_report("p1:001-x", _access={}))
+    assert out["exists"] is True
+    assert "APPROVED" in out["content"]
