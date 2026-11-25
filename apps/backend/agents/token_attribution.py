@@ -607,7 +607,11 @@ def record_turn(
         return render_breakdown(single)
 
 
-def render_breakdown(agg: dict[str, Any]) -> dict[str, Any]:
+def render_breakdown(
+    agg: dict[str, Any],
+    phase_models: dict[str, list[str]] | None = None,
+    qa_evidence: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Turn a stored aggregate into the API/UI response shape.
 
     %-of-window is computed against ``maxTokens`` using the *current* total
@@ -630,7 +634,14 @@ def render_breakdown(agg: dict[str, Any]) -> dict[str, Any]:
     cache_read = int(agg.get("cacheReadTokens", 0) or 0)
     cache_creation = int(agg.get("cacheCreationTokens", 0) or 0)
     cached = cache_read + cache_creation
+    # Read-back fields are emitted only when a caller supplies them (#2233 D5).
+    extra = (
+        {"phaseModels": phase_models, "qaEvidence": qa_evidence}
+        if phase_models is not None
+        else {}
+    )
     return {
+        **extra,
         "version": agg.get("version", 1),
         "turns": int(agg.get("turns", 0)),
         "model": agg.get("model"),
@@ -651,6 +662,28 @@ def render_breakdown(agg: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def read_breakdown(spec_dir: Path) -> dict[str, Any]:
-    """Read the persisted per-task breakdown (empty shape if absent)."""
-    return render_breakdown(_read_aggregate(usage_file_path(spec_dir)))
+def read_breakdown(
+    spec_dir: Path, source_spec_dir: Path | None = None
+) -> dict[str, Any]:
+    """Read the persisted per-task breakdown (empty shape if absent).
+
+    ``phaseModels`` and ``qaEvidence`` come from ``source_spec_dir`` (the
+    canonical spec dir), which may differ from where ``token_usage.json`` is.
+    """
+    from agents.model_identity import read_identities
+
+    canonical = Path(source_spec_dir or spec_dir)
+    phases: dict[str, set[str]] = {}
+    for entry in read_identities(canonical):
+        phases.setdefault(entry["phase"], set()).add(entry["model"])
+    evidence_path = canonical / "qa_evidence.json"
+    evidence = (
+        json.loads(evidence_path.read_text(encoding="utf-8"))
+        if evidence_path.exists()
+        else None
+    )
+    return render_breakdown(
+        _read_aggregate(usage_file_path(spec_dir)),
+        {phase: sorted(models) for phase, models in phases.items()},
+        evidence,
+    )

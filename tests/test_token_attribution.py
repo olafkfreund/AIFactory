@@ -456,3 +456,20 @@ def test_provider_without_cache_reports_zero_split_and_no_hit_rate(tmp_path):
     assert b["cacheHitRate"] is None
     # The no-cache path still estimates system_instructions from its segment.
     assert "system_instructions" in {c["key"] for c in b["categories"]}
+
+
+def test_read_breakdown_phase_models_and_qa_evidence(tmp_path):
+    """#2233 D5: deduped/sorted phaseModels; qaEvidence null when file missing."""
+    canonical = tmp_path / "main"
+    canonical.mkdir()
+    base = read_breakdown(tmp_path / "none", canonical)
+    assert base["phaseModels"] == {} and base["qaEvidence"] is None
+    (canonical / "model_identities.json").write_text(
+        json.dumps([{"phase": "qa", "model": "z"}, {"phase": "qa", "model": "y"}] * 2)
+    )
+    (canonical / "qa_evidence.json").write_text(json.dumps({"k": 1}))
+    out = read_breakdown(tmp_path / "none", canonical)
+    assert out["phaseModels"] == {"qa": ["y", "z"]}
+    assert out["qaEvidence"] == {"k": 1}
+    # Internal render calls (record_turn) stay unchanged.
+    assert "phaseModels" not in render_breakdown({})
