@@ -113,6 +113,29 @@ def test_create_pr_parses_number():
     assert not r.saw("auth setup-git")
 
 
+def test_create_pr_refuses_head_mismatch_after_push(tmp_path: Path) -> None:
+    r = FakeRunner(
+        {
+            "git grep": CmdResult(1, "", ""),
+            "git push": CmdResult(0, "", ""),
+            "git ls-remote": CmdResult(0, "other-sha\trefs/heads/b", ""),
+            "pr create": CmdResult(0, "https://github.com/o/r/pull/7", ""),
+        }
+    )
+    pr = pe.create_pr(
+        worktree=tmp_path,
+        branch="b",
+        base="main",
+        title="t",
+        body="b",
+        expected_head="reviewed-sha",
+        runner=r,
+    )
+    assert pr is None
+    assert r.saw("reviewed-sha:refs/heads/b")
+    assert not r.saw("pr create")
+
+
 def test_default_runner_hands_gh_a_config_dir_not_the_token(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -15,9 +15,14 @@ if str(_BACKEND_PATH) not in sys.path:
 from agents.model_identity import read_identities  # noqa: E402
 from phase_config import resolve_model_id  # noqa: E402
 
-GateReason = Literal["qa_missing", "qa_stale", "qa_not_independent"]
+GateReason = Literal["qa_missing", "qa_stale", "qa_not_independent", "head_unavailable"]
 GATE_REASONS: frozenset[str] = frozenset(
-    {"qa_missing", "qa_stale", "qa_not_independent"}
+    {
+        "qa_missing",
+        "qa_stale",
+        "qa_not_independent",
+        "head_unavailable",
+    }
 )
 
 
@@ -34,7 +39,7 @@ def _canonical_model(entry: object) -> str | None:
 def check(source_spec_dir: Path, head_sha: str | None) -> GateReason | None:  # noqa: PLR0911, PLR0912 - explicit refusal reasons
     """Return None when QA approved *head_sha* independently, else the refusal reason."""
     if not isinstance(head_sha, str) or not head_sha.strip():
-        return "qa_stale"
+        return "head_unavailable"
     spec_dir = Path(source_spec_dir)
     try:
         evidence = json.loads((spec_dir / "qa_evidence.json").read_text("utf-8"))
@@ -46,9 +51,7 @@ def check(source_spec_dir: Path, head_sha: str | None) -> GateReason | None:  # 
     reviewed_head = evidence.get("reviewed_head")
     report_sha256 = evidence.get("report_sha256")
     if (
-        not isinstance(head_sha, str)
-        or not head_sha.strip()
-        or not isinstance(reviewed_head, str)
+        not isinstance(reviewed_head, str)
         or not reviewed_head.strip()
         or reviewed_head.strip() != head_sha.strip()
         or not isinstance(report_sha256, str)

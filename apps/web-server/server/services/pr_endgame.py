@@ -805,6 +805,7 @@ def create_pr(
     base: str,
     title: str,
     body: str,
+    expected_head: str | None = None,
     runner: Runner = _default_runner,
 ) -> int | None:
     """Push the worktree branch and open a PR. Returns the PR number, or None.
@@ -847,7 +848,7 @@ def create_pr(
             "-u",
             "--",
             "origin",
-            f"refs/heads/{branch}:refs/heads/{branch}",
+            f"{expected_head or f'refs/heads/{branch}'}:refs/heads/{branch}",
         ],
         branch,
         str(worktree),
@@ -856,6 +857,16 @@ def create_pr(
     if not push.ok and "up-to-date" not in (push.err + push.out).lower():
         logger.warning("[pr-endgame] git push failed: %s", push.err[:300])
         # keep going — the branch may already be pushed
+
+    if expected_head is not None:
+        remote = runner(
+            ["git", "ls-remote", "origin", f"refs/heads/{branch}"], str(worktree)
+        )
+        if not remote.ok or remote.out.split()[0:1] != [expected_head]:
+            logger.warning(
+                "[pr-endgame] pushed head differs from reviewed head for %s", branch
+            )
+            return None
 
     res = runner(
         [
@@ -2282,6 +2293,7 @@ async def run_pr_endgame(  # noqa: PLR0911, PLR0912, PLR0915 - existing state ma
     trusted: object,
     worktree: Path,
     branch: str,
+    expected_head: str | None = None,
     base: str,
     repo: str,
     provider: str = "github",
@@ -2475,6 +2487,7 @@ async def run_pr_endgame(  # noqa: PLR0911, PLR0912, PLR0915 - existing state ma
                 base=base,
                 title=title,
                 body=body,
+                expected_head=expected_head,
                 runner=runner,
             )
         )
