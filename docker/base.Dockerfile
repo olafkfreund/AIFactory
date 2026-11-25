@@ -1,5 +1,5 @@
 # AIFactory's Wolfi package layers, published before the main Dockerfile consumes them.
-FROM cgr.dev/chainguard/python:latest-dev@sha256:b73b9e61fa9e0c6ec59c68ee2db1a08a4a61b969dbe03a39c309033749ef7f78 AS py-build
+FROM cgr.dev/chainguard/python:latest-dev@sha256:768ee36ee9f4b8c882634c07d0b889425bc8e100886a3f742b83b1c647cc2d4b AS py-build
 LABEL org.opencontainers.image.source="https://github.com/olafkfreund/AIFactory"
 USER root
 ARG SECURITY_REFRESH=0
@@ -7,7 +7,7 @@ RUN echo "security refresh: ${SECURITY_REFRESH}" \
  && apk add --no-cache build-base cmake xmlsec-dev xmlsec-openssl \
         libxml2-dev libxslt-dev pkgconf openssl-dev libtool
 
-FROM cgr.dev/chainguard/python:latest-dev@sha256:b73b9e61fa9e0c6ec59c68ee2db1a08a4a61b969dbe03a39c309033749ef7f78 AS runtime
+FROM cgr.dev/chainguard/python:latest-dev@sha256:768ee36ee9f4b8c882634c07d0b889425bc8e100886a3f742b83b1c647cc2d4b AS runtime
 LABEL org.opencontainers.image.source="https://github.com/olafkfreund/AIFactory"
 USER root
 ARG SECURITY_REFRESH=0
@@ -91,7 +91,7 @@ RUN git lfs uninstall --system
 FROM runtime AS build-runtime
 RUN apk add --no-cache chromium
 
-FROM cgr.dev/chainguard/python:latest-dev@sha256:b73b9e61fa9e0c6ec59c68ee2db1a08a4a61b969dbe03a39c309033749ef7f78 AS gateway
+FROM cgr.dev/chainguard/python:latest-dev@sha256:768ee36ee9f4b8c882634c07d0b889425bc8e100886a3f742b83b1c647cc2d4b AS gateway
 LABEL org.opencontainers.image.source="https://github.com/olafkfreund/AIFactory"
 USER root
 ARG SECURITY_REFRESH=0
