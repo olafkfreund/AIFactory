@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -107,6 +108,13 @@ async def run_terminal_completion(
         logger.warning(
             "project-settings load failed before terminal completion", exc_info=True
         )
+
+    if (spec_dir / ".terminal_completion_emitted").exists():
+        from core.workspace_fetch import (  # noqa: PLC0415 - completion-only import
+            maybe_fetch_qa_evidence,
+        )
+
+        maybe_fetch_qa_evidence(spec_dir, spec_id)
 
     # #1550: on the co-mount Job path the gate marker is written into the task
     # worktree's spec dir and nothing else brings it home (the packed path's
@@ -206,6 +214,14 @@ async def run_terminal_completion(
     # (lines ~1972 emit_events=True and ~2269 emit_events=False).
     if is_completed:
         _seffx_marker = spec_dir / ".terminal_side_effects_done"
+        _endgame_marker = spec_dir / ".pr_endgame_done"
+        _trusted_cache: list[object] = []
+
+        async def _get_trusted() -> object:
+            if not _trusted_cache:
+                _trusted_cache.append(await lookup(spec_dir))
+            return _trusted_cache[0]
+
         if not _seffx_marker.exists():
             try:
                 _seffx_marker.write_text(datetime.now(UTC).isoformat())
@@ -224,7 +240,7 @@ async def run_terminal_completion(
             # Same helper the endgame calls; idempotent, best-effort.
             # #1667: one lookup of the signed record, passed to every merge-path
             # consumer below. A failed read is LOOKUP_FAILED, which holds.
-            trusted = await lookup(spec_dir)
+            trusted = await _get_trusted()
             try:
                 from .pr_endgame import apply_path_risk_floor  # noqa: PLC0415
 
@@ -275,6 +291,7 @@ async def run_terminal_completion(
                     "tfactory auto-handoff failed (best-effort)", exc_info=True
                 )
 
+        if not _endgame_marker.exists():
             # PR endgame (#71 Phase 4): on a clean build, optionally open
             # a PR, request a Copilot review, and (only on Copilot's
             # APPROVAL) auto-merge + re-test. Toggled per-project from the
@@ -284,8 +301,12 @@ async def run_terminal_completion(
             try:
                 from server.project_registry import org_id_for_path  # noqa: PLC0415
 
-                from . import github_app  # noqa: PLC0415
+                from . import github_app, qa_gate  # noqa: PLC0415
+                from .merger import _ref_sha  # noqa: PLC0415
                 from .pr_endgame import (
+                    _default_runner,
+                    _pr_head,
+                    _split_repo,
                     gather_pr_context,
                     is_auto_merge_enabled,
                     is_auto_pr_enabled,
@@ -294,6 +315,7 @@ async def run_terminal_completion(
                     verdict_from_review_result,
                 )
 
+                trusted = await _get_trusted()
                 _org = org_id_for_path(project_path)
                 with github_app.org_github_token(_org):
                     verified = handoff_contract(spec_dir, trusted)
@@ -310,6 +332,53 @@ async def run_terminal_completion(
                             spec_id,
                             trusted=trusted,
                         )
+                        gate_reason = None
+                        if ctx:
+                            try:
+                                fd = os.open(
+                                    _endgame_marker,
+                                    os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                                    0o600,
+                                )
+                            except FileExistsError:
+                                ctx = None
+                            else:
+                                os.close(fd)
+
+                        if ctx:
+
+                            def _check_gate(context: dict[str, Any]) -> str | None:
+                                adopted_pr = context.get("adopted_pr")
+                                if adopted_pr:
+                                    parts = _split_repo(context.get("repo", ""))
+                                    head = (
+                                        _pr_head(
+                                            parts[0],
+                                            parts[1],
+                                            adopted_pr,
+                                            _default_runner,
+                                        )
+                                        if parts
+                                        else None
+                                    )
+                                else:
+                                    head = _ref_sha(
+                                        Path(context["worktree"]),
+                                        context["branch"],
+                                        _default_runner,
+                                    )
+                                return qa_gate.check(spec_dir, head)
+
+                            gate_reason = await asyncio.to_thread(_check_gate, ctx)
+                            if gate_reason is not None:
+                                _endgame_marker.unlink(missing_ok=True)
+                                logger.info(
+                                    "[AgentService] PR endgame skipped for %s "
+                                    "(QA gate: %s)",
+                                    sanitize_log(spec_id),
+                                    sanitize_log(gate_reason),
+                                )
+                                ctx = None
                         if ctx:
 
                             async def _re_test() -> None:
@@ -580,7 +649,7 @@ async def run_terminal_completion(
                                 f"[AgentService] PR endgame for {sanitize_log(spec_id)} "
                                 f"(reviewer={sanitize_log(_reviewer)}): {sanitize_log(endgame)}"
                             )
-                        else:
+                        elif gate_reason is None:
                             logger.info(
                                 "[AgentService] PR endgame skipped for %s "
                                 "(no worktree branch / repo)",
@@ -589,25 +658,25 @@ async def run_terminal_completion(
             except Exception:
                 logger.debug("PR endgame failed (best-effort)", exc_info=True)
 
-            # Factory#2586: land the work even when the endgame did not run
-            # (QA refused, no clean-build context). The merger is idempotent,
-            # so after an endgame PR it only sees `already_open` and records
-            # `awaiting_merge`; otherwise it pushes the branch and opens the
-            # PR. Runs after the endgame on purpose, never instead of it.
-            try:
-                from .merger import process_one  # noqa: PLC0415
+        # Factory#2586: land the work even when the endgame did not run
+        # (QA refused, no clean-build context). The merger is idempotent,
+        # so after an endgame PR it only sees `already_open` and records
+        # `awaiting_merge`; otherwise it pushes the branch and opens the
+        # PR. Runs after the endgame on purpose, never instead of it.
+        try:
+            from .merger import process_one  # noqa: PLC0415
 
-                landed = await asyncio.to_thread(
-                    process_one,
-                    task_id.split(":", 1)[0] if ":" in task_id else project_path.name,
-                    project_path,
-                    spec_dir,
-                )
-                logger.info(
-                    "[AgentService] merger for %s: %s",
-                    sanitize_log(spec_id),
-                    sanitize_log(landed),
-                )
-            except Exception:  # noqa: BLE001 - landing never breaks completion
-                logger.debug("merger landing failed (best-effort)", exc_info=True)
+            landed = await asyncio.to_thread(
+                process_one,
+                task_id.split(":", 1)[0] if ":" in task_id else project_path.name,
+                project_path,
+                spec_dir,
+            )
+            logger.info(
+                "[AgentService] merger for %s: %s",
+                sanitize_log(spec_id),
+                sanitize_log(landed),
+            )
+        except Exception:  # noqa: BLE001 - landing never breaks completion
+            logger.debug("merger landing failed (best-effort)", exc_info=True)
     return terminal_status

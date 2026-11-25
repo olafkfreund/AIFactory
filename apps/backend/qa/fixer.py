@@ -13,6 +13,7 @@ from pathlib import Path
 
 # Memory integration for cross-session learning
 from agents.memory_manager import get_graphiti_context, save_session_memory
+from agents.token_attribution import PromptSegments, TurnUsage, record_turn
 from claude_agent_sdk import ClaudeSDKClient
 from debug import debug, debug_detailed, debug_error, debug_section, debug_success
 from security.tool_input_validator import get_safe_tool_input
@@ -130,9 +131,12 @@ async def run_qa_fixer_session(
         debug_success("qa_fixer", "Query sent successfully")
 
         response_text = ""
+        usage_result = None
         debug("qa_fixer", "Starting to receive response stream...")
         async for msg in client.receive_response():
             msg_type = type(msg).__name__
+            if msg_type == "ResultMessage":
+                usage_result = msg
             message_count += 1
             debug_detailed(
                 "qa_fixer",
@@ -262,6 +266,21 @@ async def run_qa_fixer_session(
                                 )
 
                         current_tool = None
+
+        usage = getattr(usage_result, "usage", None)
+        if usage_result and usage:
+            record_turn(
+                spec_dir,
+                PromptSegments(user_prompt=prompt),
+                TurnUsage.from_sdk_usage(
+                    usage, getattr(usage_result, "total_cost_usd", None)
+                ),
+                model=getattr(client, "model", None),
+                worker_id=f"qa-fixer-{fix_session}",
+                phase="qa_fixer",
+                provider=type(client).__name__,
+                duration_ms=getattr(usage_result, "duration_ms", 0) or 0,
+            )
 
         print("\n" + "-" * 70 + "\n")
 

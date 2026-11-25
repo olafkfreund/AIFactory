@@ -59,3 +59,40 @@ def test_token_usage_route_serves_the_cache_split(tmp_path, monkeypatch):
     body = asyncio.run(tasks_usage.get_task_token_usage("p:001", _access={}))
     assert (body["cacheReadTokens"], body["cacheCreationTokens"]) == (900, 100)
     assert body["cacheHitRate"] == 0.9
+
+
+def test_token_usage_route_reads_canonical_dir_for_read_back(tmp_path, monkeypatch):
+    """#2233 D5: phaseModels/qaEvidence come from the main dir, usage from worktree."""
+    import asyncio
+    import json
+
+    from server.routes import tasks as tasks_routes
+
+    main = tmp_path / "main"
+    worktree = tmp_path / "wt"
+    main.mkdir()
+    worktree.mkdir()
+    (worktree / "token_usage.json").write_text(
+        json.dumps({"turns": 3, "categories": {}})
+    )
+    (main / "qa_evidence.json").write_text(json.dumps({"verdict": "ok"}))
+    (main / "model_identities.json").write_text(
+        json.dumps(
+            [
+                {"phase": "coding", "model": "b"},
+                {"phase": "coding", "model": "a"},
+                {"phase": "coding", "model": "a"},
+                {"phase": "qa", "model": "c"},
+            ]
+        )
+    )
+    # A decoy in the worktree must be ignored.
+    (worktree / "qa_evidence.json").write_text(json.dumps({"verdict": "decoy"}))
+    monkeypatch.setattr(
+        tasks_routes, "_resolve_task", lambda _t: ("p", "001", tmp_path, main)
+    )
+    monkeypatch.setattr(tasks_routes, "get_worktree_spec_dir", lambda *_: worktree)
+    body = asyncio.run(tasks_usage.get_task_token_usage("p:001", _access={}))
+    assert body["turns"] == 3
+    assert body["phaseModels"] == {"coding": ["a", "b"], "qa": ["c"]}
+    assert body["qaEvidence"] == {"verdict": "ok"}

@@ -241,7 +241,14 @@ def _make_spec(tmp_path: Path) -> Path:
     return spec_dir
 
 
-async def _run_one_turn(spec_dir: Path, project_dir: Path):
+async def _run_one_turn(
+    spec_dir: Path,
+    project_dir: Path,
+    *,
+    source_spec_dir: Path | None = None,
+    next_subtask: dict | None = None,
+    first_run: bool | None = None,
+):
     """Drive run_autonomous_agent for a single (mocked) session.
 
     All heavy collaborators are mocked. ``run_session_guarded`` returns
@@ -267,11 +274,15 @@ async def _run_one_turn(spec_dir: Path, project_dir: Path):
         "create_client": create_client_mock,
         "get_solo_prompt": solo_p,
         "generate_planner_prompt": plan_p,
+        "generate_subtask_prompt": MagicMock(return_value="SUBTASK_PROMPT"),
+        "load_subtask_context": MagicMock(return_value={}),
         "run_session_guarded": AsyncMock(return_value=("complete", "", {})),
         # tmp_path is not a git repo; the metadata check fails closed there.
         "check_git_metadata": MagicMock(),
         "get_graphiti_context": AsyncMock(return_value=""),
-        "RecoveryManager": MagicMock(),
+        "RecoveryManager": MagicMock(
+            return_value=MagicMock(get_attempt_count=MagicMock(return_value=0))
+        ),
         "StatusManager": MagicMock(),
         "get_task_logger": MagicMock(return_value=None),
         "debug_memory_system_status": MagicMock(),
@@ -279,7 +290,7 @@ async def _run_one_turn(spec_dir: Path, project_dir: Path):
         "CompactionDetector": MagicMock(),
         "build_operational_context": MagicMock(return_value=""),
         "drain_inbox": MagicMock(return_value=[]),
-        "is_build_complete": MagicMock(return_value=True),
+        "is_build_complete": MagicMock(return_value=next_subtask is None),
         "print_build_complete_banner": MagicMock(),
         "print_progress_summary": MagicMock(),
         "print_session_header": MagicMock(),
@@ -288,13 +299,17 @@ async def _run_one_turn(spec_dir: Path, project_dir: Path):
             return_value={"completed": 0, "total": 0, "in_progress": 0}
         ),
         "get_current_phase": MagicMock(return_value=None),
-        "get_next_subtask": MagicMock(return_value=None),
+        "get_next_subtask": MagicMock(return_value=next_subtask),
         "get_latest_commit": MagicMock(return_value="abc"),
         "get_commit_count": MagicMock(return_value=0),
         "infer_provider_from_model": MagicMock(return_value="claude"),
     }
 
     with contextlib.ExitStack() as stack:
+        if first_run is not None:
+            stack.enter_context(
+                patch.object(coder, "is_first_run", return_value=first_run)
+            )
         stack.enter_context(
             patch("run_gates.get_phase_model", return_value="claude-sonnet-4-5")
         )
@@ -308,6 +323,7 @@ async def _run_one_turn(spec_dir: Path, project_dir: Path):
             spec_dir=spec_dir,
             model="claude-sonnet-4-5",
             max_iterations=1,
+            source_spec_dir=source_spec_dir,
         )
 
     return create_client_mock, solo_p, plan_p
@@ -358,13 +374,11 @@ class TestSoloSeam:
 # QA skip wiring (solo agent is its own QA)
 # ---------------------------------------------------------------------------
 class TestSoloSkipsQA:
-    def test_solo_forces_skip_qa_in_build_command(self, tmp_path: Path, monkeypatch):
-        """With solo ON, handle_build_command must set skip_qa=True before QA.
+    def test_solo_still_runs_qa_in_build_command(self, tmp_path: Path, monkeypatch):
+        """With solo ON, handle_build_command must still run QA (#2233).
 
-        We stop the build right after run_autonomous_agent by raising, and
-        capture the resolved ``skip_qa`` via the should_run_qa probe — which is
-        only consulted when skip_qa is False. In solo mode it must never be
-        consulted.
+        ``should_run_qa`` is only consulted when ``skip_qa`` is False, so the
+        probe must be consulted and the QA loop must run.
         """
         import contextlib
 
@@ -374,20 +388,20 @@ class TestSoloSkipsQA:
         from cli import build_commands
 
         should_run_qa_mock = MagicMock(return_value=True)
+        qa_loop_mock = AsyncMock(return_value=True)
         review_state = MagicMock()
         review_state.is_approval_valid.return_value = True
         review_state_cls = MagicMock()
         review_state_cls.load.return_value = review_state
 
         # Make run_autonomous_agent a no-op so we reach the QA gate quickly.
-        # We only care that should_run_qa is never consulted (skip_qa
-        # short-circuits the `not skip_qa and ...` guard in solo mode).
         patches = [
             patch("agent.run_autonomous_agent", new=AsyncMock(return_value=None)),
             patch("agent.sync_plan_to_source", MagicMock(return_value=False)),
             patch("qa_loop.should_run_qa", should_run_qa_mock),
             patch("qa_loop.is_qa_approved", MagicMock(return_value=False)),
-            patch("qa_loop.run_qa_validation_loop", new=AsyncMock(return_value=True)),
+            patch("qa_loop.run_qa_validation_loop", new=qa_loop_mock),
+            patch.object(build_commands, "_check_qa_git_metadata", MagicMock()),
             # validate_environment / print_banner are lazy-imported from
             # cli.utils inside the function, so patch them at the source.
             patch("cli.utils.validate_environment", MagicMock(return_value=True)),
@@ -422,10 +436,8 @@ class TestSoloSkipsQA:
                 force_bypass_approval=False,
             )
 
-        assert not should_run_qa_mock.called, (
-            "solo mode must skip QA: should_run_qa was consulted, meaning "
-            "skip_qa was not forced True"
-        )
+        assert should_run_qa_mock.called, "solo mode must not force skip_qa"
+        assert qa_loop_mock.called, "solo mode must still run the QA loop"
 
 
 # ---------------------------------------------------------------------------

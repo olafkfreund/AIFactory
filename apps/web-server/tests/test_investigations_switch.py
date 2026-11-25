@@ -33,6 +33,7 @@ def test_switch_values(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_router_and_loop_only_when_on(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AIFACTORY_INVESTIGATIONS", "off")
+    monkeypatch.setattr(get_settings(), "DISABLE_AUTH", True)
     off = create_app()
     assert not any(r.path.startswith("/api/investigations") for r in off.routes)
     assert not any(

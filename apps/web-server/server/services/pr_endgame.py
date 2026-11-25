@@ -1612,10 +1612,17 @@ async def _gated_head(
     match_head: str | None,
     pr_head: Callable[[], str | None],
     pr: int,
+    spec_dir: Path | None = None,
 ) -> str | None:
     """The head to merge when ``merge_gate`` is green for it, else None (#1695)."""
     head = match_head or await asyncio.to_thread(pr_head)
-    if head is None or not await asyncio.to_thread(merge_gate, head):
+    from . import qa_gate  # noqa: PLC0415
+
+    if (
+        head is None
+        or (spec_dir is not None and qa_gate.check(spec_dir, head) is not None)
+        or not await asyncio.to_thread(merge_gate, head)
+    ):
         logger.info("[pr-endgame] pr=%d merge gate not green yet", pr)
         return None
     return head
@@ -1642,6 +1649,7 @@ async def watch_and_finish(  # noqa: PLR0911, PLR0915 - merge-gate human-stop (#
     human_approval_required: bool = False,
     merge_gate: Callable[[str], bool] | None = None,
     merge_body: str | None = None,
+    spec_dir: Path | None = None,
 ) -> dict:
     """Poll the PR's reviews and merge only on a CLEAN Copilot approval.
 
@@ -1767,6 +1775,7 @@ async def watch_and_finish(  # noqa: PLR0911, PLR0915 - merge-gate human-stop (#
                     match_head,
                     lambda: _pr_head(owner, repo, pr, runner),
                     pr,
+                    spec_dir,
                 )
                 if match_head is None:
                     gate_held = True
@@ -2531,6 +2540,7 @@ async def run_pr_endgame(  # noqa: PLR0911, PLR0912, PLR0915 - existing state ma
         human_approval_required=human_approval_required,
         merge_gate=merge_gate,
         merge_body=trailer_block(spec_dir) or None,
+        spec_dir=spec_dir,
     )
     if background:
         # A strong reference, held until the watcher finishes. The event loop

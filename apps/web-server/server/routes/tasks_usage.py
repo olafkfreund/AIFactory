@@ -49,6 +49,7 @@ async def get_task_token_usage(
 
     # Prefer the main spec dir (synced from worktree). Fall back to the live
     # worktree spec dir if the sync hasn't landed yet.
+    source_spec_dir = spec_dir
     candidate = spec_dir / "token_usage.json"
     if not candidate.exists():
         worktree_spec_dir = get_worktree_spec_dir(project_path, spec_id)
@@ -71,7 +72,7 @@ async def get_task_token_usage(
             detail=client_error(logger, "Token attribution module unavailable", exc),
         ) from exc
 
-    return read_breakdown(spec_dir)
+    return read_breakdown(spec_dir, source_spec_dir)
 
 
 def _not_running_resource_usage() -> dict:

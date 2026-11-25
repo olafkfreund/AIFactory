@@ -68,6 +68,7 @@ from .deploy_scaffold import scaffold_deploy_for_spec
 from .inbox import drain_unread as drain_inbox
 from .inbox import format_for_prompt as format_inbox_for_prompt
 from .memory_manager import debug_memory_system_status, get_graphiti_context
+from .model_identity import record_identity
 from .route_wiring import route_wiring_gate
 from .session import post_session_processing, run_session_guarded
 from .token_attribution import PromptSegments, TurnUsage, record_turn
@@ -503,6 +504,14 @@ async def run_autonomous_agent(
                 phase=current_phase,
                 **provider_kwargs,
             )
+
+        record_identity(
+            source_spec_dir or spec_dir,
+            phase="coding" if solo_plans_inline and first_run else current_phase,
+            subtask_id=subtask_id,
+            model=phase_model,
+            provider=provider_name,
+        )
 
         # Token-attribution segments (#262): track the named prompt pieces as
         # we assemble them so per-category token usage can be attributed.
