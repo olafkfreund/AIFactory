@@ -473,3 +473,16 @@ def test_read_breakdown_phase_models_and_qa_evidence(tmp_path):
     assert out["qaEvidence"] == {"k": 1}
     # Internal render calls (record_turn) stay unchanged.
     assert "phaseModels" not in render_breakdown({})
+
+
+def test_read_breakdown_ignores_malformed_readback(tmp_path):
+    (tmp_path / "model_identities.json").write_text("broken")
+    (tmp_path / "qa_evidence.json").write_text("broken")
+    out = read_breakdown(tmp_path)
+    assert out["phaseModels"] == {}
+    assert out["qaEvidence"] is None
+    (tmp_path / "model_identities.json").write_text(json.dumps([{"phase": "coding"}]))
+    (tmp_path / "qa_evidence.json").write_text("[]")
+    out = read_breakdown(tmp_path)
+    assert out["phaseModels"] == {}
+    assert out["qaEvidence"] is None

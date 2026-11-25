@@ -76,6 +76,7 @@ def pick_reviewer(gates, identities: list[dict], *, configured=is_configured) ->
         qa_model = _resolve_phase_model(
             Path(os.devnull), "qa", gates.cli_model, metadata=gates.metadata
         )
+    identities = [i for i in identities if i.get("phase") != "planning"]
     if any(not i.get("model") for i in identities):
         raise IndependentReviewUnavailable(
             "A coding or fixer model identity is unknown"
@@ -85,6 +86,22 @@ def pick_reviewer(gates, identities: list[dict], *, configured=is_configured) ->
         for i in identities
         if i.get("served_model") or i.get("model")
     }
+    for phase in ("coding", "qa_fixer"):
+        try:
+            coding_models.add(resolve_model_id(gates.model(phase)))
+        except ModelNotApprovedError:
+            pass
+    plan = gates.approved_plan if hasattr(gates, "approved_plan") else None
+    if isinstance(plan, dict):
+        phases = plan.get("phases")
+        for phase in phases if isinstance(phases, list) else []:
+            if isinstance(phase, dict):
+                subtasks = phase.get("subtasks")
+                for subtask in subtasks if isinstance(subtasks, list) else []:
+                    if isinstance(subtask, dict) and isinstance(
+                        subtask.get("model"), str
+                    ):
+                        coding_models.add(resolve_model_id(subtask["model"]))
     coding_providers = {i.get("provider") for i in identities}
     routes = gates.metadata.get("phaseRoutes") or {}
     qa_route = routes.get("qa")

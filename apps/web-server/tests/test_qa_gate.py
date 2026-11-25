@@ -10,7 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastapi.responses import JSONResponse
@@ -108,6 +108,49 @@ def _write_gate_files(
 def test_qa_gate_pass_returns_none(tmp_path: Path) -> None:
     _write_gate_files(tmp_path, head_sha="abc1234")
     assert qa_gate.check(tmp_path, "abc1234") is None
+
+
+def test_qa_gate_ignores_planning_identity(tmp_path: Path) -> None:
+    _write_gate_files(
+        tmp_path,
+        reviewer_model="opus",
+        identities=[
+            {"phase": "planning", "model": "opus"},
+            {"phase": "coding", "model": "sonnet"},
+        ],
+    )
+    assert qa_gate.check(tmp_path, "head-sha-1") is None
+
+
+@pytest.mark.asyncio
+async def test_auto_merge_rechecks_qa_after_pr_head_moves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_gate_files(tmp_path, head_sha="reviewed-head")
+    gate_calls: list[str] = []
+
+    def merge_gate(head: str) -> bool:
+        gate_calls.append(head)
+        return True
+
+    monkeypatch.setattr(pe, "_pr_head", lambda *_args: "pushed-head")
+    merge = Mock()
+    monkeypatch.setattr(pe, "merge_pr", merge)
+    assert qa_gate.check(tmp_path, "reviewed-head") is None
+    result = await pe.watch_and_finish(
+        owner="o",
+        repo="r",
+        pr=44,
+        auto_merge=True,
+        review_fn=lambda: pe.ReviewState("approved"),
+        merge_gate=merge_gate,
+        spec_dir=tmp_path,
+        poll_interval=0,
+        max_minutes=1,
+    )
+    assert result["reason"] == "merge_gate_timeout"
+    merge.assert_not_called()
+    assert gate_calls == []
 
 
 def test_qa_gate_missing_malformed_or_unapproved(tmp_path: Path) -> None:
@@ -352,8 +395,9 @@ def test_merger_remote_only_branch_resolves_origin_ref_sha(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("adopted", [False, True])
+@pytest.mark.parametrize("unreadable_head", [False, True])
 async def test_completion_endgame_marker_skipped_on_failure_and_runs_later(
-    tmp_path: Path, adopted: bool
+    tmp_path: Path, adopted: bool, unreadable_head: bool
 ) -> None:
     spec_id = "025-endgame"
     spec_dir = tmp_path / ".aifactory" / "specs" / spec_id
@@ -397,7 +441,9 @@ async def test_completion_endgame_marker_skipped_on_failure_and_runs_later(
         ),
         patch.object(pe, "is_auto_pr_enabled", return_value=not adopted),
         patch.object(pe, "gather_pr_context", return_value=ctx),
-        patch.object(pe, "_pr_head", return_value="head-sha-1"),
+        patch.object(
+            pe, "_pr_head", return_value=None if unreadable_head else "head-sha-1"
+        ),
         patch("server.services.merger._ref_sha", return_value="head-sha-1"),
         patch.object(pe, "resolve_pr_reviewer", return_value="copilot"),
         patch.object(pe, "run_pr_endgame", endgame_mock),
@@ -433,9 +479,72 @@ async def test_completion_endgame_marker_skipped_on_failure_and_runs_later(
             terminal_status="completed",
             logger=_LOG,
         )
-        assert (spec_dir / ".pr_endgame_done").exists()
-        endgame_mock.assert_awaited_once()
+        if adopted and unreadable_head:
+            assert not (spec_dir / ".pr_endgame_done").exists()
+            endgame_mock.assert_not_awaited()
+        else:
+            assert (spec_dir / ".pr_endgame_done").exists()
+            endgame_mock.assert_awaited_once()
         assert len(merger_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_overlapping_completion_runs_endgame_once(tmp_path: Path) -> None:
+    spec_id = "025-endgame"
+    spec_dir = tmp_path / ".aifactory" / "specs" / spec_id
+    _write_gate_files(spec_dir)
+    (spec_dir / "implementation_plan.json").write_text(
+        json.dumps({"phases": [{"name": "build", "subtasks": []}]})
+    )
+    memory = spec_dir / "memory"
+    memory.mkdir()
+    (memory / "build_commits.json").write_text(
+        json.dumps({"commits": [{"hash": "head-sha-1", "subtask_id": "1.1"}]})
+    )
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def endgame(**_kwargs: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        entered.set()
+        await release.wait()
+        return {"ok": True}
+
+    async def complete() -> None:
+        await orch.run_terminal_completion(
+            spec_dir=spec_dir,
+            project_path=tmp_path,
+            spec_id=spec_id,
+            task_id=f"proj:{spec_id}",
+            backend_path=_BACKEND,
+            is_terminal=True,
+            is_completed=True,
+            terminal_status="completed",
+            logger=_LOG,
+        )
+
+    ctx = {"worktree": tmp_path, "branch": "task", "base": "main", "repo": "o/r"}
+    with (
+        patch("server.services.completion.emit_terminal_completion"),
+        patch(
+            "pfactory.tfactory_client.maybe_auto_handoff_tfactory",
+            new=AsyncMock(return_value={"sent": False}),
+        ),
+        patch.object(pe, "is_auto_pr_enabled", return_value=True),
+        patch.object(pe, "gather_pr_context", return_value=ctx),
+        patch("server.services.merger._ref_sha", return_value="head-sha-1"),
+        patch.object(pe, "resolve_pr_reviewer", return_value="copilot"),
+        patch.object(pe, "run_pr_endgame", side_effect=endgame),
+        patch("server.services.merger.process_one", return_value={"action": "skipped"}),
+    ):
+        first = asyncio.create_task(complete())
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        await complete()
+        release.set()
+        await first
+    assert calls == 1
 
 
 # ── manual route: routes/pr.create_pr_from_task ─────────────────────────────
@@ -586,6 +695,37 @@ async def test_manual_route_gates_existing_open_pr_but_not_merged(
 
 
 @pytest.mark.asyncio
+async def test_manual_route_unreadable_existing_head_is_stale(tmp_path: Path) -> None:
+    env = _setup_manual_repos(tmp_path)
+    _write_gate_files(env["spec_dir"], head_sha=env["head_sha"])
+
+    def fake_gh(args: list[str], **_kw: Any) -> dict[str, Any]:
+        if args[:2] == ["pr", "list"]:
+            return {
+                "success": True,
+                "output": json.dumps(
+                    [
+                        {
+                            "number": 44,
+                            "state": "OPEN",
+                            "url": "https://github.com/o/r/pull/44",
+                        }
+                    ]
+                ),
+            }
+        return {"success": False, "output": ""}
+
+    with (
+        patch("server.routes.github._use_provider_api", return_value=False),
+        patch("server.services.approval.run_gh_command", fake_gh),
+        patch("server.routes.github.run_gh_command", fake_gh),
+    ):
+        code, body = await _call_manual_create_pr(env["task_id"])
+    assert code == 409
+    assert body["reason"] == "qa_stale"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("use_provider_api", [False, True])
 async def test_manual_route_gates_new_pr_on_github_and_provider_api(
     tmp_path: Path, use_provider_api: bool
@@ -638,7 +778,7 @@ async def test_manual_route_gates_new_pr_on_github_and_provider_api(
 
 
 @pytest.mark.asyncio
-async def test_manual_route_refuses_when_rebase_would_move_reviewed_head(
+async def test_manual_route_pushes_reviewed_head_when_base_moves(
     tmp_path: Path,
 ) -> None:
     env = _setup_manual_repos(tmp_path)
@@ -661,7 +801,12 @@ async def test_manual_route_refuses_when_rebase_would_move_reviewed_head(
         patch("server.routes.github.run_gh_command", fake_gh),
     ):
         code, body = await _call_manual_create_pr(env["task_id"])
+        assert code == 200
+        assert body["data"]["prNumber"] == 99
+        assert _git(env["worktree"], "rev-parse", "HEAD") == env["head_sha"]
+        assert _git(env["origin"], "rev-parse", env["branch"]) == env["head_sha"]
+
+        _write_gate_files(env["spec_dir"], head_sha="old-review")
+        code, body = await _call_manual_create_pr(env["task_id"])
         assert code == 409
         assert body["reason"] == "qa_stale"
-        # Worktree head was NOT rewritten by rebase
-        assert _git(env["worktree"], "rev-parse", "HEAD") == env["head_sha"]

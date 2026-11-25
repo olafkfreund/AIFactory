@@ -674,14 +674,24 @@ def read_breakdown(
 
     canonical = Path(source_spec_dir or spec_dir)
     phases: dict[str, set[str]] = {}
-    for entry in read_identities(canonical):
-        phases.setdefault(entry["phase"], set()).add(entry["model"])
+    try:
+        for entry in read_identities(canonical):
+            if (
+                not isinstance(entry, dict)
+                or not isinstance(entry.get("phase"), str)
+                or not isinstance(entry.get("model"), str)
+            ):
+                raise ValueError("Malformed model identity")
+            phases.setdefault(entry["phase"], set()).add(entry["model"])
+    except (OSError, ValueError, KeyError, TypeError):
+        phases = {}
     evidence_path = canonical / "qa_evidence.json"
-    evidence = (
-        json.loads(evidence_path.read_text(encoding="utf-8"))
-        if evidence_path.exists()
-        else None
-    )
+    try:
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        evidence = None
+    if not isinstance(evidence, dict):
+        evidence = None
     return render_breakdown(
         _read_aggregate(usage_file_path(spec_dir)),
         {phase: sorted(models) for phase, models in phases.items()},

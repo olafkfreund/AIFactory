@@ -508,7 +508,24 @@ and web-server suites and the full PFactory suite.
   - **Why it changed:** AIFactory's model catalog has only Claude frontier
     entries, and `check_model_registered` accepts any non-Claude name. A
     guessed id could therefore be picked, and would then fail at runtime.
-  - **What it is now:** other-provider candidates come only from operator
-    config, `AIFACTORY_QA_ALT_MODELS`, a comma-separated list of real model
-    ids (for example `gpt-5.3-codex`). It is empty by default. With nothing
+  - **What it is now:** other-provider candidates come from catalog entries
+    with real ids and `AIFACTORY_QA_ALT_MODELS`, a comma-separated list of
+    operator-configured ids. Guessed ids are never used. With nothing
     configured, QA uses the Claude ladder: opus, fable, sonnet.
+
+- **Step 3: configured and approved-plan models are excluded.** Reviewer
+  selection also excludes canonical coding and fixer models from run settings,
+  plus each subtask model override in the approved plan snapshot. Planning
+  identities are ignored; the solo coding session remains recorded as coding.
+- **Step 5: an unreadable existing PR head is stale.** Adopted and existing
+  PRs no longer substitute the local task ref when their head cannot be read.
+- **Step 5: claim the endgame before running it.** The marker uses an exclusive
+  create to prevent overlapping completion calls from running the endgame
+  twice; a refused QA gate removes the claim for a later retry.
+- **Step 5: push the reviewed head.** Manual PR creation no longer rebases or
+  force-pushes when the base moves. The unchanged task head remains QA-gated;
+  GitHub reports merge conflicts.
+- **Step 5: recheck QA at auto-merge.** The endgame checks the current PR head
+  against the source QA evidence immediately before its merge gate.
+- **Step 6: malformed read-back is empty.** Invalid identity or QA evidence
+  files produce empty `phaseModels` or null `qaEvidence` instead of raising.

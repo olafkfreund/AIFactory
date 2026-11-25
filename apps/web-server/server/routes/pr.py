@@ -42,7 +42,6 @@ from server.specpath import safe_spec_component
 from server.utils.subprocess_env import (
     child_env,
     lfs_upload,
-    merge_driver_pins,
     project_github_env,
 )
 
@@ -118,8 +117,6 @@ def _resolve_task_ref_sha(
 def _existing_open_pr_head(
     existing: tuple[Any, ...],
     project_path: Path,
-    worktree_path: Path | None,
-    branch: str,
     target_repo: str | None,
     run_gh_command: Any,
 ) -> str | None:
@@ -136,7 +133,7 @@ def _existing_open_pr_head(
                 oid = data.get("headRefOid")
                 if isinstance(oid, str) and oid.strip():
                     return oid.strip()
-    return _resolve_task_ref_sha(worktree_path, project_path, branch)
+    return None
 
 
 class CreatePRFromTaskOptions(BaseModel):
@@ -280,8 +277,6 @@ async def create_pr_from_task(
                 open_head = _existing_open_pr_head(
                     existing,
                     project_path,
-                    worktree_path,
-                    worktree_branch,
                     options.targetRepo,
                     run_gh_command,
                 )
@@ -318,7 +313,7 @@ async def create_pr_from_task(
                 env=env,
             )
     except Exception:
-        pass  # Non-fatal — rebase will use whatever is available
+        pass  # Non-fatal — push the reviewed head as-is
 
     # #1459: same failure as #959/PR #962, on the other door. Under the
     # kubejob/packed build backend the build ran in a k8s Job on an ephemeral
@@ -359,131 +354,8 @@ async def create_pr_from_task(
             "reason": gate_reason,
         }
 
-    # If origin/<base_branch> has advanced past the task branch's merge-base,
-    # rebasing onto it would rewrite the task commits and change the head SHA
-    # away from reviewed_head. Refuse with qa_stale and ask for a fresh QA run
-    # before mutating the worktree.
-    try:
-        ancestor = subprocess.run(  # noqa: S603, PLW1510
-            [  # noqa: S607
-                "git",
-                "merge-base",
-                "--is-ancestor",
-                f"origin/{base_branch}",
-                worktree_branch,
-            ],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            timeout=10,
-            env=child_env(),
-        )
-        if ancestor.returncode == 1:
-            return {
-                "success": False,
-                "error": (
-                    f"Independent QA review gate failed (qa_stale): rebasing onto "
-                    f"origin/{base_branch} would change the reviewed head; run a "
-                    f"fresh QA review first"
-                ),
-                "reason": "qa_stale",
-            }
-    except (subprocess.SubprocessError, OSError):
-        pass
-
-    # Stash any uncommitted changes before rebasing
-    stashed = False
-    try:
-        stash_result = subprocess.run(
-            ["git", "stash", "push", "-m", "aifactory-pre-rebase"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            timeout=10,
-            env=child_env(),
-        )
-        # "No local changes to save" means nothing was stashed
-        stashed = (
-            stash_result.returncode == 0
-            and "No local changes" not in stash_result.stdout
-        )
-    except (subprocess.SubprocessError, OSError) as exc:
-        logger.warning(
-            "git stash before rebase failed, proceeding without stash: %s", exc
-        )
-
-    # Rebase onto latest base branch to minimize conflicts (best-effort)
-    rebase_failed = False
-    try:
-        pins = merge_driver_pins(worktree_path)
-        result = subprocess.run(
-            ["git", *pins, "rebase", f"origin/{base_branch}"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            timeout=120,
-            env=child_env(),
-        )
-        if result.returncode != 0:
-            # Abort the failed rebase to leave worktree clean
-            subprocess.run(
-                ["git", "rebase", "--abort"],
-                cwd=worktree_path,
-                capture_output=True,
-                text=True,
-                timeout=10,
-                env=child_env(),
-            )
-            rebase_failed = True
-    except subprocess.TimeoutExpired:
-        subprocess.run(
-            ["git", "rebase", "--abort"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            timeout=10,
-            env=child_env(),
-        )
-        rebase_failed = True
-    except Exception:  # includes merge_driver_pins' RuntimeError: rebase not started
-        rebase_failed = True
-
-    # Restore stashed changes
-    if stashed:
-        subprocess.run(
-            ["git", "stash", "pop"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            timeout=10,
-            env=child_env(),
-        )
-
-    post_rebase_sha = _resolve_task_ref_sha(
-        worktree_path, project_path, worktree_branch
-    )
-    if post_rebase_sha and task_ref_sha and post_rebase_sha != task_ref_sha:
-        return {
-            "success": False,
-            "error": (
-                "Independent QA review gate failed (qa_stale): rebase changed "
-                "the reviewed head; run a fresh QA review first"
-            ),
-            "reason": "qa_stale",
-        }
-
-    # Push the branch to remote
-    # Use --force-with-lease after successful rebase (rebase rewrites history)
+    # Push the reviewed branch head without rewriting its history.
     push_cmd = ["git", "push", "-u", "origin", worktree_branch]
-    if not rebase_failed:
-        push_cmd = [
-            "git",
-            "push",
-            "--force-with-lease",
-            "-u",
-            "origin",
-            worktree_branch,
-        ]
     try:
         pushed = await asyncio.to_thread(
             _upload_and_push, str(worktree_path), worktree_branch, push_cmd

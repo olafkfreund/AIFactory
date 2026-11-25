@@ -33,6 +33,8 @@ def _canonical_model(entry: object) -> str | None:
 
 def check(source_spec_dir: Path, head_sha: str | None) -> GateReason | None:
     """Return None when QA approved *head_sha* independently, else the refusal reason."""
+    if not isinstance(head_sha, str) or not head_sha.strip():
+        return "qa_stale"
     spec_dir = Path(source_spec_dir)
     try:
         evidence = json.loads((spec_dir / "qa_evidence.json").read_text("utf-8"))
@@ -71,10 +73,14 @@ def check(source_spec_dir: Path, head_sha: str | None) -> GateReason | None:
         return "qa_not_independent"
     coding_models: set[str] = set()
     for item in identities:
+        if isinstance(item, dict) and item.get("phase") == "planning":
+            continue
         model = _canonical_model(item)
         if model is None:
             return "qa_not_independent"
         coding_models.add(model)
+    if not coding_models:
+        return "qa_not_independent"
     if reviewer_model in coding_models:
         return "qa_not_independent"
     return None

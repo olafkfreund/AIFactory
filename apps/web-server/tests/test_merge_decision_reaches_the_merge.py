@@ -190,3 +190,9 @@ async def test_the_same_run_merges_when_the_matrix_says_auto_merge(
     log = await _drive(tmp_path, monkeypatch, decision=merge_policy.AUTO_MERGE)
     # Once at PR-open, once in the merge-time gate on the head (#1697).
     assert log == [_DECIDE, _DECIDE, _MERGE]
+
+
+@pytest.fixture(autouse=True)
+def _qa_gate_passes(monkeypatch):
+    """These tests cover the merge decision, not #2233's QA gate (see test_qa_gate.py)."""
+    monkeypatch.setattr("server.services.qa_gate.check", lambda *_a: None)

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -331,6 +332,18 @@ async def run_terminal_completion(
                         )
                         gate_reason = None
                         if ctx:
+                            try:
+                                fd = os.open(
+                                    _endgame_marker,
+                                    os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                                    0o600,
+                                )
+                            except FileExistsError:
+                                ctx = None
+                            else:
+                                os.close(fd)
+
+                        if ctx:
 
                             def _check_gate() -> str | None:
                                 adopted_pr = ctx.get("adopted_pr")
@@ -346,12 +359,6 @@ async def run_terminal_completion(
                                         if parts
                                         else None
                                     )
-                                    if head is None:
-                                        head = _ref_sha(
-                                            Path(ctx["worktree"]),
-                                            ctx["branch"],
-                                            _default_runner,
-                                        )
                                 else:
                                     head = _ref_sha(
                                         Path(ctx["worktree"]),
@@ -362,6 +369,7 @@ async def run_terminal_completion(
 
                             gate_reason = await asyncio.to_thread(_check_gate)
                             if gate_reason is not None:
+                                _endgame_marker.unlink(missing_ok=True)
                                 logger.info(
                                     "[AgentService] PR endgame skipped for %s "
                                     "(QA gate: %s)",
@@ -639,15 +647,6 @@ async def run_terminal_completion(
                                 f"[AgentService] PR endgame for {sanitize_log(spec_id)} "
                                 f"(reviewer={sanitize_log(_reviewer)}): {sanitize_log(endgame)}"
                             )
-                            try:
-                                _endgame_marker.write_text(
-                                    datetime.now(UTC).isoformat()
-                                )
-                            except OSError as e:
-                                logger.debug(
-                                    "pr-endgame marker write failed: %s",
-                                    sanitize_log(str(e)),
-                                )
                         elif gate_reason is None:
                             logger.info(
                                 "[AgentService] PR endgame skipped for %s "

@@ -47,6 +47,7 @@ def _verified_green(
     if request.node.path != Path(__file__):
         return
     monkeypatch.setattr(pe, "_build_merge_gate", lambda *_a, **_k: lambda _h: True)
+    monkeypatch.setattr("server.services.qa_gate.check", lambda *_a: None)
     real_head = pe._pr_head
     # A FakeRunner without a head route still yields a head to gate on.
     monkeypatch.setattr(pe, "_pr_head", lambda *a: real_head(*a) or "deadbeef")

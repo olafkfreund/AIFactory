@@ -258,3 +258,31 @@ def test_no_alt_models_configured_falls_back_to_claude_ladder(monkeypatch):
         configured=lambda m: m in {"opus", "gpt-5.3-codex"},
     )
     assert pick.model == "opus"
+
+
+def test_configured_and_approved_coding_models_outweigh_identity_file():
+    configured = SimpleNamespace(
+        model=lambda phase: {"qa": "sonnet", "coding": "sonnet", "qa_fixer": "opus"}[
+            phase
+        ],
+        metadata={},
+        approved_plan={"phases": [{"subtasks": [{"id": "1", "model": "fable"}]}]},
+    )
+    with pytest.raises(IndependentReviewUnavailable):
+        pick_reviewer(
+            configured,
+            [identity("haiku")],
+            configured=lambda model: model in {"sonnet", "opus", "fable"},
+        )
+
+
+def test_planning_identity_does_not_exclude_reviewer():
+    selected = SimpleNamespace(
+        model=lambda phase: "opus" if phase == "qa" else "sonnet", metadata={}
+    )
+    pick = pick_reviewer(
+        selected,
+        [identity("opus", phase="planning"), identity("sonnet")],
+        configured=lambda model: model == "opus",
+    )
+    assert pick.model == "opus"
