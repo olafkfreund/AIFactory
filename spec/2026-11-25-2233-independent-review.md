@@ -12,188 +12,291 @@ Approved intent decisions:
   endgame review stays optional;
 - the rule covers all tasks;
 - a different model is required, and a different provider is preferred;
-- when no distinct reviewer exists, AIFactory overrides the pin for QA only
-  and logs it, and refuses only if no second model is configured at all;
-- the token figure is filed as a separate issue.
+- when no distinct reviewer exists, QA overrides the pin for QA only and logs
+  it, and the task is refused only if no second model is configured at all;
+- the token figure is a separate issue (AIFactory#2234).
+
+Revision 2 follows the Codex and agy spec reviews. It adds the manual PR
+route, makes the evidence control-plane-owned and tied to a commit, captures
+coding identities when a session starts, and moves QA model selection to QA
+session construction.
 
 ## Design
 
-### D1. One backstop: no QA evidence, no `awaiting_merge` (AIFactory)
+### D1. One gate before any PR counts as the task's PR (AIFactory)
 
-**Where:** `apps/web-server/server/services/merger.py` `_decide` /
-`_process_spec`, before a PR is opened or adopted.
+**The helper.** `services/qa_gate.py` holds
+`check(source_spec_dir, head_sha) -> None | "qa_missing" | "qa_stale" | "qa_not_independent"`.
 
-**The gate.** It reads one evidence file, `qa_evidence.json`, from the spec
-dir (see D3) and requires all of the following:
+**What it reads.**
+
+- `qa_evidence.json` (D3);
+- `model_identities.json` (D3);
+- the report.
+
+**When it passes.** All of the following must hold:
 
 - `status == "approved"`;
-- `qa_report.md` exists;
-- `reviewer_model` is not in `coder_models`.
+- `reviewed_head == head_sha`;
+- the report's sha256 matches `report_sha256`;
+- every identity in `model_identities.json` has a known model;
+- `reviewer` is not equal to any of those identities (compared by canonical
+  model id).
 
-**On failure.** The merger raises `_SkipTask("qa_missing")` or
-`_SkipTask("qa_not_independent")`, and opens no PR. `_sync_status` writes
-`human_review` with that reason, so the task shows in Needs you, not in
-awaiting merge.
+**It is called at every point where a PR becomes the task's PR.**
 
-**Endgame.** The completion orchestration endgame
-(`completion_orchestration.py` ~299-385) checks the same gate before
-`run_pr_endgame` opens a PR. Both callers share one helper,
-`qa_gate.check(spec_dir) -> str | None`.
+1. **Merger** `merger._decide`.
+   - It is called after `_find_pr`, only for the `opened` and `already_open`
+     outcomes.
+   - It never blocks `MERGED → done` or `CLOSED → pr_closed`.
+   - For `opened`, it runs before the push and create.
+   - For `already_open`, it runs before the mapping to `awaiting_merge`.
+2. **Completion endgame**, before `run_pr_endgame` in
+   `completion_orchestration.py` (~549-578). This one check covers both
+   auto-PR and an adopted PR.
+   - For an adopted PR that fails the gate, the fire-once marker is not set,
+     so a later successful QA resumes the endgame.
+3. **Manual PR route** `routes/pr.py` `create_pr_from_task` (~97-534).
+   - It is called before it returns an existing PR or opens one (GitHub, `gh`
+     or the provider API).
+   - This covers the UI dialog, the mcp-stdio `proxy_create_pr` and the
+     `task_create_pr` agent tool.
+   - On failure it returns 409 with the reason.
 
-**Why here.** Every path to a PR goes through these two callers: solo mode,
-quick mode / `--skip-qa`, the coder's `qa_signoff`, and every future skip. So
-one check covers them all. The source-side fixes (D2) only make the normal
-path pass the gate; they are not what enforces it.
+**Status.** `merger._sync_status` maps `qa_missing`, `qa_stale` and
+`qa_not_independent` to `("human_review", reason)` explicitly. They replace
+`awaiting_merge` or `None`. A status a human set is never overwritten
+(unchanged rule).
+
+**Out of scope.** Copilot dispatch (`execution.py` ~1925-2019): GitHub's agent
+writes that code, and AIFactory runs no QA there. A follow-up issue covers it.
 
 ### D2. Stop skipping QA in the normal path (AIFactory)
 
-- **Solo mode.** `cli/build_commands.py:311-316` no longer sets
-  `skip_qa = True`. Solo keeps its single plan-and-implement session
-  (`coder.py:218-256` is unchanged), and only the QA skip goes.
+- **Solo mode.** `cli/build_commands.py:315-316` no longer sets
+  `skip_qa = True`. Solo keeps its single plan-and-implement session.
 - **The coder's self-approval.** `qa/criteria.py`: `is_qa_approved` and
-  `should_run_qa` no longer accept a coder-written `qa_signoff` as approval,
-  whatever `requires_review` says. Only a QA session's signoff counts
-  (D3 writes the marker). This removes the "QA pre-approved by coder" branch
-  (`build_commands.py:665-750`). Its log line becomes "coder signoff ignored;
-  running QA".
-- **`--skip-qa`.** The flag stays as an operator and debug option, but the
-  D1 gate means such a task never reaches `awaiting_merge`. The help text
-  says so.
+  `should_run_qa` ignore `qa_signoff` in `implementation_plan.json` as a skip
+  signal, at any `requires_review` value. The "QA pre-approved by coder"
+  branch (`build_commands.py:665-750`) is removed.
+- **`--skip-qa`.** The flag stays as an operator and debug option. D1 means
+  such a task never reaches `awaiting_merge`, and the help text says so.
 
-### D3. QA records who reviewed (AIFactory)
+### D3. Control-plane evidence, bound to the reviewed commit (AIFactory)
 
-When a QA session finishes (`qa/loop.py` ~743-753, where `qa_report.md` is
-written), it writes `spec_dir/qa_evidence.json`:
+**Writer and location.**
 
-```json
-{"status": "approved|rejected", "reviewer_model": "...", "reviewer_provider": "...",
- "coder_models": ["..."], "report": "qa_report.md", "at": "..."}
-```
+- The QA loop's own Python code (`qa/loop.py`, approved branch ~438-480 and
+  rejected branch ~482-555), not an agent session, writes
+  `qa_evidence.json` and `model_identities.json`.
+- They go to the **source spec dir** (`source_spec_dir`), which worktree
+  sessions can only read (`core/client.py` ~773-785, the same pattern as
+  `injection_scan.json`).
+- They are never synced back from a worktree.
+- The QA loop deletes any `qa_evidence.json` at run start and before each QA
+  cycle.
 
-- **`coder_models`** is the set of `model` values in `token_usage.json`
-  `workers` whose phase is `coding` or `planning`. Per-subtask coding
-  overrides are included, because every coding turn records its model
-  through `record_turn`.
-- **QA usage.** The QA reviewer and QA fixer sessions call
-  `token_attribution.record_turn(..., phase="qa" | "qa_fixer",
-  model=..., provider=...)`, just as the coder does at `coder.py:835`. QA cost
-  then shows up in the usage figures too.
-- **What counts as a QA signoff.** The signoff in `implementation_plan.json`
-  counts as QA's only if `qa_evidence.json` also exists with the same status.
-  A coder can still write the JSON field, but not the evidence file, because
-  only the QA loop writes it after its own session.
+**`qa_evidence.json` fields.**
 
-### D4. Pick an independent QA model at resolution time (AIFactory)
+- `status`;
+- `reviewer` (model, provider, served model if known);
+- `reviewed_head` (git HEAD of the worktree at the verdict);
+- `report_sha256`, plus a copy of `qa_report.md` in the source spec dir;
+- `qa_cycle`;
+- `override` (D4's re-pick reason or null);
+- `at`.
 
-**Where:** `phase_config.get_phase_model`, after `_resolve_phase_model` and
-before `enforce_model_registry`, for `phase in {"qa", "qa_fixer"}`.
+**Only a fresh verdict counts.** It must be a verdict the reviewer session
+wrote during the current cycle. The loop clears `qa_signoff` before the cycle
+and reads it after. A missing fresh verdict counts as an error, not as an
+approval.
 
-**The check.** The coding model is resolved with the same metadata and
-compared with the QA model after `resolve_model_id`. If they are equal, QA is
-re-picked in this order and the first configured, distinct model wins:
+**`model_identities.json`.**
 
-1. `DEFAULT_PHASE_MODELS["qa"]` (opus);
-2. `"sonnet"`;
-3. a model from another configured provider.
+- It is an append-only list of `{phase, subtask_id, model, provider,
+  served_model}`.
+- It is written when the session is built, by `coder.py`,
+  `parallel_integration.py` and `qa/fixer.py`, through one helper
+  `record_identity(source_spec_dir, ...)`.
+- It does not depend on billing or usage payloads.
+- QA fixer identities are included: QA re-reviews fixer output, so the
+  reviewer must differ from the fixer too.
 
-**Logging.** A pick that differs from the input is logged as a warning:
-`[QA independence] qa=<a> equals coding=<a>; using <b> (pin overridden for
-QA)`. It is also recorded in `task_metadata.json` as `qaModelOverride`.
+**Packed and kubejob builds.** `core/workspace_fetch.py` pushes and fetches
+`qa_evidence.json`, `model_identities.json` and the `qa_report.md` copy
+alongside `token_usage.json`. The control plane writes them to its source spec
+dir on fetch.
 
-**When nothing is distinct.** If no distinct model is configured, the call
-raises `IndependentReviewUnavailable`. The build fails visibly with that
-reason, and the task lands in Needs you.
+**QA usage.** The QA reviewer and fixer call `record_turn` with their own
+`worker_id` (`qa-<cycle>` or `qa-fixer-<cycle>`), so they never overwrite
+`workers["main"]`. The usage and duration plumbing is added to
+`qa/reviewer.py` and `qa/fixer.py`. This is for cost only: the D1 gate does
+not read it.
 
-**Scope.** This one place covers PFactory contract `phase_models`,
-`pinnedModel`, `phaseRoutes`, `cli_model`, the single-model fallback and
-`AIFACTORY_FALLBACK_MODEL`. `phaseRoutes` resolve to opaque gateway classes,
-so for routes the comparison uses the route's resolved model id when the
-gateway reports one, and the class name otherwise.
+### D4. QA picks an independent model when its session is built (AIFactory)
+
+**Where:** `qa/loop.py` (~352, and the failover ~651-676), through a new
+`qa/independence.py` `pick_reviewer(gates, identities) -> Pick`.
+`phase_config.get_phase_model` is left alone, because it is called with
+`Path(os.devnull)` and carries no per-session identity.
+
+**The candidates, in order:**
+
+1. the resolved QA model (`gates.model("qa")`);
+2. a frontier model from another configured provider (preferred provider
+   first);
+3. `DEFAULT_PHASE_MODELS["qa"]` (opus);
+4. fable;
+5. sonnet.
+
+**The filter.** A candidate is kept only if it is:
+
+- eligible in the model registry (checked per candidate, so a `deny`-mode
+  rejection moves on to the next one);
+- configured, meaning provider credentials or a gateway exist;
+- not equal to any coding or fixer identity, by canonical id.
+
+**Provider preference.** When the resolved QA model is already distinct but
+on the same provider as coding, a distinct candidate on another configured
+provider wins.
+
+**Gateway routes.**
+
+- **Same class:** a QA class equal to a coding class means re-pick.
+- **Unknown served model:** if the gateway does not report the served model
+  and QA and coding are both routes, independence is unverified. QA moves to
+  an explicit, non-route candidate.
+- **Nothing distinct:** if no such candidate exists, the result is
+  `IndependentReviewUnavailable`. The task lands in Needs you with that
+  reason.
+
+**Failover.** `next_provider` on QA errors uses the same filter. Failover
+never lands on a coding identity.
+
+**Betas.** The beta headers and the thinking config are derived from the
+picked model, not re-resolved through `get_phase_model_betas`.
+
+**Logging.** Any change from the resolved model is logged as
+`[QA independence] …` and recorded in `qa_evidence.override`.
 
 ### D5. Read back the models used (AIFactory API)
 
-- **The field.** `token_attribution.render_breakdown` adds
-  `phaseModels: {phase: [model, ...]}`, derived from the `workers` rows
-  (deduped and sorted), plus `qaEvidence`, the content of `qa_evidence.json`
-  or `null`.
-- **Where it shows.** It reaches `GET /api/tasks/{id}/token-usage` and
-  through it the mcp-stdio proxy. No new route.
-- **The `metadata: null` gap.** `routes/task_service.py:809-817` (from-plan
-  tasks return `metadata: null` on the task read) is out of scope here. D5 is
-  the read the harness needs.
+- **The fields.** `read_breakdown(spec_dir)` passes to `render_breakdown`:
+  - `phaseModels`: `{phase: [model…]}` from `model_identities.json`;
+  - `qaEvidence`: the content of `qa_evidence.json`, or null.
+- **Where they are read.** `routes/tasks_usage.py` reads both from the
+  canonical source spec dir, even when `token_usage.json` falls back to the
+  worktree copy.
+- **Where they show.** In `GET /api/tasks/{id}/token-usage`, including the
+  mcp-stdio proxy.
 
 ### D6. PFactory stops seeding QA with the coding model
 
-**Where:** `apps/backend/plan/emit/tier_profile.py:62-63`.
+**Where:** `apps/backend/plan/emit/tier_profile.py` (~72) and `cost_router.py`.
 
-**The table.** `phase_models` comes from a new `_QA_MODEL_BY_TIER`:
+**Seeds.**
 
 | Tier | coding | qa | qa_fixer |
 |---|---|---|---|
 | low | haiku | sonnet | haiku |
 | medium | sonnet | opus | sonnet |
-| hard | opus | sonnet | opus |
+| hard | opus | fable | opus |
 
-At hard, QA is a different and capable model. AIFactory's D4 still upgrades
-it to another provider when one is preferred and configured.
+At hard, QA stays at the frontier floor and differs from the coder.
 
-**Cost routing.** `cost_router.py` (~142-176) must not route `qa` onto the
-coding model. It skips `qa` when the cheaper candidate equals the coding
-model.
+**Cost router.** When it selects `qa`, the router removes the canonical
+coding id (and its aliases) from the candidates. `phase_models.qa`,
+`phase_routes.qa` and the cost estimate stay populated and consistent.
 
-**Defense in depth.** D4 already makes AIFactory safe against old contracts.
-D6 makes new contracts honest.
+**A pin** applies to coding. QA is not pinned onto the same model.
 
-### D7. E2E harness follow-up (Factory, separate PR after the AIFactory release)
+**Nothing distinct at the floor.** The router emits `qa` one class up. If
+that also yields nothing, it leaves `qa` unset and AIFactory D4 decides.
 
-`scripts/e2e/run.py` S3:
+`qa_fixer` stays equal to coding by design: it writes fixes, and D3 treats it
+as a coding identity.
 
-- reads `phaseModels` and `qaEvidence` from the usage read;
-- sets `coder = phaseModels.coding` and `reviewer = qaEvidence.reviewer_model`;
-- sets `green` from `qaEvidence.status == "approved"`;
-- sets `review_recorded` from `qaEvidence.report`.
+### D7. E2E harness follow-up (Factory, separate PR after the releases)
 
-This replaces the `workers` read that never worked. `.gitignore` drift stays a
-reported finding; the plan-files oracle is not relaxed.
+`scripts/e2e/run.py` S3 reads `phaseModels` and `qaEvidence`:
+
+- **`runtime_models`:** every coding and fixer identity is known;
+- **independence:** `reviewer ∉ identities`;
+- **`green` / `review_recorded`:** `qaEvidence.status == "approved"`, and
+  `reviewed_head` equals the PR head.
+
+`.gitignore` drift stays a reported finding.
 
 ## Alternatives rejected
 
-- **Only removing the solo `skip_qa`.** `qa_signoff`, `--skip-qa`, pins and
-  routes still get around review (both reviewers found this).
-- **Only fixing PFactory's tier profile.** Old contracts, pins and the
-  fallback model still collapse QA onto the coding model.
-- **Exposing `workers` as-is.** QA never records turns, so the QA model would
-  still be missing.
-- **Requiring the PR endgame review.** It is off by default, never posts its
-  verdict, and is not on the merger path. The owner chose the in-build QA.
-- **Requiring a different provider.** Not every deployment has two. It is
-  preferred in D4, not required.
+- **Only removing the solo `skip_qa`.** `qa_signoff`, `--skip-qa`, pins,
+  routes and the manual PR route still get around review.
+- **Evidence in the worktree spec dir.** The coder can write it (Write, Edit
+  and Bash are granted there).
+- **Choosing at `get_phase_model`.** It runs with `os.devnull` and no session
+  identity, and cannot see per-subtask overrides or failover.
+- **Exposing `workers` as-is.** It is last-write-wins and billing-dependent,
+  and QA does not write to it.
+- **Requiring the PR endgame review.** It is off by default and never posts.
+- **Requiring a different provider.** Not every deployment has two.
 
 ## Risks
 
-- **Cost and time:** low and medium tasks gain one QA session, about $0.10-1
-  and a few minutes each.
+- **Direct (`--direct`) and packed builds share one filesystem.** There, an
+  agent with `Bash(*)` could still write the source spec dir.
+  - D3 narrows the gap: the file is deleted before each cycle, and a forged
+    verdict would also have to match `reviewed_head` and `report_sha256`.
+  - D3 does not close it. Closing it needs evidence signed outside the pod.
+    The follow-up issue is named in the plan.
+  - Prod runs isolated worktrees.
+- **Cost and time:** low and medium tasks gain one QA session.
 - **Tasks stuck in Needs you:** a QA infrastructure failure now blocks the
-  merge. That is intended, and it is visible as `qa_missing`.
-- **Old in-flight tasks:** tasks already built without evidence land in
-  `qa_missing` at their next merger sweep. A retry runs QA.
-- **Gateway routes:** with opaque classes, the comparison may miss two
-  classes that resolve to the same model. This is logged, and covered when
-  the gateway reports a model id.
+  merge. That is intended, and visible as `qa_missing`.
+- **In-flight tasks without evidence** land in `qa_missing` at their next
+  sweep. A retry runs QA.
+- **Weak reviewers:** QA is never weaker than the coder by tier: sonnet over
+  haiku, opus over sonnet, fable over opus. Reviewing at hard costs more.
 - **Hosts:** prod k3s through gitops only. No p510.
 
 ## Verification
 
-- **AIFactory unit tests:**
-  - the D1 gate, all three failure modes and a pass;
-  - D2, solo still runs QA;
-  - D2, a coder's `qa_signoff` is ignored;
-  - D3, the evidence file is written and QA `record_turn` is called;
-  - D4, equal models are re-picked, a pin is overridden for QA, and
-    `IndependentReviewUnavailable` is raised when no distinct model exists;
-  - D5, `render_breakdown` includes `phaseModels` and `qaEvidence`.
-- **PFactory unit tests:** the tier table has `qa != coding` for every tier,
-  and the cost router never routes QA onto the coding model.
-- **Live:** after both releases, rerun E2E P1:cli:1. S3 passes with
-  `reviewer_model != coder_model` read through the API, and a QA report
-  exists.
+**AIFactory unit tests.**
+
+- **D1, every entry point:**
+  - the merger, for `opened` and `already_open` (refused), and for
+    `MERGED`/`CLOSED` (not blocked);
+  - the completion endgame, ordinary and adopted, including the marker not
+    being set;
+  - the manual PR route, on GitHub and on the provider API (409);
+  - all four gate outcomes;
+  - `_sync_status` mapping.
+- **D2:** solo runs QA, and a coder `qa_signoff` is ignored.
+- **D3:**
+  - a coder-written worktree `qa_evidence.json` is ignored;
+  - the evidence is deleted before each cycle;
+  - a stale verdict, with a changed HEAD or no fresh signoff, does not count;
+  - identities are captured with no usage payload;
+  - the workspace_fetch round trip works.
+- **D4:**
+  - an equal model is re-picked;
+  - a pin is overridden for QA;
+  - a `deny`-mode registry rejection moves to the next candidate;
+  - provider preference applies;
+  - two different gateway classes with an unknown served model fall back to
+    an explicit model;
+  - failover is filtered;
+  - `IndependentReviewUnavailable` is raised.
+- **D5:** `phaseModels` and `qaEvidence` are read from the canonical dir.
+
+**PFactory unit tests.**
+
+- The emitted contract, after the tier profile and cost routing, has
+  `qa != coding` by canonical id, with shorthand and full-id aliases, with a
+  pin, and with no distinct model at the floor.
+- `phase_routes.qa` and the cost estimate are populated.
+
+**Live.** After both releases, rerun E2E P1:cli:1. S3 must pass with:
+
+- the reviewer not among any coding identity, read through the API;
+- `reviewed_head` equal to the PR head;
+- a QA report present.
