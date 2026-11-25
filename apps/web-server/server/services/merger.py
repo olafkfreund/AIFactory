@@ -39,10 +39,10 @@ from pathlib import Path
 from typing import Any
 
 import server.services.project_settings_store as pss
+import server.services.qa_gate as gate
 from server.project_registry import load_projects, resolve_project_path
 from server.routes.task_service import get_spec_dirs
 from server.services import pr_endgame as pe
-from server.services import qa_gate
 from server.services.github_app import project_github_token
 from server.services.pr_endgame import Runner
 from server.services.task_control import read_control, write_control
@@ -371,7 +371,7 @@ def _decide(  # noqa: PLR0912 - each branch returns a distinct sweep outcome
         )
         if action == "already_open":
             head = pr_head or pe._pr_head(owner, name, existing, runner)
-            gate_reason = qa_gate.check(spec_dir, head)
+            gate_reason = gate.check(spec_dir, head)
             if gate_reason is not None:
                 raise _SkipTask(gate_reason)
         return {"action": action, "pr": existing}
@@ -389,7 +389,7 @@ def _decide(  # noqa: PLR0912 - each branch returns a distinct sweep outcome
         raise _SkipTask("auto_pr_disabled")
 
     head_sha = _ref_sha(ctx["worktree"], branch, runner)
-    gate_reason = qa_gate.check(spec_dir, head_sha)
+    gate_reason = gate.check(spec_dir, head_sha)
     if gate_reason is not None:
         raise _SkipTask(gate_reason)
 
@@ -467,7 +467,7 @@ def _sync_status(spec_dir: Path, result: dict[str, Any]) -> bool:
     reason_raw = str(result.get("reason") or "")
     if action == "skipped" and reason_raw.startswith("no_content"):
         target: tuple[str, str | None] | None = _NO_WORK
-    elif action == "skipped" and reason_raw in qa_gate.GATE_REASONS:
+    elif action == "skipped" and reason_raw in gate.GATE_REASONS:
         target = ("human_review", reason_raw)
     else:
         target = _STATUS_FOR_ACTION.get(str(action))

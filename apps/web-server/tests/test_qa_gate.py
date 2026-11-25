@@ -22,20 +22,12 @@ _BACKEND = _WS.parent / "backend"
 if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
 
+import server.services.completion_orchestration as orch  # noqa: E402
+import server.services.merger as mg  # noqa: E402
+import server.services.pr_endgame as pe  # noqa: E402
+import server.services.qa_gate as gate_mod  # noqa: E402
 from server.project_registry import save_projects  # noqa: E402
 from server.routes import pr as pr_routes  # noqa: E402
-from server.services import (  # noqa: E402
-    completion_orchestration as orch,
-)
-from server.services import (
-    merger as mg,
-)
-from server.services import (
-    pr_endgame as pe,
-)
-from server.services import (
-    qa_gate,
-)
 from server.services.pr_endgame import CmdResult  # noqa: E402
 from server.services.task_control import read_control, write_control  # noqa: E402
 
@@ -110,12 +102,12 @@ def _write_gate_files(  # noqa: PLR0913 - fixture controls each gate input
     (spec_dir / "model_identities.json").write_text(json.dumps(identities))
 
 
-# ── qa_gate.check ───────────────────────────────────────────────────────────
+# ── gate_mod.check ───────────────────────────────────────────────────────────
 
 
 def test_qa_gate_pass_returns_none(tmp_path: Path) -> None:
     _write_gate_files(tmp_path, head_sha="abc1234")
-    assert qa_gate.check(tmp_path, "abc1234") is None
+    assert gate_mod.check(tmp_path, "abc1234") is None
 
 
 def test_qa_gate_ignores_planning_identity(tmp_path: Path) -> None:
@@ -127,7 +119,7 @@ def test_qa_gate_ignores_planning_identity(tmp_path: Path) -> None:
             {"phase": "coding", "model": "sonnet"},
         ],
     )
-    assert qa_gate.check(tmp_path, "head-sha-1") is None
+    assert gate_mod.check(tmp_path, "head-sha-1") is None
 
 
 @pytest.mark.asyncio
@@ -144,7 +136,7 @@ async def test_auto_merge_rechecks_qa_after_pr_head_moves(
     monkeypatch.setattr(pe, "_pr_head", lambda *_args: "pushed-head")
     merge = Mock()
     monkeypatch.setattr(pe, "merge_pr", merge)
-    assert qa_gate.check(tmp_path, "reviewed-head") is None
+    assert gate_mod.check(tmp_path, "reviewed-head") is None
     result = await pe.watch_and_finish(
         owner="o",
         repo="r",
@@ -163,30 +155,30 @@ async def test_auto_merge_rechecks_qa_after_pr_head_moves(
 
 def test_qa_gate_missing_malformed_or_unapproved(tmp_path: Path) -> None:
     # Missing files
-    assert qa_gate.check(tmp_path, "abc1234") == "qa_missing"
+    assert gate_mod.check(tmp_path, "abc1234") == "qa_missing"
 
     # Malformed JSON
     (tmp_path / "qa_evidence.json").write_text("{not-json")
-    assert qa_gate.check(tmp_path, "abc1234") == "qa_missing"
+    assert gate_mod.check(tmp_path, "abc1234") == "qa_missing"
 
     # Status not approved
     for st in ("rejected", "unavailable", "error"):
         _write_gate_files(tmp_path, status=st, head_sha="abc1234")
-        assert qa_gate.check(tmp_path, "abc1234") == "qa_missing"
+        assert gate_mod.check(tmp_path, "abc1234") == "qa_missing"
 
 
 def test_qa_gate_stale_on_head_mismatch_or_changed_report(tmp_path: Path) -> None:
     _write_gate_files(tmp_path, head_sha="abc1234")
-    assert qa_gate.check(tmp_path, "other-head") == "qa_stale"
-    assert qa_gate.check(tmp_path, None) == "qa_stale"
+    assert gate_mod.check(tmp_path, "other-head") == "qa_stale"
+    assert gate_mod.check(tmp_path, None) == "qa_stale"
 
     # Tampered / changed report copy
     (tmp_path / "qa_evidence_report.md").write_text("edited after verdict")
-    assert qa_gate.check(tmp_path, "abc1234") == "qa_stale"
+    assert gate_mod.check(tmp_path, "abc1234") == "qa_stale"
 
     # Missing protected report copy
     (tmp_path / "qa_evidence_report.md").unlink()
-    assert qa_gate.check(tmp_path, "abc1234") == "qa_stale"
+    assert gate_mod.check(tmp_path, "abc1234") == "qa_stale"
 
 
 def test_qa_gate_not_independent_and_alias_equality(tmp_path: Path) -> None:
@@ -204,7 +196,7 @@ def test_qa_gate_not_independent_and_alias_equality(tmp_path: Path) -> None:
             }
         ],
     )
-    assert qa_gate.check(tmp_path, "head-sha-1") == "qa_not_independent"
+    assert gate_mod.check(tmp_path, "head-sha-1") == "qa_not_independent"
 
     # Alias equality: shorthand vs canonical ID
     _write_gate_files(
@@ -220,7 +212,7 @@ def test_qa_gate_not_independent_and_alias_equality(tmp_path: Path) -> None:
             }
         ],
     )
-    assert qa_gate.check(tmp_path, "head-sha-1") == "qa_not_independent"
+    assert gate_mod.check(tmp_path, "head-sha-1") == "qa_not_independent"
 
     # Equal to qa_fixer identity
     _write_gate_files(
@@ -243,7 +235,7 @@ def test_qa_gate_not_independent_and_alias_equality(tmp_path: Path) -> None:
             },
         ],
     )
-    assert qa_gate.check(tmp_path, "head-sha-1") == "qa_not_independent"
+    assert gate_mod.check(tmp_path, "head-sha-1") == "qa_not_independent"
 
     # Unknown identity model or empty identities list
     _write_gate_files(
@@ -259,10 +251,10 @@ def test_qa_gate_not_independent_and_alias_equality(tmp_path: Path) -> None:
             }
         ],
     )
-    assert qa_gate.check(tmp_path, "head-sha-1") == "qa_not_independent"
+    assert gate_mod.check(tmp_path, "head-sha-1") == "qa_not_independent"
 
     _write_gate_files(tmp_path, reviewer_model="opus", identities=[])
-    assert qa_gate.check(tmp_path, "head-sha-1") == "qa_not_independent"
+    assert gate_mod.check(tmp_path, "head-sha-1") == "qa_not_independent"
 
 
 # ── merger ──────────────────────────────────────────────────────────────────

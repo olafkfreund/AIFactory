@@ -10,7 +10,9 @@ Memory Integration:
 - Saves QA findings (bugs, patterns, validation outcomes) after session
 """
 
+import importlib
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 # Memory integration for cross-session learning
@@ -515,11 +517,10 @@ async def _run_tool_fallback(  # noqa: PLR0913 - fallback session context
     Returns:
         (status, response_text) if the fallback succeeded, or None if it failed.
     """
-    from types import SimpleNamespace  # noqa: PLC0415 - fallback-only dependency
-
-    from phase_config import (
-        infer_provider_from_model,  # noqa: PLC0415 - fallback-only dependency
-    )
+    # Fallback-only dependency, imported lazily.
+    infer_provider_from_model = importlib.import_module(
+        "phase_config"
+    ).infer_provider_from_model
 
     from .independence import is_configured  # noqa: PLC0415 - fallback-only dependency
 

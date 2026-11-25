@@ -43,6 +43,7 @@ On-disk contract (AIFactory-owned, shared with the web-server reader):
 from __future__ import annotations
 
 import contextlib
+import importlib
 import json
 import os
 import tempfile
@@ -670,9 +671,8 @@ def read_breakdown(
     ``phaseModels`` and ``qaEvidence`` come from ``source_spec_dir`` (the
     canonical spec dir), which may differ from where ``token_usage.json`` is.
     """
-    from agents.model_identity import (
-        read_identities,  # noqa: PLC0415 - avoid import cycle
-    )
+    # Imported lazily to avoid an import cycle.
+    read_identities = importlib.import_module("agents.model_identity").read_identities
 
     canonical = Path(source_spec_dir or spec_dir)
     phases: dict[str, set[str]] = {}
