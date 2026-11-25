@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2233
 spec: spec/2026-11-25-2233-independent-review.md
 coders:
