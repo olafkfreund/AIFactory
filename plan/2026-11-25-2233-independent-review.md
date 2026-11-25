@@ -498,6 +498,17 @@ and web-server suites and the full PFactory suite.
 
 ## Deviations recorded during implementation
 
+- **Live E2E: surface packed branch push failures.** The Job uploads a per-run
+  `build_push_failed.json` after a rejected push. Completion fetches it and
+  parks the task at `human_review/branch_push_failed`; the merger preserves
+  that reason and does not attempt a PR for the failed branch.
+- **Live E2E: refresh the task head before QA gating.** The merger, completion
+  endgame and manual PR route fetch the task branch before resolving its SHA.
+  A missing SHA now reports `head_unavailable` instead of `qa_stale`.
+- **Live E2E: pin the PR push to the reviewed SHA.** The merger and completion
+  endgame pass their checked SHA to `create_pr`, which pushes that commit and
+  verifies the remote head before opening a PR.
+
 - **Step 1: preserve identities across resumed builds.** Build startup no
   longer clears `model_identities.json`; the reset could erase earlier coding
   identities before QA selected a reviewer. Keeping them may exclude extra

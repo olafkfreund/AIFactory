@@ -33,6 +33,7 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -327,6 +328,23 @@ def _ref_sha(worktree: Path, branch: str, runner: Runner) -> str | None:
     return sha or None
 
 
+def resolve_task_head(worktree: Path, branch: str, runner: Runner) -> str | None:
+    """Refresh the packed build's remote ref before choosing the task head."""
+    try:
+        runner(
+            [
+                "git",
+                "fetch",
+                "origin",
+                f"refs/heads/{branch}:refs/remotes/origin/{branch}",
+            ],
+            str(worktree),
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.info("[merger] fetch of %s skipped: %s", branch, exc)
+    return _ref_sha(worktree, branch, runner)
+
+
 def _decide(  # noqa: PLR0912 - each branch returns a distinct sweep outcome
     project_path: Path,
     spec_dir: Path,
@@ -341,6 +359,8 @@ def _decide(  # noqa: PLR0912 - each branch returns a distinct sweep outcome
     ``opened``, or raises ``_SkipTask`` for every "no PR, here's why" case --
     ``_process_spec`` converts that into the same-shaped ``skipped`` dict.
     """
+    if (spec_dir / "build_push_failed.json").is_file():
+        raise _SkipTask("branch_push_failed")
     ctx = pe.gather_pr_context(
         project_path,
         spec_dir,
@@ -388,7 +408,7 @@ def _decide(  # noqa: PLR0912 - each branch returns a distinct sweep outcome
     if not pe.is_auto_pr_enabled(project_path):
         raise _SkipTask("auto_pr_disabled")
 
-    head_sha = _ref_sha(ctx["worktree"], branch, runner)
+    head_sha = resolve_task_head(ctx["worktree"], branch, runner)
     gate_reason = gate.check(spec_dir, head_sha)
     if gate_reason is not None:
         raise _SkipTask(gate_reason)
@@ -412,6 +432,7 @@ def _decide(  # noqa: PLR0912 - each branch returns a distinct sweep outcome
             base=base,
             title=title,
             body=body,
+            expected_head=head_sha,
             runner=runner,
         )
     except Exception as exc:
@@ -467,7 +488,9 @@ def _sync_status(spec_dir: Path, result: dict[str, Any]) -> bool:
     reason_raw = str(result.get("reason") or "")
     if action == "skipped" and reason_raw.startswith("no_content"):
         target: tuple[str, str | None] | None = _NO_WORK
-    elif action == "skipped" and reason_raw in gate.GATE_REASONS:
+    elif action == "skipped" and (
+        reason_raw in gate.GATE_REASONS or reason_raw == "branch_push_failed"
+    ):
         target = ("human_review", reason_raw)
     else:
         target = _STATUS_FOR_ACTION.get(str(action))
