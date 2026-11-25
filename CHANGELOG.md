@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+## 3.21.11 - 2026-11-25
+
+Merged to `dev` since 3.21.10.
+
+### Changed
+
+- Every task now gets an independent review: the QA gate no longer lets a task skip review. (#2233, #2239)
+
 ## 3.21.10 - 2026-11-25
 
 Merged to `dev` since 3.21.9.
