@@ -15,7 +15,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -177,7 +177,11 @@ def test_a_real_route_response_body_leaks_nothing(
         request.state.user = {"id": "default", "is_service": True}
         return await call_next(request)
 
-    with patch.object(terminal, "get_pty_manager", return_value=_FailingPtyManager()):
+    with (
+        patch.object(terminal, "get_pty_manager", return_value=_FailingPtyManager()),
+        patch.object(terminal, "project_id_for_path", return_value="test-project"),
+        patch.object(terminal, "_authorize_project", new=AsyncMock()),
+    ):
         response = TestClient(app, raise_server_exceptions=False).post(
             "/api/terminals", json={"cols": 80, "rows": 24, "cwd": str(tmp_path)}
         )

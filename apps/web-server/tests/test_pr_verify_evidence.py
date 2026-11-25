@@ -210,3 +210,9 @@ def test_stray_start_marker_does_not_eat_the_body() -> None:
     r = _Runner(f"a{pe._EVIDENCE_END}b{pe._EVIDENCE_START}c")
     assert REAL_WRITE("o", "r", 7, "N", runner=r)
     assert r.edits[0][-1].endswith(f"{pe._EVIDENCE_START}c\n\nN")
+
+
+@pytest.fixture(autouse=True)
+def _qa_gate_passes(monkeypatch):
+    """These tests cover the merge decision, not #2233's QA gate (see test_qa_gate.py)."""
+    monkeypatch.setattr("server.services.qa_gate.check", lambda *_a: None)

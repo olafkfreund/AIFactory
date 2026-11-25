@@ -50,6 +50,8 @@ def _isolated_host(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "server.services.project_settings_store.is_loaded", lambda _p: True
     )
+    # Matrix tests isolate the deterministic merge floor; QA freshness has its own test.
+    monkeypatch.setattr("server.services.qa_gate.check", lambda *_a: None)
 
 
 def _spec(tmp_path: Path, **meta: object) -> Path:

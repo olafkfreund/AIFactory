@@ -38,6 +38,9 @@ from core.git_credentials import authed_push_url
 _log = logging.getLogger(__name__)
 
 _USAGE_MAX_BYTES = 1 << 20
+_QA_FILES = ("qa_evidence.json", "model_identities.json", "qa_evidence_report.md")
+_QA_RUN_FILE = ".qa_evidence_run"
+_QA_RUN_ENV = "AIFACTORY_QA_RUN_ID"
 
 WORKSPACE_URI_ENV = "WORKSPACE_URI"
 
@@ -607,6 +610,90 @@ def maybe_fetch_plan(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
         return True
     except OSError as exc:
         _log.warning("[workspace_fetch] could not write fetched plan: %s", exc)
+        return False
+
+
+def _qa_evidence_key(spec_id: str, run_id: str) -> str:
+    from core.artifact_store import ArtifactRef  # noqa: PLC0415
+
+    if not re.fullmatch(r"[0-9a-f]{32}", run_id):
+        raise ValueError("Invalid QA run id")
+    return str(
+        ArtifactRef(
+            service="aifactory",
+            job_id=spec_id,
+            role="build",
+            path=f"qa-evidence/{run_id}.json",
+        ).key()
+    )
+
+
+def maybe_push_qa_evidence(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
+    """Push this run's protected QA files, including an explicit absent verdict."""
+    if not os.environ.get(WORKSPACE_URI_ENV, "").strip():
+        return False
+    run_id = os.environ.get(_QA_RUN_ENV, "")
+    try:
+        from core.artifact_store import ArtifactStore  # noqa: PLC0415
+
+        source = Path(spec_dir)
+        payload = {
+            name: base64.b64encode((source / name).read_bytes()).decode("ascii")
+            if (source / name).is_file()
+            else None
+            for name in _QA_FILES
+        }
+        ArtifactStore().put_bytes(
+            _qa_evidence_key(spec_id, run_id),
+            json.dumps(payload).encode(),
+            "application/json",
+            role="build",
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001 - best-effort upload
+        _log.warning("[workspace_fetch] QA evidence push failed: %s", exc)
+        return False
+
+
+def maybe_fetch_qa_evidence(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
+    """Replace local QA files with this run's upload; absent files stay absent."""
+    destination = Path(spec_dir)
+    if not (destination / _QA_RUN_FILE).is_file():
+        return False
+    try:
+        run_id = (destination / _QA_RUN_FILE).read_text().strip()
+        from core.artifact_store import ArtifactStore  # noqa: PLC0415
+
+        raw = ArtifactStore().get_bytes(_qa_evidence_key(spec_id, run_id))
+        if len(raw) > 8 << 20:
+            raise ValueError("QA evidence upload exceeds 8 MiB")
+        payload = json.loads(raw)
+        if not isinstance(payload, dict) or set(payload) != set(_QA_FILES):
+            raise ValueError("Invalid QA evidence upload")
+        files = {
+            name: base64.b64decode(payload[name], validate=True)
+            if isinstance(payload[name], str)
+            else None
+            for name in _QA_FILES
+        }
+    except Exception as exc:  # noqa: BLE001 - missing upload means no current evidence
+        _log.debug("[workspace_fetch] QA evidence unavailable: %s", exc)
+        for name in _QA_FILES:
+            (destination / name).unlink(missing_ok=True)
+        return False
+    try:
+        destination.mkdir(parents=True, exist_ok=True)
+        for name, data in files.items():
+            path = destination / name
+            if data is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_bytes(data)
+        return True
+    except OSError as exc:
+        _log.warning("[workspace_fetch] QA evidence fetch failed: %s", exc)
+        for name in _QA_FILES:
+            (destination / name).unlink(missing_ok=True)
         return False
 
 

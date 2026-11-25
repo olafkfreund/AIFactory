@@ -79,8 +79,8 @@ def approved(
 
 def find_pr(
     project_path: Path, branch: str, repo: str | None = None
-) -> tuple[int, str, str] | None:
-    """The most recent PR for *branch* as (number, state, url), or None.
+) -> tuple[int, str, str, str | None] | None:
+    """The most recent PR for *branch* as (number, state, url, head_sha), or None.
 
     *repo* (``owner/name``) searches another repository, for a cross-fork PR
     opened with ``--repo``. Used by create-pr to hand back a PR that already
@@ -96,7 +96,7 @@ def find_pr(
         "--limit",
         "1",
         "--json",
-        "number,state,url",
+        "number,state,url,headRefOid",
     ]
     if repo:
         args.extend(["--repo", repo])
@@ -109,10 +109,17 @@ def find_pr(
         return None
     if not prs:
         return None
+    head_oid = prs[0].get("headRefOid")
+    head_sha = (
+        str(head_oid).strip()
+        if isinstance(head_oid, str) and head_oid.strip()
+        else None
+    )
     return (
         prs[0].get("number"),
         (prs[0].get("state") or "").upper(),
         prs[0].get("url") or "",
+        head_sha,
     )
 
 

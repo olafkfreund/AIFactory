@@ -814,6 +814,28 @@ def test_log_backend_config(
 # --------------------------------------------------------------------------- #
 
 
+async def test_packed_dispatch_shares_qa_run_id(tmp_path, monkeypatch):
+    project = tmp_path / "project"
+    spec = project / ".aifactory" / "specs" / "s1"
+    spec.mkdir(parents=True)
+    monkeypatch.setattr(bb, "populate_build_worktree", lambda *_a, **_k: tmp_path)
+    monkeypatch.setattr(
+        bb, "_maybe_pack_workspace", lambda *_a, **_k: "s3://packed/workspace"
+    )
+    store = await _make_store(tmp_path / "qa-run.db")
+    await store.admit("p:s1", _spawn_args("s1"), cap=2)
+    fake = _FakeBatch()
+
+    await bb.KubeJobBuildBackend(store).dispatch(
+        task_id="p:s1", project_path=project, spec_id="s1", batch=fake
+    )
+
+    env = fake.created[0][1]["spec"]["template"]["spec"]["containers"][0]["env"]
+    run_id = {entry["name"]: entry["value"] for entry in env}["AIFACTORY_QA_RUN_ID"]
+    assert len(run_id) == 32
+    assert (spec / ".qa_evidence_run").read_text() == run_id
+
+
 async def test_dispatch_records_worker_ref(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

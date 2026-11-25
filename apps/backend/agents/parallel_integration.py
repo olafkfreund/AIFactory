@@ -55,6 +55,7 @@ from task_logger import LogPhase, TaskLogger
 from .act_loop_hooks import charge_tokens
 from .completion_gate import completion_refusal
 from .memory_manager import get_graphiti_context, save_session_memory
+from .model_identity import record_identity
 from .parallel_runner import PhaseRunResult, SubtaskResult, run_parallel_phase
 from .session import run_session_guarded
 from .test_evidence import read_test_evidence, record_subtask_completed
@@ -611,6 +612,13 @@ async def run_parallel_coding_phase(
                 or phase_model
             )
             client = _make_client(child_path, child_spec_dir, sub_model)
+            record_identity(
+                source_spec_dir or spec_dir,
+                phase="coding",
+                subtask_id=subtask.id,
+                model=sub_model,
+                provider=infer_provider_from_model(sub_model),
+            )
             _t_start = time.monotonic()
             # Watchdog on the client enter (#816): a stalled MCP connect becomes a
             # session_stall error (session_ok False) instead of a silent hang.

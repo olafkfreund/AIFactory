@@ -301,25 +301,21 @@ def handle_build_command(
         debug_section,
         debug_success,
     )
-    from phase_config import get_phase_model
+    from phase_config import _resolve_phase_model, get_phase_model
     from phase_event import ExecutionPhase, emit_phase
-    from qa_loop import is_qa_approved, run_qa_validation_loop, should_run_qa
-    from solo_mode import is_solo_mode_enabled_for_spec
+    from qa_loop import run_qa_validation_loop, should_run_qa
 
     from .utils import print_banner, validate_environment
 
-    # Solo mode (#276): the single self-directed agent is its own QA, so the
-    # separate QA validation loop is skipped. This is the token-saving path.
-    # Default OFF — when disabled the full planner -> coder -> QA flow runs
-    # exactly as before.
-    if is_solo_mode_enabled_for_spec(spec_dir):
-        skip_qa = True
+    # Solo mode (#276) keeps one self-directed plan-and-implement session, but
+    # QA still runs: the coder never reviews its own work (#2233).
 
     # Get the resolved model for the planning phase (first phase of build)
     # This respects task_metadata.json phase configuration from the UI
     planning_model = get_phase_model(spec_dir, "planning", model)
     coding_model = get_phase_model(spec_dir, "coding", model)
-    qa_model = get_phase_model(spec_dir, "qa", model)
+    # The QA loop checks registry eligibility while selecting an independent model.
+    qa_model = _resolve_phase_model(spec_dir, "qa", model)
 
     print_banner()
     print(f"\nProject directory: {project_dir}")
@@ -527,6 +523,12 @@ def handle_build_command(
     # #1983: gate values read once, before any agent session; the spec dirs are
     # agent-writable after it.
     gates = RunGates.capture(spec_dir, source_spec_dir, model)
+    for name in ("qa_evidence.json", "qa_evidence_report.md"):
+        (source_spec_dir or spec_dir).joinpath(name).unlink(missing_ok=True)
+    if not os.environ.get("WORKSPACE_URI", "").strip():
+        (source_spec_dir or spec_dir).joinpath(".qa_evidence_run").unlink(
+            missing_ok=True
+        )
 
     try:
         debug("run.py", "Starting agent execution")
@@ -661,92 +663,6 @@ def handle_build_command(
                 print("\n\nQA validation paused.")
                 print(f"Resume: python aifactory/run.py --spec {spec_dir.name} --qa")
                 qa_approved = False
-
-        elif not skip_qa and is_qa_approved(
-            spec_dir, requires_review=gates.requires_review
-        ):
-            # A pre-approval is the coder's own reading of its own work. That is
-            # worth something, but it is not evidence, and it must not be able
-            # to report the same "passed" as an executed gate suite.
-            #
-            # Live example (AIFactory#1496): a Kotlin build where `gradle` was
-            # never found, no gate ran at all, and the run still completed as
-            # "QA validation passed (pre-approved)" — indistinguishable, to
-            # anyone reading the result, from a suite that ran and was green.
-            _check_qa_git_metadata(working_dir)
-            gate_evidence = _trailing_gate_evidence(spec_dir, working_dir)
-            emit_phase(
-                ExecutionPhase.QA_REVIEW, "QA pre-approved by coder agent", progress=100
-            )
-
-            if not _evidence_shows_an_executed_gate(gate_evidence):
-                why = gate_evidence or "the gate step did not run at all"
-                if gate_evidence and not gate_evidence.startswith("no gates detected"):
-                    # Only claim "skipped" when the summary actually parses that
-                    # way. A corrupt or reformatted marker is unreadable, not
-                    # evidence of skips, and saying otherwise sends the reader
-                    # after the wrong thing.
-                    outcomes = _gate_outcomes(gate_evidence)
-                    why = (
-                        f"every gate was skipped ({gate_evidence})"
-                        if outcomes and all(o == "skipped" for o in outcomes)
-                        else f"the gate summary could not be read ({gate_evidence})"
-                    )
-                print_status(
-                    "QA PRE-APPROVED BY CODER — NOT VERIFIED: the coder approved "
-                    f"its own work and no verification gate ran over it ({why}). "
-                    "This build has executed no test; run the project's own suite "
-                    "before merging.",
-                    "warning",
-                )
-                # #597's rule, applied one level up: an absent check must read
-                # differently from a passing one. It has to be a TERMINAL phase:
-                # the phase stream drives the UI and task state, so stopping at
-                # QA_REVIEW would leave a finished build looking stuck, and
-                # setting qa_approved here would do nothing at all — nothing
-                # reads it after this branch.
-                emit_phase(
-                    ExecutionPhase.COMPLETE,
-                    "Completed WITHOUT verification — pre-approved by the coder, "
-                    "no gate ran",
-                )
-            elif _gate_outcomes_include_a_failure(gate_evidence):
-                # A gate that ran and FAILED is evidence — of the opposite. It
-                # was being reported with the same success wording as a clean
-                # run: "✓ QA pre-approved by the coder; verification gates:
-                # kotlin-unit: failed" (#1491). Seen live.
-                print_status(
-                    "QA PRE-APPROVED BY CODER — BUT A GATE FAILED: "
-                    f"{gate_evidence}. The coder approved its own work and the "
-                    "verification that ran over it did not pass; see "
-                    "GATE_FAILURES.md and the gate output above.",
-                    "error",
-                )
-                # No `qa_approved = False` here: as the comment above says,
-                # nothing reads it after this branch, so the assignment would be
-                # dead — the same inert "fix" #1502 shipped. The terminal phase
-                # and the error status ARE the mechanism; they reach the UI and
-                # the log, which is what a failing gate has to change.
-                emit_phase(
-                    ExecutionPhase.COMPLETE,
-                    f"Completed with FAILING gates — {gate_evidence}",
-                )
-            else:
-                print_status(
-                    "QA pre-approved by the coder; verification gates: "
-                    f"{gate_evidence}",
-                    "success",
-                )
-                emit_phase(
-                    ExecutionPhase.COMPLETE, "QA validation passed (pre-approved)"
-                )
-
-            # Sync implementation plan to main project
-            if sync_plan_to_source(spec_dir, source_spec_dir):
-                debug_info(
-                    "run.py",
-                    "Implementation plan synced to main project after pre-approved QA",
-                )
 
         # Post-build finalization (only for isolated sequential mode)
         # This happens AFTER QA validation so the worktree still exists

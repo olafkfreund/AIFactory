@@ -98,11 +98,11 @@ async def test_loop_clears_preapproval_before_reviewer(
     spec = _spec(tmp_path, requires_review)
     gates = RunGates.capture(spec, None, "sonnet")
 
-    async def reviewer(*_args: object, **_kwargs: object) -> None:
+    async def reviewer(*_args: object, **_kwargs: object) -> tuple[str, str]:
         assert "qa_signoff" not in json.loads(
             (spec / "implementation_plan.json").read_text()
         )
-        raise KeyboardInterrupt
+        return "error", "no fresh signoff"
 
     session = AsyncMock(side_effect=reviewer)
     provider = MagicMock(
@@ -117,13 +117,14 @@ async def test_loop_clears_preapproval_before_reviewer(
             "is_no_test_project": MagicMock(return_value=False),
             "get_task_logger": MagicMock(return_value=None),
             "get_qa_iteration_count": MagicMock(return_value=0),
+            "is_configured": MagicMock(return_value=True),
+            "MAX_QA_ITERATIONS": 1,
             "_create_qa_reviewer_provider": MagicMock(return_value=provider),
             "run_qa_agent_session": session,
+            "request_review": MagicMock(return_value=MagicMock(cycle_id=1)),
+            "check_git_metadata": MagicMock(),
+            "record_iteration": MagicMock(),
         },
     ):
-        if requires_review:
-            with pytest.raises(KeyboardInterrupt):
-                await loop(tmp_path, spec, "sonnet", gates=gates)
-        else:
-            assert await loop(tmp_path, spec, "sonnet", gates=gates) is True
-    assert session.await_count == int(requires_review)
+        assert await loop(tmp_path, spec, "sonnet", gates=gates) is False
+    assert session.await_count == 1

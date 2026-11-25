@@ -189,7 +189,7 @@ async def test_qa_loop_ignores_metadata_forged_by_a_qa_session(
     spec = _spec(tmp_path, phaseModels={"qa": "sonnet"}, phaseThinking={"qa": "high"})
     seen: list[tuple[str, int | None]] = []
 
-    def provider(_name, _project, _spec, model, budget):
+    def provider(_name, _project, _spec, model, budget, **_kw):
         seen.append((model, budget))
         if len(seen) == 2:
             raise KeyboardInterrupt  # round 2 reached: stop the loop here
@@ -216,6 +216,8 @@ async def test_qa_loop_ignores_metadata_forged_by_a_qa_session(
                 "check_git_metadata": MagicMock(),
                 "_create_qa_reviewer_provider": provider,
                 "run_qa_agent_session": forging_session,
+                # CI runners have no provider CLI; reviewer configuration is not under test.
+                "is_configured": lambda _m: True,
             },
         ),
         pytest.raises(KeyboardInterrupt),

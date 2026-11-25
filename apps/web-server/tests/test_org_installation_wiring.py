@@ -198,6 +198,8 @@ def test_terminal_endgame_uses_project_org(
 
     monkeypatch.setattr(pr_endgame, "gather_pr_context", gather)
     monkeypatch.setattr(pr_endgame, "run_pr_endgame", endgame)
+    monkeypatch.setattr("server.services.qa_gate.check", lambda *_args: None)
+    monkeypatch.setattr(merger, "_ref_sha", lambda *_args: "deadbeef")
     monkeypatch.setattr(merger, "process_one", lambda *_args: {})
     asyncio.run(
         completion.run_terminal_completion(

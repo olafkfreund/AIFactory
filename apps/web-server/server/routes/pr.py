@@ -25,13 +25,14 @@ import logging
 import subprocess
 from contextlib import suppress
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from server.error_ref import client_error
 from server.project_registry import load_projects, org_id_for_path
-from server.services import github_app
+from server.services import github_app, qa_gate
 from server.services.approval import find_pr
 from server.services.audit_service import ACTION_TASK_CREATE_PR, audit_task_route
 from server.services.build_backend import task_repo_dir
@@ -41,7 +42,6 @@ from server.specpath import safe_spec_component
 from server.utils.subprocess_env import (
     child_env,
     lfs_upload,
-    merge_driver_pins,
     project_github_env,
 )
 
@@ -84,6 +84,59 @@ def _upload_and_push(
             timeout=60,
             env=env,
         )
+
+
+def _git_rev_parse(cwd: Path, ref: str) -> str | None:
+    try:
+        res = subprocess.run(  # noqa: S603, PLW1510
+            ["git", "rev-parse", "--verify", "--quiet", ref],  # noqa: S607
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=child_env(),
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+    sha = res.stdout.strip() if res.returncode == 0 else ""
+    return sha or None
+
+
+def _resolve_task_ref_sha(
+    worktree_path: Path | None, project_path: Path, branch: str
+) -> str | None:
+    roots = [r for r in (worktree_path, project_path) if r is not None and r.exists()]
+    for root in roots:
+        for ref in (f"refs/heads/{branch}", f"refs/remotes/origin/{branch}", branch):
+            sha = _git_rev_parse(root, ref)
+            if sha:
+                return sha
+    return None
+
+
+def _existing_open_pr_head(
+    existing: tuple[Any, ...],
+    project_path: Path,
+    target_repo: str | None,
+    run_gh_command: Any,
+) -> str | None:
+    head_index = 3
+    if len(existing) > head_index:
+        head = existing[head_index]
+        if isinstance(head, str) and head.strip():
+            return head.strip()
+    view_args = ["pr", "view", str(existing[0]), "--json", "headRefOid"]
+    if target_repo:
+        view_args.extend(["--repo", target_repo])
+    viewed = run_gh_command(view_args, cwd=str(project_path))
+    if viewed.get("success"):
+        with suppress(ValueError, TypeError):
+            data = json.loads(viewed.get("output") or "{}")
+            if isinstance(data, dict):
+                oid = data.get("headRefOid")
+                if isinstance(oid, str) and oid.strip():
+                    return oid.strip()
+    return None
 
 
 class CreatePRFromTaskOptions(BaseModel):
@@ -223,6 +276,20 @@ async def create_pr_from_task(
     if is_github:
         existing = find_pr(project_path, worktree_branch, options.targetRepo)
         if existing and existing[1] in {"OPEN", "MERGED"}:
+            if existing[1] == "OPEN":
+                open_head = _existing_open_pr_head(
+                    existing,
+                    project_path,
+                    options.targetRepo,
+                    run_gh_command,
+                )
+                gate_reason = qa_gate.check(spec_dir, open_head)
+                if gate_reason is not None:
+                    return {
+                        "success": False,
+                        "error": f"Independent QA review gate failed ({gate_reason})",
+                        "reason": gate_reason,
+                    }
             return {
                 "success": True,
                 "data": {
@@ -249,75 +316,7 @@ async def create_pr_from_task(
                 env=env,
             )
     except Exception:
-        pass  # Non-fatal — rebase will use whatever is available
-
-    # Stash any uncommitted changes before rebasing
-    stashed = False
-    try:
-        stash_result = subprocess.run(
-            ["git", "stash", "push", "-m", "aifactory-pre-rebase"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            timeout=10,
-            env=child_env(),
-        )
-        # "No local changes to save" means nothing was stashed
-        stashed = (
-            stash_result.returncode == 0
-            and "No local changes" not in stash_result.stdout
-        )
-    except (subprocess.SubprocessError, OSError) as exc:
-        logger.warning(
-            "git stash before rebase failed, proceeding without stash: %s", exc
-        )
-
-    # Rebase onto latest base branch to minimize conflicts (best-effort)
-    rebase_failed = False
-    try:
-        pins = merge_driver_pins(worktree_path)
-        result = subprocess.run(
-            ["git", *pins, "rebase", f"origin/{base_branch}"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            timeout=120,
-            env=child_env(),
-        )
-        if result.returncode != 0:
-            # Abort the failed rebase to leave worktree clean
-            subprocess.run(
-                ["git", "rebase", "--abort"],
-                cwd=worktree_path,
-                capture_output=True,
-                text=True,
-                timeout=10,
-                env=child_env(),
-            )
-            rebase_failed = True
-    except subprocess.TimeoutExpired:
-        subprocess.run(
-            ["git", "rebase", "--abort"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            timeout=10,
-            env=child_env(),
-        )
-        rebase_failed = True
-    except Exception:  # includes merge_driver_pins' RuntimeError: rebase not started
-        rebase_failed = True
-
-    # Restore stashed changes
-    if stashed:
-        subprocess.run(
-            ["git", "stash", "pop"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            timeout=10,
-            env=child_env(),
-        )
+        pass  # Non-fatal — push the reviewed head as-is
 
     # #1459: same failure as #959/PR #962, on the other door. Under the
     # kubejob/packed build backend the build ran in a k8s Job on an ephemeral
@@ -349,18 +348,17 @@ async def create_pr_from_task(
     except (subprocess.SubprocessError, OSError) as exc:
         logger.info("fetch of %s from origin skipped: %s", worktree_branch, exc)
 
-    # Push the branch to remote
-    # Use --force-with-lease after successful rebase (rebase rewrites history)
+    task_ref_sha = _resolve_task_ref_sha(worktree_path, project_path, worktree_branch)
+    gate_reason = qa_gate.check(spec_dir, task_ref_sha)
+    if gate_reason is not None:
+        return {
+            "success": False,
+            "error": f"Independent QA review gate failed ({gate_reason})",
+            "reason": gate_reason,
+        }
+
+    # Push the reviewed branch head without rewriting its history.
     push_cmd = ["git", "push", "-u", "origin", worktree_branch]
-    if not rebase_failed:
-        push_cmd = [
-            "git",
-            "push",
-            "--force-with-lease",
-            "-u",
-            "origin",
-            worktree_branch,
-        ]
     try:
         pushed = await asyncio.to_thread(
             _upload_and_push, str(worktree_path), worktree_branch, push_cmd

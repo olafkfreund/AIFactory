@@ -6,16 +6,24 @@ Main QA loop that coordinates reviewer and fixer sessions until
 approval or max iterations.
 """
 
+import hashlib
+import json
+import os
+import subprocess
 import time as time_module
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from agents.coder import _fail_on_git_metadata
+from agents.model_identity import read_identities, record_identity
 from agents.utils import load_implementation_plan
 from core.client import create_client
 from core.git_metadata import check_git_metadata
 from core.provider_failover import DeadlineBudget, next_provider, should_failover
 from debug import debug, debug_error, debug_section, debug_success, debug_warning
 from phase_config import (
+    get_model_betas,
     get_provider_extra_kwargs,
     infer_provider_from_model,
 )
@@ -33,10 +41,10 @@ from .criteria import (
     MAX_QA_ITERATIONS,
     get_qa_iteration_count,
     get_qa_signoff_status,
-    is_qa_approved,
     save_implementation_plan,
 )
 from .fixer import run_qa_fixer_session
+from .independence import IndependentReviewUnavailable, is_configured, pick_reviewer
 from .providers import get_qa_llm_provider
 from .report import (
     create_manual_test_plan,
@@ -60,18 +68,87 @@ from .reviewer import run_qa_agent_session
 MAX_CONSECUTIVE_ERRORS = 3  # Stop after 3 consecutive errors without progress
 
 
+def _evidence_dir(spec_dir: Path, source_spec_dir: Path | None) -> Path:
+    return (
+        source_spec_dir
+        if source_spec_dir and source_spec_dir != Path(os.devnull)
+        else spec_dir
+    )
+
+
+def _clear_evidence(spec_dir: Path) -> None:
+    for name in ("qa_evidence.json", "qa_evidence_report.md"):
+        (spec_dir / name).unlink(missing_ok=True)
+
+
+def _write_unavailable_evidence(spec_dir: Path, cycle: int, reason: str) -> None:
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    (spec_dir / "qa_evidence.json").write_text(
+        json.dumps({"status": "unavailable", "reason": reason, "qa_cycle": cycle})
+    )
+
+
+def _write_evidence(  # noqa: PLR0913 - evidence fields are caller supplied
+    project_dir: Path,
+    spec_dir: Path,
+    source_spec_dir: Path,
+    *,
+    status: str,
+    model: str,
+    provider: str,
+    cycle: int,
+    override: str | None = None,
+    fallback_report: str | None = None,
+) -> bool:
+    """Only the QA controller writes evidence; never accept a worktree copy."""
+    try:
+        if fallback_report is not None and not (spec_dir / "qa_report.md").exists():
+            (spec_dir / "qa_report.md").write_text(fallback_report, encoding="utf-8")
+        report = (spec_dir / "qa_report.md").read_bytes()
+        head = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],  # noqa: S607 - git from PATH
+            cwd=project_dir,
+            text=True,
+        ).strip()
+        source_spec_dir.mkdir(parents=True, exist_ok=True)
+        (source_spec_dir / "qa_evidence_report.md").write_bytes(report)
+        (source_spec_dir / "qa_evidence.json").write_text(
+            json.dumps(
+                {
+                    "status": status,
+                    "reviewer": {
+                        "model": model,
+                        "provider": provider,
+                        "served_model": None,
+                    },
+                    "reviewed_head": head,
+                    "report_sha256": hashlib.sha256(report).hexdigest(),
+                    "qa_cycle": cycle,
+                    "override": override,
+                    "at": datetime.now(UTC).isoformat(),
+                }
+            )
+        )
+        return True
+    except (OSError, subprocess.CalledProcessError) as exc:
+        debug_error("qa_loop", f"Could not record QA evidence: {exc}")
+        _clear_evidence(source_spec_dir)
+        return False
+
+
 # =============================================================================
 # PROVIDER FACTORY HELPERS
 # =============================================================================
 
 
-def _create_qa_reviewer_provider(
+def _create_qa_reviewer_provider(  # noqa: PLR0913 - provider factory coordinates
     provider_name: str,
     project_dir: Path,
     spec_dir: Path,
     model: str,
     max_thinking_tokens: int | None,
-):
+    betas: list[str] | None = None,
+) -> Any:
     """
     Instantiate the correct QA LLM provider for the reviewer role.
 
@@ -104,6 +181,7 @@ def _create_qa_reviewer_provider(
             model=model,
             agent_type="qa_reviewer",
             max_thinking_tokens=max_thinking_tokens,
+            betas=betas,
         )
 
     if normalised in {"codex", "codex-cli", "openai-codex"}:
@@ -220,20 +298,7 @@ async def run_qa_validation_loop(  # noqa: PLR0913 - #1969 source dir + #1983 ga
     fix_request_file = spec_dir / "QA_FIX_REQUEST.md"
     has_human_feedback = fix_request_file.exists()
 
-    # Check if already approved - but if there's human feedback, we need to process it first
-    if is_qa_approved(spec_dir):
-        if not gates.requires_review:
-            if not has_human_feedback:
-                debug_success("qa_loop", "Build already approved by QA")
-                print("\n✅ Build already approved by QA.")
-                return True
-        else:
-            # #1987: the reviewer's verdict is read from this field, so a
-            # coder-written approval must not survive into it.
-            plan = load_implementation_plan(spec_dir) or {}
-            plan.pop("qa_signoff", None)
-            if not save_implementation_plan(spec_dir, plan):
-                return False
+    evidence_dir = _evidence_dir(spec_dir, source_spec_dir)
 
     # If there's human feedback, we need to run the fixer first before re-validating
     if has_human_feedback:
@@ -269,6 +334,16 @@ async def run_qa_validation_loop(  # noqa: PLR0913 - #1969 source dir + #1983 ga
                 phase="qa_fixer",
                 **fixer_kwargs,
             )
+
+        record_identity(
+            source_spec_dir
+            if source_spec_dir and source_spec_dir != Path(os.devnull)
+            else spec_dir,
+            phase="qa_fixer",
+            subtask_id=None,
+            model=qa_model,
+            provider=fixer_provider,
+        )
 
         async with fix_client:
             fix_status, fix_response = await run_qa_fixer_session(
@@ -321,6 +396,11 @@ async def run_qa_validation_loop(  # noqa: PLR0913 - #1969 source dir + #1983 ga
     while qa_iteration < MAX_QA_ITERATIONS:
         qa_iteration += 1
         iteration_start = time_module.time()
+        _clear_evidence(evidence_dir)
+        plan = load_implementation_plan(spec_dir) or {}
+        plan.pop("qa_signoff", None)
+        if not save_implementation_plan(spec_dir, plan):
+            return False
 
         # #474: the anti-loop guardrail halted this run (no progress). Escalate
         # instead of spinning the QA fix/review cycle. No-op unless the guardrail
@@ -349,9 +429,27 @@ async def run_qa_validation_loop(  # noqa: PLR0913 - #1969 source dir + #1983 ga
         )
 
         # Run QA reviewer with phase-specific model and thinking budget
-        qa_model = gates.model("qa")
+        try:
+
+            def configured(
+                candidate: str, provider: str | None = qa_provider_override
+            ) -> bool:
+                return is_configured(candidate) and (
+                    not provider or infer_provider_from_model(candidate) == provider
+                )
+
+            pick = pick_reviewer(
+                gates,
+                read_identities(evidence_dir),
+                configured=configured,
+            )
+        except IndependentReviewUnavailable as exc:
+            _write_unavailable_evidence(evidence_dir, qa_iteration, str(exc))
+            debug_error("qa_loop", f"[QA independence] {exc}")
+            return False
+        qa_model = pick.model
         qa_thinking_budget = gates.thinking_budget("qa")
-        qa_provider_name = qa_provider_override or infer_provider_from_model(qa_model)
+        qa_provider_name = pick.provider
         if qa_provider_override:
             failover_used.add(qa_provider_override)
         # Strip provider prefix if present (e.g., "ollama:llama3.2" → "llama3.2")
@@ -373,6 +471,7 @@ async def run_qa_validation_loop(  # noqa: PLR0913 - #1969 source dir + #1983 ga
             spec_dir,
             actual_qa_model,
             qa_thinking_budget,
+            betas=get_model_betas(qa_model),
         )
 
         # Open a new, monotonically-numbered review cycle for THIS iteration.
@@ -386,17 +485,29 @@ async def run_qa_validation_loop(  # noqa: PLR0913 - #1969 source dir + #1983 ga
             state=review_cycle.state.value,
         )
 
+        verdict_writer = {
+            "model": qa_model,
+            "provider": qa_provider_name,
+            "override": pick.override,
+        }
         async with reviewer_provider:
             debug("qa_loop", "Running QA reviewer agent session...")
-            status, response = await run_qa_agent_session(
-                reviewer_provider,
-                project_dir,  # Pass project_dir for capability-based tool injection
-                spec_dir,
-                qa_iteration,
-                MAX_QA_ITERATIONS,
-                verbose,
-                previous_error=last_error_context,  # Pass error context for self-correction
-            )
+            try:
+                status, response = await run_qa_agent_session(
+                    reviewer_provider,
+                    project_dir,  # Pass project_dir for capability-based tool injection
+                    spec_dir,
+                    qa_iteration,
+                    MAX_QA_ITERATIONS,
+                    verbose,
+                    previous_error=last_error_context,
+                    identities=read_identities(evidence_dir),
+                    verdict_writer=verdict_writer,
+                )
+            except IndependentReviewUnavailable as exc:
+                _write_unavailable_evidence(evidence_dir, qa_iteration, str(exc))
+                debug_error("qa_loop", f"[QA independence] {exc}")
+                return False
         # Before any verdict: a reviewer or an earlier fixer session may have
         # written .git/config; COMPLETE must never follow a tamper (#1746).
         try:
@@ -406,6 +517,23 @@ async def run_qa_validation_loop(  # noqa: PLR0913 - #1969 source dir + #1983 ga
             raise
 
         iteration_duration = time_module.time() - iteration_start
+        fresh_signoff = get_qa_signoff_status(spec_dir)
+        if status in ("approved", "rejected") and (
+            not fresh_signoff or fresh_signoff.get("status") != status
+        ):
+            status, response = "error", "QA reviewer did not write a fresh signoff"
+        if status in ("approved", "rejected") and not _write_evidence(
+            project_dir,
+            spec_dir,
+            evidence_dir,
+            status=status,
+            model=qa_model,
+            provider=qa_provider_name,
+            cycle=qa_iteration,
+            override=verdict_writer["override"],
+            fallback_report=response,
+        ):
+            status, response = "error", "QA evidence could not be recorded"
         debug(
             "qa_loop",
             "QA reviewer session completed",
@@ -588,6 +716,16 @@ async def run_qa_validation_loop(  # noqa: PLR0913 - #1969 source dir + #1983 ga
                     **fixer_kwargs,
                 )
 
+            record_identity(
+                source_spec_dir
+                if source_spec_dir and source_spec_dir != Path(os.devnull)
+                else spec_dir,
+                phase="qa_fixer",
+                subtask_id=None,
+                model=fixer_model,
+                provider=fixer_provider_name,
+            )
+
             async with fix_client:
                 fix_status, fix_response = await run_qa_fixer_session(
                     fix_client, spec_dir, qa_iteration, verbose
@@ -648,9 +786,7 @@ async def run_qa_validation_loop(  # noqa: PLR0913 - #1969 source dir + #1983 ga
                 # provider in the chain — but only for failover-worthy errors
                 # (not auth/model/quota faults a different provider can't fix)
                 # and only while the overall deadline holds.
-                current_provider = qa_provider_override or infer_provider_from_model(
-                    gates.model("qa")
-                )
+                current_provider = qa_provider_name
                 failover_used.add(current_provider)
                 candidate = next_provider(current_provider, failover_used, gated=True)
                 if (

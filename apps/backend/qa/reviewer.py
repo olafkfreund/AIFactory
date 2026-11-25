@@ -10,14 +10,17 @@ Memory Integration:
 - Saves QA findings (bugs, patterns, validation outcomes) after session
 """
 
+import importlib
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 # Memory integration for cross-session learning
 from agents.memory_manager import get_graphiti_context, save_session_memory
+from agents.token_attribution import PromptSegments, TurnUsage, record_turn
 from debug import debug, debug_detailed, debug_error, debug_section, debug_success
 from prompts_pkg import get_qa_reviewer_prompt
-from providers.factory import get_tool_fallback_provider
+from providers.factory import get_provider
 from qa.providers import BaseLLMProvider
 from security.tool_input_validator import get_safe_tool_input
 from task_logger import (
@@ -28,20 +31,23 @@ from task_logger import (
 )
 
 from .criteria import get_qa_signoff_status
+from .independence import IndependentReviewUnavailable, pick_reviewer
 
 # =============================================================================
 # QA REVIEWER SESSION
 # =============================================================================
 
 
-async def run_qa_agent_session(
+async def run_qa_agent_session(  # noqa: PLR0913 - reviewer session context
     client: BaseLLMProvider,
     project_dir: Path,
     spec_dir: Path,
     qa_session: int,
     max_iterations: int,
     verbose: bool = False,
-    previous_error: dict | None = None,
+    previous_error: dict[str, Any] | None = None,
+    identities: list[dict[str, Any]] | None = None,
+    verdict_writer: dict[str, Any] | None = None,
 ) -> tuple[str, str]:
     """
     Run a QA reviewer agent session.
@@ -192,9 +198,12 @@ This is attempt {previous_error.get("consecutive_errors", 1) + 1}. If you fail t
         debug_success("qa_reviewer", "Query sent successfully")
 
         response_text = ""
+        usage_result = None
         debug("qa_reviewer", "Starting to receive response stream...")
         async for msg in client.receive_response():
             msg_type = type(msg).__name__
+            if msg_type == "ResultMessage":
+                usage_result = msg
             message_count += 1
             debug_detailed(
                 "qa_reviewer",
@@ -325,6 +334,20 @@ This is attempt {previous_error.get("consecutive_errors", 1) + 1}. If you fail t
 
                         current_tool = None
 
+        if usage_result and getattr(usage_result, "usage", None):
+            record_turn(
+                spec_dir,
+                PromptSegments(user_prompt=prompt),
+                TurnUsage.from_sdk_usage(
+                    usage_result.usage, getattr(usage_result, "total_cost_usd", None)
+                ),
+                model=getattr(client, "model", None),
+                worker_id=f"qa-{qa_session}",
+                phase="qa",
+                provider=type(client).__name__,
+                duration_ms=getattr(usage_result, "duration_ms", 0) or 0,
+            )
+
         print("\n" + "-" * 70 + "\n")
 
         # Check the QA result from implementation_plan.json
@@ -339,7 +362,7 @@ This is attempt {previous_error.get("consecutive_errors", 1) + 1}. If you fail t
         )
 
         # Save QA session insights to memory
-        qa_discoveries = {
+        qa_discoveries: dict[str, Any] = {
             "files_understood": {},
             "patterns_found": [],
             "gotchas_encountered": [],
@@ -393,7 +416,13 @@ This is attempt {previous_error.get("consecutive_errors", 1) + 1}. If you fail t
                     response_length=len(response_text),
                 )
                 fallback_result = await _run_tool_fallback(
-                    response_text, spec_dir, project_dir, qa_session, task_logger
+                    response_text,
+                    spec_dir,
+                    project_dir,
+                    qa_session,
+                    task_logger,
+                    identities=identities,
+                    verdict_writer=verdict_writer,
                 )
                 if fallback_result is not None:
                     fb_status, fb_text = fallback_result
@@ -423,6 +452,8 @@ This is attempt {previous_error.get("consecutive_errors", 1) + 1}. If you fail t
 
             return "error", error_msg
 
+    except IndependentReviewUnavailable:
+        raise
     except Exception as e:
         debug_error(
             "qa_reviewer",
@@ -460,12 +491,14 @@ def _fallback_transcript(task_logger: Any, block_type: str, block: Any) -> None:
         )
 
 
-async def _run_tool_fallback(
+async def _run_tool_fallback(  # noqa: PLR0913 - fallback session context
     qa_analysis: str,
     spec_dir: Path,
     project_dir: Path,
     qa_session: int,
-    task_logger,
+    task_logger: Any,
+    identities: list[dict[str, Any]] | None = None,
+    verdict_writer: dict[str, Any] | None = None,
 ) -> tuple[str, str] | None:
     """Use a tool-capable provider to write qa_signoff based on text analysis.
 
@@ -482,21 +515,28 @@ async def _run_tool_fallback(
         task_logger: Task logger for progress tracking.
 
     Returns:
-        (status, response_text) if the fallback succeeded, or None if no
-        fallback provider is available or the fallback also failed.
+        (status, response_text) if the fallback succeeded, or None if it failed.
     """
-    fallback = get_tool_fallback_provider(
-        phase="qa",
-        exclude="ollama",
-        working_dir=project_dir,
-    )
-    if fallback is None:
-        debug_error(
-            "qa_reviewer",
-            "No tool-capable fallback provider available",
-        )
-        return None
+    # Fallback-only dependency, imported lazily.
+    infer_provider_from_model = importlib.import_module(
+        "phase_config"
+    ).infer_provider_from_model
 
+    from .independence import is_configured  # noqa: PLC0415 - fallback-only dependency
+
+    pick = pick_reviewer(
+        SimpleNamespace(
+            model=lambda _: verdict_writer["model"] if verdict_writer else "opus",
+            metadata={},
+        ),
+        identities or [],
+        configured=lambda model: infer_provider_from_model(model)
+        in {"claude", "codex", "antigravity"}
+        and is_configured(model),
+    )
+    fallback = get_provider(
+        pick.provider, phase="qa", working_dir=project_dir, model=pick.model
+    )
     provider_name = type(fallback).__name__
     print(f"\n🔄 Delegating file update to {provider_name}...")
     debug(
@@ -560,7 +600,10 @@ IMPORTANT: You MUST read and then write the implementation_plan.json file. Do NO
             await fallback.query(fallback_prompt)
             fb_response = ""
             fb_tool_count = 0
+            usage_result = None
             async for msg in fallback.receive_response():
+                if type(msg).__name__ == "ResultMessage":
+                    usage_result = msg
                 # Assistant text and tool calls, and the user-side tool results.
                 for block in getattr(msg, "content", None) or []:
                     block_type = type(block).__name__
@@ -570,9 +613,27 @@ IMPORTANT: You MUST read and then write the implementation_plan.json file. Do NO
                         fb_tool_count += 1
                     _fallback_transcript(task_logger, block_type, block)
 
+        if usage_result and getattr(usage_result, "usage", None):
+            record_turn(
+                spec_dir,
+                PromptSegments(user_prompt=fallback_prompt),
+                TurnUsage.from_sdk_usage(
+                    usage_result.usage, getattr(usage_result, "total_cost_usd", None)
+                ),
+                model=getattr(fallback, "model", None),
+                worker_id=f"qa-{qa_session}",
+                phase="qa",
+                provider=type(fallback).__name__,
+                duration_ms=getattr(usage_result, "duration_ms", 0) or 0,
+            )
+
         # Check if the fallback actually wrote qa_signoff
         status = get_qa_signoff_status(spec_dir)
         if status and status.get("status") in ("approved", "rejected"):
+            if verdict_writer is not None:
+                verdict_writer.update(
+                    model=pick.model, provider=pick.provider, override=pick.override
+                )
             result_status = status["status"]
             debug_success(
                 "qa_reviewer",
