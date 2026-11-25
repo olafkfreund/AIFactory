@@ -64,6 +64,10 @@ async def get_qa_report(
     project_path = Path(projects[project_id]["path"])
     spec_dir = project_path / ".aifactory" / "specs" / spec_id
     qa_report_file = spec_dir / "qa_report.md"
+    if not qa_report_file.exists():
+        # #2233: QA writes its report in the worktree; only the protected
+        # copy reaches the project spec dir.
+        qa_report_file = spec_dir / "qa_evidence_report.md"
 
     if not qa_report_file.exists():
         # 404 is the right answer — clients should treat "no report yet"
