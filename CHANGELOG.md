@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+## 3.21.13 - 2026-11-25
+
+Merged to `dev` since 3.21.12.
+
+### Fixed
+
+- The QA report endpoint serves the protected `qa_evidence_report.md` when `qa_report.md` is absent, so approved tasks no longer return 404. (#2233, #2246)
+
 ## 3.21.12 - 2026-11-25
 
 Merged to `dev` since 3.21.11.
