@@ -28,6 +28,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +42,7 @@ _USAGE_MAX_BYTES = 1 << 20
 _QA_FILES = ("qa_evidence.json", "model_identities.json", "qa_evidence_report.md")
 _QA_RUN_FILE = ".qa_evidence_run"
 _QA_RUN_ENV = "AIFACTORY_QA_RUN_ID"
+_PUSH_FAILURE_MAX_BYTES = 4 << 10
 
 WORKSPACE_URI_ENV = "WORKSPACE_URI"
 
@@ -129,12 +131,14 @@ def maybe_push_workspace_branch(  # noqa: PLR0911 - one early return per refusal
     wt = Path(project_dir) / ".aifactory" / "worktrees" / "tasks" / spec_id
     if not wt.is_dir():
         _log.warning("[workspace_fetch] no worktree at %s; nothing to push", wt)
+        _push_failure(spec_id, "", f"no worktree at {wt}")
         return False
     if (
         process_hardening.in_build_job()
         and not process_hardening.kill_stray_processes()
     ):
         _log.error("agent-started processes survived; refusing to push (#1724)")
+        _push_failure(spec_id, "", "agent-started processes survived; refusing to push")
         return False
 
     def _git(*args: str) -> str:
@@ -148,11 +152,13 @@ def maybe_push_workspace_branch(  # noqa: PLR0911 - one early return per refusal
             check=False,
         ).stdout.strip()
 
+    branch = ""
     try:
         branch = _git("rev-parse", "--abbrev-ref", "HEAD")
         url = _git("remote", "get-url", "origin")
         if not branch or not url:
             _log.warning("[workspace_fetch] worktree has no branch/origin; skip push")
+            _push_failure(spec_id, branch, "worktree has no branch/origin")
             return False
         # The token rides in a per-call GH_CONFIG_DIR (github_env), never in argv
         # or env; the URL is not rewritten. /proc/<pid>/cmdline is world-readable
@@ -186,14 +192,19 @@ def maybe_push_workspace_branch(  # noqa: PLR0911 - one early return per refusal
                     timeout=180,
                     check=False,
                 )
-                err = res.stderr if res.returncode != 0 else None
+                err = (
+                    (res.stdout + "\n" + res.stderr).strip()
+                    if res.returncode != 0
+                    else None
+                )
                 sha = (
                     run(["git", "rev-parse", "HEAD"], 120)[1].strip()
                     if err is None
                     else ""
                 )
         if err is not None:
-            _log.warning("[workspace_fetch] branch push failed: %s", err[:200])
+            _log.warning("[workspace_fetch] branch push failed: %s", err)
+            _push_failure(spec_id, branch, err)
             return False
         _log.info(
             "[workspace_fetch] pushed build branch %s to origin (packed path)", branch
@@ -210,6 +221,7 @@ def maybe_push_workspace_branch(  # noqa: PLR0911 - one early return per refusal
         return True
     except (OSError, subprocess.SubprocessError) as exc:  # never break a green build
         _log.warning("[workspace_fetch] branch push errored: %s", exc)
+        _push_failure(spec_id, branch, str(exc))
         return False
 
 
@@ -626,6 +638,52 @@ def _qa_evidence_key(spec_id: str, run_id: str) -> str:
             path=f"qa-evidence/{run_id}.json",
         ).key()
     )
+
+
+def _push_failure(spec_id: str, branch: str, reason: str) -> None:
+    try:
+        from core.artifact_store import ArtifactStore  # noqa: PLC0415
+
+        payload = {
+            "branch": branch,
+            "reason": reason.encode("utf-8")[:2048].decode("utf-8", "ignore"),
+            "at": datetime.now(UTC).isoformat(),
+        }
+        key = _qa_evidence_key(spec_id, os.environ.get(_QA_RUN_ENV, "")).replace(
+            "/qa-evidence/", "/build-push-failed/"
+        )
+        ArtifactStore().put_bytes(
+            key,
+            json.dumps(payload).encode(),
+            "application/json",
+            role="build",
+        )
+    except Exception as exc:  # noqa: BLE001 - keep the build's original outcome
+        _log.warning("[workspace_fetch] could not record branch push failure: %s", exc)
+
+
+def maybe_fetch_push_failure(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
+    """Fetch this run's push failure, clearing any previous run's marker."""
+    destination = Path(spec_dir) / "build_push_failed.json"
+    try:
+        destination.unlink(missing_ok=True)
+        from core.artifact_store import ArtifactStore  # noqa: PLC0415
+
+        run_id = (Path(spec_dir) / _QA_RUN_FILE).read_text().strip()
+        key = _qa_evidence_key(spec_id, run_id).replace(
+            "/qa-evidence/", "/build-push-failed/"
+        )
+        raw = ArtifactStore().get_bytes(key, max_bytes=_PUSH_FAILURE_MAX_BYTES)
+        marker = json.loads(raw)
+        if not isinstance(marker, dict) or any(
+            not isinstance(marker.get(name), str) for name in ("branch", "reason", "at")
+        ):
+            raise ValueError("Invalid push failure marker")
+        destination.write_bytes(raw)
+        return True
+    except Exception as exc:  # noqa: BLE001 - absent marker is normal
+        _log.debug("[workspace_fetch] no current push failure marker: %s", exc)
+        return False
 
 
 def maybe_push_qa_evidence(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:

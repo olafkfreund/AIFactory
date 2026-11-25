@@ -12,6 +12,7 @@ S3, so they run on every PR without Docker, S3, or MinIO.
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -186,6 +187,64 @@ def test_push_branch_pushes_to_origin(monkeypatch, tmp_path) -> None:
     assert recorded[0][0][1] == b"a" * 40
     assert "ghs_faketoken" in hosts[idx]  # vacuity guard
     assert "GIT_PASS" not in push_env
+
+
+def test_rejected_workflow_push_is_reported_per_run(
+    monkeypatch, tmp_path, caplog
+) -> None:
+    def git(cwd: Path, *args: str) -> str:
+        return subprocess.run(
+            ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    origin = tmp_path / "origin.git"
+    git(tmp_path, "init", "--bare", str(origin))
+    wt = tmp_path / ".aifactory" / "worktrees" / "tasks" / "042-x"
+    wt.mkdir(parents=True)
+    git(wt, "init")
+    git(wt, "checkout", "-b", "b")
+    git(wt, "remote", "add", "origin", str(origin))
+    workflow = wt / ".github" / "workflows" / "ci.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text("name: ci\n")
+    git(wt, "add", ".")
+    git(
+        wt,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-m",
+        "workflow",
+    )
+    hook = origin / "hooks" / "pre-receive"
+    rejection = "workflows permission denied " + "x" * 250
+    hook.write_text(
+        "#!/bin/sh\nwhile read old new ref; do\n"
+        '  git diff-tree --root --no-commit-id --name-only -r "$new" | '
+        "grep -q '^.github/workflows/' && "
+        f"{{ echo '{rejection}' >&2; exit 1; }}\ndone\n"
+    )
+    hook.chmod(0o755)
+
+    store = a_s._fake_store()
+    monkeypatch.setattr(a_s, "ArtifactStore", lambda *a, **k: store)
+    monkeypatch.setenv("WORKSPACE_URI", "s3://bucket/key")
+    monkeypatch.setenv("AIFACTORY_QA_RUN_ID", "a" * 32)
+    assert wf.maybe_push_workspace_branch(tmp_path, "042-x") is False
+    assert rejection in caplog.text
+    cp = tmp_path / "control"
+    cp.mkdir()
+    (cp / ".qa_evidence_run").write_text("a" * 32)
+    assert wf.maybe_fetch_push_failure(cp, "042-x") is True
+    marker = json.loads((cp / "build_push_failed.json").read_text())
+    assert marker["branch"] == "b"
+    assert "workflows permission denied" in marker["reason"]
+    assert marker["at"]
+    (cp / ".qa_evidence_run").write_text("b" * 32)
+    assert wf.maybe_fetch_push_failure(cp, "042-x") is False
+    assert not (cp / "build_push_failed.json").exists()
 
 
 # ---------------------------------------------------------------------------

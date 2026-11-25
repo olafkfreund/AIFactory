@@ -116,6 +116,25 @@ async def run_terminal_completion(
 
         maybe_fetch_qa_evidence(spec_dir, spec_id)
 
+    from core.workspace_fetch import maybe_fetch_push_failure  # noqa: PLC0415
+
+    if maybe_fetch_push_failure(spec_dir, spec_id):
+        marker = json.loads((spec_dir / "build_push_failed.json").read_text())
+        logger.error(
+            "[AgentService] branch push failed for %s (%s): %s",
+            sanitize_log(spec_id),
+            sanitize_log(marker["branch"]),
+            sanitize_log(marker["reason"]),
+        )
+        write_control(
+            spec_dir,
+            status="human_review",
+            review_reason="branch_push_failed",
+            updated_by="web_server",
+        )
+        is_completed = False
+        terminal_status = "human_review"
+
     # #1550: on the co-mount Job path the gate marker is written into the task
     # worktree's spec dir and nothing else brings it home (the packed path's
     # object-store fetch is a no-op here). Copy it before anything reads it --
@@ -302,7 +321,7 @@ async def run_terminal_completion(
                 from server.project_registry import org_id_for_path  # noqa: PLC0415
 
                 from . import github_app, qa_gate  # noqa: PLC0415
-                from .merger import _ref_sha  # noqa: PLC0415
+                from .merger import resolve_task_head  # noqa: PLC0415
                 from .pr_endgame import (
                     _default_runner,
                     _pr_head,
@@ -347,7 +366,9 @@ async def run_terminal_completion(
 
                         if ctx:
 
-                            def _check_gate(context: dict[str, Any]) -> str | None:
+                            def _check_gate(
+                                context: dict[str, Any],
+                            ) -> tuple[str | None, str | None]:
                                 adopted_pr = context.get("adopted_pr")
                                 if adopted_pr:
                                     parts = _split_repo(context.get("repo", ""))
@@ -362,14 +383,16 @@ async def run_terminal_completion(
                                         else None
                                     )
                                 else:
-                                    head = _ref_sha(
+                                    head = resolve_task_head(
                                         Path(context["worktree"]),
                                         context["branch"],
                                         _default_runner,
                                     )
-                                return qa_gate.check(spec_dir, head)
+                                return qa_gate.check(spec_dir, head), head
 
-                            gate_reason = await asyncio.to_thread(_check_gate, ctx)
+                            gate_reason, checked_head = await asyncio.to_thread(
+                                _check_gate, ctx
+                            )
                             if gate_reason is not None:
                                 _endgame_marker.unlink(missing_ok=True)
                                 logger.info(
@@ -621,6 +644,7 @@ async def run_terminal_completion(
                                 trusted=trusted,
                                 worktree=ctx["worktree"],
                                 branch=ctx["branch"],
+                                expected_head=checked_head,
                                 base=ctx["base"],
                                 repo=ctx["repo"],
                                 # RFC-0020 3.5: the tenant's declared host. The

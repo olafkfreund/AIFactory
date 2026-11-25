@@ -28,18 +28,17 @@ import server.services.pr_endgame as pe  # noqa: E402
 import server.services.qa_gate as gate_mod  # noqa: E402
 from server.project_registry import save_projects  # noqa: E402
 from server.routes import pr as pr_routes  # noqa: E402
-from server.services.pr_endgame import CmdResult  # noqa: E402
 from server.services.task_control import read_control, write_control  # noqa: E402
 
 _LOG = logging.getLogger(__name__)
 
 
 class FakeRunner:
-    def __init__(self, routes: dict[str, CmdResult]) -> None:
+    def __init__(self, routes: dict[str, pe.CmdResult]) -> None:
         self.routes = routes
         self.calls: list[list[str]] = []
 
-    def __call__(self, argv: list[str], _cwd: str | None = None) -> CmdResult:
+    def __call__(self, argv: list[str], _cwd: str | None = None) -> pe.CmdResult:
         self.calls.append(argv)
         joined = " ".join(argv)
         matches = [
@@ -49,7 +48,7 @@ class FakeRunner:
         ]
         if matches:
             return max(matches, key=lambda pair: len(pair[0]))[1]
-        return CmdResult(0, "", "")
+        return pe.CmdResult(0, "", "")
 
     def saw(self, needle: str) -> bool:
         return any(needle in " ".join(c) for c in self.calls)
@@ -170,7 +169,7 @@ def test_qa_gate_missing_malformed_or_unapproved(tmp_path: Path) -> None:
 def test_qa_gate_stale_on_head_mismatch_or_changed_report(tmp_path: Path) -> None:
     _write_gate_files(tmp_path, head_sha="abc1234")
     assert gate_mod.check(tmp_path, "other-head") == "qa_stale"
-    assert gate_mod.check(tmp_path, None) == "qa_stale"
+    assert gate_mod.check(tmp_path, None) == "head_unavailable"
 
     # Tampered / changed report copy
     (tmp_path / "qa_evidence_report.md").write_text("edited after verdict")
@@ -271,16 +270,16 @@ def _merger_spec(tmp_path: Path, spec_id: str = "001-x") -> Path:
     return spec_dir
 
 
-def _merger_routes(**overrides: CmdResult) -> dict[str, CmdResult]:
+def _merger_routes(**overrides: pe.CmdResult) -> dict[str, pe.CmdResult]:
     base = {
-        "rev-parse --abbrev-ref HEAD": CmdResult(0, "aifactory/001-x", ""),
-        "rev-parse refs/heads/aifactory/001-x": CmdResult(0, "head-sha-1", ""),
-        "pr list": CmdResult(0, "[]", ""),
-        "fetch origin": CmdResult(0, "", ""),
-        "rev-list --count": CmdResult(0, "2\n", ""),
-        "diff --no-ext-diff --no-textconv --name-only": CmdResult(0, "a.py\n", ""),
-        "git push": CmdResult(0, "", ""),
-        "pr create": CmdResult(0, "https://github.com/o/r/pull/5", ""),
+        "rev-parse --abbrev-ref HEAD": pe.CmdResult(0, "aifactory/001-x", ""),
+        "rev-parse refs/heads/aifactory/001-x": pe.CmdResult(0, "head-sha-1", ""),
+        "pr list": pe.CmdResult(0, "[]", ""),
+        "fetch origin": pe.CmdResult(0, "", ""),
+        "rev-list --count": pe.CmdResult(0, "2\n", ""),
+        "diff --no-ext-diff --no-textconv --name-only": pe.CmdResult(0, "a.py\n", ""),
+        "git push": pe.CmdResult(0, "", ""),
+        "pr create": pe.CmdResult(0, "https://github.com/o/r/pull/5", ""),
     }
     base.update(overrides)
     return base
@@ -315,7 +314,7 @@ def test_merger_refuses_opened_and_already_open_when_gate_fails(
         ]
     )
     r_existing = FakeRunner(
-        _merger_routes(**{"pr list": CmdResult(0, open_pr_json, "")})
+        _merger_routes(**{"pr list": pe.CmdResult(0, open_pr_json, "")})
     )
     res_existing = mg.process_one("proj", tmp_path, spec_dir, runner=r_existing)
     assert res_existing["action"] == "skipped"
@@ -337,7 +336,7 @@ def test_merger_does_not_block_merged_or_closed_prs(
         pr_json = json.dumps(
             [{"number": 33, "state": state, "createdAt": "2026-11-25"}]
         )
-        r = FakeRunner(_merger_routes(**{"pr list": CmdResult(0, pr_json, "")}))
+        r = FakeRunner(_merger_routes(**{"pr list": pe.CmdResult(0, pr_json, "")}))
         res = mg.process_one("proj", tmp_path, spec_dir, runner=r)
         assert res["action"] == expected_action
         assert res["pr"] == 33
@@ -346,7 +345,16 @@ def test_merger_does_not_block_merged_or_closed_prs(
         assert ctrl.get("reviewReason") == expected_reason
 
 
-@pytest.mark.parametrize("reason", ["qa_missing", "qa_stale", "qa_not_independent"])
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "qa_missing",
+        "qa_stale",
+        "qa_not_independent",
+        "head_unavailable",
+        "branch_push_failed",
+    ],
+)
 def test_merger_sync_status_maps_gate_reasons_and_keeps_human_set_status(
     tmp_path: Path, reason: str
 ) -> None:
@@ -375,13 +383,18 @@ def test_merger_remote_only_branch_resolves_origin_ref_sha(
     r = FakeRunner(
         _merger_routes(
             **{
-                "rev-parse --verify --quiet refs/heads/aifactory/001-x": CmdResult(
+                "rev-parse --verify --quiet refs/heads/aifactory/001-x": pe.CmdResult(
                     1, "", ""
                 ),
-                "rev-parse --verify --quiet origin/aifactory/001-x": CmdResult(
+                "rev-parse --verify --quiet origin/aifactory/001-x": pe.CmdResult(
                     0, "remote-sha-999", ""
                 ),
-                "rev-parse origin/aifactory/001-x": CmdResult(0, "remote-sha-999", ""),
+                "rev-parse origin/aifactory/001-x": pe.CmdResult(
+                    0, "remote-sha-999", ""
+                ),
+                "ls-remote origin refs/heads/aifactory/001-x": pe.CmdResult(
+                    0, "remote-sha-999\trefs/heads/aifactory/001-x", ""
+                ),
             }
         )
     )
@@ -390,7 +403,158 @@ def test_merger_remote_only_branch_resolves_origin_ref_sha(
     assert res["pr"] == 5
 
 
+@pytest.mark.asyncio
+async def test_packed_branch_fetched_before_merger_and_completion_gate(
+    tmp_path: Path,
+) -> None:
+    def git(cwd: Path, *args: str) -> str:
+        return subprocess.run(  # noqa: S603 - local test repositories only
+            ["git", *args],  # noqa: S607 - git is required by this test
+            cwd=cwd,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    origin = tmp_path / "origin.git"
+    git(tmp_path, "init", "--bare", "-b", "main", str(origin))
+    seed = tmp_path / "seed"
+    git(tmp_path, "init", "-b", "main", str(seed))
+    (seed / "base.txt").write_text("base")
+    git(seed, "add", ".")
+    git(
+        seed,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-m",
+        "base",
+    )
+    git(seed, "remote", "add", "origin", str(origin))
+    git(seed, "push", "origin", "main")
+
+    spec_id = "001-x"
+    wt = tmp_path / ".aifactory" / "worktrees" / "tasks" / spec_id
+    wt.parent.mkdir(parents=True)
+    git(tmp_path, "clone", str(origin), str(wt))
+    producer = tmp_path / "producer"
+    git(tmp_path, "clone", str(origin), str(producer))
+    git(producer, "checkout", "-b", "b")
+    (producer / "feature.txt").write_text("reviewed")
+    git(producer, "add", ".")
+    git(
+        producer,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-m",
+        "feature",
+    )
+    head = git(producer, "rev-parse", "HEAD")
+    git(producer, "push", "origin", "b")
+    assert not (wt / ".git" / "refs" / "heads" / "b").exists()
+    assert not (wt / ".git" / "refs" / "remotes" / "origin" / "b").exists()
+
+    spec_dir = tmp_path / ".aifactory" / "specs" / spec_id
+    _write_gate_files(spec_dir, head_sha=head)
+    (spec_dir / "requirements.json").write_text(
+        json.dumps({"github_repo": "o/r", "title": "Task"})
+    )
+    (spec_dir / "implementation_plan.json").write_text(json.dumps({"phases": []}))
+    memory = spec_dir / "memory"
+    memory.mkdir()
+    (memory / "build_commits.json").write_text(
+        json.dumps({"commits": [{"hash": head, "subtask_id": "1"}]})
+    )
+    ctx = {
+        "worktree": wt,
+        "branch": "b",
+        "base": "main",
+        "repo": "o/r",
+        "provider": "github",
+    }
+
+    def runner(argv: list[str], cwd: str | None = None) -> pe.CmdResult:
+        if argv[:3] == ["gh", "pr", "list"]:
+            return pe.CmdResult(0, "[]", "")
+        return pe._default_runner(argv, cwd)
+
+    with (
+        patch.object(pe, "gather_pr_context", return_value=ctx),
+        patch.object(pe, "is_auto_pr_enabled", return_value=True),
+    ):
+        decided = mg._decide(tmp_path, spec_dir, spec_id, dry_run=True, runner=runner)
+    assert decided["action"] == "would_open"
+
+    endgame = AsyncMock(return_value={"ok": True, "pr": 17})
+    with (
+        patch("server.services.completion.emit_terminal_completion"),
+        patch(
+            "pfactory.tfactory_client.maybe_auto_handoff_tfactory",
+            new=AsyncMock(return_value={"sent": False}),
+        ),
+        patch.object(pe, "gather_pr_context", return_value=ctx),
+        patch.object(pe, "is_auto_pr_enabled", return_value=True),
+        patch.object(pe, "run_pr_endgame", endgame),
+        patch("server.services.merger.process_one", return_value={"action": "skipped"}),
+    ):
+        await orch.run_terminal_completion(
+            spec_dir=spec_dir,
+            project_path=tmp_path,
+            spec_id=spec_id,
+            task_id=f"proj:{spec_id}",
+            backend_path=_BACKEND,
+            is_terminal=True,
+            is_completed=True,
+            terminal_status="completed",
+            logger=_LOG,
+        )
+    endgame.assert_awaited_once()
+    assert endgame.await_args is not None
+    assert endgame.await_args.kwargs["expected_head"] == head
+
+
 # ── completion_orchestration ────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_push_failure_marker_parks_task_for_review(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec_dir = tmp_path / "spec"
+    spec_dir.mkdir()
+    (spec_dir / "build_push_failed.json").write_text(
+        json.dumps(
+            {"branch": "b", "reason": "workflows permission denied", "at": "now"}
+        )
+    )
+    monkeypatch.setattr(
+        "core.workspace_fetch.maybe_fetch_push_failure", lambda *_args: True
+    )
+    with (
+        patch("server.services.completion.emit_terminal_completion"),
+        patch(
+            "server.services.completion_orchestration._build_wrote_nothing",
+            return_value=False,
+        ),
+    ):
+        status = await orch.run_terminal_completion(
+            spec_dir=spec_dir,
+            project_path=tmp_path,
+            spec_id="001-x",
+            task_id="proj:001-x",
+            backend_path=_BACKEND,
+            is_terminal=True,
+            is_completed=True,
+            terminal_status="completed",
+            logger=_LOG,
+        )
+    assert status == "human_review"
+    assert read_control(spec_dir)["reviewReason"] == "branch_push_failed"
 
 
 @pytest.mark.asyncio
@@ -722,7 +886,7 @@ async def test_manual_route_unreadable_existing_head_is_stale(tmp_path: Path) ->
     ):
         code, body = await _call_manual_create_pr(env["task_id"])
     assert code == 409
-    assert body["reason"] == "qa_stale"
+    assert body["reason"] == "head_unavailable"
 
 
 @pytest.mark.asyncio

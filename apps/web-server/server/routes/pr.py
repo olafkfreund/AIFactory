@@ -32,11 +32,12 @@ from pydantic import BaseModel
 
 from server.error_ref import client_error
 from server.project_registry import load_projects, org_id_for_path
-from server.services import github_app, qa_gate
+from server.services import github_app, merger, qa_gate
 from server.services.approval import find_pr
 from server.services.audit_service import ACTION_TASK_CREATE_PR, audit_task_route
 from server.services.build_backend import task_repo_dir
 from server.services.http_verdict import honest_status
+from server.services.pr_endgame import _default_runner
 from server.services.task_branch import resolve_task_branch_fetching
 from server.specpath import safe_spec_component
 from server.utils.subprocess_env import (
@@ -86,31 +87,14 @@ def _upload_and_push(
         )
 
 
-def _git_rev_parse(cwd: Path, ref: str) -> str | None:
-    try:
-        res = subprocess.run(  # noqa: S603, PLW1510
-            ["git", "rev-parse", "--verify", "--quiet", ref],  # noqa: S607
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            timeout=10,
-            env=child_env(),
-        )
-    except (subprocess.SubprocessError, OSError):
-        return None
-    sha = res.stdout.strip() if res.returncode == 0 else ""
-    return sha or None
-
-
 def _resolve_task_ref_sha(
     worktree_path: Path | None, project_path: Path, branch: str
 ) -> str | None:
     roots = [r for r in (worktree_path, project_path) if r is not None and r.exists()]
     for root in roots:
-        for ref in (f"refs/heads/{branch}", f"refs/remotes/origin/{branch}", branch):
-            sha = _git_rev_parse(root, ref)
-            if sha:
-                return sha
+        sha = merger.resolve_task_head(root, branch, _default_runner)
+        if sha:
+            return sha
     return None
 
 

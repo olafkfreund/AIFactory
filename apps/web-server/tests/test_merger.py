@@ -367,6 +367,7 @@ def _routes(**overrides) -> dict[str, CmdResult]:
         "rev-list --count": CmdResult(0, "3\n", ""),
         "diff --no-ext-diff --no-textconv --name-only": CmdResult(0, "a.py\n", ""),
         "git push": CmdResult(0, "", ""),
+        "ls-remote origin refs/heads/": CmdResult(0, "head-sha-001\trefs/heads/b", ""),
         "pr create": CmdResult(0, "https://github.com/o/r/pull/5", ""),
     }
     base.update(overrides)
@@ -553,6 +554,8 @@ def test_sweep_accounts_for_every_spec(tmp_path, monkeypatch):
             return CmdResult(0, "", "")
         if "pr create" in joined:
             return CmdResult(0, "https://github.com/o/r/pull/5", "")
+        if "ls-remote origin refs/heads/" in joined:
+            return CmdResult(0, "head-sha-001\trefs/heads/b", "")
         return CmdResult(0, "", "")
 
     report = mg.sweep(dry_run=False, runner=runner)
