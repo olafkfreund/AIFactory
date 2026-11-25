@@ -374,13 +374,11 @@ class TestSoloSeam:
 # QA skip wiring (solo agent is its own QA)
 # ---------------------------------------------------------------------------
 class TestSoloSkipsQA:
-    def test_solo_forces_skip_qa_in_build_command(self, tmp_path: Path, monkeypatch):
-        """With solo ON, handle_build_command must set skip_qa=True before QA.
+    def test_solo_still_runs_qa_in_build_command(self, tmp_path: Path, monkeypatch):
+        """With solo ON, handle_build_command must still run QA (#2233).
 
-        We stop the build right after run_autonomous_agent by raising, and
-        capture the resolved ``skip_qa`` via the should_run_qa probe — which is
-        only consulted when skip_qa is False. In solo mode it must never be
-        consulted.
+        ``should_run_qa`` is only consulted when ``skip_qa`` is False, so the
+        probe must be consulted and the QA loop must run.
         """
         import contextlib
 
@@ -390,20 +388,20 @@ class TestSoloSkipsQA:
         from cli import build_commands
 
         should_run_qa_mock = MagicMock(return_value=True)
+        qa_loop_mock = AsyncMock(return_value=True)
         review_state = MagicMock()
         review_state.is_approval_valid.return_value = True
         review_state_cls = MagicMock()
         review_state_cls.load.return_value = review_state
 
         # Make run_autonomous_agent a no-op so we reach the QA gate quickly.
-        # We only care that should_run_qa is never consulted (skip_qa
-        # short-circuits the `not skip_qa and ...` guard in solo mode).
         patches = [
             patch("agent.run_autonomous_agent", new=AsyncMock(return_value=None)),
             patch("agent.sync_plan_to_source", MagicMock(return_value=False)),
             patch("qa_loop.should_run_qa", should_run_qa_mock),
             patch("qa_loop.is_qa_approved", MagicMock(return_value=False)),
-            patch("qa_loop.run_qa_validation_loop", new=AsyncMock(return_value=True)),
+            patch("qa_loop.run_qa_validation_loop", new=qa_loop_mock),
+            patch.object(build_commands, "_check_qa_git_metadata", MagicMock()),
             # validate_environment / print_banner are lazy-imported from
             # cli.utils inside the function, so patch them at the source.
             patch("cli.utils.validate_environment", MagicMock(return_value=True)),
@@ -438,10 +436,8 @@ class TestSoloSkipsQA:
                 force_bypass_approval=False,
             )
 
-        assert not should_run_qa_mock.called, (
-            "solo mode must skip QA: should_run_qa was consulted, meaning "
-            "skip_qa was not forced True"
-        )
+        assert should_run_qa_mock.called, "solo mode must not force skip_qa"
+        assert qa_loop_mock.called, "solo mode must still run the QA loop"
 
 
 # ---------------------------------------------------------------------------

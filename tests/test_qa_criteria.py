@@ -553,17 +553,17 @@ class TestShouldRunQA:
         # Reset mock
         mock_progress.is_build_complete.return_value = True
 
-    def test_should_run_qa_already_approved(
+    def test_should_run_qa_ignores_coder_signoff(
         self, spec_dir: Path, qa_signoff_approved: dict
     ):
-        """Returns False when already approved."""
+        """A coder signoff never skips QA, at either requires_review value."""
         mock_progress.is_build_complete.return_value = True
 
         plan = {"feature": "Test", "qa_signoff": qa_signoff_approved}
         save_implementation_plan(spec_dir, plan)
 
-        result = should_run_qa(spec_dir)
-        assert result is False
+        assert should_run_qa(spec_dir) is True
+        assert should_run_qa(spec_dir, requires_review=True) is True
 
     def test_should_run_qa_build_complete_not_approved(self, spec_dir: Path):
         """Returns True when build complete but not approved."""
@@ -974,8 +974,8 @@ class TestQAIntegration:
         }
         save_implementation_plan(spec_dir, plan)
 
-        # Should not run QA again or fixes
-        assert should_run_qa(spec_dir) is False
+        # A signoff never skips QA; fixes are not needed
+        assert should_run_qa(spec_dir) is True
         assert should_run_fixes(spec_dir) is False
         assert is_qa_approved(spec_dir) is True
 

@@ -203,7 +203,10 @@ Environment Variables:
     parser.add_argument(
         "--skip-qa",
         action="store_true",
-        help="Skip automatic QA validation after build completes",
+        help=(
+            "Skip automatic QA validation after build completes. A task built "
+            "with --skip-qa cannot reach awaiting_merge."
+        ),
     )
     parser.add_argument(
         "--stop-after-planning",

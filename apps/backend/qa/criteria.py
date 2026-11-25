@@ -98,15 +98,11 @@ def should_run_qa(spec_dir: Path, *, requires_review: bool = False) -> bool:
 
     QA should run when:
     - All subtasks are completed
-    - QA has not yet approved
+
+    A coder-written ``qa_signoff`` is never a reason to skip QA (#2233), so
+    ``requires_review`` no longer changes the answer.
     """
-    if not is_build_complete(spec_dir):
-        return False
-
-    if is_qa_approved(spec_dir, requires_review=requires_review):
-        return False
-
-    return True
+    return is_build_complete(spec_dir)
 
 
 def should_run_fixes(spec_dir: Path) -> bool:

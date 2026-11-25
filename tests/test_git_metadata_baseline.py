@@ -814,7 +814,7 @@ def test_qa_post_loop_metadata_change_fails_build_nonzero(
     reviewer.assert_not_awaited()
 
 
-def test_qa_preapproved_metadata_change_fails_build_nonzero(
+def test_qa_metadata_change_after_signoff_fails_build_nonzero(
     repo: Path, tmp_path: Path
 ) -> None:
     from unittest.mock import AsyncMock, MagicMock, patch  # noqa: PLC0415
@@ -834,8 +834,8 @@ def test_qa_preapproved_metadata_change_fails_build_nonzero(
     patches = [
         patch("agent.run_autonomous_agent", new=AsyncMock(return_value=None)),
         patch("agent.sync_plan_to_source", MagicMock(return_value=False)),
-        patch("qa_loop.should_run_qa", MagicMock(return_value=False)),
-        patch("qa_loop.is_qa_approved", MagicMock(return_value=True)),
+        patch("qa_loop.should_run_qa", MagicMock(return_value=True)),
+        patch("qa_loop.run_qa_validation_loop", new=AsyncMock(return_value=True)),
         patch("cli.utils.validate_environment", MagicMock(return_value=True)),
         patch("cli.utils.print_banner", MagicMock()),
         patch.object(
