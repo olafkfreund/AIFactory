@@ -14,6 +14,7 @@ push); only ``gh`` is faked.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -30,7 +31,12 @@ SPEC_ID = "020-probe"
 TASK_ID = f"{PROJECT_ID}:{SPEC_ID}"
 TASK_BRANCH = f"aifactory/{SPEC_ID}"
 BASE = "main"
-OPEN_PR = {"number": 7, "state": "OPEN", "url": "https://github.com/acme/proj/pull/7"}
+OPEN_PR = {
+    "number": 7,
+    "state": "OPEN",
+    "url": "https://github.com/acme/proj/pull/7",
+    "headRefOid": "head-sha-7",
+}
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -77,7 +83,40 @@ def repos(tmp_path: Path) -> dict[str, Path]:
     refs = _git(project, "for-each-ref", "--format=%(refname:short)")
     assert SPEC_ID not in refs  # the precondition prod had
 
-    (project / ".aifactory" / "specs" / SPEC_ID).mkdir(parents=True)
+    spec_dir = project / ".aifactory" / "specs" / SPEC_ID
+    spec_dir.mkdir(parents=True)
+    report = b"# QA Report\nApproved\n"
+    (spec_dir / "qa_evidence_report.md").write_bytes(report)
+    (spec_dir / "qa_evidence.json").write_text(
+        json.dumps(
+            {
+                "status": "approved",
+                "reviewer": {
+                    "model": "opus",
+                    "provider": "claude",
+                    "served_model": None,
+                },
+                "reviewed_head": "head-sha-7",
+                "report_sha256": hashlib.sha256(report).hexdigest(),
+                "qa_cycle": 1,
+                "override": None,
+                "at": "2026-11-25T00:00:00+00:00",
+            }
+        )
+    )
+    (spec_dir / "model_identities.json").write_text(
+        json.dumps(
+            [
+                {
+                    "phase": "coding",
+                    "subtask_id": "1.1",
+                    "model": "sonnet",
+                    "provider": "claude",
+                    "served_model": None,
+                }
+            ]
+        )
+    )
     save_projects({PROJECT_ID: {"path": str(project), "name": PROJECT_ID}})
     return {"project": project}
 

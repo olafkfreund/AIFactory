@@ -10,6 +10,7 @@ but never called fixes nothing.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import shutil
@@ -47,6 +48,39 @@ def _make_spec(project_path: Path, spec_id: str, *, commits: list[str]) -> Path:
     (memory / "build_commits.json").write_text(
         json.dumps({"commits": [{"hash": h, "subtask_id": "1.1"} for h in commits]})
     )
+    if commits:
+        report = b"# QA Report\nApproved\n"
+        (spec_dir / "qa_evidence_report.md").write_bytes(report)
+        (spec_dir / "qa_evidence.json").write_text(
+            json.dumps(
+                {
+                    "status": "approved",
+                    "reviewer": {
+                        "model": "opus",
+                        "provider": "claude",
+                        "served_model": None,
+                    },
+                    "reviewed_head": commits[-1],
+                    "report_sha256": hashlib.sha256(report).hexdigest(),
+                    "qa_cycle": 1,
+                    "override": None,
+                    "at": "2026-11-25T00:00:00+00:00",
+                }
+            )
+        )
+        (spec_dir / "model_identities.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "phase": "coding",
+                        "subtask_id": "1.1",
+                        "model": "sonnet",
+                        "provider": "claude",
+                        "served_model": None,
+                    }
+                ]
+            )
+        )
     return spec_dir
 
 
@@ -125,6 +159,7 @@ async def test_adopted_pr_watcher_runs_with_auto_pr_off(tmp_path: Path) -> None:
         ),
         patch.object(pr_endgame, "is_auto_pr_enabled", return_value=False),
         patch.object(pr_endgame, "gather_pr_context", return_value=ctx),
+        patch.object(pr_endgame, "_pr_head", return_value="abc1234"),
         patch.object(pr_endgame, "resolve_pr_reviewer", return_value="aifactory"),
         patch.object(pr_endgame, "run_pr_endgame", end),
     ):
@@ -178,6 +213,7 @@ async def test_fix_push_lfs_failure_warns_and_pushes(
     with (
         patch.object(pr_endgame, "is_auto_pr_enabled", return_value=True),
         patch.object(pr_endgame, "gather_pr_context", return_value=ctx),
+        patch("server.services.merger._ref_sha", return_value="a1"),
         patch.object(pr_endgame, "resolve_pr_reviewer", return_value="aifactory"),
         patch.object(pr_endgame, "run_pr_endgame", end),
     ):

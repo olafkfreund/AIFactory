@@ -25,13 +25,14 @@ import logging
 import subprocess
 from contextlib import suppress
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from server.error_ref import client_error
 from server.project_registry import load_projects, org_id_for_path
-from server.services import github_app
+from server.services import github_app, qa_gate
 from server.services.approval import find_pr
 from server.services.audit_service import ACTION_TASK_CREATE_PR, audit_task_route
 from server.services.build_backend import task_repo_dir
@@ -84,6 +85,58 @@ def _upload_and_push(
             timeout=60,
             env=env,
         )
+
+
+def _git_rev_parse(cwd: Path, ref: str) -> str | None:
+    try:
+        res = subprocess.run(  # noqa: S603, PLW1510
+            ["git", "rev-parse", "--verify", "--quiet", ref],  # noqa: S607
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=child_env(),
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+    sha = res.stdout.strip() if res.returncode == 0 else ""
+    return sha or None
+
+
+def _resolve_task_ref_sha(
+    worktree_path: Path | None, project_path: Path, branch: str
+) -> str | None:
+    roots = [r for r in (worktree_path, project_path) if r is not None and r.exists()]
+    for root in roots:
+        for ref in (f"refs/heads/{branch}", f"refs/remotes/origin/{branch}", branch):
+            sha = _git_rev_parse(root, ref)
+            if sha:
+                return sha
+    return None
+
+
+def _existing_open_pr_head(
+    existing: tuple[Any, ...],
+    project_path: Path,
+    worktree_path: Path | None,
+    branch: str,
+    target_repo: str | None,
+    run_gh_command: Any,
+) -> str | None:
+    if len(existing) >= 4 and isinstance(existing[3], str) and existing[3].strip():
+        return existing[3].strip()
+    view_args = ["pr", "view", str(existing[0]), "--json", "headRefOid"]
+    if target_repo:
+        view_args.extend(["--repo", target_repo])
+    viewed = run_gh_command(view_args, cwd=str(project_path))
+    if viewed.get("success"):
+        with suppress(ValueError, TypeError):
+            data = json.loads(viewed.get("output") or "{}")
+            if isinstance(data, dict):
+                oid = data.get("headRefOid")
+                if isinstance(oid, str) and oid.strip():
+                    return oid.strip()
+    return _resolve_task_ref_sha(worktree_path, project_path, branch)
 
 
 class CreatePRFromTaskOptions(BaseModel):
@@ -223,6 +276,22 @@ async def create_pr_from_task(
     if is_github:
         existing = find_pr(project_path, worktree_branch, options.targetRepo)
         if existing and existing[1] in {"OPEN", "MERGED"}:
+            if existing[1] == "OPEN":
+                open_head = _existing_open_pr_head(
+                    existing,
+                    project_path,
+                    worktree_path,
+                    worktree_branch,
+                    options.targetRepo,
+                    run_gh_command,
+                )
+                gate_reason = qa_gate.check(spec_dir, open_head)
+                if gate_reason is not None:
+                    return {
+                        "success": False,
+                        "error": f"Independent QA review gate failed ({gate_reason})",
+                        "reason": gate_reason,
+                    }
             return {
                 "success": True,
                 "data": {
@@ -250,6 +319,77 @@ async def create_pr_from_task(
             )
     except Exception:
         pass  # Non-fatal — rebase will use whatever is available
+
+    # #1459: same failure as #959/PR #962, on the other door. Under the
+    # kubejob/packed build backend the build ran in a k8s Job on an ephemeral
+    # /work and pushed its branch to origin from there; THIS control-plane
+    # worktree stayed on the base branch and has no local ref for that branch,
+    # so the push below fails "src refspec <branch> does not match any" and no
+    # PR opens. Fetch the branch into a local ref first, exactly as
+    # services/pr_endgame.create_pr does. Fail-safe: on the co-mount path (the
+    # branch is already local, possibly checked out here) git declines and the
+    # fetch is a harmless no-op — we log and fall through to the existing
+    # behaviour.
+    try:
+        with project_github_env(worktree_path, child_env()) as env:
+            fetch_result = subprocess.run(  # noqa: S603, ASYNC221, PLW1510
+                ["git", "fetch", "origin", f"{worktree_branch}:{worktree_branch}"],  # noqa: S607
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env=env,
+            )
+        if fetch_result.returncode != 0:
+            logger.info(
+                "fetch of %s from origin skipped (%s) - branch may be local "
+                "already or not yet on origin",
+                worktree_branch,
+                (fetch_result.stderr or fetch_result.stdout).strip()[:200],
+            )
+    except (subprocess.SubprocessError, OSError) as exc:
+        logger.info("fetch of %s from origin skipped: %s", worktree_branch, exc)
+
+    task_ref_sha = _resolve_task_ref_sha(worktree_path, project_path, worktree_branch)
+    gate_reason = qa_gate.check(spec_dir, task_ref_sha)
+    if gate_reason is not None:
+        return {
+            "success": False,
+            "error": f"Independent QA review gate failed ({gate_reason})",
+            "reason": gate_reason,
+        }
+
+    # If origin/<base_branch> has advanced past the task branch's merge-base,
+    # rebasing onto it would rewrite the task commits and change the head SHA
+    # away from reviewed_head. Refuse with qa_stale and ask for a fresh QA run
+    # before mutating the worktree.
+    try:
+        ancestor = subprocess.run(  # noqa: S603, PLW1510
+            [  # noqa: S607
+                "git",
+                "merge-base",
+                "--is-ancestor",
+                f"origin/{base_branch}",
+                worktree_branch,
+            ],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=child_env(),
+        )
+        if ancestor.returncode == 1:
+            return {
+                "success": False,
+                "error": (
+                    f"Independent QA review gate failed (qa_stale): rebasing onto "
+                    f"origin/{base_branch} would change the reviewed head; run a "
+                    f"fresh QA review first"
+                ),
+                "reason": "qa_stale",
+            }
+    except (subprocess.SubprocessError, OSError):
+        pass
 
     # Stash any uncommitted changes before rebasing
     stashed = False
@@ -319,35 +459,18 @@ async def create_pr_from_task(
             env=child_env(),
         )
 
-    # #1459: same failure as #959/PR #962, on the other door. Under the
-    # kubejob/packed build backend the build ran in a k8s Job on an ephemeral
-    # /work and pushed its branch to origin from there; THIS control-plane
-    # worktree stayed on the base branch and has no local ref for that branch,
-    # so the push below fails "src refspec <branch> does not match any" and no
-    # PR opens. Fetch the branch into a local ref first, exactly as
-    # services/pr_endgame.create_pr does. Fail-safe: on the co-mount path (the
-    # branch is already local, possibly checked out here) git declines and the
-    # fetch is a harmless no-op — we log and fall through to the existing
-    # behaviour.
-    try:
-        with project_github_env(worktree_path, child_env()) as env:
-            fetch_result = subprocess.run(  # noqa: S603, ASYNC221, PLW1510
-                ["git", "fetch", "origin", f"{worktree_branch}:{worktree_branch}"],  # noqa: S607
-                cwd=worktree_path,
-                capture_output=True,
-                text=True,
-                timeout=60,
-                env=env,
-            )
-        if fetch_result.returncode != 0:
-            logger.info(
-                "fetch of %s from origin skipped (%s) - branch may be local "
-                "already or not yet on origin",
-                worktree_branch,
-                (fetch_result.stderr or fetch_result.stdout).strip()[:200],
-            )
-    except (subprocess.SubprocessError, OSError) as exc:
-        logger.info("fetch of %s from origin skipped: %s", worktree_branch, exc)
+    post_rebase_sha = _resolve_task_ref_sha(
+        worktree_path, project_path, worktree_branch
+    )
+    if post_rebase_sha and task_ref_sha and post_rebase_sha != task_ref_sha:
+        return {
+            "success": False,
+            "error": (
+                "Independent QA review gate failed (qa_stale): rebase changed "
+                "the reviewed head; run a fresh QA review first"
+            ),
+            "reason": "qa_stale",
+        }
 
     # Push the branch to remote
     # Use --force-with-lease after successful rebase (rebase rewrites history)

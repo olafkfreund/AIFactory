@@ -16,6 +16,7 @@ not helper names.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -86,7 +87,40 @@ class FakeGit:
 
 def _project(tmp_path: Path, *, worktree: bool) -> Path:
     project_path = tmp_path / "repo"
-    (project_path / ".aifactory" / "specs" / SPEC_ID).mkdir(parents=True)
+    spec_dir = project_path / ".aifactory" / "specs" / SPEC_ID
+    spec_dir.mkdir(parents=True)
+    report = b"# QA Report\nApproved\n"
+    (spec_dir / "qa_evidence_report.md").write_bytes(report)
+    (spec_dir / "qa_evidence.json").write_text(
+        json.dumps(
+            {
+                "status": "approved",
+                "reviewer": {
+                    "model": "opus",
+                    "provider": "claude",
+                    "served_model": None,
+                },
+                "reviewed_head": "head-sha-50",
+                "report_sha256": hashlib.sha256(report).hexdigest(),
+                "qa_cycle": 1,
+                "override": None,
+                "at": "2026-11-25T00:00:00+00:00",
+            }
+        )
+    )
+    (spec_dir / "model_identities.json").write_text(
+        json.dumps(
+            [
+                {
+                    "phase": "coding",
+                    "subtask_id": "1.1",
+                    "model": "sonnet",
+                    "provider": "claude",
+                    "served_model": None,
+                }
+            ]
+        )
+    )
     if worktree:
         (project_path / ".aifactory" / "worktrees" / "tasks" / SPEC_ID).mkdir(
             parents=True
@@ -135,7 +169,12 @@ def _merge(tmp_path: Path, gh: FakeGh, git: FakeGit, *, worktree: bool) -> Any:
         return asyncio.run(worktree_merge.merge_worktree(TASK_ID, _access={}))
 
 
-OPEN_PR = {"number": 50, "state": "OPEN", "url": "https://github.com/o/r/pull/50"}
+OPEN_PR = {
+    "number": 50,
+    "state": "OPEN",
+    "url": "https://github.com/o/r/pull/50",
+    "headRefOid": "head-sha-50",
+}
 MERGED_PR = {"number": 50, "state": "MERGED", "url": "https://github.com/o/r/pull/50"}
 
 

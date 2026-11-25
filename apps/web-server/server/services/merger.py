@@ -42,6 +42,7 @@ import server.services.project_settings_store as pss
 from server.project_registry import load_projects, resolve_project_path
 from server.routes.task_service import get_spec_dirs
 from server.services import pr_endgame as pe
+from server.services import qa_gate
 from server.services.github_app import project_github_token
 from server.services.pr_endgame import Runner
 from server.services.task_control import read_control, write_control
@@ -56,8 +57,8 @@ def _skip(task: str, reason: str) -> dict[str, Any]:
 
 def _find_pr(
     owner: str, name: str, branch: str, runner: Runner
-) -> tuple[bool, int | None, str | None]:
-    """``(measured, pr_number, state)`` of the PR for ``branch``, in ANY state.
+) -> tuple[bool, int | None, str | None, str | None]:
+    """``(measured, pr_number, state, head_sha)`` of the PR for ``branch``, in ANY state.
 
     An OPEN PR wins; otherwise the most recently created one, so a branch
     whose PR was MERGED or CLOSED is recognised as already decided (#2586).
@@ -83,26 +84,32 @@ def _find_pr(
             "--state",
             "all",
             "--json",
-            "number,state,createdAt",
+            "number,state,createdAt,headRefOid",
         ],
         None,
     )
     if not res.ok:
-        return False, None, None
+        return False, None, None, None
     try:
         prs = json.loads(res.out or "[]")
     except ValueError:
-        return False, None, None
+        return False, None, None, None
     if not isinstance(prs, list):
-        return False, None, None
+        return False, None, None, None
     prs = [p for p in prs if isinstance(p, dict) and isinstance(p.get("number"), int)]
     if not prs:
-        return True, None, None
+        return True, None, None, None
     open_prs = [p for p in prs if p.get("state") == "OPEN"]
     pick = (
         open_prs[0] if open_prs else max(prs, key=lambda p: str(p.get("createdAt", "")))
     )
-    return True, int(pick["number"]), str(pick.get("state") or "")
+    head_oid = pick.get("headRefOid")
+    head_sha = (
+        str(head_oid).strip()
+        if isinstance(head_oid, str) and head_oid.strip()
+        else None
+    )
+    return True, int(pick["number"]), str(pick.get("state") or ""), head_sha
 
 
 def _pick_ref(
@@ -307,6 +314,19 @@ class _SkipTask(Exception):  # noqa: N818 - not an error, a control-flow signal
         self.reason = reason
 
 
+def _ref_sha(worktree: Path, branch: str, runner: Runner) -> str | None:
+    on_origin = runner(
+        ["git", "rev-parse", "--verify", "--quiet", f"origin/{branch}"],
+        str(worktree),
+    ).ok
+    ref = _pick_ref(worktree, branch, on_origin, runner)
+    if ref is None:
+        return None
+    res = runner(["git", "rev-parse", ref], str(worktree))
+    sha = res.out.strip() if res.ok else ""
+    return sha or None
+
+
 def _decide(
     project_path: Path,
     spec_dir: Path,
@@ -340,7 +360,7 @@ def _decide(
     owner, name = parts
     branch, base = ctx["branch"], ctx["base"]
 
-    pr_list_measured, existing, state = _find_pr(owner, name, branch, runner)
+    pr_list_measured, existing, state, pr_head = _find_pr(owner, name, branch, runner)
     if not pr_list_measured:
         raise _SkipTask("open_pr_check_unmeasurable (gh pr list failed)")
     if existing is not None:
@@ -349,6 +369,11 @@ def _decide(
         action = {"MERGED": "merged", "CLOSED": "closed"}.get(
             state or "", "already_open"
         )
+        if action == "already_open":
+            head = pr_head or pe._pr_head(owner, name, existing, runner)
+            gate_reason = qa_gate.check(spec_dir, head)
+            if gate_reason is not None:
+                raise _SkipTask(gate_reason)
         return {"action": action, "pr": existing}
 
     ahead_by, changed_files, unpushed = _branch_ahead_and_changed(
@@ -362,6 +387,11 @@ def _decide(
         )
     if not pe.is_auto_pr_enabled(project_path):
         raise _SkipTask("auto_pr_disabled")
+
+    head_sha = _ref_sha(ctx["worktree"], branch, runner)
+    gate_reason = qa_gate.check(spec_dir, head_sha)
+    if gate_reason is not None:
+        raise _SkipTask(gate_reason)
 
     if dry_run:
         return {
@@ -434,8 +464,11 @@ def _sync_status(spec_dir: Path, result: dict[str, Any]) -> bool:
     Never raises: a failed write must not turn a PR outcome into an error.
     """
     action = result.get("action")
-    if action == "skipped" and str(result.get("reason") or "").startswith("no_content"):
+    reason_raw = str(result.get("reason") or "")
+    if action == "skipped" and reason_raw.startswith("no_content"):
         target: tuple[str, str | None] | None = _NO_WORK
+    elif action == "skipped" and reason_raw in qa_gate.GATE_REASONS:
+        target = ("human_review", reason_raw)
     else:
         target = _STATUS_FOR_ACTION.get(str(action))
     if target is None:

@@ -20,6 +20,7 @@ branch is already local) passes with or without the guard and proves nothing.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -105,6 +106,39 @@ def packed_path_repos(tmp_path: Path) -> dict[str, Path]:
     spec_dir.mkdir(parents=True)
     (spec_dir / "requirements.json").write_text(
         json.dumps({"title": "Roman numerals", "description": "convert ints"})
+    )
+    head_sha = _git(origin, "rev-parse", TASK_BRANCH)
+    report = b"# QA Report\nApproved\n"
+    (spec_dir / "qa_evidence_report.md").write_bytes(report)
+    (spec_dir / "qa_evidence.json").write_text(
+        json.dumps(
+            {
+                "status": "approved",
+                "reviewer": {
+                    "model": "opus",
+                    "provider": "claude",
+                    "served_model": None,
+                },
+                "reviewed_head": head_sha,
+                "report_sha256": hashlib.sha256(report).hexdigest(),
+                "qa_cycle": 1,
+                "override": None,
+                "at": "2026-11-25T00:00:00+00:00",
+            }
+        )
+    )
+    (spec_dir / "model_identities.json").write_text(
+        json.dumps(
+            [
+                {
+                    "phase": "coding",
+                    "subtask_id": "1.1",
+                    "model": "sonnet",
+                    "provider": "claude",
+                    "served_model": None,
+                }
+            ]
+        )
     )
 
     save_projects({PROJECT_ID: {"path": str(project), "name": "proj"}})

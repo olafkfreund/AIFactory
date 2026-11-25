@@ -8,6 +8,7 @@ runner (reused from ``pr_endgame``), so these tests touch no network/git.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import subprocess
 import sys
@@ -70,6 +71,38 @@ def _spec(
         meta["tenant_id"] = tenant
     if meta:
         (spec_dir / "task_metadata.json").write_text(json.dumps(meta))
+    report = b"# QA Report\nApproved\n"
+    (spec_dir / "qa_evidence_report.md").write_bytes(report)
+    (spec_dir / "qa_evidence.json").write_text(
+        json.dumps(
+            {
+                "status": "approved",
+                "reviewer": {
+                    "model": "opus",
+                    "provider": "claude",
+                    "served_model": None,
+                },
+                "reviewed_head": "head-sha-001",
+                "report_sha256": hashlib.sha256(report).hexdigest(),
+                "qa_cycle": 1,
+                "override": None,
+                "at": "2026-11-25T00:00:00+00:00",
+            }
+        )
+    )
+    (spec_dir / "model_identities.json").write_text(
+        json.dumps(
+            [
+                {
+                    "phase": "coding",
+                    "subtask_id": "1.1",
+                    "model": "sonnet",
+                    "provider": "claude",
+                    "served_model": None,
+                }
+            ]
+        )
+    )
     return spec_dir
 
 
@@ -80,7 +113,15 @@ def _prs(*items: tuple[int, str, str]) -> CmdResult:
     return CmdResult(
         0,
         json.dumps(
-            [{"number": n, "state": st, "createdAt": at} for n, st, at in items]
+            [
+                {
+                    "number": n,
+                    "state": st,
+                    "createdAt": at,
+                    "headRefOid": "head-sha-001",
+                }
+                for n, st, at in items
+            ]
         ),
         "",
     )
@@ -88,12 +129,12 @@ def _prs(*items: tuple[int, str, str]) -> CmdResult:
 
 def test_find_pr_none():
     r = FakeRunner({"pr list": CmdResult(0, "[]", "")})
-    assert mg._find_pr("o", "r", "b", r) == (True, None, None)
+    assert mg._find_pr("o", "r", "b", r) == (True, None, None, None)
 
 
 def test_find_pr_found_open():
     r = FakeRunner({"pr list": _prs((42, "OPEN", "2026-09-01"))})
-    assert mg._find_pr("o", "r", "b", r) == (True, 42, "OPEN")
+    assert mg._find_pr("o", "r", "b", r) == (True, 42, "OPEN", "head-sha-001")
 
 
 def test_find_pr_queries_every_state():
@@ -108,14 +149,14 @@ def test_find_pr_prefers_open_over_newer_merged():
     r = FakeRunner(
         {"pr list": _prs((7, "MERGED", "2026-09-10"), (9, "OPEN", "2026-09-01"))}
     )
-    assert mg._find_pr("o", "r", "b", r) == (True, 9, "OPEN")
+    assert mg._find_pr("o", "r", "b", r) == (True, 9, "OPEN", "head-sha-001")
 
 
 def test_find_pr_most_recent_when_none_open():
     r = FakeRunner(
         {"pr list": _prs((3, "CLOSED", "2026-09-01"), (8, "MERGED", "2026-09-08"))}
     )
-    assert mg._find_pr("o", "r", "b", r) == (True, 8, "MERGED")
+    assert mg._find_pr("o", "r", "b", r) == (True, 8, "MERGED", "head-sha-001")
 
 
 def test_find_pr_query_failure_is_unmeasured_not_none():
@@ -123,12 +164,12 @@ def test_find_pr_query_failure_is_unmeasured_not_none():
     successful query that found nothing -- else the sweep proceeds to
     `gh pr create` on an idempotency check that was never actually made."""
     r = FakeRunner({"pr list": CmdResult(1, "", "rate limited")})
-    assert mg._find_pr("o", "r", "b", r) == (False, None, None)
+    assert mg._find_pr("o", "r", "b", r) == (False, None, None, None)
 
 
 def test_find_pr_garbled_output_is_unmeasured_not_none():
     r = FakeRunner({"pr list": CmdResult(0, "<html>502</html>", "")})
-    assert mg._find_pr("o", "r", "b", r) == (False, None, None)
+    assert mg._find_pr("o", "r", "b", r) == (False, None, None, None)
 
 
 # ── _branch_ahead_and_changed ────────────────────────────────────────────────
@@ -320,6 +361,7 @@ def test_honest_body_links_origin_issue(tmp_path):
 def _routes(**overrides) -> dict[str, CmdResult]:
     base = {
         "rev-parse --abbrev-ref HEAD": CmdResult(0, "aifactory/001-x", ""),
+        "rev-parse refs/heads/aifactory/001-x": CmdResult(0, "head-sha-001", ""),
         "pr list": CmdResult(0, "", ""),
         "fetch origin": CmdResult(0, "", ""),
         "rev-list --count": CmdResult(0, "3\n", ""),
@@ -499,8 +541,10 @@ def test_sweep_accounts_for_every_spec(tmp_path, monkeypatch):
     def runner(argv, cwd=None):
         joined = " ".join(argv)
         spec_id = "002-empty" if cwd and "002-empty" in cwd else "001-opens"
-        if joined.startswith("git rev-parse"):
+        if joined.startswith("git rev-parse --abbrev-ref"):
             return CmdResult(0, f"aifactory/{spec_id}", "")
+        if joined.startswith("git rev-parse refs/heads/"):
+            return CmdResult(0, "head-sha-001", "")
         if "rev-list --count" in joined:
             return CmdResult(0, "0\n" if spec_id == "002-empty" else "3\n", "")
         if "diff --no-ext-diff --no-textconv --name-only" in joined:
