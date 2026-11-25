@@ -216,6 +216,8 @@ async def test_qa_loop_ignores_metadata_forged_by_a_qa_session(
                 "check_git_metadata": MagicMock(),
                 "_create_qa_reviewer_provider": provider,
                 "run_qa_agent_session": forging_session,
+                # CI runners have no provider CLI; reviewer configuration is not under test.
+                "is_configured": lambda _m: True,
             },
         ),
         pytest.raises(KeyboardInterrupt),
