@@ -295,6 +295,7 @@ def handle_build_command(
     """
     # Lazy imports to avoid loading heavy modules
     from agent import run_autonomous_agent, sync_plan_to_source
+    from agents.model_identity import clear_identities
     from debug import (
         debug,
         debug_info,
@@ -527,6 +528,7 @@ def handle_build_command(
     # #1983: gate values read once, before any agent session; the spec dirs are
     # agent-writable after it.
     gates = RunGates.capture(spec_dir, source_spec_dir, model)
+    clear_identities(source_spec_dir or spec_dir)
 
     try:
         debug("run.py", "Starting agent execution")

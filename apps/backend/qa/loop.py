@@ -6,10 +6,12 @@ Main QA loop that coordinates reviewer and fixer sessions until
 approval or max iterations.
 """
 
+import os
 import time as time_module
 from pathlib import Path
 
 from agents.coder import _fail_on_git_metadata
+from agents.model_identity import record_identity
 from agents.utils import load_implementation_plan
 from core.client import create_client
 from core.git_metadata import check_git_metadata
@@ -269,6 +271,16 @@ async def run_qa_validation_loop(  # noqa: PLR0913 - #1969 source dir + #1983 ga
                 phase="qa_fixer",
                 **fixer_kwargs,
             )
+
+        record_identity(
+            source_spec_dir
+            if source_spec_dir and source_spec_dir != Path(os.devnull)
+            else spec_dir,
+            phase="qa_fixer",
+            subtask_id=None,
+            model=qa_model,
+            provider=fixer_provider,
+        )
 
         async with fix_client:
             fix_status, fix_response = await run_qa_fixer_session(
@@ -587,6 +599,16 @@ async def run_qa_validation_loop(  # noqa: PLR0913 - #1969 source dir + #1983 ga
                     phase="qa_fixer",
                     **fixer_kwargs,
                 )
+
+            record_identity(
+                source_spec_dir
+                if source_spec_dir and source_spec_dir != Path(os.devnull)
+                else spec_dir,
+                phase="qa_fixer",
+                subtask_id=None,
+                model=fixer_model,
+                provider=fixer_provider_name,
+            )
 
             async with fix_client:
                 fix_status, fix_response = await run_qa_fixer_session(

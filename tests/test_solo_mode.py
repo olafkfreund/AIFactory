@@ -241,7 +241,14 @@ def _make_spec(tmp_path: Path) -> Path:
     return spec_dir
 
 
-async def _run_one_turn(spec_dir: Path, project_dir: Path):
+async def _run_one_turn(
+    spec_dir: Path,
+    project_dir: Path,
+    *,
+    source_spec_dir: Path | None = None,
+    next_subtask: dict | None = None,
+    first_run: bool | None = None,
+):
     """Drive run_autonomous_agent for a single (mocked) session.
 
     All heavy collaborators are mocked. ``run_session_guarded`` returns
@@ -267,11 +274,15 @@ async def _run_one_turn(spec_dir: Path, project_dir: Path):
         "create_client": create_client_mock,
         "get_solo_prompt": solo_p,
         "generate_planner_prompt": plan_p,
+        "generate_subtask_prompt": MagicMock(return_value="SUBTASK_PROMPT"),
+        "load_subtask_context": MagicMock(return_value={}),
         "run_session_guarded": AsyncMock(return_value=("complete", "", {})),
         # tmp_path is not a git repo; the metadata check fails closed there.
         "check_git_metadata": MagicMock(),
         "get_graphiti_context": AsyncMock(return_value=""),
-        "RecoveryManager": MagicMock(),
+        "RecoveryManager": MagicMock(
+            return_value=MagicMock(get_attempt_count=MagicMock(return_value=0))
+        ),
         "StatusManager": MagicMock(),
         "get_task_logger": MagicMock(return_value=None),
         "debug_memory_system_status": MagicMock(),
@@ -279,7 +290,7 @@ async def _run_one_turn(spec_dir: Path, project_dir: Path):
         "CompactionDetector": MagicMock(),
         "build_operational_context": MagicMock(return_value=""),
         "drain_inbox": MagicMock(return_value=[]),
-        "is_build_complete": MagicMock(return_value=True),
+        "is_build_complete": MagicMock(return_value=next_subtask is None),
         "print_build_complete_banner": MagicMock(),
         "print_progress_summary": MagicMock(),
         "print_session_header": MagicMock(),
@@ -288,13 +299,17 @@ async def _run_one_turn(spec_dir: Path, project_dir: Path):
             return_value={"completed": 0, "total": 0, "in_progress": 0}
         ),
         "get_current_phase": MagicMock(return_value=None),
-        "get_next_subtask": MagicMock(return_value=None),
+        "get_next_subtask": MagicMock(return_value=next_subtask),
         "get_latest_commit": MagicMock(return_value="abc"),
         "get_commit_count": MagicMock(return_value=0),
         "infer_provider_from_model": MagicMock(return_value="claude"),
     }
 
     with contextlib.ExitStack() as stack:
+        if first_run is not None:
+            stack.enter_context(
+                patch.object(coder, "is_first_run", return_value=first_run)
+            )
         stack.enter_context(
             patch("run_gates.get_phase_model", return_value="claude-sonnet-4-5")
         )
@@ -308,6 +323,7 @@ async def _run_one_turn(spec_dir: Path, project_dir: Path):
             spec_dir=spec_dir,
             model="claude-sonnet-4-5",
             max_iterations=1,
+            source_spec_dir=source_spec_dir,
         )
 
     return create_client_mock, solo_p, plan_p
