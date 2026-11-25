@@ -7,7 +7,7 @@ coders:
   2: codex   # control-plane evidence + fresh-verdict rule: security-sensitive logic
   3: codex   # reviewer pick, failover filter, gateway rules: tricky selection logic
   4: coder   # D2 removal of the QA skips: small, well-bounded edits
-  5: agy     # D1 gate wired into merger, endgame and manual PR route, plus entry-point tests: broad mechanical wiring
+  5: agy     # D1 gate across merger, endgame and manual PR route: broad behavioural wiring; codex reviews head selection and retry
   6: coder   # D5 read-back fields: small API change
   7: codex   # PFactory tier table + cost-router exclusion: small routing logic
   8: coder   # Factory E2E harness S3 read-back: small, after the releases
@@ -105,25 +105,147 @@ without it.
 - **D7 (Factory):** the S3 read-back uses `phaseModels` and `qaEvidence`,
   with `reviewer ∉ identities` and `reviewed_head` equal to the PR head.
 
+### Decisions added in revision 2 (from the plan reviews)
+
+These details sit within the approved spec.
+
+- **The gate's pass criteria.** `check` returns `None` only when every one of
+  these holds:
+  - `qa_evidence.status == "approved"`;
+  - `reviewed_head == head_sha`;
+  - the sha256 of the protected report copy equals `report_sha256`;
+  - every identity has a known model;
+  - the reviewer's canonical id equals no identity's canonical id
+    (`resolve_model_id` on both sides, so aliases compare equal).
+
+  The other outcomes:
+
+  | Situation | Result |
+  |---|---|
+  | Evidence missing, malformed or unreadable | `qa_missing` |
+  | Status not approved | `qa_missing` |
+  | Head or report hash mismatch | `qa_stale` |
+  | Unknown identity, or the reviewer equals an identity | `qa_not_independent` |
+- **The protected report copy** is `source_spec_dir/qa_evidence_report.md`.
+  `qa_report.md` is already in the worktree sync allowlist
+  (`agent_worktree_sync.py:91`), so the copy needs its own name. That name
+  stays off the allowlist.
+- **The head sha differs per PR path:**
+  - an existing or adopted PR uses its actual head sha, from `gh pr view
+    --json headRefOid` or the provider API;
+  - a new PR uses the sha of the task ref the path will push.
+- **The manual route** checks before rebasing and pushing. If the route's
+  rebase would change the head, it returns `qa_stale` (409) and asks for a
+  fresh QA run. The gate does not block an already-merged PR.
+- **The solo session** that writes the code is recorded as a **coding**
+  identity, even though it is labelled `planning`. Both fixer clients built in
+  `qa/loop.py` are recorded: the human-feedback one and the after-rejection
+  one.
+- **The QA identity is the verdict writer's.** The reviewer's tool fallback
+  (`qa/reviewer.py` ~383-574), which can write `qa_signoff`, goes through the
+  same independence filter. The evidence records the identity of the session
+  that actually wrote the verdict.
+- **A denied first candidate.** When the model registry is in `deny` mode,
+  the resolved QA candidate is checked in non-raising form, so an initial
+  candidate that is denied moves on to the next one. The build preflight QA
+  resolve (`build_commands.py` ~322) must not raise for a QA model that
+  `pick_reviewer` would replace.
+- **Provider preference.** A distinct candidate on another configured
+  provider beats a distinct resolved QA model on the coder's provider. Any
+  change is logged with the prefix `[QA independence]` and recorded in
+  `qa_evidence.override`.
+- **`IndependentReviewUnavailable`** is caught in `qa/loop.py`. It writes
+  `qa_evidence.json` with `status: "unavailable"` and the reason, and
+  returns not-approved. The task then lands in Needs you as `qa_missing`, and
+  the log carries the reason. It never reaches the generic fatal handler at
+  `build_commands.py:776`.
+- **Clearing evidence.**
+  - Evidence is deleted at **build start**, before the QA branch, so a
+    `--skip-qa` retry at the same sha cannot reuse an old approval.
+  - It is deleted again before each QA cycle.
+  - It is written before `COMPLETE` is emitted.
+- **The `os.devnull` source dir.** On the `--qa` CLI path, `source_spec_dir`
+  can be `Path(os.devnull)` (`cli/qa_commands.py:171-180`). The writers fall
+  back to `spec_dir` in that case and never write under `os.devnull`.
+- **Packed and kubejob builds.**
+  - The CLI pushes the evidence, the identities and the protected report copy
+    after QA (next to the other pushes in `cli/main.py` ~537-565).
+  - The control plane fetches them in `services/completion.py` (~1185-1208)
+    before completion orchestration or the merger reads them.
+  - The evidence object is keyed per run (task id plus run id), and the fetch
+    replaces local evidence with the current run's object. If the run
+    uploaded no evidence, the local evidence is deleted.
+  - This does not use `maybe_fetch_usage`'s token-total comparison.
+- **The completion markers.**
+  - `.terminal_side_effects_done` keeps guarding the TFactory hand-off, as
+    today.
+  - The PR endgame gets its own marker, `.pr_endgame_done`, written only
+    after the endgame ran. When the gate fails, the endgame is skipped
+    without writing it, so the next completion after a passing QA runs it.
+  - The merger still runs and records the gate reason.
+- **The identity file lock.** `record_identity` holds an `fcntl.flock` (plus
+  a thread lock) around the whole read, append and replace. Parallel workers
+  must not lose entries.
+- **Shared helpers in the web server.** `qa_gate.py` reuses
+  `resolve_model_id` and `read_identities` through the `sys.path` shim
+  pattern in `routes/tasks_usage.py:60-67`. It never duplicates alias logic.
+- **Human-set status.** The merger keeps the existing guard
+  (`merger.py:445`): a status a human set is never overwritten.
+- **D5 shapes.**
+  - `phaseModels` is `{phase: [model, …]}`, deduped and sorted. The solo
+    session's model is listed under `coding`.
+  - `qaEvidence` is the evidence object or `null`.
+- **The PFactory router.**
+  - When the search for QA is exhausted, `apply_cost_routing` explicitly
+    removes `qa` from the merged `phase_models` and `phase_routes`.
+  - `qa_fixer` is set to the final coding model after routing or a pin.
+  - Canonical ids come from the catalog's documented shorthand mapping
+    (`model-catalog.json:2`), in `cost_router.py`.
+    `cost_router_core.py` is vendored and stays byte-identical.
+  - The `_CLAUDE_ROLES` restriction on `qa` (`cost_router.py:61`) stays.
+- **Deployment.** Prod k3s through gitops only. No p510.
+
 ### Branches and order
 
 | Repo | Branch | Steps | Released as |
 |---|---|---|---|
-| AIFactory | `fix/2233-independent-review` | 1-6 | AIFactory release |
-| PFactory | `fix/2233-qa-seed` | 7 | PFactory 0.9.7 |
-| Factory | — | 8 | after both releases |
+| AIFactory | `fix/2233-independent-review` | 1-6, released together | next AIFactory release |
+| PFactory | `fix/2233-qa-seed` | 7, independent of 1-6 | PFactory 0.9.7 |
+| Factory | `fix/2233-e2e-s3`, from `origin/main` | 8 | after both releases |
+
+**Dependencies.**
+
+- Steps 1-2 define the files that steps 3, 5 and 6 read.
+- Step 3 completes the reviewer identity that the gate trusts.
+- Step 4 turns QA on in the normal paths before the gate ships.
 
 ## Repo traps (every step)
 
-- **Tests:** run them with `apps/backend/.venv/bin/pytest`, plus
-  `apps/web-server` tests where the step touches the web server. Run ruff
-  check and `ruff format --check` on the changed files.
+- **AIFactory tests** run from the worktree root against the root `tests/`
+  folder, using the main checkout's venv:
+
+  ```bash
+  /mnt/code/Source-home/GitHub/AIFactory/apps/backend/.venv/bin/pytest tests/<file> -q
+  ```
+
+  Web-server tests run from `apps/web-server`:
+
+  ```bash
+  /mnt/code/Source-home/GitHub/AIFactory/apps/web-server/.venv/bin/pytest tests/<file> -q
+  ```
+
+  Name the test files; never rely on `-k` alone. Run `ruff check` and
+  `ruff format --check` on the changed files.
 - **`get_phase_model` and `os.devnull`:** `RunGates.model()` calls
-  `get_phase_model` with `Path(os.devnull)`. Never write files from inside it.
+  `get_phase_model` with `Path(os.devnull)`. Never write files from inside
+  it.
 - **`record_turn`:** it defaults `worker_id` to `"main"`, last write wins.
   Always pass a distinct worker id.
-- **Worktree sync:** `agent_worktree_sync.py` has an allowlist. Do not add
-  the evidence files to it.
+- **Worktree sync:** `agent_worktree_sync.py` already syncs `qa_report.md`.
+  Never add the evidence files or the protected copy to it.
+- **Source vs worktree spec dir:** use the split at `build_commands.py:475`
+  and the `source_spec_dir or spec_dir` pattern at `coder.py:865` /
+  `parallel_integration.py:451,722`. `coder.py:480` is the worktree client.
 - **Implementers** (Codex, agy, coder) never stage, commit, push, deploy or
   restart. The lead commits after each step.
 
@@ -132,158 +254,219 @@ without it.
 1. **Identity capture (D3 identities).**
    - **Add** `apps/backend/agents/model_identity.py` with
      `record_identity(source_spec_dir, *, phase, subtask_id, model, provider,
-     served_model=None)` (append-only JSON, with a lock like
-     token_attribution's) and `read_identities(source_spec_dir)`.
-   - **Call it** where each session is built:
-     - `agents/coder.py` (~459-473, the serial session's model, including a
-       per-subtask override);
-     - `agents/parallel_integration.py` (~493, per worker);
-     - `qa/fixer.py` (the fixer session).
-   - **Source dir:** pass the source spec dir, not the worktree one. Find how
-     `build_commands.py:475` and `coder.py:480` separate the two.
-   - **Tests:** identities are written with no usage payload; a subtask
-     override is recorded; a worktree build writes to the source dir.
-   - **Verify** with `apps/backend/.venv/bin/pytest
-     apps/backend/tests -k "model_identity" -q`.
+     served_model=None)` (flock-guarded append, atomic replace),
+     `read_identities(source_spec_dir)` and `clear_identities`.
+   - **Call it where each session is built:**
+     - `agents/coder.py`: the first session (~462-488) is recorded as
+       `coding` even when it is labelled planning in solo; the serial coding
+       session, including a per-subtask override;
+     - `agents/parallel_integration.py` (~493), per worker;
+     - `qa/loop.py`: both fixer clients (~249-279 human feedback, ~557-595
+       after rejection).
+   - **Clearing:** `clear_identities` runs at build start.
+   - **Tests** (`tests/test_model_identity.py`, new):
+     - an identity is written with no usage payload;
+     - a solo run with no later coding session records `coding`;
+     - a subtask override is recorded;
+     - both fixer sites are recorded;
+     - a worktree build writes to the source dir;
+     - the `os.devnull` fallback works;
+     - concurrent appends lose nothing.
+   - **Verify** with `<backend pytest> tests/test_model_identity.py
+     tests/test_solo_mode.py tests/test_qa_loop.py -q`.
 
-2. **Control-plane QA evidence and fresh verdicts (D3 evidence).**
+2. **Control-plane evidence, fresh verdicts and transport (D3 evidence).**
+   - **`cli/build_commands.py`:**
+     - at build start, before the QA branch (~613), delete
+       `qa_evidence.json` and `qa_evidence_report.md` in the source dir;
+     - remove the loop's old approval shortcut (`qa/loop.py` ~224).
    - **`qa/loop.py`:**
-     - delete `source_spec_dir/qa_evidence.json` at the start of the loop and
-       before each cycle;
-     - clear `qa_signoff` before the reviewer session;
-     - after the session, write `qa_evidence.json` on both the approved
-       branch (~438-480) and the rejected branch (~482-555), with
-       `reviewed_head` set to `git rev-parse HEAD` in the build worktree;
-     - copy `qa_report.md` and compute `report_sha256`;
-     - if no fresh signoff exists, count it as an error, not an approval.
+     - before each cycle, delete the evidence and clear `qa_signoff`;
+     - after the reviewer session, on the approved (~438-480) and rejected
+       (~482-555) branches, write `qa_evidence.json`;
+     - `reviewed_head` is `git rev-parse HEAD` in the build worktree;
+     - copy the report to `qa_evidence_report.md` and set `report_sha256`;
+     - a missing fresh signoff counts as an error, never an approval;
+     - write all of this before `COMPLETE`.
    - **`qa/reviewer.py` and `qa/fixer.py`:** read `ResultMessage` usage and
      duration, and call `record_turn` with worker id `qa-<cycle>` or
      `qa-fixer-<cycle>`.
-   - **`core/workspace_fetch.py`:** push and fetch `qa_evidence.json`,
-     `model_identities.json` and the report copy next to `token_usage.json`.
-   - **Tests:**
+   - **`core/workspace_fetch.py`:**
+     - add per-run-keyed `push_qa_evidence` and `fetch_qa_evidence`;
+     - call the push in `cli/main.py` (~537-565) and the fetch in
+       `services/completion.py` (~1185-1208);
+     - an absent upload deletes local evidence.
+   - **Tests** (`tests/test_qa_evidence.py`, new, plus the existing ones):
      - a coder-written worktree `qa_evidence.json` is ignored;
-     - the file is deleted before each cycle;
+     - evidence is deleted at build start and before each cycle;
+     - a `--skip-qa` retry at the same sha leaves no evidence;
      - a stale verdict (changed HEAD, or no fresh signoff) does not count;
+     - a sync of `qa_report.md` does not touch the protected copy;
      - QA `record_turn` leaves `workers["main"]` unchanged;
-     - the workspace_fetch round trip works.
-   - **Verify** with `pytest apps/backend/tests -k "qa_loop or qa_evidence or
-     workspace_fetch" -q`.
+     - the packed push and fetch round trip, with no usage payload and with
+       no verdict.
+   - **Verify** with `<backend pytest> tests/test_qa_evidence.py
+     tests/test_qa_loop.py tests/test_qa_loop_enhancements.py
+     tests/test_workspace_fetch_plan.py
+     tests/test_workspace_fetch_correction.py -q`.
 
 3. **Reviewer selection (D4).**
-   - **Add** `apps/backend/qa/independence.py` with
-     `pick_reviewer(gates, identities, *, exclude_providers=()) -> Pick`
-     (model, provider, override reason), or raise
+   - **Add** `apps/backend/qa/independence.py` with `pick_reviewer(gates,
+     identities, *, configured) -> Pick(model, provider, override)`, or raise
      `IndependentReviewUnavailable`.
-   - **Use it** in `qa/loop.py` where the QA session is built (~352) and in
-     the provider failover (~651-676), replacing the bare `next_provider`
-     result.
-   - **Registry:** check eligibility per candidate with `model_registry`
-     (~176), in non-raising form.
-   - **Betas and thinking:** derive them from the picked model.
-   - **Record** the override in `qa_evidence.override`.
-   - **Tests:**
+   - **What it applies:** candidate order, the registry check per candidate
+     in non-raising form (`model_registry` ~176; the initial candidate
+     included), the configured filter, canonical-id exclusion, provider
+     preference, the gateway rules, and the `[QA independence]` log.
+   - **Use it in:**
+     - `qa/loop.py`, where the QA session is built (~352), and the provider
+       failover (~651-676);
+     - the reviewer tool fallback (`qa/reviewer.py` ~383-574).
+   - **Preflight:** make the build preflight QA resolve
+     (`build_commands.py` ~322) non-fatal for a QA model that the pick
+     replaces.
+   - **Betas:** pass them through `_create_qa_reviewer_provider`
+     (`qa/loop.py` ~68-107).
+   - **`IndependentReviewUnavailable`:** catch it in `qa/loop.py`, write
+     evidence with `status: "unavailable"` and the reason, and return
+     not-approved.
+   - **Tests** (`tests/test_qa_independence.py`, new):
      - an equal model is re-picked;
+     - alias equality;
      - a pin is overridden for QA;
-     - a `deny`-mode registry rejection moves to the next candidate;
-     - provider preference applies;
-     - same-class routes are re-picked;
+     - the initial candidate denied by the registry;
+     - provider preference beats a distinct same-provider QA;
+     - same-class routes;
      - two routes with an unknown served model fall back to an explicit
        model;
      - failover is filtered;
-     - the unavailable case raises.
-   - **Verify** with `pytest apps/backend/tests -k "independence or qa_loop"
-     -q`.
+     - the verdict-writing fallback is filtered and its identity recorded;
+     - unavailable is handled.
+   - **Verify** with `<backend pytest> tests/test_qa_independence.py
+     tests/test_qa_loop.py tests/test_qa_model_from_source.py -q`.
 
 4. **Remove the QA skips (D2).**
-   - **`cli/build_commands.py:311-316`:** delete the solo `skip_qa = True`.
-     Keep the comment explaining that solo keeps its single session.
+   - **`cli/build_commands.py:311-316`:** delete the solo `skip_qa = True`
+     and rewrite the comment: solo keeps one plan-and-implement session, and
+     QA still runs.
    - **`build_commands.py:665-750`:** remove the "pre-approved by coder"
      branch.
-   - **`qa/criteria.py:53-61,95-109`:** `is_qa_approved` and `should_run_qa`
-     no longer treat a coder `qa_signoff` as a reason to skip.
+   - **`qa/criteria.py:53-61,95-109`:** a coder `qa_signoff` is never a
+     reason to skip, at any `requires_review` value.
    - **`cli/main.py:204` help text:** say that a `--skip-qa` task cannot
      reach `awaiting_merge`.
    - **Tests:** solo runs QA; a coder signoff is ignored at both
-     `requires_review` values.
-   - **Verify** with `pytest apps/backend/tests -k "solo or criteria or
-     build_commands" -q`.
+     `requires_review` values. Update the existing assertions that expect the
+     skip.
+   - **Verify** with `<backend pytest> tests/test_solo_mode.py
+     tests/test_qa_criteria.py tests/test_solo_parallel_waves.py -q`.
 
-5. **The gate at every PR entry point (D1).**
+5. **The gate at every PR entry point (D1).** This is behavioural work, and
+   the review covers head selection and retry.
    - **Add** `apps/web-server/server/services/qa_gate.py` with
-     `check(source_spec_dir, head_sha)`, reading `qa_evidence.json`,
-     `model_identities.json` and the report copy.
-   - **Wire it in:**
-     - `services/merger.py` `_decide` (~343-352): after `_find_pr`, for the
-       `opened` (before push and create) and `already_open` outcomes, raise
-       `_SkipTask(reason)`; leave `MERGED` and `CLOSED` alone;
-     - `_sync_status` (~427-451): map the three reasons to
-       `("human_review", reason)`;
-     - `services/completion_orchestration.py`: before `run_pr_endgame`
-       (~549-578), skip the endgame and do not set the fire-once marker
-       (~207) when the gate fails;
-     - `routes/pr.py` `create_pr_from_task` (~97-534): before returning an
-       existing PR (~224) or creating one (~432, ~464-507), return 409 with
-       the reason.
-   - **Head sha:** use the branch head the PR would carry.
-   - **Tests:** every entry point, refused and passing, `MERGED`/`CLOSED` not
-     blocked, the adopted marker not set, the provider-API route, and the
-     `_sync_status` mapping.
-   - **Verify** with `cd apps/web-server && ../backend/.venv/bin/pytest
-     tests -k "qa_gate or merger or completion or create_pr" -q`.
+     `check(source_spec_dir, head_sha)`, applying the pass criteria above,
+     with the `sys.path` shim for the backend helpers.
+   - **`services/merger.py`:**
+     - `_find_pr` (~86/175) also returns `headRefOid`;
+     - `_decide` (~343-352) calls the gate for `already_open`, with the PR
+       head, and for `opened`, with the selected task ref sha, before the
+       push;
+     - `MERGED` and `CLOSED` are never gated;
+     - `_sync_status` (~427-451) maps the three reasons to
+       `("human_review", reason)` and keeps the human-set guard (~445).
+   - **`services/completion_orchestration.py`:**
+     - add the `.pr_endgame_done` marker;
+     - before `run_pr_endgame` (~549-578), skip on gate failure without
+       writing it;
+     - the TFactory hand-off and `.terminal_side_effects_done` (~207-252)
+       are unchanged;
+     - the merger call (~592-610) still runs.
+   - **`routes/pr.py` `create_pr_from_task`:**
+     - for an existing PR (~224-225): gate an `OPEN` PR with its head; never
+       gate a `MERGED` one;
+     - for a new PR: gate before the rebase and push (~275-382) with the
+       task ref sha;
+     - return 409 with the reason;
+     - a rebase that would move the head returns `qa_stale`.
+   - **Tests** (`apps/web-server/tests/test_qa_gate.py`, new, plus the
+     existing root tests):
+     - all four outcomes, alias equality and a changed report;
+     - the merger: `opened` and `already_open` refused, `MERGED` and `CLOSED`
+       not blocked, the status mapping, a human-set status kept, a
+       remote-only branch;
+     - completion: ordinary and adopted, the endgame marker not written on
+       failure, and the endgame run on a later pass;
+     - the manual route: GitHub and the provider API, an existing `OPEN` PR,
+       a `MERGED` PR, and the rebase case.
+   - **Verify** with `cd apps/web-server && <web pytest>
+     tests/test_qa_gate.py -q`, then, from the root, `<backend pytest>
+     tests/test_merge_auto_merger.py tests/test_completion_lands_via_merger.py
+     tests/test_completion_evidence_gate.py
+     tests/test_create_pr_fetches_branch.py tests/test_pr_endpoints.py -q`.
 
 6. **Read-back (D5).**
-   - **`agents/token_attribution.py`:** `read_breakdown(spec_dir)` loads
-     `phaseModels` from `model_identities.json` and `qaEvidence`, and passes
-     them to `render_breakdown`, which emits them.
-   - **Other callers:** `record_turn`'s internal `render_breakdown` calls
-     pass nothing.
+   - **`agents/token_attribution.py`:** `read_breakdown(spec_dir,
+     source_spec_dir=None)` loads `phaseModels` and `qaEvidence` and passes
+     them to `render_breakdown`, which emits them. The internal calls in
+     `record_turn` pass nothing.
    - **`routes/tasks_usage.py` (~48-56):** read both from the canonical
-     source spec dir even when `token_usage.json` falls back to the worktree.
-   - **Tests:** both fields appear, and are read from the canonical dir.
-   - **Verify** with `pytest -k "token_attribution or tasks_usage" -q`.
-   - **Then:** the full backend suite
-     (`apps/backend/.venv/bin/pytest tests -m "not slow" -q`) and the
-     web-server suite.
+     source spec dir, even when `token_usage.json` comes from the worktree.
+   - **Tests:** both fields and their shapes; read from the canonical dir;
+     the mcp-stdio proxy returns them.
+   - **Verify** with `<backend pytest> tests/test_token_attribution.py
+     tests/test_tasks_usage_route.py -q`.
+   - **Then:** run the full backend suite (`<backend pytest> tests -m "not
+     slow" -q`) and the web-server suite (`cd apps/web-server && <web
+     pytest> tests -q`).
 
 7. **PFactory QA seed and cost router (D6).**
    - **Where:** a PFactory worktree from `origin/dev`, branch
      `fix/2233-qa-seed`.
-   - **`apps/backend/plan/emit/tier_profile.py` (~41-74):**
-     - add `_QA_MODEL_BY_TIER = {"low": "sonnet", "medium": "opus", "hard":
-       "fable"}`;
-     - set `phase_models = {coding: m, qa: _QA_MODEL_BY_TIER[tier],
-       qa_fixer: m}`.
+   - **`apps/backend/plan/emit/tier_profile.py` (~41-74):** add
+     `_QA_MODEL_BY_TIER = {"low": "sonnet", "medium": "opus", "hard":
+     "fable"}`, and set `phase_models = {coding: m, qa: …, qa_fixer: m}`.
    - **`cost_router.py` (~92-176, 253-271):**
-     - for `qa`, remove the canonical coding id and its aliases from the
-       candidates (use `cost_router_core` / `model-catalog.json` aliases);
+     - QA candidates exclude the canonical coding id and its aliases (the
+       catalog shorthand mapping);
      - a pin applies to coding only;
-     - if nothing distinct exists at the floor, try one class up, else leave
-       `qa` unset;
-     - keep `phase_routes.qa` and the cost estimate filled.
-   - **Tests:** the emitted contract after tier plus routing has `qa !=
-     coding` by canonical id for every tier, with alias forms, a pin, and no
-     distinct model at the floor.
-   - **Verify** with PFactory `apps/backend/.venv/bin/pytest tests -k
-     "tier_profile or cost_router" -q`, plus ruff.
+     - with nothing distinct at the floor, try one class up, else remove
+       `qa` from the merged `phase_models` and `phase_routes`;
+     - `qa_fixer` is the final coding model;
+     - the route and the cost estimate follow the picked QA model;
+     - `cost_router_core.py` is untouched.
+   - **Tests:** update `tests/test_cost_router.py`, whose assertions expect
+     same-model QA and an all-role pin, and `tests/test_tier_profile.py`.
+     Add a test for the emitted contract after tier and routing: `qa !=
+     coding` by canonical id for every tier, alias forms, a pin, and nothing
+     distinct at the floor.
+   - **Verify** from the PFactory worktree root with
+     `/mnt/code/Source-home/GitHub/PFactory/apps/backend/.venv/bin/pytest
+     tests/test_tier_profile.py tests/test_cost_router.py -q`, then the full
+     suite with `… pytest tests -q`, plus ruff.
 
-8. **E2E harness (D7)**, after both releases are live.
-   - **Where:** Factory `scripts/e2e/run.py` S3 (~169-203).
+8. **E2E harness (D7),** after both releases are live.
+   - **Where:** a Factory worktree from `origin/main`, branch
+     `fix/2233-e2e-s3`, file `scripts/e2e/run.py` S3 (~169-203).
    - **Change:**
      - read `phaseModels` and `qaEvidence` from `services.usage`;
-     - `runtime_models` requires every coding identity to be known;
-     - independence means the reviewer is not among the identities;
-     - `green` and `review_recorded` come from `qaEvidence.status ==
-       "approved"`, with `reviewed_head` equal to the PR head sha;
-     - remove the `workers` read.
+     - `runtime_models` requires a known model for every coding and fixer
+       identity;
+     - the S3 pass requires that the reviewer is not among the identities,
+       compared by canonical id;
+     - `green` and `review_recorded` require `qaEvidence.status ==
+       "approved"` and `reviewed_head` equal to the PR head sha;
+     - remove the `workers` read;
+     - `.gitignore` drift stays a reported finding (`plan_files_only`
+       unchanged).
    - **Tests:** a unit test in `tests/e2e/unit` with a real-shaped payload.
-   - **Verify** with `uv run -q --with pytest python -m pytest tests/e2e/unit
-     -q`.
+   - **Verify** from the worktree root with `uv run -q --with pytest python
+     -m pytest tests/e2e/unit -q`.
 
 ## After the steps (lead)
 
 1. **Review:** an Opus review of each PR diff against this plan, plus the
-   `reviewers:` above.
+   `reviewers:` above. For step 5, ask explicitly about head selection and
+   retry.
 2. **AIFactory:**
    - open the PR to `dev` with the 3 artifact links;
    - merge it with `--match-head-commit` after the checks pass;
@@ -302,7 +485,7 @@ without it.
 ## Tests
 
 Each step's verify command must pass, and so must the full AIFactory backend
-and web-server suites and the PFactory suite.
+and web-server suites and the full PFactory suite.
 
 ## Rollback
 
