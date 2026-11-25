@@ -541,6 +541,7 @@ def main() -> None:
         workspace_fetch.maybe_push_usage(spec_dir, spec_dir.name)
         if not args.stop_after_planning:
             workspace_fetch.maybe_push_plan(spec_dir, spec_dir.name)
+            workspace_fetch.maybe_push_qa_evidence(spec_dir, spec_dir.name)
 
     # RFC-0017 #190 (producer push-back): on the packed multi-node path ``/work``
     # is an ephemeral emptyDir that dies with the Job, so persist the built branch

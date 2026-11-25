@@ -15,6 +15,7 @@ from typing import Any
 
 # Memory integration for cross-session learning
 from agents.memory_manager import get_graphiti_context, save_session_memory
+from agents.token_attribution import PromptSegments, TurnUsage, record_turn
 from debug import debug, debug_detailed, debug_error, debug_section, debug_success
 from prompts_pkg import get_qa_reviewer_prompt
 from providers.factory import get_tool_fallback_provider
@@ -192,9 +193,12 @@ This is attempt {previous_error.get("consecutive_errors", 1) + 1}. If you fail t
         debug_success("qa_reviewer", "Query sent successfully")
 
         response_text = ""
+        usage_result = None
         debug("qa_reviewer", "Starting to receive response stream...")
         async for msg in client.receive_response():
             msg_type = type(msg).__name__
+            if msg_type == "ResultMessage":
+                usage_result = msg
             message_count += 1
             debug_detailed(
                 "qa_reviewer",
@@ -324,6 +328,20 @@ This is attempt {previous_error.get("consecutive_errors", 1) + 1}. If you fail t
                                 )
 
                         current_tool = None
+
+        if usage_result and getattr(usage_result, "usage", None):
+            record_turn(
+                spec_dir,
+                PromptSegments(user_prompt=prompt),
+                TurnUsage.from_sdk_usage(
+                    usage_result.usage, getattr(usage_result, "total_cost_usd", None)
+                ),
+                model=getattr(client, "model", None),
+                worker_id=f"qa-{qa_session}",
+                phase="qa",
+                provider=type(client).__name__,
+                duration_ms=getattr(usage_result, "duration_ms", 0) or 0,
+            )
 
         print("\n" + "-" * 70 + "\n")
 
@@ -560,7 +578,10 @@ IMPORTANT: You MUST read and then write the implementation_plan.json file. Do NO
             await fallback.query(fallback_prompt)
             fb_response = ""
             fb_tool_count = 0
+            usage_result = None
             async for msg in fallback.receive_response():
+                if type(msg).__name__ == "ResultMessage":
+                    usage_result = msg
                 # Assistant text and tool calls, and the user-side tool results.
                 for block in getattr(msg, "content", None) or []:
                     block_type = type(block).__name__
@@ -569,6 +590,20 @@ IMPORTANT: You MUST read and then write the implementation_plan.json file. Do NO
                     elif block_type == "ToolUseBlock":
                         fb_tool_count += 1
                     _fallback_transcript(task_logger, block_type, block)
+
+        if usage_result and getattr(usage_result, "usage", None):
+            record_turn(
+                spec_dir,
+                PromptSegments(user_prompt=fallback_prompt),
+                TurnUsage.from_sdk_usage(
+                    usage_result.usage, getattr(usage_result, "total_cost_usd", None)
+                ),
+                model=getattr(fallback, "model", None),
+                worker_id=f"qa-{qa_session}",
+                phase="qa",
+                provider=type(fallback).__name__,
+                duration_ms=getattr(usage_result, "duration_ms", 0) or 0,
+            )
 
         # Check if the fallback actually wrote qa_signoff
         status = get_qa_signoff_status(spec_dir)

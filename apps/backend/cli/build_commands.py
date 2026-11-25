@@ -529,6 +529,12 @@ def handle_build_command(
     # agent-writable after it.
     gates = RunGates.capture(spec_dir, source_spec_dir, model)
     clear_identities(source_spec_dir or spec_dir)
+    for name in ("qa_evidence.json", "qa_evidence_report.md"):
+        (source_spec_dir or spec_dir).joinpath(name).unlink(missing_ok=True)
+    if not os.environ.get("WORKSPACE_URI", "").strip():
+        (source_spec_dir or spec_dir).joinpath(".qa_evidence_run").unlink(
+            missing_ok=True
+        )
 
     try:
         debug("run.py", "Starting agent execution")

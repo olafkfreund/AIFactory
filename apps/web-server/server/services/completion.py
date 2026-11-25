@@ -1186,6 +1186,7 @@ def emit_terminal_completion(
             maybe_fetch_gate_marker,
             maybe_fetch_memory,
             maybe_fetch_plan,
+            maybe_fetch_qa_evidence,
             maybe_fetch_task_logs,
             maybe_fetch_usage,
         )
@@ -1203,6 +1204,7 @@ def emit_terminal_completion(
         # and escalates to human_review — blocking the TFactory handoff behind a
         # bookkeeping gap (Factory#253 "output propagation").
         maybe_fetch_plan(spec_dir, spec_id)
+        maybe_fetch_qa_evidence(spec_dir, spec_id)
         # #1038: and the memory tree, which otherwise dies in the Job's emptyDir.
         # Fetched BEFORE pooling below, since the pool is built from this copy.
         maybe_fetch_memory(spec_dir, spec_id)

@@ -103,6 +103,7 @@ import importlib
 import json
 import logging
 import os
+import secrets
 import shutil
 import subprocess
 import time
@@ -1601,6 +1602,9 @@ class KubeJobBuildBackend:
         workspace_uri = _maybe_pack_workspace(
             worktree_path, task_id=task_id, correlation_key=correlation_key
         )
+        qa_run_id = secrets.token_hex(16) if workspace_uri else None
+        if qa_run_id:
+            (source_spec / ".qa_evidence_run").write_text(qa_run_id)
 
         # #671 OAuth-env defect: mirror the in-pod build env into the Job (the
         # pooled token + the SDK passthrough). Goes into container env, NOT argv.
@@ -1620,6 +1624,8 @@ class KubeJobBuildBackend:
         if marker_nonce:
             extra_env["AIFACTORY_MARKER_NONCE"] = marker_nonce  # #1929
         extra_env["AIFACTORY_TASK_ID"] = task_id  # #1972: not a secret
+        if qa_run_id:
+            extra_env["AIFACTORY_QA_RUN_ID"] = qa_run_id
         # #2023: last, so no earlier merge can put the bucket-wide S3 key back.
         from .job_s3_scope import scope_job_s3  # noqa: PLC0415
 

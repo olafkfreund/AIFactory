@@ -108,6 +108,11 @@ async def run_terminal_completion(
             "project-settings load failed before terminal completion", exc_info=True
         )
 
+    if (spec_dir / ".terminal_completion_emitted").exists():
+        from core.workspace_fetch import maybe_fetch_qa_evidence
+
+        maybe_fetch_qa_evidence(spec_dir, spec_id)
+
     # #1550: on the co-mount Job path the gate marker is written into the task
     # worktree's spec dir and nothing else brings it home (the packed path's
     # object-store fetch is a no-op here). Copy it before anything reads it --

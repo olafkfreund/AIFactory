@@ -6,8 +6,12 @@ Main QA loop that coordinates reviewer and fixer sessions until
 approval or max iterations.
 """
 
+import hashlib
+import json
 import os
+import subprocess
 import time as time_module
+from datetime import UTC, datetime
 from pathlib import Path
 
 from agents.coder import _fail_on_git_metadata
@@ -35,7 +39,6 @@ from .criteria import (
     MAX_QA_ITERATIONS,
     get_qa_iteration_count,
     get_qa_signoff_status,
-    is_qa_approved,
     save_implementation_plan,
 )
 from .fixer import run_qa_fixer_session
@@ -60,6 +63,61 @@ from .reviewer import run_qa_agent_session
 # MAX_QA_ITERATIONS now lives in `.criteria` (#1317) and is imported above;
 # re-exported here so `from qa.loop import MAX_QA_ITERATIONS` keeps working.
 MAX_CONSECUTIVE_ERRORS = 3  # Stop after 3 consecutive errors without progress
+
+
+def _evidence_dir(spec_dir: Path, source_spec_dir: Path | None) -> Path:
+    return (
+        source_spec_dir
+        if source_spec_dir and source_spec_dir != Path(os.devnull)
+        else spec_dir
+    )
+
+
+def _clear_evidence(spec_dir: Path) -> None:
+    for name in ("qa_evidence.json", "qa_evidence_report.md"):
+        (spec_dir / name).unlink(missing_ok=True)
+
+
+def _write_evidence(
+    project_dir: Path,
+    spec_dir: Path,
+    source_spec_dir: Path,
+    *,
+    status: str,
+    model: str,
+    provider: str,
+    cycle: int,
+) -> bool:
+    """Only the QA controller writes evidence; never accept a worktree copy."""
+    try:
+        report = (spec_dir / "qa_report.md").read_bytes()
+        head = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=project_dir, text=True
+        ).strip()
+        source_spec_dir.mkdir(parents=True, exist_ok=True)
+        (source_spec_dir / "qa_evidence_report.md").write_bytes(report)
+        (source_spec_dir / "qa_evidence.json").write_text(
+            json.dumps(
+                {
+                    "status": status,
+                    "reviewer": {
+                        "model": model,
+                        "provider": provider,
+                        "served_model": None,
+                    },
+                    "reviewed_head": head,
+                    "report_sha256": hashlib.sha256(report).hexdigest(),
+                    "qa_cycle": cycle,
+                    "override": None,
+                    "at": datetime.now(UTC).isoformat(),
+                }
+            )
+        )
+        return True
+    except (OSError, subprocess.CalledProcessError) as exc:
+        debug_error("qa_loop", f"Could not record QA evidence: {exc}")
+        _clear_evidence(source_spec_dir)
+        return False
 
 
 # =============================================================================
@@ -222,20 +280,7 @@ async def run_qa_validation_loop(  # noqa: PLR0913 - #1969 source dir + #1983 ga
     fix_request_file = spec_dir / "QA_FIX_REQUEST.md"
     has_human_feedback = fix_request_file.exists()
 
-    # Check if already approved - but if there's human feedback, we need to process it first
-    if is_qa_approved(spec_dir):
-        if not gates.requires_review:
-            if not has_human_feedback:
-                debug_success("qa_loop", "Build already approved by QA")
-                print("\n✅ Build already approved by QA.")
-                return True
-        else:
-            # #1987: the reviewer's verdict is read from this field, so a
-            # coder-written approval must not survive into it.
-            plan = load_implementation_plan(spec_dir) or {}
-            plan.pop("qa_signoff", None)
-            if not save_implementation_plan(spec_dir, plan):
-                return False
+    evidence_dir = _evidence_dir(spec_dir, source_spec_dir)
 
     # If there's human feedback, we need to run the fixer first before re-validating
     if has_human_feedback:
@@ -333,6 +378,11 @@ async def run_qa_validation_loop(  # noqa: PLR0913 - #1969 source dir + #1983 ga
     while qa_iteration < MAX_QA_ITERATIONS:
         qa_iteration += 1
         iteration_start = time_module.time()
+        _clear_evidence(evidence_dir)
+        plan = load_implementation_plan(spec_dir) or {}
+        plan.pop("qa_signoff", None)
+        if not save_implementation_plan(spec_dir, plan):
+            return False
 
         # #474: the anti-loop guardrail halted this run (no progress). Escalate
         # instead of spinning the QA fix/review cycle. No-op unless the guardrail
@@ -418,6 +468,21 @@ async def run_qa_validation_loop(  # noqa: PLR0913 - #1969 source dir + #1983 ga
             raise
 
         iteration_duration = time_module.time() - iteration_start
+        fresh_signoff = get_qa_signoff_status(spec_dir)
+        if status in ("approved", "rejected") and (
+            not fresh_signoff or fresh_signoff.get("status") != status
+        ):
+            status, response = "error", "QA reviewer did not write a fresh signoff"
+        if status in ("approved", "rejected") and not _write_evidence(
+            project_dir,
+            spec_dir,
+            evidence_dir,
+            status=status,
+            model=qa_model,
+            provider=qa_provider_name,
+            cycle=qa_iteration,
+        ):
+            status, response = "error", "QA evidence could not be recorded"
         debug(
             "qa_loop",
             "QA reviewer session completed",

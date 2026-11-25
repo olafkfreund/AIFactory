@@ -98,7 +98,6 @@ async def test_both_fixer_sites_recorded(
     gates.thinking_budget.return_value = None
     with (
         patch.object(loop, "is_build_complete", return_value=True),
-        patch.object(loop, "is_qa_approved", return_value=False),
         patch.object(loop, "get_task_logger", return_value=None),
         patch.object(loop, "is_no_test_project", return_value=False),
         patch.object(loop, "get_qa_iteration_count", return_value=0),
@@ -115,7 +114,16 @@ async def test_both_fixer_sites_recorded(
             "run_qa_fixer_session",
             new=AsyncMock(return_value=("complete", "fixed")),
         ),
-        patch.object(loop, "get_qa_signoff_status", return_value={"issues_found": []}),
+        patch.object(
+            loop,
+            "get_qa_signoff_status",
+            side_effect=[
+                {"status": "rejected", "issues_found": []},
+                {"status": "rejected", "issues_found": []},
+                {"status": "approved"},
+            ],
+        ),
+        patch.object(loop, "_write_evidence", return_value=True),
         patch.object(loop, "record_iteration"),
         patch.object(loop, "get_iteration_history", return_value=[]),
         patch.object(loop, "has_recurring_issues", return_value=(False, [])),
