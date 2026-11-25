@@ -517,7 +517,9 @@ async def _run_tool_fallback(  # noqa: PLR0913 - fallback session context
     """
     from types import SimpleNamespace  # noqa: PLC0415 - fallback-only dependency
 
-    from phase_config import infer_provider_from_model  # noqa: PLC0415 - fallback-only dependency
+    from phase_config import (
+        infer_provider_from_model,  # noqa: PLC0415 - fallback-only dependency
+    )
 
     from .independence import is_configured  # noqa: PLC0415 - fallback-only dependency
 

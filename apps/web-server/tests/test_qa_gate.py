@@ -26,8 +26,14 @@ from server.project_registry import save_projects  # noqa: E402
 from server.routes import pr as pr_routes  # noqa: E402
 from server.services import (  # noqa: E402
     completion_orchestration as orch,
+)
+from server.services import (
     merger as mg,
+)
+from server.services import (
     pr_endgame as pe,
+)
+from server.services import (
     qa_gate,
 )
 from server.services.pr_endgame import CmdResult  # noqa: E402
