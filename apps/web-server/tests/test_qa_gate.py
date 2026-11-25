@@ -28,18 +28,17 @@ import server.services.pr_endgame as pe  # noqa: E402
 import server.services.qa_gate as gate_mod  # noqa: E402
 from server.project_registry import save_projects  # noqa: E402
 from server.routes import pr as pr_routes  # noqa: E402
-from server.services.pr_endgame import CmdResult  # noqa: E402
 from server.services.task_control import read_control, write_control  # noqa: E402
 
 _LOG = logging.getLogger(__name__)
 
 
 class FakeRunner:
-    def __init__(self, routes: dict[str, CmdResult]) -> None:
+    def __init__(self, routes: dict[str, pe.CmdResult]) -> None:
         self.routes = routes
         self.calls: list[list[str]] = []
 
-    def __call__(self, argv: list[str], _cwd: str | None = None) -> CmdResult:
+    def __call__(self, argv: list[str], _cwd: str | None = None) -> pe.CmdResult:
         self.calls.append(argv)
         joined = " ".join(argv)
         matches = [
@@ -49,7 +48,7 @@ class FakeRunner:
         ]
         if matches:
             return max(matches, key=lambda pair: len(pair[0]))[1]
-        return CmdResult(0, "", "")
+        return pe.CmdResult(0, "", "")
 
     def saw(self, needle: str) -> bool:
         return any(needle in " ".join(c) for c in self.calls)
@@ -271,16 +270,16 @@ def _merger_spec(tmp_path: Path, spec_id: str = "001-x") -> Path:
     return spec_dir
 
 
-def _merger_routes(**overrides: CmdResult) -> dict[str, CmdResult]:
+def _merger_routes(**overrides: pe.CmdResult) -> dict[str, pe.CmdResult]:
     base = {
-        "rev-parse --abbrev-ref HEAD": CmdResult(0, "aifactory/001-x", ""),
-        "rev-parse refs/heads/aifactory/001-x": CmdResult(0, "head-sha-1", ""),
-        "pr list": CmdResult(0, "[]", ""),
-        "fetch origin": CmdResult(0, "", ""),
-        "rev-list --count": CmdResult(0, "2\n", ""),
-        "diff --no-ext-diff --no-textconv --name-only": CmdResult(0, "a.py\n", ""),
-        "git push": CmdResult(0, "", ""),
-        "pr create": CmdResult(0, "https://github.com/o/r/pull/5", ""),
+        "rev-parse --abbrev-ref HEAD": pe.CmdResult(0, "aifactory/001-x", ""),
+        "rev-parse refs/heads/aifactory/001-x": pe.CmdResult(0, "head-sha-1", ""),
+        "pr list": pe.CmdResult(0, "[]", ""),
+        "fetch origin": pe.CmdResult(0, "", ""),
+        "rev-list --count": pe.CmdResult(0, "2\n", ""),
+        "diff --no-ext-diff --no-textconv --name-only": pe.CmdResult(0, "a.py\n", ""),
+        "git push": pe.CmdResult(0, "", ""),
+        "pr create": pe.CmdResult(0, "https://github.com/o/r/pull/5", ""),
     }
     base.update(overrides)
     return base
@@ -315,7 +314,7 @@ def test_merger_refuses_opened_and_already_open_when_gate_fails(
         ]
     )
     r_existing = FakeRunner(
-        _merger_routes(**{"pr list": CmdResult(0, open_pr_json, "")})
+        _merger_routes(**{"pr list": pe.CmdResult(0, open_pr_json, "")})
     )
     res_existing = mg.process_one("proj", tmp_path, spec_dir, runner=r_existing)
     assert res_existing["action"] == "skipped"
@@ -337,7 +336,7 @@ def test_merger_does_not_block_merged_or_closed_prs(
         pr_json = json.dumps(
             [{"number": 33, "state": state, "createdAt": "2026-11-25"}]
         )
-        r = FakeRunner(_merger_routes(**{"pr list": CmdResult(0, pr_json, "")}))
+        r = FakeRunner(_merger_routes(**{"pr list": pe.CmdResult(0, pr_json, "")}))
         res = mg.process_one("proj", tmp_path, spec_dir, runner=r)
         assert res["action"] == expected_action
         assert res["pr"] == 33
@@ -375,13 +374,15 @@ def test_merger_remote_only_branch_resolves_origin_ref_sha(
     r = FakeRunner(
         _merger_routes(
             **{
-                "rev-parse --verify --quiet refs/heads/aifactory/001-x": CmdResult(
+                "rev-parse --verify --quiet refs/heads/aifactory/001-x": pe.CmdResult(
                     1, "", ""
                 ),
-                "rev-parse --verify --quiet origin/aifactory/001-x": CmdResult(
+                "rev-parse --verify --quiet origin/aifactory/001-x": pe.CmdResult(
                     0, "remote-sha-999", ""
                 ),
-                "rev-parse origin/aifactory/001-x": CmdResult(0, "remote-sha-999", ""),
+                "rev-parse origin/aifactory/001-x": pe.CmdResult(
+                    0, "remote-sha-999", ""
+                ),
             }
         )
     )
