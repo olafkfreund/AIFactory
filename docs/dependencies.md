@@ -109,7 +109,7 @@ AIFactory **declares** **17** backend, **38** web-server, and **47** frontend ru
 | `class-variance-authority` | `^0.7.1` |
 | `clsx` | `^2.1.1` |
 | `highlight.js` | `^11.11.1` |
-| `i18next` | `^25.7.3` |
+| `i18next` | `^26.3.4` |
 | `lucide-react` | `^0.562.0` |
 | `monaco-editor` | `0.55.1` |
 | `motion` | `^12.23.26` |
