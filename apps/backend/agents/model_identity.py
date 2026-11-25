@@ -59,12 +59,3 @@ def record_identity(
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)
-
-
-def clear_identities(source_spec_dir: Path) -> None:
-    """Reset the identity set for a new build run."""
-    path = _path(source_spec_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with _LOCK, (path.parent / "model_identities.json.lock").open("a+") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        path.unlink(missing_ok=True)

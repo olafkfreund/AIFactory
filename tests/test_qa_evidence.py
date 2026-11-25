@@ -21,6 +21,7 @@ def test_skip_qa_build_clears_previous_approval(monkeypatch, tmp_path):
     for name in ("qa_evidence.json", "qa_evidence_report.md"):
         (spec / name).write_text("old approval")
     (spec / ".qa_evidence_run").write_text("old packed run")
+    (spec / "model_identities.json").write_text('[{"model": "sonnet"}]')
     seen = []
 
     async def stop_before_agent(*_args, **_kwargs):
@@ -64,6 +65,9 @@ def test_skip_qa_build_clears_previous_approval(monkeypatch, tmp_path):
             force_bypass_approval=False,
         )
     assert seen == [True]
+    assert json.loads((spec / "model_identities.json").read_text()) == [
+        {"model": "sonnet"}
+    ]
 
 
 class Store:
@@ -108,9 +112,11 @@ def test_evidence_uses_worktree_report_but_only_source_receives_protected_copy(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("fresh", [False, True])
+@pytest.mark.parametrize(
+    "fresh,text_only", [(False, False), (True, False), (True, True)]
+)
 async def test_cycle_clears_old_evidence_and_requires_fresh_signoff(
-    monkeypatch, tmp_path, fresh
+    monkeypatch, tmp_path, fresh, text_only
 ):
     source = tmp_path / "source"
     source.mkdir()
@@ -135,8 +141,9 @@ async def test_cycle_clears_old_evidence_and_requires_fresh_signoff(
             (spec / "implementation_plan.json").write_text(
                 json.dumps({"qa_signoff": {"status": "approved"}})
             )
-            (spec / "qa_report.md").write_text("fresh report")
-        return "approved", "text"
+            if not text_only:
+                (spec / "qa_report.md").write_text("fresh report")
+        return "approved", "text-only report"
 
     monkeypatch.setattr(loop, "run_qa_agent_session", review)
     monkeypatch.setattr(loop.subprocess, "check_output", lambda *_a, **_k: "head-b\n")
@@ -164,7 +171,9 @@ async def test_cycle_clears_old_evidence_and_requires_fresh_signoff(
             json.loads((source / "qa_evidence.json").read_text())["reviewed_head"]
             == "head-b"
         )
-        assert (source / "qa_evidence_report.md").read_text() == "fresh report"
+        report = "text-only report" if text_only else "fresh report"
+        assert (spec / "qa_report.md").read_text() == report
+        assert (source / "qa_evidence_report.md").read_text() == report
     else:
         assert "qa_signoff" not in json.loads(
             (spec / "implementation_plan.json").read_text()

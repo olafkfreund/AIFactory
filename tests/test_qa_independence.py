@@ -14,6 +14,7 @@ if str(_BACKEND) not in sys.path:
 from qa import reviewer  # noqa: E402
 from qa.independence import (  # noqa: E402
     IndependentReviewUnavailable,
+    is_configured,
     pick_reviewer,
 )
 from qa.loop import _write_evidence  # noqa: E402
@@ -55,6 +56,7 @@ def test_pin_is_overridden_for_qa_only():
 
 
 def test_provider_preference_beats_distinct_qa_model(monkeypatch):
+    monkeypatch.setenv("AIFACTORY_RUNTIMES", "codex")
     monkeypatch.setenv("AIFACTORY_QA_ALT_MODELS", "gpt-5.3-codex")
     pick = pick_reviewer(
         gates("opus"),
@@ -101,11 +103,52 @@ def test_no_distinct_configured_reviewer():
 
 
 def test_failover_filter_keeps_provider_distinct(monkeypatch):
+    monkeypatch.setenv("AIFACTORY_RUNTIMES", "codex")
     monkeypatch.setenv("AIFACTORY_QA_ALT_MODELS", "gpt-5.3-codex")
     pick = pick_reviewer(
         gates("sonnet"), [identity("sonnet")], configured=lambda m: m == "gpt-5.3-codex"
     )
     assert pick.provider == "codex"
+
+
+def test_disabled_runtime_is_never_picked(monkeypatch):
+    monkeypatch.setenv("AIFACTORY_RUNTIMES", "")
+    monkeypatch.setenv("AIFACTORY_QA_ALT_MODELS", "gpt-5.3-codex")
+    monkeypatch.setattr("qa.independence.shutil.which", lambda _name: "/bin/codex")
+    monkeypatch.setenv("CODEX_API_KEY", "present")
+    assert is_configured("gpt-5.3-codex")
+    pick = pick_reviewer(
+        gates("sonnet"),
+        [identity("sonnet")],
+        configured=lambda m: m == "opus" or is_configured(m),
+    )
+    assert pick.model == "opus"
+
+
+def test_saved_openai_endpoints_are_configured(monkeypatch):
+    import phase_config
+
+    endpoint = {
+        "base_url": "http://localhost:1234",
+        "api_key": None,
+        "default_model": "local",
+    }
+    monkeypatch.setattr(phase_config, "_load_first_openai_endpoint", lambda: endpoint)
+    monkeypatch.setattr(
+        phase_config,
+        "_load_openai_endpoint_by_label",
+        lambda label: endpoint if label == "local" else None,
+    )
+    assert is_configured("openai:local:custom")
+    assert is_configured("openai-compatible:custom")
+
+
+def test_studio_model_uses_google_key(monkeypatch):
+    monkeypatch.setenv("GOOGLE_API_KEY", "present")
+    assert is_configured("studio:gemini-2.5-flash")
+    monkeypatch.delenv("GOOGLE_API_KEY")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    assert not is_configured("studio:gemini-2.5-flash")
 
 
 @pytest.mark.asyncio

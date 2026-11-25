@@ -7,9 +7,11 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from core.runtime_gating import is_runtime_enabled
 from model_registry import ModelNotApprovedError, check_model_registered
 from phase_config import (
     _resolve_phase_model,
+    get_provider_extra_kwargs,
     infer_provider_from_model,
     resolve_model_id,
 )
@@ -50,10 +52,16 @@ def is_configured(model: str) -> bool:
             or (Path.home() / ".gemini/oauth_creds.json").exists()
         )
     if provider == "openai-compatible":
+        try:
+            extra = get_provider_extra_kwargs(provider, model)
+        except ValueError:
+            return False
+        if model.lower().startswith("studio:"):
+            return bool(extra.get("api_key"))
         return bool(
-            os.environ.get("LITELLM_GATEWAY_URL")
+            extra.get("api_key")
+            or (extra.get("base_url") and extra["base_url"] != "https://api.openai.com")
             or os.environ.get("OPENAI_COMPATIBLE_BASE_URL")
-            or os.environ.get("AIFACTORY_MODEL_GATEWAY_URL")
         )
     if provider == "ollama":
         return bool(os.environ.get("OLLAMA_BASE_URL"))
@@ -103,7 +111,11 @@ def pick_reviewer(gates, identities: list[dict], *, configured=is_configured) ->
     eligible = []
     for candidate in dict.fromkeys(candidates):
         provider = infer_provider_from_model(candidate)
-        if not check_model_registered(candidate, "qa")[0] or not configured(candidate):
+        if (
+            not is_runtime_enabled(provider)
+            or not check_model_registered(candidate, "qa")[0]
+            or not configured(candidate)
+        ):
             continue
         if resolve_model_id(candidate) in coding_models:
             continue

@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agents.model_identity import clear_identities, read_identities, record_identity
+from agents.model_identity import read_identities, record_identity
 
 from tests.test_solo_mode import _make_spec, _run_one_turn
 
@@ -40,8 +40,17 @@ def test_identity_without_usage_payload(tmp_path: Path) -> None:
             "served_model": None,
         }
     ]
-    clear_identities(tmp_path)
-    assert read_identities(tmp_path) == []
+    record_identity(
+        tmp_path,
+        phase="qa_fixer",
+        subtask_id=None,
+        model="claude-opus-4-5",
+        provider="claude",
+    )
+    assert [entry["model"] for entry in read_identities(tmp_path)] == [
+        "claude-sonnet-4-5",
+        "claude-opus-4-5",
+    ]
 
 
 @pytest.mark.asyncio

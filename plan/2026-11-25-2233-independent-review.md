@@ -498,6 +498,11 @@ and web-server suites and the full PFactory suite.
 
 ## Deviations recorded during implementation
 
+- **Step 1: preserve identities across resumed builds.** Build startup no
+  longer clears `model_identities.json`; the reset could erase earlier coding
+  identities before QA selected a reviewer. Keeping them may exclude extra
+  models, which is the safe direction for independent review.
+
 - **Step 3: the other-provider candidates.** The plan listed "a frontier
   model from another provider" as the second candidate.
   - **Why it changed:** AIFactory's model catalog has only Claude frontier

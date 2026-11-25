@@ -97,9 +97,12 @@ def _write_evidence(
     provider: str,
     cycle: int,
     override: str | None = None,
+    fallback_report: str | None = None,
 ) -> bool:
     """Only the QA controller writes evidence; never accept a worktree copy."""
     try:
+        if fallback_report is not None and not (spec_dir / "qa_report.md").exists():
+            (spec_dir / "qa_report.md").write_text(fallback_report, encoding="utf-8")
         report = (spec_dir / "qa_report.md").read_bytes()
         head = subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=project_dir, text=True
@@ -519,6 +522,7 @@ async def run_qa_validation_loop(  # noqa: PLR0913 - #1969 source dir + #1983 ga
             provider=verdict_writer["provider"],
             cycle=qa_iteration,
             override=verdict_writer["override"],
+            fallback_report=response,
         ):
             status, response = "error", "QA evidence could not be recorded"
         debug(
