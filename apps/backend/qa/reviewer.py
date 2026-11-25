@@ -36,16 +36,16 @@ from .independence import IndependentReviewUnavailable, pick_reviewer
 # =============================================================================
 
 
-async def run_qa_agent_session(
+async def run_qa_agent_session(  # noqa: PLR0913 - reviewer session context
     client: BaseLLMProvider,
     project_dir: Path,
     spec_dir: Path,
     qa_session: int,
     max_iterations: int,
     verbose: bool = False,
-    previous_error: dict | None = None,
-    identities: list[dict] | None = None,
-    verdict_writer: dict | None = None,
+    previous_error: dict[str, Any] | None = None,
+    identities: list[dict[str, Any]] | None = None,
+    verdict_writer: dict[str, Any] | None = None,
 ) -> tuple[str, str]:
     """
     Run a QA reviewer agent session.
@@ -360,7 +360,7 @@ This is attempt {previous_error.get("consecutive_errors", 1) + 1}. If you fail t
         )
 
         # Save QA session insights to memory
-        qa_discoveries = {
+        qa_discoveries: dict[str, Any] = {
             "files_understood": {},
             "patterns_found": [],
             "gotchas_encountered": [],
@@ -489,14 +489,14 @@ def _fallback_transcript(task_logger: Any, block_type: str, block: Any) -> None:
         )
 
 
-async def _run_tool_fallback(
+async def _run_tool_fallback(  # noqa: PLR0913 - fallback session context
     qa_analysis: str,
     spec_dir: Path,
     project_dir: Path,
     qa_session: int,
-    task_logger,
-    identities: list[dict] | None = None,
-    verdict_writer: dict | None = None,
+    task_logger: Any,
+    identities: list[dict[str, Any]] | None = None,
+    verdict_writer: dict[str, Any] | None = None,
 ) -> tuple[str, str] | None:
     """Use a tool-capable provider to write qa_signoff based on text analysis.
 
@@ -515,11 +515,11 @@ async def _run_tool_fallback(
     Returns:
         (status, response_text) if the fallback succeeded, or None if it failed.
     """
-    from types import SimpleNamespace
+    from types import SimpleNamespace  # noqa: PLC0415 - fallback-only dependency
 
-    from phase_config import infer_provider_from_model
+    from phase_config import infer_provider_from_model  # noqa: PLC0415 - fallback-only dependency
 
-    from .independence import is_configured
+    from .independence import is_configured  # noqa: PLC0415 - fallback-only dependency
 
     pick = pick_reviewer(
         SimpleNamespace(

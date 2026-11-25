@@ -110,7 +110,9 @@ async def run_terminal_completion(
         )
 
     if (spec_dir / ".terminal_completion_emitted").exists():
-        from core.workspace_fetch import maybe_fetch_qa_evidence
+        from core.workspace_fetch import (  # noqa: PLC0415 - completion-only import
+            maybe_fetch_qa_evidence,
+        )
 
         maybe_fetch_qa_evidence(spec_dir, spec_id)
 
@@ -345,10 +347,10 @@ async def run_terminal_completion(
 
                         if ctx:
 
-                            def _check_gate() -> str | None:
-                                adopted_pr = ctx.get("adopted_pr")
+                            def _check_gate(context: dict[str, Any]) -> str | None:
+                                adopted_pr = context.get("adopted_pr")
                                 if adopted_pr:
-                                    parts = _split_repo(ctx.get("repo", ""))
+                                    parts = _split_repo(context.get("repo", ""))
                                     head = (
                                         _pr_head(
                                             parts[0],
@@ -361,13 +363,13 @@ async def run_terminal_completion(
                                     )
                                 else:
                                     head = _ref_sha(
-                                        Path(ctx["worktree"]),
-                                        ctx["branch"],
+                                        Path(context["worktree"]),
+                                        context["branch"],
                                         _default_runner,
                                     )
                                 return qa_gate.check(spec_dir, head)
 
-                            gate_reason = await asyncio.to_thread(_check_gate)
+                            gate_reason = await asyncio.to_thread(_check_gate, ctx)
                             if gate_reason is not None:
                                 _endgame_marker.unlink(missing_ok=True)
                                 logger.info(

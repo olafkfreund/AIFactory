@@ -110,6 +110,7 @@ async def test_both_fixer_sites_recorded(
         patch.object(loop, "get_task_logger", return_value=None),
         patch.object(loop, "is_no_test_project", return_value=False),
         patch.object(loop, "get_qa_iteration_count", return_value=0),
+        patch.object(loop, "is_configured", return_value=True),
         patch.object(loop, "infer_provider_from_model", return_value="claude"),
         patch.object(loop, "create_client", return_value=client),
         patch.object(loop, "_create_qa_reviewer_provider", return_value=client),

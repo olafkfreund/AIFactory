@@ -267,12 +267,13 @@ async def run_qa_fixer_session(
 
                         current_tool = None
 
-        if usage_result and getattr(usage_result, "usage", None):
+        usage = getattr(usage_result, "usage", None)
+        if usage_result and usage:
             record_turn(
                 spec_dir,
                 PromptSegments(user_prompt=prompt),
                 TurnUsage.from_sdk_usage(
-                    usage_result.usage, getattr(usage_result, "total_cost_usd", None)
+                    usage, getattr(usage_result, "total_cost_usd", None)
                 ),
                 model=getattr(client, "model", None),
                 worker_id=f"qa-fixer-{fix_session}",

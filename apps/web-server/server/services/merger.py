@@ -41,8 +41,7 @@ from typing import Any
 import server.services.project_settings_store as pss
 from server.project_registry import load_projects, resolve_project_path
 from server.routes.task_service import get_spec_dirs
-from server.services import pr_endgame as pe
-from server.services import qa_gate
+from server.services import pr_endgame as pe, qa_gate
 from server.services.github_app import project_github_token
 from server.services.pr_endgame import Runner
 from server.services.task_control import read_control, write_control
@@ -327,7 +326,7 @@ def _ref_sha(worktree: Path, branch: str, runner: Runner) -> str | None:
     return sha or None
 
 
-def _decide(
+def _decide(  # noqa: PLR0912 - each branch returns a distinct sweep outcome
     project_path: Path,
     spec_dir: Path,
     spec_id: str,

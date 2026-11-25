@@ -92,7 +92,7 @@ def get_qa_iteration_count(spec_dir: Path) -> int:
 # =============================================================================
 
 
-def should_run_qa(spec_dir: Path, *, requires_review: bool = False) -> bool:
+def should_run_qa(spec_dir: Path, *, requires_review: bool = False) -> bool:  # noqa: ARG001 - retained for callers
     """
     Determine if QA validation should run for this build's review requirement.
 
@@ -102,7 +102,7 @@ def should_run_qa(spec_dir: Path, *, requires_review: bool = False) -> bool:
     A coder-written ``qa_signoff`` is never a reason to skip QA (#2233), so
     ``requires_review`` no longer changes the answer.
     """
-    return is_build_complete(spec_dir)
+    return bool(is_build_complete(spec_dir))
 
 
 def should_run_fixes(spec_dir: Path) -> bool:

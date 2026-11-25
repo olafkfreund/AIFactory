@@ -117,6 +117,7 @@ async def test_loop_clears_preapproval_before_reviewer(
             "is_no_test_project": MagicMock(return_value=False),
             "get_task_logger": MagicMock(return_value=None),
             "get_qa_iteration_count": MagicMock(return_value=0),
+            "is_configured": MagicMock(return_value=True),
             "MAX_QA_ITERATIONS": 1,
             "_create_qa_reviewer_provider": MagicMock(return_value=provider),
             "run_qa_agent_session": session,

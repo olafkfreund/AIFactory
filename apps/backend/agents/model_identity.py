@@ -6,6 +6,7 @@ import os
 import tempfile
 import threading
 from pathlib import Path
+from typing import Any
 
 _LOCK = threading.Lock()
 
@@ -14,7 +15,7 @@ def _path(source_spec_dir: Path) -> Path:
     return Path(source_spec_dir) / "model_identities.json"
 
 
-def read_identities(source_spec_dir: Path) -> list[dict]:
+def read_identities(source_spec_dir: Path) -> list[dict[str, Any]]:
     """Read recorded sessions; a missing file means no sessions yet."""
     path = _path(source_spec_dir)
     if not path.exists():
@@ -25,7 +26,7 @@ def read_identities(source_spec_dir: Path) -> list[dict]:
     return entries
 
 
-def record_identity(
+def record_identity(  # noqa: PLR0913 - persisted identity needs all session coordinates
     source_spec_dir: Path,
     *,
     phase: str,
@@ -55,7 +56,6 @@ def record_identity(
                 json.dump(entries, stream)
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.replace(temporary, path)
+            Path(temporary).replace(path)
         finally:
-            if os.path.exists(temporary):
-                os.unlink(temporary)
+            Path(temporary).unlink(missing_ok=True)

@@ -34,7 +34,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Generator
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from server.services import project_settings_store
@@ -318,6 +318,22 @@ class TestProjectSetupWorkflow:
         from server.routes import projects as projects_routes
 
         caller = SimpleNamespace(state=SimpleNamespace(user={"id": "default"}))
+        monkeypatch.setattr(
+            projects_routes, "resolve_owner_org_id", AsyncMock(return_value="default")
+        )
+        monkeypatch.setattr(
+            projects_routes, "accessible_project_ids", AsyncMock(return_value=set())
+        )
+        monkeypatch.setattr(
+            projects_routes,
+            "authorize_project_for_user",
+            AsyncMock(return_value="default"),
+        )
+        monkeypatch.setattr(
+            projects_routes,
+            "require_project_role",
+            AsyncMock(return_value=SimpleNamespace(org_id="default", team_id=None)),
+        )
 
         async def call_route(
             handler: Callable[..., Awaitable[Any]], payload: Any

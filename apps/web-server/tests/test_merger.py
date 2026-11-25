@@ -538,7 +538,7 @@ def test_sweep_accounts_for_every_spec(tmp_path, monkeypatch):
     # One runner shared across both specs; each spec's worktree path (the
     # `cwd` every call gets) embeds its own spec id, so route on that rather
     # than on argv content shared between the two (both start on "HEAD").
-    def runner(argv, cwd=None):
+    def runner(argv, cwd=None):  # noqa: PLR0911 - command fixture responses
         joined = " ".join(argv)
         spec_id = "002-empty" if cwd and "002-empty" in cwd else "001-opens"
         if joined.startswith("git rev-parse --abbrev-ref"):

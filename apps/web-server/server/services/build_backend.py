@@ -1540,7 +1540,7 @@ class KubeJobBuildBackend:
 
     # -- dispatch -----------------------------------------------------------
 
-    async def dispatch(  # noqa: PLR0913 - all keyword-only dispatch coordinates
+    async def dispatch(  # noqa: PLR0913, PLR0915 - dispatch coordinates and job setup
         self,
         *,
         task_id: str,

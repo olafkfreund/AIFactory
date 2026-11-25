@@ -24,10 +24,12 @@ if str(_BACKEND) not in sys.path:
 
 from server.project_registry import save_projects  # noqa: E402
 from server.routes import pr as pr_routes  # noqa: E402
-from server.services import completion_orchestration as orch  # noqa: E402
-from server.services import merger as mg  # noqa: E402
-from server.services import pr_endgame as pe  # noqa: E402
-from server.services import qa_gate  # noqa: E402
+from server.services import (  # noqa: E402
+    completion_orchestration as orch,
+    merger as mg,
+    pr_endgame as pe,
+    qa_gate,
+)
 from server.services.pr_endgame import CmdResult  # noqa: E402
 from server.services.task_control import read_control, write_control  # noqa: E402
 
@@ -55,7 +57,7 @@ class FakeRunner:
         return any(needle in " ".join(c) for c in self.calls)
 
 
-def _write_gate_files(
+def _write_gate_files(  # noqa: PLR0913 - fixture controls each gate input
     spec_dir: Path,
     *,
     status: str = "approved",

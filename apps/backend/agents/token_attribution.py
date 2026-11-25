@@ -670,7 +670,7 @@ def read_breakdown(
     ``phaseModels`` and ``qaEvidence`` come from ``source_spec_dir`` (the
     canonical spec dir), which may differ from where ``token_usage.json`` is.
     """
-    from agents.model_identity import read_identities
+    from agents.model_identity import read_identities  # noqa: PLC0415 - avoid import cycle
 
     canonical = Path(source_spec_dir or spec_dir)
     phases: dict[str, set[str]] = {}

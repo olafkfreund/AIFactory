@@ -4,8 +4,11 @@ import json
 import logging
 import os
 import shutil
+from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from core.runtime_gating import is_runtime_enabled
 from model_registry import ModelNotApprovedError, check_model_registered
@@ -19,7 +22,7 @@ from phase_config import (
 log = logging.getLogger(__name__)
 
 
-class IndependentReviewUnavailable(RuntimeError):
+class IndependentReviewUnavailable(RuntimeError):  # noqa: N818 - public exception name
     """No configured, eligible, independent QA model exists."""
 
 
@@ -30,7 +33,7 @@ class Pick:
     override: str | None = None
 
 
-def is_configured(model: str) -> bool:
+def is_configured(model: str) -> bool:  # noqa: PLR0911 - provider-specific availability checks
     """Check runtime availability without reading credential values."""
     provider = infer_provider_from_model(model)
     if provider == "claude":
@@ -68,7 +71,12 @@ def is_configured(model: str) -> bool:
     return False
 
 
-def pick_reviewer(gates, identities: list[dict], *, configured=is_configured) -> Pick:
+def pick_reviewer(  # noqa: PLR0912 - independent model eligibility rules
+    gates: Any,
+    identities: list[dict[str, Any]],
+    *,
+    configured: Callable[[str], bool] = is_configured,
+) -> Pick:
     """Select a distinct QA model, preferring a different configured provider."""
     try:
         qa_model = gates.model("qa")
@@ -87,10 +95,8 @@ def pick_reviewer(gates, identities: list[dict], *, configured=is_configured) ->
         if i.get("served_model") or i.get("model")
     }
     for phase in ("coding", "qa_fixer"):
-        try:
+        with suppress(ModelNotApprovedError):
             coding_models.add(resolve_model_id(gates.model(phase)))
-        except ModelNotApprovedError:
-            pass
     plan = gates.approved_plan if hasattr(gates, "approved_plan") else None
     if isinstance(plan, dict):
         phases = plan.get("phases")

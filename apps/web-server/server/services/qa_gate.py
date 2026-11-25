@@ -31,7 +31,7 @@ def _canonical_model(entry: object) -> str | None:
     return resolved if isinstance(resolved, str) and resolved.strip() else None
 
 
-def check(source_spec_dir: Path, head_sha: str | None) -> GateReason | None:
+def check(source_spec_dir: Path, head_sha: str | None) -> GateReason | None:  # noqa: PLR0911, PLR0912 - explicit refusal reasons
     """Return None when QA approved *head_sha* independently, else the refusal reason."""
     if not isinstance(head_sha, str) or not head_sha.strip():
         return "qa_stale"

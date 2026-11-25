@@ -13,6 +13,7 @@ import subprocess
 import time as time_module
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from agents.coder import _fail_on_git_metadata
 from agents.model_identity import read_identities, record_identity
@@ -87,7 +88,7 @@ def _write_unavailable_evidence(spec_dir: Path, cycle: int, reason: str) -> None
     )
 
 
-def _write_evidence(
+def _write_evidence(  # noqa: PLR0913 - evidence fields are caller supplied
     project_dir: Path,
     spec_dir: Path,
     source_spec_dir: Path,
@@ -105,7 +106,9 @@ def _write_evidence(
             (spec_dir / "qa_report.md").write_text(fallback_report, encoding="utf-8")
         report = (spec_dir / "qa_report.md").read_bytes()
         head = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], cwd=project_dir, text=True
+            ["git", "rev-parse", "HEAD"],  # noqa: S607 - git from PATH
+            cwd=project_dir,
+            text=True,
         ).strip()
         source_spec_dir.mkdir(parents=True, exist_ok=True)
         (source_spec_dir / "qa_evidence_report.md").write_bytes(report)
@@ -138,14 +141,14 @@ def _write_evidence(
 # =============================================================================
 
 
-def _create_qa_reviewer_provider(
+def _create_qa_reviewer_provider(  # noqa: PLR0913 - provider factory coordinates
     provider_name: str,
     project_dir: Path,
     spec_dir: Path,
     model: str,
     max_thinking_tokens: int | None,
     betas: list[str] | None = None,
-):
+) -> Any:
     """
     Instantiate the correct QA LLM provider for the reviewer role.
 
@@ -427,12 +430,18 @@ async def run_qa_validation_loop(  # noqa: PLR0913 - #1969 source dir + #1983 ga
 
         # Run QA reviewer with phase-specific model and thinking budget
         try:
+
+            def configured(
+                candidate: str, provider: str | None = qa_provider_override
+            ) -> bool:
+                return is_configured(candidate) and (
+                    not provider or infer_provider_from_model(candidate) == provider
+                )
+
             pick = pick_reviewer(
                 gates,
                 read_identities(evidence_dir),
-                configured=lambda candidate,
-                provider=qa_provider_override: is_configured(candidate)
-                and (not provider or infer_provider_from_model(candidate) == provider),
+                configured=configured,
             )
         except IndependentReviewUnavailable as exc:
             _write_unavailable_evidence(evidence_dir, qa_iteration, str(exc))
@@ -518,8 +527,8 @@ async def run_qa_validation_loop(  # noqa: PLR0913 - #1969 source dir + #1983 ga
             spec_dir,
             evidence_dir,
             status=status,
-            model=verdict_writer["model"],
-            provider=verdict_writer["provider"],
+            model=qa_model,
+            provider=qa_provider_name,
             cycle=qa_iteration,
             override=verdict_writer["override"],
             fallback_report=response,

@@ -120,8 +120,11 @@ def _existing_open_pr_head(
     target_repo: str | None,
     run_gh_command: Any,
 ) -> str | None:
-    if len(existing) >= 4 and isinstance(existing[3], str) and existing[3].strip():
-        return existing[3].strip()
+    head_index = 3
+    if len(existing) > head_index:
+        head = existing[head_index]
+        if isinstance(head, str) and head.strip():
+            return head.strip()
     view_args = ["pr", "view", str(existing[0]), "--json", "headRefOid"]
     if target_repo:
         view_args.extend(["--repo", target_repo])
