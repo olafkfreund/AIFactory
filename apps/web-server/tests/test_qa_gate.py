@@ -26,6 +26,7 @@ import server.services.completion_orchestration as orch  # noqa: E402
 import server.services.merger as mg  # noqa: E402
 import server.services.pr_endgame as pe  # noqa: E402
 import server.services.qa_gate as gate_mod  # noqa: E402
+import server.services.tf_writeback as wb  # noqa: E402
 from server.project_registry import save_projects  # noqa: E402
 from server.routes import pr as pr_routes  # noqa: E402
 from server.services.task_control import read_control, write_control  # noqa: E402
@@ -107,6 +108,30 @@ def _write_gate_files(  # noqa: PLR0913 - fixture controls each gate input
 def test_qa_gate_pass_returns_none(tmp_path: Path) -> None:
     _write_gate_files(tmp_path, head_sha="abc1234")
     assert gate_mod.check(tmp_path, "abc1234") is None
+
+
+def test_qa_gate_accepts_verified_writeback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_gate_files(tmp_path, head_sha="reviewed")
+    monkeypatch.setattr(wb, "writeback_base", lambda _spec, _head: "reviewed")
+    assert gate_mod.check(tmp_path, "writeback") is None
+
+
+def test_qa_gate_rejects_unverified_writeback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_gate_files(tmp_path, head_sha="reviewed")
+    monkeypatch.setattr(wb, "writeback_base", lambda _spec, _head: None)
+    assert gate_mod.check(tmp_path, "writeback") == "qa_stale"
+
+
+def test_qa_gate_exact_head_skips_resolver(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_gate_files(tmp_path, head_sha="reviewed")
+    monkeypatch.setattr(wb, "writeback_base", lambda *_a: pytest.fail("resolver called"))
+    assert gate_mod.check(tmp_path, "reviewed") is None
 
 
 def test_qa_gate_ignores_planning_identity(tmp_path: Path) -> None:

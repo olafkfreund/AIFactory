@@ -2154,7 +2154,10 @@ def _build_merge_gate(  # noqa: PLR0913 - one-shot builder for run_pr_endgame
                     tfactory_verdict,
                 )
 
-                verdict = tfactory_verdict(spec_dir, spec_id, head=head, vote=vote)
+                from server.services.tf_writeback import writeback_base  # noqa: PLC0415
+
+                verified = writeback_base(spec_dir, head) or head
+                verdict = tfactory_verdict(spec_dir, spec_id, head=verified, vote=vote)
             except ImportError:
                 verdict = None
             ci = (
