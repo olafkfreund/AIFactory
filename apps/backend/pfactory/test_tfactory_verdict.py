@@ -238,8 +238,10 @@ def test_poster_project_id_only_on_json_success(
 def test_send_handoff_records_valid_project_only(
     ok: bool, value: object, included: bool
 ) -> None:
-    async def poster(_url: str, _payload: dict, _headers: dict) -> dict:
-        result = {"ok": ok, "status": 200 if ok else 409}
+    async def poster(
+        _url: str, _payload: dict[str, object], _headers: dict[str, str]
+    ) -> dict[str, object]:
+        result: dict[str, object] = {"ok": ok, "status": 200 if ok else 409}
         if value is not None:
             result["workspace_project_id"] = value
         return result
@@ -257,7 +259,7 @@ def test_handoff_marker_is_atomically_replaced(
     monkeypatch.setattr(tc, "build_commit_count", lambda _spec_dir, _spec_id: 1)
     monkeypatch.setattr(tc, "build_ingest_payload", lambda *_args, **_kwargs: {})
 
-    async def handoff(_payload: dict) -> dict:
+    async def handoff(_payload: dict[str, object]) -> dict[str, object]:
         return {"sent": True, "tfactory_project_id": "2b2e"}
 
     monkeypatch.setattr(tc, "send_handoff", handoff)
@@ -362,7 +364,7 @@ def test_unreadable_marker_uses_bare_urls(
     marker.write_text("{}")
     read_text = Path.read_text
 
-    def unreadable(path: Path, *args: object, **kwargs: object) -> str:
+    def unreadable(path: Path, *args: Any, **kwargs: Any) -> str:
         if path == marker:
             raise OSError("unreadable")
         return read_text(path, *args, **kwargs)
