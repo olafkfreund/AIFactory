@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+## 3.21.18 - 2026-11-26
+
+Merged to `dev` since 3.21.17.
+
+### Fixed
+
+- When TFactory commits its accepted tests onto the PR branch, the merge no longer stalls. The QA gate and the merge gate both accept the new head, but only when it is TFactory's own test-only commit made directly on the verified build. That means TFactory's writer record has to match, GitHub must report a single parent equal to the verified SHA, and every changed file must be a test file that TFactory committed. CI still runs on the real head. This also clears CFactory "Approve (PR + merge)" returning `qa_stale` (HTTP 409). (#2258, #2259)
+
 ## 3.21.17 - 2026-11-26
 
 Merged to `dev` since 3.21.16.

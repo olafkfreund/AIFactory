@@ -1649,7 +1649,10 @@ async def _gated_head(
 
     if (
         head is None
-        or (spec_dir is not None and qa_gate.check(spec_dir, head) is not None)
+        or (
+            spec_dir is not None
+            and await asyncio.to_thread(qa_gate.check, spec_dir, head) is not None
+        )
         or not await asyncio.to_thread(merge_gate, head)
     ):
         logger.info("[pr-endgame] pr=%d merge gate not green yet", pr)
@@ -2149,12 +2152,16 @@ def _build_merge_gate(  # noqa: PLR0913 - one-shot builder for run_pr_endgame
 
         def fetch() -> dict[str, object]:
             vote: dict[str, Any] = {}
+            verified = head
             try:
                 from pfactory.tfactory_client import (  # noqa: PLC0415
                     tfactory_verdict,
                 )
 
-                verdict = tfactory_verdict(spec_dir, spec_id, head=head, vote=vote)
+                from server.services.tf_writeback import writeback_base  # noqa: PLC0415
+
+                verified = writeback_base(spec_dir, head) or head
+                verdict = tfactory_verdict(spec_dir, spec_id, head=verified, vote=vote)
             except ImportError:
                 verdict = None
             ci = (
@@ -2168,7 +2175,7 @@ def _build_merge_gate(  # noqa: PLR0913 - one-shot builder for run_pr_endgame
                 "tfactory_verdict": verdict,
                 "host_ci_green": ci,
             }
-            state.update(fetched=fetched, vote=vote)
+            state.update(fetched=fetched, vote=vote, verified=verified)
             return fetched
 
         if verdict_only:
@@ -2197,7 +2204,7 @@ def _build_merge_gate(  # noqa: PLR0913 - one-shot builder for run_pr_endgame
                 block = verify_evidence_block(
                     merge_gate_signals(spec_dir, fetched=state["fetched"]),
                     state["vote"],
-                    head=head,
+                    head=state.get("verified", head),
                     allowed=ok,
                 )
                 if block not in written and write_verify_evidence(

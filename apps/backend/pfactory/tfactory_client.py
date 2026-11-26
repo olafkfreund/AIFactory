@@ -50,6 +50,7 @@ __all__ = [
     "send_fix_completed",
     "send_handoff",
     "tfactory_config",
+    "tfactory_task",
     "tfactory_verdict",
     "wants_auto_handoff",
 ]
@@ -1276,7 +1277,49 @@ def _recorded_tfactory_project(spec_dir: Path) -> str | None:
     return None
 
 
-def tfactory_verdict(
+def _task_request(
+    spec_dir: Path, spec_id: str
+) -> tuple[str, str, dict[str, str], str] | None:
+    config = tfactory_config()
+    base_url = config.get("base_url")
+    recorded = _recorded_tfactory_project(Path(spec_dir))
+    project_id = (
+        recorded
+        or os.environ.get("TFACTORY_PROJECT_ID")
+        or _aifactory_project_name(Path(spec_dir))
+    )
+    if not base_url or not project_id:
+        return None
+    headers = (
+        {"Authorization": f"Bearer {config['token']}"} if config.get("token") else {}
+    )
+    base = f"{base_url}/api/tfactory/tasks/{quote(spec_id, safe='')}"
+    qs = f"?project_id={quote(recorded, safe='')}" if recorded else ""
+    return base, qs, headers, project_id
+
+
+def tfactory_task(
+    spec_dir: Path, spec_id: str, *, getter: Getter | None = None
+) -> dict[str, Any] | None:
+    """Fetch a task only when TFactory confirms the expected project."""
+    try:
+        request = _task_request(spec_dir, spec_id)
+        if request is None:
+            return None
+        base, qs, headers, project_id = request
+        code, task = (getter or _httpx_get)(f"{base}{qs}", headers)
+        if (
+            _HTTP_OK <= code < _HTTP_REDIRECT
+            and isinstance(task, dict)
+            and task.get("project_id") == project_id
+        ):
+            return task
+    except Exception:  # noqa: BLE001 - an untrusted response must not pass the gate
+        return None
+    return None
+
+
+def tfactory_verdict(  # noqa: PLR0911 - each refusal is an explicit fail-closed return
     spec_dir: Path,
     spec_id: str,
     *,
@@ -1293,31 +1336,17 @@ def tfactory_verdict(
     ``verdict_vote`` summary (Factory#1963).
     """
     try:
-        config = tfactory_config()
-        base_url = config.get("base_url")
-        recorded = _recorded_tfactory_project(Path(spec_dir))
-        project_id = (
-            recorded
-            or os.environ.get("TFACTORY_PROJECT_ID")
-            or _aifactory_project_name(Path(spec_dir))
-        )
-        if not base_url or not project_id:
+        task = tfactory_task(spec_dir, spec_id, getter=getter)
+        if task is None:
             return None
-        headers = (
-            {"Authorization": f"Bearer {config['token']}"}
-            if config.get("token")
-            else {}
-        )
-        base = f"{base_url}/api/tfactory/tasks/{quote(spec_id, safe='')}"
-        qs = f"?project_id={quote(recorded, safe='')}" if recorded else ""
+        request = _task_request(spec_dir, spec_id)
+        if request is None:
+            return None
+        base, qs, headers, _ = request
         get = getter or _httpx_get
-        code, task = get(f"{base}{qs}", headers)
-        status_json = task.get("status_json") if isinstance(task, dict) else None
+        status_json = task.get("status_json")
         if not (
-            _HTTP_OK <= code < _HTTP_REDIRECT
-            and isinstance(task, dict)
-            and task.get("project_id") == project_id
-            and bool(head)
+            bool(head)
             and task.get("source_sha") == head
             and isinstance(status_json, dict)
             and status_json.get("status") == "triaged"

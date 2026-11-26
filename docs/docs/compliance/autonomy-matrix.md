@@ -168,7 +168,7 @@ label = the gate module's own transitive imports; package `__init__` side effect
 |---|---|---|---|---|---|
 | `merge.merge_policy` | deterministic | - | yes (1): `apps/backend/merge/__init__.py`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | 2 | - |
 | `server.services.pr_review_service` | model-assisted (dynamic import: agents.token_attribution:675 (+9 more)) | `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | yes (21): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | 398 | `runners/github/runner.py` |
-| `server.services.pr_endgame` | model-assisted (dynamic import: agents.token_attribution:675 (+8 more)) | `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | yes (25): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | 461 | - |
+| `server.services.pr_endgame` | model-assisted (dynamic import: agents.token_attribution:675 (+8 more)) | `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | yes (25): see JSON `gates[].init_reach`; reaches `anthropic`, `claude_agent_sdk`, `core.client`, `core.simple_client`, `openai`, `providers` | 462 | - |
 
 Declared, unverified (cross-repo, not probed):
 
