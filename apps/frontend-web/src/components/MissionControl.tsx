@@ -211,6 +211,7 @@ function MissionControlContent({
   const needsReview = state.needsReview && showsMergeReview(task.reviewReason);
 
   const renderPrimaryAction = () => {
+    if (task.status === 'human_review' && task.reviewReason === 'approval_rejected') return null;
     if (state.isStuck) {
       return (
         <Button variant="warning" size="sm" onClick={handleRecover} disabled={state.isRecovering}>
@@ -254,7 +255,7 @@ function MissionControlContent({
     <PaneShell icon={<ListTree className="h-3.5 w-3.5" />} title="Plan & Subtasks">
       <ScrollArea className="h-full">
         <div className="space-y-5 p-4">
-          {task.status === 'human_review' && task.reviewReason === 'needs_input' && <NeedsInputBanner taskId={task.id} />}
+          {task.status === 'human_review' && (task.reviewReason === 'needs_input' || task.reviewReason === 'approval_rejected') && <NeedsInputBanner taskId={task.id} rejected={task.reviewReason === 'approval_rejected'} />}
           <TaskProgress
             task={task}
             isRunning={state.isRunning}

@@ -13,6 +13,7 @@ import { OpenAIEndpointsStatusBadge } from './components/OpenAIEndpointsStatusBa
 import { RateLimitIndicator } from './components/RateLimitIndicator';
 import { apiRequest } from './lib/api-client';
 import { ProjectsPage } from './pages/ProjectsPage';
+import { NeedsInputPage } from './pages/NeedsInputPage';
 import { useEnsureProjects } from './hooks/useEnsureProjects';
 import {
   findProjectByRef,
@@ -427,7 +428,7 @@ function AuthenticatedApp() {
     setSelectedTaskId(null);
     setMissionControlId(null);
     if (!urlProjectId) {
-      if (pathname === '/tasks' && projectsLoaded && !projectError) void loadFleetTasks(projects.map((project) => project.id));
+      if ((pathname === '/tasks' || pathname === '/needs-input') && projectsLoaded && !projectError) void loadFleetTasks(projects.map((project) => project.id));
       else clearLoadedTasks();
       return;
     }
@@ -435,6 +436,14 @@ function AuthenticatedApp() {
       void loadTasks(urlProjectId);
     }
   }, [urlProjectId, inSync, pathname, projectsLoaded, projectError, projects]);
+
+  useEffect(() => {
+    const match = /^\/p\/[^/]+\/tasks\/([^/]+)$/.exec(pathname);
+    if (match) {
+      try { setSelectedTaskId(decodeURIComponent(match[1])); }
+      catch { setSelectedTaskId(match[1]); }
+    }
+  }, [pathname]);
 
   useEffect(() => {
     if (!isSwitchingProject) return;
@@ -786,7 +795,8 @@ function AuthenticatedApp() {
               }}
             />
           )}
-          {route.kind === 'home' && pathname !== '/tasks' && !projectError && (
+          {pathname === '/needs-input' && !projectError && <NeedsInputPage />}
+          {route.kind === 'home' && pathname !== '/tasks' && pathname !== '/needs-input' && !projectError && (
             <WelcomeScreen
               projects={projects}
               onNewProject={handleAddProject}
@@ -841,7 +851,10 @@ function AuthenticatedApp() {
           open={selectedTask !== null}
           task={selectedTask}
           onOpenChange={(open) => {
-            if (!open) setSelectedTaskId(null);
+            if (!open) {
+              setSelectedTaskId(null);
+              if (/^\/p\/[^/]+\/tasks\/[^/]+$/.test(pathname) && urlSlug) void navigate(projectPath(urlSlug));
+            }
           }}
           onSwitchToTerminals={() => {
             setActiveView('terminals');
@@ -919,6 +932,10 @@ export default function App() {
       <Route
         path="/console/:projectId"
         element={isAuthenticated ? <LegacyConsoleRedirect /> : <RedirectToLogin />}
+      />
+      <Route
+        path="/needs-input"
+        element={isAuthenticated ? <AuthenticatedApp /> : <RedirectToLogin />}
       />
       <Route
         path="/*"

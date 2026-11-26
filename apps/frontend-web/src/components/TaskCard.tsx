@@ -420,7 +420,13 @@ export const TaskCard = memo(function TaskCard({
 
   const actions: WorkAction[] = useMemo(() => {
     const list: WorkAction[] = [];
-    if (isStuck) {
+    if (task.status === 'human_review' && task.reviewReason === 'approval_rejected') {
+      if (!isArchived) list.push({
+        id: 'archive', label: t('actions.archive'), variant: 'ghost',
+        disabled: isArchiving, busy: isArchiving,
+        onClick: () => { void handleArchive(); },
+      });
+    } else if (isStuck) {
       list.push({
         id: 'recover',
         label: isRecovering ? t('labels.recovering') : t('actions.recover'),
@@ -484,6 +490,7 @@ export const TaskCard = memo(function TaskCard({
     failed,
     isArchived,
     task.status,
+    task.reviewReason,
     isRunning,
     isStartingStopping,
     isArchiving,

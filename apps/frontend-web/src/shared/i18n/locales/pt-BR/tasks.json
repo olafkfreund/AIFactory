@@ -53,7 +53,18 @@
     "reject": "Rejeitar",
     "loadError": "Não foi possível carregar a pergunta",
     "answerError": "Não foi possível enviar a resposta",
-    "confirmError": "Não foi possível confirmar esta aprovação"
+    "confirmError": "Não foi possível confirmar esta aprovação",
+    "alreadyAnswered": "Esta pergunta já foi respondida",
+    "approvalSignIn": "A aprovação exige seu login no portal. Entre novamente neste navegador e tente de novo",
+    "forbidden": "Você não tem acesso para responder esta pergunta",
+    "notFound": "Esta pergunta não foi encontrada",
+    "invalidAnswer": "Esta resposta é inválida",
+    "suggested": "Sugestão: {{suggestion}}",
+    "rejectedTitle": "Aprovação rejeitada",
+    "rejectedNotice": "A aprovação foi rejeitada. A execução não será retomada. Arquive a tarefa ou tente novamente com novas instruções.",
+    "rejectedNote": "Nota: {{note}}",
+    "pageTitle": "Tarefas que precisam de resposta",
+    "empty": "Nenhuma tarefa precisa de resposta"
   },
   "tooltips": {
     "archiveTask": "Arquivar tarefa",

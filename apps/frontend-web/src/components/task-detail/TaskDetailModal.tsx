@@ -317,6 +317,7 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
 
   // Render primary action button based on state
   const renderPrimaryAction = () => {
+    if (task.status === 'human_review' && task.reviewReason === 'approval_rejected') return null;
     if (state.isStuck) {
       return (
         <Button
@@ -582,7 +583,7 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
                 <TabsContent value="overview" className="flex-1 min-h-0 overflow-hidden mt-0">
                   <ScrollArea className="h-full">
                     <div className="p-5 space-y-5">
-                      {task.status === 'human_review' && task.reviewReason === 'needs_input' && <NeedsInputBanner taskId={task.id} />}
+                      {task.status === 'human_review' && (task.reviewReason === 'needs_input' || task.reviewReason === 'approval_rejected') && <NeedsInputBanner taskId={task.id} rejected={task.reviewReason === 'approval_rejected'} />}
                       {/* Metadata */}
                       <TaskMetadata task={task} />
 
