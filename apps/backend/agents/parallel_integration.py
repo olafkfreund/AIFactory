@@ -385,7 +385,7 @@ def _seed_child_spec(spec_dir: Path, child_spec_dir: Path) -> Path:
     try:
         child_spec_dir.mkdir(parents=True, exist_ok=True)
         copied = 0
-        for name in ("spec.md", "implementation_plan.json"):
+        for name in ("spec.md", "implementation_plan.json", ".question_run_id"):
             source = spec_dir / name
             if source.exists():
                 shutil.copy2(source, child_spec_dir / name)
@@ -503,6 +503,7 @@ async def run_parallel_coding_phase(
                 child_spec_dir,
                 sub_model,
                 agent_type="coder",
+                question_budget_spec_dir=spec_dir,
                 max_thinking_tokens=thinking_budget,
                 remote_control_session=remote_control_session,
             )

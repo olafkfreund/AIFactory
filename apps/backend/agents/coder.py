@@ -69,6 +69,7 @@ from .inbox import drain_unread as drain_inbox
 from .inbox import format_for_prompt as format_inbox_for_prompt
 from .memory_manager import debug_memory_system_status, get_graphiti_context
 from .model_identity import record_identity
+from .questions import start_question_run
 from .route_wiring import route_wiring_gate
 from .session import post_session_processing, run_session_guarded
 from .token_attribution import PromptSegments, TurnUsage, record_turn
@@ -239,6 +240,7 @@ async def run_autonomous_agent(
     is_planning_phase = False
 
     start_run(spec_dir)  # #2033: fresh token count, no stale halt
+    start_question_run(spec_dir)
 
     if first_run:
         if solo_plans_inline:

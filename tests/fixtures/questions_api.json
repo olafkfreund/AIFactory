@@ -1,0 +1,371 @@
+{
+  "_meta": {
+    "issue": 3906,
+    "source": "plan/2026-11-25-3906-ask-human.md (Revisions 2 and 3 win)",
+    "enums": {
+      "status": ["open", "expired", "answered", "rejected"],
+      "delivery": [null, "answered", "inboxed", "launched"],
+      "decision": [null, "approve", "reject"],
+      "channel": ["portal", "mcp", "cfactory"],
+      "auth": ["session", "key:<api_key_id>"],
+      "review_reason": ["needs_input", "approval_rejected"]
+    },
+    "rules": [
+      "open and expired questions are both answerable",
+      "delivery is null until status is answered; a rejected question never gets a delivery state",
+      "an answer response may carry any of the three delivery states; clients must not wait for launched",
+      "answered_by, channel, auth and answered_at are set by the server; the same keys in a request body are ignored",
+      "choices is null for a free-text question; when it is a list, answer must equal one entry",
+      "default is a suggestion to display; it is never preselected, submitted or applied",
+      "question, context and choices are model-written text; render them as plain text"
+    ]
+  },
+
+  "list": {
+    "request": { "method": "GET", "path": "/api/tasks/{task_id}/questions" },
+    "response": {
+      "status": 200,
+      "body": {
+        "task_id": "042-export-csv",
+        "review_reason": "needs_input",
+        "questions": [
+          {
+            "id": "q-3f9a1c7e20b4",
+            "task_id": "042-export-csv",
+            "status": "open",
+            "question": "The plan says dates are UTC, but the acceptance test expects local time. Which one is right?",
+            "choices": ["UTC", "Local time"],
+            "needs_approval": false,
+            "context": "Plan step 3; files: export/format.py, tests/test_export.py",
+            "default": "UTC",
+            "timeout_minutes": 30,
+            "asked_at": "2026-11-26T10:00:00Z",
+            "expires_at": "2026-11-26T10:30:00Z",
+            "asked_by_model": "claude-opus-5-5",
+            "answer": null,
+            "decision": null,
+            "note": null,
+            "answer_id": null,
+            "answered_by": null,
+            "channel": null,
+            "auth": null,
+            "answered_at": null,
+            "delivery": null
+          },
+          {
+            "id": "q-77c0d2e9a511",
+            "task_id": "042-export-csv",
+            "status": "expired",
+            "question": "What should the exported file be called?",
+            "choices": null,
+            "needs_approval": false,
+            "context": "Plan step 4; files: export/writer.py",
+            "default": null,
+            "timeout_minutes": 30,
+            "asked_at": "2026-11-26T08:00:00Z",
+            "expires_at": "2026-11-26T08:30:00Z",
+            "asked_by_model": "claude-opus-5-5",
+            "answer": null,
+            "decision": null,
+            "note": null,
+            "answer_id": null,
+            "answered_by": null,
+            "channel": null,
+            "auth": null,
+            "answered_at": null,
+            "delivery": null
+          },
+          {
+            "id": "q-0b41e6aa93d8",
+            "task_id": "042-export-csv",
+            "status": "answered",
+            "question": "Which delimiter should the export use?",
+            "choices": ["comma", "semicolon", "tab"],
+            "needs_approval": false,
+            "context": "Plan step 2; files: export/writer.py",
+            "default": "comma",
+            "timeout_minutes": 60,
+            "asked_at": "2026-11-25T14:00:00Z",
+            "expires_at": "2026-11-25T15:00:00Z",
+            "asked_by_model": "claude-opus-5-5",
+            "answer": "semicolon",
+            "decision": null,
+            "note": null,
+            "answer_id": "a-5d2c8f10b7e3",
+            "answered_by": "user-1f2e3d",
+            "channel": "mcp",
+            "auth": "key:key-9a8b7c",
+            "answered_at": "2026-11-25T14:20:00Z",
+            "delivery": "launched"
+          },
+          {
+            "id": "q-c4d81f3360ae",
+            "task_id": "042-export-csv",
+            "status": "open",
+            "question": "The change needs to drop the legacy_exports table. May I delete it?",
+            "choices": null,
+            "needs_approval": true,
+            "context": "Plan step 5; files: migrations/0007_drop_legacy.py",
+            "default": null,
+            "timeout_minutes": 1440,
+            "asked_at": "2026-11-26T10:05:00Z",
+            "expires_at": "2026-11-27T10:05:00Z",
+            "asked_by_model": "claude-opus-5-5",
+            "answer": null,
+            "decision": null,
+            "note": null,
+            "answer_id": null,
+            "answered_by": null,
+            "channel": null,
+            "auth": null,
+            "answered_at": null,
+            "delivery": null
+          },
+          {
+            "id": "q-e92b6d04f1c7",
+            "task_id": "042-export-csv",
+            "status": "rejected",
+            "question": "May I force-push the release branch to remove the bad commit?",
+            "choices": null,
+            "needs_approval": true,
+            "context": "Plan step 6; outside the plan's files",
+            "default": null,
+            "timeout_minutes": 120,
+            "asked_at": "2026-11-24T09:00:00Z",
+            "expires_at": "2026-11-24T11:00:00Z",
+            "asked_by_model": "claude-opus-5-5",
+            "answer": null,
+            "decision": "reject",
+            "note": "Revert the commit instead.",
+            "answer_id": "a-81f0c3d2e6a9",
+            "answered_by": "user-1f2e3d",
+            "channel": "portal",
+            "auth": "session",
+            "answered_at": "2026-11-24T09:12:00Z",
+            "delivery": null
+          }
+        ]
+      }
+    }
+  },
+
+  "answer_factual": {
+    "request": {
+      "method": "POST",
+      "path": "/api/tasks/{task_id}/questions/{qid}/answer",
+      "body": { "answer": "UTC" }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "question": {
+          "id": "q-3f9a1c7e20b4",
+          "task_id": "042-export-csv",
+          "status": "answered",
+          "question": "The plan says dates are UTC, but the acceptance test expects local time. Which one is right?",
+          "choices": ["UTC", "Local time"],
+          "needs_approval": false,
+          "context": "Plan step 3; files: export/format.py, tests/test_export.py",
+          "default": "UTC",
+          "timeout_minutes": 30,
+          "asked_at": "2026-11-26T10:00:00Z",
+          "expires_at": "2026-11-26T10:30:00Z",
+          "asked_by_model": "claude-opus-5-5",
+          "answer": "UTC",
+          "decision": null,
+          "note": null,
+          "answer_id": "a-2c7e9b0d4f16",
+          "answered_by": "user-1f2e3d",
+          "channel": "portal",
+          "auth": "session",
+          "answered_at": "2026-11-26T10:07:00Z",
+          "delivery": "launched"
+        }
+      }
+    }
+  },
+
+  "confirm_token": {
+    "request": {
+      "method": "GET",
+      "path": "/api/tasks/{task_id}/questions/{qid}/confirm-token",
+      "transport": "cookie only, no Authorization header"
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "confirm_token": "v1.1764151800.Zm9vYmFyYmF6cXV4",
+        "expires_at": "2026-11-26T10:15:00Z"
+      }
+    }
+  },
+
+  "answer_approval_approve": {
+    "request": {
+      "method": "POST",
+      "path": "/api/tasks/{task_id}/questions/{qid}/answer",
+      "transport": "cookie only, no Authorization header",
+      "body": {
+        "decision": "approve",
+        "note": "Table is unused since 3.9.",
+        "confirm_token": "v1.1764151800.Zm9vYmFyYmF6cXV4"
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "question": {
+          "id": "q-c4d81f3360ae",
+          "task_id": "042-export-csv",
+          "status": "answered",
+          "question": "The change needs to drop the legacy_exports table. May I delete it?",
+          "choices": null,
+          "needs_approval": true,
+          "context": "Plan step 5; files: migrations/0007_drop_legacy.py",
+          "default": null,
+          "timeout_minutes": 1440,
+          "asked_at": "2026-11-26T10:05:00Z",
+          "expires_at": "2026-11-27T10:05:00Z",
+          "asked_by_model": "claude-opus-5-5",
+          "answer": null,
+          "decision": "approve",
+          "note": "Table is unused since 3.9.",
+          "answer_id": "a-6e1d0a9c3b52",
+          "answered_by": "user-1f2e3d",
+          "channel": "portal",
+          "auth": "session",
+          "answered_at": "2026-11-26T10:11:00Z",
+          "delivery": "answered"
+        }
+      }
+    }
+  },
+
+  "answer_approval_reject": {
+    "request": {
+      "method": "POST",
+      "path": "/api/tasks/{task_id}/questions/{qid}/answer",
+      "transport": "cookie only, no Authorization header",
+      "body": {
+        "decision": "reject",
+        "note": "Keep the table; archive it instead.",
+        "confirm_token": "v1.1764151800.Zm9vYmFyYmF6cXV4"
+      }
+    },
+    "response": {
+      "status": 200,
+      "task_review_reason_after": "approval_rejected",
+      "body": {
+        "question": {
+          "id": "q-c4d81f3360ae",
+          "task_id": "042-export-csv",
+          "status": "rejected",
+          "question": "The change needs to drop the legacy_exports table. May I delete it?",
+          "choices": null,
+          "needs_approval": true,
+          "context": "Plan step 5; files: migrations/0007_drop_legacy.py",
+          "default": null,
+          "timeout_minutes": 1440,
+          "asked_at": "2026-11-26T10:05:00Z",
+          "expires_at": "2026-11-27T10:05:00Z",
+          "asked_by_model": "claude-opus-5-5",
+          "answer": null,
+          "decision": "reject",
+          "note": "Keep the table; archive it instead.",
+          "answer_id": "a-b7430e2d91fc",
+          "answered_by": "user-1f2e3d",
+          "channel": "portal",
+          "auth": "session",
+          "answered_at": "2026-11-26T10:11:00Z",
+          "delivery": null
+        }
+      }
+    }
+  },
+
+  "errors": {
+    "approval_not_interactive": {
+      "when": "approval answer or confirm-token with an API key, scoped service, service principal, bearer JWT, or a missing, expired, reused or mismatched confirm_token",
+      "status": 403,
+      "body": { "detail": "approval requires a person in the portal" }
+    },
+    "legacy_token": {
+      "when": "the legacy shared token on any questions route",
+      "status": 403,
+      "body": { "detail": "questions require a personal identity" }
+    },
+    "not_project_member": {
+      "when": "the caller is below project member on the task's project",
+      "status": 403,
+      "body": { "detail": "forbidden" }
+    },
+    "already_answered": {
+      "when": "POST answer on a question whose status is answered or rejected",
+      "status": 409,
+      "body": { "detail": "already answered" }
+    },
+    "approval_pending": {
+      "when": "start or recover while an approval question is open or rejected",
+      "status": 409,
+      "body": { "detail": "approval question pending: answer it in the portal" }
+    },
+    "task_paused": {
+      "when": "the manual PR route on a task with reviewReason needs_input, approval_rejected or plan_review",
+      "status": 409,
+      "body": { "detail": "task is paused: needs_input" }
+    },
+    "question_not_found": {
+      "when": "the qid is unknown, malformed, or belongs to another task",
+      "status": 404,
+      "body": { "detail": "question not found" }
+    },
+    "invalid_answer": {
+      "when": "answer is not one of the choices, answer sent to an approval question, or decision sent to a factual question",
+      "status": 422,
+      "body": { "detail": "answer must be one of the choices" }
+    }
+  },
+
+  "mcp": {
+    "questions_pending": {
+      "scope": "mcp:read",
+      "arguments": {},
+      "result": {
+        "questions": [
+          {
+            "id": "q-3f9a1c7e20b4",
+            "task_id": "042-export-csv",
+            "project": "export-service",
+            "status": "open",
+            "question": "The plan says dates are UTC, but the acceptance test expects local time. Which one is right?",
+            "choices": ["UTC", "Local time"],
+            "needs_approval": false,
+            "age_seconds": 420,
+            "portal_url": "https://aifactory.example.test/p/export-service/tasks/042-export-csv"
+          },
+          {
+            "id": "q-c4d81f3360ae",
+            "task_id": "042-export-csv",
+            "project": "export-service",
+            "status": "open",
+            "question": "The change needs to drop the legacy_exports table. May I delete it?",
+            "choices": null,
+            "needs_approval": true,
+            "age_seconds": 120,
+            "portal_url": "https://aifactory.example.test/p/export-service/tasks/042-export-csv"
+          }
+        ]
+      }
+    },
+    "answer_question": {
+      "scope": "mcp:write",
+      "arguments": { "task_id": "042-export-csv", "qid": "q-3f9a1c7e20b4", "answer": "UTC" },
+      "result": { "question": { "id": "q-3f9a1c7e20b4", "status": "answered", "answer_id": "a-2c7e9b0d4f16", "channel": "mcp", "auth": "key:key-9a8b7c", "delivery": "launched" } },
+      "refusal_approval": {
+        "error": "approval requires a person in the portal",
+        "portal_url": "https://aifactory.example.test/p/export-service/tasks/042-export-csv"
+      },
+      "refusal_ownerless_or_legacy_key": { "error": "questions require a personal identity" }
+    }
+  }
+}

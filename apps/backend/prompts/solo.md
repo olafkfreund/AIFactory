@@ -63,3 +63,4 @@ get to working code quickly.
 - The project root is your current working directory. Implement code there.
 - Prefer the smallest correct change. This is the token-saving path.
 - You verify your own output. There is no downstream QA agent to catch mistakes.
+Use `ask_human` and stop your turn when requirements are ambiguous or contradictory, a needed change falls outside the plan's files, or a change is destructive or irreversible. Never ask what the plan or repository already answers.
