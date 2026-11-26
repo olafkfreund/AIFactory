@@ -93,10 +93,12 @@ Run ``python3 scripts/job_dispatch.py`` for the self-test.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import sys
 from dataclasses import dataclass, field, replace
+from types import SimpleNamespace
 from typing import Any
 
 # Canonical nix-base image (RFC-0016 #198). Override per env in the consumer.
@@ -192,10 +194,16 @@ class JobSpec:
     automount_service_account_token: bool = False
 
 
+_HASH_HEX = 12  # 48 bits; ~2e-9 collision odds among 1,000 ids sharing a tail (#3922)
+_TAIL = 13
+
+
 def _short(job_id: str) -> str:
-    """k8s-safe short suffix from a job_id (DNS-1123, <=20 chars)."""
+    """k8s-safe suffix: readable tail + hash of the full id (DNS-1123, <=26 chars)."""
+    digest = hashlib.sha256(job_id.encode()).hexdigest()[:_HASH_HEX]
     s = re.sub(r"[^a-z0-9-]", "-", job_id.lower()).strip("-")
-    return (s[-20:] or "job").strip("-") or "job"
+    tail = s[-_TAIL:].strip("-")
+    return f"{tail}-{digest}" if tail else digest
 
 
 def job_name(service: str, job_id: str) -> str:
@@ -305,6 +313,22 @@ def job_labels(service: str, job_id: str) -> dict[str, str]:
         "factory.io/job-id": _short(job_id),
         "factory.io/kind": "task",
     }
+
+
+JOB_ID_ANNOTATION = "factory.io/job-id-full"
+
+
+def job_annotations(job_id: str) -> dict[str, str]:
+    """Annotations for the Job object: the full id, which a label cannot hold (#3922)."""
+    return {JOB_ID_ANNOTATION: job_id}
+
+
+def job_owner(job: Any) -> str | None:
+    """The full job id on a fetched Job (client object or dict), else None."""
+    meta = job.get("metadata") if isinstance(job, dict) else getattr(job, "metadata", None)
+    ann = meta.get("annotations") if isinstance(meta, dict) else getattr(meta, "annotations", None)
+    value = ann.get(JOB_ID_ANNOTATION) if isinstance(ann, dict) else None
+    return value if isinstance(value, str) and value else None
 
 
 def task_pod_labels(service: str, *, role: str = "task") -> dict[str, str]:
@@ -650,6 +674,7 @@ def build_job_manifest(spec: JobSpec) -> dict[str, Any]:
             "name": name,
             "namespace": spec.namespace,
             "labels": job_labels(spec.service, spec.job_id),
+            "annotations": job_annotations(spec.job_id),
         },
         "spec": {
             "backoffLimit": 0,
@@ -804,6 +829,50 @@ def _check_nix_develop(command: str) -> None:
     _require(not WRITABLE_STORE_ROOT.startswith("/work"), "store is outside the worktree")
 
 
+def _selftest_job_identity(spec: JobSpec, manifest: dict[str, Any]) -> None:
+    same_tail = "x" * 20
+    ids = (f"first:{same_tail}", f"second:{same_tail}")
+    _require(
+        job_name("aifactory", ids[0]) != job_name("aifactory", ids[1]),
+        "same-tail names collide",
+    )
+    _require(
+        job_labels("aifactory", ids[0])["factory.io/job-id"]
+        != job_labels("aifactory", ids[1])["factory.io/job-id"],
+        "same-tail labels collide",
+    )
+    repeated_name = job_name("aifactory", ids[0])
+    _require(repeated_name == job_name("aifactory", ids[0]), "name changed")
+    _require(_short(":::") == hashlib.sha256(b":::").hexdigest()[:_HASH_HEX], "empty tail")
+    _require(manifest["metadata"]["annotations"] == job_annotations(spec.job_id), "Job annotation")
+    _require("annotations" not in manifest["spec"]["template"]["metadata"], "pod annotation")
+    _require(job_owner(manifest) == spec.job_id, "dict owner")
+    _require(
+        job_owner(
+            SimpleNamespace(metadata=SimpleNamespace(annotations=job_annotations(spec.job_id)))
+        )
+        == spec.job_id,
+        "object owner",
+    )
+    bad: Any
+    for bad in (
+        None,
+        {"metadata": None},
+        SimpleNamespace(metadata=None),
+        {"metadata": {"annotations": []}},
+        SimpleNamespace(metadata=SimpleNamespace(annotations=[])),
+        {"metadata": {"annotations": {JOB_ID_ANNOTATION: 1}}},
+    ):
+        _require(job_owner(bad) is None, f"malformed owner: {bad!r}")
+    for service in SERVICES:
+        name = job_name(service, ids[0])
+        _require(
+            len(name) <= _DNS_LABEL_MAX
+            and re.fullmatch(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?", name) is not None,
+            f"invalid Job name for {service}: {name}",
+        )
+
+
 def _selftest() -> None:
     spec = JobSpec(
         service="aifactory",
@@ -821,6 +890,7 @@ def _selftest() -> None:
     name = m["metadata"]["name"]
     assert_job_policy(m)
     _require(name.startswith("factory-aifactory-"), f"name prefix: {name}")
+    _selftest_job_identity(spec, m)
     ps = m["spec"]["template"]["spec"]
     _selftest_service_account(spec, ps)
     _require(
