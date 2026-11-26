@@ -22,8 +22,9 @@ Only that one field is kept. The body is never stored or logged beyond today's t
 `[A-Za-z0-9._-]{1,128}`, the returned dict gains `"tfactory_project_id": <value>`. An injected
 `poster` that returns no such key adds nothing.
 
-**The marker write.** `maybe_auto_handoff_tfactory` (~line 1375) writes the marker atomically: to
-`tfactory_handoff.json.tmp`, then `os.replace` over the real file. It still writes every result,
+**The marker write.** `maybe_auto_handoff_tfactory` (~line 1375) writes the marker atomically: to a
+unique temp file in the same directory (`tempfile.mkstemp`), then `os.replace` over the real
+file. It still writes every result,
 as it does today. A failed retry therefore leaves no recorded id, and the verdict lookup falls
 back to the bare lookup. That fallback is still fail-closed: when spec ids collide, TFactory
 answers 409, which gives `None`. The gate is not weakened; only the collision fix is lost for that
@@ -95,7 +96,7 @@ Tests in `apps/backend/pfactory/test_tfactory_verdict.py` and the handoff tests:
 | no record, no env | the existing bare URLs; the existing tests pass unchanged |
 | env `TFACTORY_PROJECT_ID` only | unchanged: bare URLs, equality with the env value |
 | a record with `sent: false` | ignored (legacy lookup) |
-| the marker write | atomic (`.tmp` then `os.replace`) |
+| the marker write | atomic (unique temp file, then `os.replace`) |
 | malformed or unreadable `tfactory_handoff.json` | legacy behaviour; never raises |
 
 Then:
