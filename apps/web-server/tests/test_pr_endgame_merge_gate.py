@@ -451,9 +451,7 @@ def test_ci_green_requires_measured_green(
     )
 
 
-def test_recorded_red_ci_beats_measured_green(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_recorded_red_ci_beats_measured_green(tmp_path: Path) -> None:
     spec = _spec(tmp_path, **{**_GREEN, "hostCiGreen": False})
     (spec / "context").mkdir()
     (spec / "context" / "task_contract.json").write_text(
