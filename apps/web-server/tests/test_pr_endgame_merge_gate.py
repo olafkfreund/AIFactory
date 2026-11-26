@@ -57,7 +57,7 @@ def test_writeback_verdict_uses_base_while_ci_uses_head(
 
     def disposition(_spec: Path, _tier: str | None, **kwargs: Any) -> str:
         kwargs["fetch_signals"]()
-        return pe.AUTO_MERGE_DISPOSITION
+        return str(pe.AUTO_MERGE_DISPOSITION)
 
     monkeypatch.setattr("pfactory.tfactory_client.tfactory_verdict", verdict)
     monkeypatch.setattr(pe, "host_ci_green", ci)
