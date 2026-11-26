@@ -556,6 +556,24 @@ def test_auto_merge_held_when_settings_never_loaded(tmp_path, monkeypatch):
     assert pe.is_auto_merge_enabled(tmp_path) is True
 
 
+def test_auto_merge_off_logs_its_source_not_value(tmp_path, monkeypatch, caplog):
+    """#2248: an "off" decision says where it came from."""
+    monkeypatch.delenv("AIFACTORY_AUTO_MERGE", raising=False)
+    pss._SNAPSHOT[pss.project_key(tmp_path)] = {}
+    with caplog.at_level("INFO", logger=pe.logger.name):
+        assert pe.is_auto_merge_enabled(tmp_path) is False
+    assert "auto_merge off: source=env" in caplog.text
+    caplog.clear()
+    pss._SNAPSHOT[pss.project_key(tmp_path)] = {"AIFACTORY_AUTO_MERGE": "false"}
+    with caplog.at_level("INFO", logger=pe.logger.name):
+        assert pe.is_auto_merge_enabled(tmp_path) is False
+    assert "auto_merge off: source=project" in caplog.text
+    pss._SNAPSHOT.pop(pss.project_key(tmp_path), None)
+    with caplog.at_level("INFO", logger=pe.logger.name):
+        assert pe.is_auto_merge_enabled(tmp_path) is False
+    assert "project settings not loaded" in caplog.text
+
+
 # ── full chain (inline) ──────────────────────────────────────────────────────
 
 
