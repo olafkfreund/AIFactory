@@ -977,14 +977,13 @@ async def _httpx_poster(url: str, payload: dict, headers: dict) -> dict:
             "body": resp.text[:2000],
         }
         if resp.is_success:
-            try:
+            # Response parsing can never fail the handoff.
+            with contextlib.suppress(Exception):
                 data = resp.json()
                 if isinstance(data, dict) and isinstance(
                     data.get("workspace_project_id"), str
                 ):
                     result["workspace_project_id"] = data["workspace_project_id"]
-            except Exception:  # noqa: BLE001 - response parsing cannot fail the handoff
-                pass
         return result
 
 
@@ -1265,7 +1264,8 @@ def _httpx_get(url: str, headers: dict[str, str]) -> tuple[int, object]:
 
 
 def _recorded_tfactory_project(spec_dir: Path) -> str | None:
-    try:
+    # A missing or malformed marker means the legacy lookup.
+    with contextlib.suppress(Exception):
         marker = json.loads((spec_dir / "tfactory_handoff.json").read_text())
         if isinstance(marker, dict) and marker.get("sent") is True:
             project_id = marker.get("tfactory_project_id")
@@ -1273,8 +1273,6 @@ def _recorded_tfactory_project(spec_dir: Path) -> str | None:
                 r"[A-Za-z0-9._-]{1,128}", project_id
             ):
                 return project_id
-    except Exception:  # noqa: BLE001 - missing or malformed marker uses legacy lookup
-        pass
     return None
 
 
@@ -1411,9 +1409,9 @@ async def maybe_auto_handoff_tfactory(
         try:
             with os.fdopen(fd, "w") as marker:
                 marker.write(json.dumps(result, indent=2))
-            os.replace(tmp, spec_dir / "tfactory_handoff.json")
+            Path(tmp).replace(spec_dir / "tfactory_handoff.json")
         except Exception:
             with contextlib.suppress(OSError):
-                os.unlink(tmp)
+                Path(tmp).unlink()
             raise
     return result
