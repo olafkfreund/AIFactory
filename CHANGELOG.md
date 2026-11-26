@@ -1,5 +1,46 @@
 ## [Unreleased]
 
+## 3.21.16 - 2026-11-26
+
+Merged to `dev` since 3.21.15.
+
+### Fixed
+
+- Build Job names end in a 12-hex hash of the full job id, so two projects building the same spec slug no longer collide (409 AlreadyExists); the reaper and orphan sweeper prove ownership from the `factory.io/job-id-full` annotation, and sweeper deletes carry a uid precondition. (Factory#3922, #2253)
+
+## 3.21.15 - 2026-11-26
+
+Merged to `dev` since 3.21.14.
+
+### Fixed
+
+- A task whose contract requires the `ci-green` system gate auto-merges once the host CI is measured green. Before this, nothing cleared the gate, so every planned task in a repo with CI was held at hold-blocking. Every other gate still holds. (#2248, #2251)
+
+## 3.21.14 - 2026-11-26
+
+Merged to `dev` since 3.21.13.
+
+### Changed
+
+- The PR endgame logs where an "auto_merge off" decision came from (settings not loaded, global env, or project setting), without the value. (#2248, #2249)
+
+## 3.21.13 - 2026-11-25
+
+Merged to `dev` since 3.21.12.
+
+### Fixed
+
+- The QA report endpoint serves the protected `qa_evidence_report.md` when `qa_report.md` is absent, so approved tasks no longer return 404. (#2233, #2246)
+
+## 3.21.12 - 2026-11-25
+
+Merged to `dev` since 3.21.11.
+
+### Changed
+
+- QA gate follow-ups for #2233: surface branch push failures, fetch before the QA gate and pin the pushed head. (#2243)
+- Test cleanup: import pr_endgame one way in test_qa_gate (CodeQL note on #2240). (#2241)
+
 ## 3.21.11 - 2026-11-25
 
 Merged to `dev` since 3.21.10.
