@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+## 3.21.16 - 2026-11-26
+
+Merged to `dev` since 3.21.15.
+
+### Fixed
+
+- Build Job names end in a 12-hex hash of the full job id, so two projects building the same spec slug no longer collide (409 AlreadyExists); the reaper and orphan sweeper prove ownership from the `factory.io/job-id-full` annotation, and sweeper deletes carry a uid precondition. (Factory#3922, #2253)
+
 ## 3.21.15 - 2026-11-26
 
 Merged to `dev` since 3.21.14.
