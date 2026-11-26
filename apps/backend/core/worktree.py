@@ -585,7 +585,7 @@ class WorktreeManager:
         cwd: Path | None = None,
         timeout: float | None = None,
         env: dict[str, str] | None = None,
-    ) -> subprocess.CompletedProcess:
+    ) -> subprocess.CompletedProcess[str]:
         """Run a git command and return the result.
 
         ``-c core.bare=false`` makes every worktree operation immune to a stray
@@ -860,12 +860,25 @@ class WorktreeManager:
 
         return stats
 
-    def create_worktree(self, spec_name: str) -> WorktreeInfo:  # noqa: PLR0912
+    def _resolve_question_wip(self, ref: str, *, handoff: bool) -> str:
+        if handoff:
+            raise WorktreeError("Cannot resume a question on an adopted branch")
+        resolved = self._run_git(
+            ["rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}"]
+        )
+        if resolved.returncode != 0:
+            raise WorktreeError(f"Could not resolve question WIP ref {ref}")
+        return resolved.stdout.strip()
+
+    def create_worktree(  # noqa: PLR0912
+        self, spec_name: str, *, resume_start_point: str | None = None
+    ) -> WorktreeInfo:
         """
         Create a worktree for a spec.
 
         Args:
             spec_name: The spec folder name (e.g., "002-implement-memory")
+            resume_start_point: Fetched WIP ref for a paused task, if any
 
         Returns:
             WorktreeInfo for the created worktree
@@ -895,7 +908,15 @@ class WorktreeManager:
         # Cut the branch from the CURRENT remote tip, not the checkout's stale
         # local base ref (#1106). Raises WorktreeError when the base cannot be
         # verified as current — see _resolve_start_point.
-        start_point = self._resolve_start_point() if not handoff else ""
+        start_point = (
+            self._resolve_start_point()
+            if not handoff and resume_start_point is None
+            else ""
+        )
+        if resume_start_point is not None:
+            start_point = self._resolve_question_wip(
+                resume_start_point, handoff=bool(handoff)
+            )
 
         # Serialize the shared-.git mutations below across CONCURRENT BUILDS:
         # `worktree remove`, `branch -D`, and `worktree add` all take git's
@@ -963,7 +984,6 @@ class WorktreeManager:
             if not handoff:
                 self._run_git(["branch", "-D", branch_name])
 
-            # Create worktree with new branch from base
             result = self._run_git(
                 [
                     "worktree",
@@ -1044,6 +1064,12 @@ class WorktreeManager:
             )
             return existing
 
+        # Kubejobs receive the source question count for both packed and co-mounted /work.
+        if os.environ.get("AIFACTORY_TASK_QUESTION_COUNT", "0") != "0":
+            return self.create_worktree(
+                spec_name,
+                resume_start_point=f"refs/remotes/origin/aifactory/{spec_name}",
+            )
         return self.create_worktree(spec_name)
 
     def remove_worktree(self, spec_name: str, delete_branch: bool = False) -> None:

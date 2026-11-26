@@ -39,6 +39,7 @@ from .agent_skill_context import SkillContextMixin
 from .agent_spec_creation import SpecCreationMixin
 from .agent_worktree_sync import WorktreeSyncMixin
 from .build_backend import GatedTaskRefusedError, subprocess_gate_refusal
+from .question_guards import APPROVAL_PENDING, approval_blocked
 from .spec_job_backend import SpecJobProcess
 
 # subprocess_env adds apps/backend to sys.path before this import.
@@ -591,6 +592,7 @@ class AgentService(
             if (
                 status == control_status == "human_review"
                 and control.get("reviewReason") == "needs_input"
+                and not control.get("_migratedFromPlan")
             ):
                 return
             if control_status == "done" or plan.get("status") == "done":
@@ -853,9 +855,10 @@ class AgentService(
             raise ValueError(f"Task {task_id} is already running")
         if any(q.task_id == task_id for q in self._task_queue):
             raise ValueError(f"Task {task_id} is already queued")
-        if problem := subprocess_gate_refusal(
-            spec_dir_for(project_path, spec_id), mode
-        ):
+        spec_dir = spec_dir_for(project_path, spec_id)
+        if approval_blocked(spec_dir):
+            raise GatedTaskRefusedError(APPROVAL_PENDING)
+        if problem := subprocess_gate_refusal(spec_dir, mode):
             raise GatedTaskRefusedError(problem)
 
         # #376 shipped the parallel harness but left it dark for every caller

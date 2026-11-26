@@ -7,6 +7,7 @@ import logging
 import secrets
 from contextlib import suppress
 from pathlib import Path
+from typing import Any
 
 from agents.questions import (
     QID_RE,
@@ -68,7 +69,7 @@ def local_pause_claimed(spec_dir: Path) -> bool:
         return False
 
 
-def confirm_local(spec_dir: Path) -> dict | None:
+def confirm_local(spec_dir: Path) -> dict[str, Any] | None:
     """Find an open question published to the source directory by this attempt."""
     try:
         attempt = _read_attempt(spec_dir)
@@ -76,7 +77,7 @@ def confirm_local(spec_dir: Path) -> dict | None:
         if len(files) <= TASK_QUESTION_LIMIT:
             for path in sorted(files):
                 with suppress(ValueError, RecursionError):
-                    record = validate_question(
+                    record: dict[str, Any] = validate_question(
                         json.loads(path.read_text(encoding="utf-8")), run_id=attempt
                     )
                     if record["id"] == path.stem:
@@ -86,14 +87,14 @@ def confirm_local(spec_dir: Path) -> dict | None:
     return None
 
 
-def confirm_kubejob(spec_dir: Path, spec_id: str) -> dict | None:
+def confirm_kubejob(spec_dir: Path, spec_id: str) -> dict[str, Any] | None:
     """Validate and persist this Job's open questions before accepting the pause."""
     created: list[Path] = []
     try:
         from core.workspace_fetch import fetch_questions  # noqa: PLC0415
 
         attempt = _read_attempt(spec_dir)
-        records = [
+        records: list[dict[str, Any]] = [
             validate_question(record, run_id=attempt)
             for record in fetch_questions(spec_id, attempt)
         ]

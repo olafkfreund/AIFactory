@@ -122,6 +122,21 @@ def test_old_question_does_not_trigger_pause(tmp_path):
     assert coder._open_run_questions(tmp_path) == []
 
 
+def test_open_run_questions_skips_invalid_files(tmp_path: Path) -> None:
+    spec_dir = tmp_path / "work" / "spec"
+    assert coder._open_run_questions(spec_dir) == []
+    qid = _question(spec_dir)
+    directory = spec_dir / "questions"
+    valid = (directory / f"{qid}.json").read_text(encoding="utf-8")
+    (directory / "q-000000000001.json").write_text("{", encoding="utf-8")
+    (directory / "q-000000000002.json").write_text("[]", encoding="utf-8")
+    (directory / "q-000000000003.json").mkdir()
+    (directory / "q-000000000004.json").symlink_to(f"{qid}.json")
+    (directory / "q-00000000000A.json").write_text(valid, encoding="utf-8")
+
+    assert coder._open_run_questions(spec_dir) == [json.loads(valid)]
+
+
 @pytest.mark.parametrize("failure", ["conflict", "sync"])
 def test_local_pause_failure_rolls_back_created_questions(
     tmp_path, monkeypatch, failure
@@ -240,45 +255,53 @@ def test_packed_question_transport_contains_only_records(
     assert set(tmp_path.rglob("*")) == before
 
 
-def _mock_checkpoint_git(monkeypatch, *, dirty=False, prestaged=False, push_rc=0):
-    calls = []
+def _mock_checkpoint_git(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    dirty: bool = False,
+    prestaged: bool = False,
+    push_rc: int = 0,
+) -> list[tuple[list[str], bytes | None]]:
+    from collections.abc import Iterator  # noqa: PLC0415 - checkpoint mock only
 
-    def fake_run(args, **_kwargs):
-        calls.append(args)
+    calls: list[tuple[list[str], bytes | None]] = []
+
+    def fake_run(args: list[str], **kwargs: object) -> SimpleNamespace:
+        data = kwargs.get("input")
+        assert data is None or isinstance(data, bytes)
+        calls.append((args, data))
+        returncode = 0
+        stdout = ""
         if args[1:3] == ["branch", "--show-current"]:
-            return SimpleNamespace(returncode=0, stdout="aifactory/001-x\n", stderr="")
-        if args[1:3] == ["remote", "get-url"]:
-            return SimpleNamespace(
-                returncode=0, stdout="https://example.invalid/repo", stderr=""
-            )
-        if args[1:3] == ["ls-files", "--others"]:
-            return SimpleNamespace(
-                returncode=0,
-                stdout="code.py\0.env\0questions/q-123.json\0secrets.txt\0.aifactory/specs/x\0",
-                stderr="",
-            )
-        if args[1:] == [
+            stdout = "aifactory/001-x\n"
+        elif args[1:3] == ["remote", "get-url"]:
+            stdout = "https://example.invalid/repo"
+        elif args[1:3] == ["ls-files", "--others"]:
+            stdout = ".env\0.aifactory/specs/x\0.aifactory-allowlist\0"
+            if dirty:
+                stdout += "code.py\0"
+        elif args[1:] == [
             "diff",
             "--no-ext-diff",
             "--no-textconv",
             "--cached",
             "--quiet",
         ]:
-            return SimpleNamespace(returncode=1 if dirty else 0, stdout="", stderr="")
-        if prestaged and args[1:] == [
+            returncode = int(dirty)
+        elif prestaged and args[1:] == [
             "diff",
             "--no-ext-diff",
             "--no-textconv",
             "--cached",
             "--name-only",
         ]:
-            return SimpleNamespace(returncode=0, stdout=".env\n", stderr="")
-        if args[1] == "push":
-            return SimpleNamespace(returncode=push_rc, stdout="", stderr="")
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
+            stdout = ".env\n"
+        elif args[1] == "push":
+            returncode = push_rc
+        return SimpleNamespace(returncode=returncode, stdout=stdout, stderr="")
 
     @contextmanager
-    def fake_auth(url):
+    def fake_auth(url: str) -> Iterator[tuple[str, dict[str, str]]]:
         yield url, {}
 
     monkeypatch.setattr(coder.subprocess, "run", fake_run)
@@ -290,16 +313,33 @@ def _mock_checkpoint_git(monkeypatch, *, dirty=False, prestaged=False, push_rc=0
 
 @pytest.mark.parametrize("dirty", [False, True])
 def test_checkpoint_stages_only_code_and_handles_nothing_to_commit(
-    tmp_path, monkeypatch, dirty
-):
-    calls = _mock_checkpoint_git(monkeypatch, dirty=dirty, prestaged=dirty)
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, dirty: bool
+) -> None:
+    recorded = _mock_checkpoint_git(monkeypatch, dirty=dirty, prestaged=dirty)
     coder._checkpoint_question_branch(tmp_path, "001-x", "q-123456789abc")
-    add_code = ["git", "add", "--", "code.py"]
-    assert add_code in calls
+    tracked = [
+        "git",
+        "add",
+        "-u",
+        "--",
+        ".",
+        ":(top,exclude).aifactory",
+        ":(top,exclude).aifactory-allowlist",
+    ]
+    untracked = ["git", "ls-files", "--others", "--exclude-standard", "-z"]
+    staging: list[tuple[list[str], bytes | None]] = [(tracked, None), (untracked, None)]
     if dirty:
-        assert calls[2] == ["git", "reset", "-q"]
-        assert calls[3][:3] == ["git", "add", "-u"]
-        assert calls.index(add_code) > 3
+        staging.append(
+            (["git", "update-index", "--add", "-z", "--stdin"], b"code.py\0")
+        )
+    assert [
+        (args, data)
+        for args, data in recorded
+        if args[1] in {"add", "ls-files", "update-index"}
+    ] == staging
+    calls = [args for args, _ in recorded]
+    if dirty:
+        assert calls.index(["git", "reset", "-q"]) < calls.index(tracked)
     else:
         assert ["git", "reset", "-q"] not in calls
     assert (
@@ -332,7 +372,7 @@ def test_git_push_failure_leaves_plan_and_review_state_unchanged(tmp_path, monke
     status = _status()
     with pytest.raises(RuntimeError, match="checkpoint push failed"):
         coder._pause_for_question(tmp_path, spec_dir, source, status)
-    assert any(args[1] == "push" for args in calls)
+    assert any(args[1] == "push" for args, _ in calls)
     assert status.states[-1] == BuildState.ERROR
     for directory in (spec_dir, source):
         assert (directory / "implementation_plan.json").read_text() == plan
@@ -591,7 +631,9 @@ async def test_coder_reuses_question_run_only_when_requested(
 ):
     run, spec_dir, source = coder_run
     _question(source)
-    _question(source)
+    (source / "questions" / "q-0123456789ab.json").write_text("corrupt")
+    (source / "questions" / "other.json").write_text("ignored")
+    (source / "questions" / "q-1123456789ab.json").mkdir()
     if packed:
         monkeypatch.setenv("WORKSPACE_URI", "s3://packed/work")
     existing = start_question_run(spec_dir)

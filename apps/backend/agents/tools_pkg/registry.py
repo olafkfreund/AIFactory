@@ -7,6 +7,7 @@ Central registry for creating and managing aifactory MCP tools.
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 try:
     from claude_agent_sdk import create_sdk_mcp_server
@@ -83,9 +84,10 @@ def create_magestic_ai_mcp_server(
 
     tools = create_all_tools(spec_dir, project_dir)
     if coder_model is not None:
+        # Only in-process coders pass a model, and they supply a concrete path.
         tools.extend(
             create_human_tools(
-                spec_dir,
+                cast(Path, spec_dir),
                 coder_model,
                 budget_spec_dir=question_budget_spec_dir,
                 prior_task_count=prior_task_count,

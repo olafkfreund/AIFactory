@@ -450,7 +450,7 @@ def reset_subtask_status_pending(plan_path: Path, subtask_id: str) -> bool:
 
 async def _checkpoint_worker_question(
     spec_dir: Path, child_spec_dir: Path, child_path: Path, *, metadata_ok: bool
-) -> dict | None:
+) -> dict[str, Any] | None:
     if not metadata_ok:
         return None
     run_id = question_run_id(spec_dir)
@@ -482,7 +482,7 @@ async def _checkpoint_worker_question(
     return question
 
 
-def _write_merged_question(spec_dir: Path, question: dict) -> None:
+def _write_merged_question(spec_dir: Path, question: dict[str, Any]) -> None:
     try:
         validate_question(question)
         with atomic_write(spec_dir / "questions" / f"{question['id']}.json") as stream:
@@ -505,6 +505,7 @@ async def run_parallel_coding_phase(
     recovery_manager: Any = None,
     gates: RunGates | None = None,
     prior_task_count: int | None = None,
+    ask_human_enabled: bool = False,
 ) -> PhaseRunResult:
     """Run one ``parallel_safe`` phase's subtasks concurrently in waves.
 
@@ -557,6 +558,7 @@ async def run_parallel_coding_phase(
                 agent_type="coder",
                 question_budget_spec_dir=spec_dir,
                 prior_task_count=prior_task_count,
+                ask_human_enabled=ask_human_enabled,
                 max_thinking_tokens=thinking_budget,
                 remote_control_session=remote_control_session,
             )
@@ -616,6 +618,11 @@ async def run_parallel_coding_phase(
             # --- scoped prompt for just this subtask ---
             subtask_dict = subtask.to_dict()
             phase_dict = phase.to_dict() if hasattr(phase, "to_dict") else {}
+            sub_model = (
+                gates.subtask_model(subtask.id, getattr(subtask, "model", None))
+                or phase_model
+            )
+            sub_provider = infer_provider_from_model(sub_model)
             prompt = generate_subtask_prompt(
                 spec_dir=child_spec_dir,
                 project_dir=child_path,
@@ -623,6 +630,7 @@ async def run_parallel_coding_phase(
                 phase=phase_dict,
                 attempt_count=0,
                 recovery_hints=None,
+                ask_human_enabled=ask_human_enabled and sub_provider == "claude",
             )
             context = load_subtask_context(child_spec_dir, child_path, subtask_dict)
             if context.get("patterns") or context.get("files_to_modify"):
@@ -670,17 +678,13 @@ async def run_parallel_coding_phase(
             commit_before = await asyncio.to_thread(_head_commit, child_path)
 
             # --- agent session (the genuinely concurrent, awaited part) ---
-            sub_model = (
-                gates.subtask_model(subtask.id, getattr(subtask, "model", None))
-                or phase_model
-            )
             client = _make_client(child_path, child_spec_dir, sub_model)
             record_identity(
                 source_spec_dir or spec_dir,
                 phase="coding",
                 subtask_id=subtask.id,
                 model=sub_model,
-                provider=infer_provider_from_model(sub_model),
+                provider=sub_provider,
             )
             _t_start = time.monotonic()
             # Watchdog on the client enter (#816): a stalled MCP connect becomes a

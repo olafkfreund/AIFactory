@@ -216,6 +216,7 @@ from agents.tools_pkg import (
     get_required_mcp_servers,
     is_tools_available,
 )
+from agents.tools_pkg.models import TOOL_ASK_HUMAN  # noqa: E402
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from claude_agent_sdk.types import HookMatcher
 from core import process_hardening  # noqa: E402
@@ -601,6 +602,7 @@ def create_client(
     allowed_models: list[str] | None = None,
     question_budget_spec_dir: Path | None = None,
     prior_task_count: int | None = None,
+    ask_human_enabled: bool = False,
 ) -> "ClaudeSDKClient":
     """
     Create a Claude Agent SDK client with multi-layered security.
@@ -949,15 +951,18 @@ def create_client(
 
     # Add custom aifactory MCP server if required and available
     if "aifactory" in required_servers and aifactory_tools_enabled:
+        coder_model = model if ask_human_enabled and agent_type == "coder" else None
         magestic_ai_mcp_server = create_magestic_ai_mcp_server(
             spec_dir,
             project_dir,
-            coder_model=model if agent_type == "coder" else None,
+            coder_model=coder_model,
             question_budget_spec_dir=question_budget_spec_dir,
             prior_task_count=prior_task_count,
         )
         if magestic_ai_mcp_server:
             mcp_servers["aifactory"] = magestic_ai_mcp_server
+            if coder_model is not None:
+                allowed_tools_list.append(TOOL_ASK_HUMAN)
 
     # ========== Catalog-driven servers (github, kubernetes, aws, azure, ...) =====
     # ``get_required_mcp_servers`` already filtered the catalog by agent +

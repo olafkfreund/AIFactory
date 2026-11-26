@@ -199,7 +199,6 @@ AGENT_CONFIGS = {
             TOOL_RECORD_DEAD_END,
             TOOL_GET_SESSION_CONTEXT,
             TOOL_TEST_MEMORY_INTEGRATION,
-            TOOL_ASK_HUMAN,
         ],
         "thinking_default": "none",  # Coding doesn't use extended thinking
     },

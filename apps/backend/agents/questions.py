@@ -6,6 +6,7 @@ import os
 import re
 import tempfile
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -71,7 +72,7 @@ def question_run_id(spec_dir: Path) -> str:
 
 
 @contextmanager
-def _staged_json(path: Path, value: dict[str, Any]):
+def _staged_json(path: Path, value: dict[str, Any]) -> Iterator[Path]:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
     try:
@@ -90,7 +91,7 @@ def _atomic_json(path: Path, value: dict[str, Any]) -> None:
 
 
 def create_question(
-    spec_dir: Path, record: dict, *, created: list[Path] | None = None
+    spec_dir: Path, record: dict[str, Any], *, created: list[Path] | None = None
 ) -> bool:
     """Publish once, optionally recording files owned by this transfer for rollback."""
     validate_question(record)
@@ -112,7 +113,7 @@ def create_question(
 
 
 @contextmanager
-def _lock(spec_dir: Path):
+def _lock(spec_dir: Path) -> Iterator[Path]:
     directory = spec_dir / "questions"
     directory.mkdir(parents=True, exist_ok=True)
     with (directory / ".lock").open("a+") as lock:
@@ -139,7 +140,7 @@ def _validate_choices(choices: list[str] | None) -> None:
         raise ValueError(f"each choice must be at most {CHOICE_MAX_LENGTH} characters")
 
 
-def _validate_arguments(record: dict) -> None:
+def _validate_arguments(record: dict[str, Any]) -> None:
     question = record["question"]
     if not isinstance(question, str) or not question.strip():
         raise ValueError("question is required")
@@ -173,7 +174,7 @@ def _validate_arguments(record: dict) -> None:
         raise ValueError(f"timeout_minutes must be between 1 and {TIMEOUT_MAX_MINUTES}")
 
 
-def validate_question(record: dict, *, run_id: str | None = None) -> dict:
+def validate_question(record: object, *, run_id: str | None = None) -> dict[str, Any]:
     """Validate an open question at a transfer boundary."""
     if not isinstance(record, dict) or record.keys() != QUESTION_FIELDS:
         raise ValueError("invalid question fields")
@@ -234,7 +235,7 @@ def write_question(  # noqa: PLR0913 - explicit tool inputs and budget context
     budget_spec_dir = budget_spec_dir or spec_dir
     with _lock(budget_spec_dir) as budget_dir:
         budget_path = budget_dir / ".budget.json"
-        budget = (
+        budget: dict[str, Any] = (
             json.loads(budget_path.read_text())
             if budget_path.exists()
             else {"total": 0, "runs": {}}
@@ -261,7 +262,10 @@ def write_question(  # noqa: PLR0913 - explicit tool inputs and budget context
 def read_question(spec_dir: Path, qid: str) -> dict[str, Any]:
     if not valid_qid(qid):
         raise ValueError("invalid question id")
-    return json.loads((spec_dir / "questions" / f"{qid}.json").read_text())
+    record: dict[str, Any] = json.loads(
+        (spec_dir / "questions" / f"{qid}.json").read_text()
+    )
+    return record
 
 
 def list_questions(spec_dir: Path) -> list[dict[str, Any]]:

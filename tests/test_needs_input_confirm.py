@@ -79,7 +79,7 @@ def _seed_questions(spec, count):
         (directory / f"q-{number:012x}.json").write_text("malformed")
 
 
-def _plan(spec, **state):
+def _plan(spec: Path, **state: object) -> Path:
     path = spec / "implementation_plan.json"
     path.write_text(
         json.dumps({"phases": [{"name": "Build", "subtasks": []}], **state})
@@ -418,4 +418,27 @@ async def test_plan_status_preserves_needs_input_until_terminal(
 
     assert json.loads(plan.read_text())["reviewReason"] != "needs_input"
     assert task_control.read_control(spec)["reviewReason"] != "needs_input"
+    completion_call.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_plan_status_overwrites_migrated_needs_input(
+    tmp_path: Path, spec: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan = _plan(spec, status="human_review", reviewReason="needs_input")
+    assert task_control.read_control(spec)["_migratedFromPlan"] is True
+    completion_call = AsyncMock()
+    monkeypatch.setattr(
+        completion_orchestration, "run_terminal_completion", completion_call
+    )
+
+    service = agent_service.AgentService()
+    await service._update_plan_status(
+        tmp_path, SPEC, "human_review", TASK, emit_events=False
+    )
+
+    assert json.loads(plan.read_text())["reviewReason"] == "plan_review"
+    control = task_control.read_control(spec)
+    assert control["reviewReason"] == "plan_review"
+    assert "_migratedFromPlan" not in control
     completion_call.assert_awaited_once()

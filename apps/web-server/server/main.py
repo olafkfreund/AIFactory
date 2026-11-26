@@ -54,6 +54,7 @@ from .routes import (
     notifications,
     organizations,
     projects,
+    questions,
     search,
     skills,
     stale,
@@ -627,6 +628,7 @@ def create_app() -> FastAPI:  # noqa: PLR0915 - router and middleware wiring
     # before tasks.router so its specific path isn't shadowed by the catch-all.
     app.include_router(from_issue.router, prefix="/api/tasks", tags=["Intake"])
     app.include_router(tasks.router, prefix="/api/tasks", tags=["Tasks"])
+    app.include_router(questions.router, prefix="/api/tasks", tags=["Tasks"])
     app.include_router(
         settings_routes.router, prefix="/api/settings", tags=["Settings"]
     )

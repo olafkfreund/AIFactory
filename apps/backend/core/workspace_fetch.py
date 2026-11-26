@@ -89,7 +89,7 @@ def push_questions(spec_dir: Path, spec_id: str, run_id: str) -> bool:
         return False
 
 
-def fetch_questions(spec_id: str, run_id: str) -> list[dict]:
+def fetch_questions(spec_id: str, run_id: str) -> list[dict[str, Any]]:
     """Read and validate a run's question records before pause confirmation."""
     try:
         raw = artifact_store.ArtifactStore().get_bytes(

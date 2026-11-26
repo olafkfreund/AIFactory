@@ -12,9 +12,11 @@ from agents.questions import (
 )
 
 try:
-    from claude_agent_sdk import tool
+    from claude_agent_sdk import tool as _sdk_tool
 except ImportError:
     tool = None
+else:
+    tool = _sdk_tool
 
 
 def create_human_tools(
@@ -23,7 +25,7 @@ def create_human_tools(
     *,
     budget_spec_dir: Path | None = None,
     prior_task_count: int | None = None,
-) -> list:
+) -> list[Any]:
     if tool is None:
         return []
 

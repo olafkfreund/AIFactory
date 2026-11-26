@@ -10,9 +10,11 @@ import contextlib
 import json
 import logging
 import os
+import stat
 import subprocess
 import time
 from pathlib import Path
+from typing import Any
 
 from core import workspace_fetch
 from core.child_env import child_env, lfs_upload
@@ -24,6 +26,7 @@ from core.error_utils import (
 from core.file_utils import write_json_atomic
 from core.git_credentials import authed_push_url
 from core.git_metadata import GitMetadataChangedError, check_git_metadata
+from core.process_hardening import in_build_job
 from phase_config import (
     get_provider_extra_kwargs,
     infer_provider_from_model,
@@ -46,6 +49,7 @@ from prompt_generator import (
     load_subtask_context,
 )
 from prompts import get_solo_prompt, is_first_run
+from prompts_pkg.prompt_generator import ASK_HUMAN_RULE
 from providers.factory import get_provider
 from recovery import RecoveryManager
 from review.state import requires_review_before_coding
@@ -77,16 +81,17 @@ from .inbox import format_for_prompt as format_inbox_for_prompt
 from .memory_manager import debug_memory_system_status, get_graphiti_context
 from .model_identity import record_identity
 from .questions import (
+    QID_RE,
     QuestionCheckpointError,
     QuestionPause,
     create_question,
-    list_questions,
     question_run_id,
     start_question_run,
 )
 from .route_wiring import route_wiring_gate
 from .session import post_session_processing, run_session_guarded
 from .token_attribution import PromptSegments, TurnUsage, record_turn
+from .tools_pkg import is_tools_available
 from .utils import (
     find_phase_for_subtask,
     get_commit_count,
@@ -102,13 +107,76 @@ logger = logging.getLogger(__name__)
 DEFAULT_PARALLEL_WORKERS = 3
 
 
-def _open_run_questions(spec_dir: Path) -> list[dict]:
+def _can_ask_human(project_dir: Path, spec_id: str) -> bool:
+    """Allow questions on a task branch with origin, outside co-mounted jobs."""
+    if (
+        in_build_job()
+        and not os.environ.get(workspace_fetch.WORKSPACE_URI_ENV, "").strip()
+    ):
+        return False
+    try:
+        env = child_env()
+        branch = subprocess.run(
+            ["git", "branch", "--show-current"],  # noqa: S607
+            cwd=project_dir,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        ).stdout.strip()
+        if branch != f"aifactory/{spec_id}":
+            return False
+        return bool(
+            subprocess.run(
+                ["git", "remote", "get-url", "origin"],  # noqa: S607
+                cwd=project_dir,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=True,
+            ).stdout.strip()
+        )
+    except (OSError, subprocess.SubprocessError, UnicodeError):
+        return False
+
+
+def _prior_question_count(spec_dir: Path) -> int:
+    try:
+        return sum(
+            path.suffix == ".json"
+            and QID_RE.fullmatch(path.stem) is not None
+            and path.is_file()
+            for path in (spec_dir / "questions").iterdir()
+        )
+    except FileNotFoundError:
+        return 0
+
+
+def _open_run_questions(spec_dir: Path) -> list[dict[str, Any]]:
+    try:
+        paths = sorted((spec_dir / "questions").iterdir())
+    except OSError:
+        return []
     run_id = question_run_id(spec_dir)
-    return [
-        question
-        for question in list_questions(spec_dir)
-        if question.get("status") == "open" and question.get("run_id") == run_id
-    ]
+    questions: list[dict[str, Any]] = []
+    for path in paths:
+        if path.suffix != ".json" or QID_RE.fullmatch(path.stem) is None:
+            continue
+        try:
+            if not stat.S_ISREG(path.lstat().st_mode):
+                continue
+            question = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, RecursionError):
+            continue
+        if (
+            isinstance(question, dict)
+            and question.get("status") == "open"
+            and question.get("run_id") == run_id
+        ):
+            questions.append(question)
+    return questions
 
 
 def _pause_for_question(
@@ -126,7 +194,9 @@ def _pause_for_question(
         qid = questions[0]["id"]
         _checkpoint_question_branch(project_dir, spec_dir.name, qid)
         target = (
-            spec_dir if source_spec_dir in (None, Path(os.devnull)) else source_spec_dir
+            spec_dir
+            if source_spec_dir is None or source_spec_dir == Path(os.devnull)
+            else source_spec_dir
         )
         _transfer_questions(spec_dir, target, questions, created)
         _write_question_pause(spec_dir, target, qid)
@@ -142,7 +212,7 @@ def _pause_for_question(
 
 
 def _transfer_questions(
-    spec_dir: Path, target: Path, questions: list[dict], created: list[Path]
+    spec_dir: Path, target: Path, questions: list[dict[str, Any]], created: list[Path]
 ) -> None:
     if os.environ.get("WORKSPACE_URI", "").strip():
         if not workspace_fetch.push_questions(
@@ -179,26 +249,112 @@ def _write_question_pause(spec_dir: Path, target: Path, qid: str) -> None:
         _write_question_review(target, qid)
 
 
+# shortcut: excluded files exist only in this worktree, lost on a packed kubejob resume; upgrade when the workspace pack carries untracked files  # noqa: E501
+_QUESTION_UNTRACKED_SECRET_NAMES = (
+    ".env",
+    ".env.*",
+    "*.pem",
+    "*.key",
+    "*.p12",
+    "*.pfx",
+    "*.jks",
+    "*.keystore",
+    "id_rsa*",
+    "id_ed25519*",
+    "id_ecdsa*",
+    ".npmrc",
+    ".netrc",
+    ".pypirc",
+    ".git-credentials",
+    "*credentials*.json",
+    "*credentials*.yaml",
+    "*credentials*.yml",
+    "*secret*.json",
+    "*secret*.yaml",
+    "*secret*.yml",
+    "kubeconfig*",
+    "*.kubeconfig",
+    "*.tfstate",
+    "*.tfstate.backup",
+    "*.tfvars",
+    "*.env",
+    ".envrc",
+    "credentials",
+    ".pgpass",
+    ".dockercfg",
+)
+
+
+def _question_untracked_paths(paths: str) -> bytes:
+    from fnmatch import fnmatchcase  # noqa: PLC0415 - checkpoint-only import
+
+    allowed: list[bytes] = []
+    excluded: list[str] = []
+    for path in paths.split("\0"):
+        if path.endswith("/"):
+            excluded.append(path)
+            continue
+        if not path or path.partition("/")[0] in {".aifactory", ".aifactory-allowlist"}:
+            continue
+        parent, _, basename = path.lower().rpartition("/")
+        kube_config = basename == "config" and parent.rpartition("/")[2] in {
+            ".kube",
+            "kube",
+        }
+        docker_config = (
+            basename == "config.json" and parent.rpartition("/")[2] == ".docker"
+        )
+        if (
+            kube_config
+            or docker_config
+            or any(
+                fnmatchcase(basename, pattern)
+                for pattern in _QUESTION_UNTRACKED_SECRET_NAMES
+            )
+        ):
+            excluded.append(path)
+        else:
+            allowed.append(os.fsencode(path) + b"\0")
+    if excluded:
+        logger.warning(
+            "Question checkpoint excluded %d untracked files: %r",
+            len(excluded),
+            excluded,
+        )
+    return b"".join(allowed)
+
+
 def _checkpoint_question_branch(
     project_dir: Path, spec_id: str, qid: str, *, push: bool = True
 ) -> None:
-    """Stage code without spec state or untracked credentials, then push."""
+    """Stage the project changes, scan for secrets, and push the checkpoint."""
 
     def git(
-        args: list[str], timeout: int = 120, *, env: dict | None = None
-    ) -> subprocess.CompletedProcess:
-        return subprocess.run(  # noqa: S603 - fixed git argv, no shell
-            ["git", *args],  # noqa: S607 - same git executable as the task runner
+        args: list[str],
+        timeout: int = 120,
+        *,
+        env: dict[str, str] | None = None,
+        stdin: bytes | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        argv = ["git", *args]
+        result = subprocess.run(  # noqa: S603 - fixed git argv, no shell
+            argv,
             cwd=project_dir,
             env=child_env() if env is None else env,
             capture_output=True,
-            text=True,
+            input=stdin,
             timeout=timeout,
             check=False,
         )
+        return subprocess.CompletedProcess(
+            argv,
+            result.returncode,
+            os.fsdecode(result.stdout),
+            os.fsdecode(result.stderr),
+        )
 
-    def run(*args: str) -> subprocess.CompletedProcess:
-        result = git(list(args))
+    def run(*args: str, stdin: bytes | None = None) -> subprocess.CompletedProcess[str]:
+        result = git(list(args), stdin=stdin)
         if result.returncode:
             raise RuntimeError(
                 f"question checkpoint git {args[0]} failed: {result.stderr.strip()}"
@@ -214,39 +370,17 @@ def _checkpoint_question_branch(
         "diff", "--no-ext-diff", "--no-textconv", "--cached", "--name-only"
     ).stdout.strip():
         run("reset", "-q")
-    run(
-        "add",
-        "-u",
-        "--",
+    project_paths = (
         ".",
-        ":!.aifactory",
-        ":!.aifactory-allowlist",
-        ":!aifactory/specs",
-        ":!specs",
-        ":!questions",
-        ":!.question_run_id",
+        ":(top,exclude).aifactory",
+        ":(top,exclude).aifactory-allowlist",
     )
-    untracked = run("ls-files", "--others", "--exclude-standard", "-z").stdout.split(
-        "\0"
+    run("add", "-u", "--", *project_paths)
+    allowed = _question_untracked_paths(
+        run("ls-files", "--others", "--exclude-standard", "-z").stdout
     )
-    # shortcut: unknown secret names stay uncommitted; add explicit safe paths if needed.
-    safe = [
-        path
-        for path in untracked
-        if path
-        and not any(
-            part.startswith(".")
-            or part in {"questions", "specs"}
-            or any(
-                word in part.lower()
-                for word in ("secret", "credential", "token", "private", "password")
-            )
-            or part.lower().endswith((".pem", ".key", ".p12", ".pfx"))
-            for part in Path(path).parts
-        )
-    ]
-    if safe:
-        run("add", "--", *safe)
+    if allowed:
+        run("update-index", "--add", "-z", "--stdin", stdin=allowed)
     staged_paths = run(
         "diff", "--no-ext-diff", "--no-textconv", "--cached", "--name-only", "-z"
     ).stdout.split("\0")
@@ -386,7 +520,7 @@ async def run_autonomous_agent(  # noqa: PLR0911 - distinct terminal states exit
     gates = gates or RunGates.capture(spec_dir, source_spec_dir, model)
     if _injection_scan_blocks(spec_dir, project_dir, source_spec_dir, gates):
         status_manager.update(state=BuildState.PAUSED)
-        return
+        return None
 
     # Debug: Print memory system status at startup
     debug_memory_system_status()
@@ -435,10 +569,17 @@ async def run_autonomous_agent(  # noqa: PLR0911 - distinct terminal states exit
     start_run(spec_dir)  # #2033: fresh token count, no stale halt
     if not reuse_question_run or not (spec_dir / ".question_run_id").exists():
         start_question_run(spec_dir)
+    ask_human_enabled = is_tools_available() and _can_ask_human(
+        project_dir, spec_dir.name
+    )
     prior_task_count = (
         None
-        if os.environ.get("WORKSPACE_URI", "").strip()
-        else len(list_questions(source_spec_dir or spec_dir))
+        if os.environ.get(workspace_fetch.WORKSPACE_URI_ENV, "").strip()
+        else _prior_question_count(
+            spec_dir
+            if source_spec_dir is None or source_spec_dir == Path(os.devnull)
+            else source_spec_dir
+        )
     )
 
     if first_run:
@@ -505,7 +646,7 @@ async def run_autonomous_agent(  # noqa: PLR0911 - distinct terminal states exit
             # them.
             await _run_trailing_gates_if_build_complete(spec_dir, project_dir)
             _emit_build_report(spec_dir, source_spec_dir)
-            return
+            return None
 
         # Start/continue coding phase in task logger
         if task_logger:
@@ -573,7 +714,7 @@ async def run_autonomous_agent(  # noqa: PLR0911 - distinct terminal states exit
             print(f"  rm {pause_file}")
             print("\nThen run again:")
             print(f"  python aifactory/run.py --spec {spec_dir.name}")
-            return
+            return None
 
         # Check max iterations
         if max_iterations and iteration > max_iterations:
@@ -693,6 +834,7 @@ async def run_autonomous_agent(  # noqa: PLR0911 - distinct terminal states exit
                 max_thinking_tokens=phase_thinking_budget,
                 remote_control_session=remote_control_session,
                 prior_task_count=prior_task_count,
+                ask_human_enabled=ask_human_enabled,
             )
         else:
             # Use agentic provider for non-Claude models
@@ -728,6 +870,8 @@ async def run_autonomous_agent(  # noqa: PLR0911 - distinct terminal states exit
             # the dedicated planner prompt.
             if solo_plans_inline:
                 prompt = get_solo_prompt(spec_dir)
+                if not (ask_human_enabled and provider_name == "claude"):
+                    prompt = prompt.replace(ASK_HUMAN_RULE + "\n", "")
             else:
                 # Planner-only session: authors the plan without implementing,
                 # so the wave dispatch can pick up independent subtasks (#389).
@@ -773,7 +917,7 @@ async def run_autonomous_agent(  # noqa: PLR0911 - distinct terminal states exit
                         )
                     if source_spec_dir:
                         sync_plan_to_source(spec_dir, source_spec_dir)
-                    return
+                    return None
 
                 # Plan-review gate (#1922): when review is required (snapshot
                 # taken before any agent session), ALWAYS pause after the planner.
@@ -826,7 +970,7 @@ async def run_autonomous_agent(  # noqa: PLR0911 - distinct terminal states exit
                     )
                     print()
 
-                    return  # Exit agent loop - task pauses for approval
+                    return None  # Exit agent loop - task pauses for approval
 
                 # Continue to coding phase
                 current_log_phase = LogPhase.CODING
@@ -883,6 +1027,7 @@ async def run_autonomous_agent(  # noqa: PLR0911 - distinct terminal states exit
                         recovery_manager=recovery_manager,
                         gates=gates,
                         prior_task_count=prior_task_count,
+                        ask_human_enabled=ask_human_enabled,
                     )
                 except QuestionPause:
                     question_pause = True
@@ -934,6 +1079,7 @@ async def run_autonomous_agent(  # noqa: PLR0911 - distinct terminal states exit
                 phase=phase or {},
                 attempt_count=attempt_count,
                 recovery_hints=recovery_hints,
+                ask_human_enabled=ask_human_enabled and provider_name == "claude",
             )
             seg_user_prompt = prompt
 
@@ -978,7 +1124,7 @@ async def run_autonomous_agent(  # noqa: PLR0911 - distinct terminal states exit
         # Between-turn inbox check (#264): deliver any user messages that
         # arrived while the previous turn was running. Drained exactly-once
         # and folded into this turn's prompt as high-priority directives.
-        inbox_messages = drain_inbox(spec_dir)
+        inbox_messages = drain_inbox(spec_dir, source_spec_dir=source_spec_dir)
         if inbox_messages:
             _inbox_block = format_inbox_for_prompt(inbox_messages)
             prompt += "\n\n" + _inbox_block
@@ -1357,6 +1503,7 @@ async def run_autonomous_agent(  # noqa: PLR0911 - distinct terminal states exit
 
     # Emit the profiling artifact (#397 Phase 1) — observability only.
     _emit_build_report(spec_dir, source_spec_dir)
+    return None
 
 
 def _injection_scan_blocks(
@@ -1706,6 +1853,7 @@ async def _maybe_run_parallel_phase(
     recovery_manager: RecoveryManager | None = None,
     gates: RunGates | None = None,
     prior_task_count: int | None = None,
+    ask_human_enabled: bool = False,
 ) -> bool:
     """Run the subtask's phase as parallel waves if it is eligible (#376).
 
@@ -1755,6 +1903,7 @@ async def _maybe_run_parallel_phase(
             recovery_manager=recovery_manager,
             gates=gates,
             prior_task_count=prior_task_count,
+            ask_human_enabled=ask_human_enabled,
         )
 
         # A stalled phase (cycle / unresolved deps / merge failures) drops to the

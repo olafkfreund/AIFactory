@@ -21,12 +21,18 @@ from typing import TYPE_CHECKING, Any
 from factory_common.logsafe import sanitize_log
 
 from server.project_registry import resolve_project_path
-from server.services import question_pause, review_redrive_service, task_control
+from server.services import (
+    question_guards,
+    question_pause,
+    review_redrive_service,
+    task_control,
+)
 from server.specpath import spec_dir_for
 
 from .build_backend import (
     _TERMINAL_STATES,
     BuildBackendUnavailableError,
+    GatedTaskRefusedError,
     backend_config_error,
     inpod_agent_refusal,
     kubejob_enabled,
@@ -585,6 +591,8 @@ class KubejobMixin:
         An unrunnable backend config refuses the launch (#1932) instead of
         falling back to the in-pod subprocess.
         """
+        if question_guards.approval_blocked(spec_dir_for(project_path, spec_id)):
+            raise GatedTaskRefusedError(question_guards.APPROVAL_PENDING)
         if problem := backend_config_error(self._store_enabled):
             raise BuildBackendUnavailableError(f"Builds refused: {problem}")
         if self._kubejob_backend_enabled():

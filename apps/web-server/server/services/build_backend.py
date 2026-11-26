@@ -1371,6 +1371,35 @@ def _refresh_to_remote_base(wt_path: Path, base_branch: str) -> None:
     )
 
 
+def _fetch_question_wip(
+    wt_path: Path, source_spec_dir: Path, spec_id: str, *, can_resume: bool
+) -> None:
+    from .question_pause import _question_files  # noqa: PLC0415
+
+    if not _question_files(source_spec_dir):
+        return
+    if not can_resume:
+        raise BuildBackendUnavailableError(
+            "Question WIP resume requires an origin and an AIFactory task branch"
+        )
+    branch = f"aifactory/{spec_id}"
+    try:
+        _git(
+            [
+                "-C",
+                str(wt_path),
+                "fetch",
+                "--",
+                "origin",
+                f"+refs/heads/{branch}:refs/remotes/origin/{branch}",
+            ]
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+        raise BuildBackendUnavailableError(
+            f"Could not fetch question WIP checkpoint for {spec_id}"
+        ) from exc
+
+
 def _populate_self_contained_worktree(
     project_path: Path,
     spec_id: str,
@@ -1388,7 +1417,7 @@ def _populate_self_contained_worktree(
     PR-endgame push) fails (the build-default flip blocker).
 
     Instead, build a self-contained local clone: a real ``.git`` directory, the
-    task branch checked out, the GitHub ``origin`` set, and the spec materialized.
+    base branch checked out, the GitHub ``origin`` set, and the spec materialized.
     Reuses the project's own conventions so ``/work`` matches the in-pod worktree
     shape: ``WorktreeManager.get_branch_name`` / ``get_worktree_path`` (so the
     branch + path are byte-identical to the subPath the manifest co-mounts) and
@@ -1455,8 +1484,8 @@ def _populate_self_contained_worktree(
     )
     # IMPORTANT (#716): leave /work on the BASE branch — do NOT pre-create or
     # check out the aifactory/<spec> task branch here. run.py's own setup_workspace
-    # (WorktreeManager.create_worktree) creates that worktree + branch FROM the base
-    # branch inside the Job, exactly as it does in-pod. Pre-checking it out makes
+    # (WorktreeManager.create_worktree) creates the worktree and task branch inside
+    # the Job, exactly as it does in-pod. Pre-checking it out makes
     # run.py's `git worktree add -b aifactory/<spec>` fail ("branch already
     # exists") → WorktreeError, crashing the build. The clone only needs to be a
     # self-contained repo (real .git + GitHub origin + the spec) on the base branch.
@@ -1478,6 +1507,9 @@ def _populate_self_contained_worktree(
                     f"+refs/heads/{source_branch}:refs/remotes/origin/{source_branch}",
                 ]
             )
+    _fetch_question_wip(
+        wt_path, source_spec_dir, spec_id, can_resume=bool(origin and not source_branch)
+    )
     # Materialize the spec into the clone working tree (gitignored/uncommitted —
     # exactly as the in-pod worktree carries it).
     workspace.copy_spec_to_worktree(source_spec_dir, wt_path, spec_id)
