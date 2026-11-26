@@ -5,21 +5,21 @@ import { answerQuestion, decideQuestion, getQuestions, QuestionRequestError, typ
 
 export function NeedsInputBanner({ taskId, rejected = false }: { taskId: string; rejected?: boolean }) {
   const { t } = useTranslation('tasks');
-  const [questions, setQuestions] = useState<HumanQuestion[]>([]);
+  const [questionList, setQuestionList] = useState<Awaited<ReturnType<typeof getQuestions>>['data']>();
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState('');
 
   async function refresh() {
     const result = await getQuestions(taskId);
-    if (result.success) setQuestions(result.data?.questions ?? []);
+    if (result.success) setQuestionList(result.data);
   }
 
   useEffect(() => {
     let active = true;
     getQuestions(taskId).then((result) => {
       if (!active) return;
-      if (result.success) setQuestions(result.data?.questions ?? []);
+      if (result.success) setQuestionList(result.data);
       else setError(t('needsInput.loadError'));
     });
     return () => { active = false; };
@@ -31,7 +31,10 @@ export function NeedsInputBanner({ taskId, rejected = false }: { taskId: string;
     try {
       if (decision) await decideQuestion(taskId, q.id, decision, value);
       else await answerQuestion(taskId, q.id, value);
-      setQuestions((current) => current.filter((item) => item.id !== q.id));
+      setQuestionList((current) => current && {
+        ...current,
+        questions: current.questions.filter((item) => item.id !== q.id),
+      });
     } catch (cause) {
       const status = cause instanceof QuestionRequestError ? cause.status : 0;
       const key = status === 409 ? 'alreadyAnswered'
@@ -46,11 +49,15 @@ export function NeedsInputBanner({ taskId, rejected = false }: { taskId: string;
     }
   }
 
-  return <section role="region" aria-label={t('needsInput.title')} className="rounded-lg border border-warning/40 bg-warning/10 p-4 space-y-3">
+  const visibleQuestions = (questionList?.questions ?? []).filter((q) =>
+    rejected ? q.status === 'rejected' : q.status === 'open' || q.status === 'expired');
+  if (!error && visibleQuestions.length === 0 && (!rejected || questionList?.review_reason === null)) return null;
+
+  return <section aria-label={t('needsInput.title')} className="rounded-lg border border-warning/40 bg-warning/10 p-4 space-y-3">
     <h3 className="font-semibold">{t(rejected ? 'needsInput.rejectedTitle' : 'needsInput.title')}</h3>
     {rejected && <p className="text-sm">{t('needsInput.rejectedNotice')}</p>}
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-    {questions.filter((q) => rejected ? q.status === 'rejected' : q.status === 'open' || q.status === 'expired').map((q) => <div key={q.id} className="space-y-2">
+    {visibleQuestions.map((q) => <div key={q.id} className="space-y-2">
       <p className="text-sm">{q.question}</p>
       {q.context && <p className="text-xs text-muted-foreground">{q.context}</p>}
       {rejected ? q.note && <p className="text-sm">{t('needsInput.rejectedNote', { note: q.note })}</p> : <>

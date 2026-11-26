@@ -169,6 +169,22 @@ describe('URL-scoped projects', () => {
     await waitFor(() => { expect(screen.getByTestId('location')).toHaveTextContent('/p/beta?filter=open'); });
   });
 
+  it.each(['/p/alpha/tasks/id%3A42', '/p/id-alpha/tasks/id%3A42'])(
+    'opens a cold task detail link after projects load: %s', async (path) => {
+      setApi({});
+      tasksFor['id-alpha'] = [makeTask('id:42', 'linked task', 'id-alpha')];
+      let resolveProjects: ((value: unknown) => void) | undefined;
+      (window.API as unknown as { getProjects: () => Promise<unknown> }).getProjects = () =>
+        new Promise((resolve) => { resolveProjects = resolve; });
+      renderAt(`${path}?filter=open`);
+      await waitFor(() => expect(resolveProjects).toBeDefined());
+      expect(screen.queryByTestId('aifactory-task-detail')).toBeNull();
+      await act(async () => { resolveProjects?.({ success: true, data: [A, B] }); });
+      expect(await screen.findByTestId('aifactory-task-detail')).toHaveTextContent('id:42');
+      expect(screen.getByTestId('location')).toHaveTextContent('/p/alpha/tasks/id%3A42?filter=open');
+    },
+  );
+
   it('shows not found for an unknown slug and never mounts views', async () => {
     setApi({});
     renderAt('/p/nope');

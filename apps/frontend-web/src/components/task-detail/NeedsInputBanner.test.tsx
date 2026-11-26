@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import fixture from '../../../../../tests/fixtures/questions_api.json';
 import en from '../../shared/i18n/locales/en/tasks.json';
@@ -27,7 +27,7 @@ afterEach(() => { vi.unstubAllGlobals(); localStorage.clear(); });
 describe('NeedsInputBanner', () => {
   it('shows both open and the expired fixture questions, without answered or rejected ones', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(ok(list));
-    render(<NeedsInputBanner taskId={list.task_id} />);
+    const { container } = render(<NeedsInputBanner taskId={list.task_id} />);
     for (const q of list.questions.filter((item) => item.status === 'open' || item.status === 'expired')) {
       expect(await screen.findByText(q.question)).toBeInTheDocument();
     }
@@ -36,6 +36,34 @@ describe('NeedsInputBanner', () => {
     }
     expect(screen.getByText('Suggested: UTC')).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: en.needsInput.answer })).toHaveValue('');
+    expect(container.querySelector('button[aria-pressed="true"], input[type="radio"]:checked')).toBeNull();
+  });
+
+  it.each([false, true])('renders nothing for an empty list (rejected=%s)', async (rejected) => {
+    const emptyList = fixture.list_empty.response.body;
+    const response = Promise.resolve(ok(emptyList));
+    vi.mocked(fetch).mockReturnValueOnce(response);
+    const { container } = render(<NeedsInputBanner taskId={emptyList.task_id} rejected={rejected} />);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await act(async () => { await response; });
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByRole('region')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('shows an alert when loading fails', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(failure(500));
+    render(<NeedsInputBanner taskId={list.task_id} />);
+    expect(await screen.findByRole('alert')).toHaveTextContent(en.needsInput.loadError);
+  });
+
+  it('renders question markup as literal text', async () => {
+    const question = '<img src=x onerror=alert(1)><b>bold</b>';
+    vi.mocked(fetch).mockResolvedValueOnce(ok({ ...list, questions: [{ ...list.questions[0], question }] }));
+    const { container } = render(<NeedsInputBanner taskId={list.task_id} />);
+    expect(await screen.findByText(question)).toBeInTheDocument();
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.querySelector('b')).toBeNull();
   });
 
   it('sends a factual choice with the stored bearer token', async () => {
@@ -64,6 +92,8 @@ describe('NeedsInputBanner', () => {
       credentials: 'include', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ decision: 'reject', note: 'Keep the table', confirm_token: fixture.confirm_token.response.body.confirm_token }),
     }));
+    expect(new Headers(vi.mocked(fetch).mock.calls[1][1]?.headers).has('Authorization')).toBe(false);
+    expect(new Headers(vi.mocked(fetch).mock.calls[2][1]?.headers).has('Authorization')).toBe(false);
   });
 
   it('translates a 409 and refetches the list', async () => {

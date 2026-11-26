@@ -22,6 +22,7 @@ import {
   projectPath,
   projectSlugs,
   projectsForBareSlug,
+  taskIdFromPath,
 } from './lib/project-route';
 import { PipelineStripContext } from './contexts/PipelineStripContext';
 import { PipelineBoard } from './components/pipeline/PipelineBoard';
@@ -224,9 +225,12 @@ function AuthenticatedApp() {
   // An id or alias in the URL is rewritten to the canonical slug.
   useEffect(() => {
     if (route.kind === 'project' && urlSlug && route.ref !== urlSlug) {
-      void navigate(projectPath(urlSlug, route.view) + search, { replace: true });
+      const taskId = taskIdFromPath(pathname);
+      void navigate(taskId !== null
+        ? `${projectPath(urlSlug)}/tasks/${encodeURIComponent(taskId)}${search}`
+        : projectPath(urlSlug, route.view) + search, { replace: true });
     }
-  }, [route, urlSlug, search, navigate]);
+  }, [route, urlSlug, pathname, search, navigate]);
 
   // Back at "/" after a login that interrupted a deep link: go there once.
   useEffect(() => {
@@ -425,7 +429,7 @@ function AuthenticatedApp() {
 
   // Load tasks when URL project changes
   useEffect(() => {
-    setSelectedTaskId(null);
+    setSelectedTaskId(taskIdFromPath(pathname));
     setMissionControlId(null);
     if (!urlProjectId) {
       if ((pathname === '/tasks' || pathname === '/needs-input') && projectsLoaded && !projectError) void loadFleetTasks(projects.map((project) => project.id));
@@ -436,14 +440,6 @@ function AuthenticatedApp() {
       void loadTasks(urlProjectId);
     }
   }, [urlProjectId, inSync, pathname, projectsLoaded, projectError, projects]);
-
-  useEffect(() => {
-    const match = /^\/p\/[^/]+\/tasks\/([^/]+)$/.exec(pathname);
-    if (match) {
-      try { setSelectedTaskId(decodeURIComponent(match[1])); }
-      catch { setSelectedTaskId(match[1]); }
-    }
-  }, [pathname]);
 
   useEffect(() => {
     if (!isSwitchingProject) return;
@@ -853,7 +849,7 @@ function AuthenticatedApp() {
           onOpenChange={(open) => {
             if (!open) {
               setSelectedTaskId(null);
-              if (/^\/p\/[^/]+\/tasks\/[^/]+$/.test(pathname) && urlSlug) void navigate(projectPath(urlSlug));
+              if (taskIdFromPath(pathname) !== null && urlSlug) void navigate(projectPath(urlSlug));
             }
           }}
           onSwitchToTerminals={() => {

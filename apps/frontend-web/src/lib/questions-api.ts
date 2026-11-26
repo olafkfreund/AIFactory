@@ -33,7 +33,7 @@ const path = (taskId: string, qid?: string) =>
   `/tasks/${encodeURIComponent(taskId)}/questions${qid ? `/${encodeURIComponent(qid)}` : ''}`;
 
 export async function getQuestions(taskId: string) {
-  return get<{ task_id: string; review_reason: 'needs_input' | 'approval_rejected'; questions: HumanQuestion[] }>(path(taskId));
+  return get<{ task_id: string; review_reason: 'needs_input' | 'approval_rejected' | null; questions: HumanQuestion[] }>(path(taskId));
 }
 
 export async function answerQuestion(taskId: string, qid: string, answer: string) {

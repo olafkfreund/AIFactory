@@ -3,12 +3,37 @@
     "issue": 3906,
     "source": "plan/2026-11-25-3906-ask-human.md (Revisions 2 and 3 win)",
     "enums": {
-      "status": ["open", "expired", "answered", "rejected"],
-      "delivery": [null, "answered", "inboxed", "launched"],
-      "decision": [null, "approve", "reject"],
-      "channel": ["portal", "mcp", "cfactory"],
-      "auth": ["session", "key:<api_key_id>"],
-      "review_reason": ["needs_input", "approval_rejected"]
+      "status": [
+        "open",
+        "expired",
+        "answered",
+        "rejected"
+      ],
+      "delivery": [
+        null,
+        "answered",
+        "inboxed",
+        "launched"
+      ],
+      "decision": [
+        null,
+        "approve",
+        "reject"
+      ],
+      "channel": [
+        "portal",
+        "mcp",
+        "cfactory"
+      ],
+      "auth": [
+        "session",
+        "key:<api_key_id>"
+      ],
+      "review_reason": [
+        null,
+        "needs_input",
+        "approval_rejected"
+      ]
     },
     "rules": [
       "open and expired questions are both answerable",
@@ -17,12 +42,16 @@
       "answered_by, channel, auth and answered_at are set by the server; the same keys in a request body are ignored",
       "choices is null for a free-text question; when it is a list, answer must equal one entry",
       "default is a suggestion to display; it is never preselected, submitted or applied",
-      "question, context and choices are model-written text; render them as plain text"
+      "question, context and choices are model-written text; render them as plain text",
+      "the list route returns 200 with review_reason null and an empty questions list for a task that has no questions or is no longer paused; never 404 for a known task",
+      "the MCP answer_question result carries the full question object, the same shape as the REST answer response; the example below shows a subset"
     ]
   },
-
   "list": {
-    "request": { "method": "GET", "path": "/api/tasks/{task_id}/questions" },
+    "request": {
+      "method": "GET",
+      "path": "/api/tasks/{task_id}/questions"
+    },
     "response": {
       "status": 200,
       "body": {
@@ -34,7 +63,10 @@
             "task_id": "042-export-csv",
             "status": "open",
             "question": "The plan says dates are UTC, but the acceptance test expects local time. Which one is right?",
-            "choices": ["UTC", "Local time"],
+            "choices": [
+              "UTC",
+              "Local time"
+            ],
             "needs_approval": false,
             "context": "Plan step 3; files: export/format.py, tests/test_export.py",
             "default": "UTC",
@@ -80,7 +112,11 @@
             "task_id": "042-export-csv",
             "status": "answered",
             "question": "Which delimiter should the export use?",
-            "choices": ["comma", "semicolon", "tab"],
+            "choices": [
+              "comma",
+              "semicolon",
+              "tab"
+            ],
             "needs_approval": false,
             "context": "Plan step 2; files: export/writer.py",
             "default": "comma",
@@ -148,12 +184,27 @@
       }
     }
   },
-
+  "list_empty": {
+    "request": {
+      "method": "GET",
+      "path": "/api/tasks/{task_id}/questions"
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "task_id": "042-export-csv",
+        "review_reason": null,
+        "questions": []
+      }
+    }
+  },
   "answer_factual": {
     "request": {
       "method": "POST",
       "path": "/api/tasks/{task_id}/questions/{qid}/answer",
-      "body": { "answer": "UTC" }
+      "body": {
+        "answer": "UTC"
+      }
     },
     "response": {
       "status": 200,
@@ -163,7 +214,10 @@
           "task_id": "042-export-csv",
           "status": "answered",
           "question": "The plan says dates are UTC, but the acceptance test expects local time. Which one is right?",
-          "choices": ["UTC", "Local time"],
+          "choices": [
+            "UTC",
+            "Local time"
+          ],
           "needs_approval": false,
           "context": "Plan step 3; files: export/format.py, tests/test_export.py",
           "default": "UTC",
@@ -184,7 +238,6 @@
       }
     }
   },
-
   "confirm_token": {
     "request": {
       "method": "GET",
@@ -199,7 +252,6 @@
       }
     }
   },
-
   "answer_approval_approve": {
     "request": {
       "method": "POST",
@@ -240,7 +292,6 @@
       }
     }
   },
-
   "answer_approval_reject": {
     "request": {
       "method": "POST",
@@ -282,50 +333,64 @@
       }
     }
   },
-
   "errors": {
     "approval_not_interactive": {
       "when": "approval answer or confirm-token with an API key, scoped service, service principal, bearer JWT, or a missing, expired, reused or mismatched confirm_token",
       "status": 403,
-      "body": { "detail": "approval requires a person in the portal" }
+      "body": {
+        "detail": "approval requires a person in the portal"
+      }
     },
     "legacy_token": {
       "when": "the legacy shared token on any questions route",
       "status": 403,
-      "body": { "detail": "questions require a personal identity" }
+      "body": {
+        "detail": "questions require a personal identity"
+      }
     },
     "not_project_member": {
       "when": "the caller is below project member on the task's project",
       "status": 403,
-      "body": { "detail": "forbidden" }
+      "body": {
+        "detail": "forbidden"
+      }
     },
     "already_answered": {
       "when": "POST answer on a question whose status is answered or rejected",
       "status": 409,
-      "body": { "detail": "already answered" }
+      "body": {
+        "detail": "already answered"
+      }
     },
     "approval_pending": {
       "when": "start or recover while an approval question is open or rejected",
       "status": 409,
-      "body": { "detail": "approval question pending: answer it in the portal" }
+      "body": {
+        "detail": "approval question pending: answer it in the portal"
+      }
     },
     "task_paused": {
       "when": "the manual PR route on a task with reviewReason needs_input, approval_rejected or plan_review",
       "status": 409,
-      "body": { "detail": "task is paused: needs_input" }
+      "body": {
+        "detail": "task is paused: needs_input"
+      }
     },
     "question_not_found": {
       "when": "the qid is unknown, malformed, or belongs to another task",
       "status": 404,
-      "body": { "detail": "question not found" }
+      "body": {
+        "detail": "question not found"
+      }
     },
     "invalid_answer": {
       "when": "answer is not one of the choices, answer sent to an approval question, or decision sent to a factual question",
       "status": 422,
-      "body": { "detail": "answer must be one of the choices" }
+      "body": {
+        "detail": "answer must be one of the choices"
+      }
     }
   },
-
   "mcp": {
     "questions_pending": {
       "scope": "mcp:read",
@@ -338,7 +403,10 @@
             "project": "export-service",
             "status": "open",
             "question": "The plan says dates are UTC, but the acceptance test expects local time. Which one is right?",
-            "choices": ["UTC", "Local time"],
+            "choices": [
+              "UTC",
+              "Local time"
+            ],
             "needs_approval": false,
             "age_seconds": 420,
             "portal_url": "https://aifactory.example.test/p/export-service/tasks/042-export-csv"
@@ -359,13 +427,29 @@
     },
     "answer_question": {
       "scope": "mcp:write",
-      "arguments": { "task_id": "042-export-csv", "qid": "q-3f9a1c7e20b4", "answer": "UTC" },
-      "result": { "question": { "id": "q-3f9a1c7e20b4", "status": "answered", "answer_id": "a-2c7e9b0d4f16", "channel": "mcp", "auth": "key:key-9a8b7c", "delivery": "launched" } },
+      "arguments": {
+        "task_id": "042-export-csv",
+        "qid": "q-3f9a1c7e20b4",
+        "answer": "UTC"
+      },
+      "result": {
+        "question": {
+          "id": "q-3f9a1c7e20b4",
+          "status": "answered",
+          "answer": "UTC",
+          "answer_id": "a-2c7e9b0d4f16",
+          "channel": "mcp",
+          "auth": "key:key-9a8b7c",
+          "delivery": "launched"
+        }
+      },
       "refusal_approval": {
         "error": "approval requires a person in the portal",
         "portal_url": "https://aifactory.example.test/p/export-service/tasks/042-export-csv"
       },
-      "refusal_ownerless_or_legacy_key": { "error": "questions require a personal identity" }
+      "refusal_ownerless_or_legacy_key": {
+        "error": "questions require a personal identity"
+      }
     }
   }
 }
