@@ -287,22 +287,28 @@ def _job_finish_time(job: Any) -> float | None:
     return next((t for t in stamps if t is not None), -1.0)
 
 
-def _sweep_candidates(jobs: Any, owned: set[str], clock: float) -> list[str]:
+def _sweep_candidates(
+    jobs: Any, owned: set[str], owned_ids: set[str], clock: float
+) -> list[tuple[str, str]]:
     """Unowned Jobs to delete: unfinished past grace, plus finished beyond the cap (#2133)."""
-    orphans: list[str] = []
-    finished: list[tuple[float, str]] = []
+    from core.job_dispatch import job_owner  # noqa: PLC0415
+
+    orphans: list[tuple[str, str]] = []
+    finished: list[tuple[float, str, str]] = []
     for job in jobs:
-        name = job.metadata.name
-        if not name or name in owned:
+        meta = getattr(job, "metadata", None)
+        name = getattr(meta, "name", None)
+        uid = getattr(meta, "uid", None)
+        if not name or not uid or name in owned or job_owner(job) in owned_ids:
             continue
-        created = _to_epoch(job.metadata.creation_timestamp)
+        created = _to_epoch(getattr(meta, "creation_timestamp", None))
         finish = _job_finish_time(job)
         if finish is not None:
-            finished.append((finish if finish >= 0 else (created or 0), name))
+            finished.append((finish if finish >= 0 else (created or 0), name, uid))
         elif created is not None and clock - created >= _SWEEP_GRACE_SECONDS:
-            orphans.append(name)
-    finished.sort()
-    return orphans + [name for _, name in finished[: -_retain_max()]]
+            orphans.append((name, uid))
+    finished.sort(key=lambda item: (item[0], item[1]))
+    return orphans + [(name, uid) for _, name, uid in finished[: -_retain_max()]]
 
 
 def _job_service_account() -> str:
@@ -1764,53 +1770,6 @@ class KubeJobBuildBackend:
 
     # -- reaper -------------------------------------------------------------
 
-    async def _reconstructed_job_is_ours(
-        self, batch: Any, namespace: str, job_name: str, job_id: str
-    ) -> bool:
-        """True when the Job found under a RECONSTRUCTED name really is this row's.
-
-        ``job_dispatch._short`` keeps only the last 20 characters of the job_id, so
-        two ids can produce one Job name. The Job object carries the same short id
-        as its ``factory.io/job-id`` label, so compare them before this row's
-        verdict is written from that Job's status (#1606).
-
-        Fails CLOSED: an unreadable Job, a missing label or any error returns
-        False, which leaves the row untouched for a later tick. A missed reap
-        costs a slot until the next pass; failing the wrong build is unrecoverable.
-        """
-        # ``job_labels`` is the function that STAMPED the label at dispatch, so
-        # asking it for the expected value cannot drift from the labelling rule the
-        # way a second copy of ``_short`` would. Lazy import: see _reconstructed_ref.
-        from core.job_dispatch import job_labels  # noqa: PLC0415
-
-        try:
-            job = await batch.read_namespaced_job(job_name, namespace)
-        except Exception as exc:  # noqa: BLE001 - never crash the reaper
-            _log.warning(
-                "[build_backend] #1606 could not re-read reconstructed Job %s/%s "
-                "for %s (%s) — leaving the row for a later tick",
-                namespace,
-                job_name,
-                sanitize_log(job_id),
-                exc,
-            )
-            return False
-        found = _job_id_label(job)
-        expected = job_labels("aifactory", job_id)["factory.io/job-id"]
-        if found == expected:
-            return True
-        _log.warning(
-            "[build_backend] #1606 reconstructed Job %s/%s belongs to another task "
-            "(factory.io/job-id=%r, expected %r) — leaving %s alone rather than "
-            "reading another build's verdict",
-            namespace,
-            job_name,
-            found,
-            expected,
-            sanitize_log(job_id),
-        )
-        return False
-
     async def _repair_worker_ref(
         self, job_id: str, job_name: str, namespace: str
     ) -> None:
@@ -1851,11 +1810,8 @@ class KubeJobBuildBackend:
         rebuild it and ASK the API: the row may still have a live Job, and assuming
         otherwise would orphan a real build.
 
-        A reconstructed name is not proof of identity — ``_short`` keeps only the
-        last 20 characters of the id, so another task's Job can answer to it — so
-        the label is checked before the caller may write a verdict from that Job's
-        status. There is no Job to read when the outcome is ``gone``; the caller
-        distinguishes that case by ``reconstructed``.
+        A name is not proof of identity: check the full-id annotation before
+        using any present Job's status. A 404 has no Job to check.
         """
         recorded_name = row.get("job_name")
         recorded_ns = row.get("namespace")
@@ -1866,7 +1822,17 @@ class KubeJobBuildBackend:
             else (str(recorded_name), str(recorded_ns))
         )
 
-        outcome = await self._job_outcome(batch, namespace, job_name)
+        from core.job_dispatch import job_owner  # noqa: PLC0415
+
+        outcome, job = await self._read_job(batch, namespace, job_name)
+        if job is not None and job_owner(job) != row["job_id"]:
+            _log.warning(
+                "[build_backend] Job %s/%s belongs to another task; leaving %s alone",
+                sanitize_log(namespace),
+                sanitize_log(job_name),
+                sanitize_log(row["job_id"]),
+            )
+            return None
         if reconstructed and outcome == "gone":
             # #2141: no Job under a reconstructed ref is also what a dispatch
             # still populating/packing looks like. Only a row older than the
@@ -1875,13 +1841,8 @@ class KubeJobBuildBackend:
             clock = now if now is not None else time.time()
             if ts is not None and (clock - ts) < _DISPATCH_GRACE_SECONDS:
                 return None
-        if reconstructed and outcome != "gone":
-            job_id = row["job_id"]
-            if not await self._reconstructed_job_is_ours(
-                batch, namespace, job_name, job_id
-            ):
-                return None
-            await self._repair_worker_ref(job_id, job_name, namespace)
+        if reconstructed and job is not None:
+            await self._repair_worker_ref(row["job_id"], job_name, namespace)
         return job_name, namespace, outcome, reconstructed
 
     async def reap_vanished_jobs(
@@ -1985,6 +1946,7 @@ class KubeJobBuildBackend:
         owned = {
             row["job_name"] or _reconstructed_ref(row["job_id"])[0] for row in rows
         }
+        owned_ids = {row["job_id"] for row in rows}
         from .spec_job_backend import live_spec_job_names  # noqa: PLC0415
 
         owned |= live_spec_job_names()
@@ -2009,8 +1971,8 @@ class KubeJobBuildBackend:
 
             clock = now if now is not None else _time.time()
             swept: list[str] = []
-            orphans = _sweep_candidates(listing.items or [], owned, clock)
-            for name in orphans:
+            orphans = _sweep_candidates(listing.items or [], owned, owned_ids, clock)
+            for name, uid in orphans:
                 if sweep_dry_run():
                     _log.warning(
                         "[build_backend] #1714 dry-run: would delete orphan Job %s/%s",
@@ -2020,10 +1982,24 @@ class KubeJobBuildBackend:
                     swept.append(name)
                     continue
                 try:
+                    from kubernetes_asyncio import client  # noqa: PLC0415
+
                     await batch.delete_namespaced_job(
-                        name, namespace, propagation_policy="Background"
+                        name,
+                        namespace,
+                        body=client.V1DeleteOptions(
+                            preconditions=client.V1Preconditions(uid=uid)
+                        ),
+                        propagation_policy="Background",
                     )
                 except Exception as exc:  # noqa: BLE001 - continue with other Jobs
+                    if getattr(exc, "status", None) == 409:
+                        _log.warning(
+                            "[build_backend] #1714 orphan Job %s/%s was replaced; skipping",
+                            namespace,
+                            name,
+                        )
+                        continue
                     if getattr(exc, "status", None) != 404:  # noqa: PLR2004 - HTTP Not Found
                         _log.warning(
                             "[build_backend] #1714 could not delete orphan Job %s/%s: %s",
@@ -2089,6 +2065,12 @@ class KubeJobBuildBackend:
 
     @staticmethod
     async def _job_outcome(batch: Any, namespace: str, job_name: str) -> str:
+        return (await KubeJobBuildBackend._read_job(batch, namespace, job_name))[0]
+
+    @staticmethod
+    async def _read_job(
+        batch: Any, namespace: str, job_name: str
+    ) -> tuple[str, Any | None]:
         """The Job's real state: ``succeeded`` | ``failed`` | ``running`` | ``gone``.
 
         #857: this used to be ``_job_exists`` and returned a bool, discarding the
@@ -2111,20 +2093,20 @@ class KubeJobBuildBackend:
             job = await batch.read_namespaced_job(job_name, namespace)
         except Exception as exc:  # noqa: BLE001
             if getattr(exc, "status", None) == 404:
-                return "gone"
+                return "gone", None
             _log.warning(
                 "[build_backend] could not verify Job %s/%s (%s) — assuming present",
                 namespace,
                 job_name,
                 exc,
             )
-            return "running"
+            return "running", None
         status = getattr(job, "status", None)
         if (getattr(status, "succeeded", None) or 0) >= 1:
-            return "succeeded"
+            return "succeeded", job
         if (getattr(status, "failed", None) or 0) >= 1:
-            return "failed"
-        return "running"
+            return "failed", job
+        return "running", job
 
 
 def _dispatch_namespace() -> str:
@@ -2145,9 +2127,8 @@ def _reconstructed_ref(job_id: str) -> tuple[str, str]:
     — and a build dispatches with ``job_id=task_id``, so the inputs that named
     the Job are still on the row even when the ref write never happened (#1606).
 
-    The name alone is NOT proof of identity: ``_short`` keeps only the last 20
-    characters of the id, so two ids can collide. Callers must check the Job's
-    ``factory.io/job-id`` label before writing any terminal state.
+    The name alone is not proof of identity. Callers must check the Job's
+    ``factory.io/job-id-full`` annotation before writing any terminal state.
     """
     # Lazy for the same reason as the other core.* imports in this file: ``core``
     # joins sys.path at startup, so a module-level import would not resolve on a
@@ -2175,14 +2156,6 @@ def _vanished_reason(namespace: str, job_name: str, reconstructed: bool) -> str:
         f"k8s Job {namespace}/{job_name} disappeared without a terminal write "
         "(evicted / GC'd / crashed before report)"
     )
-
-
-def _job_id_label(job: Any) -> str | None:
-    """The ``factory.io/job-id`` label off a fetched Job object, if present."""
-    meta = getattr(job, "metadata", None)
-    labels = getattr(meta, "labels", None) or {}
-    value = labels.get("factory.io/job-id")
-    return str(value) if value is not None else None
 
 
 def _to_epoch(value: Any) -> float | None:
