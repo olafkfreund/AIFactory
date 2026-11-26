@@ -381,6 +381,7 @@ class _FakeBatch:
         self.delete_error = delete_error
         self.listed = []
         self.deleted = []
+        self.delete_bodies = []
 
     async def list_namespaced_job(self, namespace, *, label_selector):
         self.listed.append((namespace, label_selector))
@@ -388,15 +389,23 @@ class _FakeBatch:
             raise self.list_error
         return SimpleNamespace(items=self.jobs)
 
-    async def delete_namespaced_job(self, name, namespace, *, propagation_policy):
+    async def delete_namespaced_job(self, name, namespace, *, body, propagation_policy):
         self.deleted.append((name, namespace, propagation_policy))
+        self.delete_bodies.append(body)
         if self.delete_error:
             raise self.delete_error
 
 
-def _job(name, created, *, finished=None, failed=False, counters=False):
+def _job(
+    name, created, *, finished=None, failed=False, counters=False, owner=None, uid=None
+):
     return SimpleNamespace(
-        metadata=SimpleNamespace(name=name, creation_timestamp=created),
+        metadata=SimpleNamespace(
+            name=name,
+            uid=uid if uid is not None else f"{name}-uid",
+            annotations={"factory.io/job-id-full": owner} if owner else {},
+            creation_timestamp=created,
+        ),
         status=SimpleNamespace(
             conditions=[
                 SimpleNamespace(
@@ -431,6 +440,8 @@ async def test_sweep_dry_run_and_single_delete(monkeypatch, setting):
     assert batch.deleted == (
         [("orphan", "factory", "Background")] if setting == "false" else []
     )
+    if setting == "false":
+        assert batch.delete_bodies[0].preconditions.uid == "orphan-uid"
     assert not hasattr(batch, "delete_collection_namespaced_job")
 
 
@@ -453,6 +464,7 @@ async def test_sweep_keeps_young_and_owned_jobs(monkeypatch):
             _job("young", now - timedelta(seconds=599)),
             _job("j", old),
             _job(pending_name, old),
+            _job("id-owned", old, owner=TASK),
             _job("orphan", old),
         ]
     )
@@ -494,6 +506,36 @@ async def test_sweep_404_counts_as_deleted_but_other_delete_errors_do_not(
         assert batch.deleted == [("orphan", "factory", "Background")]
 
 
+async def test_sweep_skips_missing_uid_and_replaced_job(monkeypatch):
+    monkeypatch.setenv("AIFACTORY_JOB_SWEEP_DRY_RUN", "false")
+    old = datetime.now(UTC) - timedelta(seconds=601)
+    jobs = [
+        SimpleNamespace(metadata=None),
+        _job("no-uid", old),
+        _job("replaced", old),
+        _job("next", old),
+    ]
+    jobs[1].metadata.uid = None
+    batch = _FakeBatch(jobs)
+    store = SimpleNamespace(get_active_kubejobs=AsyncMock(return_value=[]))
+
+    async def delete(name, namespace, *, body, propagation_policy):
+        batch.deleted.append((name, namespace, propagation_policy))
+        batch.delete_bodies.append(body)
+        if name == "replaced":
+            raise _PodError(409)
+
+    batch.delete_namespaced_job = delete
+    assert await build_backend.KubeJobBuildBackend(store).sweep_orphan_jobs(
+        batch=batch
+    ) == ["next"]
+    assert [name for name, _, _ in batch.deleted] == ["replaced", "next"]
+    assert [body.preconditions.uid for body in batch.delete_bodies] == [
+        "replaced-uid",
+        "next-uid",
+    ]
+
+
 @pytest.mark.parametrize("dry_run", [False, True])
 async def test_sweep_caps_finished_by_finish_time_and_keeps_owned(monkeypatch, dry_run):
     monkeypatch.setenv("AIFACTORY_JOB_RETAIN_MAX", "2")
@@ -516,6 +558,8 @@ async def test_sweep_caps_finished_by_finish_time_and_keeps_owned(monkeypatch, d
         now=now.timestamp(), batch=batch
     ) == ["oldest"]
     assert batch.deleted == ([] if dry_run else [("oldest", "factory", "Background")])
+    if not dry_run:
+        assert batch.delete_bodies[0].preconditions.uid == "oldest-uid"
 
 
 async def test_sweep_finished_jobs_are_not_age_swept(monkeypatch):
@@ -708,7 +752,12 @@ async def test_job_gone_only_on_404(status, expected):
             assert (name, namespace) == build_backend._reconstructed_ref(TASK)
             if status != 200:
                 raise _PodError(status)
-            return SimpleNamespace(status=SimpleNamespace())
+            return SimpleNamespace(
+                metadata=SimpleNamespace(
+                    annotations={"factory.io/job-id-full": "other"}
+                ),
+                status=SimpleNamespace(),
+            )
 
     backend = build_backend.KubeJobBuildBackend(SimpleNamespace())
     assert await backend.job_gone(TASK, batch=Batch()) is expected

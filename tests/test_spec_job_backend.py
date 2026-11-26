@@ -21,6 +21,7 @@ for _path in (_REPO / "apps/web-server", _REPO / "apps/backend"):
         sys.path.insert(0, str(_path))
 
 from core import artifact_store, workspace_fetch  # noqa: E402
+from core.job_dispatch import job_name  # noqa: E402
 from server.services import agent_spec_creation as sc  # noqa: E402
 from server.services import spec_job_backend as sj  # noqa: E402
 from server.services.agent_service import AgentService  # noqa: E402
@@ -44,7 +45,7 @@ class FakeBatch:
         return SimpleNamespace(status=SimpleNamespace(succeeded=None, failed=None))
 
     async def delete_namespaced_job(
-        self, name: str, namespace: str, *, propagation_policy: str
+        self, name: str, namespace: str, *, propagation_policy: str, body: Any = None
     ) -> None:
         self.deleted.append((namespace, name, propagation_policy))
 
@@ -358,7 +359,13 @@ async def test_repeat_dispatch_uses_distinct_kubernetes_names(
     names = [manifest["metadata"]["name"] for _, manifest in batch.created]
     assert len(set(names)) == 2
     assert all(re.fullmatch(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?", name) for name in names)
-    assert all(re.search(r"-spec-[0-9a-f]{8}$", name) for name in names)
+    assert all(
+        name
+        == job_name(
+            "aifactory", manifest["metadata"]["annotations"]["factory.io/job-id-full"]
+        )
+        for (_, manifest), name in zip(batch.created, names, strict=True)
+    )
     for proc in processes:
         proc.terminate()
         assert await proc.wait() == -15
@@ -449,7 +456,9 @@ async def test_sweep_treats_live_spec_job_as_owned(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     job = SimpleNamespace(
-        metadata=SimpleNamespace(name="live-spec", creation_timestamp=0)
+        metadata=SimpleNamespace(
+            name="live-spec", uid="live-spec-uid", creation_timestamp=0
+        )
     )
     batch = FakeBatch()
 

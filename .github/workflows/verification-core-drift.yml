@@ -75,7 +75,9 @@ env:
   # on hub `main`, never a PR-branch head -- the hub squash-merges, so a branch
   # head ceases to exist the moment the PR lands and the pin then resolves to
   # nothing (Factory#638).
-  HUB_PIN_SHA: "a35d2813cab14bd781c5e2a252e7098dfed1828b"
+  # Bumped for olafkfreund/Factory#3922 (#3933 squash-merge): job_dispatch.py
+  # hashes the full job id into Job names and annotates the owner.
+  HUB_PIN_SHA: "7002bf654e2cc008511de9b70baa0bf5cf5e846a"
 
 jobs:
   drift:

@@ -75,6 +75,7 @@ class _FakeBatch:
         self,
         existing: set[str] | None = None,
         statuses: dict[str, tuple[int, int]] | None = None,
+        owners: dict[str, str] | None = None,
     ) -> None:
         self.created: list[tuple[str, dict]] = []
         self.deleted: list[tuple[str, str]] = []
@@ -84,6 +85,7 @@ class _FakeBatch:
         # them on .status. Absent -> a Job with no status (still running), which
         # is what a bare object() modelled before.
         self._statuses: dict[str, tuple[int, int]] = dict(statuses or {})
+        self._owners = dict(owners or {})
         self.api_client = None
 
     async def create_namespaced_job(self, namespace: str, manifest: dict) -> None:
@@ -94,9 +96,12 @@ class _FakeBatch:
         if name in self._existing:
             succeeded, failed = self._statuses.get(name, (0, 0))
             return SimpleNamespace(
+                metadata=SimpleNamespace(
+                    annotations={"factory.io/job-id-full": self._owners.get(name)}
+                ),
                 status=SimpleNamespace(
                     succeeded=succeeded or None, failed=failed or None
-                )
+                ),
             )
         raise _ApiError(404)
 
@@ -1148,7 +1153,9 @@ async def test_succeeded_job_is_marked_done_not_reaped(tmp_path: Path) -> None:
     backend = bb.KubeJobBuildBackend(store)
 
     # Job present AND succeeded — the state a finished build sits in for its TTL.
-    fake = _FakeBatch(existing={"winner"}, statuses={"winner": (1, 0)})
+    fake = _FakeBatch(
+        existing={"winner"}, statuses={"winner": (1, 0)}, owners={"winner": "p:ok"}
+    )
     reaped = await backend.reap_vanished_jobs(batch=fake)
 
     assert reaped == [], "a succeeded build must not be reaped"
@@ -1182,7 +1189,9 @@ async def test_done_build_fires_on_done_hook_once(tmp_path: Path) -> None:
         fired.append(job_id)
 
     backend = bb.KubeJobBuildBackend(store, on_done=_on_done)
-    fake = _FakeBatch(existing={"winner"}, statuses={"winner": (1, 0)})
+    fake = _FakeBatch(
+        existing={"winner"}, statuses={"winner": (1, 0)}, owners={"winner": "p:hook"}
+    )
     await backend.reap_vanished_jobs(batch=fake)
 
     assert fired == ["p:hook"], (
@@ -1203,7 +1212,9 @@ async def test_failed_job_is_marked_failed_from_its_own_status(tmp_path: Path) -
     )
     backend = bb.KubeJobBuildBackend(store)
 
-    fake = _FakeBatch(existing={"loser"}, statuses={"loser": (0, 1)})
+    fake = _FakeBatch(
+        existing={"loser"}, statuses={"loser": (0, 1)}, owners={"loser": "p:bad"}
+    )
     reaped = await backend.reap_vanished_jobs(batch=fake)
 
     assert reaped == ["p:bad"]
@@ -1220,7 +1231,7 @@ async def test_reaper_leaves_present_job_running(tmp_path: Path) -> None:
     )
     backend = bb.KubeJobBuildBackend(store)
 
-    fake = _FakeBatch(existing={"live"})  # Job still exists
+    fake = _FakeBatch(existing={"live"}, owners={"live": "p:s4"})  # Job still exists
     reaped = await backend.reap_vanished_jobs(batch=fake)
     assert reaped == []
     state = await store.get_state("p:s4")
@@ -1236,7 +1247,9 @@ async def test_reaper_fails_present_job_past_deadline(tmp_path: Path) -> None:
     )
     backend = bb.KubeJobBuildBackend(store)
 
-    fake = _FakeBatch(existing={"wedged"})  # present but wedged
+    fake = _FakeBatch(
+        existing={"wedged"}, owners={"wedged": "p:s5"}
+    )  # present but wedged
     # now far in the future relative to updated_at → past the deadline.
     reaped = await backend.reap_vanished_jobs(
         batch=fake, now=10**12, deadline_seconds=1
