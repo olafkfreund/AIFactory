@@ -28,6 +28,7 @@ for _p in (_REPO / "apps" / "web-server", _REPO / "apps" / "backend"):
     if str(_p) not in sys.path:
         sys.path.append(str(_p))
 
+from core.job_dispatch import job_name  # noqa: E402
 from server.database.models import Base  # noqa: E402
 from server.services import build_backend as bb  # noqa: E402
 from server.services.job_state_store import (  # noqa: E402
@@ -35,11 +36,8 @@ from server.services.job_state_store import (  # noqa: E402
     SpawnArgs,
 )
 
-# job_id -> the Job name and label dispatch would have produced.
-# Mirrors job_dispatch.job_name / job_labels: factory-<service>-<last 20 chars>.
 _TASK = "p:s1"
-_JOB_NAME = "factory-aifactory-p-s1"
-_LABEL = "p-s1"
+_JOB_NAME = job_name("aifactory", _TASK)
 
 _ENGINES: list[Any] = []
 
@@ -51,17 +49,13 @@ class _ApiError(Exception):
 
 
 class _FakeBatch:
-    """BatchV1Api stand-in that also models metadata.labels.
-
-    The fake in ``test_build_backend_kubejob.py`` returns ``status`` only, so it
-    cannot exercise the ``factory.io/job-id`` check; this one carries labels.
-    """
+    """BatchV1Api stand-in with Job ownership annotations."""
 
     def __init__(
         self,
         existing: dict[str, dict[str, Any]] | None = None,
     ) -> None:
-        # job_name -> {"succeeded": int, "failed": int, "job_id_label": str|None}
+        # job_name -> {"succeeded": int, "failed": int, "job_id_owner": str|None}
         self._existing: dict[str, dict[str, Any]] = dict(existing or {})
         self.api_client = None
         self.reads: list[str] = []
@@ -71,10 +65,12 @@ class _FakeBatch:
         if name not in self._existing:
             raise _ApiError(404)
         spec = self._existing[name]
-        label = spec.get("job_id_label", _LABEL)
-        labels = {} if label is None else {"factory.io/job-id": label}
+        if "read_error" in spec:
+            raise _ApiError(spec["read_error"])
+        owner = spec.get("job_id_owner", _TASK)
+        annotations = {} if owner is None else {"factory.io/job-id-full": owner}
         return SimpleNamespace(
-            metadata=SimpleNamespace(labels=labels),
+            metadata=SimpleNamespace(annotations=annotations),
             status=SimpleNamespace(
                 succeeded=spec.get("succeeded") or None,
                 failed=spec.get("failed") or None,
@@ -171,7 +167,7 @@ async def test_unclaimed_row_with_a_live_job_is_left_running(tmp_path: Path) -> 
 
     reaped = await backend.reap_vanished_jobs(batch=batch)
 
-    assert _JOB_NAME in batch.reads, "the reaper never asked the API about the Job"
+    assert batch.reads == [_JOB_NAME]
     assert reaped == []
     state = await store.get_state(_TASK)
     assert state is not None
@@ -238,17 +234,21 @@ async def test_unclaimed_row_whose_job_failed_is_marked_failed(tmp_path: Path) -
     assert state["lifecycle_state"] == "failed"
 
 
+@pytest.mark.parametrize("stored", [False, True])
 async def test_colliding_job_name_does_not_decide_this_rows_verdict(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
+    stored: bool,
 ) -> None:
-    """The collision guard. ``_short`` keeps only the last 20 characters of the
-    id, so another task's Job can answer to the reconstructed name. Reading its
-    status would fail the wrong build, so the row is left alone and logged."""
+    """A Job at the expected name can still belong to another task."""
     store = await _store_with_refless_row(tmp_path / "g.db")
+    if stored:
+        await store.set_worker_ref(
+            _TASK, {"kind": "k8s-job", "job_name": _JOB_NAME, "namespace": "factory"}
+        )
     backend = bb.KubeJobBuildBackend(store)
     # Same name, but the Job belongs to a different task and has FAILED.
-    batch = _FakeBatch({_JOB_NAME: {"failed": 1, "job_id_label": "some-other-task"}})
+    batch = _FakeBatch({_JOB_NAME: {"failed": 1, "job_id_owner": "some-other-task"}})
 
     with caplog.at_level("WARNING"):
         reaped = await backend.reap_vanished_jobs(batch=batch)
@@ -257,19 +257,42 @@ async def test_colliding_job_name_does_not_decide_this_rows_verdict(
     state = await store.get_state(_TASK)
     assert state is not None
     assert state["lifecycle_state"] == "running", "another task's verdict was used"
+    assert batch.reads == [_JOB_NAME]
     assert "belongs to another task" in caplog.text
 
 
-async def test_job_without_the_label_is_not_trusted(tmp_path: Path) -> None:
-    """Fail closed: an unlabelled Job cannot be proven to be ours."""
+@pytest.mark.parametrize("stored", [False, True])
+async def test_job_without_the_annotation_is_not_trusted(
+    tmp_path: Path, stored: bool
+) -> None:
+    """Fail closed: an unstamped Job cannot be proven to be ours."""
     store = await _store_with_refless_row(tmp_path / "h.db")
+    if stored:
+        await store.set_worker_ref(
+            _TASK, {"kind": "k8s-job", "job_name": _JOB_NAME, "namespace": "factory"}
+        )
     backend = bb.KubeJobBuildBackend(store)
-    batch = _FakeBatch({_JOB_NAME: {"failed": 1, "job_id_label": None}})
+    batch = _FakeBatch({_JOB_NAME: {"failed": 1, "job_id_owner": None}})
 
     assert await backend.reap_vanished_jobs(batch=batch) == []
     state = await store.get_state(_TASK)
     assert state is not None
     assert state["lifecycle_state"] == "running"
+
+
+async def test_read_error_leaves_row_running_without_owner_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    store = await _store_with_refless_row(tmp_path / "read-error.db")
+    backend = bb.KubeJobBuildBackend(store)
+    batch = _FakeBatch({_JOB_NAME: {"read_error": 500}})
+
+    with caplog.at_level("WARNING"):
+        assert await backend.reap_vanished_jobs(batch=batch) == []
+
+    assert batch.reads == [_JOB_NAME]
+    assert (await store.get_state(_TASK))["lifecycle_state"] == "running"
+    assert "belongs to another task" not in caplog.text
 
 
 async def test_verified_reference_is_persisted_for_later_ticks(
