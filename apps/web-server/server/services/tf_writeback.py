@@ -11,6 +11,7 @@ from typing import Any
 
 from server.utils.subprocess_env import child_env, project_github_env
 
+_MAX_FILES = 300  # GitHub truncates a commit's file list at 300
 _SHA = re.compile(r"[0-9a-fA-F]{40}\Z")
 _REMOTE = re.compile(
     r"(?:https://github\.com/|git@github\.com:)([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?\Z"
@@ -39,6 +40,7 @@ def _github_repo(project_dir: Path) -> tuple[str, str] | None:
         text=True,
         timeout=30,
         check=False,
+        env=child_env(),
     )
     match = _REMOTE.fullmatch(result.stdout.strip()) if result.returncode == 0 else None
     return (match.group(1), match.group(2)) if match else None
@@ -87,7 +89,7 @@ def _gh_commit(
     return parents, files
 
 
-def writeback_base(
+def writeback_base(  # noqa: PLR0911 - each refusal is an explicit fail-closed return
     spec_dir: Path,
     head: str,
     *,
@@ -142,7 +144,7 @@ def writeback_base(
         if commit is None:
             return None
         parents, files = commit
-        if parents != [source] or not files or len(files) >= 300:
+        if parents != [source] or not files or len(files) >= _MAX_FILES:
             return None
         if all(
             isinstance(p, str) and p in committed and _is_test_path(p) for p in files

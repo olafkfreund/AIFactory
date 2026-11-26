@@ -47,7 +47,7 @@ def test_writeback_verdict_uses_base_while_ci_uses_head(
     heads: dict[str, str] = {}
     monkeypatch.setattr(wb, "writeback_base", lambda _spec, _head: "verified-base")
 
-    def verdict(_spec: Path, _id: str, *, head: str, vote: dict[str, Any]) -> str:
+    def verdict(_spec: Path, _id: str, *, head: str, vote: dict[str, Any]) -> str:  # noqa: ARG001 - matches tfactory_verdict's signature
         heads["verdict"] = head
         return "pass"
 

@@ -1315,11 +1315,11 @@ def tfactory_task(
         ):
             return task
     except Exception:  # noqa: BLE001 - an untrusted response must not pass the gate
-        pass
+        return None
     return None
 
 
-def tfactory_verdict(
+def tfactory_verdict(  # noqa: PLR0911 - each refusal is an explicit fail-closed return
     spec_dir: Path,
     spec_id: str,
     *,

@@ -130,7 +130,9 @@ def test_qa_gate_exact_head_skips_resolver(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _write_gate_files(tmp_path, head_sha="reviewed")
-    monkeypatch.setattr(wb, "writeback_base", lambda *_a: pytest.fail("resolver called"))
+    monkeypatch.setattr(
+        wb, "writeback_base", lambda *_a: pytest.fail("resolver called")
+    )
     assert gate_mod.check(tmp_path, "reviewed") is None
 
 
