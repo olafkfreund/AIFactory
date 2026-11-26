@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2255
 intent: intent/2026-11-26-2255-tf-verdict-project.md
 ---
