@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+## 3.21.15 - 2026-11-26
+
+Merged to `dev` since 3.21.14.
+
+### Fixed
+
+- A task whose contract requires the `ci-green` system gate auto-merges once the host CI is measured green. Before this, nothing cleared the gate, so every planned task in a repo with CI was held at hold-blocking. Every other gate still holds. (#2248, #2251)
+
 ## 3.21.14 - 2026-11-26
 
 Merged to `dev` since 3.21.13.

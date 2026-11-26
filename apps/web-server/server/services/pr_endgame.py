@@ -308,8 +308,10 @@ def apply_path_risk_floor(  # noqa: PLR0913 - trusted is the required #1667 keyw
     try:
         state, contract = resolve_contract(spec_dir, trusted)
         deployment = contract.get("deployment")
-        # No gate evidence here: the PR does not exist yet (#1663).
-        if state == "hold" or deployment_block_reasons(deployment):
+        # ci-green is checked against measured CI at merge time; no CI exists yet (#2248).
+        if state == "hold" or deployment_block_reasons(
+            deployment, satisfied_gates=(CI_GREEN_GATE,)
+        ):
             floor = "blocking"
     except Exception:  # noqa: BLE001 - same: an unreadable contract adds nothing
         logger.debug("[pr-endgame] path risk floor: contract unreadable", exc_info=True)
@@ -384,6 +386,7 @@ def _record_path_risk_floor(spec_dir: Path, floor: str, *, enforced: bool) -> No
 # silently turning this gate into "never auto-merge".
 AUTO_MERGE_DISPOSITION = "auto-merge"
 HOLD_BLOCKING_DISPOSITION = "hold-blocking"
+CI_GREEN_GATE = "ci-green"
 
 # task_metadata keys carrying the RFC-0011/RFC-0006 gate signals, camel and snake.
 _SIGNAL_KEYS: dict[str, tuple[str, ...]] = {
@@ -701,8 +704,9 @@ def merge_disposition(  # noqa: PLR0913 - floor is the legacy path floor (#1697)
     The RFC-0013 deployment overlay is enforced here, independent of the
     path-floor flag (#1658): a production or high-risk deployment holds, and
     satisfied system gates clear only ``system_gates`` holds. Gate evidence
-    comes only from the caller (a GitHub review, #1663), never from the contract
-    or task_metadata.
+    comes only from the caller (a GitHub review, #1663) or, for ``ci-green``
+    only, from the measured host CI signal; never from the contract or
+    task_metadata.
 
     ``fetch_signals`` supplies the verdict and host-CI for any readable,
     non-hold task; a raise holds.
@@ -775,12 +779,16 @@ def merge_disposition(  # noqa: PLR0913 - floor is the legacy path floor (#1697)
     if unreadable:
         logger.warning("[pr-endgame] task contract unreadable; auto-merge withheld")
         return HOLD_BLOCKING_DISPOSITION
+    signals = merge_gate_signals(spec_dir, fetched=fetched)
+    gates = {g for g in satisfied_gates if str(g).strip().lower() != CI_GREEN_GATE}
+    if signals["host_ci_green"] is True:
+        gates.add(CI_GREEN_GATE)
     return str(
         decide_merge(
             str(effective),
-            **merge_gate_signals(spec_dir, fetched=fetched),
+            **signals,
             deployment=deployment,
-            satisfied_gates=list(satisfied_gates),
+            satisfied_gates=sorted(gates),
         )
     )
 
