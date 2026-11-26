@@ -267,7 +267,9 @@ async def create_pr_from_task(
                     options.targetRepo,
                     run_gh_command,
                 )
-                gate_reason = qa_gate.check(spec_dir, open_head)
+                gate_reason = await asyncio.to_thread(
+                    qa_gate.check, spec_dir, open_head
+                )
                 if gate_reason is not None:
                     return {
                         "success": False,
@@ -333,7 +335,7 @@ async def create_pr_from_task(
         logger.info("fetch of %s from origin skipped: %s", worktree_branch, exc)
 
     task_ref_sha = _resolve_task_ref_sha(worktree_path, project_path, worktree_branch)
-    gate_reason = qa_gate.check(spec_dir, task_ref_sha)
+    gate_reason = await asyncio.to_thread(qa_gate.check, spec_dir, task_ref_sha)
     if gate_reason is not None:
         return {
             "success": False,

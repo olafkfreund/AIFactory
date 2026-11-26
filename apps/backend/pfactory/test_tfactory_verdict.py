@@ -62,6 +62,24 @@ def test_flag_does_not_block_and_request_shape() -> None:
     assert all(h == {"Authorization": "Bearer tok"} for _, h in calls)
 
 
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [(_task(), True), (_task(project="other"), False), ((404, None), False)],
+)
+def test_tfactory_task_checks_project_and_status(
+    response: tuple[int, object], expected: bool
+) -> None:
+    task = tc.tfactory_task(
+        Path("spec"), "048-feat", getter=lambda _url, _headers: response
+    )
+    assert (task is not None) is expected
+
+
+def test_tfactory_task_unconfigured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tc, "tfactory_config", lambda: {"base_url": ""})
+    assert tc.tfactory_task(Path("spec"), "048-feat", getter=lambda *_: _task()) is None
+
+
 def test_reject_fails() -> None:
     out, _ = _run(
         {TASK: _task(), TASK + "/verdicts.json": _verdicts("accept", "reject")}
