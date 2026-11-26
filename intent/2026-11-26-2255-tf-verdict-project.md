@@ -22,26 +22,46 @@ yet the merge gate never went green and the PR never auto-merged.
 
 ## Proposed outcome
 
-- AIFactory asks TFactory for the task and its verdicts **in the project it already expects**: the
-  `project_id` that `tfactory_verdict` computes today (`TFACTORY_PROJECT_ID` or the AIFactory
-  project name). TFactory's existing `?project_id=` parameter narrows the lookup, so a same-named
-  spec in another project no longer causes a 409.
-- Nothing else changes:
-  - AIFactory still checks that the returned `project_id` matches;
-  - it still requires `source_sha == head` and `status == "triaged"`;
-  - only a `reject` fails;
-  - any error is still `None`.
-- Live proof: E2E P1 merges the PR (S4), and S5 reports the verdict on the merge SHA.
+Owner decision (2026-11-26): **AIFactory stores TFactory's project id.** Live checks on prod
+showed that TFactory doesn't recognise AIFactory's project reference, the workspace directory
+name `olafkfreund-e2e-…`:
+
+- `?project_id=olafkfreund-e2e-…` returns 404;
+- TFactory scopes a lookup by its project UUID or its name `e2e-…`;
+- scoped responses return the UUID.
+
+So `?project_id=` alone, with the directory name, can't fix this.
+
+- **TFactory's ingest response already returns the resolved id** as `workspace_project_id`
+  (`routes/specs.py`, `ingest_spec`). AIFactory currently keeps only `sent`, `reason`, `status` and
+  `url` from that call, and drops the body.
+- **AIFactory records it.** The handoff result saved to `tfactory_handoff.json` gains
+  `tfactory_project_id`, taken from the ingest response body's `workspace_project_id`.
+- **`tfactory_verdict` uses it** when it is present:
+  - it adds `?project_id=<tfactory_project_id>`, URL-encoded, to the task request and to the
+    `verdicts.json` request;
+  - it requires the returned `project_id` to equal that same id.
+- **Old tasks are unchanged.** A task with no recorded id (handed off before this release) uses
+  today's lookup, so nothing regresses.
+- **Unchanged checks:**
+  - `source_sha == head`;
+  - `status == "triaged"`;
+  - only `reject` fails;
+  - any error gives `None`;
+  - there is never a retry with a bare spec id once an id is recorded.
+- **Live proof:** E2E P1 merges the PR (S4), and S5 reports the verdict on the merge SHA.
 
 ## Affected users and systems
 
-- AIFactory `apps/backend/pfactory/tfactory_client.py` (the one caller that fetches a TFactory task
-  by spec id) and `apps/backend/pfactory/test_tfactory_verdict.py`.
+- AIFactory `apps/backend/pfactory/tfactory_client.py`: the handoff sender (`send_*`, which today
+  keeps no response body), where the handoff result is written to `tfactory_handoff.json`, and
+  `tfactory_verdict`, which is the one reader of a TFactory task by spec id. Tests are in
+  `apps/backend/pfactory/test_tfactory_verdict.py` and the handoff tests.
 - Prod AIFactory, through a normal release.
 
 ## Constraints
 
-- Make no change to TFactory. It already supports `?project_id=`.
+- Make no change to TFactory. It already returns `workspace_project_id` and supports `?project_id=`.
 - URL-encode the project id. It comes from config or a directory name.
 - The merge gate stays fail-closed.
 
