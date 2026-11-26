@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2258
 intent: intent/2026-11-26-2258-tf-writeback-head.md
 ---
