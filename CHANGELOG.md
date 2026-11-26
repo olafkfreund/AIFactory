@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+## 3.21.17 - 2026-11-26
+
+Merged to `dev` since 3.21.16.
+
+### Fixed
+
+- The merge gate looks up the TFactory verdict in the right project. The handoff records TFactory's `workspace_project_id`, and the verdict lookup sends it as `?project_id=`, so a spec id that exists in more than one TFactory project no longer returns 409 (no trusted verdict). (#2255, #2256)
+
 ## 3.21.16 - 2026-11-26
 
 Merged to `dev` since 3.21.15.
