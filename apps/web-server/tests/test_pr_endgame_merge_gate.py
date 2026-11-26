@@ -564,22 +564,24 @@ def test_ci_green_watcher_checks_head_before_merge(
     monkeypatch.setattr(
         "pfactory.tfactory_client.tfactory_verdict", lambda *_a, **_k: "pass"
     )
-    monkeypatch.setattr(
-        pe,
-        "host_ci_green",
-        lambda *a, **_k: (ci_calls.append(a), host_ci)[1],
-    )
-    monkeypatch.setattr(
-        pe,
-        "required_checks_green",
-        lambda *a, **_k: (check_calls.append(a), checks_green)[1],
-    )
+
+    def _host_ci(*a: object, **_k: object) -> bool | None:
+        ci_calls.append(a)
+        return host_ci
+
+    def _checks(*a: object, **_k: object) -> bool:
+        check_calls.append(a)
+        return checks_green
+
+    monkeypatch.setattr(pe, "host_ci_green", _host_ci)
+    monkeypatch.setattr(pe, "required_checks_green", _checks)
     monkeypatch.setattr(pe, "_pr_head", lambda *_a: "deadbeef")
     real = pe.watch_and_finish
 
     async def _watch(**kw: Any) -> dict[str, object]:
         watched.append(kw["auto_merge"])
-        return await real(**kw, poll_interval=0, max_minutes=1)
+        out: dict[str, object] = await real(**kw, poll_interval=0, max_minutes=1)
+        return out
 
     monkeypatch.setattr(pe, "watch_and_finish", _watch)
     result = asyncio.run(
