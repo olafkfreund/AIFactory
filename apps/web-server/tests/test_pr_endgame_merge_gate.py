@@ -408,6 +408,217 @@ def test_merge_disposition_takes_explicit_evidence(
     )
 
 
+def test_measured_ci_satisfies_ci_green(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _contracted(tmp_path, monkeypatch, _deployment(system_gates=["ci-green"]))
+    assert (
+        pe.merge_disposition(spec, "low", trusted=None, fetch_signals=lambda: _PASS)
+        == pe.AUTO_MERGE_DISPOSITION
+    )
+
+
+@pytest.mark.parametrize(
+    ("ci", "gate", "fetch"),
+    [
+        (False, None, True),
+        (None, None, True),
+        (None, None, False),
+        (False, "ci-green", True),
+        (False, " CI-Green ", True),
+        (None, "ci-green", True),
+        (None, " CI-Green ", True),
+    ],
+)
+def test_ci_green_requires_measured_green(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    ci: bool | None,
+    gate: str | None,
+    fetch: bool,
+) -> None:
+    spec = _contracted(tmp_path, monkeypatch, _deployment(system_gates=["ci-green"]))
+    fetched = {"tfactory_verdict": "pass", "host_ci_green": ci}
+    assert (
+        pe.merge_disposition(
+            spec,
+            "low",
+            trusted=None,
+            satisfied_gates=[gate] if gate else [],
+            fetch_signals=(lambda: fetched) if fetch else None,
+        )
+        == pe.HOLD_BLOCKING_DISPOSITION
+    )
+
+
+def test_recorded_red_ci_beats_measured_green(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _spec(tmp_path, **{**_GREEN, "hostCiGreen": False})
+    (spec / "context").mkdir()
+    (spec / "context" / "task_contract.json").write_text(
+        json.dumps(_deployment(system_gates=["ci-green"]))
+    )
+    assert (
+        pe.merge_disposition(spec, "low", trusted=None, fetch_signals=lambda: _PASS)
+        == pe.HOLD_BLOCKING_DISPOSITION
+    )
+
+
+def test_ci_green_does_not_clear_another_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _contracted(
+        tmp_path, monkeypatch, _deployment(system_gates=["ci-green", "security-scan"])
+    )
+    assert (
+        pe.merge_disposition(spec, "low", trusted=None, fetch_signals=lambda: _PASS)
+        == pe.HOLD_BLOCKING_DISPOSITION
+    )
+
+
+def test_human_approval_still_needs_caller_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _contracted(
+        tmp_path, monkeypatch, _deployment(system_gates=["ci-green", "human-approval"])
+    )
+    assert (
+        pe.merge_disposition(spec, "low", trusted=None, fetch_signals=lambda: _PASS)
+        == pe.HOLD_BLOCKING_DISPOSITION
+    )
+    assert (
+        pe.merge_disposition(
+            spec,
+            "low",
+            trusted=None,
+            satisfied_gates=["human-approval"],
+            fetch_signals=lambda: _PASS,
+        )
+        == pe.AUTO_MERGE_DISPOSITION
+    )
+
+
+def test_green_ci_does_not_clear_production(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _contracted(
+        tmp_path,
+        monkeypatch,
+        _deployment(system_gates=["ci-green"], production_classification="production"),
+    )
+    assert (
+        pe.merge_disposition(spec, "low", trusted=None, fetch_signals=lambda: _PASS)
+        == pe.HOLD_BLOCKING_DISPOSITION
+    )
+
+
+@pytest.mark.parametrize(
+    ("gates", "expected"),
+    [
+        (["ci-green"], ("auto", None)),
+        (["ci-green", "human-approval"], ("blocking", "blocking")),
+    ],
+)
+def test_ci_green_does_not_floor_tier_before_pr_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    gates: list[str],
+    expected: tuple[str, str | None],
+) -> None:
+    spec = _contracted(tmp_path, monkeypatch, _deployment(system_gates=gates))
+    monkeypatch.setenv(pe.PATH_RISK_FLOOR_ENV, "true")
+    monkeypatch.setattr(
+        "cli.workspace_commands._get_changed_files_from_git",
+        lambda *_a: ["wordfreq/cli.py"],
+    )
+    assert (
+        pe.apply_path_risk_floor(tmp_path, spec, "001-x", "main", "auto", trusted=None)
+        == expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("host_ci", "checks_green", "merges"),
+    [(True, True, True), (None, True, False), (True, False, False)],
+)
+def test_ci_green_watcher_checks_head_before_merge(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    host_ci: bool | None,
+    checks_green: bool,
+    merges: bool,
+) -> None:
+    spec = _contracted(tmp_path, monkeypatch, _deployment(system_gates=["ci-green"]))
+    merge_calls: list[object] = []
+    ci_calls: list[tuple[object, ...]] = []
+    check_calls: list[tuple[object, ...]] = []
+    watched: list[object] = []
+
+    def _merge(*_a: object, **kw: object) -> bool:
+        merge_calls.append(kw.get("match_head"))
+        return True
+
+    monkeypatch.setattr(pe, "merge_pr", _merge)
+    monkeypatch.setattr(pe, "create_pr", lambda **_k: 42)
+    monkeypatch.setattr(pe, "_pr_title_body", lambda _d, _s: ("t", "b"))
+    monkeypatch.setattr(pe, "write_verify_evidence", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        "pfactory.tfactory_client.tfactory_verdict", lambda *_a, **_k: "pass"
+    )
+    monkeypatch.setattr(
+        pe,
+        "host_ci_green",
+        lambda *a, **_k: (ci_calls.append(a), host_ci)[1],
+    )
+    monkeypatch.setattr(
+        pe,
+        "required_checks_green",
+        lambda *a, **_k: (check_calls.append(a), checks_green)[1],
+    )
+    monkeypatch.setattr(pe, "_pr_head", lambda *_a: "deadbeef")
+    real = pe.watch_and_finish
+
+    async def _watch(**kw: Any) -> dict[str, object]:
+        watched.append(kw["auto_merge"])
+        return await real(**kw, poll_interval=0, max_minutes=1)
+
+    monkeypatch.setattr(pe, "watch_and_finish", _watch)
+    result = asyncio.run(
+        pe.run_pr_endgame(
+            spec_dir=spec,
+            spec_id="001-x",
+            worktree=spec,
+            branch="aifactory/001-x",
+            base="main",
+            repo="owner/repo",
+            auto_merge=True,
+            review_tier="auto",
+            reviewer="aifactory",
+            review_fn=lambda: pe.ReviewState("approved"),
+            background=False,
+            trusted=None,
+        )
+    )
+    assert watched == [True]
+    # A held gate re-polls until the watcher times out, so compare what was probed.
+    assert set(ci_calls) == {("owner", "repo", "deadbeef")}
+    assert set(check_calls) == (
+        {("owner", "repo", "main", "deadbeef")} if host_ci is True else set()
+    )
+    assert merge_calls == (["deadbeef"] if merges else [])
+    assert result["merged"] is merges
+    if not merges:
+        assert result["reason"] == "merge_gate_timeout"
+
+
+def test_ci_green_arms_watcher_at_pr_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _contracted(tmp_path, monkeypatch, _deployment(system_gates=["ci-green"]))
+    assert asyncio.run(_endgame_auto_merge(spec, "auto", monkeypatch)) is True
+
+
 async def test_a_human_only_hold_keeps_the_watcher_armed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
