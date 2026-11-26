@@ -3,70 +3,111 @@ status: draft
 issue: 2258
 spec: spec/2026-11-26-2258-tf-writeback-head.md
 coders:
-  1: codex   # small, security-relevant logic in the verdict check, with exact tests
-  2: codex   # the same task's caller and gh helper; keeps one implementer's context
+  1: codex   # pure refactor with the existing tests as the oracle
+  2: codex   # small, security-relevant resolver with exact rule tests
+  3: codex   # one guarded branch in qa_gate; same context
+  4: codex   # one-line wiring plus a wiring test; same context
 reviewers:
-  - codex    # checks the fail-closed paths and the parent check against the spec
-  - agy      # independent read of the trust argument
+  - codex    # fail-closed paths and the trust argument against the spec
+  - agy      # independent read of the resolver and the qa_gate branch
 ---
 
 # Plan: accept TFactory's own test write-back commit as the verified head
 
 ## Approved decisions (from the spec)
 
-- **Two SHAs are accepted.** `tfactory_verdict` trusts a verdict when `source_sha == head`, as
-  today. It also trusts it when all of these hold:
-  - `status_json.git_writer` is a dict with `ok is True`, `dry_run is not True` and
-    `commit_sha == head`;
-  - a caller-supplied `head_parent(head)` returns exactly `source_sha`.
-- **No callable, no write-back path.** Without `head_parent`, the write-back path is off.
-  `head_parent` raising or returning `None` gives `None`.
-- **The endgame supplies the parent.** It passes `_commit_parent(owner, name, sha, runner)`: a
-  `gh api /repos/{o}/{r}/commits/{sha}` read that returns the parent only when there is exactly
-  one, and otherwise `None`. It never raises.
-- **No TFactory change.**
+**The resolver.** `writeback_base(spec_dir, head)` returns TFactory's `source_sha` only when `head` is
+TFactory's own test write-back directly on it. All of these must hold:
+
+- the TFactory task is project-checked and `triaged`;
+- `git_writer` has `ok is True`, `dry_run is False` and `commit_sha == head`;
+- GitHub reports exactly one parent, and it equals `source_sha`;
+- every changed file (including any `previous_filename`) is in `committed_paths` and is
+  test-shaped, with fewer than 300 files.
+
+Otherwise it returns `None`. It never raises.
+
+**Where it is used.**
+
+- **`qa_gate.check`** uses it on a `reviewed_head` mismatch. That covers every caller, including
+  CFactory approve.
+- **The merge gate** asks for the TFactory verdict at `writeback_base(...) or head`.
+- **CI and the merge pin** stay on `head`.
 
 ## Steps
 
-1. `apps/backend/pfactory/tfactory_client.py`:
-   - add `_verified_at(task, status_json, head, head_parent)` above `tfactory_verdict`;
-   - add the keyword-only `head_parent: Callable[[str], str | None] | None = None` to
-     `tfactory_verdict`;
-   - in the task check, replace `and bool(head) and task.get("source_sha") == head` with a call
-     to `_verified_at(...)`, placed after `isinstance(status_json, dict)`;
-   - update the docstring.
-
-   Tests go in `apps/backend/pfactory/test_tfactory_verdict.py`, covering the spec's table.
+1. **`apps/backend/pfactory/tfactory_client.py`.**
+   - Extract `tfactory_task(spec_dir, spec_id, *, getter=None) -> dict[str, Any] | None` from
+     `tfactory_verdict` (around lines 1295–1321). It covers the config, the project id, the
+     scoped URL and headers, the GET, the 2xx check, the dict check and the `project_id`
+     equality. It never raises.
+   - `tfactory_verdict` calls it, then keeps its `source_sha`, `triaged` and `verdicts.json`
+     logic. The `verdicts.json` URL still needs `base` and `qs`, so return them from a private
+     `_task_request(spec_dir, spec_id)` that both functions use.
 
    Verify: `cd apps/backend && /mnt/code/Source-home/GitHub/AIFactory/apps/backend/.venv/bin/pytest pfactory/test_tfactory_verdict.py -q`.
+   All existing tests pass unchanged. Add `tfactory_task` tests for a match, a mismatch, a non-2xx
+   response and unconfigured.
 
    Traps:
-   - `Callable` may need importing (check the existing `typing` / `collections.abc` imports);
-   - the ruff ratchet applies (PLR2004 magic numbers; ARG001);
-   - mypy runs on the tests: type the helpers.
-2. `apps/web-server/server/services/pr_endgame.py`:
-   - add `_commit_parent(owner, repo, sha, runner) -> str | None` after `_pr_head` (around line
-     1191), in the same style: `runner([...], None)`, `res.ok`, and a broad `except` that returns
-     `None`;
-   - in `_build_merge_gate.fetch` (around line 2157), pass
-     `head_parent=lambda sha: _commit_parent(owner, name, sha, runner)`.
+   - the ruff ratchet (PLR2004, PLR0913, BLE001 with a reason) and mypy on the tests.
 
-   Tests go in the nearest endgame test file that stubs `runner` (for example
-   `apps/web-server/tests/test_pr_endgame*.py`): one parent, zero, two, `ok=False`, a raise.
+2. **New `apps/web-server/server/services/tf_writeback.py`.**
+   - `writeback_base(spec_dir, head, *, getter=None, reader=None) -> str | None`, exactly as in the
+     spec.
+   - `_is_test_path(path) -> bool`.
+   - `_github_repo(project_dir) -> tuple[str, str] | None`, which parses
+     `https://github.com/o/r(.git)` and `git@github.com:o/r(.git)`.
+   - `_gh_commit(owner, repo, sha, cwd) -> tuple[list[str], list[str]] | None`. It runs
+     `gh api repos/{o}/{r}/commits/{sha}` through `subprocess` under
+     `project_github_env(cwd, child_env())`, the same imports as `pr_endgame._default_runner`,
+     with a 30 s timeout. It parses `parents[].sha` and `files[].filename` / `previous_filename`.
+   - Lazy-import `pfactory.tfactory_client` inside the function, as `pr_endgame` does.
+
+   Tests go in the new `apps/web-server/tests/test_tf_writeback.py`, covering every accept and
+   reject case in the spec.
 
    Verify: from the repo root,
-   `PYTHONPATH=apps/backend /mnt/code/Source-home/GitHub/AIFactory/apps/backend/.venv/bin/pytest apps/web-server/tests -q -k "endgame or merge_gate"`.
+   `PYTHONPATH=apps/backend /mnt/code/Source-home/GitHub/AIFactory/apps/backend/.venv/bin/pytest apps/web-server/tests/test_tf_writeback.py -q`.
 
    Traps:
-   - fake runners in the existing tests may route by argv; check that they don't break on the
-     new call. It is only reached when the SHAs differ and `git_writer` matches.
+   - an S603 / S607 noqa for `subprocess` and `gh`, matching the existing style;
+   - `_project_dir` lives in `tfactory_client`, so reuse it.
+3. **`apps/web-server/server/services/qa_gate.py` `check`.**
+   - In the `reviewed_head` comparison, a mismatch first tries
+     `writeback_base(source_spec_dir, head_sha)` through a lazy import;
+   - if that equals `reviewed_head.strip()`, it falls through to the remaining checks; otherwise it
+     returns `qa_stale`;
+   - the exact match never calls it.
+
+   Add tests in the existing qa_gate test file: find it with `grep -rl "qa_gate" apps/web-server/tests`.
+   Monkeypatch `tf_writeback.writeback_base`.
+
+   Verify: `PYTHONPATH=apps/backend …/pytest apps/web-server/tests -q -k qa_gate`.
+
+   Traps:
+   - `check` already carries `noqa: PLR0911, PLR0912`; adding a branch may trip PLR0915 or C901.
+     Keep it inside a small helper, `_head_matches(spec_dir, reviewed, head)`.
+4. **`apps/web-server/server/services/pr_endgame.py` `_build_merge_gate.fetch`** (around line
+   2157).
+   - `verified = writeback_base(spec_dir, head) or head` (lazy import);
+   - `tfactory_verdict(..., head=verified, ...)`;
+   - CI calls keep `head`.
+
+   Add a wiring test in `apps/web-server/tests/test_pr_endgame_merge_gate.py`: a stubbed
+   `writeback_base` returning the base means `tfactory_verdict` is called with the base, and
+   `host_ci_green` with the head.
+
+   Verify: `PYTHONPATH=apps/backend …/pytest apps/web-server/tests -q -k "endgame or merge_gate or qa_gate or writeback"`.
 
 ## Tests
 
-- Both verify commands pass, with no new failures against the `origin/dev` baseline.
-- CI is green on the PR (ruff, mypy and pytest ratchets).
+- Every verify command passes, with no new failures against an `origin/dev` baseline.
+- CI is green: the ruff, mypy and pytest ratchets.
+- Live: release AIFactory 3.21.18 and rerun E2E P1. S4 merges and S5 runs. CFactory approve on run
+  `n`'s task no longer gives `qa_stale`.
 
 ## Rollback
 
-Revert the PR. The gate goes back to an exact SHA match: write-back runs stall at S4 again, but
-nothing is merged wrongly.
+Revert the PR. Both gates go back to an exact head match: write-back runs stall again, but nothing
+is merged wrongly.
