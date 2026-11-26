@@ -32,7 +32,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from core import process_hardening
+from agents.questions import (
+    RUN_ID_RE,
+    RUN_QUESTION_LIMIT,
+    list_questions,
+    validate_question,
+)
+from core import artifact_store, process_hardening
 from core.child_env import child_env, lfs_upload
 from core.git_credentials import authed_push_url
 
@@ -43,8 +49,60 @@ _QA_FILES = ("qa_evidence.json", "model_identities.json", "qa_evidence_report.md
 _QA_RUN_FILE = ".qa_evidence_run"
 _QA_RUN_ENV = "AIFACTORY_QA_RUN_ID"
 _PUSH_FAILURE_MAX_BYTES = 4 << 10
+_QUESTION_TRANSFER_MAX_BYTES = 64 << 10
 
 WORKSPACE_URI_ENV = "WORKSPACE_URI"
+
+
+def _questions_key(spec_id: str, run_id: str) -> str:
+    if not RUN_ID_RE.fullmatch(run_id):
+        raise ValueError("invalid question run id")
+    return str(
+        artifact_store.ArtifactRef(
+            service="aifactory",
+            job_id=spec_id,
+            role="build",
+            path=f"questions/{run_id}.json",
+        ).key()
+    )
+
+
+def push_questions(spec_dir: Path, spec_id: str, run_id: str) -> bool:
+    """Transfer only this run's question records from an ephemeral build."""
+    records = [
+        q
+        for q in list_questions(spec_dir)
+        if q.get("run_id") == run_id and q.get("status") == "open"
+    ]
+    if not records:
+        return False
+    try:
+        artifact_store.ArtifactStore().put_bytes(
+            _questions_key(spec_id, run_id),
+            json.dumps(records).encode(),
+            "application/json",
+            role="build",
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001 - caller must fail closed
+        _log.error("[workspace_fetch] question transfer failed: %s", type(exc).__name__)
+        return False
+
+
+def fetch_questions(spec_id: str, run_id: str) -> list[dict]:
+    """Read and validate a run's question records before pause confirmation."""
+    try:
+        raw = artifact_store.ArtifactStore().get_bytes(
+            _questions_key(spec_id, run_id), max_bytes=_QUESTION_TRANSFER_MAX_BYTES
+        )
+        if len(raw) > _QUESTION_TRANSFER_MAX_BYTES:
+            raise ValueError("question transfer too large")
+        records = json.loads(raw)
+        if not isinstance(records, list) or len(records) > RUN_QUESTION_LIMIT:
+            raise ValueError("invalid question list")
+        return [validate_question(record, run_id=run_id) for record in records]
+    except Exception as exc:
+        raise ValueError("invalid question transfer") from exc
 
 
 def _mark_git_safe_directory(dest: Path) -> None:

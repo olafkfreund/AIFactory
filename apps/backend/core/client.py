@@ -600,6 +600,7 @@ def create_client(
     user_id: str | None = None,
     allowed_models: list[str] | None = None,
     question_budget_spec_dir: Path | None = None,
+    prior_task_count: int | None = None,
 ) -> "ClaudeSDKClient":
     """
     Create a Claude Agent SDK client with multi-layered security.
@@ -953,6 +954,7 @@ def create_client(
             project_dir,
             coder_model=model if agent_type == "coder" else None,
             question_budget_spec_dir=question_budget_spec_dir,
+            prior_task_count=prior_task_count,
         )
         if magestic_ai_mcp_server:
             mcp_servers["aifactory"] = magestic_ai_mcp_server

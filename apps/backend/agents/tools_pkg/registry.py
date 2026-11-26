@@ -66,6 +66,7 @@ def create_magestic_ai_mcp_server(
     *,
     coder_model: str | None = None,
     question_budget_spec_dir: Path | None = None,
+    prior_task_count: int | None = None,
 ):
     """
     Create an MCP server with aifactory custom tools.
@@ -84,7 +85,10 @@ def create_magestic_ai_mcp_server(
     if coder_model is not None:
         tools.extend(
             create_human_tools(
-                spec_dir, coder_model, budget_spec_dir=question_budget_spec_dir
+                spec_dir,
+                coder_model,
+                budget_spec_dir=question_budget_spec_dir,
+                prior_task_count=prior_task_count,
             )
         )
 

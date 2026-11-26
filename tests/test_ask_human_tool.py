@@ -70,9 +70,11 @@ def test_create_client_passes_coder_model(
         "claude",
         agent_type=agent_type,
         question_budget_spec_dir=budget_dir,
+        prior_task_count=7,
     )
     assert captured[0]["coder_model"] == expected_model
     assert captured[0]["question_budget_spec_dir"] == budget_dir
+    assert captured[0]["prior_task_count"] == 7
 
 
 def test_tool_writes_question_and_returns_stop_message(tmp_path, monkeypatch):

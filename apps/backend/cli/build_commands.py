@@ -533,7 +533,7 @@ def handle_build_command(
     try:
         debug("run.py", "Starting agent execution")
 
-        asyncio.run(
+        result = asyncio.run(
             run_autonomous_agent(
                 project_dir=working_dir,  # Use worktree if isolated
                 spec_dir=spec_dir,
@@ -549,6 +549,9 @@ def handle_build_command(
             )
         )
         debug_success("run.py", "Agent execution completed")
+
+        if result == "needs_input":
+            return
 
         # Delegation mode: planner has written implementation_plan.json and
         # we hand off to the vendor agent (Copilot) from auto_fix_service.
@@ -830,6 +833,7 @@ def _handle_build_interrupt(
                     verbose=verbose,
                     source_spec_dir=source_spec_dir,
                     gates=gates,
+                    reuse_question_run=True,
                 )
             )
             # Build completed or was interrupted again - exit

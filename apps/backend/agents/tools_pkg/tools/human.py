@@ -4,7 +4,12 @@ import os
 from pathlib import Path
 from typing import Any
 
-from agents.questions import QuestionBudgetExhausted, question_run_id, write_question
+from agents.questions import (
+    TASK_QUESTION_LIMIT,
+    QuestionBudgetExhausted,
+    question_run_id,
+    write_question,
+)
 
 try:
     from claude_agent_sdk import tool
@@ -51,7 +56,7 @@ def create_human_tools(
                 if raw_count and (
                     not raw_count.isascii()
                     or not raw_count.isdecimal()
-                    or len(raw_count.lstrip("0")) > 2
+                    or len(raw_count.lstrip("0")) > len(str(TASK_QUESTION_LIMIT))
                 ):
                     raise QuestionBudgetExhausted(
                         "question budget exhausted: proceed on your best reading or stop"
