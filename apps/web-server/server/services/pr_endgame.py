@@ -151,8 +151,18 @@ def is_auto_pr_enabled(project_path: Path | None = None) -> bool:
 def is_auto_merge_enabled(project_path: Path | None = None) -> bool:
     # #1795: settings never loaded (DB down since start) -> hold, don't use defaults
     if project_path is not None and not project_settings_store.is_loaded(project_path):
+        logger.info("[pr-endgame] auto_merge off: project settings not loaded (#2248)")
         return False
-    return _flag("AIFACTORY_AUTO_MERGE", project_path)
+    enabled = _flag("AIFACTORY_AUTO_MERGE", project_path)
+    if not enabled:
+        # #2248: says where "off" came from, never the value itself.
+        logger.info(
+            "[pr-endgame] auto_merge off: source=%s",
+            "env"
+            if _project_env(project_path, "AIFACTORY_AUTO_MERGE") is None
+            else "project",
+        )
+    return enabled
 
 
 def is_graphiti_enabled(project_path: Path | None = None) -> bool:

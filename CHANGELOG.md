@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+## 3.21.14 - 2026-11-26
+
+Merged to `dev` since 3.21.13.
+
+### Changed
+
+- The PR endgame logs where an "auto_merge off" decision came from (settings not loaded, global env, or project setting), without the value. (#2248, #2249)
+
 ## 3.21.13 - 2026-11-25
 
 Merged to `dev` since 3.21.12.
