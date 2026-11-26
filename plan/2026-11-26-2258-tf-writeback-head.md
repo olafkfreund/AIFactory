@@ -111,3 +111,7 @@ Otherwise it returns `None`. It never raises.
 
 Revert the PR. Both gates go back to an exact head match: write-back runs stall again, but nothing
 is merged wrongly.
+
+## Deviations
+
+qa_gate.check is called via asyncio.to_thread in async callers (pr_endgame._gated_head, routes/pr.py) because it may now perform network I/O (Fable review).

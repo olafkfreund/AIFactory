@@ -15,7 +15,9 @@ _SHA = re.compile(r"[0-9a-fA-F]{40}\Z")
 _REMOTE = re.compile(
     r"(?:https://github\.com/|git@github\.com:)([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?\Z"
 )
-_TEST_FILE = re.compile(r"(?:test_.*\.py|.*_test\.(?:py|go)|.*\.(?:test|spec)\.(?:js|jsx|ts|tsx))\Z")
+_TEST_FILE = re.compile(
+    r"(?:test_.*\.py|.*_test\.(?:py|go)|.*\.(?:test|spec)\.(?:js|jsx|ts|tsx))\Z"
+)
 
 
 def _is_test_path(path: str) -> bool:
@@ -57,8 +59,16 @@ def _gh_commit(
         )
     if result.returncode != 0:
         return None
-    doc = json.loads(result.stdout)
-    if not isinstance(doc, dict) or not isinstance(doc.get("parents"), list) or not isinstance(doc.get("files"), list):
+    try:
+        doc = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    if (
+        not isinstance(doc, dict)
+        or not isinstance(doc.get("parents"), list)
+        or len(doc["parents"]) != 1
+        or not isinstance(doc.get("files"), list)
+    ):
         return None
     if not all(isinstance(p, dict) for p in doc["parents"]) or not all(
         isinstance(item, dict) and isinstance(item.get("filename"), str)
@@ -94,7 +104,9 @@ def writeback_base(
         )
 
         spec_dir = Path(spec_dir)
-        task: dict[str, Any] | None = tfactory_task(spec_dir, spec_dir.name, getter=getter)
+        task: dict[str, Any] | None = tfactory_task(
+            spec_dir, spec_dir.name, getter=getter
+        )
         if not isinstance(task, dict):
             return None
         status = task.get("status_json")
@@ -113,7 +125,11 @@ def writeback_base(
         ):
             return None
         committed = writer.get("committed_paths")
-        if not isinstance(committed, list) or not committed or not all(isinstance(p, str) for p in committed):
+        if (
+            not isinstance(committed, list)
+            or not committed
+            or not all(isinstance(p, str) for p in committed)
+        ):
             return None
         if reader is None:
             project_dir = _project_dir(spec_dir)
@@ -128,7 +144,9 @@ def writeback_base(
         parents, files = commit
         if parents != [source] or not files or len(files) >= 300:
             return None
-        if all(isinstance(p, str) and p in committed and _is_test_path(p) for p in files):
+        if all(
+            isinstance(p, str) and p in committed and _is_test_path(p) for p in files
+        ):
             return source
     except Exception:  # noqa: BLE001 - uncertain provenance must fail closed
         return None

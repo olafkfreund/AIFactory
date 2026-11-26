@@ -55,9 +55,7 @@ def test_writeback_verdict_uses_base_while_ci_uses_head(
         heads["ci"] = head
         return True
 
-    def disposition(
-        _spec: Path, _tier: str | None, **kwargs: Any
-    ) -> str:
+    def disposition(_spec: Path, _tier: str | None, **kwargs: Any) -> str:
         kwargs["fetch_signals"]()
         return pe.AUTO_MERGE_DISPOSITION
 
@@ -65,12 +63,32 @@ def test_writeback_verdict_uses_base_while_ci_uses_head(
     monkeypatch.setattr(pe, "host_ci_green", ci)
     monkeypatch.setattr(pe, "required_checks_green", lambda *_a, **_k: True)
     monkeypatch.setattr(pe, "merge_disposition", disposition)
+    monkeypatch.setattr(pe, "merge_gate_signals", lambda *_a, **_k: {})
+    monkeypatch.setattr(pe, "write_verify_evidence", lambda *_a, **_k: True)
+
+    def evidence(*_args: object, head: str, **_kwargs: object) -> str:
+        heads["evidence"] = head
+        return "evidence"
+
+    monkeypatch.setattr(pe, "verify_evidence_block", evidence)
     gate = pe._build_merge_gate(
-        tmp_path, "001-x", ("owner", "repo"), None, "auto", None, False,
-        lambda *_a: pe.CmdResult(0, "", ""), "main",
+        tmp_path,
+        "001-x",
+        ("owner", "repo"),
+        None,
+        "auto",
+        None,
+        False,
+        lambda *_a: pe.CmdResult(0, "", ""),
+        "main",
+        pr=42,
     )
     assert gate("writeback-head")
-    assert heads == {"verdict": "verified-base", "ci": "writeback-head"}
+    assert heads == {
+        "verdict": "verified-base",
+        "ci": "writeback-head",
+        "evidence": "verified-base",
+    }
 
 
 @pytest.fixture(autouse=True)
