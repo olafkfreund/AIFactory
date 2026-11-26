@@ -1594,6 +1594,7 @@ class KubeJobBuildBackend:
         # the in-pod path does, at the subPath the manifest co-mounts at /work,
         # BEFORE the Job exists. Done first so a population failure never leaves a
         # dangling Job pointed at an unpopulated /work.
+        from .question_pause import start_attempt  # noqa: PLC0415
         from .trusted_contract import adopted_handoff  # noqa: PLC0415
         from .trusted_contract_store import lookup, stamp_spawn  # noqa: PLC0415
 
@@ -1615,6 +1616,7 @@ class KubeJobBuildBackend:
         qa_run_id = secrets.token_hex(16) if workspace_uri else None
         if qa_run_id:
             (source_spec / ".qa_evidence_run").write_text(qa_run_id)
+        attempt_env = start_attempt(source_spec)
 
         # #671 OAuth-env defect: mirror the in-pod build env into the Job (the
         # pooled token + the SDK passthrough). Goes into container env, NOT argv.
@@ -1634,6 +1636,7 @@ class KubeJobBuildBackend:
         if marker_nonce:
             extra_env["AIFACTORY_MARKER_NONCE"] = marker_nonce  # #1929
         extra_env["AIFACTORY_TASK_ID"] = task_id  # #1972: not a secret
+        extra_env.update(attempt_env)
         if qa_run_id:
             extra_env["AIFACTORY_QA_RUN_ID"] = qa_run_id
         # #2023: last, so no earlier merge can put the bucket-wide S3 key back.

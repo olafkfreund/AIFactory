@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 from factory_common.logsafe import sanitize_log
 
 from server.project_registry import resolve_project_path
-from server.services import review_redrive_service, task_control
+from server.services import question_pause, review_redrive_service, task_control
 from server.specpath import spec_dir_for
 
 from .build_backend import (
@@ -73,7 +73,7 @@ async def _report_orphaned_worktrees(
         return []
 
 
-_REVIEW_PAUSE_REASONS = ("plan_review", "injection_scan")
+_REVIEW_PAUSE_REASONS = ("plan_review", "injection_scan", "needs_input")
 
 
 def _pause_confirmed(
@@ -84,6 +84,9 @@ def _pause_confirmed(
     The Job's claim is necessary, never sufficient.
     """
     try:
+        if reason == "needs_input":
+            return question_pause.confirm_kubejob(spec_dir, spec_id) is not None
+
         from review.state import (  # noqa: PLC0415
             ReviewState,
             requires_review_before_coding,
@@ -353,6 +356,8 @@ class KubejobMixin:
                 )
             # The board must leave running/planning now, not at the next poll.
             await self._safe_emit_task_status(job_id, "human_review", pause[1])
+            if pause[1] == "needs_input":
+                question_pause.on_question_open(job_id)
             await _report_orphaned_worktrees(job_id, await self._active_job_ids())
             await self._drain_queue()
             await self._report_kubejob_usage(job_id, "human_review")
