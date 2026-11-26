@@ -287,6 +287,10 @@ def _job_finish_time(job: Any) -> float | None:
     return next((t for t in stamps if t is not None), -1.0)
 
 
+# A uid precondition that failed: the Job was replaced after listing (#3922).
+_HTTP_CONFLICT = 409
+
+
 def _sweep_candidates(
     jobs: Any, owned: set[str], owned_ids: set[str], clock: float
 ) -> list[tuple[str, str]]:
@@ -1993,7 +1997,7 @@ class KubeJobBuildBackend:
                         propagation_policy="Background",
                     )
                 except Exception as exc:  # noqa: BLE001 - continue with other Jobs
-                    if getattr(exc, "status", None) == 409:
+                    if getattr(exc, "status", None) == _HTTP_CONFLICT:
                         _log.warning(
                             "[build_backend] #1714 orphan Job %s/%s was replaced; skipping",
                             namespace,
