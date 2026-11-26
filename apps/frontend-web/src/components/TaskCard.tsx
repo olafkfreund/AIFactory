@@ -52,6 +52,7 @@ export function isTaskDone(task: Task): boolean {
 }
 
 export function isTaskFailed(task: Task): boolean {
+  if (task.status === 'human_review' && (task.reviewReason === 'needs_input' || task.reviewReason === 'approval_rejected')) return false;
   return (
     task.reviewReason === 'errors' ||
     task.reviewReason === 'qa_rejected' ||
@@ -322,7 +323,7 @@ export const TaskCard = memo(function TaskCard({
       case 'ai_review':
         return t('labels.aiReview');
       case 'human_review':
-        return t('labels.needsReview');
+        return t(task.reviewReason === 'needs_input' ? 'labels.needsInput' : 'labels.needsReview');
       case 'done':
         return t('status.complete');
       case 'copilot_running':

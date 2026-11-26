@@ -36,7 +36,7 @@ import { cn } from '../../lib/utils';
 import { calculateProgress } from '../../lib/utils';
 import { startTask, stopTask, submitReview, recoverStuckTask, deleteTask, persistTaskStatus } from '../../stores/task-store';
 import { useProjectStore } from '../../stores/project-store';
-import { reviewReasonBadge, TASK_STATUS_LABELS } from '../../shared/constants';
+import { reviewReasonBadge, showsMergeReview, TASK_STATUS_LABELS } from '../../shared/constants';
 import { TaskEditDialog } from '../TaskEditDialog';
 import { useTaskDetail } from './hooks/useTaskDetail';
 import { TaskMetadata } from './TaskMetadata';
@@ -47,6 +47,7 @@ import { TaskFiles } from './TaskFiles';
 import { TaskReview } from './TaskReview';
 import { PlanReviewSection } from './PlanReviewSection';
 import { AgentConsole } from './AgentConsole';
+import { NeedsInputBanner } from './NeedsInputBanner';
 import { ObservabilityTab } from './ObservabilityTab';
 import { CreatePRDialog } from './task-review/CreatePRDialog';
 import type { Task } from '../../shared/types';
@@ -155,7 +156,7 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
   // Note: reviewReason can be null when phase tracking fails but worktree has changes —
   // we still show the review section so the merge button can evaluate filesChanged
   const showTaskReview = useMemo(() => {
-    const shouldShow = state.needsReview && task.reviewReason !== 'plan_review';
+    const shouldShow = state.needsReview && showsMergeReview(task.reviewReason);
     return shouldShow;
   }, [state.needsReview, task.reviewReason]);
 
@@ -581,6 +582,7 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
                 <TabsContent value="overview" className="flex-1 min-h-0 overflow-hidden mt-0">
                   <ScrollArea className="h-full">
                     <div className="p-5 space-y-5">
+                      {task.status === 'human_review' && task.reviewReason === 'needs_input' && <NeedsInputBanner taskId={task.id} />}
                       {/* Metadata */}
                       <TaskMetadata task={task} />
 

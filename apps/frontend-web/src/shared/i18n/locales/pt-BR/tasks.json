@@ -25,6 +25,7 @@
     "running": "Executando",
     "aiReview": "Revisão IA",
     "needsReview": "Precisa Revisão",
+    "needsInput": "Precisa de resposta",
     "pending": "Pendente",
     "stuck": "Travado",
     "incomplete": "Incompleto",
@@ -37,9 +38,22 @@
     "hasErrors": "Com Erros",
     "qaIssues": "Problemas de QA",
     "approvePlan": "Aprovar Plano",
+    "needsInput": "Precisa de resposta",
+    "approvalRejected": "Aprovação rejeitada",
     "prOpen": "PR Aberto",
     "prClosed": "PR Fechado",
     "noWork": "Nenhum Trabalho Produzido"
+  },
+  "needsInput": {
+    "title": "Precisa de resposta",
+    "answer": "Sua resposta",
+    "note": "Nota opcional",
+    "send": "Enviar resposta",
+    "approve": "Aprovar",
+    "reject": "Rejeitar",
+    "loadError": "Não foi possível carregar a pergunta",
+    "answerError": "Não foi possível enviar a resposta",
+    "confirmError": "Não foi possível confirmar esta aprovação"
   },
   "tooltips": {
     "archiveTask": "Arquivar tarefa",

@@ -30,6 +30,7 @@
     "running": "Running",
     "aiReview": "AI Review",
     "needsReview": "Needs Review",
+    "needsInput": "Needs input",
     "pending": "Pending",
     "stuck": "Stuck",
     "incomplete": "Incomplete",
@@ -44,9 +45,22 @@
     "hasErrors": "Has Errors",
     "qaIssues": "QA Issues",
     "approvePlan": "Approve Plan",
+    "needsInput": "Needs input",
+    "approvalRejected": "Approval rejected",
     "prOpen": "PR Open",
     "prClosed": "PR Closed",
     "noWork": "No Work Produced"
+  },
+  "needsInput": {
+    "title": "Needs input",
+    "answer": "Your answer",
+    "note": "Optional note",
+    "send": "Send answer",
+    "approve": "Approve",
+    "reject": "Reject",
+    "loadError": "Could not load the question",
+    "answerError": "Could not send the answer",
+    "confirmError": "Could not confirm this approval"
   },
   "tooltips": {
     "archiveTask": "Archive task",

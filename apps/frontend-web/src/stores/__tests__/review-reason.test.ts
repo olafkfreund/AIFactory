@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { isIncompleteHumanReview } from '../task-store';
-import { REVIEW_REASON_BADGES, reviewReasonBadge } from '../../shared/constants';
+import { REVIEW_REASON_BADGES, reviewReasonBadge, showsMergeReview } from '../../shared/constants';
 import type { ReviewReason, Task } from '../../shared/types';
 
 // Factory#2586: the merger records a task's PR state as a review reason.
@@ -18,6 +18,18 @@ describe('isIncompleteHumanReview', () => {
 
   it('still flags a crashed build with no completed subtasks', () => {
     expect(isIncompleteHumanReview(reviewTask('errors'))).toBe(true);
+  });
+
+  it('keeps a question pause out of recovery', () => {
+    expect(isIncompleteHumanReview(reviewTask('needs_input'))).toBe(false);
+  });
+});
+
+describe('merge review visibility', () => {
+  it('hides merge actions while input is pending or approval was rejected', () => {
+    expect(showsMergeReview('needs_input')).toBe(false);
+    expect(showsMergeReview('approval_rejected')).toBe(false);
+    expect(showsMergeReview('completed')).toBe(true);
   });
 });
 
@@ -38,5 +50,6 @@ describe('reviewReasonBadge', () => {
 
   it('returns the badge for a known reason', () => {
     expect(reviewReasonBadge('awaiting_merge')?.label).toBe('PR Open');
+    expect(reviewReasonBadge('needs_input')?.label).toBe('Needs input');
   });
 });
