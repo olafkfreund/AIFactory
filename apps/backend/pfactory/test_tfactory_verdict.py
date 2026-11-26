@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pfactory.tfactory_client as tc
 import pytest
 
@@ -39,6 +42,7 @@ def _run(
     routes: dict[str, tuple[int, object]],
     spec_id: str = "048-feat",
     head: str = "abc",
+    spec_dir: Path = Path("spec"),
 ) -> tuple[str | None, list[tuple[str, dict[str, str]]]]:
     calls: list[tuple[str, dict[str, str]]] = []
 
@@ -46,7 +50,7 @@ def _run(
         calls.append((url, headers))
         return routes[url]
 
-    return tc.tfactory_verdict(Path("spec"), spec_id, head=head, getter=getter), calls
+    return tc.tfactory_verdict(spec_dir, spec_id, head=head, getter=getter), calls
 
 
 def test_flag_does_not_block_and_request_shape() -> None:
@@ -178,3 +182,211 @@ def test_vote_stays_empty_without_a_trusted_result_or_summary() -> None:
     doc = {"verdicts": [{"verdict": "accept"}], "verdict_vote": {"splits": {}}}
     assert _vote_run(doc, _task(status="running")) == (None, {})
     assert _vote_run({"verdicts": [{"verdict": "accept"}]}) == ("pass", {})
+
+
+@pytest.mark.parametrize(
+    ("success", "body", "expected"),
+    [
+        (True, {"workspace_project_id": "2b2e"}, "2b2e"),
+        (True, ValueError("not json"), None),
+        (False, {"workspace_project_id": "2b2e"}, None),
+    ],
+)
+def test_poster_project_id_only_on_json_success(
+    monkeypatch: pytest.MonkeyPatch, success: bool, body: object, expected: str | None
+) -> None:
+    class Response:
+        status_code = 200 if success else 409
+        is_success = success
+        text = "x" * 2001
+
+        def json(self) -> object:
+            if isinstance(body, Exception):
+                raise body
+            return body
+
+    class Client:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        async def __aenter__(self) -> Client:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            pass
+
+        async def post(self, *_args: object, **_kwargs: object) -> Response:
+            return Response()
+
+    monkeypatch.setattr(httpx, "AsyncClient", Client)
+    result = asyncio.run(tc._httpx_poster("http://tf", {}, {}))
+    assert result["body"] == "x" * 2000
+    assert result.get("workspace_project_id") == expected
+
+
+@pytest.mark.parametrize(
+    ("ok", "value", "included"),
+    [
+        (True, "2b2e", True),
+        (True, 2, False),
+        (True, "bad/id", False),
+        (True, "x" * 129, False),
+        (True, None, False),
+        (False, "2b2e", False),
+    ],
+)
+def test_send_handoff_records_valid_project_only(
+    ok: bool, value: object, included: bool
+) -> None:
+    async def poster(
+        _url: str, _payload: dict[str, object], _headers: dict[str, str]
+    ) -> dict[str, object]:
+        result: dict[str, object] = {"ok": ok, "status": 200 if ok else 409}
+        if value is not None:
+            result["workspace_project_id"] = value
+        return result
+
+    result = asyncio.run(
+        tc.send_handoff({}, config={"base_url": "http://tf"}, poster=poster)
+    )
+    assert result.get("tfactory_project_id") == ("2b2e" if included else None)
+
+
+def test_handoff_marker_is_atomically_replaced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tc, "wants_auto_handoff", lambda _spec_dir: True)
+    monkeypatch.setattr(tc, "build_commit_count", lambda _spec_dir, _spec_id: 1)
+    monkeypatch.setattr(tc, "build_ingest_payload", lambda *_args, **_kwargs: {})
+
+    async def handoff(_payload: dict[str, object]) -> dict[str, object]:
+        return {"sent": True, "tfactory_project_id": "2b2e"}
+
+    monkeypatch.setattr(tc, "send_handoff", handoff)
+    mkstemp = tc.tempfile.mkstemp
+    replace = tc.os.replace
+    operations: list[tuple[str, Path, Path | None]] = []
+
+    def tracked_mkstemp(**kwargs: object) -> tuple[int, str]:
+        fd, path = mkstemp(**kwargs)
+        operations.append(("mkstemp", Path(path), None))
+        return fd, path
+
+    def tracked_replace(src: str, dst: Path) -> None:
+        operations.append(("replace", Path(src), dst))
+        replace(src, dst)
+
+    monkeypatch.setattr(tc.tempfile, "mkstemp", tracked_mkstemp)
+    monkeypatch.setattr(tc.os, "replace", tracked_replace)
+    result = asyncio.run(
+        tc.maybe_auto_handoff_tfactory(tmp_path, "048-feat", contract=None)
+    )
+    marker = tmp_path / "tfactory_handoff.json"
+    assert json.loads(marker.read_text()) == result
+    assert operations == [
+        ("mkstemp", operations[0][1], None),
+        ("replace", operations[0][1], marker),
+    ]
+    assert operations[0][1].parent == tmp_path
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+@pytest.mark.parametrize("verdict,expected", [("flag", "pass"), ("reject", "fail")])
+def test_recorded_project_scopes_both_requests(
+    tmp_path: Path, verdict: str, expected: str
+) -> None:
+    (tmp_path / "tfactory_handoff.json").write_text(
+        json.dumps({"sent": True, "tfactory_project_id": "2b2e"})
+    )
+    scoped = TASK + "?project_id=2b2e"
+    verdicts = TASK + "/verdicts.json?project_id=2b2e"
+    out, calls = _run(
+        {scoped: _task(project="2b2e"), verdicts: _verdicts("accept", verdict)},
+        spec_dir=tmp_path,
+    )
+    assert out == expected
+    assert [url for url, _ in calls] == [scoped, verdicts]
+
+
+def test_recorded_project_mismatch_stops_after_task(tmp_path: Path) -> None:
+    (tmp_path / "tfactory_handoff.json").write_text(
+        json.dumps({"sent": True, "tfactory_project_id": "2b2e"})
+    )
+    scoped = TASK + "?project_id=2b2e"
+    out, calls = _run({scoped: _task(project="demo")}, spec_dir=tmp_path)
+    assert out is None
+    assert [url for url, _ in calls] == [scoped]
+
+
+@pytest.mark.parametrize("status", [404, 409])
+def test_scoped_failure_does_not_retry_bare(tmp_path: Path, status: int) -> None:
+    (tmp_path / "tfactory_handoff.json").write_text(
+        json.dumps({"sent": True, "tfactory_project_id": "2b2e"})
+    )
+    scoped = TASK + "?project_id=2b2e"
+    out, calls = _run(
+        {
+            scoped: (status, None),
+            TASK: _task(),
+            TASK + "/verdicts.json": _verdicts("accept"),
+        },
+        spec_dir=tmp_path,
+    )
+    assert out is None
+    assert [url for url, _ in calls] == [scoped]
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        {"sent": False, "tfactory_project_id": "2b2e"},
+        {"sent": True, "tfactory_project_id": "bad/id"},
+        {"sent": True, "tfactory_project_id": 123},
+        "malformed",
+    ],
+)
+def test_invalid_marker_uses_bare_urls(tmp_path: Path, marker: object) -> None:
+    (tmp_path / "tfactory_handoff.json").write_text(
+        marker if isinstance(marker, str) else json.dumps(marker)
+    )
+    out, calls = _run(
+        {TASK: _task(), TASK + "/verdicts.json": _verdicts("accept")},
+        spec_dir=tmp_path,
+    )
+    assert out == "pass"
+    assert [url for url, _ in calls] == [TASK, TASK + "/verdicts.json"]
+
+
+def test_unreadable_marker_uses_bare_urls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    marker = tmp_path / "tfactory_handoff.json"
+    marker.write_text("{}")
+    read_text = Path.read_text
+
+    def unreadable(path: Path, *args: Any, **kwargs: Any) -> str:
+        if path == marker:
+            raise OSError("unreadable")
+        return read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", unreadable)
+    out, calls = _run(
+        {TASK: _task(), TASK + "/verdicts.json": _verdicts("accept")},
+        spec_dir=tmp_path,
+    )
+    assert out == "pass"
+    assert [url for url, _ in calls] == [TASK, TASK + "/verdicts.json"]
+
+
+def test_no_marker_or_env_uses_derived_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("TFACTORY_PROJECT_ID")
+    spec_dir = tmp_path / "workspaces" / "derived" / ".aifactory" / "specs" / "048-feat"
+    spec_dir.mkdir(parents=True)
+    out, calls = _run(
+        {TASK: _task(project="derived"), TASK + "/verdicts.json": _verdicts("accept")},
+        spec_dir=spec_dir,
+    )
+    assert out == "pass"
+    assert [url for url, _ in calls] == [TASK, TASK + "/verdicts.json"]

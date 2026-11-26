@@ -28,6 +28,7 @@ import logging
 import os
 import re
 import subprocess
+import tempfile
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -970,11 +971,20 @@ async def _httpx_poster(url: str, payload: dict, headers: dict) -> dict:
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.post(url, json=payload, headers=headers)
-        return {
+        result = {
             "status": resp.status_code,
             "ok": resp.is_success,
             "body": resp.text[:2000],
         }
+        if resp.is_success:
+            # Response parsing can never fail the handoff.
+            with contextlib.suppress(Exception):
+                data = resp.json()
+                if isinstance(data, dict) and isinstance(
+                    data.get("workspace_project_id"), str
+                ):
+                    result["workspace_project_id"] = data["workspace_project_id"]
+        return result
 
 
 # Short: a handoff must not wait on a slow probe (results are cached 5 min).
@@ -1051,12 +1061,16 @@ async def send_handoff(
         return {"sent": False, "reason": "error", "error": str(exc)[:300]}
 
     ok = bool(result.get("ok"))
-    return {
+    handoff = {
         "sent": ok,
         "reason": None if ok else "http_error",
         "status": result.get("status"),
         "url": url,
     }
+    v = result.get("workspace_project_id")
+    if ok and isinstance(v, str) and re.fullmatch(r"[A-Za-z0-9._-]{1,128}", v):
+        handoff["tfactory_project_id"] = v
+    return handoff
 
 
 async def send_pr_attach(
@@ -1249,6 +1263,19 @@ def _httpx_get(url: str, headers: dict[str, str]) -> tuple[int, object]:
     return resp.status_code, resp.json() if resp.is_success else None
 
 
+def _recorded_tfactory_project(spec_dir: Path) -> str | None:
+    # A missing or malformed marker means the legacy lookup.
+    with contextlib.suppress(Exception):
+        marker = json.loads((spec_dir / "tfactory_handoff.json").read_text())
+        if isinstance(marker, dict) and marker.get("sent") is True:
+            project_id = marker.get("tfactory_project_id")
+            if isinstance(project_id, str) and re.fullmatch(
+                r"[A-Za-z0-9._-]{1,128}", project_id
+            ):
+                return project_id
+    return None
+
+
 def tfactory_verdict(
     spec_dir: Path,
     spec_id: str,
@@ -1268,8 +1295,11 @@ def tfactory_verdict(
     try:
         config = tfactory_config()
         base_url = config.get("base_url")
-        project_id = os.environ.get("TFACTORY_PROJECT_ID") or _aifactory_project_name(
-            Path(spec_dir)
+        recorded = _recorded_tfactory_project(Path(spec_dir))
+        project_id = (
+            recorded
+            or os.environ.get("TFACTORY_PROJECT_ID")
+            or _aifactory_project_name(Path(spec_dir))
         )
         if not base_url or not project_id:
             return None
@@ -1279,8 +1309,9 @@ def tfactory_verdict(
             else {}
         )
         base = f"{base_url}/api/tfactory/tasks/{quote(spec_id, safe='')}"
+        qs = f"?project_id={quote(recorded, safe='')}" if recorded else ""
         get = getter or _httpx_get
-        code, task = get(base, headers)
+        code, task = get(f"{base}{qs}", headers)
         status_json = task.get("status_json") if isinstance(task, dict) else None
         if not (
             _HTTP_OK <= code < _HTTP_REDIRECT
@@ -1292,7 +1323,7 @@ def tfactory_verdict(
             and status_json.get("status") == "triaged"
         ):
             return None
-        code, doc = get(f"{base}/verdicts.json", headers)
+        code, doc = get(f"{base}/verdicts.json{qs}", headers)
         if not (
             _HTTP_OK <= code < _HTTP_REDIRECT
             and isinstance(doc, dict)
@@ -1372,5 +1403,15 @@ async def maybe_auto_handoff_tfactory(
         return {"sent": False, "reason": "error", "error": str(exc)[:300]}
     # Record a local marker so the UI / operator can see the handoff outcome.
     with contextlib.suppress(OSError):
-        (spec_dir / "tfactory_handoff.json").write_text(json.dumps(result, indent=2))
+        fd, tmp = tempfile.mkstemp(
+            dir=spec_dir, prefix=".tfactory_handoff.", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w") as marker:
+                marker.write(json.dumps(result, indent=2))
+            Path(tmp).replace(spec_dir / "tfactory_handoff.json")
+        except Exception:
+            with contextlib.suppress(OSError):
+                Path(tmp).unlink()
+            raise
     return result
