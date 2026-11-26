@@ -3,6 +3,7 @@
 import fcntl
 import json
 import os
+import re
 import tempfile
 import uuid
 from contextlib import contextmanager
@@ -11,6 +12,11 @@ from pathlib import Path
 from typing import Any
 
 RUN_FILE = ".question_run_id"
+QID_RE = re.compile(r"^q-[0-9a-f]{12}$")
+
+
+def valid_qid(qid: str) -> bool:
+    return isinstance(qid, str) and QID_RE.fullmatch(qid) is not None
 
 
 class QuestionBudgetExhausted(ValueError):
@@ -66,27 +72,47 @@ def write_question(
     default: str | None = None,
     timeout_minutes: int = 30,
     budget_spec_dir: Path | None = None,
+    prior_task_count: int = 0,
 ) -> dict[str, Any]:
     """Write one question and charge both budgets under the task lock."""
     if not isinstance(question, str) or not question.strip():
         raise ValueError("question is required")
+    question = question.strip()
+    if len(question) > 2000:
+        raise ValueError("question must be at most 2000 characters")
     if not isinstance(needs_approval, bool):
         raise ValueError("needs_approval must be a boolean")
     if not isinstance(context, str) or (
         default is not None and not isinstance(default, str)
     ):
         raise ValueError("context and default must be strings")
+    if len(context) > 4000:
+        raise ValueError("context must be at most 4000 characters")
+    if default is not None:
+        default = default.strip()
+        if len(default) > 500:
+            raise ValueError("default must be at most 500 characters")
     if not isinstance(run_id, str) or not run_id or not isinstance(asked_by_model, str):
         raise ValueError("run_id and asked_by_model are required")
     if choices is not None and not isinstance(choices, list):
         raise ValueError("choices must contain 2-6 distinct nonempty strings")
+    if choices is not None:
+        choices = [
+            choice.strip() if isinstance(choice, str) else choice for choice in choices
+        ]
     if choices is not None and (
         not 2 <= len(choices) <= 6
         or any(not isinstance(choice, str) or not choice.strip() for choice in choices)
         or len(set(choices)) != len(choices)
     ):
         raise ValueError("choices must contain 2-6 distinct nonempty strings")
-    if not isinstance(timeout_minutes, int) or not 1 <= timeout_minutes <= 1440:
+    if choices is not None and any(len(choice) > 200 for choice in choices):
+        raise ValueError("each choice must be at most 200 characters")
+    if (
+        isinstance(timeout_minutes, bool)
+        or not isinstance(timeout_minutes, int)
+        or not 1 <= timeout_minutes <= 1440
+    ):
         raise ValueError("timeout_minutes must be between 1 and 1440")
     budget_spec_dir = budget_spec_dir or spec_dir
     with _lock(budget_spec_dir) as budget_dir:
@@ -96,21 +122,26 @@ def write_question(
             if budget_path.exists()
             else {"total": 0, "runs": {}}
         )
-        if budget["total"] >= 10 or budget["runs"].get(run_id, 0) >= 3:
+        if (
+            max(budget["total"], prior_task_count + budget["runs"].get(run_id, 0)) >= 10
+            or budget["runs"].get(run_id, 0) >= 3
+        ):
             raise QuestionBudgetExhausted(
                 "question budget exhausted: proceed on your best reading or stop"
             )
-        qid = uuid.uuid4().hex
+        qid = f"q-{uuid.uuid4().hex[:12]}"
+        while (spec_dir / "questions" / f"{qid}.json").exists():
+            qid = f"q-{uuid.uuid4().hex[:12]}"
         record = {
             "id": qid,
-            "question": question.strip(),
+            "question": question,
             "choices": choices,
             "needs_approval": needs_approval,
             "context": context,
             "default": default,
             "timeout_minutes": timeout_minutes,
             "status": "open",
-            "asked_at": datetime.now(UTC).isoformat(),
+            "asked_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "asked_by_model": asked_by_model,
             "run_id": run_id,
         }
@@ -122,7 +153,7 @@ def write_question(
 
 
 def read_question(spec_dir: Path, qid: str) -> dict[str, Any]:
-    if not qid or any(char not in "0123456789abcdef" for char in qid):
+    if not valid_qid(qid):
         raise ValueError("invalid question id")
     return json.loads((spec_dir / "questions" / f"{qid}.json").read_text())
 
@@ -142,6 +173,8 @@ def update_question(
     spec_dir: Path, qid: str, *, expected_status: str, changes: dict[str, Any]
 ) -> dict[str, Any] | None:
     """Compare and set one question; return None when its status moved."""
+    if not valid_qid(qid):
+        raise ValueError("invalid question id")
     with _lock(spec_dir):
         record = read_question(spec_dir, qid)
         if record["status"] != expected_status:
