@@ -1,5 +1,22 @@
 ## [Unreleased]
 
+## 3.21.13 - 2026-11-25
+
+Merged to `dev` since 3.21.12.
+
+### Fixed
+
+- The QA report endpoint serves the protected `qa_evidence_report.md` when `qa_report.md` is absent, so approved tasks no longer return 404. (#2233, #2246)
+
+## 3.21.12 - 2026-11-25
+
+Merged to `dev` since 3.21.11.
+
+### Changed
+
+- QA gate follow-ups for #2233: surface branch push failures, fetch before the QA gate and pin the pushed head. (#2243)
+- Test cleanup: import pr_endgame one way in test_qa_gate (CodeQL note on #2240). (#2241)
+
 ## 3.21.11 - 2026-11-25
 
 Merged to `dev` since 3.21.10.
