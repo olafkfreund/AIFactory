@@ -910,7 +910,9 @@ def test_pr_body_artifacts_follow_attribution(tmp_path, monkeypatch):
                 "originator": "github:octocat",
                 "provenance": {
                     "issue_number": 2263,
-                    "source_artifacts": [{"stage": "intent", "path": "intent/links.md"}],
+                    "source_artifacts": [
+                        {"stage": "intent", "path": "intent/links.md"}
+                    ],
                 },
             }
         )
@@ -958,7 +960,8 @@ def test_pr_body_artifacts_skip_invalid_and_duplicate_items(tmp_path):
                         {"stage": "plan", "path": "plan/only.md"},
                     ]
                 }
-            })
+            }
+        )
     )
     _, body = pe._pr_title_body(tmp_path, "spec-1")
     assert body == (
