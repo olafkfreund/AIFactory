@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2269
 spec: spec/2026-11-27-2269-not-run-verdict.md
 coders:
