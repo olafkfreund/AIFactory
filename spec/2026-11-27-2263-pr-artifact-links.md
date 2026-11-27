@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2263
 intent: intent/2026-11-27-2263-pr-artifact-links.md
 ---
