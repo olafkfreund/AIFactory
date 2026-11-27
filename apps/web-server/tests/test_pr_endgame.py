@@ -876,6 +876,152 @@ def test_pr_body_no_issue_no_fixes(tmp_path):
     assert "Fixes #" not in body
 
 
+def test_pr_body_lists_artifacts_before_fixes(tmp_path):
+    artifacts = [
+        {"stage": stage, "path": f"{stage}/2026-11-27-2263-links.md"}
+        for stage in ("intent", "spec", "plan")
+    ]
+    (tmp_path / "requirements.json").write_text(
+        json.dumps(
+            {
+                "description": "do it",
+                "provenance": {"issue_number": 2263, "source_artifacts": artifacts},
+            }
+        )
+    )
+    _, body = pe._pr_title_body(tmp_path, "spec-1")
+    assert body == (
+        "do it\n\n---\n🤖 AIFactory auto-PR on a clean, QA-passed build."
+        "\n\n**Artifacts**\n"
+        "- intent: `intent/2026-11-27-2263-links.md`\n"
+        "- spec: `spec/2026-11-27-2263-links.md`\n"
+        "- plan: `plan/2026-11-27-2263-links.md`"
+        "\n\nFixes #2263"
+    )
+
+
+def test_pr_body_artifacts_follow_attribution(tmp_path, monkeypatch):
+    monkeypatch.setenv("AIFACTORY_AGENT_COMMIT_TRAILERS", "1")
+    (tmp_path / "requirements.json").write_text(
+        json.dumps(
+            {
+                "description": "do it",
+                "agent_identity": "agent:aifactory/k1",
+                "originator": "github:octocat",
+                "provenance": {
+                    "issue_number": 2263,
+                    "source_artifacts": [{"stage": "intent", "path": "intent/links.md"}],
+                },
+            }
+        )
+    )
+    _, body = pe._pr_title_body(tmp_path, "spec-1")
+    assert body.index("do it") < body.index("Authored by agent")
+    assert body.index("Authored by agent") < body.index("Originator")
+    assert body.index("Originator") < body.index("**Artifacts**")
+    assert body.index("**Artifacts**") < body.index("Fixes #2263")
+
+
+def test_pr_body_artifacts_use_stage_order(tmp_path):
+    (tmp_path / "requirements.json").write_text(
+        json.dumps(
+            {
+                "provenance": {
+                    "source_artifacts": [
+                        {"stage": stage, "path": f"{stage}/links.md"}
+                        for stage in ("plan", "intent", "spec")
+                    ]
+                }
+            }
+        )
+    )
+    _, body = pe._pr_title_body(tmp_path, "spec-1")
+    assert body.endswith(
+        "**Artifacts**\n- intent: `intent/links.md`\n"
+        "- spec: `spec/links.md`\n- plan: `plan/links.md`"
+    )
+
+
+def test_pr_body_artifacts_skip_invalid_and_duplicate_items(tmp_path):
+    (tmp_path / "requirements.json").write_text(
+        json.dumps(
+            {
+                "provenance": {
+                    "source_artifacts": [
+                        None,
+                        "intent/stray.md",
+                        {"stage": "intent"},
+                        {"stage": "intent", "path": 3},
+                        {"stage": "intent", "path": "intent/first.md"},
+                        {"stage": "intent", "path": "intent/second.md"},
+                        {"stage": "spec", "path": "spec/invalid.txt"},
+                        {"stage": "plan", "path": "plan/only.md"},
+                    ]
+                }
+            })
+    )
+    _, body = pe._pr_title_body(tmp_path, "spec-1")
+    assert body == (
+        "Automated PR from AIFactory (clean build)."
+        "\n\n**Artifacts**\n- intent: `intent/first.md`\n- plan: `plan/only.md`"
+    )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "intent/one\ntwo.md",
+        "intent/one.md\n",
+        "intent/../one.md",
+        "intent/one`two.md",
+        "spec/one.md",
+        "intent/one.txt",
+    ],
+)
+def test_pr_body_rejects_invalid_artifact_paths(tmp_path, path):
+    (tmp_path / "requirements.json").write_text(
+        json.dumps(
+            {"provenance": {"source_artifacts": [{"stage": "intent", "path": path}]}}
+        )
+    )
+    _, body = pe._pr_title_body(tmp_path, "spec-1")
+    assert body == "Automated PR from AIFactory (clean build)."
+
+
+@pytest.mark.parametrize(
+    "provenance",
+    [
+        {},
+        {"source_artifacts": "intent/one.md"},
+        {"source_artifacts": [{"stage": "intent", "path": "intent/one.txt"}]},
+        "not a dict",
+    ],
+)
+def test_pr_body_artifacts_noop(tmp_path, provenance):
+    (tmp_path / "requirements.json").write_text(
+        json.dumps({"description": "do it", "provenance": provenance})
+    )
+    _, body = pe._pr_title_body(tmp_path, "spec-1")
+    assert body == "do it\n\n---\n🤖 AIFactory auto-PR on a clean, QA-passed build."
+
+
+def test_pr_body_artifacts_follow_default_body_without_description(tmp_path):
+    (tmp_path / "requirements.json").write_text(
+        json.dumps(
+            {
+                "provenance": {
+                    "source_artifacts": [{"stage": "spec", "path": "spec/links.md"}]
+                }
+            }
+        )
+    )
+    _, body = pe._pr_title_body(tmp_path, "spec-1")
+    assert body == (
+        "Automated PR from AIFactory (clean build)."
+        "\n\n**Artifacts**\n- spec: `spec/links.md`"
+    )
+
+
 # ── #71 Phase A: configurable reviewer + AIFactory-verdict gate ──────────────
 
 
