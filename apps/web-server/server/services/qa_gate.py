@@ -36,6 +36,14 @@ def _canonical_model(entry: object) -> str | None:
     return resolved if isinstance(resolved, str) and resolved.strip() else None
 
 
+def _head_matches(spec_dir: Path, reviewed: str, head: str) -> bool:
+    if reviewed.strip() == head.strip():
+        return True
+    from server.services.tf_writeback import writeback_base  # noqa: PLC0415
+
+    return writeback_base(spec_dir, head.strip()) == reviewed.strip()
+
+
 def check(source_spec_dir: Path, head_sha: str | None) -> GateReason | None:  # noqa: PLR0911, PLR0912 - explicit refusal reasons
     """Return None when QA approved *head_sha* independently, else the refusal reason."""
     if not isinstance(head_sha, str) or not head_sha.strip():
@@ -53,7 +61,7 @@ def check(source_spec_dir: Path, head_sha: str | None) -> GateReason | None:  # 
     if (
         not isinstance(reviewed_head, str)
         or not reviewed_head.strip()
-        or reviewed_head.strip() != head_sha.strip()
+        or not _head_matches(spec_dir, reviewed_head, head_sha)
         or not isinstance(report_sha256, str)
         or not report_sha256.strip()
     ):

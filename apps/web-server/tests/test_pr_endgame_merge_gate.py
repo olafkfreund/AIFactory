@@ -32,12 +32,63 @@ for _p in (str(_WS), str(_BACKEND)):
         sys.path.insert(0, _p)
 
 import server.services.handback_receipt_store as hrs  # noqa: E402
+import server.services.tf_writeback as wb  # noqa: E402
 from merge import merge_policy  # noqa: E402
 from server.database.models import Base  # noqa: E402
 from server.services import pr_endgame as pe  # noqa: E402
 
 # Captured before conftest's autouse stub replaces it (#1696).
 _REAL_ON_RECORD = hrs.on_record
+
+
+def test_writeback_verdict_uses_base_while_ci_uses_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    heads: dict[str, str] = {}
+    monkeypatch.setattr(wb, "writeback_base", lambda _spec, _head: "verified-base")
+
+    def verdict(_spec: Path, _id: str, *, head: str, vote: dict[str, Any]) -> str:  # noqa: ARG001 - matches tfactory_verdict's signature
+        heads["verdict"] = head
+        return "pass"
+
+    def ci(_owner: str, _repo: str, head: str, **_kwargs: object) -> bool:
+        heads["ci"] = head
+        return True
+
+    def disposition(_spec: Path, _tier: str | None, **kwargs: Any) -> str:
+        kwargs["fetch_signals"]()
+        return str(pe.AUTO_MERGE_DISPOSITION)
+
+    monkeypatch.setattr("pfactory.tfactory_client.tfactory_verdict", verdict)
+    monkeypatch.setattr(pe, "host_ci_green", ci)
+    monkeypatch.setattr(pe, "required_checks_green", lambda *_a, **_k: True)
+    monkeypatch.setattr(pe, "merge_disposition", disposition)
+    monkeypatch.setattr(pe, "merge_gate_signals", lambda *_a, **_k: {})
+    monkeypatch.setattr(pe, "write_verify_evidence", lambda *_a, **_k: True)
+
+    def evidence(*_args: object, head: str, **_kwargs: object) -> str:
+        heads["evidence"] = head
+        return "evidence"
+
+    monkeypatch.setattr(pe, "verify_evidence_block", evidence)
+    gate = pe._build_merge_gate(
+        tmp_path,
+        "001-x",
+        ("owner", "repo"),
+        None,
+        "auto",
+        None,
+        False,
+        lambda *_a: pe.CmdResult(0, "", ""),
+        "main",
+        pr=42,
+    )
+    assert gate("writeback-head")
+    assert heads == {
+        "verdict": "verified-base",
+        "ci": "writeback-head",
+        "evidence": "verified-base",
+    }
 
 
 @pytest.fixture(autouse=True)
