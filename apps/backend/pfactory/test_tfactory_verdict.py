@@ -408,3 +408,50 @@ def test_no_marker_or_env_uses_derived_project(
     )
     assert out == "pass"
     assert [url for url, _ in calls] == [TASK, TASK + "/verdicts.json"]
+
+
+@pytest.mark.parametrize(
+    ("kinds", "expected"),
+    [
+        (("accept", "not_run"), "pass"),
+        (("accept", "reject", "not_run"), "fail"),
+        (("not_run",), None),
+        (("flag", "not_run"), "pass"),
+        (("accept", "not_run", "maybe"), None),
+    ],
+)
+def test_not_run_rows_are_ignored(kinds: tuple[str, ...], expected: str | None) -> None:
+    # #2269: TFactory's not_run (no evidence) neither passes nor fails.
+    out, _ = _run({TASK: _task(), TASK + "/verdicts.json": _verdicts(*kinds)})
+    assert out == expected
+
+
+def test_not_run_count_reaches_the_vote_evidence() -> None:
+    vote: dict[str, object] = {}
+
+    def getter(url: str, _headers: dict[str, str]) -> tuple[int, object]:
+        return {TASK: _task(), TASK + "/verdicts.json": _verdicts("accept", "not_run")}[
+            url
+        ]
+
+    out = tc.tfactory_verdict(
+        Path("spec"), "048-feat", head="abc", getter=getter, vote=vote
+    )
+    assert out == "pass"
+    assert vote["not_run_excluded"] == 1
+
+
+def test_all_not_run_holds_and_still_reports_the_count() -> None:
+    vote: dict[str, object] = {}
+
+    def getter(url: str, _headers: dict[str, str]) -> tuple[int, object]:
+        return {
+            TASK: _task(),
+            TASK + "/verdicts.json": _verdicts("not_run", "not_run"),
+        }[url]
+
+    out = tc.tfactory_verdict(
+        Path("spec"), "048-feat", head="abc", getter=getter, vote=vote
+    )
+    assert out is None
+    assert vote["not_run_excluded"] == 2
