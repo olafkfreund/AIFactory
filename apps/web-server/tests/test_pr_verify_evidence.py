@@ -220,10 +220,12 @@ def _qa_gate_passes(monkeypatch):
 
 def test_votes_text_names_excluded_not_run_rows() -> None:
     # #2269: a pass that skipped not_run rows says so.
-    from server.services.pr_endgame import _votes_text
-
-    assert _votes_text({"splits": {"3-0": 2}, "not_run_excluded": 1}).endswith(
+    assert pe._votes_text({"splits": {"3-0": 2}, "not_run_excluded": 1}).endswith(
         "; 1 not run (excluded)"
     )
-    assert _votes_text({"not_run_excluded": 1}) == "not reported; 1 not run (excluded)"
-    assert "not run" not in _votes_text({"splits": {"3-0": 2}, "not_run_excluded": 0})
+    assert (
+        pe._votes_text({"not_run_excluded": 1}) == "not reported; 1 not run (excluded)"
+    )
+    assert "not run" not in pe._votes_text(
+        {"splits": {"3-0": 2}, "not_run_excluded": 0}
+    )
