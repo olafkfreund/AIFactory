@@ -39,12 +39,6 @@ from .agent_skill_context import SkillContextMixin
 from .agent_spec_creation import SpecCreationMixin
 from .agent_worktree_sync import WorktreeSyncMixin
 from .build_backend import GatedTaskRefusedError, subprocess_gate_refusal
-from .completion import (
-    correlation_key,
-    read_contract_key,
-    read_issue_number,
-    read_issue_repo,
-)
 from .question_guards import APPROVAL_PENDING, approval_blocked
 from .spec_job_backend import SpecJobProcess
 
@@ -298,43 +292,28 @@ class AgentService(
         project_path = kwargs.pop("project_path")
         return SpawnArgs(project_path=str(project_path), **kwargs)
 
-    def _read_correlation_key(
-        self,
-        project_path: Path,
-        spec_id: str,
-        *,
-        task_id: str | None = None,
-    ) -> str | None:
-        """Read the correlation key for the durable job-state row (#612, #2266).
+    def _read_correlation_key(self, project_path: Path, spec_id: str) -> str | None:
+        """Read the upstream GitHub issue number for the correlation key (#612).
 
-        Returns the same key the RFC-0001 events carry; when that falls back to
-        ``af-...`` and ``provenance.issue_number`` is set, keeps ``str(issue_number)``.
+        Threads ``requirements.json -> provenance.issue_number`` into the
+        durable job-state row so a build is joinable across PFactory/TFactory/
+        CFactory. Best-effort: returns None when the spec has no provenance.
         """
         try:
-            d = spec_dir_for(project_path, spec_id)
-        except ValueError:
-            return None
-        key = correlation_key(
-            task_id or spec_id,
-            read_issue_number(d),
-            read_issue_repo(d),
-            read_contract_key(d),
-        )
-        if key is None or key.startswith("af-"):
-            try:
-                req_file = d / "requirements.json"
-                if req_file.exists():
-                    req = json.loads(req_file.read_text())
-                    prov = req.get("provenance")
-                    if isinstance(prov, dict) and prov.get("issue_number") is not None:
-                        return str(prov["issue_number"])
-            except (OSError, ValueError):
-                _log.debug(
-                    "failed to read provenance issue number for %s",
-                    sanitize_log(spec_id),
-                    exc_info=True,
-                )
-        return key
+            req_file = spec_dir_for(project_path, spec_id) / "requirements.json"
+            if not req_file.exists():
+                return None
+            req = json.loads(req_file.read_text())
+            prov = req.get("provenance")
+            if isinstance(prov, dict) and prov.get("issue_number") is not None:
+                return str(prov["issue_number"])
+        except (OSError, ValueError):
+            _log.debug(
+                "failed to read provenance issue number for %s",
+                sanitize_log(spec_id),
+                exc_info=True,
+            )
+        return None
 
     @property
     def backend_path(self) -> Path:
@@ -998,9 +977,7 @@ class AgentService(
             parallel=parallel,
             workers=workers,
         )
-        correlation_key = self._read_correlation_key(
-            project_path, spec_id, task_id=task_id
-        )
+        correlation_key = self._read_correlation_key(project_path, spec_id)
         cap = self._concurrency_cap()
 
         # ValueError (already running/queued) propagates to the 409 mapping.

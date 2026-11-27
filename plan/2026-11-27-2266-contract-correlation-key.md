@@ -152,3 +152,10 @@ Revert the squash commit. Events go back to `af-…` keys. No stored state chang
   minting `tf-…`. An unknown `task_id` still returns `None` (#1972).
 - **Step 1 test list:** the item "the reader returns an all-digits `42`" contradicted the decision
   that the validator rejects digits. The decision was followed: the reader returns `None`.
+- **Job-state row decision dropped (fresh Opus diff review, critical).** `_read_correlation_key`
+  feeds `admit()`, then `scope_job_s3` and the artifact paths, not CFactory.
+  - With the event key, an issue task gets `o/r#5`.
+  - `job_s3_scope._BAD_ID` rejects `/`, so the build would not dispatch, and `#` truncates
+    `s3://` URIs.
+  - `agent_service.py` is reverted to `origin/dev`. A test pins the issue task's job-state key to
+    `"5"`. CFactory joins on the events and the task list, which carry the contract key.

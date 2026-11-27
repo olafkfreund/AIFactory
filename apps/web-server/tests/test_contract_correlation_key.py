@@ -54,71 +54,18 @@ def test_task_to_dict_uses_contract_correlation_key(
     assert payload["correlationKey"] == "pf-337-x"
 
 
-def test_read_correlation_key_returns_contract_key(tmp_path: Path) -> None:
-    project = tmp_path / "proj"
-    _make_spec(project, "001-trusted", contract_key="pf-337-x")
-    service = AgentService()
+def test_job_state_key_stays_s3_safe_for_issue_tasks(tmp_path: Path) -> None:
+    # #2266 review: the job-state key is an S3 scope/path id (`job_s3_scope._BAD_ID`
+    # rejects "/"), so it must stay the bare issue number, never `<repo>#<n>`.
+    from server.services.agent_service import AgentService
 
-    assert service._read_correlation_key(project, "001-trusted") == "pf-337-x"
-
-
-def test_read_correlation_key_digits_contract_falls_back_to_provenance_issue(
-    tmp_path: Path,
-) -> None:
-    project = tmp_path / "proj"
-    _make_spec(
-        project,
-        "001-trusted",
-        requirements={"title": "Task", "provenance": {"issue_number": 5}},
-        contract_key="42",
+    spec = tmp_path / ".aifactory" / "specs" / "001-x"
+    (spec / "context").mkdir(parents=True)
+    (spec / "requirements.json").write_text(
+        json.dumps({"provenance": {"issue_number": 5, "repo": "o/r"}})
     )
-    service = AgentService()
-
-    assert service._read_correlation_key(project, "001-trusted") == "5"
-
-
-@pytest.mark.asyncio
-async def test_durable_admission_passes_contract_key_to_admit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    project = tmp_path / "proj"
-    _make_spec(project, "001-trusted", contract_key="pf-337-x")
-
-    service = AgentService()
-    service._store_enabled = True
-    admitted: dict[str, Any] = {}
-
-    class _FakeStore:
-        async def admit(
-            self,
-            task_id: str,
-            _spawn_args: Any,
-            _cap: int,
-            *,
-            correlation_key: str | None = None,
-        ) -> str:
-            admitted["task_id"] = task_id
-            admitted["correlation_key"] = correlation_key
-            return "queued"
-
-    monkeypatch.setattr(service, "_store", lambda: _FakeStore())
-    monkeypatch.setattr(
-        service,
-        "_mark_task_queued",
-        lambda *_args, **_kwargs: _noop_async(),
+    (spec / "context" / "task_contract.json").write_text(
+        json.dumps({"correlation_key": "pf-337-x"})
     )
-
-    result = await service.start_task_execution(
-        task_id="p1:001-trusted",
-        project_path=project,
-        spec_id="001-trusted",
-    )
-    assert result is None
-    assert admitted == {
-        "task_id": "p1:001-trusted",
-        "correlation_key": "pf-337-x",
-    }
-
-
-async def _noop_async() -> None:
-    return None
+    svc = AgentService.__new__(AgentService)
+    assert svc._read_correlation_key(tmp_path, "001-x") == "5"
