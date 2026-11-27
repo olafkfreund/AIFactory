@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import tempfile
 import time
@@ -35,6 +36,7 @@ except ImportError:  # pragma: no cover
 
 DEFAULT_RECIPIENT = "agent"
 _LOCK_TIMEOUT_SECONDS = 5.0
+logger = logging.getLogger(__name__)
 
 
 def _inbox_path(spec_dir: Path, recipient: str) -> Path:
@@ -91,7 +93,11 @@ def _read(inbox_path: Path) -> list[dict[str, Any]]:
     if not raw:
         return []
     data = json.loads(raw)
-    return data if isinstance(data, list) else []
+    if not isinstance(data, list):
+        return []
+    if any(not isinstance(item, dict) for item in data):
+        raise ValueError("invalid inbox messages")
+    return data
 
 
 def _write_atomic(inbox_path: Path, messages: list[dict[str, Any]]) -> None:
@@ -119,12 +125,14 @@ def has_pending(spec_dir: Path, recipient: str = DEFAULT_RECIPIENT) -> bool:
         return any(
             not m.get("read", False) for m in _read(_inbox_path(spec_dir, recipient))
         )
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError, RecursionError):
         return False
 
 
 def drain_unread(
-    spec_dir: Path, recipient: str = DEFAULT_RECIPIENT
+    spec_dir: Path,
+    recipient: str = DEFAULT_RECIPIENT,
+    source_spec_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Atomically fetch unread messages and mark them read (exactly-once).
 
@@ -132,20 +140,81 @@ def drain_unread(
     turn; returns ``[]`` when the inbox is empty or unreadable.
     """
     inbox_path = _inbox_path(spec_dir, recipient)
-    if not inbox_path.exists():
-        return []
     try:
-        with _Lock(inbox_path):
+        if not inbox_path.exists():
+            return []
+        with _Lock(inbox_path), contextlib.ExitStack() as locks:
             messages = _read(inbox_path)
             unread = [m for m in messages if not m.get("read", False)]
-            if unread:
-                for m in unread:
-                    m["read"] = True
-                _write_atomic(inbox_path, messages)
-            return unread
-    except (OSError, json.JSONDecodeError, TimeoutError):
+            if not unread:
+                return []
+            source = None
+            source_messages: list[dict[str, Any]] = []
+            answer_ids = {
+                m["answer_id"] for m in unread if isinstance(m.get("answer_id"), str)
+            }
+            if (
+                answer_ids
+                and source_spec_dir is not None
+                and source_spec_dir not in (spec_dir, Path(os.devnull))
+            ):
+                source = _inbox_path(source_spec_dir, recipient)
+                try:
+                    if not source.exists():
+                        logger.warning("Source inbox is missing for drained answers")
+                        source = None
+                    elif not source.samefile(inbox_path):
+                        locks.enter_context(_Lock(source))
+                        source_messages = _read(source)
+                    else:
+                        source = None
+                except (OSError, ValueError, RecursionError):
+                    logger.warning(
+                        "Could not read source inbox for drained answers", exc_info=True
+                    )
+                    source = None
+            already_read = {
+                m["answer_id"]
+                for m in source_messages
+                if m.get("read", False) and isinstance(m.get("answer_id"), str)
+            }
+            for m in unread:
+                m["read"] = True
+            _write_atomic(inbox_path, messages)
+            if source is not None:
+                _mark_source_read(source, source_messages, answer_ids)
+            return [
+                m
+                for m in unread
+                if not isinstance(m.get("answer_id"), str)
+                or m["answer_id"] not in already_read
+            ]
+    except (OSError, ValueError, RecursionError):
         # Inbox problems must never crash a build; skip this turn.
         return []
+
+
+def _mark_source_read(
+    source: Path, messages: list[dict[str, Any]], answer_ids: set[str]
+) -> None:
+    matched: set[str] = set()
+    changed = False
+    for message in messages:
+        answer_id = message.get("answer_id")
+        if isinstance(answer_id, str) and answer_id in answer_ids:
+            matched.add(answer_id)
+            if not message.get("read", False):
+                message["read"] = True
+                changed = True
+    if answer_ids - matched:
+        logger.warning("Drained answers were missing from the source inbox")
+    if changed:
+        try:
+            _write_atomic(source, messages)
+        except (OSError, ValueError, RecursionError):
+            logger.warning(
+                "Could not mark drained answers read in the source inbox", exc_info=True
+            )
 
 
 def format_for_prompt(messages: list[dict[str, Any]]) -> str:

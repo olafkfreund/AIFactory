@@ -46,6 +46,7 @@ PROJECT_AUTHZ_PRIMITIVES: frozenset[str] = frozenset(
         "require_task_access",
         "ProjectAccessChecker",
         "TaskAccessChecker",
+        "QuestionAccessChecker",
         "accessible_project_ids",
         "accessible_org_ids",
         "resolve_owner_org_id",
@@ -356,6 +357,11 @@ def test_every_project_route_ws_and_mcp_tool_is_guarded() -> None:
                 unguarded.append((method, route.path, ep_name))
 
     assert not unguarded, f"Unguarded project/task/WS routes detected: {unguarded}"
+    assert {
+        ("GET", "/api/tasks/{task_id}/questions"),
+        ("POST", "/api/tasks/{task_id}/questions/{qid}/answer"),
+        ("GET", "/api/tasks/{task_id}/questions/{qid}/confirm-token"),
+    } <= seen_routes
 
     # Allowlist hygiene: no project-ID or task-ID parametrized route may be allowlisted.
     forbidden_params = ("{project_id}", "{projectId}", "{task_id}")

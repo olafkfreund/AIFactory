@@ -27,6 +27,7 @@ from factory_common.logsafe import sanitize_log
 from server.background import spawn
 from server.specpath import spec_dir_for
 
+from . import question_pause, task_control
 from .agent_service import (
     TaskPhase,
     TaskProgress,
@@ -421,12 +422,19 @@ async def monitor_process(
         if project_path and spec_id:
             spec_dir = spec_dir_for(project_path, spec_id)
             review_state_file = spec_dir / "review_state.json"
+            claimed = question_pause.local_pause_claimed(spec_dir)
+            needs_input = claimed and question_pause.confirm_local(spec_dir) is not None
 
             # If review_state.json exists with approved=false, task is waiting for human review
-            if review_state_file.exists():
+            if needs_input or (not claimed and review_state_file.exists()):
                 try:
-                    review_data = json.loads(review_state_file.read_text())
-                    if not review_data.get("approved", False):
+                    review_data = (
+                        {} if needs_input else json.loads(review_state_file.read_text())
+                    )
+                    if needs_input or (
+                        review_data.get("reason") != "needs_input"
+                        and not review_data.get("approved", False)
+                    ):
                         # This is NOT a failure - it's waiting for human review!
                         logger.info(
                             "[AgentService] Task %s awaiting human review (not a failure)",
@@ -452,10 +460,21 @@ async def monitor_process(
                                 )
                             del service._task_log_writers[task_id]
 
-                        # Update plan status to human_review
-                        await service._update_plan_status(
-                            project_path, spec_id, "human_review", task_id
-                        )
+                        if needs_input:
+                            task_control.write_control(
+                                spec_dir,
+                                status="human_review",
+                                review_reason="needs_input",
+                                updated_by="needs_input_pause",
+                            )
+                            await service._safe_emit_task_status(
+                                task_id, "human_review", "needs_input"
+                            )
+                            question_pause.on_question_open(task_id)
+                        else:
+                            await service._update_plan_status(
+                                project_path, spec_id, "human_review", task_id
+                            )
 
                         # Clean up tracking data
                         if task_id in service.running_tasks:
@@ -469,6 +488,9 @@ async def monitor_process(
                         )  # #670: return pooled credential + pop profile
                         service._task_subtask_states.pop(task_id, None)
                         service._spec_dirs.pop(task_id, None)
+
+                        if needs_input:
+                            return
 
                         # Determine emit phase based on what phase the task was actually in
                         # If task was coding/QA, it finished implementation → show 100% progress

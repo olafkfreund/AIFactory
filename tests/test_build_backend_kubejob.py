@@ -1682,6 +1682,71 @@ def _git_init_project(root: Path) -> Path:
     return proj
 
 
+@pytest.mark.parametrize("checkpoint", ["absent", "present", "missing_ref"])
+async def test_dispatch_question_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, checkpoint: str
+) -> None:
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
+    monkeypatch.setattr(bb, "_maybe_pack_workspace", lambda *_a, **_kw: None)
+    project = _git_init_project(tmp_path)
+    remote = tmp_path / "origin.git"
+    spec_id = "042-resume"
+    branch = f"aifactory/{spec_id}"
+    remote_ref = f"refs/remotes/origin/{branch}"
+    spec_dir = _author_spec(project, spec_id)
+
+    def git(cwd: Path, *args: str) -> str:
+        return _sp.check_output(  # noqa: S603 - fixed test git commands
+            ["git", *args],  # noqa: S607
+            cwd=cwd,
+            text=True,
+        ).strip()
+
+    git(tmp_path, "init", "--bare", "-b", "main", str(remote))
+    git(project, "remote", "set-url", "origin", str(remote))
+    git(project, "push", "origin", "main")
+    if checkpoint != "absent":
+        (spec_dir / "questions").mkdir()
+        (spec_dir / "questions" / "q-123456789abc.json").write_text("{}")
+    wip = ""
+    if checkpoint != "missing_ref":
+        git(project, "switch", "-c", branch)
+        git(project, "commit", "--allow-empty", "-m", "WIP checkpoint")
+        wip = git(project, "rev-parse", "HEAD")
+        git(project, "push", str(remote), branch)
+        git(project, "switch", "main")
+        git(project, "branch", "-D", branch)
+
+    task_id = f"proj-1:{spec_id}"
+    store = await _make_store(tmp_path / "resume.db")
+    await store.admit(task_id, _spawn_args(spec_id), cap=2)
+    backend = bb.KubeJobBuildBackend(store)
+    batch = _FakeBatch()
+    dispatch = backend.dispatch(
+        task_id=task_id, project_path=project, spec_id=spec_id, batch=batch
+    )
+    if checkpoint == "missing_ref":
+        with pytest.raises(bb.BuildBackendUnavailableError, match="fetch question WIP"):
+            await dispatch
+        assert not batch.created
+        return
+
+    await dispatch
+    clone = project / ".aifactory" / "worktrees" / "builds" / spec_id
+    assert git(clone, "branch", "--show-current") == "main"
+    assert not git(clone, "branch", "--list", branch)
+    assert git(clone, "for-each-ref", "--format=%(objectname)", remote_ref) == (
+        wip if checkpoint == "present" else ""
+    )
+    _, manifest = batch.created[0]
+    containers = manifest["spec"]["template"]["spec"]["containers"]
+    env = {entry["name"]: entry.get("value") for entry in containers[0]["env"]}
+    assert env["AIFACTORY_TASK_QUESTION_COUNT"] == (
+        "1" if checkpoint == "present" else "0"
+    )
+
+
 def test_populate_builds_self_contained_repo(monkeypatch, tmp_path):
     # #671: the dispatched build Job's /work must be a STANDALONE repo (real .git
     # dir + GitHub origin + task branch + spec), not a linked git worktree whose

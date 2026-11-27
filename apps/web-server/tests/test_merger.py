@@ -12,6 +12,7 @@ import hashlib
 import json
 import subprocess
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 _WS = Path(__file__).resolve().parents[1]
@@ -959,6 +960,39 @@ def test_process_one_opens_and_syncs(tmp_path, monkeypatch):
     assert out["action"] == "opened"
     assert out["status_written"] is True
     assert read_control(spec_dir)["reviewReason"] == "awaiting_merge"
+
+
+@pytest.mark.parametrize("reason", ["needs_input", "approval_rejected", "plan_review"])
+def test_process_one_skips_paused_branch_with_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reason: str
+) -> None:
+    monkeypatch.setenv("AIFACTORY_AUTO_PR", "true")
+    monkeypatch.setattr(mg, "project_github_token", lambda _path: nullcontext())
+    spec_dir = _in_review(_spec(tmp_path, "001-x"), reason)
+    control = spec_dir / "task_control.json"
+    before = control.read_bytes(), control.stat().st_mtime_ns
+    runner = FakeRunner(_routes())
+
+    assert mg.process_one("proj", tmp_path, spec_dir, runner=runner) == {
+        **mg._skip("proj:001-x", f"paused:{reason}"),
+        "status_written": False,
+    }
+    assert not runner.calls
+    assert mg._sync_status(spec_dir, {"action": "merged"}) is False
+    assert (control.read_bytes(), control.stat().st_mtime_ns) == before
+
+
+def test_corrupt_control_still_honors_migrated_pause(tmp_path: Path) -> None:
+    spec_dir = _spec(tmp_path, "001-x")
+    (spec_dir / "task_control.json").write_text("{")
+    (spec_dir / "implementation_plan.json").write_text(
+        json.dumps({"status": "human_review", "reviewReason": "needs_input"})
+    )
+    runner = FakeRunner(_routes())
+    result = mg._process_spec("proj", tmp_path, spec_dir, dry_run=False, runner=runner)
+    assert result["reason"] == "paused:needs_input"
+    assert not runner.calls
+    assert mg._sync_status(spec_dir, {"action": "opened"}) is False
 
 
 def _sweep_env(tmp_path, monkeypatch, pr_list: CmdResult):

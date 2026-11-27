@@ -94,5 +94,11 @@ export function parseRoute(pathname: string): AppRoute {
   return { kind: 'home' };
 }
 
+export function taskIdFromPath(pathname: string): string | null {
+  const match = /^\/p\/[^/]+\/tasks\/([^/]+)$/.exec(pathname);
+  if (!match) return null;
+  try { return decodeURIComponent(match[1]); } catch { return match[1]; }
+}
+
 export const projectPath = (slug: string, view?: ProjectView | string): string =>
   `/p/${encodeURIComponent(slug)}${view && view !== 'kanban' ? `/${view}` : ''}`;

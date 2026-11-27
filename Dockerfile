@@ -59,6 +59,8 @@ RUN npm ci --workspace=apps/frontend-web \
       @rollup/rollup-linux-arm64-gnu
 
 COPY apps/frontend-web/ apps/frontend-web/
+# tsc typechecks the banner test, which imports the shared questions API contract (#3906)
+COPY tests/fixtures/questions_api.json tests/fixtures/
 
 # vite.config.ts: build.outDir = '../web-server/static'
 RUN mkdir -p apps/web-server/static \

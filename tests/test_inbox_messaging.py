@@ -13,6 +13,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
 from pathlib import Path
@@ -52,6 +53,73 @@ def spec_dir(tmp_path: Path) -> Path:
     d = tmp_path / "001-feature"
     d.mkdir(parents=True)
     return d
+
+
+@pytest.mark.parametrize("already_read", [False, True])
+def test_answer_drain_across_copies(tmp_path: Path, *, already_read: bool) -> None:
+    source = tmp_path / "source"
+    worktree = tmp_path / "worktree"
+    source_inbox = source / "inbox" / "agent.json"
+    worktree_inbox = worktree / "inbox" / "agent.json"
+    answer = {"answer_id": "a-123456789abc", "qid": "q-123456789abc", "text": "UTC"}
+    source_inbox.parent.mkdir(parents=True)
+    worktree_inbox.parent.mkdir(parents=True)
+    source_inbox.write_text(
+        json.dumps(
+            [
+                {**answer, "messageId": "source", "read": already_read},
+                {
+                    "text": "another unread answer",
+                    "answer_id": "a-000000000000",
+                    "read": False,
+                },
+                {"text": "ordinary read message", "read": True},
+            ]
+        )
+    )
+    worktree_inbox.write_text(
+        json.dumps(
+            [
+                {**answer, "messageId": "local", "read": False},
+                {"text": "ordinary unread message", "read": False},
+            ]
+        )
+    )
+
+    drained = agent_inbox.drain_unread(worktree, source_spec_dir=source)
+
+    expected = (
+        ["ordinary unread message"]
+        if already_read
+        else ["UTC", "ordinary unread message"]
+    )
+    assert [message["text"] for message in drained] == expected
+    assert [message["read"] for message in json.loads(worktree_inbox.read_text())] == [
+        True,
+        True,
+    ]
+    assert [message["read"] for message in json.loads(source_inbox.read_text())] == [
+        True,
+        False,
+        True,
+    ]
+
+
+@pytest.mark.parametrize("source", ["missing", "same", os.devnull, None])
+def test_answer_drain_without_separate_source(
+    tmp_path: Path, source: str | None
+) -> None:
+    inbox = tmp_path / "inbox" / "agent.json"
+    inbox.parent.mkdir()
+    inbox.write_text('[{"answer_id":"a-123456789abc","text":"UTC","read":false}]')
+    source_path = (
+        tmp_path if source == "same" else tmp_path / source if source else None
+    )
+
+    assert agent_inbox.drain_unread(tmp_path, source_spec_dir=source_path) == [
+        {"answer_id": "a-123456789abc", "text": "UTC", "read": True}
+    ]
+    assert agent_inbox.drain_unread(tmp_path, source_spec_dir=source_path) == []
 
 
 # ---------------------------------------------------------------------------

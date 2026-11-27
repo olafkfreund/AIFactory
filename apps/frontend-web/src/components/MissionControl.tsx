@@ -26,9 +26,10 @@ import { ResizablePanels } from './ui/resizable-panels';
 import { cn, calculateProgress } from '../lib/utils';
 import { startTask, stopTask, recoverStuckTask, submitReview, persistTaskStatus } from '../stores/task-store';
 import { useProjectStore } from '../stores/project-store';
-import { TASK_STATUS_LABELS } from '../shared/constants';
+import { showsMergeReview, TASK_STATUS_LABELS } from '../shared/constants';
 import { useTaskDetail } from './task-detail/hooks/useTaskDetail';
 import { TaskProgress } from './task-detail/TaskProgress';
+import { NeedsInputBanner } from './task-detail/NeedsInputBanner';
 import { TaskSubtasks } from './task-detail/TaskSubtasks';
 import { TaskMetadata } from './task-detail/TaskMetadata';
 import { TaskLogs } from './task-detail/TaskLogs';
@@ -207,9 +208,10 @@ function MissionControlContent({
 
   const handleCreatePR = () => { setShowCreatePRDialog(true); };
 
-  const needsReview = state.needsReview && task.reviewReason !== 'plan_review';
+  const needsReview = state.needsReview && showsMergeReview(task.reviewReason);
 
   const renderPrimaryAction = () => {
+    if (task.status === 'human_review' && task.reviewReason === 'approval_rejected') return null;
     if (state.isStuck) {
       return (
         <Button variant="warning" size="sm" onClick={handleRecover} disabled={state.isRecovering}>
@@ -253,6 +255,7 @@ function MissionControlContent({
     <PaneShell icon={<ListTree className="h-3.5 w-3.5" />} title="Plan & Subtasks">
       <ScrollArea className="h-full">
         <div className="space-y-5 p-4">
+          {task.status === 'human_review' && (task.reviewReason === 'needs_input' || task.reviewReason === 'approval_rejected') && <NeedsInputBanner taskId={task.id} rejected={task.reviewReason === 'approval_rejected'} />}
           <TaskProgress
             task={task}
             isRunning={state.isRunning}

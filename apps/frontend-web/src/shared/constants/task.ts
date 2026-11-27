@@ -40,6 +40,8 @@ export const REVIEW_REASON_BADGES: Record<
   errors: { label: 'Has Errors', labelKey: 'reviewReason.hasErrors', variant: 'destructive' },
   qa_rejected: { label: 'QA Issues', labelKey: 'reviewReason.qaIssues', variant: 'warning' },
   plan_review: { label: 'Approve Plan', labelKey: 'reviewReason.approvePlan', variant: 'warning' },
+  needs_input: { label: 'Needs input', labelKey: 'reviewReason.needsInput', variant: 'warning' },
+  approval_rejected: { label: 'Approval rejected', labelKey: 'reviewReason.approvalRejected', variant: 'warning' },
   awaiting_merge: { label: 'PR Open', labelKey: 'reviewReason.prOpen', variant: 'default' },
   pr_closed: { label: 'PR Closed', labelKey: 'reviewReason.prClosed', variant: 'warning' },
   no_work: { label: 'No Work Produced', labelKey: 'reviewReason.noWork', variant: 'destructive' },
@@ -53,6 +55,10 @@ export function reviewReasonBadge(
 ): (typeof REVIEW_REASON_BADGES)[ReviewReason] | null {
   if (!reason || !Object.hasOwn(REVIEW_REASON_BADGES, reason)) return null;
   return REVIEW_REASON_BADGES[reason];
+}
+
+export function showsMergeReview(reason: ReviewReason | null | undefined): boolean {
+  return reason !== 'plan_review' && reason !== 'needs_input' && reason !== 'approval_rejected';
 }
 
 // Reasons the merger writes once a task's PR state is known. The PR, not the

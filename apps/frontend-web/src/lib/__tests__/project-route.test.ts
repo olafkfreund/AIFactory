@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { findProjectByRef, parseRoute, projectPath, projectSlug, projectSlugs, slugify } from '../project-route';
+import { findProjectByRef, parseRoute, projectPath, projectSlug, projectSlugs, slugify, taskIdFromPath } from '../project-route';
 import type { Project } from '../../shared/types';
 
 const project = (id: string, name: string, createdAt: string, slug?: string): Project =>
@@ -7,6 +7,14 @@ const project = (id: string, name: string, createdAt: string, slug?: string): Pr
 
 describe('project routes', () => {
   beforeEach(() => localStorage.clear());
+  it('reads task IDs only from project task detail paths', () => {
+    expect(taskIdFromPath('/p/slug/tasks/plain-id')).toBe('plain-id');
+    expect(taskIdFromPath('/p/slug/tasks/id%3A42')).toBe('id:42');
+    expect(taskIdFromPath('/p/slug/tasks/bad%escape')).toBe('bad%escape');
+    expect(taskIdFromPath('/p/slug')).toBeNull();
+    expect(taskIdFromPath('/p/slug/kanban')).toBeNull();
+    expect(taskIdFromPath('/tasks')).toBeNull();
+  });
   it('normalizes names and falls back to the id', () => {
     expect(slugify('My  Project_1!', 'x')).toBe('my-project-1');
     expect(slugify('Café', 'x')).toBe('cafe');

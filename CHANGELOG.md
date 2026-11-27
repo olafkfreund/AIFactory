@@ -1,5 +1,17 @@
 ## [Unreleased]
 
+## 3.22.0 - 2026-11-27
+
+Merged to `dev` since 3.21.18.
+
+### Added
+
+- Factory coders can ask you a question mid-build (`ask_human`). The task pauses in Needs you with the question, and you answer it in the portal, either on the task's deep link `/p/<slug>/tasks/<id>` or in the "needs input" banner. Approval questions need a signed-in user (SSO cookie session) and a short-lived confirm token. API keys, service principals and bearer JWTs are refused. The MCP server gains `questions_pending` and `answer_question`, and an optional content-free notice can go to the agent bus. (Factory#3906, #2262)
+
+### Fixed
+
+- The auto-PR body lists the task's approved intent, spec and plan paths, taken from the signed `provenance.source_artifacts`. Tasks without them keep the same body. (#2263, #2264)
+
 ## 3.21.18 - 2026-11-26
 
 Merged to `dev` since 3.21.17.

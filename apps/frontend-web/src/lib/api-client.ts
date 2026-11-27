@@ -9,7 +9,7 @@ import type { IPCResult } from '../shared/types';
 const log = createLogger('api-client');
 
 // API base URL - defaults to /api (proxied in dev), can be set via env for remote deployments
-const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
+export const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
 
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';

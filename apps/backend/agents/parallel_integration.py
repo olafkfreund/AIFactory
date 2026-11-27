@@ -26,6 +26,7 @@ that subtask failed/unmerged so the caller falls back to serial execution for it
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -37,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from core.client import create_client
+from core.file_utils import atomic_write
 from core.git_metadata import GitMetadataChangedError, check_git_metadata
 from implementation_plan.plan import ImplementationPlan
 from phase_config import (
@@ -57,6 +59,12 @@ from .completion_gate import completion_refusal
 from .memory_manager import get_graphiti_context, save_session_memory
 from .model_identity import record_identity
 from .parallel_runner import PhaseRunResult, SubtaskResult, run_parallel_phase
+from .questions import (
+    QuestionCheckpointError,
+    list_questions,
+    question_run_id,
+    validate_question,
+)
 from .session import run_session_guarded
 from .test_evidence import read_test_evidence, record_subtask_completed
 from .token_attribution import PromptSegments, TurnUsage, record_turn
@@ -385,7 +393,7 @@ def _seed_child_spec(spec_dir: Path, child_spec_dir: Path) -> Path:
     try:
         child_spec_dir.mkdir(parents=True, exist_ok=True)
         copied = 0
-        for name in ("spec.md", "implementation_plan.json"):
+        for name in ("spec.md", "implementation_plan.json", ".question_run_id"):
             source = spec_dir / name
             if source.exists():
                 shutil.copy2(source, child_spec_dir / name)
@@ -440,6 +448,49 @@ def reset_subtask_status_pending(plan_path: Path, subtask_id: str) -> bool:
     return found
 
 
+async def _checkpoint_worker_question(
+    spec_dir: Path, child_spec_dir: Path, child_path: Path, *, metadata_ok: bool
+) -> dict[str, Any] | None:
+    if not metadata_ok:
+        return None
+    run_id = question_run_id(spec_dir)
+    question = next(
+        (
+            q
+            for q in list_questions(child_spec_dir)
+            if q.get("status") == "open" and q.get("run_id") == run_id
+        ),
+        None,
+    )
+    if question is None:
+        return None
+
+    from .coder import (  # noqa: PLC0415 - coder imports this module
+        _checkpoint_question_branch,
+    )
+
+    try:
+        await asyncio.to_thread(
+            _checkpoint_question_branch,
+            child_path,
+            spec_dir.name,
+            question["id"],
+            push=False,
+        )
+    except Exception as exc:
+        raise QuestionCheckpointError("parallel question checkpoint failed") from exc
+    return question
+
+
+def _write_merged_question(spec_dir: Path, question: dict[str, Any]) -> None:
+    try:
+        validate_question(question)
+        with atomic_write(spec_dir / "questions" / f"{question['id']}.json") as stream:
+            stream.write(json.dumps(question))
+    except (OSError, ValueError) as exc:
+        raise QuestionCheckpointError("parallel question transfer failed") from exc
+
+
 async def run_parallel_coding_phase(
     *,
     plan: ImplementationPlan,
@@ -453,6 +504,8 @@ async def run_parallel_coding_phase(
     remote_control_session: str | None = None,
     recovery_manager: Any = None,
     gates: RunGates | None = None,
+    prior_task_count: int | None = None,
+    ask_human_enabled: bool = False,
 ) -> PhaseRunResult:
     """Run one ``parallel_safe`` phase's subtasks concurrently in waves.
 
@@ -503,6 +556,9 @@ async def run_parallel_coding_phase(
                 child_spec_dir,
                 sub_model,
                 agent_type="coder",
+                question_budget_spec_dir=spec_dir,
+                prior_task_count=prior_task_count,
+                ask_human_enabled=ask_human_enabled,
                 max_thinking_tokens=thinking_budget,
                 remote_control_session=remote_control_session,
             )
@@ -512,6 +568,15 @@ async def run_parallel_coding_phase(
             **get_provider_extra_kwargs(sub_provider, sub_model),
         }
         return get_provider(sub_provider, phase="coding", **provider_kwargs)
+
+    async def check_worker_metadata(child_path: Path, subtask_id: str) -> bool:
+        try:
+            await asyncio.to_thread(check_git_metadata, child_path)
+        except RuntimeError as exc:
+            logger.error("[parallel] %s: %s", subtask_id, exc)
+            metadata_errors.append(f"{subtask_id}: {exc}")
+            return False
+        return True
 
     async def run_subtask(subtask: Any, *, index: int) -> SubtaskResult:
         child_name = _child_spec_name(spec_dir.name, subtask.id)
@@ -553,6 +618,11 @@ async def run_parallel_coding_phase(
             # --- scoped prompt for just this subtask ---
             subtask_dict = subtask.to_dict()
             phase_dict = phase.to_dict() if hasattr(phase, "to_dict") else {}
+            sub_model = (
+                gates.subtask_model(subtask.id, getattr(subtask, "model", None))
+                or phase_model
+            )
+            sub_provider = infer_provider_from_model(sub_model)
             prompt = generate_subtask_prompt(
                 spec_dir=child_spec_dir,
                 project_dir=child_path,
@@ -560,6 +630,7 @@ async def run_parallel_coding_phase(
                 phase=phase_dict,
                 attempt_count=0,
                 recovery_hints=None,
+                ask_human_enabled=ask_human_enabled and sub_provider == "claude",
             )
             context = load_subtask_context(child_spec_dir, child_path, subtask_dict)
             if context.get("patterns") or context.get("files_to_modify"):
@@ -607,17 +678,13 @@ async def run_parallel_coding_phase(
             commit_before = await asyncio.to_thread(_head_commit, child_path)
 
             # --- agent session (the genuinely concurrent, awaited part) ---
-            sub_model = (
-                gates.subtask_model(subtask.id, getattr(subtask, "model", None))
-                or phase_model
-            )
             client = _make_client(child_path, child_spec_dir, sub_model)
             record_identity(
                 source_spec_dir or spec_dir,
                 phase="coding",
                 subtask_id=subtask.id,
                 model=sub_model,
-                provider=infer_provider_from_model(sub_model),
+                provider=sub_provider,
             )
             _t_start = time.monotonic()
             # Watchdog on the client enter (#816): a stalled MCP connect becomes a
@@ -627,13 +694,8 @@ async def run_parallel_coding_phase(
             )
             _t_end = time.monotonic()
 
-            session_ok = status != "error"
-            try:
-                await asyncio.to_thread(check_git_metadata, child_path)
-            except RuntimeError as exc:
-                logger.error("[parallel] %s: %s", subtask.id, exc)
-                metadata_errors.append(f"{subtask.id}: {exc}")
-                session_ok = False
+            metadata_ok = await check_worker_metadata(child_path, subtask.id)
+            session_ok = status != "error" and metadata_ok
 
             # Capture this child's own test-run evidence NOW: the merge deletes
             # its worktree, and with it the evidence the #851 gate reads (#1177).
@@ -723,6 +785,17 @@ async def run_parallel_coding_phase(
                 )
 
             # --- commit the subtask's work in its own worktree ---
+            question = await _checkpoint_worker_question(
+                spec_dir, child_spec_dir, child_path, metadata_ok=metadata_ok
+            )
+            if question:
+                return SubtaskResult(
+                    subtask_id=subtask.id,
+                    success=True,
+                    worktree_name=child_name,
+                    detail={"question": question},
+                )
+
             await asyncio.to_thread(
                 wt_mgr.commit_in_worktree,
                 child_name,
@@ -743,16 +816,16 @@ async def run_parallel_coding_phase(
                 canonical_project_dir=project_dir,
             )
 
-            if not session_ok:
-                return SubtaskResult(
-                    subtask_id=subtask.id,
-                    success=False,
-                    worktree_name=child_name,
-                    error=(_err or {}).get("message") or "agent session error",
-                )
             return SubtaskResult(
-                subtask_id=subtask.id, success=True, worktree_name=child_name
+                subtask_id=subtask.id,
+                success=session_ok,
+                worktree_name=child_name,
+                error=None
+                if session_ok
+                else (_err or {}).get("message") or "agent session error",
             )
+        except QuestionCheckpointError:
+            raise
         except Exception as exc:  # noqa: BLE001 - never crash the build; fall back to serial
             logger.error("[parallel] run_subtask %s failed: %s", subtask.id, exc)
             return SubtaskResult(
@@ -799,7 +872,11 @@ async def run_parallel_coding_phase(
         if not ok:
             # Merge conflict / failure → the subtask's work is on its child
             # branch but not the task branch. Reset so serial redoes it.
+            if result.detail.get("question"):
+                raise QuestionCheckpointError("parallel question merge failed")
             await _reset_to_pending(subtask.id)
+        elif result.detail.get("question"):
+            _write_merged_question(spec_dir, result.detail["question"])
         return ok
 
     async def mark_complete(subtask: Any) -> bool:
