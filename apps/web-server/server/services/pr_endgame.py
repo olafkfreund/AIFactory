@@ -551,6 +551,7 @@ _EVIDENCE_LINE = (
     "a pass cannot lift a red floor."
 )
 _HEAD_SHA = re.compile(r"[0-9a-fA-F]{7,40}")
+_ARTIFACT_PATH = re.compile(r"(intent|spec|plan)/[A-Za-z0-9][A-Za-z0-9._-]{0,200}\.md")
 
 
 def _is_count(n: object) -> bool:
@@ -1902,6 +1903,28 @@ async def watch_and_finish(  # noqa: PLR0911, PLR0915 - merge-gate human-stop (#
     }
 
 
+def _artifact_lines(prov: object) -> list[str]:
+    if not isinstance(prov, dict):
+        return []
+    items = prov.get("source_artifacts")
+    if not isinstance(items, list):
+        return []
+    lines = []
+    for stage in ("intent", "spec", "plan"):
+        for item in items:
+            if not isinstance(item, dict) or item.get("stage") != stage:
+                continue
+            path = item.get("path")
+            if (
+                isinstance(path, str)
+                and _ARTIFACT_PATH.fullmatch(path)
+                and path.startswith(f"{stage}/")
+            ):
+                lines.append(f"- {stage}: `{path}`")
+                break
+    return lines
+
+
 def _pr_title_body(spec_dir: Path, spec_id: str) -> tuple[str, str]:
     title = spec_id
     body = "Automated PR from AIFactory (clean build)."
@@ -1938,6 +1961,9 @@ def _pr_title_body(spec_dir: Path, spec_id: str) -> tuple[str, str]:
         ]
         if who:
             body = body + "\n\n" + "\n".join(who)
+        arts = _artifact_lines(prov)
+        if arts:
+            body = body + "\n\n**Artifacts**\n" + "\n".join(arts)
     except (OSError, ValueError) as exc:
         logger.warning(
             "[pr_endgame] Could not read requirements.json for %s, using default PR title/body: %s",
