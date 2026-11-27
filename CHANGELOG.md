@@ -1,5 +1,16 @@
 ## [Unreleased]
 
+## 3.23.0 - 2026-11-27
+
+Merged to `dev` since 3.22.0.
+
+### Fixed
+
+- A `factory submit` (trusted-plan) task now reports under its signed contract's correlation key wherever AIFactory used to invent `af-<task>`. This covers its completion, worker and progress events, the task list's `correlationKey` and the TFactory handoff, so CFactory threads PFactory, AIFactory and TFactory onto one work item, with AIFactory's usage on it.
+  - Issue-intake tasks keep `<repo>#<n>`, which also wins over a contract key in the handoff.
+  - Keys are validated: at most 128 characters from a safe set, never all digits.
+  - The job-state row keeps its S3-safe key. (#2266, #2267, Factory#3939)
+
 ## 3.22.0 - 2026-11-27
 
 Merged to `dev` since 3.21.18.

@@ -26,6 +26,7 @@ from pydantic import ValidationError
 
 from server.services.completion import (
     correlation_key,
+    read_contract_key,
     read_issue_number,
     read_issue_repo,
 )
@@ -1288,6 +1289,7 @@ def task_to_dict(task: Task) -> dict:
                     f"{task.project_id}:{task.spec_id}",
                     read_issue_number(spec_dir),
                     read_issue_repo(spec_dir),
+                    contract_key=read_contract_key(spec_dir),
                 )
                 execution_progress = get_execution_progress(spec_dir, task.subtasks)
                 # Load archive metadata from plan file

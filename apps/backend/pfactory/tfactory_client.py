@@ -656,16 +656,29 @@ def _issue_from_requirements(req: dict[str, Any]) -> int | None:
 
 _ISSUE_URL_PATH = re.compile(r"^/([^/]+/[^/]+)/issues/\d+$")
 _MAX_KEY_LEN = 128  # CFactory correlation_key column width (#1972)
+_CONTRACT_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/#-]{0,127}")
 
 
-def _event_correlation_key(req: dict[str, Any], task_id: str | None) -> str | None:
+def _valid_contract_key(value: object) -> str | None:
+    return (
+        value
+        if isinstance(value, str)
+        and _CONTRACT_KEY.fullmatch(value)
+        and not value.isdigit()
+        else None
+    )
+
+
+def _event_correlation_key(
+    req: dict[str, Any], task_id: str | None, contract_key: str | None = None
+) -> str | None:
     """The key AIFactory's own completion events carry for this spec (#1775).
 
     Mirrors ``server/services/completion.py`` ``read_issue_number`` +
     ``read_issue_repo`` + ``correlation_key`` (that module is stdlib-only and
-    lives in the web server); a web-server test pins the two together. None
-    when the spec has no issue; ``af-<task_id>`` when the issue's repo is unknown
-    (#1960), and None there too when ``task_id`` is unknown (#1972).
+    lives in the web server); a web-server test pins the two together. An issue
+    repo key wins, then a valid contract key, then ``af-<task_id>`` (#1960).
+    None when no key can be resolved and ``task_id`` is unknown (#1972).
     """
     raw = None
     if isinstance(req.get("metadata"), dict):
@@ -676,16 +689,17 @@ def _event_correlation_key(req: dict[str, Any], task_id: str | None) -> str | No
     try:
         number = int(raw) if raw is not None else None
     except (TypeError, ValueError):
-        return None
-    if number is None:
-        return None
-    for block in (req.get("provenance"), gh):
-        repo = block.get("repo") if isinstance(block, dict) else None
-        if repo and isinstance(repo, str):
-            return f"{repo}#{number}"
-    url = gh.get("url") if isinstance(gh, dict) else None
-    if isinstance(url, str) and (m := _ISSUE_URL_PATH.match(urlparse(url).path)):
-        return f"{m.group(1)}#{number}"
+        number = None
+    if number is not None:
+        for block in (req.get("provenance"), gh):
+            repo = block.get("repo") if isinstance(block, dict) else None
+            if repo and isinstance(repo, str):
+                return f"{repo}#{number}"
+        url = gh.get("url") if isinstance(gh, dict) else None
+        if isinstance(url, str) and (m := _ISSUE_URL_PATH.match(urlparse(url).path)):
+            return f"{m.group(1)}#{number}"
+    if valid_key := _valid_contract_key(contract_key):
+        return valid_key
     key = f"af-{task_id}" if task_id else None
     if key and len(key) > _MAX_KEY_LEN:  # never truncate (#1972)
         _log.warning(
@@ -706,7 +720,8 @@ def _thread_issue(
     backfilled from requirements.json (#964). ``correlation_key`` is the key
     AIFactory's own events carry: AIFactory sends TFactory no issue repo, so
     without it TFactory's work item splits from the build's (#1775); the key is
-    never a bare number (#1960). A PFactory contract's own key wins.
+    never a bare number (#1960). A valid PFactory contract key replaces the
+    synthetic fallback, while an issue repo key takes precedence.
     """
     issue_no = _issue_from_requirements(req)
     if issue_no is not None:
@@ -716,10 +731,13 @@ def _thread_issue(
         contract["provenance"] = prov
     # Not gated on issue_no: the event readers also accept metadata.githubIssueNumber
     # and string numbers, and the key must follow the events, not the #964 block.
-    key = _event_correlation_key(req, task_id)
+    key = _event_correlation_key(req, task_id, (contract or {}).get("correlation_key"))
     if key:
         contract = dict(contract or {})
-        contract.setdefault("correlation_key", key)
+        contract["correlation_key"] = key
+    elif isinstance(contract, dict) and "correlation_key" in contract:
+        # No resolvable key: never forward an unvalidated one (#2266).
+        contract = {k: v for k, v in contract.items() if k != "correlation_key"}
     return contract
 
 
