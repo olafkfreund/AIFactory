@@ -39,6 +39,7 @@ except ImportError:
     SDK_TOOLS_AVAILABLE = False
     tool = None  # type: ignore[assignment]
 
+from agents.questions import valid_qid
 from security.identifiers import validate_task_id
 from security.output_dlp import scan_outbound
 
@@ -91,6 +92,20 @@ def _format_json(data: Any) -> dict[str, Any]:
     return {
         "content": [{"type": "text", "text": json.dumps(data, indent=2, default=str)}]
     }
+
+
+def _question_error(exc: MCPHTTPError) -> dict[str, Any]:
+    body = exc.body
+    if (
+        exc.status_code in (403, 404, 409, 422)
+        and isinstance(body, dict)
+        and isinstance(body.get("detail"), str)
+    ):
+        error = {"error": body["detail"]}
+        if isinstance(body.get("portal_url"), str):
+            error["portal_url"] = body["portal_url"]
+        return {**_format_json(error), "isError": True}
+    return _format_error(exc)
 
 
 def create_investigation_tools() -> list[Any]:
@@ -977,6 +992,50 @@ def create_task_control_tools() -> list[Any]:
             }
         )
 
+    @tool(
+        "questions_pending",
+        "List open and expired questions in projects you can see.",
+        {"type": "object", "properties": {}},
+    )
+    async def questions_pending(_args: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return _format_json(
+                await request("GET", "/api/mcp-stdio/questions/pending")
+            )
+        except MCPHTTPError as exc:
+            return _question_error(exc)
+
+    @tool(
+        "answer_question",
+        "Answer a factual question on a task paused for human input.",
+        {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string"},
+                "qid": {"type": "string"},
+                "answer": {"type": "string"},
+            },
+            "required": ["task_id", "qid", "answer"],
+        },
+    )
+    async def answer_question(args: dict[str, Any]) -> dict[str, Any]:
+        try:
+            task_id = validate_task_id(args["task_id"])
+            qid = args["qid"]
+            if not valid_qid(qid):
+                return _format_error(ValueError("question not found"))
+            return _format_json(
+                await request(
+                    "POST",
+                    f"/api/mcp-stdio/tasks/{task_id}/questions/{qid}/answer",
+                    json={"answer": args["answer"]},
+                )
+            )
+        except MCPHTTPError as exc:
+            return _question_error(exc)
+        except (ValueError, KeyError) as exc:
+            return _format_error(exc)
+
     tools.extend(
         [
             # M1
@@ -998,6 +1057,8 @@ def create_task_control_tools() -> list[Any]:
             project_list,
             project_create,
             agent_status,
+            questions_pending,
+            answer_question,
         ]
     )
     return tools
