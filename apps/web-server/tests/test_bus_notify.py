@@ -44,8 +44,10 @@ def requests(monkeypatch: pytest.MonkeyPatch) -> list[httpx.Request]:
         return httpx.Response(200, json={"event_id": "$example"})
 
     def put(url: str, **kwargs: Any) -> httpx.Response:
-        assert kwargs.pop("follow_redirects") is False
-        assert kwargs.pop("trust_env") is False
+        follow_redirects = kwargs.pop("follow_redirects")
+        trust_env = kwargs.pop("trust_env")
+        assert follow_redirects is False
+        assert trust_env is False
         with httpx.Client(transport=httpx.MockTransport(respond)) as client:
             return client.put(url, **kwargs)
 
