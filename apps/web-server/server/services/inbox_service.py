@@ -337,12 +337,14 @@ def _apply_mentions(text: str, recipient: str) -> tuple[str, list[dict[str, Any]
     return effective, task_refs
 
 
-def enqueue(
+def enqueue(  # noqa: PLR0913 - optional question metadata preserves existing callers
     spec_dir: Path,
     text: str,
     recipient: str = DEFAULT_RECIPIENT,
     sender: str = "user",
     summary: str | None = None,
+    *,
+    question_answer: tuple[str, str] | None = None,
 ) -> dict[str, Any]:
     """Enqueue a message to a recipient's inbox with delivery verification.
 
@@ -377,8 +379,25 @@ def enqueue(
 
     with _InboxLock(inbox_path):
         messages = _read_messages(inbox_path)
-        messages.append(message)
-        _write_messages_atomic(inbox_path, messages)
+        existing = None
+        if question_answer is not None:
+            qid, answer_id = question_answer
+            message.update(qid=qid, answer_id=answer_id)
+            existing = next(
+                (m for m in messages if m.get("answer_id") == answer_id), None
+            )
+        if existing is None:
+            messages.append(message)
+            _write_messages_atomic(inbox_path, messages)
+        else:
+            if (existing.get("qid"), existing.get("text")) != (
+                message["qid"],
+                message["text"],
+            ):
+                raise DeliveryVerificationError(
+                    "Conflicting inbox message for answer id"
+                )
+            message = existing
 
         # Delivery proof: re-read from disk and confirm our id landed.
         persisted = _read_messages(inbox_path)

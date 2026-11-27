@@ -7,6 +7,8 @@ from __future__ import annotations
 import asyncio
 import sys
 import time
+from contextlib import nullcontext
+from functools import partial
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -14,8 +16,13 @@ _WS = Path(__file__).resolve().parents[1]
 if str(_WS) not in sys.path:
     sys.path.insert(0, str(_WS))
 
+import pytest  # noqa: E402
+from fastapi import Request  # noqa: E402
 from server.routes import merger as merger_routes  # noqa: E402
 from server.routes.project_authz import _roles_at_or_above  # noqa: E402
+from server.services import merger as merger_service  # noqa: E402
+from server.services.task_control import write_control  # noqa: E402
+from test_merger import FakeRunner, _routes, _spec  # noqa: E402
 
 
 class _Req:
@@ -24,6 +31,47 @@ class _Req:
     def __init__(self, headers: dict[str, str] | None = None):
         self.headers = headers or {}
         self.state = type("S", (), {})()
+
+
+@pytest.mark.parametrize("reason", ["needs_input", "approval_rejected", "plan_review"])
+def test_write_sweep_route_skips_paused_branch_with_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reason: str
+) -> None:
+    spec_dir = _spec(tmp_path, "001-x")
+    write_control(spec_dir, status="human_review", review_reason=reason)
+    control = spec_dir / "task_control.json"
+    before = control.read_bytes(), control.stat().st_mtime_ns
+    runner = FakeRunner(_routes())
+    monkeypatch.setenv("AIFACTORY_AUTO_PR", "true")
+    monkeypatch.setattr(merger_routes, "load_projects", lambda: {"p": {}})
+    monkeypatch.setattr(
+        merger_routes, "accessible_org_ids", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(merger_routes, "_tenant_scope", lambda _request: None)
+    monkeypatch.setattr(
+        "server.services.project_settings_store.refresh_all", AsyncMock()
+    )
+    monkeypatch.setattr(merger_service, "resolve_project_path", lambda _pid: tmp_path)
+    monkeypatch.setattr(
+        merger_service, "project_github_token", lambda _path: nullcontext()
+    )
+    monkeypatch.setattr(
+        merger_routes, "sweep", partial(merger_service.sweep, runner=runner)
+    )
+
+    report = asyncio.run(
+        merger_routes.run_merger(
+            request=Request({"type": "http", "headers": []}),
+            dry_run=False,
+            db=AsyncMock(),
+        )
+    )
+
+    assert report["counts"]["opened"] == report["counts"]["status_written"] == 0
+    assert report["results"][0]["reason"] == f"paused:{reason}"
+    assert report["results"][0]["status_written"] is False
+    assert not runner.calls
+    assert (control.read_bytes(), control.stat().st_mtime_ns) == before
 
 
 def test_report_merger_restricts_to_the_callers_visible_projects(monkeypatch):

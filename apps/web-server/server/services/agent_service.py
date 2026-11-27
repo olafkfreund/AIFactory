@@ -39,6 +39,7 @@ from .agent_skill_context import SkillContextMixin
 from .agent_spec_creation import SpecCreationMixin
 from .agent_worktree_sync import WorktreeSyncMixin
 from .build_backend import GatedTaskRefusedError, subprocess_gate_refusal
+from .question_guards import APPROVAL_PENDING, approval_blocked
 from .spec_job_backend import SpecJobProcess
 
 # subprocess_env adds apps/backend to sys.path before this import.
@@ -586,7 +587,14 @@ class AgentService(
             # Issue #259: the control store is the source of truth for this; fall
             # back to the plan file for pre-#259 specs (read_control migrates it).
             spec_dir = plan_file.parent
-            control_status = task_control.read_control(spec_dir).get("status")
+            control = task_control.read_control(spec_dir)
+            control_status = control.get("status")
+            if (
+                status == control_status == "human_review"
+                and control.get("reviewReason") == "needs_input"
+                and not control.get("_migratedFromPlan")
+            ):
+                return
             if control_status == "done" or plan.get("status") == "done":
                 logger.info(
                     "[AgentService._update_plan_status] Status is 'done' (user-set), skipping overwrite for %s",
@@ -847,9 +855,10 @@ class AgentService(
             raise ValueError(f"Task {task_id} is already running")
         if any(q.task_id == task_id for q in self._task_queue):
             raise ValueError(f"Task {task_id} is already queued")
-        if problem := subprocess_gate_refusal(
-            spec_dir_for(project_path, spec_id), mode
-        ):
+        spec_dir = spec_dir_for(project_path, spec_id)
+        if approval_blocked(spec_dir):
+            raise GatedTaskRefusedError(APPROVAL_PENDING)
+        if problem := subprocess_gate_refusal(spec_dir, mode):
             raise GatedTaskRefusedError(problem)
 
         # #376 shipped the parallel harness but left it dark for every caller
@@ -1266,8 +1275,6 @@ class AgentService(
         # Claude Code CLI expects a TTY for permission handling
         import pty
 
-        master_fd, slave_fd = pty.openpty()
-
         # Tee stderr to a per-spec file so failures that happen before
         # the agent writes task_logs.json are still debuggable (#146).
         # _process_output still drains the PIPE; this is an additional
@@ -1296,6 +1303,7 @@ class AgentService(
         )
         await stamp_spawn(spec_dir, "sandbox-pidns" if pidns else "none")
 
+        from .question_pause import start_attempt  # noqa: PLC0415
         from .trusted_contract import spawn_env  # noqa: PLC0415
 
         env.update(await spawn_env(spec_dir))
@@ -1303,7 +1311,9 @@ class AgentService(
         # #1929: after make_subprocess_env(), which denies this name.
         env.update(self._marker_nonce_env(task_id))
         env["AIFACTORY_TASK_ID"] = task_id  # #1972: not a secret
+        env["AIFACTORY_ATTEMPT_ID"] = start_attempt(spec_dir)["AIFACTORY_ATTEMPT_ID"]
 
+        master_fd, slave_fd = pty.openpty()
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=slave_fd,

@@ -7,6 +7,7 @@ Central registry for creating and managing aifactory MCP tools.
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 try:
     from claude_agent_sdk import create_sdk_mcp_server
@@ -23,6 +24,7 @@ from .tools import (
     create_subtask_tools,
     create_web_tools,
 )
+from .tools.human import create_human_tools
 
 # Either a fixed Path (in-process agent sessions) or a callable returning Path
 # (standalone MCP server — re-reads AIFACTORY_SPEC_DIR / --spec-dir on each
@@ -62,6 +64,10 @@ def create_all_tools(spec_dir: PathOrFactory, project_dir: PathOrFactory) -> lis
 def create_magestic_ai_mcp_server(
     spec_dir: PathOrFactory,
     project_dir: PathOrFactory,
+    *,
+    coder_model: str | None = None,
+    question_budget_spec_dir: Path | None = None,
+    prior_task_count: int | None = None,
 ):
     """
     Create an MCP server with aifactory custom tools.
@@ -77,6 +83,16 @@ def create_magestic_ai_mcp_server(
         return None
 
     tools = create_all_tools(spec_dir, project_dir)
+    if coder_model is not None:
+        # Only in-process coders pass a model, and they supply a concrete path.
+        tools.extend(
+            create_human_tools(
+                cast(Path, spec_dir),
+                coder_model,
+                budget_spec_dir=question_budget_spec_dir,
+                prior_task_count=prior_task_count,
+            )
+        )
 
     # In-process server name "aifactory" matches AI_FACTORY_TOOLS constants
     # in models.py (mcp__aifactory__update_subtask_status etc.) that the

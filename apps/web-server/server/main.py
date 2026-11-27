@@ -54,6 +54,7 @@ from .routes import (
     notifications,
     organizations,
     projects,
+    questions,
     search,
     skills,
     stale,
@@ -301,7 +302,19 @@ async def lifespan(app: FastAPI):  # noqa: PLR0912, PLR0915 - app lifecycle wiri
     else:
         logger.info("Merger sweep disabled (AIFACTORY_MERGER_SWEEP unset)")
 
-    yield
+    from .services import question_checker  # noqa: PLC0415
+
+    question_stop = _asyncio.Event()
+    question_task = _asyncio.create_task(question_checker.run(stop=question_stop))
+
+    try:
+        yield
+    finally:
+        question_stop.set()
+        try:
+            await _asyncio.wait_for(question_task, timeout=5.0)
+        except (TimeoutError, _asyncio.CancelledError):
+            question_task.cancel()
 
     # Shutdown
     if app.state.investigations_on:
@@ -627,6 +640,7 @@ def create_app() -> FastAPI:  # noqa: PLR0915 - router and middleware wiring
     # before tasks.router so its specific path isn't shadowed by the catch-all.
     app.include_router(from_issue.router, prefix="/api/tasks", tags=["Intake"])
     app.include_router(tasks.router, prefix="/api/tasks", tags=["Tasks"])
+    app.include_router(questions.router, prefix="/api/tasks", tags=["Tasks"])
     app.include_router(
         settings_routes.router, prefix="/api/settings", tags=["Settings"]
     )

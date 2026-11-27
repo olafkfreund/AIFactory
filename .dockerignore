@@ -47,6 +47,8 @@ LICENSE
 
 # Tests and docs
 tests/
+# The frontend build typechecks NeedsInputBanner.test.tsx, which imports the shared contract (#3906)
+!tests/fixtures/questions_api.json
 _bmad/
 _bmad-output/
 docs/

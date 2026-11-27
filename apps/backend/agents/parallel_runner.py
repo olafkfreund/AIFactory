@@ -56,6 +56,8 @@ from implementation_plan.scheduler import (
     validate_dependencies,
 )
 
+from .questions import QuestionCheckpointError, QuestionPause
+
 logger = logging.getLogger(__name__)
 
 
@@ -183,7 +185,10 @@ async def run_parallel_phase(
 
         # --- Invariants #2 & #3: SEQUENTIAL merge + plan update -------------
         progressed = False
+        pause_pending = False
         for subtask, run_res in zip(wave, run_results):
+            if isinstance(run_res, QuestionCheckpointError):
+                raise run_res
             if isinstance(run_res, BaseException):
                 logger.error("[parallel] subtask %s raised: %s", subtask.id, run_res)
                 _mark_failed(subtask, failed_ids, str(run_res))
@@ -203,6 +208,10 @@ async def run_parallel_phase(
                 _mark_failed(subtask, failed_ids, "merge failed")
                 continue
 
+            if run_res.detail.get("question"):
+                pause_pending = True
+                continue
+
             # A completion the honesty gates refuse is NOT a completion (#1177):
             # the work is merged but unproven, so the subtask fails here and the
             # caller redoes it serially (where the coder gets the refusal text).
@@ -217,6 +226,9 @@ async def run_parallel_phase(
                 subtask.status = SubtaskStatus.COMPLETED
             completed_ids.add(subtask.id)
             progressed = True
+
+        if pause_pending:
+            raise QuestionPause("parallel worker question")
 
         if not progressed:
             # A whole wave failed without completing anything — avoid an

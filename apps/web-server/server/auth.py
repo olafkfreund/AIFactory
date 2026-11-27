@@ -296,9 +296,11 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
+        auth_header = request.headers.get("Authorization")
 
         # Initialize user state to None for every request
         request.state.user = None
+        request.state.auth_transport = "bearer" if auth_header is not None else None
 
         # Skip all auth when disabled (development mode).
         # Populate request.state.user with the default user so that routes
@@ -331,7 +333,6 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
         # to the `access_token` cookie set by the OIDC login callback (HttpOnly
         # cookie session). Without this, SSO logins set a cookie the middleware
         # ignored, so the SPA bounced straight back to /login.
-        auth_header = request.headers.get("Authorization")
         token = None
         if auth_header:
             if not auth_header.startswith("Bearer "):
@@ -342,6 +343,9 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
             token = auth_header[7:]  # Remove "Bearer " prefix
         else:
             token = request.cookies.get("access_token")
+            request.state.auth_transport = request.state.auth_transport or (
+                "cookie" if token else None
+            )
 
         if not token:
             return JSONResponse(

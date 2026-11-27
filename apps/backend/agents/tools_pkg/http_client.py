@@ -59,6 +59,16 @@ class MCPHTTPError(RuntimeError):
     concrete next step.
     """
 
+    def __init__(
+        self,
+        *args: object,
+        status_code: int | None = None,
+        body: object = None,
+    ) -> None:
+        super().__init__(*args)
+        self.status_code = status_code
+        self.body = body
+
 
 class _ClientState:
     """Lazy singleton — opened on first request, reused thereafter."""
@@ -190,33 +200,29 @@ async def request(method: str, path: str, **kwargs: Any) -> dict[str, Any] | lis
             f"AIFactory web-server at {base} timed out after {DEFAULT_TIMEOUT}s"
         ) from exc
 
-    if response.status_code == 401:
-        raise MCPHTTPError(
-            "AIFactory MCP key rejected — mint a fresh key in Settings → "
-            "API Keys (or check $AIFACTORY_MCP_KEY / ~/.aifactory/.mcp-key)."
-        )
-    if response.status_code == 403:
-        # The proxy includes the missing scope name in the body. Pull it
-        # out so the user knows exactly which key to mint.
-        body = response.text[:300]
-        raise MCPHTTPError(
-            f"AIFactory MCP key lacks the required scope: {body} — "
-            "mint a new key with the right scope in Settings → API Keys."
-        )
-    if response.status_code == 404:
-        # Tools may want to differentiate "no such resource" from other
-        # errors; surface a structured message but stay a single line.
-        raise MCPHTTPError(f"Resource not found at {method} {path} (HTTP 404)")
-    if response.status_code >= 500:
-        body = response.text[:500]
-        raise MCPHTTPError(
-            f"AIFactory web-server returned HTTP {response.status_code}: {body}"
-        )
     if response.status_code >= 400:
-        body = response.text[:500]
-        raise MCPHTTPError(
-            f"AIFactory web-server returned HTTP {response.status_code}: {body}"
-        )
+        if response.status_code == 401:
+            message = (
+                "AIFactory MCP key rejected — mint a fresh key in Settings → "
+                "API Keys (or check $AIFACTORY_MCP_KEY / ~/.aifactory/.mcp-key)."
+            )
+        elif response.status_code == 403:
+            message = (
+                f"AIFactory MCP key lacks the required scope: {response.text[:300]} — "
+                "mint a new key with the right scope in Settings → API Keys."
+            )
+        elif response.status_code == 404:
+            message = f"Resource not found at {method} {path} (HTTP 404)"
+        else:
+            message = (
+                f"AIFactory web-server returned HTTP {response.status_code}: "
+                f"{response.text[:500]}"
+            )
+        try:
+            body = response.json()
+        except (ValueError, RecursionError):
+            body = None
+        raise MCPHTTPError(message, status_code=response.status_code, body=body)
 
     if not response.content:
         return {}

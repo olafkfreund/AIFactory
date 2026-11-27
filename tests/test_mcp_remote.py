@@ -71,6 +71,8 @@ def test_twelve_tools_in_full_catalog():
     defs = get_tool_definitions()
     names = {d["name"] for d in defs}
     expected = {
+        "aifactory.questions_pending",
+        "aifactory.answer_question",
         # V1
         "aifactory.list_projects",
         "aifactory.list_tasks",

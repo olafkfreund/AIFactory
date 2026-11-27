@@ -14,6 +14,8 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 _BACKEND = str(Path(__file__).resolve().parents[2] / "backend")
 if _BACKEND not in sys.path:
     sys.path.insert(0, _BACKEND)
@@ -79,11 +81,17 @@ def _route(fn: Callable[..., Any], tmp_path: Path, *args: Any) -> Any:
         return asyncio.run(fn("p:001-x", *args, {}))
 
 
+@pytest.mark.parametrize("reason", [None, "", "plan_review"])
 def test_approve_plan_records_plan_approved_even_without_plan_file(
     tmp_path: Path,
+    reason: str | None,
 ) -> None:
     spec_dir = _spec(tmp_path)
     (spec_dir / "implementation_plan.json").unlink()
+    if reason is not None:
+        task_control.write_control(
+            spec_dir, status="human_review", review_reason=reason
+        )
     req = plan_approval.ApprovePlanRequest(auto_restart=False)
     _route(plan_approval.approve_plan, tmp_path, req)
     c = task_control.read_control(spec_dir)

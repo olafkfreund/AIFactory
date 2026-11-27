@@ -951,7 +951,7 @@ export function isIncompleteHumanReview(task: Task): boolean {
   if (task.status !== 'human_review') return false;
 
   // Plan review tasks legitimately have 0 completed subtasks - they're waiting for approval
-  if (task.reviewReason === 'plan_review') return false;
+  if (task.reviewReason === 'plan_review' || task.reviewReason === 'needs_input' || task.reviewReason === 'approval_rejected') return false;
 
   // The merger recorded the PR state: the PR, not the subtask count, says
   // what this task needs (Factory#2586). "Needs resume" would be wrong advice.

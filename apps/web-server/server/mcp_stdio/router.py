@@ -30,18 +30,25 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import unicodedata
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Annotated, Any, cast
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi import Request as FastAPIRequest
+from agents.questions import ASKED_AT_FORMAT
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.exceptions import RequestValidationError
+from fastapi.requests import Request as FastAPIRequest
+from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.database.engine import get_db
 from server.error_ref import InputRejectedError, client_error
 from server.project_registry import load_projects
-from server.routes import investigations
+from server.routes import investigations, questions
 from server.routes.plan_approval import RejectPlanRequest, reject_plan
 from server.routes.project_authz import (
     accessible_org_ids,
@@ -50,12 +57,17 @@ from server.routes.project_authz import (
     resolve_owner_org_id,
 )
 from server.routes.task_models import TaskStatus
+from server.routes.task_service import get_spec_dirs
 from server.routes.tasks_views import get_qa_report, stream_agent_console
+from server.services import question_answers, task_control
 from server.services.audit_service import (
+    ACTION_MCP_TASK_ANSWER_QUESTION,
     ACTION_MCP_TASK_APPLY_CORRECTION,
     ACTION_MCP_TASK_ARCHIVE,
     ACTION_MCP_TASK_REJECT_PLAN,
 )
+from server.services.bus_notify import portal_base_url
+from server.specpath import safe_spec_component
 
 from ..mcp_remote.auth import AuthenticatedKey
 from ..services.audit_service import (
@@ -87,6 +99,79 @@ investigation_router = APIRouter(prefix="/api/mcp-stdio", tags=["MCP (stdio)"])
 _INV_READ = Depends(require_acw_scope(MCP_READ_SCOPE))
 _INV_WRITE = Depends(require_acw_scope(TASK_WRITE_SCOPE))
 _TASK_WRITE_MEMBER = Depends(require_acw_access(TASK_WRITE_SCOPE, "member"))
+_QUESTION_WRITE = Depends(require_acw_principal(TASK_WRITE_SCOPE))
+
+
+async def _question_write_key(
+    request: FastAPIRequest, key: AuthenticatedKey | _LegacyAdminKey = _QUESTION_WRITE
+) -> AuthenticatedKey | _LegacyAdminKey:
+    questions._personal_identity(request)
+    return key
+
+
+def _project_base_slug(project_id: str, project: dict[str, Any]) -> str:
+    slug = project.get("slug")
+    if isinstance(slug, str) and slug:
+        return slug.lower()
+    name = project.get("name") or Path(project.get("path") or "").name
+    normalized = unicodedata.normalize("NFKD", str(name)).lower()
+    return re.sub(r"[^a-z0-9]+", "-", normalized).strip("-") or project_id
+
+
+def _question_portal_url(task_id: str, projects: dict[str, Any]) -> str:
+    project_id = task_id.partition(":")[0]
+    slug = _project_base_slug(project_id, projects.get(project_id, {}))
+    if any(
+        pid != project_id and slug in (pid.lower(), _project_base_slug(pid, project))
+        for pid, project in projects.items()
+    ):
+        slug = project_id
+    return (
+        f"{portal_base_url()}/p/{quote(slug, safe='')}/tasks/{quote(task_id, safe='')}"
+    )
+
+
+def _pending_for_project(
+    project_id: str,
+    projects: dict[str, Any],
+    now: datetime,
+) -> list[dict[str, Any]]:
+    project = projects[project_id]
+    path = Path(project["path"]).resolve()
+    pending = []
+    for spec_dir in get_spec_dirs(path):
+        if (
+            spec_dir.resolve() != spec_dir
+            or task_control.control_file_path(spec_dir).is_symlink()
+            or not question_answers.review_reason(spec_dir)
+        ):
+            continue
+        try:
+            spec_id = safe_spec_component(spec_dir.name)
+        except ValueError:
+            continue
+        task_id = f"{project_id}:{spec_id}"
+        portal_url = _question_portal_url(task_id, projects)
+        for record in question_answers.list_records(spec_dir):
+            if record["status"] not in question_answers.ANSWERABLE:
+                continue
+            asked = datetime.strptime(record["asked_at"], ASKED_AT_FORMAT).replace(
+                tzinfo=UTC
+            )
+            pending.append(
+                {
+                    "id": record["id"],
+                    "task_id": task_id,
+                    "project": project.get("name") or path.name,
+                    "status": record["status"],
+                    "question": record["question"],
+                    "choices": record["choices"],
+                    "needs_approval": record["needs_approval"],
+                    "age_seconds": max(0, int((now - asked).total_seconds())),
+                    "portal_url": portal_url,
+                }
+            )
+    return pending
 
 
 @investigation_router.post("/investigations")
@@ -232,6 +317,56 @@ async def proxy_list_projects(
         for pid, pdata in projects.items()
         if pid in allowed
     ]
+
+
+@router.get("/questions/pending")
+async def proxy_questions_pending(
+    request: FastAPIRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: Annotated[object, Depends(require_acw_principal(MCP_READ_SCOPE))],
+) -> dict[str, Any]:
+    questions._personal_identity(request)
+    projects = load_projects()
+    allowed = await accessible_project_ids(request, db)
+    now = datetime.now(UTC)
+    pending = []
+    for project_id in sorted(allowed & projects.keys()):
+        try:
+            pending.extend(_pending_for_project(project_id, projects, now))
+        except (OSError, KeyError, TypeError, ValueError, RuntimeError):
+            continue
+    return {"questions": pending}
+
+
+@router.post("/tasks/{task_id}/questions/{qid}/answer", response_model=None)
+async def proxy_answer_question(
+    task_id: str,
+    qid: str,
+    request: FastAPIRequest,
+    key: Annotated[AuthenticatedKey | _LegacyAdminKey, Depends(_question_write_key)],
+    access: questions.Access,
+) -> dict[str, Any] | JSONResponse:
+    try:
+        result = await questions.answer_question(
+            task_id, qid, request, access, await _read_json_body(request)
+        )
+    except HTTPException as exc:
+        if (
+            exc.status_code != status.HTTP_403_FORBIDDEN
+            or exc.detail != question_answers.APPROVAL_DETAIL
+        ):
+            raise
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": exc.detail,
+                "portal_url": _question_portal_url(task_id, load_projects()),
+            },
+        )
+    await _audit_mcp_write(
+        key, ACTION_MCP_TASK_ANSWER_QUESTION, "task", task_id, request
+    )
+    return result
 
 
 @router.get("/tasks")
