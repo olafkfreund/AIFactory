@@ -1,5 +1,17 @@
 ## [Unreleased]
 
+## 3.23.1 - 2026-11-27
+
+Merged to `dev` since 3.23.0.
+
+### Fixed
+
+- The auto-merge gate no longer holds forever when TFactory records a `not_run` verdict, which TFactory uses for a test that gave no evidence.
+  - Those rows are ignored, as in TFactory's own VAL.
+  - A `reject` still fails, and accept or flag passes.
+  - An all-`not_run` or unknown result still holds.
+  - The PR's evidence Votes line says how many rows were excluded. (#2269, #2270)
+
 ## 3.23.0 - 2026-11-27
 
 Merged to `dev` since 3.22.0.
