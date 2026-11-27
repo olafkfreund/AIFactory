@@ -27,7 +27,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from server.error_ref import client_error
@@ -38,7 +38,9 @@ from server.services.audit_service import ACTION_TASK_CREATE_PR, audit_task_rout
 from server.services.build_backend import task_repo_dir
 from server.services.http_verdict import honest_status
 from server.services.pr_endgame import _default_runner
+from server.services.question_guards import paused_reason
 from server.services.task_branch import resolve_task_branch_fetching
+from server.services.task_control import read_control
 from server.specpath import safe_spec_component
 from server.utils.subprocess_env import (
     child_env,
@@ -194,6 +196,8 @@ async def create_pr_from_task(
     spec_dir = project_path / ".aifactory" / "specs" / spec_id
     if not spec_dir.exists():
         return {"success": False, "error": f"Task {task_id} not found"}
+    if reason := paused_reason(read_control(spec_dir)):
+        raise HTTPException(status_code=409, detail=f"task is paused: {reason}")
     if github_app.multi_installation():  # fill the token cache off the loop (#1700)
         await github_app.warm_org_token(org_id_for_path(project_path))
 

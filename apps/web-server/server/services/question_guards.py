@@ -13,6 +13,13 @@ from .task_control import read_control, write_control
 APPROVAL_PENDING = "approval question pending: answer it in the portal"
 
 
+def paused_reason(control: dict[str, object]) -> str | None:
+    reason = control.get("reviewReason")
+    if reason in ("needs_input", "approval_rejected", "plan_review"):
+        return str(reason)
+    return None
+
+
 def _rejected_questions(spec_dir: Path, *, allow_rejected: bool) -> list[str]:
     directory = spec_dir / "questions"
     if directory.is_symlink():

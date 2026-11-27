@@ -46,6 +46,7 @@ from server.routes.task_service import get_spec_dirs
 from server.services import pr_endgame as pe
 from server.services.github_app import project_github_token
 from server.services.pr_endgame import Runner
+from server.services.question_guards import paused_reason
 from server.services.task_control import read_control, write_control
 from server.tenancy import UNREADABLE_TENANT, spec_tenant
 
@@ -453,6 +454,8 @@ def _process_spec(
 ) -> dict[str, Any]:
     spec_id = spec_dir.name
     task = f"{project_id}:{spec_id}"
+    if reason := paused_reason(read_control(spec_dir)):
+        return _skip(task, f"paused:{reason}")
     try:
         outcome = _decide(
             project_path, spec_dir, spec_id, dry_run=dry_run, runner=runner
@@ -499,6 +502,8 @@ def _sync_status(spec_dir: Path, result: dict[str, Any]) -> bool:
     status, reason = target
     try:
         current = read_control(spec_dir)
+        if paused_reason(current):
+            return False
         if current.get("status") != "human_review":
             return False
         if current.get("status") == status and current.get("reviewReason") == reason:

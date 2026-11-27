@@ -257,6 +257,21 @@ def expires_at(record: dict[str, Any]) -> str:
     )
 
 
+def expire_open(spec_dir: Path, qid: str, now: datetime) -> bool:
+    """Expire a still-overdue question and claim its one notice under the lock."""
+    with _lock(spec_dir) as directory:
+        record = read_record(spec_dir, qid)
+        if record["status"] != "open":
+            return False
+        if datetime.fromisoformat(expires_at(record)) >= now:
+            return False
+        notify = "_expiry_notified_at" not in record
+        record.setdefault("_expiry_notified_at", now.strftime(ASKED_AT_FORMAT))
+        record["status"] = "expired"
+        _save(directory, record)
+        return notify
+
+
 def _save(directory: Path, record: dict[str, Any]) -> None:
     _atomic_json(directory / f"{record['id']}.json", record)
 
