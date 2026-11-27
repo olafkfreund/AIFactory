@@ -9,15 +9,24 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
+import stat
+import subprocess
 import time
 from pathlib import Path
+from typing import Any
 
+from core import workspace_fetch
+from core.child_env import child_env, lfs_upload
 from core.client import create_client
 from core.error_utils import (
     decide_rate_limit_resume,
     extract_rate_limit_cooldown,
 )
+from core.file_utils import write_json_atomic
+from core.git_credentials import authed_push_url
 from core.git_metadata import GitMetadataChangedError, check_git_metadata
+from core.process_hardening import in_build_job
 from phase_config import (
     get_provider_extra_kwargs,
     infer_provider_from_model,
@@ -40,10 +49,12 @@ from prompt_generator import (
     load_subtask_context,
 )
 from prompts import get_solo_prompt, is_first_run
+from prompts_pkg.prompt_generator import ASK_HUMAN_RULE
 from providers.factory import get_provider
 from recovery import RecoveryManager
 from review.state import requires_review_before_coding
 from run_gates import RunGates
+from security.scan_secrets import scan_files
 from task_logger import (
     LogPhase,
     get_task_logger,
@@ -69,9 +80,18 @@ from .inbox import drain_unread as drain_inbox
 from .inbox import format_for_prompt as format_inbox_for_prompt
 from .memory_manager import debug_memory_system_status, get_graphiti_context
 from .model_identity import record_identity
+from .questions import (
+    QID_RE,
+    QuestionCheckpointError,
+    QuestionPause,
+    create_question,
+    question_run_id,
+    start_question_run,
+)
 from .route_wiring import route_wiring_gate
 from .session import post_session_processing, run_session_guarded
 from .token_attribution import PromptSegments, TurnUsage, record_turn
+from .tools_pkg import is_tools_available
 from .utils import (
     find_phase_for_subtask,
     get_commit_count,
@@ -85,6 +105,313 @@ logger = logging.getLogger(__name__)
 # Default number of subtasks to run concurrently in a parallel_safe wave (#376)
 # when --parallel is requested without an explicit --workers value.
 DEFAULT_PARALLEL_WORKERS = 3
+
+
+def _can_ask_human(project_dir: Path, spec_id: str) -> bool:
+    """Allow questions on a task branch with origin, outside co-mounted jobs."""
+    if (
+        in_build_job()
+        and not os.environ.get(workspace_fetch.WORKSPACE_URI_ENV, "").strip()
+    ):
+        return False
+    try:
+        env = child_env()
+        branch = subprocess.run(
+            ["git", "branch", "--show-current"],  # noqa: S607
+            cwd=project_dir,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        ).stdout.strip()
+        if branch != f"aifactory/{spec_id}":
+            return False
+        return bool(
+            subprocess.run(
+                ["git", "remote", "get-url", "origin"],  # noqa: S607
+                cwd=project_dir,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=True,
+            ).stdout.strip()
+        )
+    except (OSError, subprocess.SubprocessError, UnicodeError):
+        return False
+
+
+def _prior_question_count(spec_dir: Path) -> int:
+    try:
+        return sum(
+            path.suffix == ".json"
+            and QID_RE.fullmatch(path.stem) is not None
+            and path.is_file()
+            for path in (spec_dir / "questions").iterdir()
+        )
+    except FileNotFoundError:
+        return 0
+
+
+def _open_run_questions(spec_dir: Path) -> list[dict[str, Any]]:
+    try:
+        paths = sorted((spec_dir / "questions").iterdir())
+    except OSError:
+        return []
+    run_id = question_run_id(spec_dir)
+    questions: list[dict[str, Any]] = []
+    for path in paths:
+        if path.suffix != ".json" or QID_RE.fullmatch(path.stem) is None:
+            continue
+        try:
+            if not stat.S_ISREG(path.lstat().st_mode):
+                continue
+            question = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, RecursionError):
+            continue
+        if (
+            isinstance(question, dict)
+            and question.get("status") == "open"
+            and question.get("run_id") == run_id
+        ):
+            questions.append(question)
+    return questions
+
+
+def _pause_for_question(
+    project_dir: Path,
+    spec_dir: Path,
+    source_spec_dir: Path | None,
+    status_manager: StatusManager,
+) -> None:
+    """Publish the pause only after its branch and question are durable."""
+    created: list[Path] = []
+    try:
+        questions = _open_run_questions(spec_dir)
+        if not questions:
+            raise RuntimeError("question pause has no open question from this run")
+        qid = questions[0]["id"]
+        _checkpoint_question_branch(project_dir, spec_dir.name, qid)
+        target = (
+            spec_dir
+            if source_spec_dir is None or source_spec_dir == Path(os.devnull)
+            else source_spec_dir
+        )
+        _transfer_questions(spec_dir, target, questions, created)
+        _write_question_pause(spec_dir, target, qid)
+        status_manager.update(state=BuildState.PAUSED)
+    except Exception:
+        try:
+            for dest in created:
+                dest.unlink(missing_ok=True)
+        finally:
+            status_manager.update(state=BuildState.ERROR)
+            emit_phase(ExecutionPhase.FAILED, "Question checkpoint failed")
+        raise
+
+
+def _transfer_questions(
+    spec_dir: Path, target: Path, questions: list[dict[str, Any]], created: list[Path]
+) -> None:
+    if os.environ.get("WORKSPACE_URI", "").strip():
+        if not workspace_fetch.push_questions(
+            spec_dir, spec_dir.name, question_run_id(spec_dir)
+        ):
+            raise RuntimeError("question transfer failed")
+    elif target != spec_dir:
+        for question in questions:
+            if not create_question(target, question, created=created):
+                raise RuntimeError("question already exists in source")
+
+
+def _write_question_review(spec_dir: Path, qid: str) -> None:
+    review_file = spec_dir / "review_state.json"
+    review = json.loads(review_file.read_text()) if review_file.exists() else {}
+    review.update({"reason": "needs_input", "qid": qid})
+    write_json_atomic(review_file, review)
+
+
+def _write_question_pause(spec_dir: Path, target: Path, qid: str) -> None:
+    plan_file = spec_dir / "implementation_plan.json"
+    plan = json.loads(plan_file.read_text()) if plan_file.exists() else {"phases": []}
+    for phase in plan.get("phases", []):
+        for subtask in phase.get("subtasks", []):
+            if subtask.get("status") == "in_progress":
+                subtask["status"] = "pending"
+    plan["status"] = "human_review"
+    plan["reviewReason"] = "needs_input"
+    write_json_atomic(plan_file, plan)
+    _write_question_review(spec_dir, qid)
+    if target != spec_dir:
+        if not sync_plan_to_source(spec_dir, target):
+            raise RuntimeError("question pause plan sync failed")
+        _write_question_review(target, qid)
+
+
+# shortcut: excluded files exist only in this worktree, lost on a packed kubejob resume; upgrade when the workspace pack carries untracked files  # noqa: E501
+_QUESTION_UNTRACKED_SECRET_NAMES = (
+    ".env",
+    ".env.*",
+    "*.pem",
+    "*.key",
+    "*.p12",
+    "*.pfx",
+    "*.jks",
+    "*.keystore",
+    "id_rsa*",
+    "id_ed25519*",
+    "id_ecdsa*",
+    ".npmrc",
+    ".netrc",
+    ".pypirc",
+    ".git-credentials",
+    "*credentials*.json",
+    "*credentials*.yaml",
+    "*credentials*.yml",
+    "*secret*.json",
+    "*secret*.yaml",
+    "*secret*.yml",
+    "kubeconfig*",
+    "*.kubeconfig",
+    "*.tfstate",
+    "*.tfstate.backup",
+    "*.tfvars",
+    "*.env",
+    ".envrc",
+    "credentials",
+    ".pgpass",
+    ".dockercfg",
+)
+
+
+def _question_untracked_paths(paths: str) -> bytes:
+    from fnmatch import fnmatchcase  # noqa: PLC0415 - checkpoint-only import
+
+    allowed: list[bytes] = []
+    excluded: list[str] = []
+    for path in paths.split("\0"):
+        if path.endswith("/"):
+            excluded.append(path)
+            continue
+        if not path or path.partition("/")[0] in {".aifactory", ".aifactory-allowlist"}:
+            continue
+        parent, _, basename = path.lower().rpartition("/")
+        kube_config = basename == "config" and parent.rpartition("/")[2] in {
+            ".kube",
+            "kube",
+        }
+        docker_config = (
+            basename == "config.json" and parent.rpartition("/")[2] == ".docker"
+        )
+        if (
+            kube_config
+            or docker_config
+            or any(
+                fnmatchcase(basename, pattern)
+                for pattern in _QUESTION_UNTRACKED_SECRET_NAMES
+            )
+        ):
+            excluded.append(path)
+        else:
+            allowed.append(os.fsencode(path) + b"\0")
+    if excluded:
+        logger.warning(
+            "Question checkpoint excluded %d untracked files: %r",
+            len(excluded),
+            excluded,
+        )
+    return b"".join(allowed)
+
+
+def _checkpoint_question_branch(
+    project_dir: Path, spec_id: str, qid: str, *, push: bool = True
+) -> None:
+    """Stage the project changes, scan for secrets, and push the checkpoint."""
+
+    def git(
+        args: list[str],
+        timeout: int = 120,
+        *,
+        env: dict[str, str] | None = None,
+        stdin: bytes | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        argv = ["git", *args]
+        result = subprocess.run(  # noqa: S603 - fixed git argv, no shell
+            argv,
+            cwd=project_dir,
+            env=child_env() if env is None else env,
+            capture_output=True,
+            input=stdin,
+            timeout=timeout,
+            check=False,
+        )
+        return subprocess.CompletedProcess(
+            argv,
+            result.returncode,
+            os.fsdecode(result.stdout),
+            os.fsdecode(result.stderr),
+        )
+
+    def run(*args: str, stdin: bytes | None = None) -> subprocess.CompletedProcess[str]:
+        result = git(list(args), stdin=stdin)
+        if result.returncode:
+            raise RuntimeError(
+                f"question checkpoint git {args[0]} failed: {result.stderr.strip()}"
+            )
+        return result
+
+    branch = run("branch", "--show-current").stdout.strip()
+    if (push and branch != f"aifactory/{spec_id}") or (
+        not push and not branch.startswith("aifactory/")
+    ):
+        raise RuntimeError("question checkpoint is not on the task branch")
+    if run(
+        "diff", "--no-ext-diff", "--no-textconv", "--cached", "--name-only"
+    ).stdout.strip():
+        run("reset", "-q")
+    project_paths = (
+        ".",
+        ":(top,exclude).aifactory",
+        ":(top,exclude).aifactory-allowlist",
+    )
+    run("add", "-u", "--", *project_paths)
+    allowed = _question_untracked_paths(
+        run("ls-files", "--others", "--exclude-standard", "-z").stdout
+    )
+    if allowed:
+        run("update-index", "--add", "-z", "--stdin", stdin=allowed)
+    staged_paths = run(
+        "diff", "--no-ext-diff", "--no-textconv", "--cached", "--name-only", "-z"
+    ).stdout.split("\0")
+    if scan_files([path for path in staged_paths if path], project_dir):
+        raise RuntimeError("question checkpoint refused files containing secrets")
+    staged = git(["diff", "--no-ext-diff", "--no-textconv", "--cached", "--quiet"])
+    if staged.returncode not in (0, 1):
+        raise RuntimeError("question checkpoint could not inspect staged changes")
+    if staged.returncode == 1:
+        run("commit", "-m", f"wip: paused for question {qid}")
+    else:
+        run("commit", "--allow-empty", "-m", f"wip: paused for question {qid}")
+    if not push:
+        return
+    url = run("remote", "get-url", "origin").stdout.strip()
+    with authed_push_url(url) as (push_url, git_env):
+
+        def push_run(argv: list[str], timeout: int) -> tuple[int, str, str]:
+            result = git(argv[1:], timeout, env=git_env)
+            return result.returncode, result.stdout, result.stderr
+
+        error = lfs_upload(push_run, "HEAD")
+        if error:
+            raise RuntimeError(f"question checkpoint LFS upload failed: {error}")
+        result = git(
+            ["push", push_url, f"HEAD:{branch}"],
+            180,
+            env=git_env,
+        )
+        if result.returncode:
+            raise RuntimeError("question checkpoint push failed")
 
 
 def solo_session_plans_inline(solo: bool, parallel: bool) -> bool:
@@ -118,7 +445,7 @@ def _emit_build_report(spec_dir: Path, source_spec_dir: Path | None = None) -> N
         pass
 
 
-async def run_autonomous_agent(
+async def run_autonomous_agent(  # noqa: PLR0911 - distinct terminal states exit the runner
     project_dir: Path,
     spec_dir: Path,
     model: str,
@@ -130,7 +457,8 @@ async def run_autonomous_agent(
     parallel: bool = False,
     workers: int | None = None,
     gates: RunGates | None = None,
-) -> None:
+    reuse_question_run: bool = False,
+) -> str | None:
     """
     Run the autonomous agent loop with automatic memory management.
 
@@ -192,7 +520,7 @@ async def run_autonomous_agent(
     gates = gates or RunGates.capture(spec_dir, source_spec_dir, model)
     if _injection_scan_blocks(spec_dir, project_dir, source_spec_dir, gates):
         status_manager.update(state=BuildState.PAUSED)
-        return
+        return None
 
     # Debug: Print memory system status at startup
     debug_memory_system_status()
@@ -239,6 +567,20 @@ async def run_autonomous_agent(
     is_planning_phase = False
 
     start_run(spec_dir)  # #2033: fresh token count, no stale halt
+    if not reuse_question_run or not (spec_dir / ".question_run_id").exists():
+        start_question_run(spec_dir)
+    ask_human_enabled = is_tools_available() and _can_ask_human(
+        project_dir, spec_dir.name
+    )
+    prior_task_count = (
+        None
+        if os.environ.get(workspace_fetch.WORKSPACE_URI_ENV, "").strip()
+        else _prior_question_count(
+            spec_dir
+            if source_spec_dir is None or source_spec_dir == Path(os.devnull)
+            else source_spec_dir
+        )
+    )
 
     if first_run:
         if solo_plans_inline:
@@ -304,7 +646,7 @@ async def run_autonomous_agent(
             # them.
             await _run_trailing_gates_if_build_complete(spec_dir, project_dir)
             _emit_build_report(spec_dir, source_spec_dir)
-            return
+            return None
 
         # Start/continue coding phase in task logger
         if task_logger:
@@ -372,7 +714,7 @@ async def run_autonomous_agent(
             print(f"  rm {pause_file}")
             print("\nThen run again:")
             print(f"  python aifactory/run.py --spec {spec_dir.name}")
-            return
+            return None
 
         # Check max iterations
         if max_iterations and iteration > max_iterations:
@@ -491,6 +833,8 @@ async def run_autonomous_agent(
                 else "coder",
                 max_thinking_tokens=phase_thinking_budget,
                 remote_control_session=remote_control_session,
+                prior_task_count=prior_task_count,
+                ask_human_enabled=ask_human_enabled,
             )
         else:
             # Use agentic provider for non-Claude models
@@ -526,6 +870,8 @@ async def run_autonomous_agent(
             # the dedicated planner prompt.
             if solo_plans_inline:
                 prompt = get_solo_prompt(spec_dir)
+                if not (ask_human_enabled and provider_name == "claude"):
+                    prompt = prompt.replace(ASK_HUMAN_RULE + "\n", "")
             else:
                 # Planner-only session: authors the plan without implementing,
                 # so the wave dispatch can pick up independent subtasks (#389).
@@ -571,7 +917,7 @@ async def run_autonomous_agent(
                         )
                     if source_spec_dir:
                         sync_plan_to_source(spec_dir, source_spec_dir)
-                    return
+                    return None
 
                 # Plan-review gate (#1922): when review is required (snapshot
                 # taken before any agent session), ALWAYS pause after the planner.
@@ -624,7 +970,7 @@ async def run_autonomous_agent(
                     )
                     print()
 
-                    return  # Exit agent loop - task pauses for approval
+                    return None  # Exit agent loop - task pauses for approval
 
                 # Continue to coding phase
                 current_log_phase = LogPhase.CODING
@@ -665,6 +1011,7 @@ async def run_autonomous_agent(
             # phase, or a stalled wave, falls through to the serial path below —
             # so this is always safe.
             if parallel:
+                question_pause = False
                 try:
                     handled = await _maybe_run_parallel_phase(
                         spec_dir=spec_dir,
@@ -679,10 +1026,30 @@ async def run_autonomous_agent(
                         disabled_phases=parallel_disabled_phases,
                         recovery_manager=recovery_manager,
                         gates=gates,
+                        prior_task_count=prior_task_count,
+                        ask_human_enabled=ask_human_enabled,
                     )
+                except QuestionPause:
+                    question_pause = True
+                except QuestionCheckpointError:
+                    status_manager.update(state=BuildState.ERROR)
+                    emit_phase(
+                        ExecutionPhase.FAILED, "Parallel question checkpoint failed"
+                    )
+                    raise
                 except GitMetadataChangedError as exc:
                     _fail_on_git_metadata(exc, status_manager)
                     raise
+                if question_pause or _open_run_questions(spec_dir):
+                    try:
+                        await asyncio.to_thread(check_git_metadata, project_dir)
+                    except RuntimeError as exc:
+                        _fail_on_git_metadata(exc, status_manager)
+                        raise
+                    _pause_for_question(
+                        project_dir, spec_dir, source_spec_dir, status_manager
+                    )
+                    return "needs_input"
                 if handled:
                     # Progress was made in parallel; re-evaluate from the top.
                     print_progress_summary(spec_dir)
@@ -712,6 +1079,7 @@ async def run_autonomous_agent(
                 phase=phase or {},
                 attempt_count=attempt_count,
                 recovery_hints=recovery_hints,
+                ask_human_enabled=ask_human_enabled and provider_name == "claude",
             )
             seg_user_prompt = prompt
 
@@ -756,7 +1124,7 @@ async def run_autonomous_agent(
         # Between-turn inbox check (#264): deliver any user messages that
         # arrived while the previous turn was running. Drained exactly-once
         # and folded into this turn's prompt as high-priority directives.
-        inbox_messages = drain_inbox(spec_dir)
+        inbox_messages = drain_inbox(spec_dir, source_spec_dir=source_spec_dir)
         if inbox_messages:
             _inbox_block = format_inbox_for_prompt(inbox_messages)
             prompt += "\n\n" + _inbox_block
@@ -905,6 +1273,10 @@ async def run_autonomous_agent(
                     )
             except Exception as e:  # noqa: BLE001 - bookkeeping must not crash a build
                 logger.debug(f"Token attribution skipped: {e}")
+
+        if _open_run_questions(spec_dir):
+            _pause_for_question(project_dir, spec_dir, source_spec_dir, status_manager)
+            return "needs_input"
 
         # === POST-SESSION PROCESSING (100% reliable) ===
         if subtask_id and not first_run:
@@ -1131,6 +1503,7 @@ async def run_autonomous_agent(
 
     # Emit the profiling artifact (#397 Phase 1) — observability only.
     _emit_build_report(spec_dir, source_spec_dir)
+    return None
 
 
 def _injection_scan_blocks(
@@ -1479,6 +1852,8 @@ async def _maybe_run_parallel_phase(
     disabled_phases: set[int],
     recovery_manager: RecoveryManager | None = None,
     gates: RunGates | None = None,
+    prior_task_count: int | None = None,
+    ask_human_enabled: bool = False,
 ) -> bool:
     """Run the subtask's phase as parallel waves if it is eligible (#376).
 
@@ -1527,6 +1902,8 @@ async def _maybe_run_parallel_phase(
             remote_control_session=remote_control_session,
             recovery_manager=recovery_manager,
             gates=gates,
+            prior_task_count=prior_task_count,
+            ask_human_enabled=ask_human_enabled,
         )
 
         # A stalled phase (cycle / unresolved deps / merge failures) drops to the
@@ -1545,6 +1922,10 @@ async def _maybe_run_parallel_phase(
         return bool(result.completed_ids)
     except GitMetadataChangedError:
         raise  # not best-effort: a tampered child ends the build (#1746)
+    except QuestionPause:
+        raise
+    except QuestionCheckpointError:
+        raise
     except Exception as exc:  # noqa: BLE001 - parallel is best-effort; serial is the safety net
         logger.warning(
             "Parallel phase execution failed (%s); falling back to serial", exc

@@ -15,6 +15,13 @@ This approach:
 import json
 from pathlib import Path
 
+ASK_HUMAN_RULE = (
+    "If the `ask_human` tool is available, use it and stop your turn when "
+    "requirements are ambiguous or contradictory, a needed change falls outside "
+    "the plan's files, or a change is destructive or irreversible. Never ask what "
+    "the plan or repository already answers."
+)
+
 
 def get_relative_spec_path(spec_dir: Path, project_dir: Path) -> str:
     """
@@ -80,6 +87,8 @@ def generate_subtask_prompt(
     phase: dict,
     attempt_count: int = 0,
     recovery_hints: list[str] | None = None,
+    *,
+    ask_human_enabled: bool = False,
 ) -> str:
     """
     Generate a minimal, focused prompt for implementing a single subtask.
@@ -123,6 +132,8 @@ def generate_subtask_prompt(
 
 {description}
 """)
+    if ask_human_enabled:
+        sections.append(ASK_HUMAN_RULE)
 
     # Recovery context if this is a retry
     if attempt_count > 0:

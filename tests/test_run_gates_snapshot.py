@@ -540,6 +540,7 @@ async def test_parallel_wave_ignores_metadata_forged_after_capture(
     )
 
     assert _client_args(create_client) == [expected]
+    assert create_client.call_args.kwargs["question_budget_spec_dir"] == spec
     assert expected[1] == get_thinking_budget("high")
     record_turn.assert_called_once()
     assert record_turn.call_args.kwargs["routing_metadata"] == gates.metadata

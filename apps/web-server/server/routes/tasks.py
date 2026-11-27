@@ -24,6 +24,7 @@ from server.services.audit_service import (
     audit_task_action,
 )
 from server.services.originator import principal_attribution
+from server.services.question_guards import guard_task_status
 from server.specpath import safe_spec_component
 
 from ..database.engine import get_db
@@ -446,6 +447,8 @@ async def update_task_status(
             detail="Task not found",
         )
 
+    guard_task_status(spec_dir, update.status)
+
     # Sync from worktree first to get latest progress
     plan, plan_file, plan_error = get_plan_with_worktree_sync(project_path, spec_id)
 
@@ -543,6 +546,8 @@ async def update_task(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Task not found",
         )
+
+    guard_task_status(spec_dir, update.status)
 
     # Update spec.md if title/description changed
     if update.title or update.description:

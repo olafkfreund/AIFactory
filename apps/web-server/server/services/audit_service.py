@@ -107,6 +107,7 @@ ACTION_MCP_TASK_APPROVE_PLAN = "mcp.task.approve_plan"
 ACTION_MCP_TASK_REJECT_PLAN = "mcp.task.reject_plan"
 ACTION_MCP_TASK_ARCHIVE = "mcp.task.archive"
 ACTION_MCP_TASK_APPLY_CORRECTION = "mcp.task.apply_correction"
+ACTION_MCP_TASK_ANSWER_QUESTION = "mcp.task.answer_question"
 ACTION_MCP_TASK_CREATE_PR = "mcp.task.create_pr"
 ACTION_MCP_TASK_MERGE = "mcp.task.merge"
 

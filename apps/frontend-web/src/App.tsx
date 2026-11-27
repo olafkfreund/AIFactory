@@ -13,6 +13,7 @@ import { OpenAIEndpointsStatusBadge } from './components/OpenAIEndpointsStatusBa
 import { RateLimitIndicator } from './components/RateLimitIndicator';
 import { apiRequest } from './lib/api-client';
 import { ProjectsPage } from './pages/ProjectsPage';
+import { NeedsInputPage } from './pages/NeedsInputPage';
 import { useEnsureProjects } from './hooks/useEnsureProjects';
 import {
   findProjectByRef,
@@ -21,6 +22,7 @@ import {
   projectPath,
   projectSlugs,
   projectsForBareSlug,
+  taskIdFromPath,
 } from './lib/project-route';
 import { PipelineStripContext } from './contexts/PipelineStripContext';
 import { PipelineBoard } from './components/pipeline/PipelineBoard';
@@ -223,9 +225,12 @@ function AuthenticatedApp() {
   // An id or alias in the URL is rewritten to the canonical slug.
   useEffect(() => {
     if (route.kind === 'project' && urlSlug && route.ref !== urlSlug) {
-      void navigate(projectPath(urlSlug, route.view) + search, { replace: true });
+      const taskId = taskIdFromPath(pathname);
+      void navigate(taskId !== null
+        ? `${projectPath(urlSlug)}/tasks/${encodeURIComponent(taskId)}${search}`
+        : projectPath(urlSlug, route.view) + search, { replace: true });
     }
-  }, [route, urlSlug, search, navigate]);
+  }, [route, urlSlug, pathname, search, navigate]);
 
   // Back at "/" after a login that interrupted a deep link: go there once.
   useEffect(() => {
@@ -424,10 +429,10 @@ function AuthenticatedApp() {
 
   // Load tasks when URL project changes
   useEffect(() => {
-    setSelectedTaskId(null);
+    setSelectedTaskId(taskIdFromPath(pathname));
     setMissionControlId(null);
     if (!urlProjectId) {
-      if (pathname === '/tasks' && projectsLoaded && !projectError) void loadFleetTasks(projects.map((project) => project.id));
+      if ((pathname === '/tasks' || pathname === '/needs-input') && projectsLoaded && !projectError) void loadFleetTasks(projects.map((project) => project.id));
       else clearLoadedTasks();
       return;
     }
@@ -786,7 +791,8 @@ function AuthenticatedApp() {
               }}
             />
           )}
-          {route.kind === 'home' && pathname !== '/tasks' && !projectError && (
+          {pathname === '/needs-input' && !projectError && <NeedsInputPage />}
+          {route.kind === 'home' && pathname !== '/tasks' && pathname !== '/needs-input' && !projectError && (
             <WelcomeScreen
               projects={projects}
               onNewProject={handleAddProject}
@@ -841,7 +847,10 @@ function AuthenticatedApp() {
           open={selectedTask !== null}
           task={selectedTask}
           onOpenChange={(open) => {
-            if (!open) setSelectedTaskId(null);
+            if (!open) {
+              setSelectedTaskId(null);
+              if (taskIdFromPath(pathname) !== null && urlSlug) void navigate(projectPath(urlSlug));
+            }
           }}
           onSwitchToTerminals={() => {
             setActiveView('terminals');
@@ -919,6 +928,10 @@ export default function App() {
       <Route
         path="/console/:projectId"
         element={isAuthenticated ? <LegacyConsoleRedirect /> : <RedirectToLogin />}
+      />
+      <Route
+        path="/needs-input"
+        element={isAuthenticated ? <AuthenticatedApp /> : <RedirectToLogin />}
       />
       <Route
         path="/*"

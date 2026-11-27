@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 
 from server.project_registry import load_projects
 from server.services.audit_service import ACTION_TASK_APPROVE_PLAN, audit_task_action
+from server.services.question_guards import require_approval_clear
 from server.specpath import safe_spec_component
 
 from ..services import task_control
@@ -51,6 +52,16 @@ class RejectPlanRequest(BaseModel):
         None,
         description="Optional reason for rejection — gets recorded on the review state's feedback log.",
     )
+
+
+def _require_plan_review(spec_dir: Path) -> None:
+    require_approval_clear(spec_dir)
+    if task_control.read_control(spec_dir).get("reviewReason") not in (
+        None,
+        "",
+        "plan_review",
+    ):
+        raise HTTPException(409, "task is not awaiting plan review")
 
 
 @router.post("/{task_id}/approve-plan")
@@ -98,6 +109,8 @@ async def approve_plan(
             detail="Task not found",
         )
 
+    _require_plan_review(spec_dir)
+
     # Import ReviewState from backend
     import sys
 
@@ -119,6 +132,7 @@ async def approve_plan(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Task is already running (possibly on another replica)",
             )
+        _require_plan_review(spec_dir)
 
     # Approve the plan
     review_state = ReviewState.load(spec_dir)

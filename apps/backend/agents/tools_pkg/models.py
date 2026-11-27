@@ -57,6 +57,7 @@ TOOL_RECORD_DEAD_END = "mcp__aifactory__record_dead_end"
 TOOL_GET_SESSION_CONTEXT = "mcp__aifactory__get_session_context"
 TOOL_UPDATE_QA_STATUS = "mcp__aifactory__update_qa_status"
 TOOL_TEST_MEMORY_INTEGRATION = "mcp__aifactory__test_memory_integration"
+TOOL_ASK_HUMAN = "mcp__aifactory__ask_human"
 
 # All aifactory MCP tools (for permissions)
 AI_FACTORY_TOOLS = [

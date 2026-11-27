@@ -26,7 +26,11 @@ if isinstance(sys.modules.get("claude_agent_sdk"), MagicMock):
     sys.modules.pop("agents.tools_pkg.tools.task_control", None)
 
 import json
+from collections.abc import Awaitable, Callable
+from pathlib import Path
+from typing import Any
 
+import httpx
 import pytest
 from agents.tools_pkg import http_client as hc
 from agents.tools_pkg.tools.task_control import create_task_control_tools
@@ -63,12 +67,14 @@ def _make_request_stub(monkeypatch, response, captured=None):
     monkeypatch.setattr("agents.tools_pkg.tools.task_control.request", stub)
 
 
-def _content_text(result):
+def _content_text(result: dict[str, Any]) -> str:
     """Extract the text block from an MCP tool result."""
     assert "content" in result
     assert isinstance(result["content"], list)
     assert result["content"][0]["type"] == "text"
-    return result["content"][0]["text"]
+    text = result["content"][0]["text"]
+    assert isinstance(text, str)
+    return text
 
 
 # ── Catalog presence ────────────────────────────────────────────────
@@ -88,6 +94,100 @@ def test_all_eight_tools_registered():
         "task_approve_plan",
     }
     assert expected.issubset(names), f"missing: {expected - names}"
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        ("questions_pending", "GET", 200, "result"),
+        ("questions_pending", "GET", 403, "refusal_ownerless_or_legacy_key"),
+        ("answer_question", "POST", 200, "result"),
+        ("answer_question", "POST", 403, "refusal_ownerless_or_legacy_key"),
+        ("answer_question", "POST", 403, "refusal_approval"),
+        ("answer_question", "POST", 404, "question_not_found"),
+        ("answer_question", "POST", 409, "already_answered"),
+        ("answer_question", "POST", 422, "invalid_answer"),
+    ],
+)
+async def test_question_tools_use_scoped_proxy(
+    tools_by_name: dict[str, Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]],
+    monkeypatch: pytest.MonkeyPatch,
+    case: tuple[str, str, int, str],
+) -> None:
+    tool_name, method, status, contract_key = case
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures/questions_api.json").read_text()
+    )
+    contract = fixture["mcp"][tool_name]
+    args = dict(contract["arguments"])
+    if tool_name == "answer_question":
+        args["task_id"] = f"project:{args['task_id']}"
+    if status == 200:
+        payload = (
+            fixture["answer_factual"]["response"]["body"]
+            if tool_name == "answer_question"
+            else contract["result"]
+        )
+    elif status == 403:
+        payload = dict(fixture["mcp"]["answer_question"][contract_key])
+        if contract_key == "refusal_approval":
+            payload["portal_url"] += "/" + "a" * 300
+    else:
+        payload = {"error": fixture["errors"][contract_key]["body"]["detail"]}
+    captured = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        body = dict(payload)
+        if status >= 400:
+            body["detail"] = body.pop("error")
+        return httpx.Response(status, json=body)
+
+    monkeypatch.setattr(hc, "_read_token", lambda: "acw_fake")
+    async with httpx.AsyncClient(
+        base_url="http://local.test", transport=httpx.MockTransport(respond)
+    ) as client:
+
+        async def get_client() -> httpx.AsyncClient:
+            return client
+
+        monkeypatch.setattr(hc._state, "get_client", get_client)
+        result = await tools_by_name[tool_name](args)
+    assert result.get("isError", False) is (status >= 400)
+    assert json.loads(_content_text(result)) == payload
+    [request] = captured
+    assert request.method == method
+    assert request.headers["Authorization"] == "Bearer acw_fake"
+    if tool_name == "questions_pending":
+        assert request.url.path == "/api/mcp-stdio/questions/pending"
+    else:
+        assert request.url.path == (
+            f"/api/mcp-stdio/tasks/{args['task_id']}/questions/{args['qid']}/answer"
+        )
+        assert json.loads(request.content) == {"answer": args["answer"]}
+
+
+async def test_non_question_tool_keeps_scope_error_message(
+    tools_by_name: dict[str, Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = '{"detail":"missing mcp:read"}'
+    monkeypatch.setattr(hc, "_read_token", lambda: "acw_fake")
+    async with httpx.AsyncClient(
+        base_url="http://local.test",
+        transport=httpx.MockTransport(lambda _: httpx.Response(403, text=body)),
+    ) as client:
+
+        async def get_client() -> httpx.AsyncClient:
+            return client
+
+        monkeypatch.setattr(hc._state, "get_client", get_client)
+        result = await tools_by_name["task_list"]({})
+    assert result["isError"] is True
+    assert _content_text(result) == (
+        f"Error: AIFactory MCP key lacks the required scope: {body} — "
+        "mint a new key with the right scope in Settings → API Keys."
+    )
 
 
 # ── Read tools ──────────────────────────────────────────────────────

@@ -48,6 +48,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import httpx
+from agents.questions import valid_qid
 from fastapi import HTTPException
 
 from server.database.engine import get_db
@@ -83,6 +84,10 @@ def _loopback_url() -> str:
 # No ``/``, ``?``, ``#``, ``%`` or leading ``.``: the id is interpolated into
 # the loopback path, and ``a:1/../b:2`` would reach task ``b:2`` (#1910).
 _SAFE_ID = re.compile(r"[\w:-][\w.:-]*")
+_NO_TASK_TOOLS = frozenset({"aifactory.list_projects", "aifactory.questions_pending"})
+_QUESTION_TOOLS = frozenset(
+    {"aifactory.questions_pending", "aifactory.answer_question"}
+)
 
 
 async def _authorize_call(
@@ -97,7 +102,7 @@ async def _authorize_call(
     so this is the only org check a remote tool call gets. The target is the
     argument the tool proxies, never any other one the caller sent.
     """
-    if tool_name == "aifactory.list_projects":
+    if tool_name in _NO_TASK_TOOLS:
         return
     arg = "project_id" if tool_name == "aifactory.list_tasks" else "task_id"
     if arg not in arguments:
@@ -180,6 +185,24 @@ async def _call_internal(
 def get_tool_definitions() -> list[dict[str, Any]]:
     """Return the list of MCP tool descriptors the server advertises."""
     return [
+        {
+            "name": "aifactory.questions_pending",
+            "description": "List open and expired questions in projects you can see.",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "aifactory.answer_question",
+            "description": "Answer a factual question on a task paused for human input.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string"},
+                    "qid": {"type": "string"},
+                    "answer": {"type": "string"},
+                },
+                "required": ["task_id", "qid", "answer"],
+            },
+        },
         {
             "name": "aifactory.list_projects",
             "description": "List all projects registered with this AIFactory install.",
@@ -327,6 +350,8 @@ def get_tool_definitions() -> list[dict[str, Any]]:
 # Scope requirement per tool — keep it next to the tool list above so
 # they don't drift. ``dispatch_tool_call`` consults this map.
 _SCOPE_FOR_TOOL: dict[str, str] = {
+    "aifactory.questions_pending": MCP_READ_SCOPE,
+    "aifactory.answer_question": MCP_WRITE_SCOPE,
     # V1
     "aifactory.list_projects": MCP_READ_SCOPE,
     "aifactory.list_tasks": MCP_READ_SCOPE,
@@ -344,6 +369,38 @@ _SCOPE_FOR_TOOL: dict[str, str] = {
 }
 
 
+async def _dispatch_question(
+    tool_name: str, arguments: dict[str, Any], key: AuthenticatedKey
+) -> dict[str, Any]:
+    try:
+        if tool_name == "aifactory.questions_pending":
+            result = await _call_internal(
+                "GET", "/api/mcp-stdio/questions/pending", key
+            )
+        else:
+            task_id, qid = arguments["task_id"], arguments["qid"]
+            if not valid_qid(qid):
+                return _format_error("question not found")
+            result = await _call_internal(
+                "POST",
+                f"/api/mcp-stdio/tasks/{task_id}/questions/{qid}/answer",
+                key,
+                json={"answer": arguments["answer"]},
+            )
+    except httpx.HTTPStatusError as exc:
+        try:
+            body = exc.response.json()
+        except ValueError:
+            raise exc from None
+        if not isinstance(body, dict) or not isinstance(body.get("detail"), str):
+            raise
+        error = {"error": body["detail"]}
+        if isinstance(body.get("portal_url"), str):
+            error["portal_url"] = body["portal_url"]
+        return {**_format_json(error), "isError": True}
+    return _format_json(result)
+
+
 async def dispatch_tool_call(
     tool_name: str,
     arguments: dict[str, Any] | None,
@@ -358,6 +415,11 @@ async def dispatch_tool_call(
     required_scope = _SCOPE_FOR_TOOL.get(tool_name)
     if required_scope is None:
         return _format_error(f"unknown tool: {tool_name}")
+    if tool_name in _QUESTION_TOOLS and not key.user_id:
+        return {
+            **_format_json({"error": "questions require a personal identity"}),
+            "isError": True,
+        }
 
     try:
         require_scope(key, required_scope)
@@ -373,6 +435,8 @@ async def dispatch_tool_call(
         return _format_error(str(exc))
 
     try:
+        if tool_name in _QUESTION_TOOLS:
+            return await _dispatch_question(tool_name, arguments, key)
         if tool_name == "aifactory.list_projects":
             listed = await _call_internal("GET", "/api/mcp-stdio/projects", key)
             allowed = await _accessible_project_ids(key)

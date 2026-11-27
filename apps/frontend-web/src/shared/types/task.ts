@@ -24,6 +24,8 @@ export type ReviewReason =
   | 'errors'
   | 'qa_rejected'
   | 'plan_review'
+  | 'needs_input'
+  | 'approval_rejected'
   // Factory#2586: written by the merger once the task's PR state is known.
   | 'awaiting_merge'
   | 'pr_closed'

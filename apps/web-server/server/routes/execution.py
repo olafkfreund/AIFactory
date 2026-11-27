@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import sys
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -44,6 +45,11 @@ from server.services.build_backend import (
 from server.services.github_app import project_github_token
 from server.services.handback_receipt_store import record as record_handback_receipt
 from server.services.originator import principal_attribution
+from server.services.question_guards import (
+    approval_rejected,
+    close_approval_rejection,
+    require_approval_clear,
+)
 from server.services.task_branch import record_branch
 from server.services.trusted_contract import handoff_contract, resolve_contract
 from server.services.trusted_contract_store import (
@@ -83,7 +89,10 @@ if str(_BACKEND_DIR) not in sys.path:
 from core.commit_trailers import (  # noqa: E402 — needs sys.path above (#2109)
     stamp_plan_slug,
 )
-from qa.correction import apply_correction  # noqa: E402 — needs sys.path above
+from qa.correction import (  # noqa: E402 — needs sys.path above
+    _default_fixer,
+    apply_correction,
+)
 from review.state import ReviewState  # noqa: E402 — needs sys.path above (#1922)
 from trusted_plan import (  # noqa: E402 — needs sys.path above (#390)
     DRIFT_ABSENT,
@@ -445,6 +454,8 @@ async def start_task(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Task/spec not found",
         )
+
+    require_approval_clear(spec_dir)
 
     # PFactory taxonomy routing (epic #327 / #331): a governed child labelled
     # `handoff:tfactory` (or `type:testing`) is test-generation work — route it
@@ -1164,6 +1175,8 @@ async def recover_task(
             detail="Task/spec not found",
         )
 
+    require_approval_clear(spec_dir)
+
     # Clean up from running_tasks if present
     agent_service = get_agent_service()
 
@@ -1880,14 +1893,16 @@ async def apply_task_correction(
     Part of the bidirectional AIFactory ↔ TFactory loop (#317).
     With APP_REQUIRE_CORRECTION_TRIAGE on, a request without ``triage`` is a 422.
     """
+    *_, spec_dir = _resolve_task(task_id)
+    if request.confirm:
+        require_approval_clear(spec_dir, retry_rejected=True)
+
     if get_settings().REQUIRE_CORRECTION_TRIAGE and request.triage is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="A triage report is required (APP_REQUIRE_CORRECTION_TRIAGE); "
             "send the structured 'triage' block with the hand-back.",
         )
-    *_, spec_dir = _resolve_task(task_id)
-
     # #2095: the QA fixer is an agent session; refuse before writing anything.
     # #2116: AIFACTORY_CORRECTION_BACKEND=kubejob runs it as a Job instead.
     use_job = False
@@ -1898,11 +1913,23 @@ async def apply_task_correction(
         if not use_job and (problem := inpod_agent_refusal()):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=problem)
 
+    fixer: Callable[[Path], Awaitable[dict[str, Any]]] | None = (
+        dispatch_correction_fixer if use_job else None
+    )
+    if request.confirm and approval_rejected(spec_dir):
+        retry_fixer = fixer or _default_fixer
+
+        async def retry_after_rejection(directory: Path) -> dict[str, Any]:
+            close_approval_rejection(directory)
+            return await retry_fixer(directory)
+
+        fixer = retry_after_rejection
+
     result = await apply_correction(
         spec_dir,
         request.fix_request_md,
         confirm=request.confirm,
-        fixer_fn=dispatch_correction_fixer if use_job else None,
+        fixer_fn=fixer,
         triage=request.triage,
         manifest_hash=request.manifest_hash,
         correlation_key=request.correlation_key,
@@ -1972,6 +1999,7 @@ async def dispatch_task_to_copilot(
     bound_repo = await asyncio.to_thread(
         _bound_github_repo, load_projects().get(project_id, {})
     )
+    require_approval_clear(spec_dir)
     if not bound_repo or _github_repo_identity(request.repo_full_name) != bound_repo:
         raise HTTPException(status_code=404, detail="Project not found")
     task_metadata_path = spec_dir / "task_metadata.json"
