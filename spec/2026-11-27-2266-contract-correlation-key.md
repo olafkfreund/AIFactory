@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2266
 intent: intent/2026-11-27-2266-contract-correlation-key.md
 ---
