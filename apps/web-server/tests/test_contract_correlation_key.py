@@ -57,8 +57,6 @@ def test_task_to_dict_uses_contract_correlation_key(
 def test_job_state_key_stays_s3_safe_for_issue_tasks(tmp_path: Path) -> None:
     # #2266 review: the job-state key is an S3 scope/path id (`job_s3_scope._BAD_ID`
     # rejects "/"), so it must stay the bare issue number, never `<repo>#<n>`.
-    from server.services.agent_service import AgentService
-
     spec = tmp_path / ".aifactory" / "specs" / "001-x"
     (spec / "context").mkdir(parents=True)
     (spec / "requirements.json").write_text(
