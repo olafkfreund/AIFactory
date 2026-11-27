@@ -49,38 +49,56 @@ today's. Use plain paths, not URLs or relative Markdown links.
 
 1. **`apps/web-server/server/services/pr_endgame.py`:**
    - Add `_ARTIFACT_PATH` at module level.
-   - In `_pr_title_body`, inside the existing `try`, collect the artifact lines from `prov` (the
-     dict already read at ~1919). Do it only when `prov` is a dict and
-     `prov.get("source_artifacts")` is a list.
-   - After the `try`/`except` and before the `Fixes #` append (~1947), add the block when the
-     list is non-empty.
-   - Keep the function under the repo's complexity limits. If ruff flags PLR0912/C901, move the
-     collection into a small `_artifact_lines(prov) -> list[str]` helper rather than adding a
-     noqa.
+   - Add a typed helper `_artifact_lines(prov: object) -> list[str]`. It returns the
+     `- <stage>: \`<path>\`` lines by the rule above, and `[]` when `prov` is not a dict or
+     `source_artifacts` is not a list. Its own `isinstance` checks mean no `TypeError` can escape.
+     Use the helper from the start: an inline loop trips C901 (Codex measured 12 against a limit
+     of 10).
+   - In `_pr_title_body`, inside the existing `try`, right after the `if who:` append (~1940):
+
+     ```python
+     arts = _artifact_lines(prov)
+     if arts:
+         body = body + "\n\n**Artifacts**\n" + "\n".join(arts)
+     ```
+
+     Being inside the `try` means a failed read keeps today's fallback, with no variable to
+     initialise. It also places the block after the attribution lines and before `Fixes #N`.
 
    **Tests,** in `apps/web-server/tests/test_pr_endgame.py`, next to `test_pr_body_no_issue_no_fixes`
-   (~871). Add the cases from the spec table:
-   - all three valid items plus `issue_number`: the block is in order and comes before `Fixes #N`;
-   - out-of-order items: the block is still in intent, spec, plan order;
-   - invalid paths, one test each or parametrized: a newline, `../`, a backtick, the wrong stage
-     prefix, `.txt`;
-   - `source_artifacts` missing, not a list, or with no valid items: no `**Artifacts**`, and the
-     body equals the body with the key removed;
-   - no `description` with valid items: the block is still present.
+   (~871):
+   - **All three valid items plus `issue_number`:** the block lists the three paths in order, and
+     `Fixes #N` comes after it.
+   - **Ordering with attribution:** `AIFACTORY_AGENT_COMMIT_TRAILERS=1`, `agent_identity` and
+     `originator` set. The order is description, attribution, `**Artifacts**`, `Fixes #N`.
+   - **Out-of-order items:** the block is still in intent, spec, plan order.
+   - **Mixed list:**
+     - a non-dict item (`None`, a bare string);
+     - a dict with no `path` or with a non-string `path`;
+     - an invalid candidate before the first valid one for a stage, which still picks the valid
+       one;
+     - a second valid item for a stage, where only the first is emitted;
+     - one stage with no valid item, which is left out and leaves no blank line.
+   - **Invalid paths,** parametrized: an embedded newline, a trailing `\n`, `../`, a backtick,
+     the wrong stage prefix, `.txt`.
+   - **No-op cases** (`source_artifacts` missing, not a list, or with no valid items): assert the
+     exact legacy body string, not only a comparison with a second call.
+   - **No `description`** with valid items: the block follows the default body.
 
-   **Verify by:**
+   **Verify by,** from the worktree root:
 
    ```bash
-   cd apps/web-server && ../web-server/.venv/bin/pytest -q -o asyncio_mode=auto tests/test_pr_endgame.py tests/test_pr_verify_evidence.py
+   W=/mnt/code/Source-home/GitHub/AIFactory/apps/web-server/.venv/bin
+   (cd apps/web-server && $W/pytest -q -o asyncio_mode=auto tests/test_pr_endgame.py tests/test_pr_verify_evidence.py)
    ```
 
-   Then the ratchets on committed files: `python scripts/cq_ratchet.py --base origin/dev` and
-   `--tool mypy`.
+   After the lead commits, run the ratchets from the repo root:
+   `python scripts/cq_ratchet.py --base origin/dev`, then the same with `--tool mypy`.
 
    **Traps:**
-   - The web-server tests need the web-server venv (in the main clone,
-     `/mnt/code/Source-home/GitHub/AIFactory/apps/web-server/.venv`) and `-o asyncio_mode=auto`.
-   - `cq_ratchet` only sees committed files: the lead commits before running it.
+   - The worktree has no venv of its own, so use the main clone's web-server venv as above, with
+     `-o asyncio_mode=auto`.
+   - `cq_ratchet` only sees committed files.
    - Do not touch `merger.py`, which uses only the title.
    - Do not change the default body text or the `_EVIDENCE_*` stripping.
 
@@ -90,6 +108,9 @@ today's. Use plain paths, not URLs or relative Markdown links.
   base failures listed in the repo are unrelated.
 - **ruff and mypy ratchets:** clean.
 - **CI on the PR:** green.
+- **Live, after the AIFactory release:** a P1 run's S4 shows `triple_linked: true`. That run
+  opens a new auto-PR. Adopted PRs return before `_pr_title_body`, and an already-open PR's body
+  is not rewritten, so neither is covered (Codex review).
 
 ## Rollback
 
