@@ -13,7 +13,7 @@ from server.project_registry import load_projects
 from server.routes.task_service import get_spec_dirs
 from server.specpath import spec_dir_for
 
-from . import question_answers
+from . import bus_notify, question_answers
 
 logger = logging.getLogger(__name__)
 INTERVAL = 60
@@ -22,6 +22,7 @@ MAX_RETRY_DELAY = 15 * 60
 
 def _notify_expired() -> None:
     logger.debug("A question expired")
+    bus_notify.notify_question_waiting()
 
 
 def _source_records(project_path: Path, spec_dir: Path) -> list[dict[str, Any]]:
@@ -76,7 +77,7 @@ class QuestionChecker:
                 elif record["status"] == "open" and await asyncio.to_thread(
                     question_answers.expire_open, spec_dir, qid, now
                 ):
-                    _notify_expired()
+                    await asyncio.to_thread(_notify_expired)
             except Exception:  # noqa: BLE001 - isolate question and notice failures
                 logger.warning("Question checker could not process a question")
 

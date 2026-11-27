@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import secrets
+import threading
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,8 @@ from agents.questions import (
 )
 from core.file_utils import atomic_write
 from factory_common.logsafe import sanitize_log
+
+from . import bus_notify
 
 logger = logging.getLogger(__name__)
 _ATTEMPT_FILE = ".question_attempt"
@@ -119,3 +122,14 @@ def confirm_kubejob(spec_dir: Path, spec_id: str) -> dict[str, Any] | None:
 
 def on_question_open(task_id: str) -> None:
     logger.debug("Confirmed a needs-input pause for %s", sanitize_log(task_id))
+
+    def notify() -> None:
+        try:
+            bus_notify.notify_question_waiting()
+        except Exception as exc:  # noqa: BLE001 - isolate failures in the worker
+            logger.warning("Question bus notice failed (%s)", type(exc).__name__)
+
+    try:
+        threading.Thread(target=notify, daemon=True).start()
+    except Exception as exc:  # noqa: BLE001 - a notice must not interrupt pause handling
+        logger.warning("Question bus notice failed (%s)", type(exc).__name__)
