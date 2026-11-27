@@ -560,21 +560,27 @@ def _is_count(n: object) -> bool:
 
 def _votes_text(vote: Mapping[str, object] | None) -> str:
     """``3-0 x4, 2-1 x1 (3 calls, 0 failed)`` from validated parts, else not reported."""
+    skipped = vote.get("not_run_excluded") if vote else None
+    tail = (
+        f"; {skipped} not run (excluded)"
+        if isinstance(skipped, int) and not isinstance(skipped, bool) and skipped > 0
+        else ""
+    )
     splits = vote.get("splits") if vote else None
     if not isinstance(splits, dict):
-        return "not reported"
+        return "not reported" + tail
     keep = sorted(
         (k, n)
         for k, n in splits.items()
         if isinstance(k, str) and re.fullmatch(r"\d+-\d+", k) and _is_count(n)
     )
     if not keep:
-        return "not reported"
+        return "not reported" + tail
     text = ", ".join(f"{k} x{n}" for k, n in keep)
     calls, failed = vote.get("calls"), vote.get("failed_calls")  # type: ignore[union-attr]
     if _is_count(calls) and _is_count(failed):
         text += f" ({calls} calls, {failed} failed)"
-    return text
+    return text + tail
 
 
 def verify_evidence_block(

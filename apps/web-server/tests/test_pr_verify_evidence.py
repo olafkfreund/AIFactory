@@ -216,3 +216,14 @@ def test_stray_start_marker_does_not_eat_the_body() -> None:
 def _qa_gate_passes(monkeypatch):
     """These tests cover the merge decision, not #2233's QA gate (see test_qa_gate.py)."""
     monkeypatch.setattr("server.services.qa_gate.check", lambda *_a: None)
+
+
+def test_votes_text_names_excluded_not_run_rows() -> None:
+    # #2269: a pass that skipped not_run rows says so.
+    from server.services.pr_endgame import _votes_text
+
+    assert _votes_text({"splits": {"3-0": 2}, "not_run_excluded": 1}).endswith(
+        "; 1 not run (excluded)"
+    )
+    assert _votes_text({"not_run_excluded": 1}) == "not reported; 1 not run (excluded)"
+    assert "not run" not in _votes_text({"splits": {"3-0": 2}, "not_run_excluded": 0})

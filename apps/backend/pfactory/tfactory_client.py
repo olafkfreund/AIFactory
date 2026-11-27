@@ -1349,7 +1349,8 @@ def tfactory_verdict(  # noqa: PLR0911 - each refusal is an explicit fail-closed
 
     ``"pass"``, ``"fail"`` or ``None`` (no trusted result: unconfigured,
     unreachable, wrong project, mismatched or missing ``source_sha``, not triaged,
-    no or unknown verdicts). Only a ``reject`` fails; ``flag`` does not block.
+    no or unknown verdicts). Only a ``reject`` fails; ``flag`` does not block;
+    ``not_run`` rows (no evidence) are ignored, and an all-``not_run`` run is None.
     Never raises; logs nothing it fetched. ``vote``, if given, receives TFactory's
     ``verdict_vote`` summary (Factory#1963).
     """
@@ -1382,13 +1383,18 @@ def tfactory_verdict(  # noqa: PLR0911 - each refusal is an explicit fail-closed
         ]
     except Exception:  # noqa: BLE001 - no trusted result is not a pass
         return None
-    # A missing or unknown verdict is not green.
+    # TFactory's `not_run` (no evidence) neither passes nor fails, as in its VAL (#2269).
+    skipped = kinds.count("not_run")
+    kinds = [k for k in kinds if k != "not_run"]
+    # A missing or unknown verdict is not green; neither is an all-not_run run.
     if not kinds or any(k not in ("accept", "flag", "reject") for k in kinds):
         return None
     verdict = "fail" if "reject" in kinds else "pass"
     summary = doc.get("verdict_vote")
     if vote is not None and isinstance(summary, dict):
         vote.update(summary)
+    if vote is not None and skipped:
+        vote["not_run_excluded"] = skipped
     return verdict
 
 
