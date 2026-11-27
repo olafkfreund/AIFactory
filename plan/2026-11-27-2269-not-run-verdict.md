@@ -87,3 +87,9 @@ plan review the team policy requires.
 | The evidence block hides skipped rows (low) | confirmed | `not_run_excluded` count is shown in the Votes line |
 | Test gaps: the `maybe` mix, and the real parser at the boundary (low) | confirmed | tests added |
 | Other legitimate verdict values | refuted: TFactory producers emit `accept`, `flag`, `reject` and `not_run` only | none |
+
+## Deviations (diff review, 2026-11-27)
+
+- **Codex (P2):** `not_run_excluded` is recorded before the early return, so a held run, either
+  all `not_run` or `not_run` beside an unknown value, also shows the count. There is a test for
+  this.

@@ -1386,6 +1386,8 @@ def tfactory_verdict(  # noqa: PLR0911 - each refusal is an explicit fail-closed
     # TFactory's `not_run` (no evidence) neither passes nor fails, as in its VAL (#2269).
     skipped = kinds.count("not_run")
     kinds = [k for k in kinds if k != "not_run"]
+    if vote is not None and skipped:  # shown on a hold too (#2269 review)
+        vote["not_run_excluded"] = skipped
     # A missing or unknown verdict is not green; neither is an all-not_run run.
     if not kinds or any(k not in ("accept", "flag", "reject") for k in kinds):
         return None
@@ -1393,8 +1395,6 @@ def tfactory_verdict(  # noqa: PLR0911 - each refusal is an explicit fail-closed
     summary = doc.get("verdict_vote")
     if vote is not None and isinstance(summary, dict):
         vote.update(summary)
-    if vote is not None and skipped:
-        vote["not_run_excluded"] = skipped
     return verdict
 
 

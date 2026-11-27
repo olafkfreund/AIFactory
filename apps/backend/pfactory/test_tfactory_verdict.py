@@ -439,3 +439,19 @@ def test_not_run_count_reaches_the_vote_evidence() -> None:
     )
     assert out == "pass"
     assert vote["not_run_excluded"] == 1
+
+
+def test_all_not_run_holds_and_still_reports_the_count() -> None:
+    vote: dict[str, object] = {}
+
+    def getter(url: str, _headers: dict[str, str]) -> tuple[int, object]:
+        return {
+            TASK: _task(),
+            TASK + "/verdicts.json": _verdicts("not_run", "not_run"),
+        }[url]
+
+    out = tc.tfactory_verdict(
+        Path("spec"), "048-feat", head="abc", getter=getter, vote=vote
+    )
+    assert out is None
+    assert vote["not_run_excluded"] == 2
