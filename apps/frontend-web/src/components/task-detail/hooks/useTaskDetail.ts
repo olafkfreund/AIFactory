@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useProjectStore } from '../../../stores/project-store';
 import { checkTaskRunning, isIncompleteHumanReview, getTaskProgress } from '../../../stores/task-store';
+import { showsMergeReview } from '../../../shared/constants';
 import type { Task, TaskLogs, TaskLogPhase, TaskPhaseLog, TaskLogStreamChunk, TaskLogEntry, WorktreeStatus, WorktreeDiff, MergeConflict, MergeStats, GitConflictInfo } from '../../../shared/types';
 
 export interface UseTaskDetailOptions {
@@ -548,9 +549,9 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
     // 2. Worktree exists
     // 3. We haven't already loaded the preview for this task
     // 4. We're not currently loading
-    const isPlanReview = task.reviewReason === 'plan_review';
+    const canMergeReview = showsMergeReview(task.reviewReason);
     const alreadyLoaded = hasLoadedPreviewRef.current === task.id;
-    if (needsReview && !isPlanReview && worktreeStatus?.exists && !alreadyLoaded && !isLoadingPreview) {
+    if (needsReview && canMergeReview && worktreeStatus?.exists && !alreadyLoaded && !isLoadingPreview) {
       loadMergePreview();
     }
   }, [needsReview, task.reviewReason, worktreeStatus?.exists, isLoadingPreview, task.id, loadMergePreview]);
