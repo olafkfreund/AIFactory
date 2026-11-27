@@ -159,3 +159,9 @@ Revert the squash commit. Events go back to `af-…` keys. No stored state chang
     `s3://` URIs.
   - `agent_service.py` is reverted to `origin/dev`. A test pins the issue task's job-state key to
     `"5"`. CFactory joins on the events and the task list, which carry the contract key.
+- **Handoff (agy diff review):**
+  - When no key resolves, `_thread_issue` drops an unvalidated contract `correlation_key` instead
+    of forwarding it.
+  - `test_handoff_keeps_a_pfactory_contract_key` asserted the old contract-over-issue precedence.
+    That precedence split TFactory from AIFactory's `o/r#382` events. The test now asserts the
+    issue key, and a new test covers a contract key with no issue.

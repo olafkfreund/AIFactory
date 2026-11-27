@@ -735,6 +735,9 @@ def _thread_issue(
     if key:
         contract = dict(contract or {})
         contract["correlation_key"] = key
+    elif isinstance(contract, dict) and "correlation_key" in contract:
+        # No resolvable key: never forward an unvalidated one (#2266).
+        contract = {k: v for k, v in contract.items() if k != "correlation_key"}
     return contract
 
 
