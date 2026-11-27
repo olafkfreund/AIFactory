@@ -30,6 +30,8 @@ useDefault = true
 description = "Fake/example secrets in test suites, SAML test-only key pairs, docs, LLM prompt templates, and the CI-only Fernet key - not real credentials"
 paths = [
   '''tests/test_scan_secrets\.py''',
+  # #3906: the questions API contract fixture carries a fake confirm_token
+  '''tests/fixtures/questions_api\.json''',
   '''tests/test_security_scanner\.py''',
   '''tests/test_structured_outputs\.py''',
   '''tests/test_file_based_endpoints\.py''',
