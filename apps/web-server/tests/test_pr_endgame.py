@@ -954,6 +954,7 @@ def test_pr_body_artifacts_skip_invalid_and_duplicate_items(tmp_path):
                         "intent/stray.md",
                         {"stage": "intent"},
                         {"stage": "intent", "path": 3},
+                        {"stage": "intent", "path": "intent/bad.txt"},
                         {"stage": "intent", "path": "intent/first.md"},
                         {"stage": "intent", "path": "intent/second.md"},
                         {"stage": "spec", "path": "spec/invalid.txt"},
