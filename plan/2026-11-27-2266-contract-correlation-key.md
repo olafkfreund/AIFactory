@@ -14,38 +14,71 @@ reviewers:
 
 ## Approved decisions
 
-The spec, copied here so this plan stands alone. Paths are under `apps/web-server/`.
+The spec is copied here so this plan stands alone, with the plan review folded in (see Review
+below). Paths are under `apps/web-server/`.
 
-- **Reader:** `server/services/completion.py` gets `read_contract_key(spec_dir: Path) -> str |
-  None`, next to `read_issue_number` (~190).
-  - It reads `spec_dir / "context" / "task_contract.json"` and returns `correlation_key` only when
-    that is a `str` that `_CONTRACT_KEY.fullmatch`es, where
-    `_CONTRACT_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/#-]{0,127}")`.
-  - It returns `None` for a missing file, `OSError`, `ValueError`, a non-dict document, or a
-    non-matching value. It never raises.
-- **Precedence:** `correlation_key(task_id, issue_number, repo=None, contract_key=None)` (~233).
-  - A `contract_key` that is not `None` and not `isdigit()` is returned first.
-  - Otherwise the existing logic runs unchanged: `<repo>#<n>`, then `af-<task_id>`, keeping the
-  `_MAX_KEY_LEN` guard. An all-digits contract key is ignored here (#1960).
+- **Validator:** one validator, `_valid_contract_key(value: object) -> str | None`, in
+  `server/services/completion.py`.
+  - It returns `value` only when it is a `str`, `_CONTRACT_KEY.fullmatch`es and is not all
+    digits. `_CONTRACT_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/#-]{0,127}")`.
+  - Anything else gives `None`, including `""`, an over-length value and a bare number (#1960).
+- **Reader:** `read_contract_key(spec_dir: Path) -> str | None`, next to `read_issue_number`
+  (~190).
+  - It reads `spec_dir / "context" / "task_contract.json"` and returns
+    `_valid_contract_key(doc.get("correlation_key"))`.
+  - It returns `None` on `OSError`, `ValueError` or a non-dict document. It never raises.
+- **Precedence (changed from the spec after review):** `correlation_key(task_id, issue_number,
+  repo=None, contract_key=None)` (~233).
+  - `<repo>#<n>` comes first, as today.
+  - Then `_valid_contract_key(contract_key)`.
+  - Then `af-<task_id>`, keeping the `_MAX_KEY_LEN` guard.
+
+  So a contract key replaces only the synthetic `af-` fallback, and issue-intake tasks stay
+  byte-identical. The approved spec had the contract key winning over `<repo>#<n>`. Both
+  reviewers showed that lets an agent-edited or stale contract re-key an issue task. A
+  trusted-plan task from `factory submit` has no issue, so the outcome is the same.
 - **Builders:** `build_completion_event` (~565, key ~630), `build_worker_event` (~687, key ~737)
-  and `build_worker_progress_event` (~767, key ~813) each gain a keyword
-  `contract_key: str | None = None`, forwarded to `correlation_key()`.
-  - The callers that pass `issue_number=read_issue_number(spec_dir)` (~865, ~966, ~1231, ~1300)
-    also pass `contract_key=read_contract_key(spec_dir)`.
-  - A grep for `issue_number=read_issue_number(` must leave no caller without the new argument.
-- **Task list:** `server/routes/task_service.py:1287` passes `contract_key=read_contract_key(spec_dir)`.
-- **Job-state row:** `server/services/agent_service.py:_read_correlation_key` (~295) returns
-  `read_contract_key(spec_dir)` first when it is not `None` and not all digits. Otherwise it falls
-  back to today's `provenance.issue_number`. Use the existing `spec_dir_for(project_path, spec_id)`.
-- **No change:**
-  - `routes/execution.py`;
-  - `pfactory/tfactory_client.py`, whose `_thread_issue` already lets the contract key win;
-  - CFactory.
+  and `build_worker_progress_event` (~767, key ~813) gain the keyword `contract_key: str | None =
+  None`, forwarded to `correlation_key()`.
+  - All four `spec_dir` callers (~865, ~966, ~1231, ~1300) pass
+    `contract_key=read_contract_key(spec_dir)`.
+  - That covers the human-approval `done` event: `routes/tasks.py:492` → `emit_terminal_completion`
+    → ~1227.
+- **Diagnostic (~621–627):** the "synthetic key … (no cross-service join)" log fires only when the
+  resolved key starts with `af-`. Otherwise it logs nothing.
+- **Task list:** `server/routes/task_service.py:1287` passes
+  `contract_key=read_contract_key(spec_dir)`.
+- **Job-state row:** `server/services/agent_service.py:_read_correlation_key` (~295) returns the
+  same key the events carry: `correlation_key(task_id, read_issue_number(d), read_issue_repo(d),
+  read_contract_key(d))`. When that is `af-…` and `provenance.issue_number` is set, it keeps
+  today's `str(issue_number)`.
+- **TFactory handoff:** in `apps/backend/pfactory/tfactory_client.py`, `_thread_issue` (~700) must
+  produce the event key.
+  - Replace `contract.setdefault("correlation_key", key)` with: keep the contract's own key only
+    when it passes the same validator, mirrored in the backend module because it is stdlib-only;
+    otherwise set `key`.
+  - `_event_correlation_key` gains the contract-key precedence above. It must equal
+    `completion.correlation_key` for the same inputs, and the existing pin test extends to that.
+
+## Review (plan draft, 2026-11-27)
+
+Codex (gpt-6.2-sol) and agy (model not reported) reviewed the draft. Both were read-only, and the
+worktree was unchanged after each.
+
+| Finding | Verdict | Change |
+|---|---|---|
+| A contract key can override an issue task's `<repo>#<n>` (Codex, high) | confirmed (spec precedence) | precedence: issue key, then contract key, then `af-` |
+| `correlation_key()` doesn't validate, so `""` or a malformed key leaks (agy, high) | confirmed | a single `_valid_contract_key`, used inside `correlation_key` |
+| `_thread_issue` `setdefault` keeps a bad, digits-only or empty contract key (agy, high) | confirmed (`tfactory_client.py:719-723`) | handoff validates and overwrites; the pin test is extended |
+| The human-approval `done` emitter isn't traced (Codex) | refuted: `routes/tasks.py:492` → `emit_terminal_completion` → `completion.py:1227` | none |
+| The misleading "no cross-service join" log (both) | confirmed (`completion.py:621-627`) | the log follows the resolved key |
+| A first poll before the contract exists, or a queued old-key event, leaves a second row (Codex) | plausible, not verified | accepted; the live check asserts one `pf-` item with usage |
+| The job-state test should assert the key passed to `admit()` (Codex) | confirmed | test extended |
 
 ## Steps
 
-1. **Codex:** `server/services/completion.py`, per the reader, precedence and builder decisions
-   above.
+1. **Codex:** `server/services/completion.py` (validator, reader, precedence, builders, diagnostic)
+   and `apps/backend/pfactory/tfactory_client.py` (`_thread_issue`, `_event_correlation_key`).
 
    **Tests** in `tests/test_completion_emitter.py`:
    - **Reader:** `read_contract_key`
@@ -53,13 +86,15 @@ The spec, copied here so this plan stands alone. Paths are under `apps/web-serve
        ignores it);
      - returns `None` for a missing file, invalid JSON, a list document, a non-str value, an empty
        string, 129 characters, an embedded space, a newline, and a leading `-`.
-   - **Precedence:** `correlation_key(..., contract_key="pf-337-x")` wins over the issue and repo.
-     A digits-only key, or `None`, falls through unchanged.
+   - **Precedence:** the issue key wins over `contract_key`. `contract_key` wins over `af-`. A
+     digits-only, empty or malformed key, or `None`, falls through.
    - **Builders:** each of the three event builders, given `contract_key`, emits it.
    - **Callers:** each of the four `spec_dir` callers puts the file's key into the event. Use the
      module's existing fixtures and the `_spec_with` helper.
-   - **Handoff pin:** `_thread_issue(contract={"correlation_key": "pf-337-x"}, req={}, task_id="p:s")`
-     keeps `pf-337-x`, which equals the event key for the same spec dir.
+   - **Handoff pin:** `_thread_issue` keeps a valid `pf-337-x`, and replaces `"42"`, `""`,
+     `None` and `"bad key"` with the event key. It is checked with and without an issue in `req`,
+     and the result equals `completion.correlation_key` for the same inputs.
+   - **Diagnostic log:** silent for a `pf-` key, and still logged for an `af-` key.
 
    **Verify:**
    ```bash
@@ -75,7 +110,8 @@ The spec, copied here so this plan stands alone. Paths are under `apps/web-serve
      with that contract and no issue. Follow how `tests/test_string_issue_identifier.py` builds a
      task and spec dir.
    - **Job-state row:** `_read_correlation_key` returns `pf-337-x`. It returns `"5"` when the
-     contract key is digits and `provenance.issue_number` is 5, and `None` when neither exists.
+     contract key is digits and `provenance.issue_number` is 5. The key handed to
+     `_store().admit(...)` is asserted too.
 
    **Verify:**
    ```bash
