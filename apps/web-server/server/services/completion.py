@@ -7,8 +7,9 @@ event so the cockpit (CFactory) can thread the unit of work end to end:
 Conforms to the Factory correlation-key RFC (olafkfreund/Factory#4 / RFC-0001):
 ``{correlation_key, service, task_id, status, phase, updated_at}`` + an optional
 ``correlation`` chain block. The shared key is ``<repo>#<issue number>`` when the
-task knows its repo (RFC-0001 §2, #1775), else a synthetic ``af-<task_id>``
-fallback. An over-long synthetic key is absent and the event is then not sent.
+task knows its repo (RFC-0001 §2, #1775), else a valid task-contract key,
+else a synthetic ``af-<task_id>`` fallback. An over-long synthetic key is
+absent and the event is then not sent.
 
 Additive envelope upgrade (#466) — every field below rides *alongside* the
 existing ones; nothing is removed, so existing consumers (CFactory) keep working
@@ -187,6 +188,31 @@ def _truthy(value: str | None) -> bool:
     return (value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+_CONTRACT_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/#-]{0,127}")
+
+
+def _valid_contract_key(value: object) -> str | None:
+    return (
+        value
+        if isinstance(value, str)
+        and _CONTRACT_KEY.fullmatch(value)
+        and not value.isdigit()
+        else None
+    )
+
+
+def read_contract_key(spec_dir: Path) -> str | None:
+    try:
+        doc = json.loads((spec_dir / "context" / "task_contract.json").read_text())
+    except (OSError, ValueError):
+        return None
+    return (
+        _valid_contract_key(doc.get("correlation_key"))
+        if isinstance(doc, dict)
+        else None
+    )
+
+
 def read_issue_number(spec_dir: Path) -> int | None:
     """The source GitHub issue number from the task's requirements.json (set at
     task creation from a PFactory-emitted issue). None until a run carries one."""
@@ -231,13 +257,18 @@ _MAX_KEY_LEN = 128  # CFactory's correlation_key column width
 
 
 def correlation_key(
-    task_id: str, issue_number: int | str | None, repo: str | None = None
+    task_id: str,
+    issue_number: int | str | None,
+    repo: str | None = None,
+    contract_key: str | None = None,
 ) -> str | None:
-    """RFC-0001 §2: ``<repo>#<n>`` when the repo is known, else the synthetic
+    """Use ``<repo>#<n>``, then a valid contract key, then the synthetic
     ``af-<project_id>:<spec_id>`` (never a bare number, #1960; project-scoped
     because spec ids repeat across projects, #1972)."""
     if issue_number is not None and repo:
         return f"{repo}#{issue_number}"
+    if valid_key := _valid_contract_key(contract_key):
+        return valid_key
     key = f"af-{task_id}"
     if len(key) > _MAX_KEY_LEN:
         # Never truncate: a cut key could collide across projects (#1972).
@@ -582,6 +613,7 @@ def build_completion_event(
     transcript_uri: str | None = None,
     originator: str | None = None,
     agent_identity: str | None = None,
+    contract_key: str | None = None,
 ) -> dict:
     """The RFC-0001 completion-event envelope (six core fields + chain block).
 
@@ -618,16 +650,17 @@ def build_completion_event(
     # key no poller and no rollup joins on, so the cockpit reads $0.00 while the
     # spend sits in an orphan row. Say so once per build, on the event that
     # matters, rather than leaving the degradation silent.
-    if issue_number is None or not repo:
+    key = correlation_key(task_id, issue_number, repo, contract_key)
+    if key is not None and key.startswith("af-"):
         logger.info(
             "completion event for spec %s has no issue %s; correlating on the "
             "synthetic key %s (no cross-service join)",
             sanitize_log(spec_id),
             "number" if issue_number is None else "repo",
-            sanitize_log(correlation_key(task_id, None)),
+            sanitize_log(key),
         )
     event: dict[str, Any] = {
-        "correlation_key": correlation_key(task_id, issue_number, repo),
+        "correlation_key": key,
         "service": SERVICE_NAME,
         "task_id": task_id,
         "status": status,
@@ -698,6 +731,7 @@ def build_worker_event(
     repo: str | None = None,
     originator: str | None = None,
     agent_identity: str | None = None,
+    contract_key: str | None = None,
 ) -> dict:
     """A LIVE per-worker sub-event (RFC-0001 v1.3, #45 P1).
 
@@ -734,7 +768,7 @@ def build_worker_event(
         "duration_ms": int(rec.get("duration_ms", 0) or 0),
     }
     event = {
-        "correlation_key": correlation_key(task_id, issue_number, repo),
+        "correlation_key": correlation_key(task_id, issue_number, repo, contract_key),
         "service": SERVICE_NAME,
         "task_id": task_id,
         "status": _WORKER_STATUS,
@@ -778,6 +812,7 @@ def build_worker_progress_event(
     repo: str | None = None,
     originator: str | None = None,
     agent_identity: str | None = None,
+    contract_key: str | None = None,
 ) -> dict:
     """A LIVE per-worker PROGRESS heartbeat event (#45 Tier 2).
 
@@ -810,7 +845,7 @@ def build_worker_progress_event(
         "elapsed_ms": int(rec.get("elapsed_ms", 0) or 0),
     }
     event = {
-        "correlation_key": correlation_key(task_id, issue_number, repo),
+        "correlation_key": correlation_key(task_id, issue_number, repo, contract_key),
         "service": SERVICE_NAME,
         "task_id": task_id,
         "status": _WORKER_PROGRESS_STATUS,
@@ -864,6 +899,7 @@ def emit_worker_completion(
             spec_id=spec_id,
             issue_number=read_issue_number(spec_dir),
             repo=read_issue_repo(spec_dir),
+            contract_key=read_contract_key(spec_dir),
             project_id=project_id,
             worker=worker,
             **_read_attribution(spec_dir),
@@ -965,6 +1001,7 @@ def emit_worker_progress(
             spec_id=spec_id,
             issue_number=read_issue_number(spec_dir),
             repo=read_issue_repo(spec_dir),
+            contract_key=read_contract_key(spec_dir),
             project_id=project_id,
             worker=worker,
             **_read_attribution(spec_dir),
@@ -1230,6 +1267,7 @@ def emit_terminal_completion(
         status=status,
         issue_number=read_issue_number(spec_dir),
         repo=read_issue_repo(spec_dir),
+        contract_key=read_contract_key(spec_dir),
         project_id=project_id,
         usage=usage,
         halt_reason=_read_halt_reason(spec_dir),
@@ -1299,6 +1337,7 @@ def emit_usage_snapshot(  # noqa: PLR0913 - event fields, all required by the en
             status=status,
             issue_number=read_issue_number(spec_dir),
             repo=read_issue_repo(spec_dir),
+            contract_key=read_contract_key(spec_dir),
             project_id=project_id,
             usage=usage,
             injection_scan=_read_injection_scan(spec_dir),

@@ -143,3 +143,12 @@ worktree was unchanged after each.
 ## Rollback
 
 Revert the squash commit. Events go back to `af-…` keys. No stored state changes.
+
+## Deviations (implementation)
+
+- **Step 1 (Codex): the handoff key.** `_event_correlation_key` for a task with no issue now
+  returns the valid contract key, or `af-<task_id>`. Before, it returned `None`. The handoff then
+  carries the same key as AIFactory's events, so TFactory joins the AIFactory work item instead of
+  minting `tf-…`. An unknown `task_id` still returns `None` (#1972).
+- **Step 1 test list:** the item "the reader returns an all-digits `42`" contradicted the decision
+  that the validator rejects digits. The decision was followed: the reader returns `None`.

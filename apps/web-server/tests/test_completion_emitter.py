@@ -26,6 +26,7 @@ from server.services.completion import (  # noqa: E402
     emit_worker_progress,
     mark_transcript_dispatch,
     notify_completion,
+    read_contract_key,
     read_issue_number,
     read_issue_repo,
     read_usage,
@@ -83,6 +84,84 @@ def _spec_with(tmp_path: Path, name: str, requirements: dict[str, object]) -> Pa
     d.mkdir()
     (d / "requirements.json").write_text(json.dumps(requirements))
     return d
+
+
+def _contract(spec_dir: Path, key: object) -> None:
+    context = spec_dir / "context"
+    context.mkdir()
+    (context / "task_contract.json").write_text(json.dumps({"correlation_key": key}))
+
+
+@pytest.mark.parametrize("key", ["pf-337-x", "o/r#5"])
+def test_read_contract_key_accepts_valid_keys(tmp_path: Path, key: str) -> None:
+    spec = _spec_with(tmp_path, "s", {})
+    _contract(spec, key)
+    assert read_contract_key(spec) == key
+
+
+@pytest.mark.parametrize(
+    "value", [42, "42", "", "x" * 129, "bad key", "bad\nkey", "-bad"]
+)
+def test_read_contract_key_rejects_invalid_values(
+    tmp_path: Path, value: object
+) -> None:
+    spec = _spec_with(tmp_path, "s", {})
+    _contract(spec, value)
+    assert read_contract_key(spec) is None
+
+
+def test_read_contract_key_handles_missing_or_malformed_file(tmp_path: Path) -> None:
+    spec = _spec_with(tmp_path, "s", {})
+    assert read_contract_key(spec) is None
+    context = spec / "context"
+    context.mkdir()
+    file = context / "task_contract.json"
+    for content in ("{", "[]"):
+        file.write_text(content)
+        assert read_contract_key(spec) is None
+
+
+def test_contract_key_precedence() -> None:
+    assert correlation_key("p:s", 5, "o/r", "pf-337-x") == "o/r#5"
+    assert correlation_key("p:s", None, contract_key="pf-337-x") == "pf-337-x"
+    for invalid in (None, "42", "", "bad key", "-bad"):
+        assert correlation_key("p:s", None, contract_key=invalid) == "af-p:s"
+
+
+def test_builders_use_contract_key() -> None:
+    common = {
+        "task_id": "p:s",
+        "spec_id": "s",
+        "issue_number": None,
+        "contract_key": "pf-337-x",
+    }
+    events = (
+        build_completion_event(status="done", **common),
+        build_worker_event(worker={"worker_id": "w"}, **common),
+        build_worker_progress_event(worker={"worker_id": "w"}, **common),
+    )
+    assert [event["correlation_key"] for event in events] == ["pf-337-x"] * 3
+
+
+def test_spec_emitters_use_contract_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _spec_with(tmp_path, "s", {})
+    _contract(spec, "pf-337-x")
+    monkeypatch.setenv("AIFACTORY_WORKER_PROGRESS_INTERVAL_S", "0")
+    common = {"task_id": "p:s", "spec_id": "s", "project_id": "p"}
+    worker = {"worker_id": "contract-key-test", "total_tokens": 1}
+    events = (
+        emit_terminal_completion(spec, status="done", **common),
+        emit_worker_completion(spec_dir=spec, worker=worker, **common),
+        emit_worker_progress(spec_dir=spec, worker=worker, **common),
+        _completion_mod.emit_usage_snapshot(
+            spec, status="running", usage={"total_tokens": 1}, **common
+        ),
+    )
+    assert all(
+        event is not None and event["correlation_key"] == "pf-337-x" for event in events
+    )
 
 
 def test_key_is_scoped_to_the_repo(tmp_path: Path) -> None:
@@ -168,6 +247,20 @@ def test_real_issue_key_is_not_logged(caplog):
             status="done",
             issue_number=412,
             repo="o/r",
+        )
+    assert not any("synthetic key" in r.getMessage() for r in caplog.records)
+
+
+def test_contract_key_has_no_synthetic_diagnostic(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level("INFO", logger=_completion_mod.logger.name):
+        build_completion_event(
+            task_id="p:s",
+            spec_id="s",
+            status="done",
+            issue_number=None,
+            contract_key="pf-337-x",
         )
     assert not any("synthetic key" in r.getMessage() for r in caplog.records)
 
@@ -1524,6 +1617,32 @@ def test_tfactory_handoff_sets_no_synthetic_key_without_task_id() -> None:
     from pfactory.tfactory_client import _event_correlation_key  # noqa: PLC0415
 
     assert _event_correlation_key({"githubIssue": {"number": 7}}, None) is None
+
+
+@pytest.mark.parametrize(
+    "requirements", [{}, {"githubIssue": {"number": 5, "repo": "o/r"}}]
+)
+@pytest.mark.parametrize("contract_key", ["pf-337-x", "42", "", None, "bad key"])
+def test_tfactory_thread_issue_matches_event_key(
+    tmp_path: Path, requirements: dict[str, object], contract_key: str | None
+) -> None:
+    backend = str(Path(__file__).resolve().parents[2] / "backend")
+    if backend not in sys.path:
+        sys.path.insert(0, backend)
+    from pfactory.tfactory_client import (  # noqa: PLC0415
+        _event_correlation_key,
+        _thread_issue,
+    )
+
+    spec = _spec_with(tmp_path, "s", requirements)
+    _contract(spec, contract_key)
+    expected = correlation_key(
+        "p:s", read_issue_number(spec), read_issue_repo(spec), read_contract_key(spec)
+    )
+    threaded = _thread_issue({"correlation_key": contract_key}, requirements, "p:s")
+    assert threaded is not None
+    assert threaded["correlation_key"] == expected
+    assert _event_correlation_key(requirements, "p:s", contract_key) == expected
 
 
 def test_synthetic_key_differs_across_projects() -> None:
