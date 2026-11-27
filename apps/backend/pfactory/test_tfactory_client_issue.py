@@ -109,9 +109,11 @@ def test_handoff_contract_carries_the_build_key(
     assert payload["contract"]["correlation_key"] == "o/r#382"
 
 
-def test_handoff_keeps_a_pfactory_contract_key(
+def test_handoff_issue_key_wins_over_a_contract_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # #2266: the handoff carries the key AIFactory's own events carry, and an
+    # issue key wins over a contract key there, so TFactory joins the same item.
     _stub_git(monkeypatch)
     monkeypatch.setattr(
         tc, "load_task_contract", lambda *_: {"correlation_key": "o/r#7"}
@@ -120,7 +122,25 @@ def test_handoff_keeps_a_pfactory_contract_key(
         tmp_path, {"githubIssue": {"number": 382}, "provenance": {"repo": "o/r"}}
     )
     payload = tc.build_ingest_payload(spec_dir, "048-feat", contract=None)
-    assert payload["contract"]["correlation_key"] == "o/r#7"
+    assert payload["contract"]["correlation_key"] == "o/r#382"
+
+
+def test_handoff_keeps_a_pfactory_contract_key_without_an_issue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub_git(monkeypatch)
+    monkeypatch.setattr(
+        tc, "load_task_contract", lambda *_: {"correlation_key": "pf-337-x"}
+    )
+    spec_dir = _spec_dir(tmp_path, {})
+    payload = tc.build_ingest_payload(spec_dir, "048-feat", contract=None)
+    assert payload["contract"]["correlation_key"] == "pf-337-x"
+
+
+@pytest.mark.parametrize("bad", ["42", "", "bad key", "x" * 129, 42])
+def test_handoff_drops_an_invalid_contract_key_when_none_resolves(bad: object) -> None:
+    out = tc._thread_issue({"correlation_key": bad, "x": 1}, {}, None)
+    assert out == {"x": 1}
 
 
 @pytest.mark.parametrize(
