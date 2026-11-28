@@ -75,3 +75,12 @@ Codex (gpt-6.2-sol) reviewed read-only, and the worktree was unchanged.
 ## Rollback
 
 Roll forward rather than revert. A revert makes CFactory's next poll key tasks by bare id again, and `prune_duplicate_stages` would then clear the AIFactory stage, with its usage, on the canonical `pf-…` or `af-…` row (Codex review). If a revert is unavoidable, accept that loss for the affected work items.
+
+## Deviations (diff review, 2026-11-28)
+
+Codex diff review:
+- **Malformed issue URL:** `completion.read_issue_repo` now returns `None` when `urlparse`
+  raises, instead of raising. Every spec in the list goes through it, so one malformed
+  `githubIssue.url` would have failed `GET /api/tasks` entirely. There is a test.
+- **List-level check:** a test asserts the serialized `TaskList` JSON, the shape CFactory polls,
+  carries `correlation_key`.
