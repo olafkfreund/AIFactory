@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: AIFactory Web API
   description: Web API for AIFactory — self-hosted AI task management + agent orchestration
-  version: 3.23.1
+  version: 3.23.2
 paths:
   /api/auth/register:
     post:
@@ -14324,6 +14324,13 @@ components:
           - type: 'null'
           title: Agent Identity
           description: API key agent identity recorded at intake
+        correlation_key:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Correlation Key
+          description: RFC-0001 correlation key the completion events carry (contract or synthetic af-
+            key); absent for issue keys, which contain '/' (#2272).
       type: object
       required:
       - title

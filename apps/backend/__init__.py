@@ -19,5 +19,5 @@ Quick Start:
 See README.md for full documentation.
 """
 
-__version__ = "3.23.1"
+__version__ = "3.23.2"
 __author__ = "Magestic AI Team"

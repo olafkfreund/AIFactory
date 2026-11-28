@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "apps" / "backend"))
 
 from server.routes import task_service  # noqa: E402
+from server.routes.task_models import TaskList  # noqa: E402
 from server.services.agent_service import AgentService  # noqa: E402
 
 
@@ -67,3 +68,68 @@ def test_job_state_key_stays_s3_safe_for_issue_tasks(tmp_path: Path) -> None:
     )
     svc = AgentService.__new__(AgentService)
     assert svc._read_correlation_key(tmp_path, "001-x") == "5"
+
+
+@pytest.mark.parametrize(
+    ("requirements", "contract_key", "expected"),
+    [
+        ({"title": "t"}, "pf-337-x", "pf-337-x"),
+        (
+            {"title": "t", "githubIssue": {"number": 5, "repo": "o/r"}},
+            "pf-337-x",
+            None,
+        ),
+        ({"title": "t"}, None, "af-p1:001-trusted"),
+        (
+            {"title": "t", "provenance": {"issue_number": 5, "repo": "o/r"}},
+            "5",
+            "af-p1:001-trusted",
+        ),
+    ],
+)
+def test_task_list_carries_the_event_key_without_slash_keys(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    requirements: dict[str, Any],
+    contract_key: Any,
+    expected: str | None,
+) -> None:
+    # #2272: GET /api/tasks (spec_to_task) carries the key CFactory's poller joins on;
+    # issue keys ("o/r#5") are left out because CFactory's single-segment routes 404 on "/".
+    project = tmp_path / "proj"
+    spec_dir = _make_spec(project, requirements=requirements, contract_key=contract_key)
+    monkeypatch.setattr(task_service, "resolve_project_path", lambda _pid: project)
+    monkeypatch.setattr(
+        task_service, "load_projects", lambda: {"p1": {"path": str(project)}}
+    )
+
+    task = task_service.spec_to_task("p1", spec_dir)
+    assert task.correlation_key == expected
+    assert task.model_dump()["correlation_key"] == expected
+    if expected is not None:
+        assert task_service.task_to_dict(task)["correlationKey"] == expected
+
+
+def test_serialized_task_list_carries_correlation_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # #2272 review: assert the response shape CFactory's poller reads (TaskList JSON).
+    project = tmp_path / "proj"
+    spec_dir = _make_spec(project, contract_key="pf-337-x")
+    monkeypatch.setattr(task_service, "resolve_project_path", lambda _pid: project)
+    task = task_service.spec_to_task("p1", spec_dir)
+    body = TaskList(tasks=[task], total=1).model_dump(mode="json")
+    assert body["tasks"][0]["correlation_key"] == "pf-337-x"
+
+
+def test_malformed_issue_url_does_not_break_the_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "proj"
+    reqs = {
+        "title": "t",
+        "githubIssue": {"number": 5, "url": "http://[bad/o/r/issues/5"},
+    }
+    spec_dir = _make_spec(project, requirements=reqs, contract_key="pf-337-x")
+    monkeypatch.setattr(task_service, "resolve_project_path", lambda _pid: project)
+    assert task_service.spec_to_task("p1", spec_dir).correlation_key == "pf-337-x"
