@@ -1,5 +1,97 @@
 ## [Unreleased]
 
+## 3.23.1 - 2026-11-27
+
+Merged to `dev` since 3.23.0.
+
+### Fixed
+
+- The auto-merge gate no longer holds forever when TFactory records a `not_run` verdict, which TFactory uses for a test that gave no evidence.
+  - Those rows are ignored, as in TFactory's own VAL.
+  - A `reject` still fails, and accept or flag passes.
+  - An all-`not_run` or unknown result still holds.
+  - The PR's evidence Votes line says how many rows were excluded. (#2269, #2270)
+
+## 3.23.0 - 2026-11-27
+
+Merged to `dev` since 3.22.0.
+
+### Fixed
+
+- A `factory submit` (trusted-plan) task now reports under its signed contract's correlation key wherever AIFactory used to invent `af-<task>`. This covers its completion, worker and progress events, the task list's `correlationKey` and the TFactory handoff, so CFactory threads PFactory, AIFactory and TFactory onto one work item, with AIFactory's usage on it.
+  - Issue-intake tasks keep `<repo>#<n>`, which also wins over a contract key in the handoff.
+  - Keys are validated: at most 128 characters from a safe set, never all digits.
+  - The job-state row keeps its S3-safe key. (#2266, #2267, Factory#3939)
+
+## 3.22.0 - 2026-11-27
+
+Merged to `dev` since 3.21.18.
+
+### Added
+
+- Factory coders can ask you a question mid-build (`ask_human`). The task pauses in Needs you with the question, and you answer it in the portal, either on the task's deep link `/p/<slug>/tasks/<id>` or in the "needs input" banner. Approval questions need a signed-in user (SSO cookie session) and a short-lived confirm token. API keys, service principals and bearer JWTs are refused. The MCP server gains `questions_pending` and `answer_question`, and an optional content-free notice can go to the agent bus. (Factory#3906, #2262)
+
+### Fixed
+
+- The auto-PR body lists the task's approved intent, spec and plan paths, taken from the signed `provenance.source_artifacts`. Tasks without them keep the same body. (#2263, #2264)
+
+## 3.21.18 - 2026-11-26
+
+Merged to `dev` since 3.21.17.
+
+### Fixed
+
+- When TFactory commits its accepted tests onto the PR branch, the merge no longer stalls. The QA gate and the merge gate both accept the new head, but only when it is TFactory's own test-only commit made directly on the verified build. That means TFactory's writer record has to match, GitHub must report a single parent equal to the verified SHA, and every changed file must be a test file that TFactory committed. CI still runs on the real head. This also clears CFactory "Approve (PR + merge)" returning `qa_stale` (HTTP 409). (#2258, #2259)
+
+## 3.21.17 - 2026-11-26
+
+Merged to `dev` since 3.21.16.
+
+### Fixed
+
+- The merge gate looks up the TFactory verdict in the right project. The handoff records TFactory's `workspace_project_id`, and the verdict lookup sends it as `?project_id=`, so a spec id that exists in more than one TFactory project no longer returns 409 (no trusted verdict). (#2255, #2256)
+
+## 3.21.16 - 2026-11-26
+
+Merged to `dev` since 3.21.15.
+
+### Fixed
+
+- Build Job names end in a 12-hex hash of the full job id, so two projects building the same spec slug no longer collide (409 AlreadyExists); the reaper and orphan sweeper prove ownership from the `factory.io/job-id-full` annotation, and sweeper deletes carry a uid precondition. (Factory#3922, #2253)
+
+## 3.21.15 - 2026-11-26
+
+Merged to `dev` since 3.21.14.
+
+### Fixed
+
+- A task whose contract requires the `ci-green` system gate auto-merges once the host CI is measured green. Before this, nothing cleared the gate, so every planned task in a repo with CI was held at hold-blocking. Every other gate still holds. (#2248, #2251)
+
+## 3.21.14 - 2026-11-26
+
+Merged to `dev` since 3.21.13.
+
+### Changed
+
+- The PR endgame logs where an "auto_merge off" decision came from (settings not loaded, global env, or project setting), without the value. (#2248, #2249)
+
+## 3.21.13 - 2026-11-25
+
+Merged to `dev` since 3.21.12.
+
+### Fixed
+
+- The QA report endpoint serves the protected `qa_evidence_report.md` when `qa_report.md` is absent, so approved tasks no longer return 404. (#2233, #2246)
+
+## 3.21.12 - 2026-11-25
+
+Merged to `dev` since 3.21.11.
+
+### Changed
+
+- QA gate follow-ups for #2233: surface branch push failures, fetch before the QA gate and pin the pushed head. (#2243)
+- Test cleanup: import pr_endgame one way in test_qa_gate (CodeQL note on #2240). (#2241)
+
 ## 3.21.11 - 2026-11-25
 
 Merged to `dev` since 3.21.10.
