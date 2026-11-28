@@ -1,5 +1,15 @@
 ## [Unreleased]
 
+## 3.23.2 - 2026-11-28
+
+Merged to `dev` since 3.23.1.
+
+### Fixed
+
+- The task list (`GET /api/tasks`) now carries each task's correlation key: the contract or synthetic `af-` key that its completion events use. CFactory's poller then keeps a `factory submit` task on the run's work item, and AIFactory's usage is no longer pruned.
+  - Issue keys (`owner/repo#n`) are left out until CFactory's routes accept `/` (CFactory#603).
+  - A malformed issue URL no longer breaks the list. (#2272, #2273)
+
 ## 3.23.1 - 2026-11-27
 
 Merged to `dev` since 3.23.0.
