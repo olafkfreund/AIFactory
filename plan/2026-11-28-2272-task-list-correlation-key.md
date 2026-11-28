@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 2272
 spec: spec/2026-11-28-2272-task-list-correlation-key.md
 coders:
