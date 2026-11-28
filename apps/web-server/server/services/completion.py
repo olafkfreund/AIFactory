@@ -248,7 +248,11 @@ def read_issue_repo(spec_dir: Path) -> str | None:
         if repo and isinstance(repo, str):
             return repo
     url = issue.get("url") if isinstance(issue, dict) else None
-    if isinstance(url, str) and (m := _ISSUE_URL_PATH.match(urlparse(url).path)):
+    try:
+        path = urlparse(url).path if isinstance(url, str) else ""
+    except ValueError:  # a malformed URL must not break the task list (#2272)
+        return None
+    if m := _ISSUE_URL_PATH.match(path):
         return m.group(1)
     return None
 
