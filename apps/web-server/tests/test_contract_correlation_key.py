@@ -67,3 +67,43 @@ def test_job_state_key_stays_s3_safe_for_issue_tasks(tmp_path: Path) -> None:
     )
     svc = AgentService.__new__(AgentService)
     assert svc._read_correlation_key(tmp_path, "001-x") == "5"
+
+
+@pytest.mark.parametrize(
+    ("requirements", "contract_key", "expected"),
+    [
+        ({"title": "t"}, "pf-337-x", "pf-337-x"),
+        (
+            {"title": "t", "githubIssue": {"number": 5, "repo": "o/r"}},
+            "pf-337-x",
+            None,
+        ),
+        ({"title": "t"}, None, "af-p1:001-trusted"),
+        (
+            {"title": "t", "provenance": {"issue_number": 5, "repo": "o/r"}},
+            "5",
+            "af-p1:001-trusted",
+        ),
+    ],
+)
+def test_task_list_carries_the_event_key_without_slash_keys(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    requirements: dict[str, Any],
+    contract_key: Any,
+    expected: str | None,
+) -> None:
+    # #2272: GET /api/tasks (spec_to_task) carries the key CFactory's poller joins on;
+    # issue keys ("o/r#5") are left out because CFactory's single-segment routes 404 on "/".
+    project = tmp_path / "proj"
+    spec_dir = _make_spec(project, requirements=requirements, contract_key=contract_key)
+    monkeypatch.setattr(task_service, "resolve_project_path", lambda _pid: project)
+    monkeypatch.setattr(
+        task_service, "load_projects", lambda: {"p1": {"path": str(project)}}
+    )
+
+    task = task_service.spec_to_task("p1", spec_dir)
+    assert task.correlation_key == expected
+    assert task.model_dump()["correlation_key"] == expected
+    if expected is not None:
+        assert task_service.task_to_dict(task)["correlationKey"] == expected

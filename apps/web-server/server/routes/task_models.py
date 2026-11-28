@@ -162,6 +162,11 @@ class Task(TaskBase):
     agent_identity: str | None = Field(
         None, description="API key agent identity recorded at intake"
     )
+    correlation_key: str | None = Field(
+        None,
+        description="RFC-0001 correlation key the completion events carry (contract or "
+        "synthetic af- key); absent for issue keys, which contain '/' (#2272).",
+    )
 
 
 class TaskList(BaseModel):

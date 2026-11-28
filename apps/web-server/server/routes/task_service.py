@@ -1029,6 +1029,17 @@ def spec_to_task(project_id: str, spec_dir: Path) -> Task:
     if metadata.get("task_metadata"):
         task_metadata = TaskMetadata(**metadata["task_metadata"])
 
+    key = correlation_key(
+        f"{project_id}:{spec_dir.name}",
+        read_issue_number(spec_dir),
+        read_issue_repo(spec_dir),
+        read_contract_key(spec_dir),
+    )
+    # #2272: CFactory's poller keys tasks by this; issue keys ("o/r#5") break its
+    # single-segment routes, so those tasks keep the bare-id row as before.
+    if key is not None and ("/" in key or "#" in key):
+        key = None
+
     return Task(
         id=f"{project_id}:{spec_dir.name}",
         spec_id=spec_dir.name,
@@ -1048,6 +1059,7 @@ def spec_to_task(project_id: str, spec_dir: Path) -> Task:
         github_issue=metadata.get("github_issue"),
         originator=metadata["originator"],
         agent_identity=metadata["agent_identity"],
+        correlation_key=key,
     )
 
 
